@@ -3,7 +3,8 @@
 # app API instance, workspace and state, drives report/start and
 # report/preview over its stdio channel (nothing reaches the approval
 # broker, so no dialog can appear), then runs the UI Automation end-to-end
-# test against that instance and requires the task to appear. The user's
+# test against that instance and requires the task to appear, and a second
+# task's update to appear with nothing typed. The user's
 # real runtime and pipe are never touched.
 param(
     [Parameter(Mandatory = $true)][string]$Orceld,
@@ -70,12 +71,38 @@ try {
     if (-not $preview.ok) { throw "report/preview failed: $($preview | ConvertTo-Json -Compress -Depth 6)" }
     Write-Output "PASS orceld previewed the report (no approval requested)"
 
+    $second = Report "start" @{ title = "$title live"; sources = @("data/q3.csv"); folder = "reports" } 3
+    if (-not $second.ok) { throw "report/start failed: $($second | ConvertTo-Json -Compress -Depth 6)" }
+    $secondId = $second.result.task_id
+
+    $signal = Join-Path $base "watching"
     $env:ORCEL_E2E_APP_API_INSTANCE = $instance
     $env:ORCEL_E2E_EXPECT_TASK_TITLE = "report proposed, waiting for approval: ""$title"""
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "e2e.ps1") -BuildDirectory $BuildDirectory
-    if ($LASTEXITCODE -ne 0) { $failed = $true }
+    $env:ORCEL_E2E_LIVE_SIGNAL = $signal
+    $env:ORCEL_E2E_EXPECT_LIVE_UPDATE = "Task ${secondId}: report proposed, waiting for approval."
+    # This task's preview happens once the app is watching, so only a live
+    # update can show it.
+    $driver = Start-Job -ScriptBlock {
+        param($Signal, $Deadline)
+        while (-not (Test-Path $Signal) -and (Get-Date) -lt $Deadline) { Start-Sleep -Milliseconds 200 }
+        Test-Path $Signal
+    } -ArgumentList $signal, (Get-Date).AddMinutes(3)
+    $app = Start-Process powershell.exe -PassThru -NoNewWindow -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "e2e.ps1"), "-BuildDirectory", $BuildDirectory)
+    # Start-Process leaves ExitCode empty unless its handle was read first.
+    $null = $app.Handle
+    $ready = Receive-Job -Job $driver -Wait
+    Remove-Job -Job $driver
+    if (-not $ready) { throw "the app never reached its task view" }
+    # Give its watcher a moment to be subscribed: a slow one still catches this
+    # on its first read, but as history rather than news.
+    Start-Sleep -Seconds 2
+    $livePreview = Report "preview" @{ task_id = $secondId; name = "live.md"; content = "# Live`n" } 4
+    if (-not $livePreview.ok) { throw "report/preview failed: $($livePreview | ConvertTo-Json -Compress -Depth 6)" }
+    Write-Output "PASS orceld previewed a second report while the app watched"
+    $app.WaitForExit()
+    if ($app.ExitCode -ne 0) { $failed = $true }
 } finally {
-    Remove-Item Env:\ORCEL_E2E_APP_API_INSTANCE, Env:\ORCEL_E2E_EXPECT_TASK_TITLE -ErrorAction SilentlyContinue
+    Remove-Item Env:\ORCEL_E2E_APP_API_INSTANCE, Env:\ORCEL_E2E_EXPECT_TASK_TITLE, Env:\ORCEL_E2E_LIVE_SIGNAL, Env:\ORCEL_E2E_EXPECT_LIVE_UPDATE -ErrorAction SilentlyContinue
     try { $requests.Close() } catch { }
     if (-not $daemon.WaitForExit(5000)) { $daemon.Kill(); $daemon.WaitForExit() }
     $reports = @(Get-ChildItem (Join-Path $workspace "reports") -File)

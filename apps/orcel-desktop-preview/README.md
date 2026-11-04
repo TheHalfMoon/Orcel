@@ -69,3 +69,7 @@ Security finding #278 remains open and blocks promotion of ledger-backed product
 6. Prove native E2E, signed delivery, security review, independent tests, product packaging and installer/download size before release.
 
 See master planning issue #279, identity #281 and security blocker #278 in the Orcel GitHub repository.
+
+## Live task updates
+
+The app follows `orceld`'s `task.updated` events over the read-only app API and shows each as it happens, so "report proposed, waiting for approval" appears without typing `tasks`. Once subscribed it sends nothing more, and each connection checks that the server is this user at normal integrity. What happened before the app started isn't announced: `tasks` shows it. CI runs this against a real `orceld` under UI Automation on a hosted runner.

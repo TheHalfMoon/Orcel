@@ -1540,6 +1540,32 @@ jobs:
   # gate signing). It unpacks, holds exactly the expected files with a
   # matching helper pin, fails its checksum when tampered with, and orceld
   # answers system.status from it.
+  # F4 slice 5a: the Windows app against a real orceld, under UI Automation on a
+  # hosted runner only, never on anyone's desktop. Nothing reaches the approval
+  # broker. It shows a task, and a second task's update with nothing typed.
+  windows-app-tasks:
+    name: Windows app task timeline / windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Build orceld
+        run: cargo build --locked -p orceld
+      - name: The app's self-test
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/build.ps1 -OutputDirectory "$env:RUNNER_TEMP/app"
+          & "$env:RUNNER_TEMP/app/Orcel.Smoke.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: A live orceld's tasks in the app
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/tests/e2e-tasks.ps1 -Orceld "$env:GITHUB_WORKSPACE/target/debug/orceld.exe" -BuildDirectory "$env:RUNNER_TEMP/app" -WorkRoot "$env:RUNNER_TEMP"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   macos-dev-package:
     name: macOS dev package / macos-latest
     runs-on: macos-latest

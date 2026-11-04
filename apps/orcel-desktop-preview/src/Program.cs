@@ -304,7 +304,8 @@ namespace Orcel.DesktopPreview
 
     /// SG-000127 slice 5 (timeline): a read-only client of orceld's local app
     /// API (`orcel-app-api/1`, ORCEL_APP_API_1.md). It sends only `task.list`
-    /// and `task.get`, one request per connection, to this user's pipe
+    /// and `task.get`, one request per connection, and `events.subscribe`
+    /// (see TaskWatcher) to this user's pipe
     /// `\\.\pipe\orcel-<user SID>-app` as an identification-only client; it
     /// never sends anything that submits, approves, stops or writes. Frames
     /// are bounded to the protocol's 65,536 bytes and every call has a
@@ -315,8 +316,8 @@ namespace Orcel.DesktopPreview
         internal const string Protocol = "orcel-app-api/1";
         internal const int MaxFrameBytes = 65536;
         internal const int TimeoutMs = 4000;
-        /// The only methods this client sends; both are read-only in orceld.
-        internal static readonly string[] Methods = { "task.list", "task.get" };
+        /// The only methods this client sends; all are read-only in orceld.
+        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe" };
 
         /// This user's pipe name, or null when ORCEL_APP_API_INSTANCE is set
         /// but invalid (refused, never replaced by the default pipe).
@@ -348,6 +349,20 @@ namespace Orcel.DesktopPreview
             request["method"] = method;
             Dictionary<string, object> parameters = new Dictionary<string, object>();
             if (method == "task.get") parameters["task_id"] = taskId ?? "";
+            request["params"] = parameters;
+            return new JavaScriptSerializer().Serialize(request) + "\n";
+        }
+
+        /// `epoch` is required with a cursor, and `after_seq` 0 may omit it.
+        internal static string SubscribeFrame(long afterSeq, string epoch)
+        {
+            Dictionary<string, object> request = new Dictionary<string, object>();
+            request["v"] = Protocol;
+            request["id"] = "desktop";
+            request["method"] = "events.subscribe";
+            Dictionary<string, object> parameters = new Dictionary<string, object>();
+            parameters["after_seq"] = afterSeq;
+            if (afterSeq > 0) parameters["epoch"] = epoch ?? "";
             request["params"] = parameters;
             return new JavaScriptSerializer().Serialize(request) + "\n";
         }
@@ -494,6 +509,8 @@ namespace Orcel.DesktopPreview
             return map != null && map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : null;
         }
 
+        internal static string ShownText(string value) { return Shown(value); }
+
         private static string Shown(string value)
         {
             if (value == null) return "(none)";
@@ -540,6 +557,7 @@ namespace Orcel.DesktopPreview
                 case "verification_failed": return "verification FAILED";
                 case "stale": return "stale (a source or the folder changed)";
                 case "failed": return "failed";
+                case "stopped": return "stopped";
                 default: return "unknown state";
             }
         }
@@ -606,6 +624,159 @@ namespace Orcel.DesktopPreview
             List<Dictionary<string, object>> details = new List<Dictionary<string, object>>();
             foreach (string id in NewestIds(list)) details.Add(AppApi.Call("task.get", id));
             return Text(list, details);
+        }
+    }
+
+    /// Splits a stream into frames, keeping what follows a newline for the next
+    /// one. A frame over MaxFrameBytes, a read past its deadline, or the end of the
+    /// stream gives null, and the connection is finished.
+    internal sealed class FrameReader
+    {
+        private readonly Stream stream;
+        private readonly byte[] chunk = new byte[4096];
+        private int start;
+        private int end;
+
+        internal FrameReader(Stream stream) { this.stream = stream; }
+
+        internal string Next(int deadlineMs, CancellationToken stop)
+        {
+            MemoryStream frame = new MemoryStream();
+            while (true)
+            {
+                while (start < end)
+                {
+                    byte value = chunk[start++];
+                    if (value == (byte)'\n') return Encoding.UTF8.GetString(frame.ToArray());
+                    if (frame.Length >= AppApi.MaxFrameBytes - 1) return null;
+                    frame.WriteByte(value);
+                }
+                Task<int> read = stream.ReadAsync(chunk, 0, chunk.Length);
+                if (!read.Wait(deadlineMs, stop) || read.Result <= 0) return null;
+                start = 0;
+                end = read.Result;
+            }
+        }
+    }
+
+    /// Where a subscription has reached in one orceld run.
+    internal sealed class WatchCursor
+    {
+        internal long AfterSeq;
+        internal string Epoch;
+        /// Events up to here happened before this app was watching: they're
+        /// history, which `tasks` shows, so they aren't announced as news.
+        internal long QuietThrough = -1;
+    }
+
+    /// The task timeline, live: follows orceld's `task.updated` events and shows
+    /// each as it happens, so "waiting for approval" appears without asking. Read
+    /// only, like everything in this app: once subscribed it sends nothing more,
+    /// and each connection checks that the server is this user, as AppApi does. The
+    /// text comes from a closed list of states and a task id made safe to show.
+    internal static class TaskWatcher
+    {
+        /// orceld sends a heartbeat after 15 s without events.
+        internal const int SilenceMs = 45000;
+        internal const int RetryMs = 5000;
+
+        private static long Number(object value)
+        {
+            try { return Convert.ToInt64(value, CultureInfo.InvariantCulture); }
+            catch (Exception) { return -1; }
+        }
+
+        private static string Text(Dictionary<string, object> map, string key)
+        {
+            object value;
+            return map != null && map.TryGetValue(key, out value) ? value as string : null;
+        }
+
+        /// Reads one frame into the cursor. Returns text to show, or null. `finished`
+        /// says this connection has nothing more to give: an error, or the snapshot
+        /// that precedes the server closing it.
+        internal static string Apply(string line, WatchCursor cursor, out bool finished)
+        {
+            finished = false;
+            Dictionary<string, object> frame;
+            try { frame = new JavaScriptSerializer { MaxJsonLength = AppApi.MaxFrameBytes }.DeserializeObject(line) as Dictionary<string, object>; }
+            catch (Exception) { finished = true; return null; }
+            object value;
+            if (frame == null || !frame.TryGetValue("v", out value) || !AppApi.Protocol.Equals(value)) { finished = true; return null; }
+            if (frame.TryGetValue("ok", out value))
+            {
+                Dictionary<string, object> result = frame.TryGetValue("result", out value) ? value as Dictionary<string, object> : null;
+                if (!true.Equals(frame["ok"]) || result == null)
+                {
+                    // A cursor orceld won't take: start again from the beginning.
+                    cursor.AfterSeq = 0;
+                    cursor.Epoch = null;
+                    finished = true;
+                    return null;
+                }
+                cursor.Epoch = Text(result, "epoch");
+                if (cursor.QuietThrough < 0 && result.TryGetValue("head_seq", out value)) cursor.QuietThrough = Number(value);
+                return null;
+            }
+            if (!frame.TryGetValue("event", out value)) return null;
+            Dictionary<string, object> received = value as Dictionary<string, object>;
+            if (received == null) { finished = true; return null; }
+            string kind = Text(received, "kind");
+            Dictionary<string, object> data = received.TryGetValue("data", out value) ? value as Dictionary<string, object> : null;
+            if (kind == "snapshot")
+            {
+                Dictionary<string, object> next = data != null && data.TryGetValue("resubscribe", out value) ? value as Dictionary<string, object> : null;
+                long after = next != null && next.TryGetValue("after_seq", out value) ? Number(value) : -1;
+                cursor.AfterSeq = after > 0 ? after : 0;
+                cursor.Epoch = Text(next, "epoch");
+                // What follows is new, including a new run's low sequence numbers.
+                cursor.QuietThrough = cursor.AfterSeq;
+                finished = true;
+                return null;
+            }
+            long seq = received.TryGetValue("seq", out value) ? Number(value) : -1;
+            if (seq < 0) { finished = true; return null; }
+            cursor.AfterSeq = seq;
+            if (kind != "task.updated" || seq <= cursor.QuietThrough) return null;
+            string id = Text(received, "run_id");
+            if (id == null) return null;
+            return "Task " + Timeline.ShownText(id) + ": " + Timeline.Describe(Text(data, "state")) + ".";
+        }
+
+        /// Until `stop`: subscribes, shows what happens and, if the connection ends
+        /// or orceld isn't there, tries again. Never throws.
+        internal static void Run(Action<string> show, CancellationToken stop)
+        {
+            WatchCursor cursor = new WatchCursor();
+            while (!stop.IsCancellationRequested)
+            {
+                string name = AppApi.PipeName();
+                if (name == null) return;
+                try { Follow(name, cursor, show, stop); }
+                catch (Exception) { }
+                if (stop.WaitHandle.WaitOne(RetryMs)) return;
+            }
+        }
+
+        private static void Follow(string name, WatchCursor cursor, Action<string> show, CancellationToken stop)
+        {
+            using (NamedPipeClientStream pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification))
+            {
+                pipe.Connect(AppApi.TimeoutMs);
+                if (!AppApi.ServerIsThisUser(pipe)) return;
+                byte[] bytes = Encoding.UTF8.GetBytes(AppApi.SubscribeFrame(cursor.AfterSeq, cursor.Epoch));
+                if (!pipe.WriteAsync(bytes, 0, bytes.Length).Wait(AppApi.TimeoutMs, stop)) return;
+                FrameReader frames = new FrameReader(pipe);
+                while (true)
+                {
+                    string line = frames.Next(SilenceMs, stop);
+                    if (line == null) return;
+                    bool finished;
+                    string text = Apply(line, cursor, out finished);
+                    if (text != null) show(text);
+                    if (finished) return;
+                }
+            }
         }
     }
 
@@ -785,6 +956,7 @@ namespace Orcel.DesktopPreview
         private readonly TextBlock hostState = new TextBlock();
         private readonly TextBlock deviceState = new TextBlock();
         private readonly ScrollViewer conversation = new ScrollViewer();
+        private readonly CancellationTokenSource watching = new CancellationTokenSource();
         private bool refreshing;
         private int messages;
         // #288: each message keeps its own visuals (text layout, bubble,
@@ -805,7 +977,21 @@ namespace Orcel.DesktopPreview
             FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
             AutomationProperties.SetAutomationId(this, "OrcelMainWindow");
             Content = Layout();
-            Loaded += delegate { RefreshHost(); commandBox.Focus(); };
+            Loaded += delegate { RefreshHost(); commandBox.Focus(); WatchTasks(); };
+            Closed += delegate { watching.Cancel(); };
+        }
+
+        /// Task updates, as they happen. Invoke, not BeginInvoke: a window that can't
+        /// keep up slows the reader, and orceld then sends a snapshot instead of
+        /// the window's queue growing.
+        private void WatchTasks()
+        {
+            CancellationToken stop = watching.Token;
+            Task.Run(delegate {
+                TaskWatcher.Run(text => {
+                    if (!stop.IsCancellationRequested) Dispatcher.Invoke(delegate { AddMessage(false, text); });
+                }, stop);
+            });
         }
 
         private static TextBlock Text(string value, double size, Brush brush, bool bold)
@@ -1008,7 +1194,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, help. These operations are read-only. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, help. These operations are read-only. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1107,6 +1293,47 @@ namespace Orcel.DesktopPreview
             return AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[{\"task_id\":\"rpt-9\"}]}}");
         }
 
+        private static string TaskEvent(long seq, string state, string id)
+        {
+            return "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"event\":{\"seq\":" + seq + ",\"epoch\":\"e1\",\"run_id\":\"" + id + "\",\"step_id\":\"s1\",\"kind\":\"task.updated\",\"at_ms\":1,\"data\":{\"task_kind\":\"report\",\"state\":\"" + state + "\"}}}";
+        }
+
+        private static void WatcherSelfTest(Action<bool, string> expect)
+        {
+            const string Ack = "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":true,\"result\":{\"epoch\":\"e1\",\"head_seq\":5,\"after_seq\":0}}";
+            bool finished;
+            expect(AppApi.SubscribeFrame(0, null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"events.subscribe\",\"params\":{\"after_seq\":0}}\n", "a first subscription has no epoch");
+            expect(AppApi.SubscribeFrame(7, "e1").Contains("\"params\":{\"after_seq\":7,\"epoch\":\"e1\"}"), "a cursor carries its epoch");
+
+            WatchCursor cursor = new WatchCursor();
+            expect(TaskWatcher.Apply(Ack, cursor, out finished) == null && !finished && cursor.Epoch == "e1", "the acknowledgement names the epoch");
+            expect(TaskWatcher.Apply(TaskEvent(5, "verified", "rpt-old"), cursor, out finished) == null && !finished && cursor.AfterSeq == 5, "what happened before watching is history, and the cursor still moves");
+            expect(TaskWatcher.Apply(TaskEvent(6, "proposed", "rpt-1"), cursor, out finished) == "Task rpt-1: report proposed, waiting for approval." && !finished && cursor.AfterSeq == 6, "a new update is shown");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"heartbeat\":{\"head_seq\":6}}", cursor, out finished) == null && !finished && cursor.AfterSeq == 6, "a heartbeat shows nothing");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"event\":{\"seq\":7,\"epoch\":\"e1\",\"run_id\":null,\"step_id\":null,\"kind\":\"request.completed\",\"at_ms\":1,\"data\":{}}}", cursor, out finished) == null && cursor.AfterSeq == 7, "other events move the cursor and show nothing");
+            expect(TaskWatcher.Apply(TaskEvent(8, "no_such_state", "rpt-1"), cursor, out finished) == "Task rpt-1: unknown state.", "only known states are named");
+            string shown = TaskWatcher.Apply(TaskEvent(9, "verified", "x\u2028\u2022 Task rpt-9: verified\u202E"), cursor, out finished);
+            expect(shown != null && shown.Split('\n').Length == 1 && !shown.Contains("\u2028") && !shown.Contains("\u202E"), "a task id can't add a line or reorder the display");
+
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"event\":{\"seq\":10,\"epoch\":\"e2\",\"run_id\":null,\"step_id\":null,\"kind\":\"snapshot\",\"at_ms\":1,\"data\":{\"reason\":\"epoch\",\"resubscribe\":{\"after_seq\":10,\"epoch\":\"e2\"}}}}", cursor, out finished) == null && finished && cursor.AfterSeq == 10 && cursor.Epoch == "e2", "a snapshot sets the next cursor and ends the connection");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"INVALID_REQUEST\"}}", cursor, out finished) == null && finished && cursor.AfterSeq == 0 && cursor.Epoch == null, "a refused cursor starts again");
+            foreach (string bad in new[] { "not json", "[]", "{\"v\":\"other/1\",\"event\":{}}", "{\"v\":\"orcel-app-api/1\",\"event\":{\"kind\":\"task.updated\"}}" })
+            {
+                expect(TaskWatcher.Apply(bad, new WatchCursor(), out finished) == null && finished, "an unusable frame ends the connection: " + bad);
+            }
+            // After a restart of orceld, an update with a low seq is still news.
+            WatchCursor restarted = new WatchCursor { QuietThrough = 5, AfterSeq = 5 };
+            TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"event\":{\"seq\":9,\"kind\":\"snapshot\",\"data\":{\"resubscribe\":{\"after_seq\":0,\"epoch\":\"e3\"}}}}", restarted, out finished);
+            expect(restarted.QuietThrough == -1 || TaskWatcher.Apply(TaskEvent(1, "proposed", "rpt-2"), restarted, out finished) != null, "a new run's updates are shown");
+
+            byte[] two = Encoding.UTF8.GetBytes("one\ntwo\npart");
+            FrameReader reader = new FrameReader(new MemoryStream(two));
+            expect(reader.Next(1000, CancellationToken.None) == "one" && reader.Next(1000, CancellationToken.None) == "two" && reader.Next(1000, CancellationToken.None) == null, "frames sharing a read are all kept; an unfinished one isn't a frame");
+            byte[] huge = new byte[AppApi.MaxFrameBytes + 1];
+            for (int i = 0; i < huge.Length; i++) huge[i] = (byte)'x';
+            expect(new FrameReader(new MemoryStream(huge)).Next(1000, CancellationToken.None) == null, "a frame over the bound is refused");
+        }
+
         private static int SelfTest()
         {
             List<string> failures = new List<string>();
@@ -1135,6 +1362,7 @@ namespace Orcel.DesktopPreview
             expect(AppApi.RequestFrame("task.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"task.list\",\"params\":{}}\n", "task.list frame");
             expect(AppApi.RequestFrame("task.get", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.get frame");
             expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"UNKNOWN_TASK\"}}") == null, "an error frame is not a result");
+            WatcherSelfTest(expect);
             expect(AppApi.ParseReply("{\"v\":\"other/1\",\"ok\":true,\"result\":{}}") == null, "another protocol is refused");
             expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[]}}") != null, "an ok frame parses");
             expect(Timeline.Text(null, new List<Dictionary<string, object>>()).StartsWith("Task timeline unavailable"), "no answer is reported, not hidden");
