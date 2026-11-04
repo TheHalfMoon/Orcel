@@ -762,7 +762,7 @@ fn an_empty_value_is_no_saved_value_except_for_a_formulas_text() {
     );
 }
 
-/// Saved by Microsoft Excel 12.0, by these files' own metadata (`WORKBOOKS.md`).
+/// Apache POI's samples of Excel 12.0 files (`WORKBOOKS.md`).
 #[test]
 fn files_saved_by_excel_read_with_their_references_values_and_formulas() {
     let document = convert_document(&fixtures::unpacked("excel-12-sample")).expect("Excel's file");

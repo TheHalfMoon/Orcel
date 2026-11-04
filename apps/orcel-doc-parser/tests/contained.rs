@@ -259,7 +259,7 @@ fn f5_a_workbook_keeps_its_cell_references_under_containment() {
     );
     assert!(!document.markdown.contains("attacker.example"));
 
-    // Saved by Excel, by the file's own metadata (tests/fixtures/WORKBOOKS.md).
+    // Apache POI's sample of an Excel file (tests/fixtures/WORKBOOKS.md).
     let Some(scene) = Scene::new(&fixtures::unpacked("excel-12-sample")) else {
         return;
     };

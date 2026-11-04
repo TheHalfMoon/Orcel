@@ -44,8 +44,9 @@ format and formula. So a report can name the cell each figure came from.
   contained crash, reported as a failure.
 
 **Tested with hand-written fixtures, with files from XlsxWriter and openpyxl, and with
-files saved by Excel 12.0 from Apache POI's test data (`tests/fixtures/WORKBOOKS.md`).**
-A workbook from a current Excel has been read but isn't a committed test. Comments, charts
+Apache POI's samples of Excel 12.0 files (`tests/fixtures/WORKBOOKS.md`).** That Excel saved
+those samples is well-founded but not proved, and no file from a current Excel is a
+committed test. Comments, charts
 and other parts aren't read. This reader is not yet wired to a task: the spreadsheet journey
 (roadmap Journey 2) still needs its own grain.
 
