@@ -1525,6 +1525,75 @@ jobs:
               test ! -e /usr/share/doc/orcel
             '
 
+  # The unsigned macOS development tarball: not a release (XP-16 and FD-05
+  # gate signing). It unpacks, holds exactly the expected files with a
+  # matching helper pin, fails its checksum when tampered with, and orceld
+  # answers system.status from it.
+  macos-dev-package:
+    name: macOS dev package / macos-latest
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      DIST: ${{ github.workspace }}/../macos-dist
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Build orceld (release, locked)
+        run: cargo build --release --locked -p orceld
+      - name: Build the orcel-contain helper (release, locked, its own workspace)
+        run: cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
+      - name: Build the tarball
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$//p' Cargo.toml | head -n 1)
+          bash distribution/macos/package-dev.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain "$DIST"
+          ls -l "$DIST"
+      - name: Contents, modes, pin, and that orceld answers
+        run: |
+          (cd "$DIST" && shasum -a 256 -c SHA256SUMS-macos.txt)
+          tarball=$(ls "$DIST"/*.tar.gz)
+          case "$tarball" in *-unsigned-dev.tar.gz) ;; *) echo "the name must say unsigned-dev" >&2; exit 1 ;; esac
+          home="$RUNNER_TEMP/orcel-dev"
+          mkdir -p "$home"
+          tar -xzf "$tarball" --strip-components=1 -C "$home"
+          actual=$(cd "$home" && find . -type f | sort)
+          expected=$(sort <<'LIST'
+          ./bin/orcel-contain
+          ./bin/orcel-contain.sha256
+          ./bin/orceld
+          ./doc/LICENSE
+          ./doc/README.md
+          ./doc/THIRD_PARTY_NOTICES.txt
+          LIST
+          )
+          expected=$(echo "$expected" | sed 's/^ *//' | sort)
+          diff <(echo "$expected") <(echo "$actual")
+          test -x "$home/bin/orceld"
+          test -x "$home/bin/orcel-contain"
+          test "$(cat "$home/bin/orcel-contain.sha256")" = "$(shasum -a 256 "$home/bin/orcel-contain" | cut -d ' ' -f 1)"
+          # No setuid, setgid or sticky bit.
+          if find "$home" -perm -1000 -o -perm -2000 -o -perm -4000 | grep .; then exit 1; fi
+          mkdir -p "$RUNNER_TEMP/ws"
+          ORCEL_WORKSPACES_JSON="[{\"id\":\"ci\",\"root\":\"$RUNNER_TEMP/ws\"}]" python3 scripts/linux-orceld-probe.py exec "$home/bin/orceld" ci
+      - name: A tampered download fails its checksum
+        run: |
+          mkdir "$RUNNER_TEMP/tampered" && cp "$DIST"/* "$RUNNER_TEMP/tampered/"
+          tarball=$(ls "$RUNNER_TEMP"/tampered/*.tar.gz)
+          python3 -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); b[100] ^= 0xFF; open(p, "wb").write(b)' "$tarball"
+          if (cd "$RUNNER_TEMP/tampered" && shasum -a 256 -c SHA256SUMS-macos.txt); then
+            echo "a tampered tarball passed its checksum" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: orcel-macos-unsigned-dev-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ env.DIST }}/
+          retention-days: 14
+
   supply-chain:
     name: Supply chain audit
     runs-on: ubuntu-latest
