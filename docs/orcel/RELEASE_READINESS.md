@@ -76,7 +76,9 @@ checkpoint at the end says where engineering stands.
 | M4 selection package: Qwen3.5-4B primary, Granite 4.0 H-Tiny fallback, runtime and benchmark bar. **Nothing downloaded or run; no model capability is measured** | #610 → `5efc52d` |
 | Unsigned macOS development tarball, built and checked in CI, with `orceld` answering from it on the hosted Mac. Not a release | #612 → `3dd082e` |
 | #438: a stage timeline of a navigation that times out, after the 0-request mode recurred with diagnostics (run 41748009453: no connection at the only listener, no TLS, not a policy timeout). No mechanism shown yet | #613 → `08d5063` |
-| Founder decision packet: the six decisions blocking the next milestones (`FOUNDER_DECISION_PACKET.md`), a narrow SG-000122 proposal, and the three-platform plan | this PR |
+| Founder decision packet: the six decisions blocking the next milestones (`FOUNDER_DECISION_PACKET.md`), a narrow SG-000122 proposal, and the three-platform plan | #611 → `b0fc676` |
+| M4 model scorer: labelled rows, an answer check per task, and a verdict in which a missing or unusable measure fails. Stricter than the package's first bar, recorded there before implementing: the injected task is required, a task counts only at 4 of 5 repeats, and egress must name the model. **No model has run** | #614 → `85efe13` |
+| M4a harness: a bridge process that speaks only to `127.0.0.1`, one model task through the real agent, edge and orceld, and another process's peak memory on Windows and Linux. CI checks the wiring on all three OSes against a fixed stub, labelled `stub-no-model`, which the scorer refuses. **It says nothing about any model.** Starting a pinned server waits on the download decision | #615 → `4e85551` |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
@@ -84,7 +86,7 @@ checkpoint at the end says where engineering stands.
 
 | Item | Note |
 |---|---|
-| #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
+| #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #613's timeline captures it. #603's merge closed the issue by mistake on 2026-11-03, and the failure recurred afterwards; reopened 2026-11-04 |
 | SG-000115 Priority B (inert): wiring B9a's lifetime spawner and B8b/B9b containment into a launch path (activation work); a cgroup the engine cannot leave (B9b's residual); S-07 key shipping and pinning (a founder decision) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | Doc parser zip advisories (RUSTSEC-2026-0367/0368/0369/0429, extraction only) | Recorded exceptions, not accepted risk (founder direction 2026-11-02): reachability checked module by module in `apps/orcel-doc-parser/.cargo/audit.toml`. Remove when anydoc accepts zip >= 9 (anydoc 0.2.4 is the latest and still requires ^8.6); remediate at once if any becomes reachable |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
@@ -145,13 +147,13 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-04, main `5efc52d`; main CI
-41771808905 green at `5efc52d`):
+If a session ends, resume from here (2026-11-04, main `4e85551`; the merge
+of #615, whose exact head passed run 41786359755; main CI 41782642389 green at
+`85efe13`):
 
-1. Merged since the last checkpoint: #605 (register and handoff), #607 (F4
-   stop kernel), #608 (slice 4 kit), #609 (slice 5 and 7 proposals), #610
-   (M4 package), #612 (macOS dev tarball) and #613 (#438 timeline). No PR
-   from this work is open apart from this handoff and packet. Branch
+1. Merged since the last checkpoint: #611 (decision packet), #614 (M4 scorer)
+   and #615 (M4a runner). No PR from this work is open apart from this
+   checkpoint. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -165,9 +167,9 @@ If a session ends, resume from here (2026-11-04, main `5efc52d`; main CI
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
-4. Next engineering, in order: the M4 harness changes that need no download
-   (`prep/M4-selection-package.md`: labelled model rows, answer checks, model
-   memory on Windows); #438 when its timeline first prints; a cgroup the
+4. Next engineering, in order: the next product milestone that needs no
+   founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`);
+   #438 when its timeline first prints; a cgroup the
    engine cannot leave (SG-000115 class 2, which needs no activation); then what the
    founder's answers to `FOUNDER_DECISION_PACKET.md` unlock.
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
