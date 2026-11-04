@@ -25,7 +25,7 @@ from pathlib import Path
 # ends as a refusal here rather than as this check giving up.
 ANSWER_TIMEOUT = 180
 #: What it means for orceld's approval to have stopped a commit with nobody here.
-APPROVAL_STOPPED = ("APPROVAL_UNAVAILABLE", "APPROVAL_DENIED", "APPROVAL_TIMEOUT")
+APPROVAL_STOPPED = ("APPROVAL_UNAVAILABLE", "APPROVAL_DENIED")
 EXPECTED_OS = "macos" if sys.platform == "darwin" else "linux"
 SECRET = "orcel-dev-check-must-not-reach-the-server"
 
