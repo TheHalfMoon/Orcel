@@ -167,7 +167,8 @@ If a session ends, resume from here (2026-11-04, main `5efc52d`; main CI
    then `node scripts/check-vendored-cua.mjs` on a commit.
 4. Next engineering, in order: the M4 harness changes that need no download
    (`prep/M4-selection-package.md`: labelled model rows, answer checks, model
-   memory on Windows); #438 when its timeline first prints; then what the
+   memory on Windows); #438 when its timeline first prints; a cgroup the
+   engine cannot leave (SG-000115 class 2, which needs no activation); then what the
    founder's answers to `FOUNDER_DECISION_PACKET.md` unlock.
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).

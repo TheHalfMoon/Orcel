@@ -8,7 +8,7 @@ Reply with the numbers and your answer, for example: "1 will do; 2 yes; 3 yes; 4
 |---|---|---|---|
 | 1 | Run the approval journey yourself, about 15 minutes | Do it | Core MVP (F4) |
 | 2 | Allow task stop without paid signing | Yes | Core MVP (F4) |
-| 3 | Download one model to benchmark, 2.74 GB | Yes | First real model capability |
+| 3 | Download two files to benchmark one model: the weights (2.74 GB) and `llama.cpp`'s runner (19.5 MB) | Yes | First real model capability |
 | 4 | Tauri for one desktop app on all three OSes | Yes | Cross-platform app |
 | 5 | Activate forms in the browser (narrow SG-000122) | Yes | Browser usable for real tasks |
 | 6 | Release builds and the browser | A: stay development-only for now | F4 closeout |
@@ -35,15 +35,15 @@ Reply with the numbers and your answer, for example: "1 will do; 2 yes; 3 yes; 4
 - **Unqualified:** the method, the app's Stop control and its UI test don't exist yet. A security judge is required before it merges.
 - **Reversible:** yes: remove the method, or add a publisher check once signing exists.
 
-## 3. Download one model to benchmark (M4)
+## 3. Download two files to benchmark one model (M4)
 
 - **Unlocks:** the first measurement of real model capability. Today, every agent result is scripted.
-- **Recommended:** Qwen3.5-4B at the pinned revision, benchmark only, on this PC. Fallback, only if it misses the bar: Granite 4.0 H-Tiny. Alternatives: a larger Qwen on better hardware; or wait. Details: `prep/M4-selection-package.md`.
+- **Recommended:** benchmark only, on this PC, exactly these two files, each verified against its pinned SHA-256 (listed in the package): `Qwen3.5-4B-Q4_K_M.gguf` (the weights) and `llama-b11567-bin-win-cpu-x64.zip` (a third-party **executable**, llama.cpp, MIT, which runs them on your PC). Fallback, only if it misses the bar: Granite 4.0 H-Tiny. Alternatives: a larger Qwen on better hardware; or wait. Details: `prep/M4-selection-package.md`.
 - **Security and licensing:** Apache-2.0, no use restrictions passing to users. Local only, no paid inference, no telemetry, and the agent stays read-only under `orceld`. The file is a third-party conversion, so it is pinned by hash; shipping would convert from the vendor's weights.
-- **Cost:** none in money; 2.74 GB of disk.
+- **Cost:** none in money; about 2.76 GB of disk.
 - **Evidence:** licence and tool-calling documentation read from the vendor at the pinned revision. **No independent tool-call score exists for this model**; the nearest is a small community test of its larger sibling.
 - **Unqualified:** everything about its real capability. It may fail the bar, and then the honest result is "no qualified model yet".
-- **Reversible:** yes: delete the file. **Not asked now:** shipping any model.
+- **Reversible:** yes: delete the files. **Not asked now:** shipping any model.
 
 ## 4. Tauri for one desktop app (FD-03)
 
