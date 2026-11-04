@@ -857,3 +857,16 @@ fn too_many_rows_or_cells_are_an_archive_limit() {
         ParseRefusal::ArchiveLimit
     );
 }
+
+#[test]
+fn a_sheet_named_like_a_label_cannot_share_a_title() {
+    let body = "<sheets><sheet name=\"x (hidden)\" sheetId=\"1\" r:id=\"rId1\"/>\
+                <sheet name=\"x\" sheetId=\"2\" state=\"hidden\" r:id=\"rId1\"/></sheets>";
+    assert_eq!(
+        refusal(&fixtures::workbook_with_parts(body, "<si><t>x</t></si>")),
+        ParseRefusal::Malformed
+    );
+    // Alone, the name is only a name.
+    let alone = "<sheets><sheet name=\"x (hidden)\" sheetId=\"1\" r:id=\"rId1\"/></sheets>";
+    assert!(convert_document(&fixtures::workbook_with_parts(alone, "<si><t>x</t></si>")).is_ok());
+}

@@ -149,10 +149,6 @@ pub fn convert(bytes: &[u8]) -> Result<(String, usize), ParseRefusal> {
             .filter(|relationship| !relationship.external)
             .ok_or(ParseRefusal::Malformed)?;
         let name = sheet.attribute("name").ok_or(ParseRefusal::Malformed)?;
-        // The name as it reads, so an escape can't make a second of the same.
-        if !names.insert(decoded_xstring(name).to_lowercase()) {
-            return Err(ParseRefusal::Malformed);
-        }
         let part_name = match relationship.kind.as_str() {
             "worksheet" => {
                 Some(resolve_part(&main, &relationship.target).ok_or(ParseRefusal::Malformed)?)
@@ -160,11 +156,17 @@ pub fn convert(bytes: &[u8]) -> Result<(String, usize), ParseRefusal> {
             "chartsheet" | "dialogsheet" => None,
             _ => return Err(ParseRefusal::Malformed),
         };
-        sheets.push(Sheet {
+        let entry = Sheet {
             name,
             hidden: sheet.attribute("state").unwrap_or("visible") != "visible",
             part: part_name,
-        });
+        };
+        // The title as it reads, so that neither an escape nor a name that ends like
+        // a label ("x (hidden)" beside a hidden "x") can make a second of the same.
+        if !names.insert(entry.title().to_lowercase()) {
+            return Err(ParseRefusal::Malformed);
+        }
+        sheets.push(entry);
     }
     if sheets.is_empty() {
         return Err(ParseRefusal::Malformed);
