@@ -52,8 +52,24 @@ $requests.NewLine = "`n"
 function Report([string]$operation, [hashtable]$arguments, [int]$n) {
     $request = @{ version = 1; request_id = "e2e-tasks-$n"; client_session_id = "e2e-tasks"; workspace_id = "default";
         capability = "report"; operation = $operation; target = $null; arguments = $arguments } | ConvertTo-Json -Compress -Depth 5
-    $requests.WriteLine($request)
-    $requests.Flush()
+    try {
+        $requests.WriteLine($request)
+        $requests.Flush()
+    } catch {
+        # A closed stdin pipe usually means orceld exited before it could
+        # handle the request. Preserve its exit code and bounded stderr to
+        # distinguish an actual daemon refusal from a transient pipe race.
+        $writeError = $_.Exception.Message
+        $null = $daemon.WaitForExit(1500)
+        $exitState = if ($daemon.HasExited) { "exited with code $($daemon.ExitCode)" } else { "still running" }
+        $details = "(stderr incomplete: process still running)"
+        if ($daemon.HasExited) {
+            try { $details = [string]$stderr.GetAwaiter().GetResult() }
+            catch { $details = "(stderr could not be read: $($_.Exception.Message))" }
+            if ($details.Length -gt 4000) { $details = $details.Substring($details.Length - 4000) }
+        }
+        throw "orceld stdin write failed for report/$operation ($exitState): $writeError; stderr: $details"
+    }
     $pending = $daemon.StandardOutput.ReadLineAsync()
     if (-not $pending.Wait(15000)) { throw "orceld did not answer report/$operation within 15 s" }
     $line = $pending.Result
