@@ -17,7 +17,7 @@
 
 ## Step 1: a macOS development package (no decision needed)
 
-The backlog gates **signed** macOS packaging (XP-16) on FD-05. An unsigned development tarball is explicitly allowed: "macOS ships unsigned dev builds only". It adds a CI job that builds a tarball on the macOS runner, as the Linux tarball does, labelled unsigned, and installs it to confirm it runs. **No paid Apple membership is needed for local engineering.** Limits to state plainly: Gatekeeper warns, and macOS ties Accessibility and Screen Recording grants to the signature, so they are lost on every rebuild. These builds are never published. A release still needs FD-05.
+The backlog gates **signed** macOS packaging (XP-16) on FD-05. An unsigned development tarball is explicitly allowed: "macOS ships unsigned dev builds only". It adds a CI job that builds a tarball on the macOS runner, as the Linux tarball does, labelled unsigned, and installs it to confirm it runs. **No paid Apple membership is needed for local engineering.** Limits to state plainly: Gatekeeper refuses it until the quarantine attribute is cleared, and macOS ties Accessibility and Screen Recording grants to the signature, so they are lost on every rebuild. These builds are never published. A release still needs FD-05.
 
 ## Step 2: one desktop app (needs FD-03)
 
