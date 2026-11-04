@@ -117,6 +117,8 @@ Thinking mode is off for the benchmark, unless a labelled second run shows it he
 |---|---|---|---|
 | `Qwen3.5-4B-Q4_K_M.gguf` | `unsloth/Qwen3.5-4B-GGUF` @ `e87f176479d0855a907a41277aca2f8ee7a09523` (a third-party conversion of the vendor's weights) | 2,740,937,888 bytes | `00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4` |
 | `llama-b11567-bin-win-cpu-x64.zip` | `ggml-org/llama.cpp`, release `b11567` of 2026-10-12 (MIT) | 19,502,550 bytes | `7039609f175cfa5427d085f6e986e4119ab62d552abd1386f4909bca48ac0cc5` |
+`b11567` is a build GitHub marks as a prerelease: llama.cpp publishes its Windows binaries that way, and its latest tagged release (`v0.8.0`) carries none. It is pinned by hash for the benchmark only.
+
 2. Approve the reference machine above.
 
 Not asked now: shipping any model. That comes only after the benchmark, with its results.
