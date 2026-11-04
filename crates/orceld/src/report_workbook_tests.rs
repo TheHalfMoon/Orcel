@@ -121,7 +121,8 @@ const MARKDOWN: &str = "# Workbook\n\n## Sheet: Sales\n\n\
 #[test]
 fn a_cell_is_found_in_its_own_sheet_and_only_there() {
     assert_eq!(cell_value(MARKDOWN, "Sales", "B2"), Some("1250.5"));
-    assert_eq!(cell_value(MARKDOWN, "Audit", "B2"), Some("other"));
+    assert_eq!(cell_value(MARKDOWN, "Audit (hidden)", "B2"), Some("other"));
+    assert_eq!(cell_value(MARKDOWN, "Audit", "B2"), None, "the whole title");
     assert_eq!(cell_value(MARKDOWN, "Sales", "B20"), Some("7"));
     assert_eq!(cell_value(MARKDOWN, "Sales", "C1"), Some("a \\| b"));
     assert_eq!(cell_value(MARKDOWN, "Sales", "Z9"), None);
@@ -137,9 +138,26 @@ fn a_missing_saved_value_confirms_nothing_not_even_zero() {
 #[test]
 fn figures_are_read_from_their_own_lines() {
     assert_eq!(
-        figures_in("Intro = no place\nSales!B2 = 1.5\nA!B!C3 = x = y\nSales!B2=1\nSales!2 = 1\nSales!B = 1\n"),
-        vec![("Sales", "B2", "1.5"), ("A!B", "C3", "x = y")]
+        figures_in("Intro = no place\nJust wow!\nSales!B2 = 1.5\nA!B!C3 = x = y\n"),
+        Ok(vec![("Sales", "B2", "1.5"), ("A!B", "C3", "x = y")])
     );
+}
+
+#[test]
+fn a_line_shaped_like_a_figure_but_not_checkable_is_an_error() {
+    for line in [
+        "Sales!b4 = 99999",
+        "Sales!B4=99999",
+        "Sales!$B$4 = 99999",
+        "P = Q!B2 = 123456",
+        "Sales!B = 1",
+        "Sales!2 = 1",
+        "!B2 = 1",
+        "Sales!B2 = ",
+    ] {
+        let report = format!("Sales!B2 = 1250.5\n{line}\n");
+        assert!(figures_in(&report).is_err(), "{line}");
+    }
 }
 
 #[test]
@@ -178,7 +196,10 @@ fn the_workbook_source_is_compiled_only_for_tests() {
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(name))
             .unwrap()
     };
-    assert!(source("sg000039_main.rs").contains("#[cfg(test)]\nmod report_workbook;"));
+    // A checkout may end lines with CRLF.
+    let main = source("sg000039_main.rs").replace("\r\n", "\n");
+    assert!(main.contains("#[cfg(test)]\nmod report_workbook;"));
+    assert_eq!(main.matches("mod report_workbook").count(), 1);
     let task = source("report_task.rs");
     let lines: Vec<&str> = task.lines().collect();
     let uses: Vec<usize> = lines

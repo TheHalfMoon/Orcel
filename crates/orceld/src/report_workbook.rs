@@ -22,7 +22,7 @@ use orcel_contracts::FailureCode;
 use orcel_policy::Workspace;
 use orcel_provider_fs::{FsProvider, ProviderError};
 use orcel_provider_process::contained::{sha256_hex, HelperPin};
-use orcel_provider_process::document_parser::{ParsedDocument, MAX_INPUT_BYTES};
+use orcel_provider_process::document_parser::{DocumentFormat, ParsedDocument, MAX_INPUT_BYTES};
 use std::sync::OnceLock;
 
 type Pins = (HelperPin, ParserPin);
@@ -62,6 +62,12 @@ pub(crate) fn observe(
 ) -> Result<(SourceRecord, String), ProviderError> {
     let bytes = read(workspace, source)?;
     let document = parse(&bytes, PINS.get())?;
+    if document.format != DocumentFormat::Xlsx {
+        return Err(ProviderError::new(
+            FailureCode::InvalidRequest,
+            "the file named as a workbook isn't one",
+        ));
+    }
     if document.truncated {
         return Err(ProviderError::new(
             FailureCode::OutputLimit,
@@ -100,31 +106,39 @@ pub(crate) fn digest_if_workbook(
     }
 }
 
-/// `Sheet!Cell = value` lines of a report: `(sheet, cell, value)`. A sheet's name
-/// may hold `!`, so the last one divides it from the cell.
-pub(crate) fn figures_in(report: &str) -> Vec<(&str, &str, &str)> {
-    report
-        .lines()
-        .filter_map(|line| {
-            let (place, value) = line.split_once(" = ")?;
+/// The `Sheet!Cell = value` lines of a report: `(sheet title, cell, value)`. A
+/// sheet's title may hold `!`, so the last one divides it from the cell. A hidden
+/// sheet's title says so: `Audit (hidden)!B2`. A line that has both `!` and `=` but
+/// isn't exactly this form is an error rather than prose, since a figure skipped
+/// would be a figure unchecked.
+pub(crate) fn figures_in(report: &str) -> Result<Vec<(&str, &str, &str)>, String> {
+    let mut figures = Vec::new();
+    for line in report.lines() {
+        if !(line.contains('!') && line.contains('=')) {
+            continue;
+        }
+        let figure = line.split_once(" = ").and_then(|(place, value)| {
             let (sheet, cell) = place.rsplit_once('!')?;
             let letters = cell.bytes().take_while(u8::is_ascii_uppercase).count();
             let digits = &cell[letters..];
             let is_cell =
                 letters > 0 && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
-            is_cell.then_some((sheet, cell, value))
-        })
-        .collect()
+            (is_cell && !sheet.is_empty() && !value.is_empty()).then_some((sheet, cell, value))
+        });
+        figures.push(figure.ok_or_else(|| format!("not a figure this can check: {line}"))?);
+    }
+    Ok(figures)
 }
 
 /// The saved value of a cell in the parser's Markdown, exactly as the table shows
-/// it. `None` if the sheet or the cell isn't there, or the cell has no saved value:
-/// a missing result isn't zero, and it can't confirm any figure.
+/// it. `sheet` is the whole title, which the parser keeps unique. `None` if the sheet
+/// or the cell isn't there, or the cell has no saved value: a missing result isn't
+/// zero, and it can't confirm any figure.
 pub(crate) fn cell_value<'a>(markdown: &'a str, sheet: &str, cell: &str) -> Option<&'a str> {
     let mut in_sheet = false;
     for line in markdown.lines() {
         if let Some(title) = line.strip_prefix("## Sheet: ") {
-            in_sheet = title.strip_suffix(" (hidden)").unwrap_or(title) == sheet;
+            in_sheet = title == sheet;
             continue;
         }
         if !in_sheet {
@@ -159,9 +173,10 @@ fn split_cell(text: &str) -> Option<(&str, &str)> {
     None
 }
 
-/// Whether every figure a report states is what the workbook saved, read again in
-/// a separate contained run. The file must still be the one the task recorded. A
-/// report stating no figure fails: there's nothing to confirm. Returns how many
+/// Whether every `Sheet!Cell = value` line in a report is what the workbook saved,
+/// read again in a separate contained run. The file must still be the one the task
+/// recorded. A figure stated any other way, such as in a sentence or a table, isn't
+/// seen. A report stating none fails: there's nothing to confirm. Returns how many
 /// were confirmed.
 pub(crate) fn check_figures(
     workspace: &Workspace,
@@ -185,10 +200,13 @@ fn check_figures_with(
         ));
     }
     let document = parse(&bytes, pins).map_err(|error| error.message)?;
+    if document.format != DocumentFormat::Xlsx {
+        return Err("the file named as a workbook isn't one".into());
+    }
     if document.truncated {
         return Err("the workbook is too large to read in full".into());
     }
-    let figures = figures_in(report);
+    let figures = figures_in(report)?;
     if figures.is_empty() {
         return Err("the report states no figure".into());
     }
