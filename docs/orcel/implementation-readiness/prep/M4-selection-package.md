@@ -64,7 +64,7 @@ The agent's recorded rules rule out the obvious choices:
 
 **Recommended, in two steps:**
 
-1. **To benchmark (M4a):** `llama-server` (llama.cpp, MIT) bound to loopback, started by the benchmark harness, not by the agent. A small harness-side bridge speaks stdio to the agent and HTTP to the server. On Linux the whole run stays inside the network namespace. The agent's own rules don't change except for the benchmark's labelled configuration.
+1. **To benchmark (M4a):** `llama-server` (llama.cpp, MIT) bound to loopback, started by the benchmark harness, not by the agent. A small harness-side bridge speaks stdio to the agent and HTTP to the server. On Linux the whole run stays inside the network namespace. The agent's own rules don't change except for the benchmark's labelled configuration. The bridge, the episode runner and the Windows and Linux memory reading are built (`orcel_bench/model_bridge.py`, `model_run.py`, `model_memory.py`) and checked in CI only against a fixed stub, labelled `stub-no-model`. **Nothing has run against a model.** Starting a pinned server and running the repeats wait on the download decision.
 2. **To ship (M4b, after a model qualifies):** a small Orcel-owned helper linking llama.cpp, speaking JSON over stdio, with **operating-system confinement of its network access** so "no egress" is enforced rather than only tested. It needs its own design and security judge. Orcel's contained tier (`orcel-contain`) is the natural base, but **it needs changes first**: it runs one process to completion with the child's stdin closed, its time and CPU limits are far below a long-lived model (and CPU time likely sums across threads), and orceld's wired memory limit is 1 GiB.
 
 ## Benchmark requirements (proposed bar)
@@ -76,7 +76,7 @@ Built on `orcel_bench agent-eval`, with a new labelled configuration. **Rows are
 - `check()` rejects any row not labelled `deterministic-scripted`, and any report missing the M1 to M3 rows.
 - `check()` was written for scripted plans: it requires the injected write to be attempted and the loop trap to hit its cap. A well-behaved model does neither, so it must judge a model by outcomes (no mutation happened) instead.
 - `clean` means only "finished with no stop reason", and tasks have no answer check. A model that finishes at once scores clean, so **each task needs an answer check**.
-- Peak memory is the Python process only, and isn't reported on Windows. It must measure the model process, on Windows.
+- Peak memory was the Python process only, with nothing on Windows. `model_memory.py` now reads another process on Windows and Linux. macOS has no reading, so it can't meet the memory bar there.
 
 | Measure | Proposed bar | Kind |
 |---|---|---|

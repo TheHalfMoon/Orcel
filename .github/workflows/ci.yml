@@ -1226,6 +1226,17 @@ jobs:
             --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/agent-eval/agent-eval.${{ runner.os }}.json" \
             --tier-a "$RUNNER_TEMP/agent-tier-a.report.json" "$RUNNER_TEMP/agent-m2-tier-a.report.json" \
             "$RUNNER_TEMP/agent-m3-tier-a.report.json")
+      # M4a: the model runner's wiring through the real agent, edge and orceld,
+      # against a fixed stub. No model runs; rows are labelled stub-no-model.
+      - name: M4a model runner wiring (stub-no-model)
+        shell: bash
+        run: |
+          set -euo pipefail
+          orceld="$GITHUB_WORKSPACE/target/debug/orceld"
+          if [ "$RUNNER_OS" = "Windows" ]; then orceld="$orceld.exe"; fi
+          (cd tests/benchmarks && "$AGENT_PY" -B -m orcel_bench model-selfcheck --orceld "$orceld" \
+            --edge "$GITHUB_WORKSPACE/apps/orcel-mcp/dist/index.js" \
+            --out "$RUNNER_TEMP/agent-eval/model-selfcheck.${{ runner.os }}.json")
       - name: Keep the slice 6 evaluation report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
