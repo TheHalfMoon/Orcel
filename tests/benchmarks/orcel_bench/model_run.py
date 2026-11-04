@@ -152,6 +152,8 @@ def bridge_model(transport: Any, record: dict[str, Any]) -> Any:
             try:
                 choice = transport(request)["choices"][0]
                 content, wire_calls = choice["message"].get("content") or "", choice["message"].get("tool_calls") or []
+                if not isinstance(wire_calls, list):
+                    raise ModelTransportError("the model server's tool_calls are not a list")
             except Exception:
                 record["transport_errors"] += 1
                 raise
