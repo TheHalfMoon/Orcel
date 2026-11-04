@@ -10,9 +10,10 @@ No paid Apple membership is needed to build or run it for local engineering.
 |---|---|
 | `bin/orceld` | The kernel |
 | `bin/orcel-contain`, `bin/orcel-contain.sha256` | The contained-tier helper and its pin, beside `orceld`, where orceld looks |
+| `bin/orcel-mcp`, `app/orcel-mcp/` | The MCP server for a local client, and its launcher |
 | `doc/` | Licence, third-party notices and this file |
 
-Not in it: a desktop app (waits on FD-03), the `orcel` lifecycle CLI's install flow (it installs on Windows), the MCP edge, and the native host. The live browser is refused on macOS until SG-000115 is activated.
+Not in it: a desktop app (waits on FD-03) and the `orcel` lifecycle CLI's install flow (it installs on Windows). Node.js 24 is needed, from `PATH`.
 
 ## Run it
 
@@ -37,6 +38,16 @@ mkdir -p ~/orcel-dev-ws && ORCEL_WORKSPACES_JSON="[{\"id\":\"dev\",\"root\":\"$H
 ```
 
 The probe is in the repository's `scripts/`; it checks `system.status`.
+
+## Connect a local MCP client
+
+Point the client at the launcher by its full path, and name the folder Orcel may work in. For example, in Claude Code's `.mcp.json`:
+
+```json
+{ "mcpServers": { "orcel": { "type": "stdio", "command": "/Users/you/orcel-dev/bin/orcel-mcp", "env": { "ORCEL_WORKSPACE_ROOT": "/Users/you/orcel-dev-ws" } } } }
+```
+
+`orceld` stays the sole authority, and asks you before it writes. Only a short list of variables reaches the server (see the launcher), so a client's other environment doesn't. CI checks this through the launcher with a test client, not with Claude or Codex, and no approval is given there: a report stops at the prompt.
 
 ## Limits
 

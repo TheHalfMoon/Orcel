@@ -1,0 +1,29 @@
+#!/bin/sh
+# The MCP server of an unsigned Orcel development tarball, over stdio, for a local
+# client. orceld stays the sole authority: this only starts the edge beside it.
+#
+# Name the workspace with ORCEL_WORKSPACE_ROOT, or ORCEL_WORKSPACES_JSON.
+#
+# Only the variables below reach the edge and orceld, so a client's other
+# environment, including any credentials, doesn't. Node.js comes from PATH: this
+# is a development build, with no install to record a verified runtime.
+set -eu
+
+if [ -z "${ORCEL_WORKSPACE_ROOT:-}" ] && [ -z "${ORCEL_WORKSPACES_JSON:-}" ]; then
+  echo "orcel-mcp: set ORCEL_WORKSPACE_ROOT to the folder Orcel may work in" >&2
+  exit 2
+fi
+bin=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+home=$(dirname -- "$bin")
+
+set --
+for name in PATH HOME USER LOGNAME TMPDIR LANG LC_ALL \
+  XDG_STATE_HOME XDG_RUNTIME_DIR DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS \
+  ORCEL_WORKSPACE_ROOT ORCEL_WORKSPACE_ID ORCEL_WORKSPACES_JSON; do
+  eval "value=\${$name-}"
+  # shellcheck disable=SC2154 # set by the eval above
+  if [ -n "$value" ]; then
+    set -- "$@" "$name=$value"
+  fi
+done
+exec env -i "$@" "ORCEL_DAEMON=$bin/orceld" node "$home/app/orcel-mcp/dist/index.js"
