@@ -624,8 +624,12 @@ const MCP_ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
 
 impl McpStdio {
     fn start(cli: &Path, local: &Path, stderr: PathBuf) -> Self {
+        Self::start_with(cli, &["mcp", "stdio"], local, stderr)
+    }
+
+    fn start_with(cli: &Path, args: &[&str], local: &Path, stderr: PathBuf) -> Self {
         let mut child = Command::new(cli)
-            .args(["mcp", "stdio"])
+            .args(args)
             .env("LOCALAPPDATA", local)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -976,4 +980,279 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
         !root.exists(),
         "uninstall leaves nothing under the install root"
     );
+}
+
+/// `examples/mcp-clients`, in the checkout this test was built from.
+fn client_examples_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mcp-clients")
+}
+
+fn example_json(name: &str) -> Value {
+    serde_json::from_slice(&fs::read(client_examples_dir().join(name)).unwrap()).unwrap()
+}
+
+fn json_entrypoint(entry: &Value) -> (String, Vec<String>) {
+    let args = entry["args"]
+        .as_array()
+        .expect("an args list")
+        .iter()
+        .map(|arg| arg.as_str().expect("a string argument").to_owned())
+        .collect();
+    (
+        entry["command"].as_str().expect("a command").to_owned(),
+        args,
+    )
+}
+
+/// The uncommented `command` and `args` of a TOML example. Its `args` line is
+/// also valid JSON, so no TOML parser joins this test's dependencies.
+fn toml_entrypoint(name: &str) -> (String, Vec<String>) {
+    let text = fs::read_to_string(client_examples_dir().join(name)).unwrap();
+    let value = |key: &str| {
+        text.lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .find_map(|line| {
+                let (left, right) = line.split_once('=')?;
+                (left.trim() == key).then(|| right.trim().to_owned())
+            })
+            .unwrap_or_else(|| panic!("{name} has no {key}"))
+    };
+    let command: String = serde_json::from_str(&value("command")).unwrap();
+    let args: Vec<String> = serde_json::from_str(&value("args")).unwrap();
+    (command, args)
+}
+
+fn sorted_tool_names(listed: &Value) -> Vec<String> {
+    let mut names: Vec<String> = listed["tools"]
+        .as_array()
+        .expect("a tools list")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("a tool name").to_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// One HTTP/1.0 exchange, so the answer ends at the close of the connection and
+/// isn't chunked. Returns the status, the headers and the body.
+fn http_post(
+    port: u16,
+    authorization: Option<&str>,
+    session: Option<&str>,
+    body: &Value,
+) -> (u16, String, String) {
+    use std::io::{Read as _, Write as _};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream.set_read_timeout(Some(MCP_ANSWER_TIMEOUT)).unwrap();
+    let body = body.to_string();
+    let mut request = format!(
+        "POST /mcp HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
+         Accept: application/json, text/event-stream\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    if let Some(authorization) = authorization {
+        request.push_str(&format!("Authorization: {authorization}\r\n"));
+    }
+    if let Some(session) = session {
+        request.push_str(&format!("Mcp-Session-Id: {session}\r\n"));
+    }
+    request.push_str("\r\n");
+    request.push_str(&body);
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let (head, rest) = answer.split_once("\r\n\r\n").expect("an HTTP answer");
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .expect("a status");
+    (status, head.to_owned(), rest.to_owned())
+}
+
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// F5 client matrix. Every configuration in `examples/mcp-clients` is read as a
+/// client would read it and run against the installed release, and each must
+/// reach the same tools. **This shows the configuration and the protocol, not
+/// that client:** no Claude, Codex or Vibe Code runs here, and their versions are
+/// not qualified by it.
+#[test]
+#[ignore = "requires ORCEL_RELEASE_DIR; run by the release-qualification CI job"]
+fn installed_release_serves_every_client_example() {
+    let release = PathBuf::from(
+        std::env::var_os("ORCEL_RELEASE_DIR")
+            .expect("ORCEL_RELEASE_DIR must name a packaged release"),
+    );
+    let node = find_node_on_path().expect("Node.js is required on PATH");
+    let local = temp_dir("matrix");
+    let project = temp_dir("matrix-project");
+    let _cleanup = Cleanup {
+        local: local.clone(),
+        dirs: std::cell::RefCell::new(vec![project.clone()]),
+    };
+    json_ok(&orcel(
+        &release.join("orcel.exe"),
+        &local,
+        &[
+            "install",
+            "--no-path",
+            "--node",
+            node.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    let cli = local.join("Orcel").join("bin").join("orcel.exe");
+    json_ok(&orcel(
+        &cli,
+        &local,
+        &[
+            "workspace",
+            "add",
+            "default",
+            project.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+
+    let stdio = [
+        (
+            "claude-desktop.json",
+            json_entrypoint(&example_json("claude-desktop.json")["mcpServers"]["orcel"]),
+        ),
+        (
+            "claude-code.mcp.json",
+            json_entrypoint(&example_json("claude-code.mcp.json")["mcpServers"]["orcel"]),
+        ),
+        (
+            "claude-desktop-mcpb-manifest.json",
+            json_entrypoint(
+                &example_json("claude-desktop-mcpb-manifest.json")["server"]["mcp_config"],
+            ),
+        ),
+        (
+            "generic-stdio.json",
+            json_entrypoint(&example_json("generic-stdio.json")),
+        ),
+        ("codex-config.toml", toml_entrypoint("codex-config.toml")),
+        (
+            "vibe-code-config.toml",
+            toml_entrypoint("vibe-code-config.toml"),
+        ),
+    ];
+    let mut expected: Option<Vec<String>> = None;
+    for (name, (command, args)) in &stdio {
+        assert_eq!(command, "orcel", "{name}");
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let mut session =
+            McpStdio::start_with(&cli, &args, &local, project.join(format!("{name}.log")));
+        let tools = sorted_tool_names(&session.request("tools/list", serde_json::json!({})));
+        session.close().expect("the session ends with its input");
+        println!(
+            "CLIENT-MATRIX-EVIDENCE {name} stdio {} tools (configuration and protocol only, not that client)",
+            tools.len()
+        );
+        match &expected {
+            Some(first) => assert_eq!(&tools, first, "{name} reaches different tools"),
+            None => expected = Some(tools),
+        }
+    }
+    let expected = expected.expect("at least one stdio example");
+    for tool in ["fs_read", "report_start", "report_commit"] {
+        assert!(
+            expected.iter().any(|name| name == tool),
+            "{tool}: {expected:?}"
+        );
+    }
+    assert!(
+        !expected.iter().any(|name| name.starts_with("browser_")),
+        "the release build serves no live browser tool: {expected:?}"
+    );
+    let manifest = example_json("claude-desktop-mcpb-manifest.json");
+    for tool in manifest["tools"].as_array().expect("manifest tools") {
+        let name = tool["name"].as_str().expect("a tool name");
+        assert!(
+            expected.iter().any(|served| served == name),
+            "the manifest advertises {name}, which isn't served"
+        );
+    }
+
+    // Loopback HTTP, with the example's own address and header.
+    let token = "orcel-client-matrix-token-0123456789abcdef";
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let http = example_json("generic-http.json");
+    let url = http["url"].as_str().expect("a url");
+    assert_eq!(url, "http://127.0.0.1:PORT/mcp");
+    let authorization = http["headers"]["Authorization"]
+        .as_str()
+        .expect("an Authorization header")
+        .replace("${ORCEL_LOOPBACK_TOKEN}", token);
+    let _server = KillOnDrop(
+        Command::new(&cli)
+            .args(["mcp", "serve", "--port", &port.to_string()])
+            .env("LOCALAPPDATA", &local)
+            .env("ORCEL_LOOPBACK_TOKEN", token)
+            .stdin(std::process::Stdio::null())
+            .stdout(fs::File::create(project.join("serve-stdout.log")).unwrap())
+            .stderr(fs::File::create(project.join("serve-stderr.log")).unwrap())
+            .spawn()
+            .expect("start orcel mcp serve"),
+    );
+    let deadline = Instant::now() + MCP_ANSWER_TIMEOUT;
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+        assert!(
+            Instant::now() < deadline,
+            "orcel mcp serve never listened; stderr: {}",
+            fs::read_to_string(project.join("serve-stderr.log")).unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let initialize = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": { "name": "orcel-release-qualification", "version": "1" }
+        }
+    });
+    let (status, _, _) = http_post(port, None, None, &initialize);
+    assert_eq!(status, 401, "no credential must be refused");
+    let (status, _, _) = http_post(port, Some("Bearer wrong"), None, &initialize);
+    assert_eq!(status, 401, "a wrong credential must be refused");
+    let (status, head, body) = http_post(port, Some(&authorization), None, &initialize);
+    assert_eq!(status, 200, "{head}\n{body}");
+    let session = head
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("mcp-session-id")
+                .then(|| value.trim().to_owned())
+        })
+        .expect("a session id");
+    let initialized =
+        serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
+    let (status, head, _) = http_post(port, Some(&authorization), Some(&session), &initialized);
+    assert_eq!(status, 202, "{head}");
+    let list =
+        serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} });
+    let (status, head, body) = http_post(port, Some(&authorization), Some(&session), &list);
+    assert_eq!(status, 200, "{head}\n{body}");
+    let answer: Value = serde_json::from_str(&body).expect("a JSON answer");
+    let tools = sorted_tool_names(&answer["result"]);
+    println!(
+        "CLIENT-MATRIX-EVIDENCE generic-http.json loopback {} tools (configuration and protocol only, not that client)",
+        tools.len()
+    );
+    assert_eq!(tools, expected, "loopback HTTP reaches different tools");
 }
