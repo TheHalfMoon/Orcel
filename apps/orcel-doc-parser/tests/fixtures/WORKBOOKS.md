@@ -13,8 +13,8 @@ An `.xlsx` is a zip of XML. **Each is committed unzipped, byte for byte, as `wor
 
 ## The Excel files
 
-- **Source:** [Apache POI](https://github.com/apache/poi) at commit `7f4d36854109efa17152b27a5fb1b2c7d842c314`, licensed Apache-2.0. The notice is `docs/orcel/notices/apache-poi-Apache-2.0.txt`. Each file's `docProps/core.xml` names its author, a POI developer.
-- **Why they're believed to be Excel's:** POI keeps these as samples of Excel's format, and its developers wrote them for that. **That's the reason, not their metadata.** Each says `Microsoft Excel`, version `12.0000`, `appName="xl"` and `rupBuild="4505"`, but `written-by-xlsxwriter` here says the same, so those markers prove nothing. **That Excel saved them is well-founded but not proved.**
+- **Source:** [Apache POI](https://github.com/apache/poi) at commit `7f4d36854109efa17152b27a5fb1b2c7d842c314`, licensed Apache-2.0. The notice is `docs/orcel/notices/apache-poi-Apache-2.0.txt`. Each file's `docProps/core.xml` names an author.
+- **Why they're believed to be Excel's:** they've been in POI's test data, where it tests its reading of Excel's format, since at least 2009. **That's the reason, not their metadata.** Each says `Microsoft Excel`, version `12.0000`, `appName="xl"` and `rupBuild="4505"`, but `written-by-xlsxwriter` here says the same, so those markers prove nothing. **That Excel saved them is well-founded but not proved.**
 
 ## Tried, and not committed
 
