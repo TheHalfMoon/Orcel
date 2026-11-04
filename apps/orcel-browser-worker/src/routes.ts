@@ -15,6 +15,7 @@
 import type { BrowserContext, Page } from "playwright-core";
 import { attachRedirectGuard, type RedirectGuard } from "./redirect-guard.js";
 import { classifyRequest, requestDetail } from "./routing.js";
+import { traceMark } from "./navigation-trace.js";
 import { denyServiceWorkerScripts } from "./service-workers.js";
 import type { RoutePolicy } from "./worker.js";
 
@@ -33,6 +34,7 @@ export async function installRoutes(
     await socket.close({ code: 1008, reason: "denied" });
   });
   await context.route("**/*", async (route) => {
+    traceMark("route_entered");
     let allow = false;
     try {
       const page = primary();
@@ -41,8 +43,10 @@ export async function installRoutes(
     } catch {
       allow = false;
     }
+    traceMark(allow ? "route_allowed" : "route_denied");
     if (allow) {
       await route.continue();
+      traceMark("route_continued");
     } else {
       await route.abort("blockedbyclient");
     }

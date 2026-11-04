@@ -1934,7 +1934,13 @@ mod platform {
                     reason,
                 } if !text && done == id => {
                     #[cfg(test)]
-                    eprintln!("SG108-DIAG navigation {url} failed: {reason}");
+                    {
+                        eprintln!("SG108-DIAG navigation {url} failed: {reason}");
+                        // #438: the worker's stage timeline of a timeout.
+                        if reason == "timeout" {
+                            self.print_stderr_tail();
+                        }
+                    }
                     return Err(navigation_failure(&reason));
                 }
                 WorkerReply::FetchFailed {
