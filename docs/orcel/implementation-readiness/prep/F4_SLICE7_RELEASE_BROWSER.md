@@ -34,7 +34,7 @@
 ## What a release path must decide (whichever option)
 
 1. **Where the pin comes from.** Today it is compiled in at build time. A release can do the same, from the packaging step, so the digest is in the binary and in `manifest.json`.
-2. **Engine.** The worker drives an installed Edge or Chrome, verified by discovery. Release needs a stated policy for engines newer than those in `QUALIFIED_WORKER_ENGINES` (`crates/orcel-browser-host/src/discovery.rs`): refuse, or warn.
+2. **Engine.** The worker drives an installed Edge or Chrome, verified by discovery. Any major outside `QUALIFIED_WORKER_ENGINES` (`crates/orcel-browser-host/src/discovery.rs`) is refused at launch with a typed error, and a new major is added only by a PR whose native suite passes on it. Edge and Chrome update themselves, so in a release **a browser update can disable Orcel's browser until Orcel updates**. That must be accepted or a different policy decided.
 3. **Exposure.** The six live tools (`browser_page_open`, `browser_navigate`, `browser_observe`, `browser_click`, `browser_download_preview`, `browser_download`) stay in `browser_structured`. Whether release serves that profile by default, or only after an opt-in, is part of this decision. **Recommended: opt-in per workspace.**
 4. **Size.** The installed release is about 25 MB against a 400 MB budget. The worker and playwright-core add little; a shipped Node binary adds roughly 80 to 100 MB (measure before relying on this). All options fit.
 5. **Licenses.** Node.js (MIT with bundled notices) and playwright-core (Apache-2.0) are already admitted for development; shipping them needs their notices in `THIRD_PARTY_NOTICES` and the SBOM.
