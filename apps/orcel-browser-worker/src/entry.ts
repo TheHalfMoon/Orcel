@@ -15,6 +15,7 @@ import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FE
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
+import { traceLine, traceMark, traceStart } from "./navigation-trace.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
 import { runProbes } from "./verify.js";
@@ -78,18 +79,34 @@ const playwrightLauncher: Launcher = {
     let closing = false;
     // Each host navigation runs in a fresh page (see above).
     const open = async (url: string) => {
+      traceStart();
       const previous = primary;
       const page = await context.newPage();
+      traceMark("page_created");
       await routes.guardReady(page);
+      traceMark("guard_ready");
       primary = page;
       await previous.close().catch(() => {});
+      traceMark("previous_closed");
+      page.on("request", () => traceMark("request"));
+      page.on("response", () => traceMark("response"));
+      page.on("requestfailed", () => traceMark("request_failed"));
+      page.on("domcontentloaded", () => traceMark("domcontentloaded"));
+      page.on("load", () => traceMark("load"));
+      page.on("crash", () => traceMark("page_crashed"));
       try {
+        traceMark("goto");
         const response = await page.goto(url, { timeout: 30_000, waitUntil: "load" });
         return { page, response };
       } catch (error) {
         const message = String((error as Error).message);
         if (message.includes("ERR_BLOCKED_BY_CLIENT")) throw new NavigationError("denied");
-        if ((error as Error).name === "TimeoutError") throw new NavigationError("timeout");
+        if ((error as Error).name === "TimeoutError") {
+          // #438: where it stalled, for the host's failure diagnostics.
+          process.stderr.write(`orcel-browser-worker: ${traceLine()}
+`);
+          throw new NavigationError("timeout");
+        }
         throw new NavigationError("failed");
       }
     };
