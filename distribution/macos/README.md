@@ -40,6 +40,6 @@ The probe is in the repository's `scripts/`; it checks `system.status`.
 
 ## Limits
 
-- **Permission grants don't survive a rebuild.** macOS ties Accessibility and Screen Recording to a binary's signature, and an ad-hoc signature changes with each build, so a grant may need repeating.
+- **Permission grants don't survive a rebuild.** macOS ties Accessibility and Screen Recording to a binary's signature, and an ad-hoc signature changes with each build, so a grant is lost on every rebuild.
 - **Unqualified on macOS:** delivered capture and input (XP-07, XP-12) need interactive consent on a real Mac. Approvals were qualified on real hardware (XP-09), but the macOS product as a whole was not.
 - CI checks that this tarball unpacks, holds the expected files, carries a matching helper pin, and that `orceld` answers `system.status`. No more than that.
