@@ -70,6 +70,13 @@ checkpoint at the end says where engineering stands.
 | #438 class: the worker's resolver-pinning positive controls wait on #374's event deadline instead of a fixed 10 s (seen in PR run 41659893527 and again on main at `5a1fa71`, run 41698027722, before the fix). #438 itself: 80 isolated stress repetitions and 60 adjacent-pair repetitions passed, and none in about 55 CI runs since 2026-11-03; no mechanism shown, issue open with diagnostics | #603 → `e653280` |
 | #438, first mechanism shown: the worker's activation click (and the WebMCP submit) waited, inside its 5 s click budget, for the navigation it started to commit (Playwright's default `noWaitAfter: false`), so a slow commit was reported `failed` after the click had happened (run 41709022637: the fixture served the target, the host got `ActionFailed`). Now `noWaitAfter: true`, as the download click already was; a native test with a target answering after 7 s passes on Windows. The earlier 0-request timeouts remain unexplained | #606 → `5895a3b` |
 | Consolidated founder decision register: every open founder or external gate with the smallest decision that unblocks it (`docs/orcel/FOUNDER_DECISIONS.md`) | this PR |
+| F4 slice 5, kernel only: conditional task transitions, so a second writer can't overwrite a stop, and a commit started only if the task still proposes what was approved; a final `Stopped` state. `stop` is compiled for tests only: **no surface exists** until the decision on #446. Requests run one at a time today, so this is hardening for that second writer, not a fix of a reachable race | #607 → `1ec4e72` |
+| F4 slice 4 kit and runbook: everything around the person's approval (`prep/F4_SLICE4_CLIENT_JOURNEY.md`). **Not yet run**: it needs the founder at the prompt | #608 → `dd3ec8b` |
+| F4 decision proposals: stop without paid signing, and the release-build browser. Nothing activated | #609 → `12a18dd` |
+| M4 selection package: Qwen3.5-4B primary, Granite 4.0 H-Tiny fallback, runtime and benchmark bar. **Nothing downloaded or run; no model capability is measured** | #610 → `5efc52d` |
+| Unsigned macOS development tarball, built and checked in CI, with `orceld` answering from it on the hosted Mac. Not a release | #612 → `3dd082e` |
+| #438: a stage timeline of a navigation that times out, after the 0-request mode recurred with diagnostics (run 41748009453: no connection at the only listener, no TLS, not a policy timeout). No mechanism shown yet | #613 → `08d5063` |
+| Founder decision packet: the six decisions blocking the next milestones (`FOUNDER_DECISION_PACKET.md`), a narrow SG-000122 proposal, and the three-platform plan | this PR |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
@@ -138,14 +145,13 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-03, main `5895a3b`; main CI
-41716774654 green at `5895a3b` after a rerun of flake #524):
+If a session ends, resume from here (2026-11-04, main `5efc52d`; main CI
+41771808905 green at `5efc52d`):
 
-1. Merged since the last checkpoint: #598 (handoff), #599 (A1 real kills),
-   #600 (A2 seccomp egress), #602 (A3 macOS ACLs, closes #601), #603 (worker
-   positive-control deadline), #604 (SG-000115 B9b) and #606 (#438
-   activation click). No PR from this
-   work is open apart from this handoff and register. Branch
+1. Merged since the last checkpoint: #605 (register and handoff), #607 (F4
+   stop kernel), #608 (slice 4 kit), #609 (slice 5 and 7 proposals), #610
+   (M4 package), #612 (macOS dev tarball) and #613 (#438 timeline). No PR
+   from this work is open apart from this handoff and packet. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -159,11 +165,10 @@ If a session ends, resume from here (2026-11-03, main `5895a3b`; main CI
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
-4. Next engineering, in order: #438 when it recurs (the stress workflow on
-   `stress/browser-438` reruns it at no cost); the remaining SG-000115 class
-   2 item that needs no activation (a cgroup the engine cannot leave); then
-   the next roadmap items that need no founder (`FOUNDER_DECISIONS.md` lists
-   what does).
+4. Next engineering, in order: the M4 harness changes that need no download
+   (`prep/M4-selection-package.md`: labelled model rows, answer checks, model
+   memory on Windows); #438 when its timeline first prints; then what the
+   founder's answers to `FOUNDER_DECISION_PACKET.md` unlock.
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to

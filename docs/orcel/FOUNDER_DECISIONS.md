@@ -2,7 +2,7 @@
 
 One list of every open decision that only the founder (or an external party) can make, as of 2026-11-03. Engineering continues around each one. Nothing here is decided by this document: each row names the **smallest decision that would unblock the work**, what it blocks, and what happens meanwhile.
 
-Sources are linked so each row can be checked. When a decision is made, record it in its own source (a grant record, the spec, or the issue), then update its row here.
+**To act on the ones blocking the next milestones, start with `FOUNDER_DECISION_PACKET.md`.** Sources are linked so each row can be checked. When a decision is made, record it in its own source (a grant record, the spec, or the issue), then update its row here.
 
 ## Activations (governance)
 
