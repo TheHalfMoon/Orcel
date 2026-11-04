@@ -21,7 +21,11 @@ import tempfile
 import threading
 from pathlib import Path
 
-ANSWER_TIMEOUT = 120
+# Longer than macOS's own 120 s approval prompt, so a prompt that waits for a person
+# ends as a refusal here rather than as this check giving up.
+ANSWER_TIMEOUT = 180
+#: What it means for orceld's approval to have stopped a commit with nobody here.
+APPROVAL_STOPPED = ("APPROVAL_UNAVAILABLE", "APPROVAL_DENIED", "APPROVAL_TIMEOUT")
 EXPECTED_OS = "macos" if sys.platform == "darwin" else "linux"
 SECRET = "orcel-dev-check-must-not-reach-the-server"
 
@@ -141,12 +145,13 @@ def main() -> int:
         failed, committed = session.call("report_commit", {
             "task_id": task, "name": "q3.md", "content": content, "expected_sha256": digest,
         })
-        require(failed, f"no approval, so no commit: {committed}")
+        code = committed.get("error", {}).get("code") or committed.get("code")
+        require(failed and code in APPROVAL_STOPPED, f"orceld's approval stops the commit: {committed}")
         require(not (workspace / "reports" / "q3.md").exists(), "nothing was written")
 
-        code = session.close()
+        exit_code = session.close()
         print(f"DEV-BUILD-MCP-EVIDENCE {EXPECTED_OS}: {len(tools)} tools, read, refusal, report stopped at "
-              f"approval ({committed.get('error', {}).get('code', committed)}), exit {code} "
+              f"approval ({code}), exit {exit_code} "
               "(the build and the protocol, not any client)")
         return 0
     finally:

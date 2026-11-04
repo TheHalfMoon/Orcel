@@ -13,7 +13,7 @@ No paid Apple membership is needed to build or run it for local engineering.
 | `bin/orcel-mcp`, `app/orcel-mcp/` | The MCP server for a local client, and its launcher |
 | `doc/` | Licence, third-party notices and this file |
 
-Not in it: a desktop app (waits on FD-03) and the `orcel` lifecycle CLI's install flow (it installs on Windows). Node.js 24 is needed, from `PATH`.
+Not in it: a desktop app (waits on FD-03), the `orcel` lifecycle CLI's install flow (it installs on Windows), and the native host. The live browser is refused on macOS until SG-000115 is activated. Node.js 24 is needed, from `PATH`, for the MCP server.
 
 ## Run it
 
@@ -47,10 +47,10 @@ Point the client at the launcher by its full path, and name the folder Orcel may
 { "mcpServers": { "orcel": { "type": "stdio", "command": "/Users/you/orcel-dev/bin/orcel-mcp", "env": { "ORCEL_WORKSPACE_ROOT": "/Users/you/orcel-dev-ws" } } } }
 ```
 
-`orceld` stays the sole authority, and asks you before it writes. Only a short list of variables reaches the server (see the launcher), so a client's other environment doesn't. CI checks this through the launcher with a test client, not with Claude or Codex, and no approval is given there: a report stops at the prompt.
+The client sees the same tool list as on Windows, and `orceld` refuses what it can't do on this OS. `orceld` stays the sole authority, and asks you before it writes. Only a short list of variables reaches the server (see the launcher), so a client's other environment doesn't. CI checks this through the launcher with a test client, not with Claude or Codex, and no approval is given there: a report stops at the prompt.
 
 ## Limits
 
 - **Permission grants don't survive a rebuild.** macOS ties Accessibility and Screen Recording to a binary's signature, and an ad-hoc signature changes with each build, so a grant is lost on every rebuild.
 - **Unqualified on macOS:** delivered capture and input (XP-07, XP-12) need interactive consent on a real Mac. Approvals were qualified on real hardware (XP-09), but the macOS product as a whole was not.
-- CI checks that this tarball unpacks, holds the expected files, carries a matching helper pin, and that `orceld` answers `system.status`. No more than that.
+- CI checks that this tarball unpacks, holds the expected files, carries a matching helper pin, that `orceld` answers `system.status`, and that a test client through `bin/orcel-mcp` lists tools, reads, is refused outside the workspace and stops at the approval. No more than that.
