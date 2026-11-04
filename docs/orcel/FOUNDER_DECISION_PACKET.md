@@ -23,7 +23,7 @@ Reply with the numbers and your answer, for example: "1 will do; 2 yes; 3 yes; 4
 - **Cost:** none, about 15 minutes.
 - **Evidence:** the same journey up to the prompt passes in CI on every commit (#453); the kit checks the outcome (#608).
 - **Unqualified:** the approved commit through a real client has never run. That is the point.
-- **Reversible:** yes. It only writes to a scratch folder and Orcel's logs; `orcel uninstall` removes the build.
+- **Reversible:** yes. It writes a scratch folder, Orcel's configuration (the workspace list, which you restore) and Orcel's journal and approval history. `orcel uninstall` removes the build.
 
 ## 2. Allow `task.stop` without paid signing (F4 slice 5)
 
@@ -59,10 +59,10 @@ Reply with the numbers and your answer, for example: "1 will do; 2 yes; 3 yes; 4
 
 - **Unlocks:** an agent can fill in and submit a form on an admitted page, with your approval per action. Today it can only read, click links and download.
 - **Recommended:** the narrow first scope in `prep/SG-000122.md`: fill, select, check, Enter to submit, text waits, the verifier. Alternatives: the full scope (adds uploads, dialogs, tabs); or wait.
-- **Security:** `orceld` stays the sole authority, with one approval per action, bound to page, element and value. Secret-looking fields are refused. Local only, Windows only, development builds only. It widens SG-000108's A13, which is why it needs you. Licensing: already-admitted code.
+- **Security:** `orceld` stays the sole authority, with one approval per action, bound to page, element and value. Local only, Windows only, development builds only. **Three limits to accept:** fields that look secret are refused, but a secret typed into an ordinary field isn't detected; a page's script can read a filled value and send it to its admitted origin without a submit; and the effect of pressing Enter can't be known in advance, so the limit is the one admitted destination. It widens SG-000108's A13 and decision 4, which is why it needs you. Licensing: already-admitted code.
 - **Cost:** none.
 - **Evidence:** the host and worker actions pass their native tests (BR-02, BR-07).
-- **Unqualified:** the orceld dispatch and MCP tools don't exist yet, and no agent has used them. Each slice needs its own review.
+- **Unqualified:** the orceld dispatch and MCP tools don't exist yet, and no agent has used them. Showing the value in the prompt and an Enter-only limit are new work. Each slice needs its own review.
 - **Reversible:** yes: remove the tools from the profile tables.
 
 ## 6. Release builds and the browser (F4 slice 7)
