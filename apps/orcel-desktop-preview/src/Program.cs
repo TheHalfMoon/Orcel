@@ -768,6 +768,9 @@ namespace Orcel.DesktopPreview
                 if (name == null) return;
                 try { Follow(name, cursor, show, stop); }
                 catch (Exception) { }
+                // Not yet connected: orceld may start in the wait, and what it does
+                // before the next try would pass as history.
+                if (cursor.QuietThrough < 0) cursor.Refresh = true;
                 if (stop.WaitHandle.WaitOne(RetryMs)) return;
             }
         }
