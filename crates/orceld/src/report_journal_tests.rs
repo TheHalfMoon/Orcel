@@ -450,6 +450,7 @@ fn rj02_an_existing_destination_at_the_create_closes_the_journaled_commit() {
         &super::super::Hooks {
             after_approval: &|| {},
             before_write: &|| std::fs::write(&destination, "someone else's").unwrap(),
+            after_preview_check: &|| {},
         },
     )
     .unwrap_err();

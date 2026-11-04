@@ -88,8 +88,8 @@ fn error(code: FailureCode, message: impl Into<String>) -> ProviderError {
 // Task records
 // ---------------------------------------------------------------------------
 
-/// The state of one report task. Verified, verification_failed, stale and
-/// failed are final.
+/// The state of one report task. Verified, verification_failed, stale,
+/// failed and stopped are final.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskState {
     Observed,
@@ -100,6 +100,28 @@ pub(crate) enum TaskState {
     VerificationFailed,
     Stale,
     Failed,
+    /// F4 slice 5 (kernel only, `prep/F4_TASK_STOP.md`): the task can never
+    /// write. No surface reaches this outside tests yet; which surface may
+    /// is a founder decision on #446.
+    Stopped,
+}
+
+/// The states a report can still be proposed or committed from.
+const OPEN_STATES: [TaskState; 3] = [
+    TaskState::Observed,
+    TaskState::Proposed,
+    TaskState::ApprovalDenied,
+];
+/// The states an approved commit may start from.
+const COMMITTABLE_STATES: [TaskState; 2] = [TaskState::Proposed, TaskState::ApprovalDenied];
+
+/// What a conditional change of a task found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transition {
+    Applied,
+    Refused(TaskState),
+    /// The task is gone (evicted, for example, while a prompt was open).
+    Missing,
 }
 
 impl TaskState {
@@ -113,6 +135,7 @@ impl TaskState {
             Self::VerificationFailed => "verification_failed",
             Self::Stale => "stale",
             Self::Failed => "failed",
+            Self::Stopped => "stopped",
         }
     }
 
@@ -126,6 +149,7 @@ impl TaskState {
             Self::VerificationFailed,
             Self::Stale,
             Self::Failed,
+            Self::Stopped,
         ]
         .into_iter()
         .find(|known| known.as_str() == state)
@@ -134,7 +158,7 @@ impl TaskState {
     pub(crate) fn is_final(self) -> bool {
         matches!(
             self,
-            Self::Verified | Self::VerificationFailed | Self::Stale | Self::Failed
+            Self::Verified | Self::VerificationFailed | Self::Stale | Self::Failed | Self::Stopped
         )
     }
 }
@@ -447,6 +471,10 @@ impl TaskRegistry {
             TaskState::Committing => {
                 Err(error(FailureCode::InvalidRequest, "the task is committing"))
             }
+            TaskState::Stopped => Err(error(
+                FailureCode::TargetStale,
+                "the task was stopped; start a new task",
+            )),
             state if state.is_final() => Err(error(
                 FailureCode::InvalidRequest,
                 format!("the task is finished ({})", state.as_str()),
@@ -464,12 +492,30 @@ impl TaskRegistry {
         outcome: &str,
         change: impl FnOnce(&mut ReportTask),
     ) {
+        self.update_if(task_id, kind, outcome, |_| true, change);
+    }
+
+    /// [`Self::update`], only if `allowed` holds: the check and the change
+    /// happen under one lock acquisition, so a writer that worked without the
+    /// lock cannot overwrite a change made meanwhile (a stop, a concurrent
+    /// commit, a newer preview). Nothing is recorded when it does not apply.
+    fn update_if(
+        &self,
+        task_id: &str,
+        kind: &'static str,
+        outcome: &str,
+        allowed: impl FnOnce(&ReportTask) -> bool,
+        change: impl FnOnce(&mut ReportTask),
+    ) -> Transition {
         let now = orcel_approval::now_ms();
         let event = {
             let mut tasks = self.lock();
             let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) else {
-                return;
+                return Transition::Missing;
             };
+            if !allowed(task) {
+                return Transition::Refused(task.state);
+            }
             change(task);
             task.next_step += 1;
             let step_id = format!("s{}", task.next_step);
@@ -494,6 +540,58 @@ impl TaskRegistry {
         }
         if let Some(log) = self.events.get() {
             log.publish_run("task.updated", Some(task_id), Some(&event.0), event.1);
+        }
+        Transition::Applied
+    }
+
+    /// F4 slice 5, kernel only (`prep/F4_TASK_STOP.md`): ends one task of this
+    /// run so that it can never write. Authority-reducing: it grants, approves
+    /// and writes nothing. Final and idempotent; refused while a commit is
+    /// writing. Compiled for tests only until a surface is decided on #446.
+    #[cfg(test)]
+    pub(crate) fn stop(&self, task_id: &str, workspace_id: &str) -> Result<Value, ProviderError> {
+        let run = self.seed.clone();
+        let workspace = workspace_id.to_owned();
+        let transition = self.update_if(
+            task_id,
+            "stop",
+            "stopped",
+            |task| {
+                task.workspace_id == workspace
+                    && task.run == run
+                    && OPEN_STATES.contains(&task.state)
+            },
+            |task| task.state = TaskState::Stopped,
+        );
+        let unknown = || {
+            error(
+                FailureCode::TargetStale,
+                "this orceld run has no such report task in this workspace",
+            )
+        };
+        let stopped = || json!({"task_id": task_id, "state": TaskState::Stopped.as_str()});
+        match transition {
+            Transition::Applied => Ok(stopped()),
+            Transition::Missing => Err(unknown()),
+            Transition::Refused(found) => {
+                // Refused also covers another workspace's or run's task, which
+                // answers exactly as an unknown id does.
+                let same = self.lock().iter().any(|task| {
+                    task.id == task_id && task.workspace_id == workspace_id && task.run == self.seed
+                });
+                match found {
+                    _ if !same => Err(unknown()),
+                    TaskState::Stopped => Ok(stopped()),
+                    TaskState::Committing => Err(error(
+                        FailureCode::InvalidRequest,
+                        "the task is committing; it will finish or fail on its own",
+                    )),
+                    state => Err(error(
+                        FailureCode::InvalidRequest,
+                        format!("the task is finished ({})", state.as_str()),
+                    )),
+                }
+            }
         }
     }
 }
@@ -596,12 +694,15 @@ struct Hooks<'a> {
     after_approval: &'a dyn Fn(),
     /// After the post-approval checks, immediately before the create.
     before_write: &'a dyn Fn(),
+    /// After a preview's checks, before its state change.
+    after_preview_check: &'a dyn Fn(),
 }
 
 impl Hooks<'static> {
     const NONE: Self = Self {
         after_approval: &|| {},
         before_write: &|| {},
+        after_preview_check: &|| {},
     };
 }
 
@@ -614,7 +715,7 @@ fn dispatch_with(
 ) -> Result<Value, ProviderError> {
     match request.operation.as_str() {
         "start" => start(workspace, tasks, request),
-        "preview" => preview(workspace, tasks, request),
+        "preview" => preview(workspace, tasks, request, hooks),
         "commit" => commit(workspace, approval, tasks, request, hooks),
         "resume_summary" => resume_summary(workspace, tasks, request),
         other => Err(error(
@@ -992,11 +1093,20 @@ fn blocked(
     tasks: &TaskRegistry,
     task_id: &str,
     kind: &'static str,
+    from: &[TaskState],
     reason: Blocked,
 ) -> ProviderError {
     match &reason {
         Blocked::Stale(_) => {
-            tasks.update(task_id, kind, "stale", |task| task.state = TaskState::Stale)
+            // Conditional: a stop made while the check ran is never rewritten
+            // as stale.
+            tasks.update_if(
+                task_id,
+                kind,
+                "stale",
+                |task| from.contains(&task.state),
+                |task| task.state = TaskState::Stale,
+            );
         }
         Blocked::Exists(_) => tasks.update(task_id, kind, "destination_exists", |_| {}),
         Blocked::Other(_) => tasks.update(task_id, kind, "error", |_| {}),
@@ -1008,13 +1118,15 @@ fn preview(
     workspace: &Workspace,
     tasks: &TaskRegistry,
     request: &RequestEnvelope,
+    hooks: &Hooks<'_>,
 ) -> Result<Value, ProviderError> {
     let task = tasks.open_task(argument(request, "task_id")?, &workspace.id)?;
     let name = argument(request, "name")?;
     let content = argument(request, "content")?;
     let destination = destination_of(&task.folder, name);
     check_current(workspace, &task, &destination)
-        .map_err(|reason| blocked(tasks, &task.id, "preview", reason))?;
+        .map_err(|reason| blocked(tasks, &task.id, "preview", &OPEN_STATES, reason))?;
+    (hooks.after_preview_check)();
     let proposal = Proposal {
         name: name.to_owned(),
         destination: destination.clone(),
@@ -1030,11 +1142,32 @@ fn preview(
         "create_only": true,
         "sources": task.sources.iter().map(|source| json!({"path": source.path, "sha256": source.sha256})).collect::<Vec<_>>(),
     });
-    tasks.update(&task.id, "preview", "ok", |task| {
-        task.proposal = Some(proposal);
-        task.state = TaskState::Proposed;
-    });
-    Ok(result)
+    // Conditional: what happened while this preview worked without the lock
+    // (a stop, a commit that started) is never overwritten.
+    match tasks.update_if(
+        &task.id,
+        "preview",
+        "ok",
+        |task| OPEN_STATES.contains(&task.state),
+        |task| {
+            task.proposal = Some(proposal);
+            task.state = TaskState::Proposed;
+        },
+    ) {
+        Transition::Applied => Ok(result),
+        Transition::Refused(TaskState::Stopped) => Err(error(
+            FailureCode::TargetStale,
+            "the task was stopped; start a new task",
+        )),
+        Transition::Refused(found) => Err(error(
+            FailureCode::TargetStale,
+            format!("the task changed during the preview ({})", found.as_str()),
+        )),
+        Transition::Missing => Err(error(
+            FailureCode::TargetStale,
+            "this orceld run has no such report task in this workspace; start a new task",
+        )),
+    }
 }
 
 fn approval_digest(workspace: &Workspace, task: &ReportTask, proposal: &Proposal) -> String {
@@ -1085,7 +1218,7 @@ fn commit(
         ));
     }
     check_current(workspace, &task, &proposal.destination)
-        .map_err(|reason| blocked(tasks, &task.id, "commit", reason))?;
+        .map_err(|reason| blocked(tasks, &task.id, "commit", &OPEN_STATES, reason))?;
 
     let digest = approval_digest(workspace, &task, &proposal);
     let sources = task
@@ -1142,17 +1275,49 @@ fn commit(
             },
         );
         if refusal.code == FailureCode::ApprovalDenied {
-            tasks.update(&task.id, "approval", "denied", |task| {
-                task.state = TaskState::ApprovalDenied;
-            });
+            // A denial never overwrites a stop or another commit's progress.
+            tasks.update_if(
+                &task.id,
+                "approval",
+                "denied",
+                |task| COMMITTABLE_STATES.contains(&task.state),
+                |task| task.state = TaskState::ApprovalDenied,
+            );
         } else {
             tasks.update(&task.id, "approval", "unavailable", |_| {});
         }
         return Err(refusal);
     }
-    tasks.update(&task.id, "approval", "approved", |task| {
-        task.state = TaskState::Committing;
-    });
+    // The approval is spent whatever happens now. The commit starts only if
+    // the task is still committable and still proposes what was approved: a
+    // stop, a concurrent commit, a newer preview or an eviction while the
+    // prompt was open writes nothing.
+    let started = tasks.update_if(
+        &task.id,
+        "approval",
+        "approved",
+        |current| {
+            COMMITTABLE_STATES.contains(&current.state)
+                && current.proposal.as_ref() == Some(&proposal)
+        },
+        |task| task.state = TaskState::Committing,
+    );
+    match started {
+        Transition::Applied => {}
+        Transition::Refused(TaskState::Stopped) => {
+            tasks.note(&intent, false, "stopped");
+            tasks.update(&task.id, "approval", "approved_after_stop", |_| {});
+            return Err(error(FailureCode::TargetStale, "the task was stopped"));
+        }
+        Transition::Refused(_) | Transition::Missing => {
+            tasks.note(&intent, false, "task_changed");
+            tasks.update(&task.id, "approval", "approved_after_change", |_| {});
+            return Err(error(
+                FailureCode::TargetStale,
+                "the task changed during approval",
+            ));
+        }
+    }
 
     (hooks.after_approval)();
     if let Err(reason) = check_current(workspace, &task, &proposal.destination) {
@@ -1161,7 +1326,7 @@ fn commit(
         // approval.
         let reopen = matches!(reason, Blocked::Exists(_) | Blocked::Other(_));
         tasks.note(&intent, false, "blocked_after_approval");
-        let failure = blocked(tasks, &task.id, "commit", reason);
+        let failure = blocked(tasks, &task.id, "commit", &[TaskState::Committing], reason);
         if reopen {
             tasks.update(&task.id, "commit", "reopened", |task| {
                 task.state = TaskState::Proposed;
