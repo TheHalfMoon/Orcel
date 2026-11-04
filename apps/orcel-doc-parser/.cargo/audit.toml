@@ -28,7 +28,7 @@ ignore = [
   #   archive only through `Package`.
   # - No anydoc source calls `extract` or `extract_unwrapped_root_dir`; its
   #   other `zip::` uses are `ZipWriter` calls, all inside `#[cfg(test)]`.
-  # - The parser's own zip use (document.rs) is `ZipArchive::new`,
+  # - The parser's own zip use (document.rs, workbook.rs) is `ZipArchive::new`,
   #   `by_index_raw`, `by_index` and `by_name` over in-memory bytes, and it
   #   admits only ZIP inputs that anydoc detects as DOCX, PPTX or Excel.
   # - Only anydoc and the parser depend on zip in Cargo.lock.

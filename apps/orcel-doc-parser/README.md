@@ -6,6 +6,50 @@ or XLSX file in, one bounded Markdown frame out.
 It is its own Cargo workspace (like `apps/orcel-contain`), so the PDF and
 Office parsers never enter orceld's lockfile and orceld never links them.
 
+## Workbooks
+
+An XLSX is read by `src/workbook.rs`, Orcel's own reader, not anydoc. Each cell
+with content is one table row: reference, value as last saved, type, number
+format and formula. So a report can name the cell each figure came from.
+
+- Nothing is calculated, and no link is followed or refreshed. A formula with
+  no saved value is shown with the note `no saved value`.
+- A formula that may reach outside the workbook (external workbook, DDE,
+  `WEBSERVICE`, `RTD`, `INDIRECT`, cube and stock functions) is marked
+  `external, not refreshed`. This is a text check: a false positive adds a caution,
+  and it can miss a form it doesn't know.
+- External links, data connections, pivot caches, query tables, reaching defined
+  names and manual or on-load calculation are declared at the top. Their targets
+  are never shown.
+- Macros, including Excel 4 macro sheets, are `active_content`.
+- **A structural element out of its place is refused, not skipped.** Only the
+  spreadsheet namespace counts. Sheets, cells, values, shared strings, defined names,
+  calculation settings and number formats must sit where the reader reads them, so
+  inside `mc:AlternateContent` or another wrapper they're `malformed`. Wrappers for
+  anything else, which Excel writes for its own features, are left alone and not read.
+  A cell holding anything unexpected is `malformed`. So is a reference that's invalid,
+  repeated or in the wrong row, and a number, boolean, error or date value that isn't
+  one.
+- The file format's `_xHHHH_` character escapes are decoded in text, formulas and sheet
+  names. Cell content is then escaped for the table, so it stays on its own row and can't
+  pass as another cell.
+- Hidden sheets are read and labelled `(hidden)`. Hidden rows and columns aren't
+  labelled. Chart and dialog sheets are listed as `(no cells)`.
+- Binary workbooks (XLSB) are refused: as `active_content` when they declare the
+  usual macro-enabled type, and otherwise as `unsupported_format`.
+- A sheet is limited to 200,000 rows and a workbook to 500,000 cells and 500 sheets. One
+  part's XML is limited to 2,000,000 nodes, 2,000,000 attributes and 256 attributes per
+  element. Past those it's `archive_limit` (`too_many_pages` for sheets). These don't bound everything: a very
+  large file can still reach the contained memory or time limit first, which ends as a
+  contained crash, reported as a failure.
+
+**Tested with hand-written fixtures, with files from XlsxWriter and openpyxl, and with
+Apache POI's samples of Excel 12.0 files (`tests/fixtures/WORKBOOKS.md`).** That Excel saved
+those samples is well-founded but not proved, and no file from a current Excel is a
+committed test. Comments, charts
+and other parts aren't read. This reader is not yet wired to a task: the spreadsheet journey
+(roadmap Journey 2) still needs its own grain.
+
 ## How orceld runs it
 
 `crates/orceld/src/document_parse.rs`, reached from a download the live

@@ -78,6 +78,8 @@ checkpoint at the end says where engineering stands.
 | #438: a stage timeline of a navigation that times out, after the 0-request mode recurred with diagnostics (run 41748009453: no connection at the only listener, no TLS, not a policy timeout). No mechanism shown yet | #613 → `08d5063` |
 | Founder decision packet: the six decisions blocking the next milestones (`FOUNDER_DECISION_PACKET.md`), a narrow SG-000122 proposal, and the three-platform plan | #611 → `b0fc676` |
 | M4 model scorer: labelled rows, an answer check per task, and a verdict in which a missing or unusable measure fails. Stricter than the package's first bar, recorded there before implementing: the injected task is required, a task counts only at 4 of 5 repeats, and egress must name the model. **No model has run** | #614 → `85efe13` |
+| #438: the first stage timelines. A navigation stalled 27.3 s between `goto` and the worker hearing of the request, and another stalled past the 30 s budget with nothing after `goto`. Same place, longer stall: this supports, without proving, one cause. The timeline now also records the worker's largest event-loop gap and the machine's CPU busy share, to tell the sides apart. **No cause shown, and no timeout changed** | #618 → `2bfd844` |
+| F5 client matrix: every configuration in `examples/mcp-clients` reaches the same 45 tools on the installed Windows release, over stdio and loopback HTTP, with a missing or wrong credential refused. **Configuration and protocol only, not those clients** | #619 |
 | M4a harness: a bridge process that speaks only to `127.0.0.1`, one model task through the real agent, edge and orceld, and another process's peak memory on Windows and Linux. CI checks the wiring on all three OSes against a fixed stub, labelled `stub-no-model`, which the scorer refuses. **It says nothing about any model.** Starting a pinned server waits on the download decision | #615 → `4e85551` |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
@@ -147,13 +149,12 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-04, main `4e85551`; the merge
-of #615, whose exact head passed run 41786359755; main CI 41782642389 green at
-`85efe13`):
+If a session ends, resume from here (2026-11-05). Check GitHub for the current
+head and CI: this checkpoint can't name its own merge.
 
-1. Merged since the last checkpoint: #611 (decision packet), #614 (M4 scorer)
-   and #615 (M4a runner). No PR from this work is open apart from this
-   checkpoint. Branch
+1. Merged since the last checkpoint: #618 (#438 diagnostics) and #619 (client
+   matrix). #617 (XLSX reader) and the workbook source on branch
+   `f5/parse-verified-bytes` (test-only, stacked on #617) come next. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -167,9 +168,9 @@ of #615, whose exact head passed run 41786359755; main CI 41782642389 green at
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
-4. Next engineering, in order: the next product milestone that needs no
-   founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`);
-   #438 when its timeline first prints; a cgroup the
+4. Next engineering, in order: finish those two; then the next product milestone
+   that needs no founder (the frontier's "Next executable grain" and
+   `FOUNDER_DECISIONS.md`); #438 when its new timeline first prints; a cgroup the
    engine cannot leave (SG-000115 class 2, which needs no activation); then what the
    founder's answers to `FOUNDER_DECISION_PACKET.md` unlock.
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
