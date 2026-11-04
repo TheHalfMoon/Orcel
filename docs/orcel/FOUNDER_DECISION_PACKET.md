@@ -89,7 +89,7 @@ Reply with the numbers and your answer, for example: "1 will do; 2 yes; 3 yes; 4
 - **Unlocks:** a workbook to a verified report with source cell references, on any machine, with no Excel and no desktop control. Full proposal: `prep/F5_SPREADSHEET_JOURNEY.md`.
 - **Recommended:** A, the confined parser. Alternatives: B, installed Excel through a read-only COM adapter, which needs a licensed Excel and a new automation surface; C, stay on text sources, which leaves the journey open.
 - **Security and licensing:** a hostile workbook is the realistic threat. The parser has no network and can't start processes, macros are refused, and nothing is calculated or followed. `report_start`, a local-only tool, would accept a binary source, which is why this needs a grain. No new dependency. Packaging the parser brings its zip advisory exceptions into shipped code: they're recorded as unreachable, and they're not accepted risk.
-- **Cost:** none.
-- **Evidence:** the reader passes under containment on all three OSes, and on files from XlsxWriter and openpyxl (#617).
-- **Unqualified:** files saved by Excel. A value is only what the file last saved, since nothing recalculates. Opening the workbook on screen is left out.
+- **Cost:** no money. It does bring those exceptions into shipped code.
+- **Evidence:** the reader passes under containment on all three OSes, on files from XlsxWriter and openpyxl, and on two of Apache POI's samples of Excel 12.0 files (#617). The test-only integration passes the full journey with scripted consent, including a denial then a fresh approval, a changed workbook going stale and false figures refused.
+- **Unqualified:** a current Excel's files. A real approval. A value is only what the file last saved, since nothing recalculates. Opening the workbook on screen is left out. The proposal lists what's still needed before exposure.
 - **Reversible:** yes, slice by slice. Nothing a client can reach changes until slice 3.

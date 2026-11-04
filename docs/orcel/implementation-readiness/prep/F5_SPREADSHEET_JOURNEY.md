@@ -19,7 +19,8 @@ The roadmap allows A or B: "an audited document parser plus UIA opening". This p
 | Piece | State |
 |---|---|
 | Confined parser, with no network, no process creation, a read-only input and CPU, memory and time limits | Exists, and qualified under containment on three OSes |
-| XLSX reader with cell references, formulas and refusals | #617 |
+| XLSX reader with cell references, formulas, limits and refusals | #617 |
+| The steps below, as test-only code: **compiled only for tests**, so no release build holds them | `crates/orceld/src/report_workbook.rs` |
 | Report task: observe, preview, approved create-only commit, independent checker | Closed under SG-000126 |
 | Parser in the release package | **Missing.** `scripts/package-release.mjs` doesn't ship it |
 | A route from a workspace file to the parser | **Missing.** `parse_download` accepts only a file the live browser committed |
@@ -35,20 +36,31 @@ Each has its own review. Slice 1 adds no behaviour; 2 onward need this decision.
 4. **Checked figures.** A report states figures as `Sheet!Cell = value`. The independent checker parses the workbook **again, in a separate contained run**, and verifies each stated figure against the cell, the report's hash and the unchanged workbook.
 5. **The journey test.** With a scripted, labelled SOFT consent, as BM-02 Tier B does: known cells, formula values and currency totals; macro and link cases refused; deny a save once, then a fresh grant; stale workbook; existing destination. A real approval through a real client stays with the founder, as in F4 slice 4.
 
+## What the test-only code doesn't do yet
+
+An independent review listed these. **Each must be done before any exposure:**
+
+- **The checker's limit:** `report_check.rs` re-reads a source up to 1 MiB, so a larger workbook would pass preview, then fail after the report is written. The limit must follow the source's type, and be checked before the prompt. Reconcile uses the same check.
+- **Figures in the checker:** a report with a false figure still reaches `verified` today, since the figure check runs separately. It must become part of verifying. That check must also keep the checker's independence: it can't use the workspace provider or the task registry, as `check_figures` does now.
+- **The prompt:** the reader's notices, such as links and hidden sheets, don't reach the approval prompt. A person approving should see them.
+- **Several workbooks:** `Sheet!Cell = value` doesn't say which source a figure means.
+- **Plain directories:** the read uses the provider's verified open, which allows links inside the workspace. Slice 2 asks for plain directories only, like `parse_download`.
+- **The approval question** in slice 2.
+
 ## Security and licensing
 
 - **`orceld` stays the sole authority.** The parser gets one private copy of one file and returns one bounded frame. Its text is data and never an instruction.
 - **New exposure:** `report_start`'s `sources` would accept a binary format. It's a local-only tool: the core and tunnel profiles never list it, and that wouldn't change. This is the reason it needs a grain.
 - **Hostile workbooks** are the realistic threat. Macros are refused, nothing is calculated, links are never followed, and a crash stays inside the contained process.
 - **Saved values can be stale.** Nothing recalculates. The report can name its source cell, but only as the file last saved it, and formulas that may reach outside are marked.
-- **Licensing:** no new dependency. The reader is Orcel's own, on crates already in the graph.
+- **Licensing:** no new dependency. The reader is Orcel's own, on crates already in the graph. Test fixtures from Apache POI carry their notice.
 
 ## What stays unqualified
 
-- **Files saved by Excel.** The reader has been tested on hand-written files and on files from XlsxWriter and openpyxl. Opening one real Excel file is an external prerequisite: it takes a person with Excel, a minute, and a file with no private data.
+- **A current Excel's files.** The committed tests are hand-written files, files from XlsxWriter and openpyxl, and two of Apache POI's samples of Excel 12.0 files. That Excel saved those samples is well-founded but not proved. A file from a current Excel, saved on a machine under this project's control, would close this. It's useful evidence and doesn't block the engineering.
 - `.xls`, `.xlsb` and `.csv` as workbook sources. (CSV already works as text.)
 - Anything recalculated: a value is only what was saved.
 
 ## Cost and reversibility
 
-No cost. Each slice can be reverted, and until slice 3 nothing a client can reach changes.
+No money. The cost is in risk carried: slice 1 brings the parser's zip advisory exceptions into shipped code, recorded as unreachable and not accepted. Each slice can be reverted, and until slice 3 nothing a client can reach changes.
