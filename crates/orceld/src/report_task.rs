@@ -931,6 +931,13 @@ fn start(
                 format!("report source {source} is a link; name the file itself"),
             ));
         }
+        #[cfg(test)]
+        if let Some(found) = crate::report_workbook::observed_if_workbook(workspace, source) {
+            let (record, text) = found?;
+            observed.push(record);
+            texts.push(text);
+            continue;
+        }
         let read = provider.read_text(source)?;
         let text = read
             .get("text")
@@ -1053,6 +1060,8 @@ fn check_current(
                 .and_then(Value::as_str)
                 .map(|text| sha256_hex(text.as_bytes()))
         });
+        #[cfg(test)]
+        let current = crate::report_workbook::digest_if_workbook(workspace, &source.path, current);
         if is_link(workspace, &source.path) || current.as_deref() != Some(source.sha256.as_str()) {
             return Err(Blocked::Stale(error(
                 FailureCode::TargetStale,
