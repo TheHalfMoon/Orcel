@@ -227,6 +227,68 @@ fn wi05_the_normal_pdf_and_docx_convert_under_containment() {
     );
 }
 
+/// F5 Journey 2: the real parser under the real containment. Known cells,
+/// formula values and currency totals keep their source references.
+#[test]
+fn f5_a_workbook_keeps_its_cell_references_under_containment() {
+    let Some(scene) = Scene::new(&fixtures::workbook()) else {
+        return;
+    };
+    let (code, frame) = scene.parse();
+    let document = frame.expect("an XLSX frame");
+    assert_eq!(code, 0);
+    assert_eq!(document.format, DocumentFormat::Xlsx);
+    assert_eq!(document.pages, 2);
+    for row in [
+        "| B2 | 1250.50 | number |",
+        "| B4 | 1999.75 | number | \"$\"#,##0.00 | =SUM(B2:B3) |",
+    ] {
+        assert!(document.markdown.contains(row), "{}", document.markdown);
+    }
+
+    let Some(scene) = Scene::new(&fixtures::linked_workbook()) else {
+        return;
+    };
+    let (code, frame) = scene.parse();
+    let document = frame.expect("a linked XLSX frame");
+    assert_eq!(code, 0);
+    assert!(
+        document.markdown.contains("external, not refreshed"),
+        "{}",
+        document.markdown
+    );
+    assert!(!document.markdown.contains("attacker.example"));
+
+    // Saved by Excel, by the file's own metadata (tests/fixtures/WORKBOOKS.md).
+    let Some(scene) = Scene::new(&fixtures::unpacked("excel-12-sample")) else {
+        return;
+    };
+    let (code, frame) = scene.parse();
+    let document = frame.expect("Excel's file");
+    assert_eq!(code, 0);
+    assert!(
+        document
+            .markdown
+            .contains("| D7 | 13 | number |  | =SUM(A7:C7) |  |"),
+        "{}",
+        document.markdown
+    );
+
+    let Some(scene) = Scene::new(&fixtures::unpacked("written-by-xlsxwriter")) else {
+        return;
+    };
+    let (code, frame) = scene.parse();
+    let document = frame.expect("XlsxWriter's file");
+    assert_eq!(code, 0);
+    assert!(
+        document
+            .markdown
+            .contains("| B4 | 1999.75 | number | \"$\"#,##0.00 | =SUM(B2:B3) |"),
+        "{}",
+        document.markdown
+    );
+}
+
 #[test]
 fn wi05_hostile_inputs_fail_closed_under_containment_with_their_type() {
     let corpus: Vec<(&str, Vec<u8>, ParseRefusal)> = vec![
@@ -279,6 +341,16 @@ fn wi05_hostile_inputs_fail_closed_under_containment_with_their_type() {
             "PDF with repair-shaped (19-byte) cross-reference entries",
             fixtures::short_xref_pdf(),
             ParseRefusal::NoText,
+        ),
+        (
+            "workbook with an Excel 4 macro sheet",
+            fixtures::macrosheet_workbook_by_type(),
+            ParseRefusal::ActiveContent,
+        ),
+        (
+            "workbook whose cell type lies",
+            fixtures::workbook_with_cells("<c r=\"A1\"><v>12 million</v></c>"),
+            ParseRefusal::Malformed,
         ),
         (
             "zip bomb DOCX",
@@ -514,7 +586,12 @@ fn wi05_mutated_inputs_never_escape_the_contained_process() {
         seed ^= seed << 5;
         seed as usize
     };
-    let mut corpus = vec![("pdf", fixtures::text_pdf()), ("docx", fixtures::docx())];
+    let mut corpus = vec![
+        ("pdf", fixtures::text_pdf()),
+        ("docx", fixtures::docx()),
+        ("xlsx", fixtures::workbook()),
+        ("excel xlsx", fixtures::unpacked("excel-12-sample")),
+    ];
     if timed.is_some() {
         corpus.extend([
             ("pptx", fixtures::pptx(3)),
