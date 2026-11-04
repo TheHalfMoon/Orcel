@@ -12,8 +12,8 @@ One supported client, at the exact version you record, drives a report task thro
 |---|---|---|
 | Approved report | **You: Yes** | Report created; the independent checker verifies it |
 | Denied report | **You: No** | `APPROVAL_DENIED`; nothing written |
-| Existing destination | orceld, before any prompt | Refused; your file untouched |
-| Changed source | orceld, before any prompt | `TARGET_STALE`; nothing written |
+| Existing destination | orceld, before any Orcel prompt | Refused; your file untouched |
+| Changed source | orceld, before any Orcel prompt | `TARGET_STALE`; nothing written |
 
 It proves that client version only, not every client.
 
@@ -27,6 +27,8 @@ It proves that client version only, not every client.
 gh run download <CI run id> --repo TheHalfMoon/Orcel --name orcel-release-candidate-<commit sha> --dir orcel-rc
 ```
 
+The artifact holds `orcel-<version>-windows-x64.zip` with its manifest, SBOM and checksums. **Extract the zip** into `orcel-rc/release`: `orcel.exe` needs `manifest.json` beside it.
+
 Unsigned means Windows may warn. This is a development build, **not a release**.
 
 ## Steps
@@ -36,7 +38,7 @@ Unsigned means Windows may warn. This is a development build, **not a release**.
 From a checkout of the same commit:
 
 ```bash
-orcel-rc/orcel.exe install --node "$(where node | head -1)"
+orcel-rc/release/orcel.exe install --node "$(where node | head -1)"
 ```
 
 ```bash
@@ -47,7 +49,9 @@ cargo run -p orcel-lifecycle --example f4_journey -- prepare C:/orcel-f4-journey
 orcel workspace add default "C:/orcel-f4-journey"
 ```
 
-Install puts `orcel` on PATH; open a new terminal if it isn't found. If you already have a workspace named `default`, note it first: this journey needs the scratch folder as its default workspace.
+Install puts `orcel` on PATH; open a new terminal if it isn't found.
+
+**The scratch folder must be the only workspace.** Orcel uses the first configured workspace as the default, and an existing id is refused. So before `workspace add`, run `orcel workspace list`, write down what's there, and `orcel workspace remove <id>` each one. You restore them in step 6. Removing a workspace from configuration never touches its files.
 
 ### 2. Start the client and record what it is
 
@@ -63,9 +67,13 @@ The scratch folder's `.mcp.json` launches `orcel mcp stdio`. Accept the project'
 
 ### 3. Paste these prompts, one at a time
 
-**A. List the tools (the shell is not available).** No prompt appears.
+"No Orcel prompt" below means no Orcel message box. Claude Code may still ask its own permission to use a tool; allowing that approves nothing in Orcel.
 
-> List the Orcel tools you have. Say whether any of them can run a shell or a process.
+**A. List the tools.** No Orcel prompt.
+
+> List the Orcel tools you have. Say whether any of them is a shell, and whether any can start a process.
+
+Expected: **no shell tool.** `process_spawn` is listed: it runs one registered executable (argv only, no shell) and needs a trusted workspace. This is the client's view of the SG-000096 shell being unarmed.
 
 **B. Approved.** A Windows message box titled **Orcel approval SOFT** appears, naming the action, target, size and digest. No is the default button. **Read it, then click Yes.**
 
@@ -79,7 +87,7 @@ Expected: `state: verified`, with the checker's result.
 
 Expected: `APPROVAL_DENIED`. `reports/q3-denied.md` does not exist.
 
-**D. Existing destination.** No prompt appears.
+**D. Existing destination.** No Orcel prompt.
 
 > Start a new report task the same way, and try to preview a report named "taken.md". Show me the result. Do not choose another name.
 
@@ -95,7 +103,7 @@ In a second terminal, change the source:
 cargo run -p orcel-lifecycle --example f4_journey -- change-source C:/orcel-f4-journey
 ```
 
-Then back in the client. No prompt appears:
+Then back in the client. No Orcel prompt:
 
 > Now commit that report. Show me the result. If it is refused, do not try again.
 
@@ -124,7 +132,7 @@ Attach both to #446. **Read the redacted transcript before attaching it**: the r
 orcel workspace remove default
 ```
 
-Restore your earlier `default` workspace if you had one. `orcel uninstall` removes the release if you installed it only for this.
+Add back the workspaces you removed in step 1, in their original order. `orcel uninstall` removes the release if you installed it only for this.
 
 ## What this leaves open
 

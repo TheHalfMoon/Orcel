@@ -49,7 +49,7 @@ fn prepare(dir: &Path) -> Result<(), String> {
     fs::write(dir.join("reports").join("taken.md"), TAKEN).map_err(text)?;
     fs::write(
         dir.join(".mcp.json"),
-        "{\n  \"mcpServers\": {\n    \"orcel\": { \"command\": \"orcel\", \"args\": [\"mcp\", \"stdio\"] }\n  }\n}\n",
+        "{\n  \"mcpServers\": {\n    \"orcel\": { \"type\": \"stdio\", \"command\": \"orcel\", \"args\": [\"mcp\", \"stdio\"] }\n  }\n}\n",
     )
     .map_err(text)?;
     println!("Prepared {}", dir.display());
