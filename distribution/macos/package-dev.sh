@@ -16,6 +16,10 @@ if [ "$#" -ne 4 ]; then
   exit 2
 fi
 version=$1
+if [ -z "$version" ]; then
+  echo "the version is empty" >&2
+  exit 2
+fi
 orceld=$2
 contain=$3
 out=$4

@@ -1548,11 +1548,13 @@ jobs:
       - name: Build the orcel-contain helper (release, locked, its own workspace)
         run: cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
       - name: Build the tarball
+        shell: bash
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"$//p' Cargo.toml | head -n 1)
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           bash distribution/macos/package-dev.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain "$DIST"
           ls -l "$DIST"
       - name: Contents, modes, pin, and that orceld answers
+        shell: bash
         run: |
           (cd "$DIST" && shasum -a 256 -c SHA256SUMS-macos.txt)
           tarball=$(ls "$DIST"/*.tar.gz)
@@ -1580,6 +1582,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ws"
           ORCEL_WORKSPACES_JSON="[{\"id\":\"ci\",\"root\":\"$RUNNER_TEMP/ws\"}]" python3 scripts/linux-orceld-probe.py exec "$home/bin/orceld" ci
       - name: A tampered download fails its checksum
+        shell: bash
         run: |
           mkdir "$RUNNER_TEMP/tampered" && cp "$DIST"/* "$RUNNER_TEMP/tampered/"
           tarball=$(ls "$RUNNER_TEMP"/tampered/*.tar.gz)

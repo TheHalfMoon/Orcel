@@ -1,6 +1,6 @@
 # Orcel on macOS: unsigned development tarball
 
-**This is a development build, not a release.** It is unsigned and not notarized. Signing, notarization and an app bundle are XP-16, which waits on FD-05 (a paid Apple Developer ID). Nothing about it may be published.
+**This is a development build, not a release.** It is unsigned and not notarized. Signing, notarization and an app bundle are XP-16, which waits on FD-05 (a paid Apple Developer ID). It is not a published product: the CI artifact of this public repository can be downloaded, but it is never released or offered as one.
 
 No paid Apple membership is needed to build or run it for local engineering.
 
@@ -24,7 +24,7 @@ shasum -a 256 -c SHA256SUMS-macos.txt
 mkdir -p ~/orcel-dev && tar -xzf orcel-*-macos-*-unsigned-dev.tar.gz --strip-components=1 -C ~/orcel-dev
 ```
 
-macOS quarantines downloaded files, and Gatekeeper refuses unsigned ones. For a build you downloaded yourself, clear the attribute on that folder only:
+macOS quarantines downloaded files, and Gatekeeper refuses unsigned ones. Clear the attribute on that folder only, and only for an artifact from this repository's own CI. The checksum comes from the same download, so it shows integrity, not origin:
 
 ```bash
 xattr -dr com.apple.quarantine ~/orcel-dev
