@@ -15,7 +15,7 @@ import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FE
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
-import { traceLine, traceMark, traceStart } from "./navigation-trace.js";
+import { traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
 import { runProbes } from "./verify.js";
@@ -89,16 +89,25 @@ const playwrightLauncher: Launcher = {
       await previous.close().catch(() => {});
       traceMark("previous_closed");
       page.on("request", () => traceMark("request"));
-      page.on("response", () => traceMark("response"));
+      page.on("response", (response) => {
+        traceMark("response");
+        // #438: when the engine started the request, by the engine's clock.
+        // Playwright knows it only once a response exists.
+        const engineStart = response.request().timing().startTime;
+        if (engineStart > 0) traceMark("request_engine_start", engineStart);
+      });
       page.on("requestfailed", () => traceMark("request_failed"));
       page.on("domcontentloaded", () => traceMark("domcontentloaded"));
       page.on("load", () => traceMark("load"));
       page.on("crash", () => traceMark("page_crashed"));
+      const stopWatching = traceWatchEventLoop();
       try {
         traceMark("goto");
         const response = await page.goto(url, { timeout: 30_000, waitUntil: "load" });
+        stopWatching();
         return { page, response };
       } catch (error) {
+        stopWatching();
         const message = String((error as Error).message);
         if (message.includes("ERR_BLOCKED_BY_CLIENT")) throw new NavigationError("denied");
         if ((error as Error).name === "TimeoutError") {
