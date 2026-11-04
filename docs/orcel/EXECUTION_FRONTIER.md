@@ -55,7 +55,9 @@ The founder adopted the Sol app-first revision of the Opus plan on 2026-10-09. W
 
 ## Review pathway
 
-Alibaba OpenCodeReview runs in **delegation mode** (founder decision, 2026-10-10) until a working OCR-managed provider is available: `ocr delegate preview` + `ocr delegate rule` per exact range, fresh-context reviewers, re-review of every head delta, evidence posted on each PR. OCR-managed runs on the current host are UNPROVEN. Jev runs in CI (hunk coverage) and locally (bounded judgments); PStack review and close-out judges run before merge.
+Alibaba OpenCodeReview runs in **delegation mode** (founder decision, 2026-10-10) until a working OCR-managed provider is available: `ocr delegate preview` + `ocr delegate rule` per exact range, fresh-context reviewers, re-review of every head delta, evidence posted on each PR. Delegation mode needs no paid provider and was verified locally on 2026-11-04 (v1.13.5). The reviewer in that mode reads under OCR's rules, so a review by the author doesn't count as independent: security-sensitive changes keep a fresh-context judge. OCR-managed runs on the current host are UNPROVEN. Jev runs in CI (hunk coverage) and locally (bounded judgments); PStack review and close-out judges run before merge.
+
+Qodo is out of the workflow (founder directive, 2026-11-04): no purchase, and no waiting on it. It was never required: it appears in no workflow, config file, webhook or required check of the `Deskal main protection` ruleset, and it never counted as qualification evidence. Its GitHub App is still installed, so it can post comments, and these are ignored. Removing the App needs the founder's GitHub settings.
 
 ## Known gates outside engineering
 

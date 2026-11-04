@@ -17,6 +17,7 @@ import json
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 
 PATH = "/v1/chat/completions"
 
@@ -30,6 +31,14 @@ def completion(reply: dict) -> dict:
         message = {"role": "assistant", "content": "", "tool_calls": [
             {"id": "stub", "type": "function", "function": {"name": reply["tool"], "arguments": arguments}}]}
     return {"choices": [{"message": message, "finish_reason": "stop"}]}
+
+
+class _Server(HTTPServer):
+    def server_bind(self) -> None:
+        # HTTPServer's own also looks up the host's name, which can stall on a
+        # hosted Mac. Nothing here needs that name.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def serve(script: list[dict]) -> HTTPServer:
@@ -52,7 +61,7 @@ def serve(script: list[dict]) -> HTTPServer:
         def log_message(self, *_: object) -> None:
             pass
 
-    return HTTPServer(("127.0.0.1", 0), Handler)
+    return _Server(("127.0.0.1", 0), Handler)
 
 
 def main(argv: list[str]) -> int:
