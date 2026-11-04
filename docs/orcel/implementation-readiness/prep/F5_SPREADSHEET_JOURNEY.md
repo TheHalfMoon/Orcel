@@ -19,8 +19,8 @@ The roadmap allows A or B: "an audited document parser plus UIA opening". This p
 | Piece | State |
 |---|---|
 | Confined parser, with no network, no process creation, a read-only input and CPU, memory and time limits | Exists, and qualified under containment on three OSes |
-| XLSX reader with cell references, formulas, limits and refusals | #617 |
-| The steps below, as test-only code: **compiled only for tests**, so no release build holds them | `crates/orceld/src/report_workbook.rs` |
+| XLSX reader with cell references, formulas, limits and refusals | **Pending:** #617, in review when this was written |
+| The steps below, as test-only code: **compiled only for tests**, so no release build holds them | **Pending:** branch `f5/parse-verified-bytes`, which follows #617 |
 | Report task: observe, preview, approved create-only commit, independent checker | Closed under SG-000126 |
 | Parser in the release package | **Missing.** `scripts/package-release.mjs` doesn't ship it |
 | A route from a workspace file to the parser | **Missing.** `parse_download` accepts only a file the live browser committed |
@@ -28,7 +28,7 @@ The roadmap allows A or B: "an audited document parser plus UIA opening". This p
 
 ## Proposed slices
 
-Each has its own review. Slice 1 adds no behaviour; 2 onward need this decision.
+Each has its own review, and **all of them need this decision.** Slice 1 adds no behaviour a client can reach, but it ships the parser and its zip advisory exceptions, which is the cost this decision weighs.
 
 1. **Package the parser, unreachable.** Ship `orcel-doc-parser` and its pin, inside the 400 MB budget, with no caller in a release build. This brings the zip advisory exceptions (`apps/orcel-doc-parser/.cargo/audit.toml`) into shipped code. They're recorded as unreachable, and they're not accepted risk.
 2. **Parse a workspace file.** The same steps as `parse_download`, starting from a workspace path instead of a committed download: plain directories only, size and SHA-256 re-read, one private input, the pinned parser. **Whether reading a workspace file through the parser needs its own approval** is a question for the grain's security review. `read_text` needs none today, but the parser is a larger surface.
