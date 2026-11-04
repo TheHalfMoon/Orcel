@@ -1142,8 +1142,9 @@ fn preview(
         "create_only": true,
         "sources": task.sources.iter().map(|source| json!({"path": source.path, "sha256": source.sha256})).collect::<Vec<_>>(),
     });
-    // Conditional: what happened while this preview worked without the lock
-    // (a stop, a commit that started) is never overwritten.
+    // Conditional: requests run one at a time today, so this guards against
+    // the second writer to come (stop, while a request works without the
+    // lock), which must never be overwritten.
     match tasks.update_if(
         &task.id,
         "preview",
@@ -1280,7 +1281,10 @@ fn commit(
                 &task.id,
                 "approval",
                 "denied",
-                |task| COMMITTABLE_STATES.contains(&task.state),
+                |current| {
+                    COMMITTABLE_STATES.contains(&current.state)
+                        && current.proposal.as_ref() == Some(&proposal)
+                },
                 |task| task.state = TaskState::ApprovalDenied,
             );
         } else {

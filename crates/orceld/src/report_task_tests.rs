@@ -1166,15 +1166,27 @@ fn f4_an_approval_granted_after_a_stop_writes_nothing_and_stays_spent() {
     let tasks = Arc::new(TaskRegistry::new());
     let task = proposed_task(&scene, &tasks);
     let (during, id) = (Arc::clone(&tasks), task.clone());
-    let broker = consent_during(&scene, ApprovalDecision::Approved, move || {
-        during.stop(&id, "default").expect("stop during the prompt");
-    });
+    let broker = Recording {
+        inner: consent_during(&scene, ApprovalDecision::Approved, move || {
+            during.stop(&id, "default").expect("stop during the prompt");
+        }),
+        seen: Mutex::new(None),
+    };
     let request = commit_request(&task, "q3.md", STOP_REPORT);
     let failure = dispatch(&scene.workspace, &broker, &tasks, &request).unwrap_err();
     assert_eq!(failure.code, FailureCode::TargetStale);
     assert!(failure.message.contains("stopped"), "{}", failure.message);
     assert_eq!(state(&tasks, &task), "stopped");
     assert_eq!(scene.tree(), before, "nothing was written");
+    // The approval was consumed before the refusal: it cannot be used again.
+    let (token, expected) = broker.seen.lock().unwrap().clone().expect("consumed once");
+    assert!(
+        broker
+            .inner
+            .consume(&token, &expected, orcel_approval::now_ms())
+            .is_err(),
+        "a second consume of the spent approval fails"
+    );
 }
 
 #[test]
@@ -1362,7 +1374,7 @@ fn f4_a_task_evicted_during_the_prompt_writes_nothing() {
 }
 
 #[test]
-fn f4_a_stop_during_the_prompt_abandons_the_intent_and_survives_a_restart() {
+fn f4_a_stop_during_the_prompt_abandons_the_intent_and_is_journaled() {
     let scene = Scene::new("stop-restart");
     let path = scene.dir.join("report-tasks.jsonl");
     let tasks = Arc::new(TaskRegistry::with_journal(path.clone()));
@@ -1374,20 +1386,51 @@ fn f4_a_stop_during_the_prompt_abandons_the_intent_and_survives_a_restart() {
     let request = commit_request(&task, "q3.md", STOP_REPORT);
     dispatch(&scene.workspace, &broker, &tasks, &request).unwrap_err();
     let journal = std::fs::read_to_string(&path).expect("journal");
+    let lines: Vec<Value> = journal
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a journal line"))
+        .collect();
+    let closed: Vec<&Value> = lines
+        .iter()
+        .filter(|line| line["event"] == "abandoned")
+        .collect();
+    assert_eq!(closed.len(), 1, "one intent, closed once:\n{journal}");
+    assert_eq!(closed[0]["outcome"], "stopped", "{journal}");
     assert!(
-        journal.contains("abandoned") && journal.contains("stopped"),
-        "the intent closed as abandoned, outcome stopped:\n{journal}"
+        !lines.iter().any(|line| line["event"] == "dispatched"),
+        "the write never started:\n{journal}"
     );
-    // The snapshot a next orceld restores from: `restored_task` keeps a final
-    // state, so a stopped task stays stopped. (A lost stop is safe too: a
-    // non-final task of an exited run is restored as failed.)
-    assert!(
-        journal.contains(r#""state":"stopped""#),
-        "the stop reached the journal:
-{journal}"
-    );
-    assert_eq!(TaskState::from_str("stopped"), Some(TaskState::Stopped));
-    assert!(TaskState::Stopped.is_final());
+    let newest = lines
+        .iter()
+        .rev()
+        .find(|line| line["event"] == "task")
+        .unwrap();
+    assert_eq!(newest["task"]["state"], "stopped", "{journal}");
+}
+
+/// Passes through to the real broker and keeps what it consumed.
+struct Recording {
+    inner: LocalApprovalBroker,
+    seen: Mutex<Option<(orcel_approval::ApprovedToken, ConsumeExpectation)>>,
+}
+
+impl ApprovalBroker for Recording {
+    fn request_token(
+        &self,
+        prompt: &ApprovalPrompt,
+    ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+        self.inner.request_token(prompt)
+    }
+
+    fn consume(
+        &self,
+        token: &orcel_approval::ApprovedToken,
+        expected: &ConsumeExpectation,
+        now_ms: u64,
+    ) -> Result<(), orcel_approval::ApprovalError> {
+        *self.seen.lock().unwrap() = Some((token.clone(), expected.clone()));
+        self.inner.consume(token, expected, now_ms)
+    }
 }
 
 /// A broker for requests that must never ask.
