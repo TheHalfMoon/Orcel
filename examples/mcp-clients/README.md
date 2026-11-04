@@ -55,6 +55,8 @@ see the contract tests for the static guarantees.
 `installed_release_serves_every_client_example`
 (`crates/orcel-lifecycle/tests/release_qualification.rs`) reads every
 configuration here as a client would and runs it against the installed Windows
-release: each stdio entrypoint and the loopback HTTP example must reach the same
-tools. **This shows the configuration and the protocol, not the client:** no
-Claude, Codex or Vibe Code runs in it, and their versions aren't qualified by it.
+release: each file's command must be `orcel`, its arguments are passed to the
+installed `orcel.exe` by its full path, and each stdio entrypoint and the loopback
+HTTP example must reach the same tools. **This shows the configuration and the
+protocol, not the client:** no Claude, Codex or Vibe Code runs in it, their versions
+aren't qualified by it, and finding `orcel` on `PATH` isn't tested.
