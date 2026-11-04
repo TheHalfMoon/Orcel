@@ -14,6 +14,11 @@ path = "src/main.rs"
 name = "orcel-mcp-host"
 path = "src/mcp_host_main.rs"
 
+# SG-000127 slice 4: its unit tests run with the crate's.
+[[example]]
+name = "f4_journey"
+test = true
+
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }
 orcel-platform = { path = "../orcel-platform" }
