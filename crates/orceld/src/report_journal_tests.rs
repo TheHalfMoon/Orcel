@@ -432,6 +432,30 @@ fn rj02_a_reconcile_never_overwrites_a_finished_task() {
 }
 
 #[test]
+fn f4_a_stopped_task_of_an_exited_run_is_restored_stopped() {
+    let scene = Scene::new("f4-stopped");
+    let tasks = TaskRegistry::new();
+    let task = start_q3(&scene, &tasks)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    tasks.stop(&task, "default").expect("stop");
+    let stopped = tasks
+        .lock()
+        .iter()
+        .find(|known| known.id == task)
+        .cloned()
+        .unwrap();
+    ReportJournal::new(journal_path(&scene), exited_owner("crashed")).snapshot(&stopped);
+    let restored = ReportJournal::new(journal_path(&scene), exited_owner("next"))
+        .restore()
+        .unwrap();
+    assert_eq!(restored.tasks.len(), 1);
+    assert_eq!(restored.tasks[0].state, TaskState::Stopped);
+    assert_eq!(restored.reconciled, 0);
+}
+
+#[test]
 fn rj02_an_existing_destination_at_the_create_closes_the_journaled_commit() {
     // The real commit path: approved, then a file appears just before the
     // create. The create refuses it; the journal records pending,
@@ -450,6 +474,7 @@ fn rj02_an_existing_destination_at_the_create_closes_the_journaled_commit() {
         &super::super::Hooks {
             after_approval: &|| {},
             before_write: &|| std::fs::write(&destination, "someone else's").unwrap(),
+            after_preview_check: &|| {},
         },
     )
     .unwrap_err();

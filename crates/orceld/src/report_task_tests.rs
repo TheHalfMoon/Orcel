@@ -369,6 +369,7 @@ fn sg126_an_existing_destination_is_never_overwritten() {
         &Hooks {
             after_approval: &|| std::fs::write(&race, b"created during the approval").unwrap(),
             before_write: &|| {},
+            after_preview_check: &|| {},
         },
     )
     .unwrap_err();
@@ -491,6 +492,7 @@ fn sg126_a_changed_source_makes_the_task_stale_and_writes_nothing() {
                     &Hooks {
                         after_approval: &change,
                         before_write: &|| {},
+                        after_preview_check: &|| {},
                     },
                 )
             }
@@ -811,6 +813,7 @@ fn sg126_the_write_itself_never_opens_an_existing_entry() {
         &Hooks {
             after_approval: &|| {},
             before_write: &|| std::fs::write(&planted, b"planted").unwrap(),
+            after_preview_check: &|| {},
         },
     )
     .unwrap_err();
@@ -830,6 +833,7 @@ fn sg126_the_write_itself_never_opens_an_existing_entry() {
         &Hooks {
             after_approval: &|| {},
             before_write: &|| std::fs::write(&same, report.as_bytes()).unwrap(),
+            after_preview_check: &|| {},
         },
     )
     .unwrap_err();
@@ -851,6 +855,7 @@ fn sg126_the_write_itself_never_opens_an_existing_entry() {
             &Hooks {
                 after_approval: &|| {},
                 before_write: &|| std::os::unix::fs::symlink(&theirs, &link).unwrap(),
+                after_preview_check: &|| {},
             },
         )
         .unwrap_err();
@@ -883,6 +888,7 @@ fn sg126_a_folder_linked_away_before_the_write_never_verifies() {
                 std::fs::rename(&reports, &moved).unwrap();
                 link_dir(&reports, &other);
             },
+            after_preview_check: &|| {},
         },
     );
     let refused = outcome.unwrap_err();
@@ -1079,4 +1085,371 @@ fn sg126_the_normal_request_path_refuses_report_requests() {
         Some(FailureCode::CapabilityDenied)
     );
     assert_eq!(approval.shown(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// F4 slice 5, kernel only (prep/F4_TASK_STOP.md). `stop` is compiled for tests
+// only: no surface reaches it until a decision on #446.
+// ---------------------------------------------------------------------------
+
+/// Answers one prompt after running `during`, as if it happened while the
+/// system dialog was open.
+fn consent_during(
+    scene: &Scene,
+    decision: ApprovalDecision,
+    during: impl Fn() + Send + Sync + 'static,
+) -> LocalApprovalBroker {
+    LocalApprovalBroker::with_path_and_soft_decider(
+        scene.dir.join("approvals.json"),
+        Arc::new(NoPresenceVerifier),
+        Arc::new(move |_: &ApprovalPrompt| {
+            during();
+            decision
+        }),
+    )
+}
+
+const STOP_REPORT: &str = "The Q3 total is 37300.75.";
+
+fn proposed_task(scene: &Scene, tasks: &TaskRegistry) -> String {
+    let task = start_q3(scene, tasks)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    preview(scene, tasks, &task, "q3.md", STOP_REPORT).expect("preview");
+    task
+}
+
+#[test]
+fn f4_stop_from_every_open_state_is_final_and_writes_nothing() {
+    for open in ["observed", "proposed", "approval_denied"] {
+        let scene = Scene::new("stop-open");
+        let before = scene.tree();
+        let tasks = TaskRegistry::new();
+        let task = start_q3(&scene, &tasks)["task_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        if open != "observed" {
+            preview(&scene, &tasks, &task, "q3.md", STOP_REPORT).expect("preview");
+        }
+        if open == "approval_denied" {
+            let denied = consent(&scene, &[ApprovalDecision::Denied]);
+            let request = commit_request(&task, "q3.md", STOP_REPORT);
+            dispatch(&scene.workspace, &denied.broker, &tasks, &request).unwrap_err();
+        }
+        assert_eq!(state(&tasks, &task), open);
+        let stopped = tasks.stop(&task, "default").expect("stop");
+        assert_eq!(stopped["state"], "stopped");
+        assert_eq!(state(&tasks, &task), "stopped");
+        // Idempotent.
+        assert_eq!(
+            tasks.stop(&task, "default").expect("again")["state"],
+            "stopped"
+        );
+        // Every later request is refused, and no prompt is ever shown.
+        let approval = consent(&scene, &[ApprovalDecision::Approved]);
+        let failure = preview(&scene, &tasks, &task, "q3.md", STOP_REPORT).unwrap_err();
+        assert_eq!(failure.code, FailureCode::TargetStale, "{open}");
+        let request = commit_request(&task, "q3.md", STOP_REPORT);
+        let failure = dispatch(&scene.workspace, &approval.broker, &tasks, &request).unwrap_err();
+        assert_eq!(failure.code, FailureCode::TargetStale, "{open}");
+        assert_eq!(approval.shown(), 0, "{open}");
+        assert_eq!(scene.tree(), before, "{open}: nothing was written");
+    }
+}
+
+#[test]
+fn f4_an_approval_granted_after_a_stop_writes_nothing_and_stays_spent() {
+    let scene = Scene::new("stop-prompt");
+    let before = scene.tree();
+    let tasks = Arc::new(TaskRegistry::new());
+    let task = proposed_task(&scene, &tasks);
+    let (during, id) = (Arc::clone(&tasks), task.clone());
+    let broker = Recording {
+        inner: consent_during(&scene, ApprovalDecision::Approved, move || {
+            during.stop(&id, "default").expect("stop during the prompt");
+        }),
+        seen: Mutex::new(None),
+    };
+    let request = commit_request(&task, "q3.md", STOP_REPORT);
+    let failure = dispatch(&scene.workspace, &broker, &tasks, &request).unwrap_err();
+    assert_eq!(failure.code, FailureCode::TargetStale);
+    assert!(failure.message.contains("stopped"), "{}", failure.message);
+    assert_eq!(state(&tasks, &task), "stopped");
+    assert_eq!(scene.tree(), before, "nothing was written");
+    // The approval was consumed before the refusal: it cannot be used again.
+    let (token, expected) = broker.seen.lock().unwrap().clone().expect("consumed once");
+    assert!(
+        broker
+            .inner
+            .consume(&token, &expected, orcel_approval::now_ms())
+            .is_err(),
+        "a second consume of the spent approval fails"
+    );
+}
+
+#[test]
+fn f4_a_denial_after_a_stop_leaves_the_task_stopped() {
+    let scene = Scene::new("stop-denied");
+    let tasks = Arc::new(TaskRegistry::new());
+    let task = proposed_task(&scene, &tasks);
+    let (during, id) = (Arc::clone(&tasks), task.clone());
+    let broker = consent_during(&scene, ApprovalDecision::Denied, move || {
+        during.stop(&id, "default").expect("stop during the prompt");
+    });
+    let request = commit_request(&task, "q3.md", STOP_REPORT);
+    let failure = dispatch(&scene.workspace, &broker, &tasks, &request).unwrap_err();
+    assert_eq!(failure.code, FailureCode::ApprovalDenied);
+    assert_eq!(state(&tasks, &task), "stopped");
+}
+
+#[test]
+fn f4_stop_is_refused_while_a_commit_writes_and_the_commit_finishes() {
+    let scene = Scene::new("stop-committing");
+    let tasks = TaskRegistry::new();
+    let task = proposed_task(&scene, &tasks);
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    let check_stop = || {
+        let failure = tasks.stop(&task, "default").unwrap_err();
+        assert_eq!(failure.code, FailureCode::InvalidRequest);
+        assert!(
+            failure.message.contains("committing"),
+            "{}",
+            failure.message
+        );
+    };
+    let hooks = Hooks {
+        after_approval: &check_stop,
+        before_write: &check_stop,
+        after_preview_check: &|| {},
+    };
+    let request = commit_request(&task, "q3.md", STOP_REPORT);
+    dispatch_with(&scene.workspace, &approval.broker, &tasks, &request, &hooks).expect("commit");
+    assert_eq!(state(&tasks, &task), "verified");
+    // Stop of a finished task names its state and changes nothing.
+    let failure = tasks.stop(&task, "default").unwrap_err();
+    assert_eq!(failure.code, FailureCode::InvalidRequest);
+    assert!(failure.message.contains("verified"), "{}", failure.message);
+    assert_eq!(state(&tasks, &task), "verified");
+}
+
+#[test]
+fn f4_stop_of_an_unknown_or_foreign_task_is_refused_alike() {
+    let scene = Scene::new("stop-foreign");
+    let tasks = TaskRegistry::new();
+    let task = proposed_task(&scene, &tasks);
+    let unknown = tasks.stop("report_unknown", "default").unwrap_err();
+    let foreign = tasks.stop(&task, "another-workspace").unwrap_err();
+    assert_eq!(unknown.code, FailureCode::TargetStale);
+    assert_eq!(foreign.code, FailureCode::TargetStale);
+    assert_eq!(
+        unknown.message, foreign.message,
+        "no oracle for another workspace's task"
+    );
+    assert_eq!(state(&tasks, &task), "proposed");
+}
+
+#[test]
+fn f4_a_stop_during_a_preview_is_not_overwritten() {
+    let scene = Scene::new("stop-preview");
+    let tasks = TaskRegistry::new();
+    let task = start_q3(&scene, &tasks)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let stop = || {
+        tasks
+            .stop(&task, "default")
+            .expect("stop during the preview");
+    };
+    let hooks = Hooks {
+        after_approval: &|| {},
+        before_write: &|| {},
+        after_preview_check: &stop,
+    };
+    let approval = consent(&scene, &[]);
+    let request = RequestEnvelope {
+        operation: "preview".into(),
+        ..commit_request(&task, "q3.md", STOP_REPORT)
+    };
+    let failure =
+        dispatch_with(&scene.workspace, &approval.broker, &tasks, &request, &hooks).unwrap_err();
+    assert_eq!(failure.code, FailureCode::TargetStale);
+    assert_eq!(state(&tasks, &task), "stopped");
+    assert!(
+        tasks.get(&task).unwrap()["proposal"].is_null(),
+        "the preview left no proposal"
+    );
+}
+
+#[test]
+fn f4_a_stale_check_after_a_stop_leaves_the_task_stopped() {
+    let scene = Scene::new("stop-stale");
+    let tasks = TaskRegistry::new();
+    let task = proposed_task(&scene, &tasks);
+    tasks.stop(&task, "default").expect("stop");
+    let _ = blocked(
+        &tasks,
+        &task,
+        "preview",
+        &OPEN_STATES,
+        Blocked::Stale(error(FailureCode::TargetStale, "a source changed")),
+    );
+    assert_eq!(state(&tasks, &task), "stopped");
+}
+
+#[test]
+fn f4_two_commits_of_one_task_write_once_and_the_loser_writes_nothing() {
+    let scene = Scene::new("two-commits");
+    let tasks = Arc::new(TaskRegistry::new());
+    let task = proposed_task(&scene, &tasks);
+    // While the first commit's prompt is open, a second commit of the same
+    // task runs to the end.
+    let inner_scene = scene.workspace.clone();
+    let inner_ledger = scene.dir.join("inner-approvals.json");
+    let (during, id) = (Arc::clone(&tasks), task.clone());
+    let broker = consent_during(&scene, ApprovalDecision::Approved, move || {
+        let inner = LocalApprovalBroker::with_path_and_soft_decider(
+            inner_ledger.clone(),
+            Arc::new(NoPresenceVerifier),
+            Arc::new(|_: &ApprovalPrompt| ApprovalDecision::Approved),
+        );
+        let request = commit_request(&id, "q3.md", STOP_REPORT);
+        dispatch(&inner_scene, &inner, &during, &request).expect("the inner commit");
+    });
+    let request = commit_request(&task, "q3.md", STOP_REPORT);
+    let failure = dispatch(&scene.workspace, &broker, &tasks, &request).unwrap_err();
+    assert_eq!(failure.code, FailureCode::TargetStale);
+    assert!(failure.message.contains("changed"), "{}", failure.message);
+    assert_eq!(
+        state(&tasks, &task),
+        "verified",
+        "the winner's state stands"
+    );
+    let written = scene.tree();
+    assert_eq!(
+        written.get("reports/q3.md").map(Vec::as_slice),
+        Some(STOP_REPORT.as_bytes())
+    );
+}
+
+#[test]
+fn f4_a_preview_during_the_prompt_means_the_approved_report_is_not_written() {
+    let scene = Scene::new("preview-during-prompt");
+    let before = scene.tree();
+    let tasks = Arc::new(TaskRegistry::new());
+    let task = proposed_task(&scene, &tasks);
+    let inner_scene = scene.workspace.clone();
+    let (during, id) = (Arc::clone(&tasks), task.clone());
+    let broker = consent_during(&scene, ApprovalDecision::Approved, move || {
+        let unused = NeverAsked;
+        let request = RequestEnvelope {
+            operation: "preview".into(),
+            ..commit_request(&id, "other.md", "another report")
+        };
+        dispatch(&inner_scene, &unused, &during, &request).expect("the newer preview");
+    });
+    let request = commit_request(&task, "q3.md", STOP_REPORT);
+    let failure = dispatch(&scene.workspace, &broker, &tasks, &request).unwrap_err();
+    assert_eq!(failure.code, FailureCode::TargetStale);
+    assert_eq!(state(&tasks, &task), "proposed");
+    assert_eq!(scene.tree(), before, "neither report was written");
+}
+
+#[test]
+fn f4_a_task_evicted_during_the_prompt_writes_nothing() {
+    let scene = Scene::new("evicted");
+    let before = scene.tree();
+    let tasks = Arc::new(TaskRegistry::new());
+    let task = proposed_task(&scene, &tasks);
+    let (during, id) = (Arc::clone(&tasks), task.clone());
+    let broker = consent_during(&scene, ApprovalDecision::Approved, move || {
+        during.lock().retain(|candidate| candidate.id != id);
+    });
+    let request = commit_request(&task, "q3.md", STOP_REPORT);
+    let failure = dispatch(&scene.workspace, &broker, &tasks, &request).unwrap_err();
+    assert_eq!(failure.code, FailureCode::TargetStale);
+    assert_eq!(scene.tree(), before, "nothing was written");
+}
+
+#[test]
+fn f4_a_stop_during_the_prompt_abandons_the_intent_and_is_journaled() {
+    let scene = Scene::new("stop-restart");
+    let path = scene.dir.join("report-tasks.jsonl");
+    let tasks = Arc::new(TaskRegistry::with_journal(path.clone()));
+    let task = proposed_task(&scene, &tasks);
+    let (during, id) = (Arc::clone(&tasks), task.clone());
+    let broker = consent_during(&scene, ApprovalDecision::Approved, move || {
+        during.stop(&id, "default").expect("stop during the prompt");
+    });
+    let request = commit_request(&task, "q3.md", STOP_REPORT);
+    dispatch(&scene.workspace, &broker, &tasks, &request).unwrap_err();
+    let journal = std::fs::read_to_string(&path).expect("journal");
+    let lines: Vec<Value> = journal
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a journal line"))
+        .collect();
+    let closed: Vec<&Value> = lines
+        .iter()
+        .filter(|line| line["event"] == "abandoned")
+        .collect();
+    assert_eq!(closed.len(), 1, "one intent, closed once:\n{journal}");
+    assert_eq!(closed[0]["outcome"], "stopped", "{journal}");
+    assert!(
+        !lines.iter().any(|line| line["event"] == "dispatched"),
+        "the write never started:\n{journal}"
+    );
+    let newest = lines
+        .iter()
+        .rev()
+        .find(|line| line["event"] == "task")
+        .unwrap();
+    assert_eq!(newest["task"]["state"], "stopped", "{journal}");
+}
+
+/// Passes through to the real broker and keeps what it consumed.
+struct Recording {
+    inner: LocalApprovalBroker,
+    seen: Mutex<Option<(orcel_approval::ApprovedToken, ConsumeExpectation)>>,
+}
+
+impl ApprovalBroker for Recording {
+    fn request_token(
+        &self,
+        prompt: &ApprovalPrompt,
+    ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+        self.inner.request_token(prompt)
+    }
+
+    fn consume(
+        &self,
+        token: &orcel_approval::ApprovedToken,
+        expected: &ConsumeExpectation,
+        now_ms: u64,
+    ) -> Result<(), orcel_approval::ApprovalError> {
+        *self.seen.lock().unwrap() = Some((token.clone(), expected.clone()));
+        self.inner.consume(token, expected, now_ms)
+    }
+}
+
+/// A broker for requests that must never ask.
+struct NeverAsked;
+
+impl ApprovalBroker for NeverAsked {
+    fn request_token(
+        &self,
+        _: &ApprovalPrompt,
+    ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+        panic!("this request must not prompt")
+    }
+
+    fn consume(
+        &self,
+        _: &orcel_approval::ApprovedToken,
+        _: &ConsumeExpectation,
+        _: u64,
+    ) -> Result<(), orcel_approval::ApprovalError> {
+        panic!("this request must not consume")
+    }
 }
