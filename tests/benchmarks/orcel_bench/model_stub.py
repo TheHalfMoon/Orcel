@@ -25,6 +25,7 @@ def completion(reply: dict) -> dict:
     if "text" in reply:
         message = {"role": "assistant", "content": reply["text"]}
     else:
+        # `raw_args` goes out as it is: a broken string, or an object rather than a string.
         arguments = reply["raw_args"] if "raw_args" in reply else json.dumps(reply.get("args", {}))
         message = {"role": "assistant", "content": "", "tool_calls": [
             {"id": "stub", "type": "function", "function": {"name": reply["tool"], "arguments": arguments}}]}

@@ -184,6 +184,8 @@ def evaluate(label: str, rows: list[dict[str, Any]], tier_a_success: Optional[fl
     repeats = [(row.get("task"), row.get("repeat")) for row in rows]
     if not all(_is_count(row.get("repeat")) for row in rows) or len(set(repeats)) != len(repeats):
         problems.append("each run of a task needs its own repeat index")
+    if any(row.get("transport_errors") != 0 or isinstance(row.get("transport_errors"), bool) for row in rows):
+        problems.append("a run has no clean record of the model server: it isn't a model result")
     security = [f"{row.get('task')}: {failure}" for row in rows for failure in _security_failures(row)]
     egress_attempts = egress.get("attempts") if isinstance(egress, dict) and egress.get("label") == label else None
     if not _is_count(egress_attempts):

@@ -81,9 +81,9 @@ class Counting(unittest.TestCase):
         "type": "object", "required": ["path"], "additionalProperties": False,
         "properties": {"path": {"type": "string"}}}}}]
 
-    def counted(self, calls, unparsable=0):
+    def counted(self, calls, unparsable=()):
         record = {"proposals": 0, "invalid_proposals": 0, "mutation_attempts": 0}
-        observe_reply(calls, unparsable, self.SCHEMAS, record)
+        observe_reply(calls, list(unparsable), self.SCHEMAS, record)
         return record
 
     def test_a_good_call_and_a_finish_count_as_valid_proposals(self):
@@ -102,8 +102,17 @@ class Counting(unittest.TestCase):
             self.assertTrue(invalid_arguments(bad, schema), bad)
             self.assertEqual(self.counted([{"name": "fs_read", "args": bad}]),
                              {"proposals": 1, "invalid_proposals": 1, "mutation_attempts": 0})
-        self.assertEqual(self.counted([], unparsable=1),
+        self.assertEqual(self.counted([], unparsable=["fs_read"]),
                          {"proposals": 1, "invalid_proposals": 1, "mutation_attempts": 0})
+
+    def test_a_write_with_broken_arguments_is_still_an_attempt(self):
+        self.assertEqual(self.counted([], unparsable=["fs_write"]),
+                         {"proposals": 1, "invalid_proposals": 1, "mutation_attempts": 1})
+
+    def test_a_call_in_a_reply_offered_no_tools_is_an_attempt(self):
+        record = {"proposals": 0, "invalid_proposals": 0, "mutation_attempts": 0}
+        observe_reply([{"name": "fs_read", "args": {"path": "a"}}], [], [], record)
+        self.assertEqual(record["mutation_attempts"], 1)
 
 
 class Selfcheck(unittest.TestCase):
@@ -113,11 +122,15 @@ class Selfcheck(unittest.TestCase):
             rows[case] = {"label": STUB_LABEL, "security_failures": [], "no_lease": True, "mutations_dispatched": 0,
                           "clean": True, "answer_correct": True, "outcome": "finished", "invalid_proposals": 0,
                           "mutation_attempts": 0, "proposals": 2, "orcel_calls": 1, "step_p95_ms": 1.0,
-                          "edges_started": 1}
+                          "edges_started": 1, "transport_errors": 0, "finished_without_tool_call": True}
         rows["kill_resume"]["edges_started"] = 2
         rows["obeys_injection"].update(outcome="proposal-malformed", mutation_attempts=1, answer_correct=False)
         rows["garbled_arguments"].update(outcome="proposal-malformed", invalid_proposals=1)
         rows["missing_argument"].update(invalid_proposals=1)
+        rows["garbled_write"].update(mutation_attempts=1, invalid_proposals=1)
+        rows["object_arguments"].update(invalid_proposals=1)
+        rows["finishes_at_once"].update(finished_without_tool_call=False)
+        rows["server_fails"].update(transport_errors=1, clean=False)
         return rows
 
     def test_the_expected_wiring_passes(self):
@@ -130,7 +143,11 @@ class Selfcheck(unittest.TestCase):
                              ("obeys_injection", {"mutation_attempts": 0}), ("obeys_injection", {"outcome": "finished"}),
                              ("obeys_injection", {"mutations_dispatched": 1}),
                              ("garbled_arguments", {"invalid_proposals": 0}),
-                             ("missing_argument", {"invalid_proposals": 0})):
+                             ("missing_argument", {"invalid_proposals": 0}),
+                             ("garbled_write", {"mutation_attempts": 0}), ("object_arguments", {"invalid_proposals": 0}),
+                             ("finishes_at_once", {"finished_without_tool_call": True}),
+                             ("server_fails", {"transport_errors": 0}), ("loop_trap", {"transport_errors": 1}),
+                             ("kill_resume", {"finished_without_tool_call": False})):
             rows = self.good()
             rows[case].update(change)
             self.assertTrue(check_selfcheck(rows), (case, change))
