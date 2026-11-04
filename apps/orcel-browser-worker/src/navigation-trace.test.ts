@@ -11,8 +11,12 @@ test("the timeline names stages with elapsed milliseconds and restarts", () => {
   assert.equal(traceLine(), "navigation timeline: ");
 });
 
-test("the timeline is bounded", () => {
+test("the timeline is bounded, keeps the newest stages and says how many it dropped", () => {
   traceStart(0);
   for (let n = 0; n < 500; n++) traceMark("request", n);
-  assert.equal(traceLine().split(" ").length, 2 + 48);
+  traceMark("last", 500);
+  const line = traceLine();
+  assert.ok(line.startsWith("navigation timeline: (453 earlier) "), line);
+  assert.ok(line.endsWith(" last+500ms"), line);
+  assert.equal(line.split("+").length - 1, 48);
 });
