@@ -88,9 +88,9 @@ lookup and no environment override. It reads two files there:
 |---|---|---|
 | Windows | the release payload, beside `orceld.exe`; both files are in `manifest.json`, so the installer verifies them | `scripts/package-release.mjs` (`--contain-target-dir`) in `build-package-qualify`, and checked by `release_qualification` and the reproducibility check |
 | Linux | `/usr/lib/orcel/` from the deb or rpm (root-owned, 0755 and 0644), or `~/.local/share/orcel/bin/` from the tarball | `distribution/linux/package.sh <version> <orceld> <orcel-contain> <out>` and `nfpm.yaml` |
-| macOS | not packaged | see below |
+| macOS | no signed package; an unsigned development tarball holds both files, beside `orceld` | `distribution/macos/package-dev.sh`; see below |
 
-**macOS is not packaged yet.** XP-16, the signed app bundle and LaunchAgent,
+**macOS has no signed package yet.** CI builds an unsigned development tarball (`distribution/macos/`). XP-16, the signed app bundle and LaunchAgent,
 waits on the Apple Developer ID (FD-05). Until then:
 
 - a developer can place a `cargo build --release --locked --bin orcel-contain`
