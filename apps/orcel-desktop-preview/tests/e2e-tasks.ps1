@@ -93,11 +93,15 @@ try {
     $ready = Receive-Job -Job $driver -Wait
     Remove-Job -Job $driver
     if (-not $ready) { throw "the app never reached its task view" }
-    # Give its watcher a moment to be subscribed: a slow one still catches this
-    # on its first read, but as history rather than news.
-    Start-Sleep -Seconds 2
-    $livePreview = Report "preview" @{ task_id = $secondId; name = "live.md"; content = "# Live`n" } 4
-    if (-not $livePreview.ok) { throw "report/preview failed: $($livePreview | ConvertTo-Json -Compress -Depth 6)" }
+    # Keep previewing until the app has seen one: an update before its watcher
+    # subscribes is history, and correctly isn't announced.
+    $n = 4
+    do {
+        $livePreview = Report "preview" @{ task_id = $secondId; name = "live.md"; content = "# Live`n" } $n
+        if (-not $livePreview.ok) { throw "report/preview failed: $($livePreview | ConvertTo-Json -Compress -Depth 6)" }
+        $n++
+        Start-Sleep -Seconds 3
+    } while (-not $app.HasExited -and $n -lt 20)
     Write-Output "PASS orceld previewed a second report while the app watched"
     $app.WaitForExit()
     if ($app.ExitCode -ne 0) { $failed = $true }

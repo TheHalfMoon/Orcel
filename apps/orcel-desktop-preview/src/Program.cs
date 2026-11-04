@@ -667,10 +667,13 @@ namespace Orcel.DesktopPreview
         /// Events up to here happened before this app was watching: they're
         /// history, which `tasks` shows, so they aren't announced as news.
         internal long QuietThrough = -1;
+        /// Updates may have been missed, so the next connection shows the list.
+        internal bool Refresh;
     }
 
     /// The task timeline, live: follows orceld's `task.updated` events and shows
-    /// each as it happens, so "waiting for approval" appears without asking. Read
+    /// each as it happens, so "waiting for approval" appears without asking. After a
+    /// gap, such as orceld restarting, it shows the current list instead. Read
     /// only, like everything in this app: once subscribed it sends nothing more,
     /// and each connection checks that the server is this user, as AppApi does. The
     /// text comes from a closed list of states and a task id made safe to show.
@@ -708,13 +711,22 @@ namespace Orcel.DesktopPreview
                 Dictionary<string, object> result = frame.TryGetValue("result", out value) ? value as Dictionary<string, object> : null;
                 if (!true.Equals(frame["ok"]) || result == null)
                 {
-                    // A cursor orceld won't take: start again from the beginning.
+                    finished = true;
+                    object failure;
+                    Dictionary<string, object> error = frame.TryGetValue("error", out failure) ? failure as Dictionary<string, object> : null;
+                    // Too many clients for now: the same cursor is still good.
+                    if (Text(error, "code") == "BUSY") return null;
+                    // A cursor orceld won't take: start over, with what was missed
+                    // shown as the current list rather than replayed as news.
                     cursor.AfterSeq = 0;
                     cursor.Epoch = null;
-                    finished = true;
+                    cursor.QuietThrough = -1;
+                    cursor.Refresh = true;
                     return null;
                 }
-                cursor.Epoch = Text(result, "epoch");
+                // Only a fresh subscription learns its epoch here. With a cursor, the
+                // cursor's own epoch stands until a snapshot replaces it.
+                if (cursor.AfterSeq == 0) cursor.Epoch = Text(result, "epoch");
                 if (cursor.QuietThrough < 0 && result.TryGetValue("head_seq", out value)) cursor.QuietThrough = Number(value);
                 return null;
             }
@@ -730,7 +742,9 @@ namespace Orcel.DesktopPreview
                 cursor.AfterSeq = after > 0 ? after : 0;
                 cursor.Epoch = Text(next, "epoch");
                 // What follows is new, including a new run's low sequence numbers.
+                // What came before wasn't seen: the next connection shows the list.
                 cursor.QuietThrough = cursor.AfterSeq;
+                cursor.Refresh = true;
                 finished = true;
                 return null;
             }
@@ -774,6 +788,11 @@ namespace Orcel.DesktopPreview
                     bool finished;
                     string text = Apply(line, cursor, out finished);
                     if (text != null) show(text);
+                    if (cursor.Refresh && !finished)
+                    {
+                        cursor.Refresh = false;
+                        show("Task updates may have been missed. The current list:\n" + Timeline.Read());
+                    }
                     if (finished) return;
                 }
             }
@@ -1316,7 +1335,11 @@ namespace Orcel.DesktopPreview
             expect(shown != null && shown.Split('\n').Length == 1 && !shown.Contains("\u2028") && !shown.Contains("\u202E"), "a task id can't add a line or reorder the display");
 
             expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"event\":{\"seq\":10,\"epoch\":\"e2\",\"run_id\":null,\"step_id\":null,\"kind\":\"snapshot\",\"at_ms\":1,\"data\":{\"reason\":\"epoch\",\"resubscribe\":{\"after_seq\":10,\"epoch\":\"e2\"}}}}", cursor, out finished) == null && finished && cursor.AfterSeq == 10 && cursor.Epoch == "e2", "a snapshot sets the next cursor and ends the connection");
-            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"INVALID_REQUEST\"}}", cursor, out finished) == null && finished && cursor.AfterSeq == 0 && cursor.Epoch == null, "a refused cursor starts again");
+            expect(cursor.Refresh, "a snapshot means updates may have been missed");
+            cursor.Refresh = false;
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":true,\"result\":{\"epoch\":\"e9\",\"head_seq\":99,\"after_seq\":10}}", cursor, out finished) == null && cursor.Epoch == "e2", "with a cursor, the acknowledgement doesn't change its epoch");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"BUSY\"}}", cursor, out finished) == null && finished && cursor.AfterSeq == 10 && cursor.Epoch == "e2" && !cursor.Refresh, "busy keeps the cursor, so nothing is replayed");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"INVALID_REQUEST\"}}", cursor, out finished) == null && finished && cursor.AfterSeq == 0 && cursor.Epoch == null && cursor.QuietThrough == -1 && cursor.Refresh, "a refused cursor starts again, showing the list rather than replaying");
             foreach (string bad in new[] { "not json", "[]", "{\"v\":\"other/1\",\"event\":{}}", "{\"v\":\"orcel-app-api/1\",\"event\":{\"kind\":\"task.updated\"}}" })
             {
                 expect(TaskWatcher.Apply(bad, new WatchCursor(), out finished) == null && finished, "an unusable frame ends the connection: " + bad);

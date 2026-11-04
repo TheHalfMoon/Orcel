@@ -72,4 +72,4 @@ See master planning issue #279, identity #281 and security blocker #278 in the O
 
 ## Live task updates
 
-The app follows `orceld`'s `task.updated` events over the read-only app API and shows each as it happens, so "report proposed, waiting for approval" appears without typing `tasks`. Once subscribed it sends nothing more, and each connection checks that the server is this user at normal integrity. What happened before the app started isn't announced: `tasks` shows it. CI runs this against a real `orceld` under UI Automation on a hosted runner.
+The app follows `orceld`'s `task.updated` events over the read-only app API and shows each as it happens, so "report proposed, waiting for approval" appears without typing `tasks`. Once subscribed it sends nothing more, and each connection checks that the server is this user at normal integrity. What happened before the app started isn't announced: `tasks` shows it. If updates may have been missed, such as when `orceld` restarts or the app falls behind, it says so and shows the current list instead. CI runs this against a real `orceld` under UI Automation on a hosted runner.
