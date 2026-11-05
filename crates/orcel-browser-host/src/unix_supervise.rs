@@ -1881,24 +1881,16 @@ mod tests {
         assert!(left.is_empty(), "survivors {left:?}");
     }
 
-    /// B9c: from inside a unit, one child moves itself to a new sibling cgroup, then
-    /// another tries the same under Landlock and also tries the user bus. The answer
-    /// goes to argv[1], written whole by a rename.
+    /// B9c: from inside a unit, a child moves itself to a new sibling cgroup, before
+    /// and after a restricted child tries each way out it can reach. The answer goes
+    /// to argv[1], written whole by a rename, whatever went wrong.
     #[cfg(target_os = "linux")]
     const LANDLOCK_CGROUP: &str = r#"
-import ctypes, json, os, socket, struct, sys
+import ctypes, errno, json, os, socket, struct, sys
 
 def own_cgroup():
     with open('/proc/self/cgroup') as f:
         return next(line.split('::', 1)[1].strip() for line in f if line.startswith('0::'))
-
-def try_move(target):
-    try:
-        with open(os.path.join(target, 'cgroup.procs'), 'w') as f:
-            f.write(str(os.getpid()))
-        return None
-    except OSError as error:
-        return error.errno
 
 def restrict():
     libc = ctypes.CDLL(None, use_errno=True)
@@ -1929,46 +1921,94 @@ def in_child(work):
             break
         data += chunk
     os.waitpid(pid, 0)
-    return json.loads(data)
+    return json.loads(data) if data else {'error': 'no answer'}
+
+def clone_into(target, here):
+    """A child made directly in the sibling cgroup, by a directory opened read-only."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    folder = os.open(target, os.O_RDONLY | os.O_DIRECTORY)
+    read_end, write_end = os.pipe()
+    flags = 0x200000000
+    args = struct.pack('=11Q', flags, 0, 0, 0, 17, 0, 0, 0, 0, 0, folder)
+    buffer = ctypes.create_string_buffer(args)
+    pid = libc.syscall(435, buffer, ctypes.c_size_t(len(args)))
+    if pid == 0:
+        moved = own_cgroup() != here
+        os.write(write_end, b'1' if moved else b'0')
+        os._exit(0)
+    if pid < 0:
+        return False
+    os.close(write_end)
+    landed = os.read(read_end, 1) == b'1'
+    os.waitpid(pid, 0)
+    return landed
 
 here = own_cgroup()
 parent = '/sys/fs/cgroup' + os.path.dirname(here)
 target = os.path.join(parent, 'orcel-sg115-b9c-' + str(os.getpid()))
+procs = os.path.join(target, 'cgroup.procs')
 answer = {'made': False}
+
+def control():
+    with open(procs, 'w') as f:
+        f.write(str(os.getpid()))
+    return {'moved': own_cgroup() != here}
+
+def restricted():
+    inherited = os.open(procs, os.O_WRONLY)
+    if not restrict():
+        return {'restricted': False}
+    result = {'restricted': True, 'open_errno': None}
+    try:
+        os.close(os.open(procs, os.O_WRONLY))
+    except OSError as error:
+        result['open_errno'] = error.errno
+    result['stayed'] = own_cgroup() == here
+    bus = socket.socket(socket.AF_UNIX)
+    try:
+        bus.connect(os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/nonexistent'), 'bus'))
+        result['bus'] = True
+    except OSError:
+        result['bus'] = False
+    try:
+        result['clone3'] = clone_into(target, here)
+    except OSError:
+        result['clone3'] = False
+    try:
+        os.write(inherited, str(os.getpid()).encode())
+    except OSError:
+        pass
+    result['inherited_fd'] = own_cgroup() != here
+    return result
+
 try:
     os.mkdir(target)
     answer['made'] = True
-except OSError as error:
-    answer['mkdir_errno'] = error.errno
-if answer['made']:
-    def control():
-        error = try_move(target)
-        return {'errno': error, 'moved': own_cgroup() != here}
-    def restricted():
-        if not restrict():
-            return {'restricted': False}
-        error = try_move(target)
-        bus = socket.socket(socket.AF_UNIX)
-        try:
-            bus.connect(os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/nonexistent'), 'bus'))
-            reachable = True
-        except OSError:
-            reachable = False
-        return {'restricted': True, 'errno': error, 'stayed': own_cgroup() == here, 'bus': reachable}
     answer['control'] = in_child(control)
     answer['landlock'] = in_child(restricted)
-    os.rmdir(target)
-with open(sys.argv[1] + '.tmp', 'w') as f:
-    json.dump(answer, f)
-os.rename(sys.argv[1] + '.tmp', sys.argv[1])
+    answer['control_after'] = in_child(control)
+except BaseException as error:
+    answer['error'] = type(error).__name__
+finally:
+    if answer['made']:
+        try:
+            os.rmdir(target)
+        except OSError as error:
+            answer['rmdir_errno'] = error.errno
+    with open(sys.argv[1] + '.tmp', 'w') as f:
+        json.dump(answer, f)
+    os.rename(sys.argv[1] + '.tmp', sys.argv[1])
 "#;
 
-    /// B9c (investigation, Linux): Landlock stops a process in a unit moving itself to
-    /// another cgroup, with a control showing the move works without it. The user bus
-    /// stays reachable, which is recorded and not asserted: this closes one route out.
+    /// B9c (investigation, Linux): what Landlock does and doesn't do about leaving a
+    /// unit's cgroup. It refuses a fresh open of `cgroup.procs`, shown against a control
+    /// before and after. It doesn't stop an inherited descriptor, `clone3` with
+    /// `CLONE_INTO_CGROUP` or the user bus: those are measured and recorded, not
+    /// asserted, so this is evidence that Landlock alone isn't a cgroup the engine
+    /// can't leave.
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_landlocked_process_cannot_leave_the_units_cgroup() {
+    fn landlock_refuses_a_fresh_open_of_cgroup_procs_and_leaves_other_routes_out() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos())
@@ -1993,6 +2033,18 @@ os.rename(sys.argv[1] + '.tmp', sys.argv[1])
             let _ = std::fs::remove_dir_all(answer_path.parent().unwrap());
             return;
         }
+        // Stops the unit and removes the scratch folder however the test ends.
+        struct Cleanup(String, std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = Command::new("systemctl")
+                    .args(["--user", "stop"])
+                    .arg(&self.0)
+                    .output();
+                let _ = std::fs::remove_dir_all(&self.1);
+            }
+        }
+        let _cleanup = Cleanup(unit, answer_path.parent().unwrap().to_owned());
         let begun = Instant::now();
         let answer = loop {
             if let Ok(text) = std::fs::read_to_string(&answer_path) {
@@ -2002,11 +2054,6 @@ os.rename(sys.argv[1] + '.tmp', sys.argv[1])
             assert!(begun.elapsed() < DEADLINE, "the fixture never answered");
             std::thread::sleep(Duration::from_millis(20));
         };
-        let _ = Command::new("systemctl")
-            .args(["--user", "stop"])
-            .arg(&unit)
-            .output();
-        let _ = std::fs::remove_dir_all(answer_path.parent().unwrap());
         if answer["made"] != true {
             println!("SG115-EVIDENCE B9c refused: no sibling cgroup could be made: {answer}");
             return;
@@ -2015,20 +2062,28 @@ os.rename(sys.argv[1] + '.tmp', sys.argv[1])
             println!("SG115-EVIDENCE B9c refused: Landlock is unavailable: {answer}");
             return;
         }
-        let control_moved = answer["control"]["moved"] == true;
-        let refused = answer["landlock"]["errno"].is_i64();
+        const EACCES: i64 = 13;
+        let controls =
+            answer["control"]["moved"] == true && answer["control_after"]["moved"] == true;
+        let open_refused = answer["landlock"]["open_errno"].as_i64() == Some(EACCES);
         let stayed = answer["landlock"]["stayed"] == true;
+        let inherited = answer["landlock"]["inherited_fd"] == true;
+        let clone3 = answer["landlock"]["clone3"] == true;
         let bus = answer["landlock"]["bus"] == true;
         println!(
-            "SG115-EVIDENCE B9c landlock: control moved={control_moved}, restricted refused={refused}, restricted stayed={stayed}, bus reachable={bus}"
+            "SG115-EVIDENCE B9c landlock: controls moved={controls}, fresh open refused={open_refused}, stayed={stayed}; still open: inherited fd={inherited}, clone3={clone3}, bus={bus}"
         );
         assert!(
-            control_moved,
-            "the control couldn't move, so the result would be vacuous: {answer}"
+            controls,
+            "a control couldn't move, so the refusal may not be Landlock's: {answer}"
         );
         assert!(
-            refused && stayed,
-            "the restricted process left its cgroup: {answer}"
+            open_refused && stayed,
+            "a fresh open wasn't refused: {answer}"
+        );
+        assert!(
+            answer.get("rmdir_errno").is_none(),
+            "a stray cgroup was left: {answer}"
         );
     }
 
