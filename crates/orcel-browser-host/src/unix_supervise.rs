@@ -1881,6 +1881,157 @@ mod tests {
         assert!(left.is_empty(), "survivors {left:?}");
     }
 
+    /// B9c: from inside a unit, one child moves itself to a new sibling cgroup, then
+    /// another tries the same under Landlock and also tries the user bus. The answer
+    /// goes to argv[1], written whole by a rename.
+    #[cfg(target_os = "linux")]
+    const LANDLOCK_CGROUP: &str = r#"
+import ctypes, json, os, socket, struct, sys
+
+def own_cgroup():
+    with open('/proc/self/cgroup') as f:
+        return next(line.split('::', 1)[1].strip() for line in f if line.startswith('0::'))
+
+def try_move(target):
+    try:
+        with open(os.path.join(target, 'cgroup.procs'), 'w') as f:
+            f.write(str(os.getpid()))
+        return None
+    except OSError as error:
+        return error.errno
+
+def restrict():
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(38, 1, 0, 0, 0) != 0:
+        return False
+    attr = struct.pack('=Q', 1 << 1)
+    ruleset = libc.syscall(444, ctypes.c_char_p(attr), ctypes.c_size_t(len(attr)), ctypes.c_uint32(0))
+    if ruleset < 0:
+        return False
+    return libc.syscall(446, ctypes.c_int(ruleset), ctypes.c_uint32(0)) == 0
+
+def in_child(work):
+    read_end, write_end = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_end)
+        try:
+            answer = work()
+        except BaseException as error:
+            answer = {'error': type(error).__name__}
+        os.write(write_end, json.dumps(answer).encode())
+        os._exit(0)
+    os.close(write_end)
+    data = b''
+    while True:
+        chunk = os.read(read_end, 4096)
+        if not chunk:
+            break
+        data += chunk
+    os.waitpid(pid, 0)
+    return json.loads(data)
+
+here = own_cgroup()
+parent = '/sys/fs/cgroup' + os.path.dirname(here)
+target = os.path.join(parent, 'orcel-sg115-b9c-' + str(os.getpid()))
+answer = {'made': False}
+try:
+    os.mkdir(target)
+    answer['made'] = True
+except OSError as error:
+    answer['mkdir_errno'] = error.errno
+if answer['made']:
+    def control():
+        error = try_move(target)
+        return {'errno': error, 'moved': own_cgroup() != here}
+    def restricted():
+        if not restrict():
+            return {'restricted': False}
+        error = try_move(target)
+        bus = socket.socket(socket.AF_UNIX)
+        try:
+            bus.connect(os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/nonexistent'), 'bus'))
+            reachable = True
+        except OSError:
+            reachable = False
+        return {'restricted': True, 'errno': error, 'stayed': own_cgroup() == here, 'bus': reachable}
+    answer['control'] = in_child(control)
+    answer['landlock'] = in_child(restricted)
+    os.rmdir(target)
+with open(sys.argv[1] + '.tmp', 'w') as f:
+    json.dump(answer, f)
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])
+"#;
+
+    /// B9c (investigation, Linux): Landlock stops a process in a unit moving itself to
+    /// another cgroup, with a control showing the move works without it. The user bus
+    /// stays reachable, which is recorded and not asserted: this closes one route out.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_landlocked_process_cannot_leave_the_units_cgroup() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let unit = format!("orcel-sg115-b9c-{}-{nanos}", std::process::id());
+        let answer_path = scratch_file("b9c-answer");
+        let started = Command::new("systemd-run")
+            .args(["--user", "--quiet", "--collect", "--service-type=exec"])
+            .arg(format!("--unit={unit}"))
+            .args(["python3", "-c", LANDLOCK_CGROUP])
+            .arg(&answer_path)
+            .output();
+        let refused = match &started {
+            Err(error) => Some(error.to_string()),
+            Ok(output) if !output.status.success() => {
+                Some(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+            }
+            Ok(_) => None,
+        };
+        if let Some(reason) = refused {
+            println!("SG115-EVIDENCE B9c refused: {reason}");
+            let _ = std::fs::remove_dir_all(answer_path.parent().unwrap());
+            return;
+        }
+        let begun = Instant::now();
+        let answer = loop {
+            if let Ok(text) = std::fs::read_to_string(&answer_path) {
+                break serde_json::from_str::<serde_json::Value>(&text)
+                    .expect("the fixture's answer");
+            }
+            assert!(begun.elapsed() < DEADLINE, "the fixture never answered");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let _ = Command::new("systemctl")
+            .args(["--user", "stop"])
+            .arg(&unit)
+            .output();
+        let _ = std::fs::remove_dir_all(answer_path.parent().unwrap());
+        if answer["made"] != true {
+            println!("SG115-EVIDENCE B9c refused: no sibling cgroup could be made: {answer}");
+            return;
+        }
+        if answer["landlock"]["restricted"] != true {
+            println!("SG115-EVIDENCE B9c refused: Landlock is unavailable: {answer}");
+            return;
+        }
+        let control_moved = answer["control"]["moved"] == true;
+        let refused = answer["landlock"]["errno"].is_i64();
+        let stayed = answer["landlock"]["stayed"] == true;
+        let bus = answer["landlock"]["bus"] == true;
+        println!(
+            "SG115-EVIDENCE B9c landlock: control moved={control_moved}, restricted refused={refused}, restricted stayed={stayed}, bus reachable={bus}"
+        );
+        assert!(
+            control_moved,
+            "the control couldn't move, so the result would be vacuous: {answer}"
+        );
+        assert!(
+            refused && stayed,
+            "the restricted process left its cgroup: {answer}"
+        );
+    }
+
     /// The sweep never claims verified coverage while any descendant lives:
     /// the property the verified sweep exists for.
     #[test]

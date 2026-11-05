@@ -99,7 +99,7 @@ jobs:
           loginctl show-user "$USER" --property=Linger --property=State || true
           ls -l "$XDG_RUNTIME_DIR/bus"
           status=0
-          out=$(cargo test -p orcel-browser-host --lib -- --exact --nocapture --test-threads=1 unix_supervise::tests::a_pid_namespace_init_takes_its_whole_family_with_it unix_rehearsal::tests::a_pid_namespace_takes_a_crashed_hosts_family_with_it unix_rehearsal::tests::an_engine_namespace_dies_with_its_crashed_host unix_supervise::tests::a_parent_death_signal_follows_the_spawning_thread unix_supervise::tests::a_user_service_cgroup_takes_a_crashed_hosts_family_with_it 2>&1) || status=$?
+          out=$(cargo test -p orcel-browser-host --lib -- --exact --nocapture --test-threads=1 unix_supervise::tests::a_pid_namespace_init_takes_its_whole_family_with_it unix_rehearsal::tests::a_pid_namespace_takes_a_crashed_hosts_family_with_it unix_rehearsal::tests::an_engine_namespace_dies_with_its_crashed_host unix_supervise::tests::a_parent_death_signal_follows_the_spawning_thread unix_supervise::tests::a_user_service_cgroup_takes_a_crashed_hosts_family_with_it unix_supervise::tests::a_landlocked_process_cannot_leave_the_units_cgroup 2>&1) || status=$?
           printf '%s\n' "$out"
           [ "$status" -eq 0 ]
           grep -qE "SG115-RESULT PID namespace|SG115-EVIDENCE unprivileged PID namespace refused" <<<"$out"
@@ -109,6 +109,7 @@ jobs:
           # Here a user manager was enabled above, so only the result counts:
           # a refusal line is evidence on a local host, never a pass in CI.
           grep -qE "SG115-EVIDENCE B9b user service: helper gone=true, control helper survived=true" <<<"$out"
+          grep -qE "SG115-EVIDENCE B9c landlock: control moved=true, restricted refused=true, restricted stayed=true" <<<"$out"
       # BM-02 evidence on this OS: both tiers again with their per-case lines
       # in the log (the Test step captures them when they pass), and both
       # reports checked against orcel-benchmark-report/1.
