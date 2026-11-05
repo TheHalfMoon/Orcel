@@ -9,7 +9,9 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The environment orceld passes the host on this OS
@@ -45,6 +47,39 @@ pub struct Host {
     next_id: u64,
     /// Every raw response line, for frame-log assertions.
     pub log: Vec<String>,
+    /// The highest resident memory seen so far, in KiB (M-NAT-04).
+    peak_rss_kib: Arc<AtomicU64>,
+    stop_sampling: Arc<AtomicBool>,
+}
+
+/// A process's resident memory in KiB, or `None` once it has gone.
+fn rss_kib(pid: u32) -> Option<u64> {
+    if cfg!(target_os = "linux") {
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+        let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+        line.split_whitespace().nth(1)?.parse().ok()
+    } else {
+        let out = Command::new("ps")
+            .args(["-o", "rss=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    }
+}
+
+/// Samples the host once a second, as M-NAT-04 asks, until told to stop or it exits.
+fn sample_rss(pid: u32, peak: Arc<AtomicU64>, stop: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            match rss_kib(pid) {
+                Some(kib) => {
+                    peak.fetch_max(kib, Ordering::Relaxed);
+                }
+                None => return,
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    });
 }
 
 fn reader(stdout: ChildStdout) -> Receiver<String> {
@@ -86,12 +121,21 @@ impl Host {
         .expect("the host starts");
         let stdin = child.stdin.take().expect("stdin");
         let lines = reader(child.stdout.take().expect("stdout"));
+        let peak_rss_kib = Arc::new(AtomicU64::new(0));
+        let stop_sampling = Arc::new(AtomicBool::new(false));
+        sample_rss(
+            child.id(),
+            Arc::clone(&peak_rss_kib),
+            Arc::clone(&stop_sampling),
+        );
         Self {
             child,
             stdin,
             lines,
             next_id: 1,
             log: Vec::new(),
+            peak_rss_kib,
+            stop_sampling,
         }
     }
 
@@ -132,6 +176,14 @@ impl Host {
         self.request("hello", json!({}))
     }
 
+    /// The host's peak resident memory so far, in MiB, sampled once a second. Real
+    /// memory of this one process: not the fixture apps, and a peak between samples
+    /// isn't seen.
+    #[allow(dead_code)]
+    pub fn rss_mb_peak(&self) -> f64 {
+        self.peak_rss_kib.load(Ordering::Relaxed) as f64 / 1024.0
+    }
+
     pub fn shutdown(mut self) -> std::process::ExitStatus {
         let reply = self.request("shutdown", json!({}));
         assert_eq!(reply["ok"], true);
@@ -141,6 +193,7 @@ impl Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
+        self.stop_sampling.store(true, Ordering::Relaxed);
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
