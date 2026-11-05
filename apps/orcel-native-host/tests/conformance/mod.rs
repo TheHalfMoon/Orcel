@@ -1441,7 +1441,10 @@ pub fn raw_latency(
                     break;
                 }
                 seen = now;
-                assert!(Instant::now() < deadline, "{case}: the journal never settled");
+                assert!(
+                    Instant::now() < deadline,
+                    "{case}: the journal never settled"
+                );
             }
             let mut fields = cell.fields.clone();
             fields["window"] = reference.clone();
