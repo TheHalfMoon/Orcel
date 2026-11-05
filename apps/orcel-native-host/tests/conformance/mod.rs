@@ -1325,6 +1325,53 @@ pub fn run_action(
     );
 }
 
+/// M-NAT-01: warm `list_windows` and `observe_window` latency, [`OBSERVATIONS_PER_TYPE`]
+/// calls each on the fixture desktop. Each listing must hold a window, and each
+/// tree must hold nodes, so a sample can't be an empty answer. The fixture, focus,
+/// stacking and pointer must be where they were.
+pub fn observation_latency(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    reference: &Value,
+    mut state: impl FnMut() -> Value,
+) {
+    let before = oracles(host, state());
+    let mut timed =
+        |host: &mut Host, op: &str, fields: Value, has_answer: &dyn Fn(&Value) -> bool| {
+            let mut samples = Vec::with_capacity(OBSERVATIONS_PER_TYPE);
+            for _ in 0..OBSERVATIONS_PER_TYPE {
+                let started = Instant::now();
+                let reply = host.request(op, fields.clone());
+                samples.push(started.elapsed());
+                assert_eq!(reply["ok"], true, "{op}: {reply}");
+                assert!(has_answer(&reply), "{op} answered with nothing: {reply}");
+            }
+            report.pass(
+                format!("{prefix}/latency/observe/{op}"),
+                "measured",
+                &samples,
+                OBSERVATIONS_PER_TYPE,
+            );
+        };
+    timed(host, "list_windows", json!({}), &|reply| {
+        reply["windows"]
+            .as_array()
+            .is_some_and(|windows| !windows.is_empty())
+    });
+    timed(
+        host,
+        "observe_window",
+        json!({"window": reference, "max_nodes": 256, "max_depth": 8}),
+        &|reply| !flatten(&reply["elements"]).is_empty(),
+    );
+    let after = oracles(host, state());
+    assert_eq!(before, after, "observing changed an oracle");
+}
+
+/// M-NAT-01: how many of each observation a latency row times.
+const OBSERVATIONS_PER_TYPE: usize = 200;
+
 /// M-NAT-03: how many of each action type a latency row times.
 const ACTIONS_PER_TYPE: usize = 100;
 
