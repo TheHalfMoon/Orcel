@@ -1433,6 +1433,7 @@ pub fn raw_latency(
             // A late event of the last action mustn't count toward this one: start
             // once the journal has been still for a while.
             let mut seen = crate::support::events(&state()).len();
+            let deadline = Instant::now() + Duration::from_secs(10);
             loop {
                 std::thread::sleep(Duration::from_millis(50));
                 let now = crate::support::events(&state()).len();
@@ -1440,6 +1441,7 @@ pub fn raw_latency(
                     break;
                 }
                 seen = now;
+                assert!(Instant::now() < deadline, "{case}: the journal never settled");
             }
             let mut fields = cell.fields.clone();
             fields["window"] = reference.clone();
