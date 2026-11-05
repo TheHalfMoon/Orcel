@@ -55,13 +55,13 @@ Install puts `orcel` on PATH; open a new terminal if it isn't found.
 
 **The scratch folder must be the only workspace.** Orcel uses the first configured workspace as the default, and an existing id is refused. So before `workspace add`, run `orcel workspace list`, write down what's there, and `orcel workspace remove <id>` each one. You restore them in step 6. Removing a workspace from configuration never touches its files.
 
-Then check that everything is in place. It reads the configuration, and approves and starts nothing:
+Then check that everything is in place. It reads the configuration, and approves nothing and starts no client:
 
 ```bash
 cargo run -p orcel-lifecycle --example f4_journey -- ready C:/orcel-f4-journey
 ```
 
-Every line should say `PASS`.
+Every check should say `PASS`.
 
 ### 2. Start the client and record what it is
 
@@ -107,7 +107,7 @@ Expected: refused, because the destination exists. `reports/taken.md` is unchang
 
 > Start a new report task the same way, for a report named "q3-stale.md", and preview it. Do not commit yet.
 
-In a second terminal, change the source:
+In a second terminal, **in your checkout of the commit**, not the scratch folder, change the source:
 
 ```bash
 cargo run -p orcel-lifecycle --example f4_journey -- change-source C:/orcel-f4-journey
@@ -123,17 +123,21 @@ Expected: `TARGET_STALE`.
 
 > Start a new report task the same way, for a report named "q3-recovered.md", and preview it. Do not commit. Show me the task_id.
 
-In a second terminal, end only `orceld`, as a crash would. Keep the client running. This ends every `orceld` you have running, so close any other client that uses Orcel first:
+In the second terminal, end only `orceld`, as a crash would. Keep the client running. This ends every `orceld` you have running, so close any other client that uses Orcel first. Use **PowerShell or Command Prompt** for this one: Git Bash rewrites the `/F` and `/IM` flags.
 
-```bash
+```powershell
 taskkill /F /IM orceld.exe
 ```
 
 Then back in the client:
 
-> Call task_resume_summary with that task_id and show me the result. Do not start or commit anything else. If the first call is refused because orceld stopped, call it once more.
+> Call task_resume_summary with that task_id and show me the whole result. If the first call is refused because orceld stopped, call it once more. Do not commit anything.
 
 Expected: the same `task_id`, with `observe` and `preview` among its completed steps and nothing unknown. The first call may be refused, and that request is never re-sent for you, so asking once more is right. `reports/q3-recovered.md` does not exist.
+
+Then one more task, which shows the new `orceld` works, and gives it a task of its own:
+
+> Start a new report task the same way, with the title "After the restart", and show me the result. Do not preview or commit it.
 
 **G. The task history.** With the client still open, in a regular Windows PowerShell at the repository root, build and open the Windows app:
 
@@ -145,7 +149,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\apps\orcel-desktop-pre
 C:\orcel-f4-app\Orcel.Desktop.exe
 ```
 
-Type `tasks` and press Enter. Expected: the tasks of the current `orceld` run, with their states and steps, and shell and process sessions labelled unavailable. Note whether that's what you saw: the kit doesn't read the app. This command prints the full history from the journal, including the earlier run's tasks:
+Type `tasks` and press Enter. Expected, with shell and process sessions labelled unavailable:
+
+- "After the restart", with its title, is `sources read`.
+- The tasks from before you ended `orceld` have **no title, which is expected**: titles are never written to the journal. The one from F shows `failed`, with the step `run orceld_run_ended`, because its `orceld` is gone and it can't continue. Nothing is wrong with your report from B: it stays `verified`.
+
+Note whether that's what you saw: the kit doesn't read the app. From the checkout, this prints the same history from the journal:
 
 ```bash
 cargo run -p orcel-lifecycle --example f4_journey -- history C:/orcel-f4-journey
@@ -156,6 +165,8 @@ cargo run -p orcel-lifecycle --example f4_journey -- history C:/orcel-f4-journey
 In Claude Code, run `/export` and save to `C:/orcel-f4-journey-transcript.txt`, outside the workspace. Copying the terminal's text into that file also works.
 
 ### 5. Check the evidence
+
+From your checkout:
 
 ```bash
 cargo run -p orcel-lifecycle --example f4_journey -- evidence C:/orcel-f4-journey --client "Claude Code <version>" --transcript C:/orcel-f4-journey-transcript.txt
@@ -180,7 +191,7 @@ Add back the workspaces you removed in step 1, in their original order. `orcel u
 ## What this leaves open
 
 - **Prompt A and the Windows app in G** are read by a person: the kit doesn't parse either.
-- **Rehearsed without you, up to the prompt:** on a real `orceld` and MCP edge in WSL, with a test client and no approval, the kit passes recovery and the existing destination, and fails approved, denied and stale as it should. The Windows run of F and G, and any real client, are first shown by you.
-- **Recovery:** the kit requires a task cut off after its preview, a second `orceld` in the journal and the transcript naming `task_resume_summary` with that task. It can't tell that you ended `orceld` by hand rather than the client restarting.
+- **Rehearsed without you, up to the prompt:** on a real `orceld` and MCP edge in WSL, with a test client and no approval, in this order, the kit passes recovery and the existing destination, and fails approved, denied and stale as it should. The Windows run of F and G, and any real client, are first shown by you.
+- **Recovery:** the kit requires a task cut off after its preview, a second `orceld` in the journal and the transcript naming `task_resume_summary` with that task. It looks for the summary's own fields in the transcript, so a client that hides tool results fails this check. It can't tell that you ended `orceld` by hand rather than the client restarting.
 - **The installed-release journey through uninstall** and **stop and takeover** are other acceptance items, not this one.
 - **Signing stays an open gate.** This is engineering evidence on an unsigned build.

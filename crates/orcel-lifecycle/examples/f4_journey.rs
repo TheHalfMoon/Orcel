@@ -207,7 +207,13 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
             .find(|task| has_step(task, kind, outcome))
             .and_then(|task| task["id"].as_str().map(str::to_owned))
     };
-    // Left mid-task by the orceld that died, then read back by the client from another.
+    // Left mid-task by the orceld that died, then read back by the client, and a later
+    // orceld started a task: a new orceld writes no line until it has one. The summary's
+    // own fields must follow the tool's name, since the prompt names the tool too.
+    let lowered = transcript.to_lowercase();
+    let read_back = lowered
+        .find("task_resume_summary")
+        .map_or("", |at| &lowered[at..]);
     let recovered = tasks.iter().find_map(|task| {
         let id = task["id"].as_str()?;
         let cut_off = has_step(task, "preview", "ok")
@@ -215,11 +221,18 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
                 .as_array()?
                 .iter()
                 .any(|step| step["kind"] == "commit" || step["kind"] == "approval");
-        let another_orceld = tasks.iter().any(|other| other["owner"] != task["owner"]);
+        let ended = task["updated_at_ms"].as_u64()?;
+        let later_orceld = tasks.iter().any(|other| {
+            other["owner"] != task["owner"]
+                && other["created_at_ms"]
+                    .as_u64()
+                    .is_some_and(|at| at >= ended)
+        });
         (cut_off
-            && another_orceld
-            && transcript.contains("task_resume_summary")
-            && transcript.contains(id))
+            && later_orceld
+            && read_back.contains(id)
+            && read_back.contains("completed")
+            && read_back.contains("unknown"))
         .then(|| format!("{id}: cut off after its preview, and read back by the client"))
     });
     let taken = fs::read(dir.join("reports").join("taken.md")).unwrap_or_default();
@@ -252,7 +265,7 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
         check(
             "an interrupted task read back after orceld died",
             recovered,
-            "no task cut off after its preview that the transcript reads back with task_resume_summary",
+            "no task cut off after its preview, read back in the transcript, with a later orceld's task after it",
         ),
         check(
             "the user's existing file is untouched",
@@ -457,6 +470,9 @@ mod tests {
             "steps": steps.iter().map(|(kind, outcome)| json!({"kind": kind, "outcome": outcome})).collect::<Vec<_>>(),
             "report": report,
             "check": {"passed": state == "verified"},
+            "owner": {"run": "the second orceld"},
+            "created_at_ms": 20,
+            "updated_at_ms": 20,
         })
     }
 
@@ -497,10 +513,13 @@ mod tests {
             Value::Null,
         );
         task["owner"] = json!({"run": "the first orceld"});
+        task["created_at_ms"] = json!(5);
+        task["updated_at_ms"] = json!(10);
         task
     }
 
-    const TRANSCRIPT: &str = "a transcript: task_resume_summary for rpt-e\n";
+    const TRANSCRIPT: &str =
+        "a transcript: task_resume_summary for rpt-e: completed observe, preview; unknown none\n";
 
     fn failed(results: &[Check]) -> Vec<&'static str> {
         results
@@ -564,7 +583,7 @@ mod tests {
             failed(&checks(
                 &dir,
                 &refs,
-                "task_resume_summary rpt-e, the tool returned approval_id 123\n"
+                "task_resume_summary rpt-e completed unknown, the tool returned approval_id 123\n"
             )),
             vec![
                 "the user's existing file is untouched",
@@ -588,8 +607,22 @@ mod tests {
         assert!(fails(&tasks, "a transcript\n"));
         assert!(fails(&tasks, "task_resume_summary for rpt-other\n"));
         assert!(fails(&tasks, "rpt-e\n"));
+        // The prompt and the id alone aren't a read-back: it was refused.
+        assert!(fails(
+            &tasks,
+            "call task_resume_summary for rpt-e: refused\n"
+        ));
+        // The summary's words before the call don't count.
+        assert!(fails(
+            &tasks,
+            "completed unknown rpt-e, then task_resume_summary\n"
+        ));
         // Every task from one orceld: nothing died.
-        tasks[4]["owner"] = Value::Null;
+        tasks[4]["owner"] = tasks[0]["owner"].clone();
+        assert!(fails(&tasks, TRANSCRIPT));
+        // Another orceld, but nothing started after this task ended.
+        tasks[4] = cut_off();
+        tasks[4]["updated_at_ms"] = json!(30);
         assert!(fails(&tasks, TRANSCRIPT));
         // A task that went on to commit wasn't cut off after its preview.
         tasks[4] = cut_off();
