@@ -14,6 +14,8 @@ One supported client, at the exact version you record, drives a report task thro
 | Denied report | **You: No** | `APPROVAL_DENIED`; nothing written |
 | Existing destination | orceld, before any Orcel prompt | Refused; your file untouched |
 | Changed source | orceld, before any Orcel prompt | `TARGET_STALE`; nothing written |
+| `orceld` dies mid-task | You end the process; orceld and the client recover | The same session reads what the task did from a new `orceld`; nothing is committed or re-sent |
+| Task history | Read-only | The Windows app and the journal both show each task's steps |
 
 It proves that client version only, not every client.
 
@@ -52,6 +54,14 @@ orcel workspace add default "C:/orcel-f4-journey"
 Install puts `orcel` on PATH; open a new terminal if it isn't found.
 
 **The scratch folder must be the only workspace.** Orcel uses the first configured workspace as the default, and an existing id is refused. So before `workspace add`, run `orcel workspace list`, write down what's there, and `orcel workspace remove <id>` each one. You restore them in step 6. Removing a workspace from configuration never touches its files.
+
+Then check that everything is in place. It reads the configuration, and approves and starts nothing:
+
+```bash
+cargo run -p orcel-lifecycle --example f4_journey -- ready C:/orcel-f4-journey
+```
+
+Every line should say `PASS`.
 
 ### 2. Start the client and record what it is
 
@@ -109,6 +119,38 @@ Then back in the client. No Orcel prompt:
 
 Expected: `TARGET_STALE`.
 
+**F. `orceld` dies mid-task.** No Orcel prompt in this step. The source changed in E, which doesn't matter here:
+
+> Start a new report task the same way, for a report named "q3-recovered.md", and preview it. Do not commit. Show me the task_id.
+
+In a second terminal, end only `orceld`, as a crash would. Keep the client running. This ends every `orceld` you have running, so close any other client that uses Orcel first:
+
+```bash
+taskkill /F /IM orceld.exe
+```
+
+Then back in the client:
+
+> Call task_resume_summary with that task_id and show me the result. Do not start or commit anything else. If the first call is refused because orceld stopped, call it once more.
+
+Expected: the same `task_id`, with `observe` and `preview` among its completed steps and nothing unknown. The first call may be refused, and that request is never re-sent for you, so asking once more is right. `reports/q3-recovered.md` does not exist.
+
+**G. The task history.** With the client still open, in a regular Windows PowerShell at the repository root, build and open the Windows app:
+
+```bash
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\apps\orcel-desktop-preview\build.ps1 -OutputDirectory C:\orcel-f4-app
+```
+
+```bash
+C:\orcel-f4-app\Orcel.Desktop.exe
+```
+
+Type `tasks` and press Enter. Expected: the tasks of the current `orceld` run, with their states and steps, and shell and process sessions labelled unavailable. Note whether that's what you saw: the kit doesn't read the app. This command prints the full history from the journal, including the earlier run's tasks:
+
+```bash
+cargo run -p orcel-lifecycle --example f4_journey -- history C:/orcel-f4-journey
+```
+
 ### 4. Save the transcript
 
 In Claude Code, run `/export` and save to `C:/orcel-f4-journey-transcript.txt`, outside the workspace. Copying the terminal's text into that file also works.
@@ -122,9 +164,10 @@ cargo run -p orcel-lifecycle --example f4_journey -- evidence C:/orcel-f4-journe
 It reads orceld's own journal (`%LOCALAPPDATA%\Orcel\report-tasks.jsonl`), which records steps and outcomes but never file contents, and the workspace. It prints `PASS` or `FAIL` for each path and writes:
 
 - `evidence/summary.json`: the client, tasks, states and checks;
+- `evidence/history.json`: each task's steps and outcomes, without file text;
 - `evidence/transcript.redacted.txt`: the transcript through Orcel's log redactor.
 
-Attach both to #446. **Read the redacted transcript before attaching it**: the redactor catches credentials, not everything you might not want public, and #446 is a public issue.
+Attach them to #446. **Read the redacted transcript before attaching it**: the redactor catches credentials, not everything you might not want public, and #446 is a public issue in a public repository.
 
 ### 6. Afterwards
 
@@ -136,6 +179,8 @@ Add back the workspaces you removed in step 1, in their original order. `orcel u
 
 ## What this leaves open
 
-- **Prompt A** is read by a person: the kit doesn't parse the client's answer.
+- **Prompt A and the Windows app in G** are read by a person: the kit doesn't parse either.
+- **Rehearsed without you, up to the prompt:** on a real `orceld` and MCP edge in WSL, with a test client and no approval, the kit passes recovery and the existing destination, and fails approved, denied and stale as it should. The Windows run of F and G, and any real client, are first shown by you.
+- **Recovery:** the kit requires a task cut off after its preview, a second `orceld` in the journal and the transcript naming `task_resume_summary` with that task. It can't tell that you ended `orceld` by hand rather than the client restarting.
 - **The installed-release journey through uninstall** and **stop and takeover** are other acceptance items, not this one.
 - **Signing stays an open gate.** This is engineering evidence on an unsigned build.
