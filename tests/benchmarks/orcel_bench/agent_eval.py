@@ -422,8 +422,10 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
             "events": {kind: kinds.count(kind) for kind in sorted(set(kinds)) if kind.startswith(("loop.", "context."))},
             "resume": resume or None,
             **episode_security(state, workspace, before, timed.dispatched,
-                               # Only this plan's kill may leave a call without a record.
-                               len(timed.dispatched) - len(timed.answered) if plan.kill_orceld_after else 0),
+                               # Only this plan's kill may leave a call without a record,
+                               # and only a call after it.
+                               len(timed.dispatched) - len(timed.answered)
+                               if plan.kill_orceld_after and len(timed.answered) >= plan.kill_orceld_after else 0),
         })
     finally:
         if tracemalloc.is_tracing():
