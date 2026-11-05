@@ -40,6 +40,51 @@ test("request builder preserves the declared bounded capability", () => {
 });
 
 /**
+ * SG-000120 RJ-03: a write that finds orceld's pipe broken, before any exit is
+ * seen, fails that request and not the edge. The next call reaches a new orceld.
+ */
+test("rj03 a broken pipe to orceld rejects the request and is replaced", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { KernelClient } = await import("./kernel.js");
+  const dir = mkdtempSync(join(tmpdir(), "orcel-rj03-pipe-"));
+  const daemon = join(dir, "fake-orceld.mjs");
+  writeFileSync(
+    daemon,
+    [
+      'import { createInterface } from "node:readline";',
+      "let seen = 0;",
+      "createInterface({ input: process.stdin }).on('line', (line) => {",
+      "  const request = JSON.parse(line);",
+      "  seen += 1;",
+      "  if (request.capability === 'hang') return;",
+      "  process.stdout.write(JSON.stringify({ ok: true, request_id: request.request_id, result: { pid: process.pid, seen } }) + '\\n');",
+      "});"
+    ].join("\n")
+  );
+  const client = new KernelClient(process.execPath, null, null, [daemon]);
+  try {
+    const call = (capability: string) =>
+      client.call({ workspaceId: "default", capability, operation: "get", timeoutMs: 5000 });
+    const first = (await call("system.status")) as unknown as { result: { pid: number } };
+    const broken = client.child;
+    const gone = new Promise((resolve) => broken.once("exit", resolve));
+    const inFlight = call("hang");
+    // What a write to a dead orceld's pipe does, without racing its exit.
+    broken.stdin.destroy(new Error("write EPIPE"));
+    await assert.rejects(inFlight, /orceld stopped reading requests: write EPIPE/);
+    await gone;
+    const next = (await call("system.status")) as unknown as { result: { pid: number; seen: number } };
+    assert.notEqual(next.result.pid, first.result.pid, "a new orceld");
+    assert.equal(next.result.seen, 1, "the refused request was not sent again");
+  } finally {
+    client.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
  * SG-000120 RJ-03: when orceld dies, the session's next call starts a new
  * orceld under the same session id; the request in flight is rejected and
  * never sent again.

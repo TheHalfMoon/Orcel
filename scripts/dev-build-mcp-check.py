@@ -7,14 +7,17 @@ any client.
 Usage: dev-build-mcp-check.py <unpacked-tarball>
 
 Exits non-zero unless the tools are listed, a read works, a read outside the
-workspace is refused, and a report stops at orceld's approval with nothing written.
-No approval is given or simulated.
+workspace is refused, a report stops at orceld's approval with nothing written, an
+existing destination and a changed source are refused, a killed orceld is replaced
+in the same session with its task's progress intact, and a replaced folder keeps
+working from the same state. No approval is given or simulated.
 """
 
 import json
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -48,7 +51,7 @@ class Session:
         self.process.stdin.write(json.dumps({"jsonrpc": "2.0", **message}) + "\n")
         self.process.stdin.flush()
 
-    def request(self, method: str, params: dict) -> dict:
+    def answer(self, method: str, params: dict) -> dict:
         self.next_id += 1
         self.send({"id": self.next_id, "method": method, "params": params})
         while True:
@@ -57,9 +60,13 @@ class Session:
                 raise SystemExit(f"the server exited during {method}")
             message = json.loads(line)
             if message.get("id") == self.next_id:
-                if "error" in message:
-                    raise SystemExit(f"{method}: {message['error']}")
-                return message["result"]
+                return message
+
+    def request(self, method: str, params: dict) -> dict:
+        message = self.answer(method, params)
+        if "error" in message:
+            raise SystemExit(f"{method}: {message['error']}")
+        return message["result"]
 
     def call(self, tool: str, arguments: dict) -> tuple:
         result = self.request("tools/call", {"name": tool, "arguments": arguments})
@@ -73,6 +80,30 @@ class Session:
             self.process.kill()
             self.process.wait()
             raise SystemExit("the server ignored the end of its input")
+
+
+def kill_orceld(session: "Session") -> int:
+    """Kills this session's orceld, as a crash would. Returns how many died."""
+    found = subprocess.run(["pgrep", "-P", str(session.process.pid), "orceld"],
+                           capture_output=True, text=True, timeout=30)
+    pids = [int(pid) for pid in found.stdout.split()]
+    for pid in pids:
+        os.kill(pid, signal.SIGKILL)
+    return len(pids)
+
+
+def call_after_crash(session: "Session", tool: str, arguments: dict) -> tuple:
+    """The call that finds orceld dead may be refused, and isn't sent again. The next reaches a new one."""
+    first = session.answer("tools/call", {"name": tool, "arguments": arguments})
+    result = first.get("result", {})
+    if "error" not in first and result.get("isError") is not True:
+        return False, json.loads(result["content"][0]["text"])
+    require("orceld" in json.dumps(first), f"the refusal says why: {first}")
+    return session.call(tool, arguments)
+
+
+def result_of(answer: dict) -> dict:
+    return answer.get("result", answer)
 
 
 def require(condition: bool, what: str) -> None:
@@ -149,9 +180,67 @@ def main() -> int:
         require(failed and code in APPROVAL_STOPPED, f"orceld's approval stops the commit: {committed}")
         require(not (workspace / "reports" / "q3.md").exists(), "nothing was written")
 
+        # A second task, for the refusals that come before any approval.
+        (workspace / "reports" / "taken.md").write_text("the user's file", encoding="utf-8")
+        failed, started = session.call("report_start", {
+            "title": "Q3 again", "sources": ["data/q3.csv"], "folder": "reports",
+        })
+        require(not failed, f"a second report_start: {started}")
+        task = result_of(started)["task_id"]
+        failed, previewed = session.call("report_preview", {"task_id": task, "name": "q3.md", "content": content})
+        require(not failed, f"a second report_preview: {previewed}")
+        digest = result_of(previewed)["sha256"]
+        failed, taken = session.call("report_preview", {"task_id": task, "name": "taken.md", "content": content})
+        require(failed, f"an existing destination is refused at preview: {taken}")
+
+        # orceld dies, as in a crash. The same session reaches a new one, which reads
+        # what the task did from its journal.
+        require(kill_orceld(session) >= 1, "this session's orceld was running")
+        failed, resumed = call_after_crash(session, "task_resume_summary", {"task_id": task})
+        require(not failed, f"the same session reads its task after the crash: {resumed}")
+        summary = result_of(resumed)
+        kinds = [entry.get("kind") for entry in summary.get("completed", [])]
+        require(summary.get("task_id") == task and "observe" in kinds, f"its progress survived: {resumed}")
+        require(summary.get("unknown") == [], f"nothing was committed: {resumed}")
+        require("north,1250" not in json.dumps(resumed), f"no file text in the summary: {resumed}")
+
+        # A task whose source changes refuses before any approval.
+        failed, started = session.call("report_start", {
+            "title": "Q3 stale", "sources": ["data/q3.csv"], "folder": "reports",
+        })
+        require(not failed, f"a report after the crash: {started}")
+        stale_task = result_of(started)["task_id"]
+        (workspace / "data" / "q3.csv").write_text("north,1\n", encoding="utf-8")
+        failed, stale = session.call("report_preview", {"task_id": stale_task, "name": "s.md", "content": content})
+        code_stale = stale.get("error", {}).get("code")
+        require(failed and code_stale == "TARGET_STALE", f"a changed source makes the task stale: {stale}")
+
         exit_code = session.close()
+        require(sorted(path.name for path in (workspace / "reports").iterdir()) == ["taken.md"],
+                "no report was written")
+        require((workspace / "reports" / "taken.md").read_text(encoding="utf-8") == "the user's file",
+                "the user's file is untouched")
+
+        # Updating is replacing the folder: the state stays where it was.
+        moved = scratch / "replaced"
+        shutil.copytree(home, moved, symlinks=True)
+        again = Session(moved / "bin" / "orcel-mcp", env)
+        again.request("initialize", {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "orcel-dev-build-check", "version": "1"},
+        })
+        again.send({"method": "notifications/initialized"})
+        failed, read = again.call("fs_read", {"path": "data/q3.csv"})
+        require(not failed and "north,1" in json.dumps(read), f"a replaced folder works: {read}")
+        require(again.close() == 0, "the replaced folder's session ends cleanly")
+        # Uninstalling is removing the folder and the state: nothing else was written.
+        shutil.rmtree(moved)
+        left = sorted(path.name for path in scratch.iterdir())
+        require(left == ["outside.txt", "state", "ws"], f"nothing else is left behind: {left}")
+
         print(f"DEV-BUILD-MCP-EVIDENCE {EXPECTED_OS}: {len(tools)} tools, read, refusal, report stopped at "
-              f"approval ({code}), exit {exit_code} "
+              f"approval ({code}), existing destination refused, killed orceld replaced with progress intact, "
+              f"stale source refused ({code_stale}), replaced folder works, exit {exit_code} "
               "(the build and the protocol, not any client)")
         return 0
     finally:

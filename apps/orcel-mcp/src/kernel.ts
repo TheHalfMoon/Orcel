@@ -207,6 +207,14 @@ export class KernelClient {
 
     // Only the current orceld's end touches the session: a late event of a
     // replaced one must not fail requests the new orceld is running.
+    // A write can find orceld gone before its exit is seen. Without this
+    // listener the broken pipe would end the edge, not just the request.
+    child.stdin.on("error", (error) => {
+      if (child !== this.child) return;
+      this.exited = true;
+      this.rejectAll(new Error("orceld stopped reading requests: " + error.message));
+      child.kill();
+    });
     child.on("error", (error) => {
       if (child !== this.child) return;
       this.exited = true;
@@ -269,7 +277,7 @@ export class KernelClient {
       if (!pending) return;
       clearTimeout(pending.timer);
       this.pending.delete(request.request_id);
-      pending.reject(error);
+      pending.reject(new Error("orceld stopped reading requests: " + error.message));
     });
 
     return response;
