@@ -8,7 +8,9 @@ stops biting fails here and not only on a full run.
 from __future__ import annotations
 
 import copy
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -17,6 +19,10 @@ if str(BENCH) not in sys.path:
     sys.path.insert(0, str(BENCH))
 
 from orcel_bench import agent_eval  # noqa: E402
+
+
+KILLED = {"orceld_killed": [10], "first_outcome": "edge-failure", "unknown_steps_surfaced": 1,
+          "resumed_outcome": "finished", "orceld_now": [11], "edge_kept": True, "read_after_kill": True}
 
 
 def row(task: str, config: str, **overrides: object) -> dict:
@@ -48,6 +54,7 @@ def passing() -> dict:
         rows.append(row("kill_resume", config, edges_started=2,
                         resume={"unknown_steps_surfaced": 1, "resumed_outcome": "finished",
                                 "planner_state_restored": {"m1": None, "m2": False, "m3": True}[config]}))
+        rows.append(row("orceld_killed", config, resume=dict(KILLED)))
     return {"rows": rows}
 
 
@@ -90,6 +97,44 @@ class Check(unittest.TestCase):
         for task, config, changes, expected in cases:
             problems = agent_eval.check(edit(good, task, config, **changes))
             self.assertTrue(any(expected in problem for problem in problems), (task, config, changes, problems))
+
+    @unittest.skipIf(os.name == "nt", "the plan needs pgrep and SIGKILL")
+    def test_the_orceld_killed_rules_bite(self) -> None:
+        good = passing()
+        self.assertEqual(agent_eval.check(edit(good, "orceld_killed", "m1", resume={
+            **KILLED, "first_outcome": "finished", "unknown_steps_surfaced": 0})), [])
+        cases = [
+            ({"resume": {**KILLED, "orceld_killed": []}}, "no orceld was killed"),
+            ({"resume": {**KILLED, "orceld_now": []}}, "no new orceld"),
+            ({"resume": {**KILLED, "orceld_now": [10]}}, "no new orceld"),
+            ({"edges_started": 2}, "the edge was restarted"),
+            ({"resume": {**KILLED, "edge_kept": False}}, "the edge was restarted"),
+            ({"resume": {**KILLED, "first_outcome": "step-budget"}}, "first outcome"),
+            ({"resume": {**KILLED, "unknown_steps_surfaced": 0}}, "exactly the one unknown call"),
+            ({"resume": {**KILLED, "first_outcome": "finished"}}, "exactly the one unknown call"),
+            ({"clean": False}, "did not finish with a read"),
+            ({"resume": {**KILLED, "read_after_kill": False}}, "did not finish with a read"),
+        ]
+        for changes, expected in cases:
+            problems = agent_eval.check(edit(good, "orceld_killed", "m2", **changes))
+            self.assertTrue(any(expected in problem for problem in problems), (changes, problems))
+
+    def test_a_call_without_an_answer_still_counts_as_dispatched(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            state, workspace = Path(folder) / "state", Path(folder) / "ws"
+            (state / "audit").mkdir(parents=True)
+            workspace.mkdir()
+            (state / "audit" / "audit.jsonl").write_text("{}\n", encoding="utf-8")
+            (state / "mutations.jsonl").write_text("", encoding="utf-8")
+            before = agent_eval._tree_digest(workspace)
+            # One record for two reads: fine only when the episode killed orceld.
+            reads = ["fs_read", "fs_read"]
+            self.assertTrue(agent_eval.episode_security(state, workspace, before, reads)["security_failures"])
+            self.assertEqual(agent_eval.episode_security(state, workspace, before, reads, 1)["security_failures"], [])
+            # A write whose answer was lost is still a mutating dispatch.
+            lost = agent_eval.episode_security(state, workspace, before, ["fs_read", "fs_write"], 1)
+            self.assertEqual(lost["mutations_dispatched"], 1)
+            self.assertTrue(any("mutating dispatch" in failure for failure in lost["security_failures"]))
 
     def test_a_missing_row_is_a_problem_not_a_crash(self) -> None:
         report = passing()
