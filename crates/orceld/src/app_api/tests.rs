@@ -134,7 +134,6 @@ fn cr01_methods_are_read_only_and_unknown_methods_are_refused() {
         "task.commit",
         "task.approve",
         "task.cancel",
-        "task.stop",
         "report.commit",
         "approval.grant",
         "approval.approve",
@@ -2264,6 +2263,29 @@ fn sg126_task_list_get_and_events_over_the_os_transport() {
     assert_eq!(record["steps"].as_array().unwrap().len(), 4);
     let text = got.to_string();
     assert!(!text.contains("north,Q3") && !text.contains("Q3 revenue summary"));
+
+    // F4 slice 5: a finished task can't be stopped, and stop takes only a task id.
+    let finished = client.call("task.stop", json!({ "task_id": task }));
+    assert_eq!(finished["error"]["code"], "INVALID_REQUEST", "{finished}");
+    for (params, code) in [
+        (json!({}), "INVALID_REQUEST"),
+        (json!({ "task_id": 7 }), "INVALID_REQUEST"),
+        (
+            json!({ "task_id": task, "approve": true }),
+            "INVALID_REQUEST",
+        ),
+        (
+            json!({ "task_id": "rpt-0123456789abcdef0123456789abcdef" }),
+            "TARGET_STALE",
+        ),
+    ] {
+        let frame = client.call("task.stop", params.clone());
+        assert_eq!(frame["error"]["code"], code, "{params}");
+    }
+    assert_eq!(
+        client.call("task.get", json!({ "task_id": task }))["result"]["state"],
+        "verified"
+    );
 
     // Bounded, read-only parameters.
     for (method, params, code) in [

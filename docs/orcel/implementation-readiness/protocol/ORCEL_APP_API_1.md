@@ -1,6 +1,6 @@
 # orcel-app-api/1
 
-Status: implemented in CR-01 (read-only slice), with the #375 and #381 follow-ups. Code: `crates/orceld/src/app_api.rs`. Tests: `crates/orceld/src/app_api/tests.rs`.
+Status: implemented in CR-01 (read-only slice), with the #375 and #381 follow-ups. Read-only except `task.stop` (F4 slice 5). **On this draft branch only: the exception below isn't in force until the founder decides on #446.** Code: `crates/orceld/src/app_api.rs`. Tests: `crates/orceld/src/app_api/tests.rs`.
 
 `orcel-app-api/1` is the local, per-user, read-only interface through which the Control Room and other local clients of the same user read `orceld` state. `orceld` remains the only authority. Nothing in this protocol submits work, changes state, or answers, mints or forwards an approval. Approvals stay with the OS presence surfaces (XP-09, XP-10); the UI only displays what is waiting.
 
@@ -69,6 +69,8 @@ Every accepted connection is identified from the kernel before any byte is read 
 
 **Code identity.** The backlog card also proposed importing Cua's code-signature checks: a macOS SecCode requirement and a Windows Authenticode publisher. Those checks are not in this read-only slice, for two reasons. First, development and CI builds of the Control Room are unsigned, so a signer requirement would refuse them. Second, on Linux, same-user ptrace makes binary identity unprovable anyway (S-27). The first method that changes state or carries authority must add a first-party code requirement before it ships.
 
+**Exception, founder decision of <date> (#446).** `task.stop` may ship with the peer identity above and no first-party code requirement, because it can only reduce authority: it moves one task of the current orceld run to a final state and never approves, writes, retries or resumes anything. This exception covers that method only. Any other method that changes state or carries authority still needs the first-party code requirement. When signing exists, `task.stop` adds the publisher check.
+
 ## 3. Framing
 
 - UTF-8 JSON, one object per line, terminated by `\n` (a preceding `\r` is ignored).
@@ -105,9 +107,9 @@ A connection may carry any number of requests, one at a time, until it subscribe
 
 The capability rows report what this build of `orceld` can serve on this OS. Rows for providers that are Windows-only in this build carry their reason. `approval.presence` reflects whether the broker found a platform presence surface at startup. Readiness beyond that is checked per request on the existing kernel path.
 
-The reserved read-only method `devices.list` answers `METHOD_UNAVAILABLE` in this revision. Every other name answers `UNKNOWN_METHOD`, including anything that would submit, approve, mint, stop or write.
+The reserved read-only method `devices.list` answers `METHOD_UNAVAILABLE` in this revision. `task.stop`, with params `{task_id}`, answers `{task_id, state}` and adds `stopped` to the closed states. It refuses unknown or earlier-run tasks (`TARGET_STALE`) and committing or finished tasks (`INVALID_REQUEST`). Every other name answers `UNKNOWN_METHOD`, including anything that would submit, approve, mint, stop or write.
 
-Error codes: `INVALID_REQUEST`, `UNSUPPORTED_VERSION`, `UNKNOWN_METHOD`, `METHOD_UNAVAILABLE`, `UNKNOWN_TASK`, `FRAME_TOO_LARGE`, `BUSY`, `INTERNAL`.
+Error codes: `INVALID_REQUEST`, `UNSUPPORTED_VERSION`, `UNKNOWN_METHOD`, `METHOD_UNAVAILABLE`, `UNKNOWN_TASK`, `TARGET_STALE`, `FRAME_TOO_LARGE`, `BUSY`, `INTERNAL`.
 
 **Tasks (SG-000126).** `task.list` and `task.get` read the report tasks of the current daemon run (a bounded registry of 64) and, since SG-000120 RJ-02, the newest 32 tasks of exited runs from the report task journal (`report-tasks.jsonl` in the private state root, or `ORCEL_REPORT_JOURNAL_PATH`; `orcel uninstall --purge-data` removes it). The journal never keeps a task's free-text planner title, so a task of an earlier run shows an empty `title`. A task of an earlier run is read-only: it cannot be previewed or committed again, and a task its exited run left `observed`, `proposed` or `committing` is shown `failed` with a final `run`/`orceld_run_ended` step. A commit an exited run left pending is reconciled when the next orceld starts, with a `reconcile` step: `nothing_written`, `verified` (the independent checker passed) or `unknown` (shown `failed`; nothing is retried or removed). States: `observed`, `proposed`, `approval_denied`, `committing`, `verified`, `verification_failed`, `stale`, `failed`. Records carry paths, sizes, hashes, states and step outcomes, never file content. Tasks are started, previewed and committed only on `orceld`'s local stdio channel (`report/start`, `report/preview`, `report/commit`), never through this API.
 

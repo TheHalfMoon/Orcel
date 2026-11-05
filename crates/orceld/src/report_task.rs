@@ -549,11 +549,27 @@ impl TaskRegistry {
         Transition::Applied
     }
 
-    /// F4 slice 5, kernel only (`prep/F4_TASK_STOP.md`): ends one task of this
+    /// F4 slice 5: stops a task of this run in its own workspace. The app API has no
+    /// workspace scope, so a task of an earlier run or an unknown id is refused here.
+    pub(crate) fn stop_in_this_run(&self, task_id: &str) -> Result<Value, ProviderError> {
+        let workspace = self
+            .lock()
+            .iter()
+            .find(|task| task.id == task_id && task.run == self.seed)
+            .map(|task| task.workspace_id.clone());
+        match workspace {
+            Some(workspace) => self.stop(task_id, &workspace),
+            None => Err(error(
+                FailureCode::TargetStale,
+                "this orceld run has no such report task",
+            )),
+        }
+    }
+
+    /// F4 slice 5 (`prep/F4_TASK_STOP.md`): ends one task of this
     /// run so that it can never write. Authority-reducing: it grants, approves
     /// and writes nothing. Final and idempotent; refused while a commit is
-    /// writing. Compiled for tests only until a surface is decided on #446.
-    #[cfg(test)]
+    /// writing. Its only surface is the local app API's `task.stop`.
     pub(crate) fn stop(&self, task_id: &str, workspace_id: &str) -> Result<Value, ProviderError> {
         let run = self.seed.clone();
         let workspace = workspace_id.to_owned();
