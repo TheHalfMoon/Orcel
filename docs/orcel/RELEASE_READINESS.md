@@ -136,16 +136,17 @@ checkpoint at the end says where engineering stands.
 | The Mac with Chrome or Edge installed | Positive vendor-bundle evidence on hardware (CI has it hosted) |
 | `remote-desktop-commander` OAuth (`/mcp` in an interactive terminal) | Remote runs on the user's devices from this agent |
 
-## Readiness by area (2026-11-01)
+## Completion, tracked separately (2026-11-05)
 
-| Area | State |
-|---|---|
-| Engineering | Class 1 merged on exact-head green CI with independent review; class 2 in progress |
-| Core MVP | **Not complete**: F4 slices 4, 5 and 7 and the closeout are open (classes 3 and 4) |
-| AI capability | Planner client (SG-000129) evaluated only with scripted plans and a scripted policy model; no model has been run. M4 waits for its selection and licensing gate |
-| Cross-platform | Windows and Linux lifecycle qualified on CI; macOS has no package (FD-05); macOS/Linux browser launch is refused until SG-000115 is activated |
-| Security | No accepted risks; SG-000115 residuals are open founder decisions (class 4) |
-| Release | Not authorized: nothing is signed, published or released |
+Orcel isn't finished while its core user journeys are incomplete. These five are separate, and one being ahead says nothing about another. Nothing is signed, published or released.
+
+| Track | State | What's open |
+|---|---|---|
+| **1. Engineering** | Class 1 merged on exact-head green CI with independent review; class 2 in progress | Slice 5's surface is a draft waiting on decision 2. The rest of section 2 |
+| **2. Real end-to-end product** | **Not complete. No real client has driven a real approval to a verified report.** The installed journey passes in CI up to the prompt, with a test client | Slice 4 needs the founder at the prompt (`prep/F4_SLICE4_CLIENT_JOURNEY.md`). Slice 5 (stop and takeover) needs decision 2. Slice 7 needs decision 6. Then the F4 closeout |
+| **3. AI model** | **No model has been run.** Every agent result is scripted, and labelled so. The harness, scoring and memory measurement exist (`model_eval.py`, `model_run.py`) | Decision 3 approves the download. A model may miss the bar, and then the honest result is "no qualified model yet" |
+| **4. Cross-platform** | Windows and Linux lifecycle qualified on CI. Unsigned dev tarballs for macOS and Linux reach the approval through a test client. The Windows app has no macOS or Linux equal (decision 4) | macOS package (FD-05). macOS and Linux browser launch waits for SG-000115. Real GNOME and KDE approvals, and macOS direct-capture consent, need a person |
+| **5. Security and release** | No accepted risks. SG-000115's residuals are open founder decisions, and B9c shows Landlock alone doesn't close the cgroup. Release isn't authorized | Signing, publication, and the residuals in section 4. **The GitHub repository is public**, while the founder's directives describe it as private: that's for the founder to settle |
 
 ## Restart checkpoint
 
@@ -171,8 +172,11 @@ head and CI: this checkpoint can't name its own merge.
    actions p50 324 ms on X11, 107 on Sway, 727 on macOS; raw click 762, drag 1016, scroll
    835 ms, on X11 only; worker and engine peak 327 to 343 MiB committed, on Windows,
    without the host. Linux's p95 is within a few ms of its p50, which suggests fixed
-   waits: raw input includes the 250 ms `EFFECT_SETTLE`, and why semantic actions take
-   about 215 ms longer on X11 than on Sway isn't known. `list_windows` p50 27 ms on X11,
+   waits. From reading the code, not measured: X11's extra 215 ms on semantic actions
+   fits the focus guard's settle watch of about 240 ms (`focus_guard.rs`), which needs a
+   reachable `DISPLAY` and is skipped on CI's Sway. It catches and undoes a late focus
+   steal, so it isn't a saving to take. The X11 raw click pays the same watch, and about
+   480 ms of it is unexplained. `EFFECT_SETTLE` is on the uinput route, which Xvfb doesn't use. `list_windows` p50 27 ms on X11,
    44 on Sway, 73 on macOS, and `observe_window` 50, 78, 121, with no Windows figure yet
    to check M-NAT-01's 1.5x target against. A crawl of ten pages, six read, takes about
    2.2 s on Windows, with 359 MiB committed at peak. #438's latest timeline shows a
@@ -193,7 +197,7 @@ head and CI: this checkpoint can't name its own merge.
    then `node scripts/check-vendored-cua.mjs` on a commit.
 4. Next engineering, in order: the next product milestone that needs no
    founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`), with
-   these candidates: why semantic actions are slower on X11; M-WI-02's token reduction
+   these candidates: the unexplained 480 ms of the X11 raw click; M-WI-02's token reduction
    (its answer accuracy needs a scoring method or a planner); a terminal task timeline
    on macOS and Linux, once someone decides whether that client may use `task.*`.
    Checked figures for CSV reports aren't on the roadmap and would change what
