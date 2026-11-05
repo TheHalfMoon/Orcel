@@ -149,3 +149,13 @@ STRONG approvals fail closed until an administrator runs
 Linux approvals are implemented but not release-qualified: the GNOME and KDE
 live check in SECURITY_INTEGRATION.md (including the socket-activated
 user-service case) has NOT RUN on a real desktop.
+
+## Connect a local MCP client from a development tarball
+
+`package-dev.sh` builds `orcel-<version>-linux-<arch>-unsigned-dev.tar.gz`, separate from the packages above and not a release. It holds `bin/orcel-mcp` and the MCP server, and it needs Node.js 24 on `PATH`. Unpack it, and point the client at the launcher by its full path, naming the folder Orcel may work in:
+
+```json
+{ "mcpServers": { "orcel": { "type": "stdio", "command": "/home/you/orcel-dev/bin/orcel-mcp", "env": { "ORCEL_WORKSPACE_ROOT": "/home/you/orcel-dev-ws" } } } }
+```
+
+The client sees the same tool list as on Windows, and `orceld` refuses what it can't do on this OS. `orceld` stays the sole authority, and asks you before it writes. Only a short list of variables reaches the server (see the launcher), so a client's other environment doesn't. CI checks this through the launcher with a test client, not with any real client, and no approval is given there: a report stops at the prompt.

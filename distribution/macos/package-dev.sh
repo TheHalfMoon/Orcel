@@ -7,6 +7,9 @@
 # which waits on FD-05. The binaries carry only the ad-hoc signature the
 # linker gives them on Apple Silicon. See README.md.
 #
+# It holds the MCP server too, so a local client can connect from the unpacked
+# folder (bin/orcel-mcp). Run `npm ci` and the edge's build first.
+#
 # Usage (from anywhere, on macOS):
 #   distribution/macos/package-dev.sh <version> <orceld-binary> <orcel-contain-binary> <out-dir>
 set -euo pipefail
@@ -45,10 +48,12 @@ tree="$stage/$name"
 mkdir -p "$tree/bin" "$tree/doc"
 install -m 0755 "$orceld" "$tree/bin/orceld"
 install -m 0755 "$contain" "$tree/bin/orcel-contain"
+install -m 0755 "$repo/distribution/dev/orcel-mcp" "$tree/bin/orcel-mcp"
 # orceld pins the helper beside it by this file (apps/orcel-contain/README.md).
 shasum -a 256 "$tree/bin/orcel-contain" | cut -d ' ' -f 1 > "$tree/bin/orcel-contain.sha256"
 chmod 0644 "$tree/bin/orcel-contain.sha256"
-node "$repo/scripts/third-party-notices.mjs" --release "$tree/bin" \
+node "$repo/scripts/mcp-payload.mjs" "$tree"
+node "$repo/scripts/third-party-notices.mjs" --release "$tree" \
   --out "$tree/doc/THIRD_PARTY_NOTICES.txt" --target "$tar_arch-apple-darwin"
 install -m 0644 "$repo/LICENSE" "$repo/distribution/macos/README.md" "$tree/doc/"
 
