@@ -1,1 +1,1895 @@
-{"source":"https://www.fda.gov/food/buy-store-serve-safe-food/safe-food-handling","retrieved":"2026-11-05","licence":"A work of the United States government, not subject to US copyright (17 U.S.C. 105).","question":"how cold should a refrigerator be","answer":"40.? ?F or below","body":[{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{},"style":{},"children":[{"kind":"text","text":"Skip to main content","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{},"style":{},"children":[{"kind":"text","text":"Skip to FDA Search","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{},"style":{},"children":[{"kind":"text","text":"Skip to in this section menu","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{},"style":{},"children":[{"kind":"text","text":"Skip to footer links","style":{}}]}]}]},{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"header","attrs":{},"style":{},"children":[{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"An official website of the United States government","style":{}}]},{"kind":"el","tag":"a","attrs":{},"style":{},"children":[{"kind":"text","text":"Here’s how you know","style":{}}]},{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"The .gov means it’s official.","style":{}}]},{"kind":"text","text":"Federal government websites often end in .gov or .mil. Before sharing sensitive information, make sure you're on a federal government site.","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"The site is secure.","style":{}}]},{"kind":"text","text":"The","style":{}},{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"https://","style":{}}]},{"kind":"text","text":"ensures that you are connecting to the official website and that any information you provide is encrypted and transmitted securely.","style":{}}]}]}]},{"kind":"el","tag":"nav","attrs":{},"style":{},"children":[{"kind":"el","tag":"section","attrs":{},"style":{},"children":[{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"Featured","style":{}}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"https://contact.fda.gov/report-problem?utm_medium=referral&utm_source=fda_gov_menu"},"style":{},"children":[{"kind":"text","text":"Report a Product Problem","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda/contact-fda"},"style":{},"children":[{"kind":"text","text":"Contact FDA","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/regulatory-information/search-fda-guidance-documents"},"style":{},"children":[{"kind":"text","text":"FDA Guidance Documents","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/safety/recalls-market-withdrawals-safety-alerts"},"style":{},"children":[{"kind":"text","text":"Recalls, Market Withdrawals and Safety Alerts","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/news-events/newsroom/press-announcements"},"style":{},"children":[{"kind":"text","text":"Press Announcements","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters"},"style":{},"children":[{"kind":"text","text":"Warning Letters","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/advisory-committees"},"style":{},"children":[{"kind":"text","text":"Advisory Committees","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/fda-en-espanol"},"style":{},"children":[{"kind":"text","text":"En Español","style":{}}]}]}]}]},{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"section","attrs":{},"style":{},"children":[{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"Products","style":{}}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food"},"style":{},"children":[{"kind":"text","text":"Food","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/drugs"},"style":{},"children":[{"kind":"text","text":"Drugs","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/medical-devices"},"style":{},"children":[{"kind":"text","text":"Medical Devices","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/radiation-emitting-products"},"style":{},"children":[{"kind":"text","text":"Radiation-Emitting Products","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/vaccines-blood-biologics"},"style":{},"children":[{"kind":"text","text":"Vaccines, Blood, and Biologics","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/animal-veterinary"},"style":{},"children":[{"kind":"text","text":"Animal and Veterinary","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/cosmetics"},"style":{},"children":[{"kind":"text","text":"Cosmetics","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/tobacco-products"},"style":{},"children":[{"kind":"text","text":"Tobacco Products","style":{}}]}]}]}]},{"kind":"el","tag":"section","attrs":{},"style":{},"children":[{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"Topics","style":{}}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda"},"style":{},"children":[{"kind":"text","text":"About FDA","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/combination-products"},"style":{},"children":[{"kind":"text","text":"Combination Products","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/regulatory-information"},"style":{},"children":[{"kind":"text","text":"Regulatory Information","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/safety"},"style":{},"children":[{"kind":"text","text":"Safety","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/emergency-preparedness-and-response"},"style":{},"children":[{"kind":"text","text":"Emergency Preparedness","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/international-programs"},"style":{},"children":[{"kind":"text","text":"International Programs","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/news-events"},"style":{},"children":[{"kind":"text","text":"News and Events","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/training-and-continuing-education"},"style":{},"children":[{"kind":"text","text":"Training and Continuing Education","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/inspections-compliance-enforcement-and-criminal-investigations"},"style":{},"children":[{"kind":"text","text":"Inspections and Compliance","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/science-research"},"style":{},"children":[{"kind":"text","text":"Science and Research","style":{}}]}]}]}]},{"kind":"el","tag":"section","attrs":{},"style":{},"children":[{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"Information For","style":{}}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/consumers"},"style":{},"children":[{"kind":"text","text":"Consumers","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/patients"},"style":{},"children":[{"kind":"text","text":"Patients","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/industry"},"style":{},"children":[{"kind":"text","text":"Industry","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/health-professionals"},"style":{},"children":[{"kind":"text","text":"Health Professionals","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/federal-state-local-tribal-and-territorial-officials"},"style":{},"children":[{"kind":"text","text":"Federal, State and Local Officials","style":{}}]}]}]}]}]}]}]},{"kind":"el","tag":"section","attrs":{},"style":{},"children":[{"kind":"el","tag":"ol","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/"},"style":{},"children":[{"kind":"text","text":"Home","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food"},"style":{},"children":[{"kind":"text","text":"Food","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/resources-you-food"},"style":{},"children":[{"kind":"text","text":"Resources for You (Food)","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/resources-you-food/consumers"},"style":{},"children":[{"kind":"text","text":"Consumers","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/consumers/buy-store-serve-safe-food"},"style":{},"children":[{"kind":"text","text":"Buy, Store & Serve Safe Food","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{},"style":{},"children":[{"kind":"text","text":"Safe Food Handling","style":{}}]}]}]},{"kind":"el","tag":"ol","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/consumers/buy-store-serve-safe-food"},"style":{},"children":[{"kind":"text","text":"Buy, Store & Serve Safe Food","style":{}}]}]}]}]},{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{},"style":{},"children":[{"kind":"text","text":"In this section","style":{}}]},{"kind":"el","tag":"nav","attrs":{},"style":{},"children":[{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/consumers/buy-store-serve-safe-food"},"style":{},"children":[{"kind":"text","text":"Buy, Store & Serve Safe Food","style":{}}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/food-facts-consumers"},"style":{},"children":[{"kind":"text","text":"Food Facts for Consumers","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/food-safety-your-kitchen"},"style":{},"children":[{"kind":"text","text":"Food Safety in Your Kitchen","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/queso-fresco-type-cheeses-consumer-guidance"},"style":{},"children":[{"kind":"text","text":"Queso Fresco-type Cheeses Consumer Guidance","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/5-red-flags-look-when-shopping-meal-kits"},"style":{},"children":[{"kind":"text","text":"5 Red Flags to Look For When Shopping for Meal Kits","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/everyday-food-safety-young-adults"},"style":{},"children":[{"kind":"text","text":"Everyday Food Safety for Young Adults","style":{}}]}]}]}]}]}]}]},{"kind":"el","tag":"main","attrs":{},"style":{},"children":[{"kind":"el","tag":"article","attrs":{},"style":{},"children":[{"kind":"el","tag":"header","attrs":{},"style":{},"children":[{"kind":"el","tag":"h1","attrs":{},"style":{},"children":[{"kind":"text","text":"Safe Food Handling","style":{}}]}]},{"kind":"el","tag":"aside","attrs":{},"style":{},"children":[{"kind":"el","tag":"nav","attrs":{},"style":{},"children":[{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/consumers/buy-store-serve-safe-food"},"style":{},"children":[{"kind":"text","text":"Buy, Store & Serve Safe Food","style":{}}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/food-facts-consumers"},"style":{},"children":[{"kind":"text","text":"Food Facts for Consumers","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/food-safety-your-kitchen"},"style":{},"children":[{"kind":"text","text":"Food Safety in Your Kitchen","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/queso-fresco-type-cheeses-consumer-guidance"},"style":{},"children":[{"kind":"text","text":"Queso Fresco-type Cheeses Consumer Guidance","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/5-red-flags-look-when-shopping-meal-kits"},"style":{},"children":[{"kind":"text","text":"5 Red Flags to Look For When Shopping for Meal Kits","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/everyday-food-safety-young-adults"},"style":{},"children":[{"kind":"text","text":"Everyday Food Safety for Young Adults","style":{}}]}]}]}]}]}]}]},{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/media/91319/download"},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Print & Share (PDF)","style":{}}]}]}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/food/buy-store-serve-safe-food/manipulacion-segura-de-los-alimentos-lo-que-usted-debe-saber"},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Español (Spanish)","style":{}}]}]}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"text","text":"The food supply in the United States is among the safest in the world. However, when certain disease-causing bacteria or pathogens contaminate food, they can cause foodborne illness, often called “food poisoning.” The Federal government estimates that there are about 48 million cases of foodborne illness annually – the equivalent of sickening 1 in 6 Americans each year. And each year, these illnesses result in an estimated 128,000 hospitalizations and 3,000 deaths.","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Know the Symptoms","style":{}}]}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"text","text":"Consuming dangerous foodborne bacteria will usually cause illness within 1 to 3 days of eating the contaminated food. However, sickness can also occur within 20 minutes or up to 6 weeks later. Symptoms of foodborne illness can include: vomiting, diarrhea, and abdominal pain – and flu-like symptoms, such as fever, headache, and body ache.","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Handle Foods Safely","style":{}}]}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"text","text":"Although most healthy people will recover from a foodborne illness within a short period of time, some can develop chronic, severe, or even life-threatening health problems. In addition, some people are at a higher risk for developing foodborne illness, including pregnant women, young children, older adults, and people with weakened immune systems (such as transplant patients and individuals with HIV/AIDS, cancer, or diabetes). To keep your family safer from food poisoning,","style":{}},{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"follow these four simple steps: clean, separate, cook, and chill","style":{}}]},{"kind":"text","text":".","style":{}}]},{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"CLEAN","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Wash hands and surfaces often","style":{}}]}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Wash your hands with warm water and soap for at least 20 seconds before and after handling food and after using the bathroom, changing diapers, and handling pets.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Wash your cutting boards, dishes, utensils, and counter tops with hot soapy water after preparing each food item.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Consider using paper towels to clean up kitchen surfaces. If you use cloth towels, launder them often in the hot cycle.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Rinse fresh fruits and vegetables under running tap water, including those with skins and rinds that are not eaten. Scrub firm produce with a clean produce brush.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"With canned goods, remember to clean lids before opening.","style":{}}]}]},{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"SEPARATE","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Separate raw meats from other foods","style":{}}]}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Separate raw meat, poultry, seafood, and eggs from other foods in your grocery shopping cart, grocery bags, and refrigerator.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Use one cutting board for fresh produce and a separate one for raw meat, poultry, and seafood.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Never place cooked food on a plate that previously held raw meat, poultry, seafood, or eggs unless the plate has been washed in hot, soapy water.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Don’t reuse marinades used on raw foods unless you bring them to a boil first.","style":{}}]}]},{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"COOK","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Cook to the right temperature","style":{}}]}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Color and texture are unreliable indicators of safety. Using a food thermometer is the only way to ensure the safety of meat, poultry, seafood, and egg products for all cooking methods. These foods must be cooked to a safe minimum internal temperature to destroy any harmful bacteria.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Cook eggs until the yolk and white are firm. Only use recipes in which eggs are cooked or heated thoroughly.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"When cooking in a microwave oven, cover food, stir, and rotate for even cooking. If there is no turntable, rotate the dish by hand once or twice during cooking. Always allow standing time, which completes the cooking, before checking the internal temperature with a food thermometer.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Bring sauces, soups and gravy to a boil when reheating.","style":{}}]}]},{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"CHILL","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Refrigerate foods promptly","style":{}}]}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Use an appliance thermometer to be sure the temperature is consistently 40° F or below and the freezer temperature is 0° F or below.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Refrigerate or freeze meat, poultry, eggs, seafood, and other perishables within 2 hours of cooking or purchasing. Refrigerate within 1 hour if the temperature outside is above 90° F.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Never thaw food at room temperature, such as on the counter top. There are three safe ways to defrost food: in the refrigerator, in cold water, and in the microwave. Food thawed in cold water or in the microwave should be cooked immediately.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Always marinate food in the refrigerator.","style":{}}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Divide large amounts of leftovers into shallow containers for quicker cooling in the refrigerator.","style":{}}]}]},{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"Safe Minimum Internal Temperatures","style":{}}]},{"kind":"el","tag":"table","attrs":{},"style":{},"children":[{"kind":"el","tag":"caption","attrs":{},"style":{},"children":[{"kind":"el","tag":"em","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"as measured with a food thermometer","style":{}}]}]}]},{"kind":"el","tag":"thead","attrs":{},"style":{},"children":[{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"th","attrs":{},"style":{},"children":[{"kind":"text","text":"Food Type","style":{}}]},{"kind":"el","tag":"th","attrs":{},"style":{},"children":[{"kind":"text","text":"Internal temperature","style":{}}]}]}]},{"kind":"el","tag":"tbody","attrs":{},"style":{},"children":[{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Beef, Pork, Veal, and Lamb","style":{}}]},{"kind":"text","text":"(chops, roasts, steaks)","style":{}}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"145","style":{}},{"kind":"el","tag":"sup","attrs":{},"style":{},"children":[{"kind":"text","text":"o","style":{}}]},{"kind":"text","text":"F with a 3 minute rest time","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Ground Meat","style":{}}]}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"160","style":{}},{"kind":"el","tag":"sup","attrs":{},"style":{},"children":[{"kind":"text","text":"o","style":{}}]},{"kind":"text","text":"F","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Ham, uncooked","style":{}}]},{"kind":"text","text":"(fresh or smoked)","style":{}}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"145","style":{}},{"kind":"el","tag":"sup","attrs":{},"style":{},"children":[{"kind":"text","text":"o","style":{}}]},{"kind":"text","text":"F with a 3 minute rest time","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Ham, fully cooked","style":{}}]},{"kind":"text","text":"(to reheat)","style":{}}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"140","style":{}},{"kind":"el","tag":"sup","attrs":{},"style":{},"children":[{"kind":"text","text":"o","style":{}}]},{"kind":"text","text":"F","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Poultry","style":{}}]},{"kind":"text","text":"(ground, parts, whole, and stuffing)","style":{}}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"165","style":{}},{"kind":"el","tag":"sup","attrs":{},"style":{},"children":[{"kind":"text","text":"o","style":{}}]},{"kind":"text","text":"F","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Eggs","style":{}}]}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"Cook until yolk & white are firm","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Egg Dishes","style":{}}]}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"160","style":{}},{"kind":"el","tag":"sup","attrs":{},"style":{},"children":[{"kind":"text","text":"o","style":{}}]},{"kind":"text","text":"F","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Fin Fish","style":{}}]}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"145","style":{}},{"kind":"el","tag":"sup","attrs":{},"style":{},"children":[{"kind":"text","text":"o","style":{}}]},{"kind":"text","text":"F or flesh is opaque & separates easily with fork","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Shrimp, Lobster, and Crabs","style":{}}]}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"Flesh pearly & opaque","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Clams, Oysters, and Mussels","style":{}}]}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"Shells open during cooking","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Scallops","style":{}}]}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"Flesh is milky white or opaque and firm","style":{}}]}]},{"kind":"el","tag":"tr","attrs":{},"style":{},"children":[{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"Leftovers and Casseroles","style":{}}]}]},{"kind":"el","tag":"td","attrs":{},"style":{},"children":[{"kind":"text","text":"165","style":{}},{"kind":"el","tag":"sup","attrs":{},"style":{},"children":[{"kind":"text","text":"o","style":{}}]},{"kind":"text","text":"F","style":{}}]}]}]}]},{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"Report a Problem","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"text","text":"If you think that you or a family member has a foodborne illness, contact your","style":{}},{"kind":"el","tag":"strong","attrs":{},"style":{},"children":[{"kind":"text","text":"healthcare provider immediately","style":{}}]},{"kind":"text","text":". To report a complaint or adverse event (illness or serious allergic reaction), visit","style":{}},{"kind":"el","tag":"a","attrs":{"href":"/food/resources-you-food/get-assistance-fda-human-foods-program-hfp"},"style":{},"children":[{"kind":"text","text":"Industry and Consumer Assistance","style":{}}]},{"kind":"text","text":".","style":{}}]}]},{"kind":"el","tag":"aside","attrs":{},"style":{},"children":[{"kind":"el","tag":"aside","attrs":{},"style":{},"children":[{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"Content current as of:","style":{}}]},{"kind":"el","tag":"p","attrs":{},"style":{},"children":[{"kind":"el","tag":"time","attrs":{},"style":{},"children":[{"kind":"text","text":"03/05/2024","style":{}}]}]}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"h2","attrs":{},"style":{},"children":[{"kind":"text","text":"Regulated Product(s)","style":{}}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"text","text":"Food & Beverages","style":{}}]}]}]}]}]}]}]}]}]}]},{"kind":"el","tag":"footer","attrs":{},"style":{},"children":[{"kind":"el","tag":"nav","attrs":{},"style":{},"children":[{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda/about-website/fdagov-archive"},"style":{},"children":[{"kind":"text","text":"FDA Archive","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda"},"style":{},"children":[{"kind":"text","text":"About FDA","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda/about-website/internet-accessibility"},"style":{},"children":[{"kind":"text","text":"Accessibility","style":{}}]}]}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda/visitor-information"},"style":{},"children":[{"kind":"text","text":"Visitor Information","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda/about-website/website-policies"},"style":{},"children":[{"kind":"text","text":"Website Policies / Privacy","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda/jobs-and-training-fda/no-fear-act"},"style":{},"children":[{"kind":"text","text":"No FEAR Act","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"https://www.hhs.gov/vulnerability-disclosure-policy/index.html"},"style":{},"children":[{"kind":"text","text":"Vulnerability Disclosure Policy","style":{}}]}]}]},{"kind":"el","tag":"ul","attrs":{},"style":{},"children":[{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/regulatory-information/freedom-information"},"style":{},"children":[{"kind":"text","text":"FOIA","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"https://www.hhs.gov/"},"style":{},"children":[{"kind":"text","text":"HHS.gov","style":{}}]}]},{"kind":"el","tag":"li","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"https://www.usa.gov/"},"style":{},"children":[{"kind":"text","text":"USA.gov","style":{}}]}]}]}]},{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"a","attrs":{"href":"/about-fda/contact-fda"},"style":{},"children":[{"kind":"text","text":"Contact FDA","style":{}}]},{"kind":"el","tag":"a","attrs":{"href":"https://www.facebook.com/FDA"},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Follow FDA on Facebook","style":{}}]}]},{"kind":"el","tag":"a","attrs":{"href":"https://x.com/FDA"},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Follow FDA on X","style":{}}]}]},{"kind":"el","tag":"a","attrs":{"href":"https://instagram.com/FDA"},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Follow FDA on Instagram","style":{}}]}]},{"kind":"el","tag":"a","attrs":{"href":"https://www.linkedin.com/company/fda/"},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Follow FDA on LinkedIn","style":{}}]}]},{"kind":"el","tag":"a","attrs":{"href":"https://youtube.com/@US_FDA"},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"View FDA videos on YouTube","style":{}}]}]},{"kind":"el","tag":"a","attrs":{"href":"/about-fda/contact-fda/subscribe-podcasts-and-news-feeds"},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Subscribe to FDA RSS feeds","style":{}}]}]}]},{"kind":"el","tag":"div","attrs":{},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Contact Number","style":{}}]},{"kind":"text","text":"1-888-INFO-FDA (1-888-463-6332)","style":{}}]}]}]},{"kind":"el","tag":"a","attrs":{},"style":{},"children":[{"kind":"el","tag":"span","attrs":{},"style":{},"children":[{"kind":"text","text":"Back to","style":{}}]},{"kind":"text","text":"Top","style":{}}]}]}]}
+{
+"source": "https://www.fda.gov/food/buy-store-serve-safe-food/safe-food-handling",
+"retrieved": "2026-11-05",
+"licence": "A work of the United States government, not subject to US copyright (17 U.S.C. 105).",
+"question": "how cold should a refrigerator be",
+"answer": "40.? ?F or below",
+"body": [
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"children": [
+"Skip to main content"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"children": [
+"Skip to FDA Search"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"children": [
+"Skip to in this section menu"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"children": [
+"Skip to footer links"
+]
+}
+]
+}
+]
+},
+{
+"tag": "div",
+"children": [
+{
+"tag": "div",
+"children": [
+{
+"tag": "header",
+"children": [
+{
+"tag": "div",
+"children": [
+{
+"tag": "span",
+"children": [
+"An official website of the United States government"
+]
+},
+{
+"tag": "a",
+"children": [
+"Here’s how you know"
+]
+},
+{
+"tag": "div",
+"children": [
+{
+"tag": "p",
+"children": [
+{
+"tag": "strong",
+"children": [
+"The .gov means it’s official."
+]
+},
+"Federal government websites often end in .gov or .mil. Before sharing sensitive information, make sure you're on a federal government site."
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "strong",
+"children": [
+"The site is secure."
+]
+},
+"The",
+{
+"tag": "strong",
+"children": [
+"https://"
+]
+},
+"ensures that you are connecting to the official website and that any information you provide is encrypted and transmitted securely."
+]
+}
+]
+}
+]
+},
+{
+"tag": "nav",
+"children": [
+{
+"tag": "section",
+"children": [
+{
+"tag": "h2",
+"children": [
+"Featured"
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "https://contact.fda.gov/report-problem?utm_medium=referral&utm_source=fda_gov_menu",
+"children": [
+"Report a Product Problem"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda/contact-fda",
+"children": [
+"Contact FDA"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/regulatory-information/search-fda-guidance-documents",
+"children": [
+"FDA Guidance Documents"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/safety/recalls-market-withdrawals-safety-alerts",
+"children": [
+"Recalls, Market Withdrawals and Safety Alerts"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/news-events/newsroom/press-announcements",
+"children": [
+"Press Announcements"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters",
+"children": [
+"Warning Letters"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/advisory-committees",
+"children": [
+"Advisory Committees"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/fda-en-espanol",
+"children": [
+"En Español"
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "div",
+"children": [
+{
+"tag": "section",
+"children": [
+{
+"tag": "h2",
+"children": [
+"Products"
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food",
+"children": [
+"Food"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/drugs",
+"children": [
+"Drugs"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/medical-devices",
+"children": [
+"Medical Devices"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/radiation-emitting-products",
+"children": [
+"Radiation-Emitting Products"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/vaccines-blood-biologics",
+"children": [
+"Vaccines, Blood, and Biologics"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/animal-veterinary",
+"children": [
+"Animal and Veterinary"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/cosmetics",
+"children": [
+"Cosmetics"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/tobacco-products",
+"children": [
+"Tobacco Products"
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "section",
+"children": [
+{
+"tag": "h2",
+"children": [
+"Topics"
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda",
+"children": [
+"About FDA"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/combination-products",
+"children": [
+"Combination Products"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/regulatory-information",
+"children": [
+"Regulatory Information"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/safety",
+"children": [
+"Safety"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/emergency-preparedness-and-response",
+"children": [
+"Emergency Preparedness"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/international-programs",
+"children": [
+"International Programs"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/news-events",
+"children": [
+"News and Events"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/training-and-continuing-education",
+"children": [
+"Training and Continuing Education"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/inspections-compliance-enforcement-and-criminal-investigations",
+"children": [
+"Inspections and Compliance"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/science-research",
+"children": [
+"Science and Research"
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "section",
+"children": [
+{
+"tag": "h2",
+"children": [
+"Information For"
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/consumers",
+"children": [
+"Consumers"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/patients",
+"children": [
+"Patients"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/industry",
+"children": [
+"Industry"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/health-professionals",
+"children": [
+"Health Professionals"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/federal-state-local-tribal-and-territorial-officials",
+"children": [
+"Federal, State and Local Officials"
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "section",
+"children": [
+{
+"tag": "ol",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/",
+"children": [
+"Home"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food",
+"children": [
+"Food"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/resources-you-food",
+"children": [
+"Resources for You (Food)"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/resources-you-food/consumers",
+"children": [
+"Consumers"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/consumers/buy-store-serve-safe-food",
+"children": [
+"Buy, Store & Serve Safe Food"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"children": [
+"Safe Food Handling"
+]
+}
+]
+}
+]
+},
+{
+"tag": "ol",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/consumers/buy-store-serve-safe-food",
+"children": [
+"Buy, Store & Serve Safe Food"
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "div",
+"children": [
+{
+"tag": "a",
+"children": [
+"In this section"
+]
+},
+{
+"tag": "nav",
+"children": [
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/consumers/buy-store-serve-safe-food",
+"children": [
+"Buy, Store & Serve Safe Food"
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/food-facts-consumers",
+"children": [
+"Food Facts for Consumers"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/food-safety-your-kitchen",
+"children": [
+"Food Safety in Your Kitchen"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/queso-fresco-type-cheeses-consumer-guidance",
+"children": [
+"Queso Fresco-type Cheeses Consumer Guidance"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/5-red-flags-look-when-shopping-meal-kits",
+"children": [
+"5 Red Flags to Look For When Shopping for Meal Kits"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/everyday-food-safety-young-adults",
+"children": [
+"Everyday Food Safety for Young Adults"
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "main",
+"children": [
+{
+"tag": "article",
+"children": [
+{
+"tag": "header",
+"children": [
+{
+"tag": "h1",
+"children": [
+"Safe Food Handling"
+]
+}
+]
+},
+{
+"tag": "aside",
+"children": [
+{
+"tag": "nav",
+"children": [
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/consumers/buy-store-serve-safe-food",
+"children": [
+"Buy, Store & Serve Safe Food"
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/food-facts-consumers",
+"children": [
+"Food Facts for Consumers"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/food-safety-your-kitchen",
+"children": [
+"Food Safety in Your Kitchen"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/queso-fresco-type-cheeses-consumer-guidance",
+"children": [
+"Queso Fresco-type Cheeses Consumer Guidance"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/5-red-flags-look-when-shopping-meal-kits",
+"children": [
+"5 Red Flags to Look For When Shopping for Meal Kits"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/everyday-food-safety-young-adults",
+"children": [
+"Everyday Food Safety for Young Adults"
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "div",
+"children": [
+{
+"tag": "p",
+"children": [
+{
+"tag": "a",
+"href": "/media/91319/download",
+"children": [
+{
+"tag": "span",
+"children": [
+"Print & Share (PDF)"
+]
+}
+]
+}
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "a",
+"href": "/food/buy-store-serve-safe-food/manipulacion-segura-de-los-alimentos-lo-que-usted-debe-saber",
+"children": [
+{
+"tag": "span",
+"children": [
+"Español (Spanish)"
+]
+}
+]
+}
+]
+},
+{
+"tag": "p",
+"children": [
+"The food supply in the United States is among the safest in the world. However, when certain disease-causing bacteria or pathogens contaminate food, they can cause foodborne illness, often called “food poisoning.” The Federal government estimates that there are about 48 million cases of foodborne illness annually – the equivalent of sickening 1 in 6 Americans each year. And each year, these illnesses result in an estimated 128,000 hospitalizations and 3,000 deaths."
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Know the Symptoms"
+]
+}
+]
+},
+{
+"tag": "p",
+"children": [
+"Consuming dangerous foodborne bacteria will usually cause illness within 1 to 3 days of eating the contaminated food. However, sickness can also occur within 20 minutes or up to 6 weeks later. Symptoms of foodborne illness can include: vomiting, diarrhea, and abdominal pain – and flu-like symptoms, such as fever, headache, and body ache."
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Handle Foods Safely"
+]
+}
+]
+},
+{
+"tag": "p",
+"children": [
+"Although most healthy people will recover from a foodborne illness within a short period of time, some can develop chronic, severe, or even life-threatening health problems. In addition, some people are at a higher risk for developing foodborne illness, including pregnant women, young children, older adults, and people with weakened immune systems (such as transplant patients and individuals with HIV/AIDS, cancer, or diabetes). To keep your family safer from food poisoning,",
+{
+"tag": "strong",
+"children": [
+"follow these four simple steps: clean, separate, cook, and chill"
+]
+},
+"."
+]
+},
+{
+"tag": "h2",
+"children": [
+"CLEAN"
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Wash hands and surfaces often"
+]
+}
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+"Wash your hands with warm water and soap for at least 20 seconds before and after handling food and after using the bathroom, changing diapers, and handling pets."
+]
+},
+{
+"tag": "li",
+"children": [
+"Wash your cutting boards, dishes, utensils, and counter tops with hot soapy water after preparing each food item."
+]
+},
+{
+"tag": "li",
+"children": [
+"Consider using paper towels to clean up kitchen surfaces. If you use cloth towels, launder them often in the hot cycle."
+]
+},
+{
+"tag": "li",
+"children": [
+"Rinse fresh fruits and vegetables under running tap water, including those with skins and rinds that are not eaten. Scrub firm produce with a clean produce brush."
+]
+},
+{
+"tag": "li",
+"children": [
+"With canned goods, remember to clean lids before opening."
+]
+}
+]
+},
+{
+"tag": "h2",
+"children": [
+"SEPARATE"
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Separate raw meats from other foods"
+]
+}
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+"Separate raw meat, poultry, seafood, and eggs from other foods in your grocery shopping cart, grocery bags, and refrigerator."
+]
+},
+{
+"tag": "li",
+"children": [
+"Use one cutting board for fresh produce and a separate one for raw meat, poultry, and seafood."
+]
+},
+{
+"tag": "li",
+"children": [
+"Never place cooked food on a plate that previously held raw meat, poultry, seafood, or eggs unless the plate has been washed in hot, soapy water."
+]
+},
+{
+"tag": "li",
+"children": [
+"Don’t reuse marinades used on raw foods unless you bring them to a boil first."
+]
+}
+]
+},
+{
+"tag": "h2",
+"children": [
+"COOK"
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Cook to the right temperature"
+]
+}
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+"Color and texture are unreliable indicators of safety. Using a food thermometer is the only way to ensure the safety of meat, poultry, seafood, and egg products for all cooking methods. These foods must be cooked to a safe minimum internal temperature to destroy any harmful bacteria."
+]
+},
+{
+"tag": "li",
+"children": [
+"Cook eggs until the yolk and white are firm. Only use recipes in which eggs are cooked or heated thoroughly."
+]
+},
+{
+"tag": "li",
+"children": [
+"When cooking in a microwave oven, cover food, stir, and rotate for even cooking. If there is no turntable, rotate the dish by hand once or twice during cooking. Always allow standing time, which completes the cooking, before checking the internal temperature with a food thermometer."
+]
+},
+{
+"tag": "li",
+"children": [
+"Bring sauces, soups and gravy to a boil when reheating."
+]
+}
+]
+},
+{
+"tag": "h2",
+"children": [
+"CHILL"
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Refrigerate foods promptly"
+]
+}
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+"Use an appliance thermometer to be sure the temperature is consistently 40° F or below and the freezer temperature is 0° F or below."
+]
+},
+{
+"tag": "li",
+"children": [
+"Refrigerate or freeze meat, poultry, eggs, seafood, and other perishables within 2 hours of cooking or purchasing. Refrigerate within 1 hour if the temperature outside is above 90° F."
+]
+},
+{
+"tag": "li",
+"children": [
+"Never thaw food at room temperature, such as on the counter top. There are three safe ways to defrost food: in the refrigerator, in cold water, and in the microwave. Food thawed in cold water or in the microwave should be cooked immediately."
+]
+},
+{
+"tag": "li",
+"children": [
+"Always marinate food in the refrigerator."
+]
+},
+{
+"tag": "li",
+"children": [
+"Divide large amounts of leftovers into shallow containers for quicker cooling in the refrigerator."
+]
+}
+]
+},
+{
+"tag": "h2",
+"children": [
+"Safe Minimum Internal Temperatures"
+]
+},
+{
+"tag": "table",
+"children": [
+{
+"tag": "caption",
+"children": [
+{
+"tag": "em",
+"children": [
+{
+"tag": "strong",
+"children": [
+"as measured with a food thermometer"
+]
+}
+]
+}
+]
+},
+{
+"tag": "thead",
+"children": [
+{
+"tag": "tr",
+"children": [
+{
+"tag": "th",
+"children": [
+"Food Type"
+]
+},
+{
+"tag": "th",
+"children": [
+"Internal temperature"
+]
+}
+]
+}
+]
+},
+{
+"tag": "tbody",
+"children": [
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Beef, Pork, Veal, and Lamb"
+]
+},
+"(chops, roasts, steaks)"
+]
+},
+{
+"tag": "td",
+"children": [
+"145",
+{
+"tag": "sup",
+"children": [
+"o"
+]
+},
+"F with a 3 minute rest time"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Ground Meat"
+]
+}
+]
+},
+{
+"tag": "td",
+"children": [
+"160",
+{
+"tag": "sup",
+"children": [
+"o"
+]
+},
+"F"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Ham, uncooked"
+]
+},
+"(fresh or smoked)"
+]
+},
+{
+"tag": "td",
+"children": [
+"145",
+{
+"tag": "sup",
+"children": [
+"o"
+]
+},
+"F with a 3 minute rest time"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Ham, fully cooked"
+]
+},
+"(to reheat)"
+]
+},
+{
+"tag": "td",
+"children": [
+"140",
+{
+"tag": "sup",
+"children": [
+"o"
+]
+},
+"F"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Poultry"
+]
+},
+"(ground, parts, whole, and stuffing)"
+]
+},
+{
+"tag": "td",
+"children": [
+"165",
+{
+"tag": "sup",
+"children": [
+"o"
+]
+},
+"F"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Eggs"
+]
+}
+]
+},
+{
+"tag": "td",
+"children": [
+"Cook until yolk & white are firm"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Egg Dishes"
+]
+}
+]
+},
+{
+"tag": "td",
+"children": [
+"160",
+{
+"tag": "sup",
+"children": [
+"o"
+]
+},
+"F"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Fin Fish"
+]
+}
+]
+},
+{
+"tag": "td",
+"children": [
+"145",
+{
+"tag": "sup",
+"children": [
+"o"
+]
+},
+"F or flesh is opaque & separates easily with fork"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Shrimp, Lobster, and Crabs"
+]
+}
+]
+},
+{
+"tag": "td",
+"children": [
+"Flesh pearly & opaque"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Clams, Oysters, and Mussels"
+]
+}
+]
+},
+{
+"tag": "td",
+"children": [
+"Shells open during cooking"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Scallops"
+]
+}
+]
+},
+{
+"tag": "td",
+"children": [
+"Flesh is milky white or opaque and firm"
+]
+}
+]
+},
+{
+"tag": "tr",
+"children": [
+{
+"tag": "td",
+"children": [
+{
+"tag": "strong",
+"children": [
+"Leftovers and Casseroles"
+]
+}
+]
+},
+{
+"tag": "td",
+"children": [
+"165",
+{
+"tag": "sup",
+"children": [
+"o"
+]
+},
+"F"
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "h2",
+"children": [
+"Report a Problem"
+]
+},
+{
+"tag": "p",
+"children": [
+"If you think that you or a family member has a foodborne illness, contact your",
+{
+"tag": "strong",
+"children": [
+"healthcare provider immediately"
+]
+},
+". To report a complaint or adverse event (illness or serious allergic reaction), visit",
+{
+"tag": "a",
+"href": "/food/resources-you-food/get-assistance-fda-human-foods-program-hfp",
+"children": [
+"Industry and Consumer Assistance"
+]
+},
+"."
+]
+}
+]
+},
+{
+"tag": "aside",
+"children": [
+{
+"tag": "aside",
+"children": [
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "div",
+"children": [
+{
+"tag": "h2",
+"children": [
+"Content current as of:"
+]
+},
+{
+"tag": "p",
+"children": [
+{
+"tag": "time",
+"children": [
+"03/05/2024"
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "div",
+"children": [
+{
+"tag": "h2",
+"children": [
+"Regulated Product(s)"
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+"Food & Beverages"
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "footer",
+"children": [
+{
+"tag": "nav",
+"children": [
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda/about-website/fdagov-archive",
+"children": [
+"FDA Archive"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda",
+"children": [
+"About FDA"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda/about-website/internet-accessibility",
+"children": [
+"Accessibility"
+]
+}
+]
+}
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda/visitor-information",
+"children": [
+"Visitor Information"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda/about-website/website-policies",
+"children": [
+"Website Policies / Privacy"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda/jobs-and-training-fda/no-fear-act",
+"children": [
+"No FEAR Act"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "https://www.hhs.gov/vulnerability-disclosure-policy/index.html",
+"children": [
+"Vulnerability Disclosure Policy"
+]
+}
+]
+}
+]
+},
+{
+"tag": "ul",
+"children": [
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "/regulatory-information/freedom-information",
+"children": [
+"FOIA"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "https://www.hhs.gov/",
+"children": [
+"HHS.gov"
+]
+}
+]
+},
+{
+"tag": "li",
+"children": [
+{
+"tag": "a",
+"href": "https://www.usa.gov/",
+"children": [
+"USA.gov"
+]
+}
+]
+}
+]
+}
+]
+},
+{
+"tag": "div",
+"children": [
+{
+"tag": "div",
+"children": [
+{
+"tag": "a",
+"href": "/about-fda/contact-fda",
+"children": [
+"Contact FDA"
+]
+},
+{
+"tag": "a",
+"href": "https://www.facebook.com/FDA",
+"children": [
+{
+"tag": "span",
+"children": [
+"Follow FDA on Facebook"
+]
+}
+]
+},
+{
+"tag": "a",
+"href": "https://x.com/FDA",
+"children": [
+{
+"tag": "span",
+"children": [
+"Follow FDA on X"
+]
+}
+]
+},
+{
+"tag": "a",
+"href": "https://instagram.com/FDA",
+"children": [
+{
+"tag": "span",
+"children": [
+"Follow FDA on Instagram"
+]
+}
+]
+},
+{
+"tag": "a",
+"href": "https://www.linkedin.com/company/fda/",
+"children": [
+{
+"tag": "span",
+"children": [
+"Follow FDA on LinkedIn"
+]
+}
+]
+},
+{
+"tag": "a",
+"href": "https://youtube.com/@US_FDA",
+"children": [
+{
+"tag": "span",
+"children": [
+"View FDA videos on YouTube"
+]
+}
+]
+},
+{
+"tag": "a",
+"href": "/about-fda/contact-fda/subscribe-podcasts-and-news-feeds",
+"children": [
+{
+"tag": "span",
+"children": [
+"Subscribe to FDA RSS feeds"
+]
+}
+]
+}
+]
+},
+{
+"tag": "div",
+"children": [
+{
+"tag": "span",
+"children": [
+"Contact Number"
+]
+},
+"1-888-INFO-FDA (1-888-463-6332)"
+]
+}
+]
+}
+]
+},
+{
+"tag": "a",
+"children": [
+{
+"tag": "span",
+"children": [
+"Back to"
+]
+},
+"Top"
+]
+}
+]
+}
+]
+}

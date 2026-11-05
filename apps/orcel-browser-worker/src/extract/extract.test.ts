@@ -473,6 +473,12 @@ test("M-WI-02: on built pages, BM25 drops the noise and pruning the navigation, 
 // used and nothing is tuned, so a lost answer is a result and doesn't fail this test. There
 // is no tokenizer in the repository, so these are characters, with a labelled estimate of a
 // quarter of those. A kept answer's text isn't answer accuracy, which needs a model.
+type FixtureNode = string | { tag: string; href?: string; children: FixtureNode[] };
+const fromFixture = (node: FixtureNode): Spec | string =>
+  typeof node === "string"
+    ? node
+    : el(node.tag, node.href ? { href: node.href } : {}, ...node.children.map(fromFixture));
+
 test("M-WI-02: real pages, measured and not tuned", () => {
   const folder = fileURLToPath(new URL("../../fixtures/m-wi-02/", import.meta.url));
   const names = readdirSync(folder).filter((name) => name.endsWith(".json"));
@@ -483,10 +489,14 @@ test("M-WI-02: real pages, measured and not tuned", () => {
       source: string;
       question: string;
       answer: string;
-      body: Spec[];
+      body: FixtureNode[];
     };
+    const body = page.body.map((node) => {
+      const spec = fromFixture(node);
+      return typeof spec === "string" ? txt(spec) : spec;
+    });
     const answer = new RegExp(page.answer);
-    const run = (options: ExtractOptions) => extractMarkdown(snapshot(page.source, ...page.body), options);
+    const run = (options: ExtractOptions) => extractMarkdown(snapshot(page.source, ...body), options);
     const whole = run({ maxChars: 1_000_000 });
     const bm25 = run({ maxChars: 1_000_000, relevance: { method: "bm25", query: page.question } });
     const pruned = run({ maxChars: 1_000_000, relevance: { method: "pruning" } });
