@@ -51,7 +51,7 @@ The client sees the same tool list as on Windows, and `orceld` refuses what it c
 
 ## Update and uninstall
 
-There's no install flow. To update, replace the folder with a newer tarball: the state and the workspace stay as they are. To uninstall, remove the folder and Orcel's state, which is `orcel` under `$XDG_STATE_HOME`, or under `~/.local/state` if that's unset. CI checks a replaced folder works from the same state, and that nothing else is written. A newer version reading older state isn't tested: CI uses the same version both times.
+This tarball has no install flow. To update, replace the folder with a newer tarball: the state and the workspace stay as they are. To uninstall, remove the folder and the state in `~/Library/Application Support/Orcel`. The app API's directory, `orcel` under `getconf DARWIN_USER_TEMP_DIR`, can go too. CI checks that a copy of the folder elsewhere writes to the same task journal. It doesn't check a replacement at the same path, or that nothing else is written, and a newer version reading older state isn't tested: CI uses the same version both times.
 
 ## Limits
 

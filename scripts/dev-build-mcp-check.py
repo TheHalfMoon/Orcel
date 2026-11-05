@@ -9,8 +9,8 @@ Usage: dev-build-mcp-check.py <unpacked-tarball>
 Exits non-zero unless the tools are listed, a read works, a read outside the
 workspace is refused, a report stops at orceld's approval with nothing written, an
 existing destination and a changed source are refused, a killed orceld is replaced
-in the same session with its task's progress intact, and a replaced folder keeps
-working from the same state. No approval is given or simulated.
+in the same session with its task's progress intact, and a copy of the folder adds
+to the same state. No approval is given or simulated.
 """
 
 import json
@@ -98,7 +98,8 @@ def call_after_crash(session: "Session", tool: str, arguments: dict) -> tuple:
     result = first.get("result", {})
     if "error" not in first and result.get("isError") is not True:
         return False, json.loads(result["content"][0]["text"])
-    require("orceld" in json.dumps(first), f"the refusal says why: {first}")
+    why = json.dumps(first)
+    require("orceld stopped reading requests" in why or "orceld exited" in why, f"the refusal says why: {first}")
     return session.call(tool, arguments)
 
 
@@ -200,7 +201,8 @@ def main() -> int:
         require(not failed, f"the same session reads its task after the crash: {resumed}")
         summary = result_of(resumed)
         kinds = [entry.get("kind") for entry in summary.get("completed", [])]
-        require(summary.get("task_id") == task and "observe" in kinds, f"its progress survived: {resumed}")
+        require(summary.get("task_id") == task and {"observe", "preview"} <= set(kinds),
+                f"its progress survived: {resumed}")
         require(summary.get("unknown") == [], f"nothing was committed: {resumed}")
         require("north,1250" not in json.dumps(resumed), f"no file text in the summary: {resumed}")
 
@@ -221,7 +223,10 @@ def main() -> int:
         require((workspace / "reports" / "taken.md").read_text(encoding="utf-8") == "the user's file",
                 "the user's file is untouched")
 
-        # Updating is replacing the folder: the state stays where it was.
+        # Updating is replacing the folder: the state stays where it was. Another
+        # session can't read this one's tasks, so the proof is its task in the same journal.
+        journals = list(state.rglob("report-tasks.jsonl"))
+        require(len(journals) == 1, f"one task journal in the state: {journals}")
         moved = scratch / "replaced"
         shutil.copytree(home, moved, symlinks=True)
         again = Session(moved / "bin" / "orcel-mcp", env)
@@ -230,17 +235,18 @@ def main() -> int:
             "clientInfo": {"name": "orcel-dev-build-check", "version": "1"},
         })
         again.send({"method": "notifications/initialized"})
-        failed, read = again.call("fs_read", {"path": "data/q3.csv"})
-        require(not failed and "north,1" in json.dumps(read), f"a replaced folder works: {read}")
-        require(again.close() == 0, "the replaced folder's session ends cleanly")
-        # Uninstalling is removing the folder and the state: nothing else was written.
+        failed, started = again.call("report_start", {
+            "title": "Q3 copy", "sources": ["data/q3.csv"], "folder": "reports",
+        })
+        require(not failed, f"a copy of the folder works: {started}")
+        require(again.close() == 0, "the copied folder's session ends cleanly")
+        require(result_of(started)["task_id"] in journals[0].read_text(encoding="utf-8"),
+                "the copied folder's task is in the same journal")
         shutil.rmtree(moved)
-        left = sorted(path.name for path in scratch.iterdir())
-        require(left == ["outside.txt", "state", "ws"], f"nothing else is left behind: {left}")
 
         print(f"DEV-BUILD-MCP-EVIDENCE {EXPECTED_OS}: {len(tools)} tools, read, refusal, report stopped at "
               f"approval ({code}), existing destination refused, killed orceld replaced with progress intact, "
-              f"stale source refused ({code_stale}), replaced folder works, exit {exit_code} "
+              f"stale source refused ({code_stale}), copied folder uses the same state, exit {exit_code} "
               "(the build and the protocol, not any client)")
         return 0
     finally:
