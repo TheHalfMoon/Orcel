@@ -4988,18 +4988,24 @@ fn bench_stale_target(
     let (target, mut approval) = approved_form(worker, &old, &name, "textbox", &fill);
     bench_observe(worker, scope, "https://fixture.test/form-page")?;
     let refused = worker.form_action(&target, &mut approval, &fill, None, 1, "workspace");
-    if refused.is_ok() || approval.consumed {
-        return Err("a stale approval acted or was spent".into());
+    if approval.consumed {
+        return Err("a stale approval was spent".into());
     }
-    Ok(3)
+    match refused {
+        Err(HostError::Unavailable(UnavailableReason::TargetStale)) => Ok(3),
+        Err(HostError::Invalid(message)) if message.contains("stale") => Ok(3),
+        Err(HostError::Unavailable(UnavailableReason::TimedOut)) => Err("TimedOut".into()),
+        other => Err(format!("not a stale refusal: {other:?}")),
+    }
 }
 
 /// M-BR-01 and M-BR-02 on the controlled site, with a scripted plan through the real
 /// host, worker and engine, and host-side oracles: **a scripted plan, not a planner
-/// or a model.** A timeout is recorded as a failed run rather than ending the
-/// benchmark, since #438 is open and its rate is part of what's measured; any other
-/// failure fails the test. Tabs aren't covered: they wait for SG-000122. M-BR-04 isn't
-/// measured here.
+/// or a model.** A timeout in one run, including a failed launch, is recorded rather
+/// than ending the benchmark, since #438 is open and its rate is part of what's
+/// measured. Any other failure fails the test, and so does a case with no passing
+/// run, which a real hang would be. The report is written either way. Tabs aren't
+/// covered: they wait for SG-000122. M-BR-04 isn't measured here.
 #[test]
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn bm_browser_tasks_on_the_controlled_site() {
@@ -5033,8 +5039,14 @@ fn bm_browser_tasks_on_the_controlled_site() {
                         .expect("fixture.test"),
                 ];
             launch.test_trusted_spki = Some(fixture.spki.clone());
-            let mut worker =
-                launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+            let mut worker = match launch_worker(&launch, &Policy(PolicyKeyState::Absent)) {
+                Ok(worker) => worker,
+                Err(error) => {
+                    timeouts += 1;
+                    println!("BM-BROWSER {case} run {repetition}: launch failed: {error:?}");
+                    continue;
+                }
+            };
             let started = Instant::now();
             match task(&mut worker, &scope) {
                 Ok(count) => {
@@ -5072,13 +5084,19 @@ fn bm_browser_tasks_on_the_controlled_site() {
             at(0.5),
             at(0.95)
         );
-        rows.push(serde_json::json!({
+        if times.is_empty() {
+            other_failures.push(format!("{case}: no run passed"));
+        }
+        let mut row = serde_json::json!({
             "case": case,
             "status": if passed { "pass" } else { "fail" },
             "observed": observed,
-            "latency_ms": { "p50": at(0.5), "p95": at(0.95) },
             "steps": steps,
-        }));
+        });
+        if !times.is_empty() {
+            row["latency_ms"] = serde_json::json!({ "p50": at(0.5), "p95": at(0.95) });
+        }
+        rows.push(row);
     }
     if let (Some(path), Ok(commit)) = (
         std::env::var_os("ORCEL_BM_BROWSER_REPORT"),
