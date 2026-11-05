@@ -158,7 +158,10 @@ head and CI: this checkpoint can't name its own merge.
    #625 (native host memory) and #626 (a broken pipe to `orceld` no longer ends the
    MCP edge; longer tarball journey). #627 (refusals name the source), #629 (M-NAT-03,
    100 actions per type), #630 (`orceld` alone killed during an Agent run, on macOS and
-   Linux) and #631 (M-BR-04, worker and engine only) followed.
+   Linux), #631 (M-BR-04, worker and engine only), #633 (M-NAT-01, 200 calls), #634
+   (M-WI-01, crawl), #635 (#438: the engine's processes at a timeout), #636 (B9c:
+   Landlock alone doesn't give a cgroup the engine can't leave) and #637 (a test race
+   on `ORCEL_TRUST_PATH`) followed.
    Evidence so far, all scripted or test clients, never a model or a real client:
    browser tasks 15/15 with no timeouts, on Windows only, p50 about 1.0 to 1.8 s across
    runs; native host peak 6.7 MiB on X11, 6.4 to 6.9 on Sway across three runs,
@@ -169,7 +172,12 @@ head and CI: this checkpoint can't name its own merge.
    835 ms, on X11 only; worker and engine peak 327 to 343 MiB committed, on Windows,
    without the host. Linux's p95 is within a few ms of its p50, which suggests fixed
    waits: raw input includes the 250 ms `EFFECT_SETTLE`, and why semantic actions take
-   about 215 ms longer on X11 than on Sway isn't known. Branch
+   about 215 ms longer on X11 than on Sway isn't known. `list_windows` p50 27 ms on X11,
+   44 on Sway, 73 on macOS, and `observe_window` 50, 78, 121, with no Windows figure yet
+   to check M-NAT-01's 1.5x target against. A crawl of ten pages, six read, takes about
+   2.2 s on Windows, with 359 MiB committed at peak. #438's latest timeline shows a
+   2 ms worst event-loop gap and 19% CPU across a 30 s stall after `goto`, so that stall
+   is on the engine's side; what it waits for isn't known. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: merge main in, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -185,18 +193,23 @@ head and CI: this checkpoint can't name its own merge.
    then `node scripts/check-vendored-cua.mjs` on a commit.
 4. Next engineering, in order: the next product milestone that needs no
    founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`), with
-   these candidates: M-NAT-01 (200 calls); M-WI-01 and M-WI-02; a terminal task timeline
+   these candidates: why semantic actions are slower on X11; M-WI-02's token reduction
+   (its answer accuracy needs a scoring method or a planner); a terminal task timeline
    on macOS and Linux, once someone decides whether that client may use `task.*`.
    Checked figures for CSV reports aren't on the roadmap and would change what
-   `verified` means, so they need adopting first. Then #438 when its new
-   timeline first prints; a cgroup the engine cannot leave (SG-000115 class 2, which
-   needs no activation); then what the founder's answers to
+   `verified` means, so they need adopting first. Then #438 when #635's process list
+   first prints. A cgroup the engine cannot leave stays open: B9c shows Landlock alone
+   doesn't do it (an inherited descriptor, `clone3` and the user bus all get past it),
+   and refusing `clone3` needs a real engine to test against, which waits on activation.
+   Then what the founder's answers to
    `FOUNDER_DECISION_PACKET.md` unlock.
 5. Known CI flakes: toolchain install conflict on macOS, and once on Ubuntu in
    #627's `Orcel Agent M1` job (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
    Seen once, not yet tracked: `unix_rehearsal::tests::survivors_and_unverified_coverage_keep_the_sink_and_the_profile`
    on macOS, and the upstream-asset parity tests when GitHub blob fetches fail.
+   Wording: GitHub reads "fix #N" and "close #N" as closing keywords even after "doesn't",
+   which closed #438 by mistake, so check `closingIssuesReferences` on any PR naming it.
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
    A6b, B1 to B5, B5b, B6a, B6b, B7, B8, B8b, B9a and B9b slices; the agent A1-A3 tests; P-13 and P-14; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
