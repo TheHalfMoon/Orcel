@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { extractMarkdown, type ExtractOptions } from "./index.js";
 import { cleanMarkdown } from "./clean.js";
 import { CONTENT_STYLES, type LayoutSnapshot } from "./model.js";
@@ -387,14 +389,11 @@ test("WI-03: relevance filtering keeps the asked-for section, drops the rest, an
   assert.equal(extractMarkdown(snapshot("https://fixture.test/help", ...body), { relevance: { query: "", method: "bm25" } }).markdown, whole.markdown);
 });
 
-// M-WI-02: how much less text reaches the client with relevance filtering, on three
-// fixture pages, and whether each page's answer survives it. There's no tokenizer in the
-// repository, so this reports characters, and a labelled estimate of a quarter of those.
-// Keeping the answer isn't answer accuracy, which needs a model to answer from the text.
+// M-WI-02, written to show the filter works: pages built for it, with the query's words
+// in the answer. The figures that say how it does on real pages are in the next test.
 const M_WI_02_PAGES: ReadonlyArray<{
   name: string;
   query: string;
-  threshold: number;
   answer: RegExp;
   noise: RegExp;
   body: Spec[];
@@ -402,7 +401,6 @@ const M_WI_02_PAGES: ReadonlyArray<{
   {
     name: "help-centre",
     query: "refund policy",
-    threshold: 0.5,
     answer: /within thirty days to the original card/,
     noise: /warehouse|hiring|Copyright/,
     body: [
@@ -420,7 +418,6 @@ const M_WI_02_PAGES: ReadonlyArray<{
   {
     name: "product-page",
     query: "battery life hours",
-    threshold: 0.5,
     answer: /battery life is eleven hours/,
     noise: /newsletter|Copyright|colours/,
     body: [
@@ -437,7 +434,6 @@ const M_WI_02_PAGES: ReadonlyArray<{
   {
     name: "news-article",
     query: "council budget vote",
-    threshold: 0.5,
     answer: /council budget vote passed by nine to four/,
     noise: /weather|Copyright|crossword/,
     body: [
@@ -453,12 +449,12 @@ const M_WI_02_PAGES: ReadonlyArray<{
   }
 ];
 
-test("M-WI-02: relevance filtering sends less text and keeps the answer", () => {
+test("M-WI-02: on built pages, BM25 drops the noise and pruning the navigation, and both keep the answer", () => {
   for (const page of M_WI_02_PAGES) {
     const url = `https://fixture.test/${page.name}`;
     const whole = extractMarkdown(snapshot(url, ...page.body));
     const bm25 = extractMarkdown(snapshot(url, ...page.body), {
-      relevance: { method: "bm25", query: page.query, threshold: page.threshold }
+      relevance: { method: "bm25", query: page.query }
     });
     const pruned = extractMarkdown(snapshot(url, ...page.body), { relevance: { method: "pruning" } });
     for (const [method, extraction] of [["none", whole], ["bm25", bm25], ["pruning", pruned]] as const) {
@@ -468,13 +464,47 @@ test("M-WI-02: relevance filtering sends less text and keeps the answer", () => 
     assert.match(whole.markdown, page.noise, `${page.name}: the page has noise to remove`);
     assert.doesNotMatch(bm25.markdown, page.noise, `${page.name}: bm25 kept the noise`);
     assert.ok(bm25.markdown.length < whole.markdown.length, `${page.name}: bm25 sent no less`);
-    const estimate = (text: string): number => Math.ceil(text.length / 4);
+    assert.ok(pruned.markdown.length < whole.markdown.length, `${page.name}: pruning sent no less`);
+  }
+});
+
+// M-WI-02 on real pages: `fixtures/m-wi-02`, saved from US government sites, whose questions
+// and answers were written before any filter ran on them. The filter's default threshold is
+// used and nothing is tuned, so a lost answer is a result and doesn't fail this test. There
+// is no tokenizer in the repository, so these are characters, with a labelled estimate of a
+// quarter of those. A kept answer's text isn't answer accuracy, which needs a model.
+test("M-WI-02: real pages, measured and not tuned", () => {
+  const folder = fileURLToPath(new URL("../../fixtures/m-wi-02/", import.meta.url));
+  const names = readdirSync(folder).filter((name) => name.endsWith(".json"));
+  assert.ok(names.length >= 5, `only ${names.length} fixture pages`);
+  let kept = 0;
+  for (const name of names) {
+    const page = JSON.parse(readFileSync(folder + name, "utf8")) as {
+      source: string;
+      question: string;
+      answer: string;
+      body: Spec[];
+    };
+    const answer = new RegExp(page.answer);
+    const run = (options: ExtractOptions) => extractMarkdown(snapshot(page.source, ...page.body), options);
+    const whole = run({ maxChars: 1_000_000 });
+    const bm25 = run({ maxChars: 1_000_000, relevance: { method: "bm25", query: page.question } });
+    const pruned = run({ maxChars: 1_000_000, relevance: { method: "pruning" } });
+    assert.equal(whole.truncated, false, name);
+    assert.match(whole.markdown, answer, `${name}: the unfiltered page must hold the answer`);
+    for (const extraction of [bm25, pruned]) {
+      assert.ok(extraction.markdown.length <= whole.markdown.length, `${name}: a filter added text`);
+    }
+    const bm25Kept = answer.test(bm25.markdown);
+    if (bm25Kept) kept += 1;
     const share = (text: string): string => `${Math.round((100 * text.length) / whole.markdown.length)}%`;
+    const tokens = (text: string): number => Math.ceil(text.length / 4);
     console.log(
-      `M-WI-02 ${page.name}: chars none ${whole.markdown.length}, ` +
-        `bm25 ${bm25.markdown.length} (${share(bm25.markdown)}, threshold ${page.threshold}), ` +
-        `pruning ${pruned.markdown.length} (${share(pruned.markdown)}); ` +
-        `estimated tokens at 4 chars each: ${estimate(whole.markdown)}, ${estimate(bm25.markdown)}, ${estimate(pruned.markdown)}`
+      `M-WI-02 real ${name}: chars none ${whole.markdown.length}, ` +
+        `bm25 ${bm25.markdown.length} (${share(bm25.markdown)}, answer ${bm25Kept ? "kept" : "LOST"}), ` +
+        `pruning ${pruned.markdown.length} (${share(pruned.markdown)}, answer ${answer.test(pruned.markdown) ? "kept" : "LOST"}); ` +
+        `estimated tokens at 4 chars each, not counted: ${tokens(whole.markdown)}, ${tokens(bm25.markdown)}, ${tokens(pruned.markdown)}`
     );
   }
+  console.log(`M-WI-02 real: BM25 kept the answer on ${kept} of ${names.length} pages at its default threshold`);
 });
