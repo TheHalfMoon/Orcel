@@ -108,13 +108,15 @@ pub(crate) fn digest_if_workbook(
 
 /// The `Sheet!Cell = value` lines of a report: `(sheet title, cell, value)`. A
 /// sheet's title may hold `!`, so the last one divides it from the cell. A hidden
-/// sheet's title says so: `Audit (hidden)!B2`. A line that has both `!` and `=` but
+/// sheet's title says so: `Audit (hidden)!B2`. A line that looks like a figure but
 /// isn't exactly this form is an error rather than prose, since a figure skipped
-/// would be a figure unchecked.
+/// would be a figure unchecked: one with both `!` and `=`, or one naming a cell
+/// before `=` or `:`, such as `B4 = 9` or `Sales!B4: 9`. That also catches a label
+/// like `Q3: 9`, which is the safer way to be wrong.
 pub(crate) fn figures_in(report: &str) -> Result<Vec<(&str, &str, &str)>, String> {
     let mut figures = Vec::new();
     for line in report.lines() {
-        if !(line.contains('!') && line.contains('=')) {
+        if !(line.contains('!') && line.contains('=')) && !names_a_cell_first(line) {
             continue;
         }
         let figure = line.split_once(" = ").and_then(|(place, value)| {
@@ -130,10 +132,30 @@ pub(crate) fn figures_in(report: &str) -> Result<Vec<(&str, &str, &str)>, String
     Ok(figures)
 }
 
+/// Whether the text before a line's first `=` or `:` ends in something like a cell
+/// reference, in any case and with or without `$`.
+fn names_a_cell_first(line: &str) -> bool {
+    let Some(end) = line.find(['=', ':']) else {
+        return false;
+    };
+    let last = line[..end]
+        .split_whitespace()
+        .next_back()
+        .unwrap_or("")
+        .rsplit('!')
+        .next()
+        .unwrap_or("");
+    let bare: String = last.chars().filter(|c| *c != '$').collect();
+    let letters = bare.chars().take_while(char::is_ascii_alphabetic).count();
+    let digits = &bare[letters..];
+    letters > 0 && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// The saved value of a cell in the parser's Markdown, exactly as the table shows
 /// it. `sheet` is the whole title, which the parser keeps unique. `None` if the sheet
 /// or the cell isn't there, or the cell has no saved value: a missing result isn't
-/// zero, and it can't confirm any figure.
+/// zero, and it can't confirm any figure. Nor can a value from a formula that may
+/// reach outside the workbook, which may be stale.
 pub(crate) fn cell_value<'a>(markdown: &'a str, sheet: &str, cell: &str) -> Option<&'a str> {
     let mut in_sheet = false;
     for line in markdown.lines() {
@@ -152,8 +174,10 @@ pub(crate) fn cell_value<'a>(markdown: &'a str, sheet: &str, cell: &str) -> Opti
             continue;
         };
         let (value, after) = split_cell(rest)?;
-        let (kind, _) = split_cell(after)?;
-        return (kind != "empty").then_some(value);
+        let (kind, after) = split_cell(after)?;
+        let (_format, after) = split_cell(after)?;
+        let (_formula, note) = split_cell(after)?;
+        return (kind != "empty" && !note.contains("external")).then_some(value);
     }
     None
 }

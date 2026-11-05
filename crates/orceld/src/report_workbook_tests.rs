@@ -88,6 +88,19 @@ fn fixture_parts(name: &str) -> Vec<(String, Vec<u8>)> {
     parts
 }
 
+/// A committed workbook with its first sheet's cells replaced.
+fn with_first_sheet(mut parts: Vec<(String, Vec<u8>)>, cells: &str) -> Vec<u8> {
+    let sheet = parts
+        .iter_mut()
+        .find(|(name, _)| name == "xl/worksheets/sheet1.xml")
+        .expect("a first sheet");
+    sheet.1 = format!(
+        "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData><row r=\"1\">{cells}</row></sheetData></worksheet>"
+    )
+    .into_bytes();
+    stored_zip(parts)
+}
+
 fn fixture(name: &str) -> Vec<u8> {
     stored_zip(fixture_parts(name))
 }
@@ -131,6 +144,12 @@ fn a_cell_is_found_in_its_own_sheet_and_only_there() {
 }
 
 #[test]
+fn a_value_that_may_be_stale_confirms_nothing() {
+    let markdown = "## Sheet: S\n\n| A1 | 41 | number |  | =[1]R!A1 | external, not refreshed |\n";
+    assert_eq!(cell_value(markdown, "S", "A1"), None);
+}
+
+#[test]
 fn a_missing_saved_value_confirms_nothing_not_even_zero() {
     assert_eq!(cell_value(MARKDOWN, "Sales", "B4"), None);
 }
@@ -138,7 +157,7 @@ fn a_missing_saved_value_confirms_nothing_not_even_zero() {
 #[test]
 fn figures_are_read_from_their_own_lines() {
     assert_eq!(
-        figures_in("Intro = no place\nJust wow!\nSales!B2 = 1.5\nA!B!C3 = x = y\n"),
+        figures_in("Intro = no place\nJust wow!\nNote: see below\nQ3 revenue: fine\nSales!B2 = 1.5\nA!B!C3 = x = y\n"),
         Ok(vec![("Sales", "B2", "1.5"), ("A!B", "C3", "x = y")])
     );
 }
@@ -154,6 +173,11 @@ fn a_line_shaped_like_a_figure_but_not_checkable_is_an_error() {
         "Sales!2 = 1",
         "!B2 = 1",
         "Sales!B2 = ",
+        "B4 = 99999",
+        "b4 = 99999",
+        "$B$4 = 99999",
+        "Sales!B4: 99999",
+        "B4: 99999",
     ] {
         let report = format!("Sales!B2 = 1250.5\n{line}\n");
         assert!(figures_in(&report).is_err(), "{line}");
@@ -374,6 +398,70 @@ fn wi05_workbook_journey_denied_once_then_granted_with_figures_confirmed() {
         check_figures(&scene.workspace, &record, "Sales!B3 = 749.25\n"),
         Ok(1)
     );
+
+    // A value from a formula that may reach outside confirms nothing.
+    let external = with_first_sheet(
+        fixture_parts("written-by-openpyxl"),
+        "<c r=\"A1\"><f>[1]Rates!A1</f><v>41</v></c>",
+    );
+    std::fs::write(&workbook_path, &external).unwrap();
+    let record = SourceRecord {
+        path: "data/sales.xlsx".into(),
+        sha256: sha256_hex(&external),
+        bytes: external.len() as u64,
+    };
+    let stale = check_figures(&scene.workspace, &record, "Sales!A1 = 41\n").unwrap_err();
+    assert!(stale.contains("no saved value"), "{stale}");
+
+    // A workbook too large for the frame isn't read in part.
+    let text = "y".repeat(1_000_100);
+    let large = with_first_sheet(
+        fixture_parts("written-by-openpyxl"),
+        &format!("<c r=\"A1\" t=\"inlineStr\"><is><t>{text}</t></is></c>"),
+    );
+    std::fs::write(&workbook_path, large).unwrap();
+    let cut = start(&scene, &tasks, "data/sales.xlsx").unwrap_err();
+    assert_eq!(cut.code, FailureCode::OutputLimit, "{}", cut.message);
+
+    // A document named as a workbook isn't one.
+    let content_types = "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>";
+    let rels = "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";
+    let body = "<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Sales!B4 = 1</w:t></w:r></w:p></w:body></w:document>";
+    let document = stored_zip(vec![
+        (
+            "[Content_Types].xml".into(),
+            content_types.as_bytes().to_vec(),
+        ),
+        ("_rels/.rels".into(), rels.as_bytes().to_vec()),
+        ("word/document.xml".into(), body.as_bytes().to_vec()),
+    ]);
+    std::fs::write(&workbook_path, &document).unwrap();
+    let not_one = start(&scene, &tasks, "data/sales.xlsx").unwrap_err();
+    assert_eq!(
+        not_one.code,
+        FailureCode::InvalidRequest,
+        "{}",
+        not_one.message
+    );
+    assert!(not_one.message.contains("isn't one"), "{}", not_one.message);
+
+    // A link is refused before anything reads it.
+    #[cfg(unix)]
+    {
+        let linked = scene.workspace.root.join("data").join("linked.xlsx");
+        std::os::unix::fs::symlink(&workbook_path, &linked).unwrap();
+        let refused = start(&scene, &tasks, "data/linked.xlsx").unwrap_err();
+        assert_eq!(
+            refused.code,
+            FailureCode::CapabilityDenied,
+            "{}",
+            refused.message
+        );
+    }
 
     // A macro workbook is refused at the start, with its type, and starts no task.
     let mut macros = fixture_parts("written-by-openpyxl");
