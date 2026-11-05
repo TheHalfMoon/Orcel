@@ -415,6 +415,16 @@ impl Report {
         self.rows.push(row);
     }
 
+    /// M-NAT-04: the host's peak resident memory across this suite. A reading of
+    /// zero means the sampler saw nothing, which fails rather than reporting no use.
+    pub fn host_memory(&mut self, prefix: &str, rss_mb_peak: f64) {
+        assert!(rss_mb_peak > 0.0, "the host's memory was never read");
+        self.push(format!("{prefix}/host/memory"), "pass", "measured", &[], 0);
+        let row = self.rows.last_mut().expect("the row just pushed");
+        row["rss_mb_peak"] = json!(rss_mb_peak);
+        eprintln!("XP-08 host memory {prefix}: peak {rss_mb_peak:.1} MiB");
+    }
+
     pub fn pass(&mut self, case: String, observed: &str, samples: &[Duration], steps: usize) {
         self.push(case, "pass", observed, samples, steps);
     }
