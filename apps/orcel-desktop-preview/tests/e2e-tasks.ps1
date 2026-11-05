@@ -78,6 +78,7 @@ function Report([string]$operation, [hashtable]$arguments, [int]$n) {
 }
 
 $failed = $false
+$reached = $false
 try {
     $started = Report "start" @{ title = $title; sources = @("data/q3.csv"); folder = "reports" } 1
     if (-not $started.ok) { throw "report/start failed: $($started | ConvertTo-Json -Compress -Depth 6)" }
@@ -121,13 +122,14 @@ try {
     Write-Output "PASS orceld previewed a second report while the app watched"
     $app.WaitForExit()
     if ($app.ExitCode -ne 0) { $failed = $true }
+    $reached = $true
 } finally {
     Remove-Item Env:\ORCEL_E2E_APP_API_INSTANCE, Env:\ORCEL_E2E_EXPECT_TASK_TITLE, Env:\ORCEL_E2E_LIVE_SIGNAL, Env:\ORCEL_E2E_EXPECT_LIVE_UPDATE -ErrorAction SilentlyContinue
     try { $requests.Close() } catch { }
     if (-not $daemon.WaitForExit(5000)) { $daemon.Kill(); $daemon.WaitForExit() }
     $reports = @(Get-ChildItem (Join-Path $workspace "reports") -File)
     if ($reports.Count -ne 0) { Write-Output "FAIL a report file exists although nothing was approved: $($reports.Name -join ', ')"; $failed = $true }
-    else { Write-Output "PASS nothing was written (no approval was requested)" }
+    elseif ($reached) { Write-Output "PASS nothing was written (no approval was requested)" }
     Remove-Item -Recurse -Force $base -ErrorAction SilentlyContinue
 }
 if ($failed) { exit 1 }

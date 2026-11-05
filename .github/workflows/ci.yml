@@ -1560,10 +1560,12 @@ jobs:
           apps/orcel-desktop-preview/build.ps1 -OutputDirectory "$env:RUNNER_TEMP/app"
           & "$env:RUNNER_TEMP/app/Orcel.Smoke.exe" --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # The state stays under the user profile, the script's default: orceld
+      # refuses a state root under the hosted runner's D:\, which isn't this user's.
       - name: A live orceld's tasks in the app
         shell: pwsh
         run: |
-          apps/orcel-desktop-preview/tests/e2e-tasks.ps1 -Orceld "$env:GITHUB_WORKSPACE/target/debug/orceld.exe" -BuildDirectory "$env:RUNNER_TEMP/app" -WorkRoot "$env:RUNNER_TEMP"
+          apps/orcel-desktop-preview/tests/e2e-tasks.ps1 -Orceld "$env:GITHUB_WORKSPACE/target/debug/orceld.exe" -BuildDirectory "$env:RUNNER_TEMP/app"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   macos-dev-package:
