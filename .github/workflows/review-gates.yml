@@ -126,6 +126,19 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
+      # A failing step, not a job-level `if`: a skipped job would pass the required check.
+      # pull_request_target runs for forks, and this job's credential isn't for them.
+      - name: Refuse a pull request from a fork
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "::error::Jev review doesn't run for a pull request from a fork; it stays unqualified."
+            exit 1
+          fi
       - name: Require TypeSafe credential
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
@@ -154,7 +167,7 @@ jobs:
           JEV_DIR="$RUNNER_TEMP/jev-review"
           git clone https://github.com/devagrawal09/jev-review.git "$JEV_DIR"
           git -C "$JEV_DIR" checkout --detach "$JEV_REVIEW_SHA"
-          npm --prefix "$JEV_DIR" ci
+          npm --prefix "$JEV_DIR" ci --ignore-scripts
       - name: Verify base-controlled exact-diff Jev adapter
         run: |
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
