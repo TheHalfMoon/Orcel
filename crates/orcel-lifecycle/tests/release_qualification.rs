@@ -579,13 +579,42 @@ fn installed_release_fits_the_400_mb_budget() {
         // Not measured here: a fresh install has no cache yet. Never
         // reported as zero.
         "cache": { "measured": false, "counted": false, "reason": "none exists at a fresh install" },
-        "not_shipped": ["live browser worker and runtime (SG-000127 slice 7)", "Windows app (apps/orcel-desktop-preview)"],
+        "not_shipped": ["live browser worker and runtime (SG-000127 slice 7)"],
     });
     println!("installed-size-report: {report}");
     assert!(
         allocated < INSTALLED_BUDGET_BYTES,
         "installed app uses {allocated} allocated bytes ({bytes} apparent), over the {INSTALLED_BUDGET_BYTES} byte budget"
     );
+
+    // SG-000127: the packaged app opens from the install, and stays open.
+    assert!(
+        manifest["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "Orcel.Desktop.exe"),
+        "the Windows app is not a manifest file"
+    );
+    let opened = json_ok(&orcel(
+        &root.join("bin").join("orcel.exe"),
+        &local,
+        &["app", "--json"],
+    ));
+    let pid = opened["pid"].as_u64().expect("the app's pid").to_string();
+    std::thread::sleep(Duration::from_secs(5));
+    let running = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .unwrap();
+    let running = String::from_utf8_lossy(&running.stdout).into_owned();
+    let _ = Command::new("taskkill").args(["/PID", &pid, "/F"]).output();
+    assert!(
+        running.contains("Orcel.Desktop.exe"),
+        "the app didn't stay open: {running}"
+    );
+    // It's gone before the install it ran from is removed.
+    std::thread::sleep(Duration::from_secs(1));
 }
 
 /// Kills (as a crash) every orceld started from the install at `root`,

@@ -23,6 +23,7 @@ pub const REQUIRED_FILES: &[&str] = &[
     "orcel.exe",
     "orcel-mcp-host.exe",
     "orceld.exe",
+    "Orcel.Desktop.exe",
     "app/orcel-mcp/package.json",
     "app/orcel-mcp/dist/index.js",
     "LICENSE",

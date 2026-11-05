@@ -53,7 +53,7 @@ runs:
         New-Item -ItemType Directory -Force $out | Out-Null
         $identical = $true
         $binaries = [ordered]@{}
-        foreach ($name in "orcel.exe", "orcel-mcp-host.exe", "orceld.exe", "orcel-contain.exe") {
+        foreach ($name in "orcel.exe", "orcel-mcp-host.exe", "orceld.exe", "orcel-contain.exe", "Orcel.Desktop.exe") {
           $a = (Get-FileHash (Join-Path $first $name) -Algorithm SHA256).Hash.ToLower()
           $b = (Get-FileHash (Join-Path $second $name) -Algorithm SHA256).Hash.ToLower()
           $binaries[$name] = [ordered]@{ first = $a; second = $b; identical = ($a -eq $b) }
