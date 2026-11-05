@@ -156,13 +156,20 @@ head and CI: this checkpoint can't name its own merge.
    #621 (MCP from the dev tarballs), #622 (live task timeline in the Windows app),
    #623 (workbook source, test-only), #624 (browser tasks on the controlled site),
    #625 (native host memory) and #626 (a broken pipe to `orceld` no longer ends the
-   MCP edge; longer tarball journey). #627 (refusals name the source) followed.
+   MCP edge; longer tarball journey). #627 (refusals name the source), #629 (M-NAT-03,
+   100 actions per type), #630 (`orceld` alone killed during an Agent run, on macOS and
+   Linux) and #631 (M-BR-04, worker and engine only) followed.
    Evidence so far, all scripted or test clients, never a model or a real client:
-   browser tasks 15/15 with no timeouts, on Windows only, p50 1326 to 1842 ms and p95
-   up to 2141 ms; native host peak 6.7 MiB on X11, 6.4 to 6.9 on Sway across three runs,
-   11.0 on macOS, under the suite and not idle; dev tarballs reach
-   the approval and stop (macOS `APPROVAL_DENIED`, Linux `APPROVAL_UNAVAILABLE`), and
-   survive a killed `orceld` in the same session. Branch
+   browser tasks 15/15 with no timeouts, on Windows only, p50 about 1.0 to 1.8 s across
+   runs; native host peak 6.7 MiB on X11, 6.4 to 6.9 on Sway across three runs,
+   11.0 on macOS, under the suite and not idle, before #629 added its actions; dev
+   tarballs reach the approval and stop (macOS `APPROVAL_DENIED`, Linux
+   `APPROVAL_UNAVAILABLE`), and survive a killed `orceld` in the same session; semantic
+   actions p50 324 ms on X11, 107 on Sway, 727 on macOS; raw click 762, drag 1016, scroll
+   835 ms, on X11 only; worker and engine peak 327 to 343 MiB committed, on Windows,
+   without the host. Linux's p95 is within a few ms of its p50, which suggests fixed
+   waits: raw input includes the 250 ms `EFFECT_SETTLE`, and why semantic actions take
+   about 215 ms longer on X11 than on Sway isn't known. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: merge main in, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -178,10 +185,10 @@ head and CI: this checkpoint can't name its own merge.
    then `node scripts/check-vendored-cua.mjs` on a commit.
 4. Next engineering, in order: the next product milestone that needs no
    founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`), with
-   these candidates: the Agent surviving an `orceld`-only restart with a saved run
-   record; M-BR-04 (browser memory); checked figures
-   for CSV reports, text only; a terminal task timeline on macOS and Linux, once
-   someone decides whether that client may use `task.*`. Then #438 when its new
+   these candidates: M-NAT-01 (200 calls); M-WI-01 and M-WI-02; a terminal task timeline
+   on macOS and Linux, once someone decides whether that client may use `task.*`.
+   Checked figures for CSV reports aren't on the roadmap and would change what
+   `verified` means, so they need adopting first. Then #438 when its new
    timeline first prints; a cgroup the engine cannot leave (SG-000115 class 2, which
    needs no activation); then what the founder's answers to
    `FOUNDER_DECISION_PACKET.md` unlock.
