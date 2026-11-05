@@ -40,9 +40,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
+import signal
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -94,6 +97,8 @@ class Plan:
     todos: list[dict[str, str]] = field(default_factory=list)
     #: The 1-based call after which the agent's process dies (kill/resume).
     crash_after: Optional[int] = None
+    #: The 1-based call after which orceld alone dies; the agent and the edge stay.
+    kill_orceld_after: Optional[int] = None
     answer: str = "done"
 
 
@@ -140,6 +145,18 @@ PLANS = [
           ToolCall("fs_list", {"path": "w"}), ToolCall("fs_list", {"path": "w"})],
          todos=[{"content": "List w and read a.txt", "status": "in_progress"}], crash_after=3),
 ]
+
+#: What a read has to return after orceld was killed.
+KEPT_TEXT = "still-readable-after-the-kill"
+
+if os.name != "nt":
+    # orceld alone dies after the second call, and the agent and the edge stay. The next
+    # call either finds orceld gone and is left unknown, stopping the run, or reaches a
+    # new one if the edge has already seen the exit. Either way the same edge goes on.
+    PLANS.append(Plan("orceld_killed", lambda root: _write(root, {"w/a.txt": f"{KEPT_TEXT}\n"}),
+                      [ToolCall("fs_list", {"path": "w"}), ToolCall("fs_stat", {"path": "w/a.txt"}),
+                       ToolCall("fs_read", {"path": "w/a.txt"}), ToolCall("fs_list", {"path": "w"})],
+                      kill_orceld_after=2))
 
 
 def _policy_model(plan: Plan, record: dict[str, Any]) -> Any:
@@ -206,15 +223,27 @@ def _policy_model(plan: Plan, record: dict[str, Any]) -> Any:
     return ScriptedPolicy()
 
 
+def _orceld_pids(edge: Edge) -> list[int]:
+    """The edge's orceld, by asking the system rather than the edge."""
+    found = subprocess.run(["pgrep", "-P", str(edge._process.pid), "orceld"],
+                           capture_output=True, text=True, timeout=30, check=False)
+    return [int(pid) for pid in found.stdout.split()]
+
+
 class TimedEdge:
     """The real edge, with each edge round trip timed, mutating dispatches
     counted and, for kill/resume, the agent's process dying right after the
-    Nth call returns (the edge is then replaced by a new one)."""
+    Nth call returns (the edge is then replaced by a new one), or orceld alone
+    dying (the edge stays)."""
 
-    def __init__(self, edge: Edge, crash_after: Optional[int] = None) -> None:
-        self.edge, self.crash_after = edge, crash_after
+    def __init__(self, edge: Edge, crash_after: Optional[int] = None,
+                 kill_orceld_after: Optional[int] = None) -> None:
+        self.edge, self.crash_after, self.kill_orceld_after = edge, crash_after, kill_orceld_after
         self.edge_call_ms: list[float] = []
         self.dispatched: list[str] = []
+        #: The calls orceld answered, so its audit should hold one record each.
+        self.answered: list[str] = []
+        self.killed_orceld: list[int] = []
 
     def list_tools(self) -> Any:
         return self.edge.list_tools()
@@ -223,9 +252,15 @@ class TimedEdge:
         started = time.perf_counter()
         self.dispatched.append(name)
         try:
-            return self.edge.call_tool(name, arguments, timeout_s)
+            outcome = self.edge.call_tool(name, arguments, timeout_s)
+            self.answered.append(name)
+            return outcome
         finally:
             self.edge_call_ms.append((time.perf_counter() - started) * 1000)
+            if self.kill_orceld_after == len(self.dispatched):
+                self.killed_orceld = _orceld_pids(self.edge)
+                for pid in self.killed_orceld:
+                    os.kill(pid, signal.SIGKILL)
             if self.crash_after is not None and len(self.dispatched) == self.crash_after:
                 self.crash_after = None
                 raise Crash()
@@ -315,12 +350,25 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
         started = time.perf_counter()
         edge = Edge([node, str(edge_js)], env)
         edge.start()
-        timed = TimedEdge(edge, plan.crash_after)
+        timed = TimedEdge(edge, plan.crash_after, plan.kill_orceld_after)
         edges_started = 1
         events = EventLog(store.run_id)
         resume: dict[str, Any] = {}
         try:
             result, _ = _run(config, plan, timed, store, events, record)
+            if plan.kill_orceld_after is not None:
+                resume["orceld_killed"] = timed.killed_orceld
+                resume["first_outcome"] = result.outcome
+                resume["unknown_steps_surfaced"] = sum(1 for s in result.steps if s.error_code == OUTCOME_UNKNOWN)
+                if result.outcome == "edge-failure":
+                    # The same process and edge: a new agent on the same store.
+                    store.close()
+                    store = open_store(state / "agent", run_id)
+                    result, _ = _run(config, plan, timed, store, events, record)
+                resume["resumed_outcome"] = result.outcome
+                resume["orceld_now"] = _orceld_pids(timed.edge)
+                resume["read_after_kill"] = any(s.ok and s.call.tool == "fs_read" and KEPT_TEXT in json.dumps(s.result)
+                                                for s in result.steps)
         except Crash:
             # A new process: a new agent, journal and planner on the same
             # store, and a new edge (so a new orceld) on the same state root.
@@ -368,7 +416,7 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
             "max_tool_message_chars": record["max_tool_message_chars"],
             "events": {kind: kinds.count(kind) for kind in sorted(set(kinds)) if kind.startswith(("loop.", "context."))},
             "resume": resume or None,
-            **episode_security(state, workspace, before, timed.dispatched),
+            **episode_security(state, workspace, before, timed.answered),
         })
     finally:
         if tracemalloc.is_tracing():
@@ -513,6 +561,25 @@ def check(report: dict[str, Any]) -> list[str]:
             problems.append(f"kill_resume/{config}: the resumed run did not finish cleanly")
         if row["edges_started"] != 2:
             problems.append(f"kill_resume/{config}: the edge and orceld were not restarted")
+    for plan in PLANS:
+        if plan.kill_orceld_after is None:
+            continue
+        for config in CONFIGS:
+            where = f"{plan.name}/{config}"
+            row = rows[(plan.name, config)]
+            resume = row["resume"] or {}
+            if not resume.get("orceld_killed"):
+                problems.append(f"{where}: no orceld was killed")
+            if not resume.get("orceld_now") or set(resume.get("orceld_now", [])) & set(resume.get("orceld_killed", [])):
+                problems.append(f"{where}: no new orceld replaced the killed one")
+            if row["edges_started"] != 1:
+                problems.append(f"{where}: the edge was restarted")
+            if resume.get("first_outcome") not in ("finished", "edge-failure"):
+                problems.append(f"{where}: first outcome {resume.get('first_outcome')}")
+            if (resume.get("first_outcome") == "edge-failure") != (resume.get("unknown_steps_surfaced") == 1):
+                problems.append(f"{where}: a stopped run must surface exactly the one unknown call")
+            if not row["clean"] or not resume.get("read_after_kill"):
+                problems.append(f"{where}: the run did not finish with a read from the new orceld")
     for task in ("long_context", "oversized_output"):
         for config in CONFIGS:
             if not rows[(task, config)]["clean"]:
