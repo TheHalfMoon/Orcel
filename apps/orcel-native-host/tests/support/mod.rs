@@ -67,15 +67,13 @@ fn rss_kib(pid: u32) -> Option<u64> {
     }
 }
 
-/// Samples the host once a second, as M-NAT-04 asks, until told to stop or it exits.
+/// Samples the host once a second, as M-NAT-04 asks, until told to stop.
 fn sample_rss(pid: u32, peak: Arc<AtomicU64>, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
-            match rss_kib(pid) {
-                Some(kib) => {
-                    peak.fetch_max(kib, Ordering::Relaxed);
-                }
-                None => return,
+            // One failed reading doesn't end sampling: Drop does.
+            if let Some(kib) = rss_kib(pid) {
+                peak.fetch_max(kib, Ordering::Relaxed);
             }
             std::thread::sleep(Duration::from_secs(1));
         }
