@@ -1721,8 +1721,6 @@ mod platform {
             }
         }
 
-        /// #438 (test builds only): the last 2 KiB of the worker's stderr,
-        /// control characters other than newlines removed.
         /// #438: which of the engine's processes are alive at a timeout, by type only
         /// (a missing network service would say what it's waiting for). No other
         /// argument is printed, because they hold the profile path and test values.
@@ -1749,6 +1747,8 @@ mod platform {
             }
         }
 
+        /// #438 (test builds only): the last 2 KiB of the worker's stderr,
+        /// control characters other than newlines removed.
         #[cfg(test)]
         fn print_stderr_tail(&self) {
             // One file per lifetime (process id and a nanosecond stamp), so
