@@ -154,10 +154,17 @@ fn names_a_cell_first(line: &str) -> bool {
 /// The saved value of a cell in the parser's Markdown, exactly as the table shows
 /// it. `sheet` is the whole title, which the parser keeps unique. `None` if the sheet
 /// or the cell isn't there, or the cell has no saved value: a missing result isn't
-/// zero, and it can't confirm any figure. Nor can a value from a formula that may
-/// reach outside the workbook, which may be stale.
+/// zero, and it can't confirm any figure. Nor can a value that may be stale: a
+/// formula marked as reaching outside, or any formula at all in a workbook declaring
+/// an outside source, since it may reach one through a defined name.
 pub(crate) fn cell_value<'a>(markdown: &'a str, sheet: &str, cell: &str) -> Option<&'a str> {
     let mut in_sheet = false;
+    // Before the first sheet: the reader's notices. A sheet's name is listed with a
+    // leading "- ", so a name can't pass for a notice.
+    let outside_sources = markdown
+        .lines()
+        .take_while(|line| !line.starts_with("## Sheet: "))
+        .any(|line| !line.starts_with("- ") && line.contains("Not used or refreshed"));
     for line in markdown.lines() {
         if let Some(title) = line.strip_prefix("## Sheet: ") {
             in_sheet = title == sheet;
@@ -176,8 +183,9 @@ pub(crate) fn cell_value<'a>(markdown: &'a str, sheet: &str, cell: &str) -> Opti
         let (value, after) = split_cell(rest)?;
         let (kind, after) = split_cell(after)?;
         let (_format, after) = split_cell(after)?;
-        let (_formula, note) = split_cell(after)?;
-        return (kind != "empty" && !note.contains("external")).then_some(value);
+        let (formula, note) = split_cell(after)?;
+        let stale = note.contains("external") || (outside_sources && !formula.is_empty());
+        return (kind != "empty" && !stale).then_some(value);
     }
     None
 }

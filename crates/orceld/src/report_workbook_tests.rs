@@ -150,6 +150,38 @@ fn a_value_that_may_be_stale_confirms_nothing() {
 }
 
 #[test]
+fn a_workbook_with_an_outside_source_confirms_no_formula() {
+    let notice = "Defined names that may reach outside: 1. Not used or refreshed, so values depending on them may be stale.";
+    let rows = "## Sheet: S\n\n| A1 | 41 | number |  | =Rate |  |\n| B1 | 7 | number |  |  |  |\n";
+    let declared = format!("# Workbook\n\n{notice}\n\n{rows}");
+    assert_eq!(
+        cell_value(&declared, "S", "A1"),
+        None,
+        "a formula may use it"
+    );
+    assert_eq!(
+        cell_value(&declared, "S", "B1"),
+        Some("7"),
+        "a typed value doesn't"
+    );
+
+    let plain = format!("# Workbook\n\n{rows}");
+    assert_eq!(cell_value(&plain, "S", "A1"), Some("41"));
+    let recalculates = format!("# Workbook\n\nThis workbook asks to be recalculated when opened, so saved values may be stale.\n\n{rows}");
+    assert_eq!(
+        cell_value(&recalculates, "S", "A1"),
+        Some("41"),
+        "that isn't an outside source"
+    );
+    let named = format!("# Workbook\n\nSheets (1):\n- Not used or refreshed\n\n{rows}");
+    assert_eq!(
+        cell_value(&named, "S", "A1"),
+        Some("41"),
+        "a sheet's name is no notice"
+    );
+}
+
+#[test]
 fn a_missing_saved_value_confirms_nothing_not_even_zero() {
     assert_eq!(cell_value(MARKDOWN, "Sales", "B4"), None);
 }
@@ -412,6 +444,29 @@ fn wi05_workbook_journey_denied_once_then_granted_with_figures_confirmed() {
     };
     let stale = check_figures(&scene.workspace, &record, "Sales!A1 = 41\n").unwrap_err();
     assert!(stale.contains("no saved value"), "{stale}");
+
+    // Nor does one reaching outside through a defined name, which the row can't show.
+    let mut named = fixture_parts("written-by-openpyxl");
+    let book = named
+        .iter_mut()
+        .find(|(name, _)| name == "xl/workbook.xml")
+        .expect("a workbook part");
+    let text = String::from_utf8(book.1.clone()).unwrap();
+    assert!(text.contains("</workbook>"), "{text}");
+    book.1 = text
+        .replace(
+            "</workbook>",
+            "<definedNames><definedName name=\"Rate\">[1]Rates!$A$1</definedName></definedNames></workbook>",
+        )
+        .into_bytes();
+    let through_name = with_first_sheet(named, "<c r=\"A1\"><f>Rate</f><v>41</v></c>");
+    std::fs::write(&workbook_path, &through_name).unwrap();
+    let record = SourceRecord {
+        path: "data/sales.xlsx".into(),
+        sha256: sha256_hex(&through_name),
+        bytes: through_name.len() as u64,
+    };
+    assert!(check_figures(&scene.workspace, &record, "Sales!A1 = 41\n").is_err());
 
     // A workbook too large for the frame isn't read in part.
     let text = "y".repeat(1_000_100);
