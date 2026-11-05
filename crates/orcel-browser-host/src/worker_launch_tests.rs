@@ -4771,3 +4771,346 @@ fn a_folder_the_user_owns_stays_changeable_when_it_denies_writes() {
         println!("SG108-EVIDENCE node folder check: elevated token, System32 changeable; self-denied own folder changeable");
     }
 }
+
+/// One benchmark task's steps, or why it failed.
+type BrowserTask =
+    fn(&mut BrowserWorker, &crate::observation::ObservationScope) -> Result<u64, String>;
+
+fn bench_named(
+    worker: &BrowserWorker,
+    live: &LiveObservation,
+    role: &str,
+    name: &str,
+) -> Result<String, String> {
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == role && h.name == name)
+        {
+            return Ok(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    Err(format!("no {role} named {name}"))
+}
+
+fn bench_form_action(
+    worker: &mut BrowserWorker,
+    live: &LiveObservation,
+    node: &str,
+    role: &str,
+    input: crate::actuation::FormInput,
+) -> Result<(), String> {
+    let (target, mut approval) = approved_form(worker, live, node, role, &input);
+    worker
+        .form_action(&target, &mut approval, &input, None, 1, "workspace")
+        .map(|_| ())
+        .map_err(|error| format!("{error:?}"))
+}
+
+fn bench_observe(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+    url: &str,
+) -> Result<LiveObservation, String> {
+    worker
+        .navigate(url)
+        .map_err(|error| format!("navigate: {error:?}"))?;
+    worker
+        .observe(scope)
+        .map_err(|error| format!("observe: {error:?}"))
+}
+
+/// Fill, select and check, then the host's own postconditions over the page.
+fn bench_form(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    use crate::actuation::FormInput;
+    use crate::verify::Postcondition;
+    let live = bench_observe(worker, scope, "https://fixture.test/form-page")?;
+    let name = bench_named(worker, &live, "textbox", "Full name")?;
+    let city = bench_named(worker, &live, "combobox", "City")?;
+    let terms = bench_named(worker, &live, "checkbox", "Accept terms")?;
+    let value = "Ada Lovelace".to_owned();
+    let fill = FormInput::Fill {
+        value: value.clone(),
+    };
+    bench_form_action(worker, &live, &name, "textbox", fill)?;
+    let select = FormInput::Select {
+        labels: vec!["Porto".into()],
+    };
+    bench_form_action(worker, &live, &city, "combobox", select)?;
+    let check = FormInput::Check { checked: true };
+    bench_form_action(worker, &live, &terms, "checkbox", check)?;
+    let report = worker
+        .verify_postconditions(&[
+            Postcondition::ValueEquals {
+                node_id: name,
+                value,
+            },
+            Postcondition::ValueEquals {
+                node_id: city,
+                value: "Porto".into(),
+            },
+            Postcondition::Checked {
+                node_id: terms,
+                checked: true,
+            },
+        ])
+        .map_err(|error| format!("verify: {error:?}"))?;
+    if !report.verified {
+        return Err("the page doesn't hold the approved values".into());
+    }
+    Ok(5)
+}
+
+/// A confirm dialog is dismissed and reported, and the page keeps its item.
+fn bench_dialog(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    let live = bench_observe(worker, scope, "https://fixture.test/dialog-page")?;
+    let button = bench_named(worker, &live, "button", "Delete")?;
+    let press = crate::actuation::FormInput::Press {
+        key: "Enter".into(),
+    };
+    bench_form_action(worker, &live, &button, "button", press)?;
+    let kept = worker
+        .wait_for_text("kept", true, Duration::from_secs(10))
+        .map_err(|error| format!("wait: {error:?}"))?;
+    let seen = worker
+        .take_dismissed_dialogs()
+        .map_err(|error| format!("dialogs: {error:?}"))?;
+    if !kept || seen.dialogs.len() != 1 || seen.dialogs[0].accepted {
+        return Err("the dialog wasn't dismissed and reported".into());
+    }
+    Ok(3)
+}
+
+/// A staged file reaches the page byte for byte, as the page itself reports.
+fn bench_upload(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    let folder = temp_profile("bench-upload-source");
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    std::fs::write(folder.join("report.txt"), b"orcel-upload-bytes")
+        .map_err(|error| error.to_string())?;
+    let live = bench_observe(worker, scope, "https://fixture.test/upload-page")?;
+    let input = bench_named(worker, &live, "button", "Attachment")?;
+    let bound = BrowserWorker::approved_folder_identity(&folder)
+        .map_err(|error| format!("folder: {error:?}"))?;
+    let staged = worker
+        .stage_upload(&folder, &bound, "report.txt")
+        .map_err(|error| format!("stage: {error:?}"))?;
+    let target = crate::actuation::ActuationTarget {
+        page_id: live.page.page_id.clone(),
+        origin: live.page.origin.clone(),
+        document_generation: live.document.document_generation,
+        node_id: input.clone(),
+        role: "button".into(),
+        state: worker
+            .upload_binding(&input, &staged.staged_id)
+            .map_err(|error| format!("binding: {error:?}"))?,
+        action: crate::actuation::SupportedAction::Upload,
+        workspace: "workspace".into(),
+        policy_revision: 1,
+    };
+    let mut approval = crate::actuation::ApprovalToken {
+        approval_id: "approval-upload".into(),
+        target_digest: crate::actuation::target_digest(&target),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+        consumed: false,
+    };
+    worker
+        .upload(&target, &mut approval, &staged.staged_id, 1, "workspace")
+        .map_err(|error| format!("upload: {error:?}"))?;
+    let got = worker
+        .wait_for_text(
+            "got report.txt orcel-upload-bytes",
+            true,
+            Duration::from_secs(10),
+        )
+        .map_err(|error| format!("wait: {error:?}"))?;
+    if !got {
+        return Err("the page didn't receive the file".into());
+    }
+    Ok(4)
+}
+
+/// The latest report is downloaded create-only. The host hashes the committed file
+/// itself and checks the fixture's own marker in it.
+fn bench_download(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    let approved = temp_profile("bench-approved-folder");
+    let live = bench_observe(worker, scope, "https://fixture.test/reports")?;
+    let latest = worker
+        .select_latest_dated_link()
+        .map_err(|error| format!("select: {error:?}"))?;
+    let (target, mut approval) =
+        approved_download(worker, &live, &latest, &approved, "reports/latest.pdf");
+    let committed = worker
+        .download(
+            &target,
+            &mut approval,
+            1,
+            "workspace",
+            &approved,
+            "reports/latest.pdf",
+        )
+        .map_err(|error| format!("download: {error:?}"))?;
+    let on_disk = std::fs::read(&committed.path).map_err(|error| error.to_string())?;
+    let marked = on_disk
+        .windows(b"/reports/2026-09-30.pdf".len())
+        .any(|window| window == b"/reports/2026-09-30.pdf");
+    if !marked || sha256_hex(&on_disk) != committed.sha256 {
+        return Err("the committed file isn't the expected bytes".into());
+    }
+    Ok(3)
+}
+
+/// An approval from before a navigation is refused, and it isn't spent (M-BR-02).
+fn bench_stale_target(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    use crate::actuation::FormInput;
+    let old = bench_observe(worker, scope, "https://fixture.test/form-page")?;
+    let name = bench_named(worker, &old, "textbox", "Full name")?;
+    let fill = FormInput::Fill {
+        value: "Ada".into(),
+    };
+    let (target, mut approval) = approved_form(worker, &old, &name, "textbox", &fill);
+    bench_observe(worker, scope, "https://fixture.test/form-page")?;
+    let refused = worker.form_action(&target, &mut approval, &fill, None, 1, "workspace");
+    if approval.consumed {
+        return Err("a stale approval was spent".into());
+    }
+    match refused {
+        Err(HostError::Unavailable(UnavailableReason::TargetStale)) => Ok(3),
+        Err(HostError::Invalid(message)) if message.contains("stale") => Ok(3),
+        Err(HostError::Unavailable(UnavailableReason::TimedOut)) => Err("TimedOut".into()),
+        other => Err(format!("not a stale refusal: {other:?}")),
+    }
+}
+
+/// M-BR-01 and M-BR-02 on the controlled site, with a scripted plan through the real
+/// host, worker and engine, and host-side oracles: **a scripted plan, not a planner
+/// or a model.** A timeout in one run, including a failed launch, is recorded rather
+/// than ending the benchmark, since #438 is open and its rate is part of what's
+/// measured. Any other failure fails the test, and so does a case with no passing
+/// run, which a real hang would be. The report is written either way. Tabs aren't
+/// covered: they wait for SG-000122. M-BR-04 isn't measured here.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn bm_browser_tasks_on_the_controlled_site() {
+    const REPETITIONS: usize = 3;
+    let tasks: [(&str, BrowserTask); 5] = [
+        ("controlled-site/form/fill-select-check", bench_form),
+        ("controlled-site/dialog/dismissed", bench_dialog),
+        ("controlled-site/upload/staged-file", bench_upload),
+        ("controlled-site/download/create-only", bench_download),
+        ("controlled-site/stale/refused", bench_stale_target),
+    ];
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    let mut rows = Vec::new();
+    let mut other_failures = Vec::new();
+    for (case, task) in tasks {
+        let mut times = Vec::new();
+        let mut steps = 0;
+        let mut timeouts = 0;
+        let mut failed = 0;
+        for repetition in 0..REPETITIONS {
+            // A new fixture and lifetime for each run, so no run inherits a page.
+            let fixture = HttpsFixture::start();
+            let profile = temp_profile("bench");
+            let mut launch = spec(&profile, true);
+            launch.destinations =
+                vec![
+                    AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                        .expect("fixture.test"),
+                ];
+            launch.test_trusted_spki = Some(fixture.spki.clone());
+            let mut worker = match launch_worker(&launch, &Policy(PolicyKeyState::Absent)) {
+                Ok(worker) => worker,
+                Err(error) => {
+                    timeouts += 1;
+                    println!("BM-BROWSER {case} run {repetition}: launch failed: {error:?}");
+                    continue;
+                }
+            };
+            let started = Instant::now();
+            match task(&mut worker, &scope) {
+                Ok(count) => {
+                    steps = count;
+                    times.push(started.elapsed().as_secs_f64() * 1000.0);
+                }
+                Err(reason) if reason.contains("TimedOut") => {
+                    timeouts += 1;
+                    println!("BM-BROWSER {case} run {repetition}: timeout");
+                }
+                Err(reason) => {
+                    failed += 1;
+                    other_failures.push(format!("{case} run {repetition}: {reason}"));
+                }
+            }
+        }
+        times.sort_by(f64::total_cmp);
+        let at = |share: f64| {
+            times
+                .get(((times.len().max(1) - 1) as f64 * share).ceil() as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
+        let passed = times.len() == REPETITIONS;
+        let observed = if passed {
+            "delivered"
+        } else if failed > 0 {
+            "failed"
+        } else {
+            "timeout"
+        };
+        println!(
+            "BM-BROWSER {case}: {}/{REPETITIONS} passed, {timeouts} timeouts, p50 {:.0} ms, p95 {:.0} ms (scripted plan, not a planner or a model)",
+            times.len(),
+            at(0.5),
+            at(0.95)
+        );
+        if times.is_empty() {
+            other_failures.push(format!("{case}: no run passed"));
+        }
+        let mut row = serde_json::json!({
+            "case": case,
+            "status": if passed { "pass" } else { "fail" },
+            "observed": observed,
+            "steps": steps,
+        });
+        if !times.is_empty() {
+            row["latency_ms"] = serde_json::json!({ "p50": at(0.5), "p95": at(0.95) });
+        }
+        rows.push(row);
+    }
+    if let (Some(path), Ok(commit)) = (
+        std::env::var_os("ORCEL_BM_BROWSER_REPORT"),
+        std::env::var("ORCEL_BM02_COMMIT"),
+    ) {
+        let report = serde_json::json!({
+            "schema": "orcel-benchmark-report/1",
+            "orcel_commit": commit,
+            "suite": "browser-tasks",
+            "machine": { "os": "windows", "os_version": "hosted", "arch": "x86_64" },
+            "planner": { "kind": "deterministic", "name": "scripted-host-calls", "version": "1" },
+            "rows": rows,
+        });
+        std::fs::write(path, report.to_string() + "\n").expect("write the report");
+    }
+    assert!(other_failures.is_empty(), "{other_failures:#?}");
+}

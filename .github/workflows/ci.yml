@@ -1027,7 +1027,23 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - name: Test
+        env:
+          # M-BR-01 and M-BR-02: a scripted plan on the controlled site, Windows only.
+          ORCEL_BM_BROWSER_REPORT: ${{ runner.temp }}/browser-tasks.report.json
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: npm test
+      - name: Check and keep the browser task report
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/browser-tasks.report.json"
+          cat "$RUNNER_TEMP/browser-tasks.report.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: browser-tasks-report
+          path: ${{ runner.temp }}/browser-tasks.report.json
+          if-no-files-found: ignore
 
   # CR-02: the headless Control Room client against the real orceld app API
   # (CR-01) on each OS. ORCEL_REQUIRE_LIVE_ORCELD makes the contract and
