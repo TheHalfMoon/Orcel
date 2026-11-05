@@ -534,34 +534,6 @@ pub use imp::CuaRuntime;
 #[cfg(all(test, target_os = "linux"))]
 mod atspi_reread_tests;
 
-/// P-15: only a window that no longer exists is skipped by the X11 walk.
-#[cfg(all(test, target_os = "linux"))]
-#[test]
-fn a_child_destroyed_during_the_x11_walk_is_skipped_and_nothing_else_is() {
-    use platform_linux::input::unless_child_gone;
-    use x11rb::errors::{ConnectionError, ReplyError};
-    use x11rb::protocol::ErrorKind;
-    let x11_error = |error_kind| {
-        ReplyError::X11Error(x11rb::x11_utils::X11Error {
-            error_kind,
-            error_code: 3,
-            sequence: 1,
-            bad_value: 6291481,
-            minor_opcode: 0,
-            major_opcode: 15,
-            extension_name: None,
-            request_name: Some("QueryTree"),
-        })
-    };
-    assert_eq!(unless_child_gone(Ok(7)).unwrap(), Some(7));
-    let gone = unless_child_gone::<i32>(Err(x11_error(ErrorKind::Window).into()));
-    assert_eq!(gone.unwrap(), None);
-    let other = unless_child_gone::<i32>(Err(x11_error(ErrorKind::Access).into()));
-    assert!(other.is_err());
-    let broken = ReplyError::ConnectionError(ConnectionError::UnknownError);
-    assert!(unless_child_gone::<i32>(Err(broken.into())).is_err());
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

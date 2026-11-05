@@ -2948,23 +2948,6 @@ fn point_in_rect(x: i32, y: i32, geom: &GetGeometryReply) -> bool {
         && y < geom.y as i32 + geom.height as i32
 }
 
-/// The result of walking into a child window, or `None` if the child was destroyed
-/// while the walk ran: it is no longer there to receive anything, as if the walk had
-/// started a moment later. The target itself going away is still an error.
-pub fn unless_child_gone<T>(walked: Result<T>) -> Result<Option<T>> {
-    match walked {
-        Ok(found) => Ok(Some(found)),
-        Err(failure) => match failure.downcast_ref::<x11rb::errors::ReplyError>() {
-            Some(x11rb::errors::ReplyError::X11Error(error))
-                if error.error_kind == x11rb::protocol::ErrorKind::Window =>
-            {
-                Ok(None)
-            }
-            _ => Err(failure),
-        },
-    }
-}
-
 fn deepest_child_at_point(
     conn: &RustConnection,
     window: Window,
@@ -2981,10 +2964,7 @@ fn deepest_child_at_point(
         }
         let child_x = local_x - geom.x as i32;
         let child_y = local_y - geom.y as i32;
-        match unless_child_gone(deepest_child_at_point(conn, *child, child_x, child_y))? {
-            Some(found) => return Ok(found),
-            None => continue,
-        }
+        return deepest_child_at_point(conn, *child, child_x, child_y);
     }
     Ok((window, local_x, local_y))
 }
@@ -3007,10 +2987,7 @@ fn window_path_at_point(
         }
         let child_x = local_x - geom.x as i32;
         let child_y = local_y - geom.y as i32;
-        match unless_child_gone(window_path_at_point(conn, *child, child_x, child_y))? {
-            Some(below) => path.extend(below),
-            None => continue,
-        }
+        path.extend(window_path_at_point(conn, *child, child_x, child_y)?);
         break;
     }
     Ok(path)

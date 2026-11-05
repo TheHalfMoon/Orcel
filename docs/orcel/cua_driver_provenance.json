@@ -145,7 +145,7 @@
         {
           "path": "src/input/mod.rs",
           "upstream_blob_sha": "7a0cd50dae20134c6994b065e4c96b3852f1bae6",
-          "patched_blob_sha": "7bd1693841af9a4e8eff40a32e41600fb8b89e04",
+          "patched_blob_sha": "42e9c5d88b35183387f2390c5806626dd88a6a64",
           "upstream_blocker_lines": [
             "650ccb2498eebfe0486c510ec91cf270beb12f7c6d6d7c46e3cd478f2e973d35",
             "65ad2898961d47e51f9263ea3ba69100e0dabb6f8345959ec0afcbaeff40e551"
