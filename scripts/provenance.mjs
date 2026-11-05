@@ -95,7 +95,9 @@ const record = {
     rustc: run("rustc", ["-vV"]),
     cargo: run("cargo", ["-V"]),
     node: process.version,
-    npm: npmVersion()
+    npm: npmVersion(),
+    // The compiler of the Windows app, whose version floats with the runner image.
+    dotnet_sdk: run("dotnet", ["--version"])
   },
   locks: {
     "Cargo.lock": sha256File(join(repo, "Cargo.lock")),

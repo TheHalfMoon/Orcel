@@ -112,8 +112,8 @@ if (!existsSync(containHelper)) {
 }
 copyFileSync(containHelper, join(out, "orcel-contain.exe"));
 writeFileSync(join(out, "orcel-contain.sha256"), `${sha256(join(out, "orcel-contain.exe"))}\n`);
-// SG-000127: the Windows app, built with Windows' own compiler. It only starts `orcel`
-// from the install and reads the local app API.
+// SG-000127: the Windows app, built deterministically by build.ps1. It only starts
+// `orcel` from the install and reads the local app API.
 const appBuild = join(targetDir, "windows-app");
 execFileSync(
   "powershell.exe",

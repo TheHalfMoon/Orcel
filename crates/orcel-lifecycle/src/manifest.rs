@@ -18,12 +18,14 @@ const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_FILES: usize = 20_000;
 const MAX_RELATIVE_PATH: usize = 200;
 
-/// Payload files every installable release must contain.
+/// Payload files every installable release must contain. This also applies to
+/// versions already installed, so a file added here would stop a rollback to a release
+/// without it: the Windows app and the contained-tier helper stay out for that reason,
+/// and release qualification requires them in a new package instead.
 pub const REQUIRED_FILES: &[&str] = &[
     "orcel.exe",
     "orcel-mcp-host.exe",
     "orceld.exe",
-    "Orcel.Desktop.exe",
     "app/orcel-mcp/package.json",
     "app/orcel-mcp/dist/index.js",
     "LICENSE",

@@ -432,6 +432,12 @@ pub fn app(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let version = active_version(&layout)?;
     let path = layout.version_dir(&version).join("Orcel.Desktop.exe");
+    // A rollback can land on a release from before the app shipped.
+    if !path.is_file() {
+        return Err(LifecycleError::usage(format!(
+            "Orcel {version} was released without the app; update to open it"
+        )));
+    }
     let child = std::process::Command::new(&path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

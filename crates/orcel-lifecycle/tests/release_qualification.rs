@@ -587,7 +587,9 @@ fn installed_release_fits_the_400_mb_budget() {
         "installed app uses {allocated} allocated bytes ({bytes} apparent), over the {INSTALLED_BUDGET_BYTES} byte budget"
     );
 
-    // SG-000127: the packaged app opens from the install, and stays open.
+    // SG-000127: the packaged app opens from the install, and stays open. It isn't in
+    // REQUIRED_FILES, which would stop a rollback to a release without it.
+    assert!(!orcel_lifecycle::manifest::REQUIRED_FILES.contains(&"Orcel.Desktop.exe"));
     assert!(
         manifest["files"]
             .as_array()
