@@ -16,7 +16,8 @@
 //! The format is detected from the content only, never from a name:
 //! - `%PDF-` goes to [`pdf`] (Firecrawl's `pdf.rs`, adapted);
 //! - a zip or OLE container goes to [`document`] (Firecrawl's `document.rs`,
-//!   adapted), which admits DOCX, PPTX and XLSX;
+//!   adapted), which admits DOCX, PPTX and XLSX, and reads an XLSX through
+//!   [`workbook`] (Orcel's own, with source cell references);
 //! - anything else is `unsupported_format`.
 //!
 //! Every bound fails closed except the Markdown length: past
@@ -26,6 +27,7 @@
 
 mod document;
 mod pdf;
+mod workbook;
 
 use orcel_provider_process::document_parser::{
     encode_ok, encode_refusal, DocumentFormat, ParseRefusal, ParsedDocument, EXIT_REFUSED,
