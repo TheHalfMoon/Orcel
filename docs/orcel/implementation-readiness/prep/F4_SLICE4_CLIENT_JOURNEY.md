@@ -58,10 +58,10 @@ Install puts `orcel` on PATH; open a new terminal if it isn't found.
 Then check that everything is in place. It reads the configuration, and approves nothing and starts no client:
 
 ```bash
-cargo run -p orcel-lifecycle --example f4_journey -- ready C:/orcel-f4-journey
+cargo run -p orcel-lifecycle --example f4_journey -- ready C:/orcel-f4-journey --release-candidate orcel-rc
 ```
 
-Every check should say `PASS`.
+Every check should say `PASS`. It also checks that the release candidate was built from the commit you've checked out, using its provenance file, and that its zip is the file that provenance hashed. Run it from your checkout, with `orcel-rc` being the folder you downloaded the artifact to, and not the extracted `release` folder.
 
 ### 2. Start the client and record what it is
 

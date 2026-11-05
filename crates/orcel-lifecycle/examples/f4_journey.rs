@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! cargo run -p orcel-lifecycle --example f4_journey -- prepare <dir>
-//! cargo run -p orcel-lifecycle --example f4_journey -- ready <dir>
+//! cargo run -p orcel-lifecycle --example f4_journey -- ready <dir> [--release-candidate <folder>]
 //! cargo run -p orcel-lifecycle --example f4_journey -- change-source <dir>
 //! cargo run -p orcel-lifecycle --example f4_journey -- history <dir> [--journal <file>]
 //! cargo run -p orcel-lifecycle --example f4_journey -- evidence <dir> \
@@ -104,9 +104,64 @@ fn ready_checks(dir: &Path, workspaces: &str) -> Vec<Check> {
     ]
 }
 
+/// Whether the downloaded release candidate is the one this checkout builds: its
+/// provenance names this commit, and its zip is the file the provenance hashed.
+/// A journey run against another commit's build is evidence about neither.
+fn release_checks(provenance: &str, head: &str, zips: &[(String, Vec<u8>)]) -> Vec<Check> {
+    let record: Value = serde_json::from_str(provenance).unwrap_or(Value::Null);
+    let revision = record["source"]["revision"].as_str().unwrap_or_default();
+    let same_commit = !head.is_empty() && revision == head;
+    let hashed = record["artifacts"].as_array();
+    let intact = !zips.is_empty()
+        && zips.iter().all(|(name, bytes)| {
+            let digest = sha256(bytes);
+            hashed.is_some_and(|artifacts| {
+                artifacts.iter().any(|artifact| {
+                    artifact["name"] == name.as_str() && artifact["sha256"] == digest.as_str()
+                })
+            })
+        });
+    vec![
+        check(
+            "the release candidate was built from this commit",
+            same_commit.then(|| format!("both at {head}")),
+            &format!("its provenance says {revision:?}, this checkout is {head:?}"),
+        ),
+        check(
+            "the release candidate's zip matches its provenance",
+            intact.then(|| format!("{} file checked", zips.len())),
+            "the zip is missing or its SHA-256 differs from the provenance",
+        ),
+    ]
+}
+
+fn release_candidate(folder: &Path) -> Result<Vec<Check>, String> {
+    let mut provenance = None;
+    let mut zips = Vec::new();
+    for entry in fs::read_dir(folder).map_err(text)? {
+        let path = entry.map_err(text)?.path();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.ends_with(".provenance.json") {
+            provenance = Some(fs::read_to_string(&path).map_err(text)?);
+        } else if name.ends_with(".zip") {
+            zips.push((name, fs::read(&path).map_err(text)?));
+        }
+    }
+    let provenance = provenance.ok_or_else(|| format!("no provenance in {}", folder.display()))?;
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|error| format!("git didn't run ({error}); run this from the checkout"))?;
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+    Ok(release_checks(&provenance, &head, &zips))
+}
+
 /// Reads the configuration through the installed `orcel`. Approves nothing and
 /// starts no client.
-fn ready(dir: &Path) -> Result<bool, String> {
+fn ready(dir: &Path, candidate: Option<&Path>) -> Result<bool, String> {
     let orcel = |args: &[&str]| {
         std::process::Command::new("orcel")
             .args(args)
@@ -121,7 +176,10 @@ fn ready(dir: &Path) -> Result<bool, String> {
         String::from_utf8_lossy(&version.stdout).trim()
     );
     let listed = orcel(&["workspace", "list", "--json"])?;
-    let results = ready_checks(dir, &String::from_utf8_lossy(&listed.stdout));
+    let mut results = ready_checks(dir, &String::from_utf8_lossy(&listed.stdout));
+    if let Some(folder) = candidate {
+        results.extend(release_candidate(folder)?);
+    }
     for result in &results {
         println!(
             "{} {}: {}",
@@ -413,14 +471,17 @@ fn value_of(args: &[String], flag: &str) -> Option<String> {
 }
 
 fn run(args: &[String]) -> Result<bool, String> {
-    let usage = "usage: f4_journey prepare <dir> | ready <dir> | change-source <dir> | history <dir> [--journal <file>] | evidence <dir> --client <name version> --transcript <file> [--journal <file>]";
+    let usage = "usage: f4_journey prepare <dir> | ready <dir> [--release-candidate <folder>] | change-source <dir> | history <dir> [--journal <file>] | evidence <dir> --client <name version> --transcript <file> [--journal <file>]";
     let (Some(command), Some(dir)) = (args.first(), args.get(1)) else {
         return Err(usage.to_owned());
     };
     let dir = Path::new(dir);
     match command.as_str() {
         "prepare" => prepare(dir).map(|()| true),
-        "ready" => ready(dir),
+        "ready" => {
+            let candidate = value_of(args, "--release-candidate").map(PathBuf::from);
+            ready(dir, candidate.as_deref())
+        }
         "change-source" => change_source(dir).map(|()| true),
         "history" => {
             let journal = value_of(args, "--journal")
@@ -637,6 +698,55 @@ mod tests {
             .push(json!({"kind": "commit", "outcome": "stale"}));
         assert!(fails(&tasks, TRANSCRIPT));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_release_candidate_must_be_this_commits_and_intact() {
+        let zip = ("orcel.zip".to_owned(), b"the bytes".to_vec());
+        let provenance = json!({
+            "source": {"revision": "abc123"},
+            "artifacts": [{"name": "orcel.zip", "sha256": sha256(b"the bytes")}],
+        })
+        .to_string();
+        let good = release_checks(&provenance, "abc123", std::slice::from_ref(&zip));
+        assert_eq!(failed(&good), Vec::<&str>::new());
+        let commit = "the release candidate was built from this commit";
+        let bytes = "the release candidate's zip matches its provenance";
+        assert_eq!(
+            failed(&release_checks(
+                &provenance,
+                "def456",
+                std::slice::from_ref(&zip)
+            )),
+            vec![commit]
+        );
+        // A checkout git couldn't read isn't a match, even against an empty revision.
+        assert_eq!(
+            failed(&release_checks(
+                &json!({"artifacts": []}).to_string(),
+                "",
+                &[]
+            )),
+            vec![commit, bytes]
+        );
+        let changed = ("orcel.zip".to_owned(), b"other bytes".to_vec());
+        assert_eq!(
+            failed(&release_checks(&provenance, "abc123", &[changed])),
+            vec![bytes]
+        );
+        let renamed = ("other.zip".to_owned(), b"the bytes".to_vec());
+        assert_eq!(
+            failed(&release_checks(&provenance, "abc123", &[renamed])),
+            vec![bytes]
+        );
+        assert_eq!(
+            failed(&release_checks(&provenance, "abc123", &[])),
+            vec![bytes]
+        );
+        assert_eq!(
+            failed(&release_checks("not json", "abc123", &[zip])),
+            vec![commit, bytes]
+        );
     }
 
     #[test]
