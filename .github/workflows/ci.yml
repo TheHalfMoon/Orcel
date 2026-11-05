@@ -1380,6 +1380,18 @@ jobs:
           bash distribution/linux/package.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain \
             apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux "$DIST"
           ls -l "$DIST"
+      - name: Build the unsigned development tarball, and a local client through its MCP server
+        run: |
+          npm ci --ignore-scripts
+          npm run build --workspace apps/orcel-mcp
+          bash distribution/linux/package-dev.sh "$VERSION" target/release/orceld apps/orcel-contain/target/release/orcel-contain \
+            apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux "$RUNNER_TEMP/linux-dev"
+          (cd "$RUNNER_TEMP/linux-dev" && sha256sum -c SHA256SUMS-linux-dev.txt)
+          case "$(ls "$RUNNER_TEMP"/linux-dev/*.tar.gz)" in *-unsigned-dev.tar.gz) ;; *) echo "the name must say unsigned-dev" >&2; exit 1 ;; esac
+          mkdir "$RUNNER_TEMP/orcel-dev"
+          tar -xzf "$RUNNER_TEMP"/linux-dev/*.tar.gz --strip-components=1 -C "$RUNNER_TEMP/orcel-dev"
+          if find "$RUNNER_TEMP/orcel-dev" -perm -1000 -o -perm -2000 -o -perm -4000 | grep .; then exit 1; fi
+          python3 scripts/dev-build-mcp-check.py "$RUNNER_TEMP/orcel-dev"
       - name: Package file list and modes (dpkg -c), no maintainer scripts
         run: |
           deb="$DIST/orcel_${VERSION}-1_amd64.deb"
@@ -1556,6 +1568,34 @@ jobs:
   # gate signing). It unpacks, holds exactly the expected files with a
   # matching helper pin, fails its checksum when tampered with, and orceld
   # answers system.status from it.
+  # F4 slice 5a: the Windows app against a real orceld, under UI Automation on a
+  # hosted runner only, never on anyone's desktop. Nothing reaches the approval
+  # broker. It shows a task, and a second task's update with nothing typed.
+  windows-app-tasks:
+    name: Windows app task timeline / windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Build orceld
+        run: cargo build --locked -p orceld
+      - name: The app's self-test
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/build.ps1 -OutputDirectory "$env:RUNNER_TEMP/app"
+          & "$env:RUNNER_TEMP/app/Orcel.Smoke.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # The state stays under the user profile, the script's default: orceld
+      # refuses a state root under the hosted runner's D:\, which isn't this user's.
+      - name: A live orceld's tasks in the app
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/tests/e2e-tasks.ps1 -Orceld "$env:GITHUB_WORKSPACE/target/debug/orceld.exe" -BuildDirectory "$env:RUNNER_TEMP/app"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   macos-dev-package:
     name: macOS dev package / macos-latest
     runs-on: macos-latest
@@ -1574,6 +1614,10 @@ jobs:
         run: cargo build --release --locked -p orceld
       - name: Build the orcel-contain helper (release, locked, its own workspace)
         run: cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
+      - name: Build the MCP edge
+        run: |
+          npm ci --ignore-scripts
+          npm run build --workspace apps/orcel-mcp
       - name: Build the tarball
         shell: bash
         run: |
@@ -1589,10 +1633,11 @@ jobs:
           home="$RUNNER_TEMP/orcel-dev"
           mkdir -p "$home"
           tar -xzf "$tarball" --strip-components=1 -C "$home"
-          actual=$(cd "$home" && find . -type f | sort)
+          actual=$(cd "$home" && find . -type f -not -path './app/*' | sort)
           expected=$(sort <<'LIST'
           ./bin/orcel-contain
           ./bin/orcel-contain.sha256
+          ./bin/orcel-mcp
           ./bin/orceld
           ./doc/LICENSE
           ./doc/README.md
@@ -1608,6 +1653,12 @@ jobs:
           if find "$home" -perm -1000 -o -perm -2000 -o -perm -4000 | grep .; then exit 1; fi
           mkdir -p "$RUNNER_TEMP/ws"
           ORCEL_WORKSPACES_JSON="[{\"id\":\"ci\",\"root\":\"$RUNNER_TEMP/ws\"}]" python3 scripts/linux-orceld-probe.py exec "$home/bin/orceld" ci
+      - name: A local client through the tarball's MCP server (a test client; no approval is given)
+        shell: bash
+        run: |
+          test -f "$RUNNER_TEMP/orcel-dev/app/orcel-mcp/dist/index.js"
+          if find "$RUNNER_TEMP/orcel-dev/app" -name '*.test.js' | grep .; then exit 1; fi
+          python3 scripts/dev-build-mcp-check.py "$RUNNER_TEMP/orcel-dev"
       - name: A tampered download fails its checksum
         shell: bash
         run: |
