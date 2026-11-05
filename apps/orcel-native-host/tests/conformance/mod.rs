@@ -1406,8 +1406,9 @@ pub fn semantic_latency(
 }
 
 /// M-NAT-03 for the raw input types, on the input probe: from the request to the
-/// application's journal holding the events the cell expects, [`ACTIONS_PER_TYPE`]
-/// times. What those events are is [`run_probe_cells`]' check: this only counts them.
+/// application's journal holding the fewest events the cell expects, [`ACTIONS_PER_TYPE`]
+/// times. An action can send more, so this can stop before its last event. What the
+/// events are is [`run_probe_cells`]' check: this only counts them.
 pub fn raw_latency(
     host: &mut Host,
     report: &mut Report,
@@ -1429,9 +1430,17 @@ pub fn raw_latency(
         let before = oracles(host, state());
         let mut samples = Vec::with_capacity(ACTIONS_PER_TYPE);
         for _ in 0..ACTIONS_PER_TYPE {
-            // A late event of the last action mustn't count toward this one.
-            std::thread::sleep(Duration::from_millis(50));
-            let seen = crate::support::events(&state()).len();
+            // A late event of the last action mustn't count toward this one: start
+            // once the journal has been still for a while.
+            let mut seen = crate::support::events(&state()).len();
+            loop {
+                std::thread::sleep(Duration::from_millis(50));
+                let now = crate::support::events(&state()).len();
+                if now == seen {
+                    break;
+                }
+                seen = now;
+            }
             let mut fields = cell.fields.clone();
             fields["window"] = reference.clone();
             fields["expected_last_input_tick"] = json!(live_tick(host));
