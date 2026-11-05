@@ -49,8 +49,12 @@ Point the client at the launcher by its full path, and name the folder Orcel may
 
 The client sees the same tool list as on Windows, and `orceld` refuses what it can't do on this OS. `orceld` stays the sole authority, and asks you before it writes. Only a short list of variables reaches the server (see the launcher), so a client's other environment doesn't. CI checks this through the launcher with a test client, not with Claude or Codex, and no approval is given there: a report stops at the prompt.
 
+## Update and uninstall
+
+This tarball has no install flow. To update, replace the folder with a newer tarball: the state and the workspace stay as they are. To uninstall, remove the folder and the state in `~/Library/Application Support/Orcel`. The app API's directory, `orcel` under `getconf DARWIN_USER_TEMP_DIR`, can go too. Any secret you stored through Orcel, such as a search key, is in your keychain rather than in the state: remove it there. CI checks that a copy of the folder elsewhere writes to the same task journal. It doesn't check a replacement at the same path, or that nothing else is written, and a newer version reading older state isn't tested: CI uses the same version both times.
+
 ## Limits
 
 - **Permission grants don't survive a rebuild.** macOS ties Accessibility and Screen Recording to a binary's signature, and an ad-hoc signature changes with each build, so a grant is lost on every rebuild.
 - **Unqualified on macOS:** delivered capture and input (XP-07, XP-12) need interactive consent on a real Mac. Approvals were qualified on real hardware (XP-09), but the macOS product as a whole was not.
-- CI checks that this tarball unpacks, holds the expected files, carries a matching helper pin, that `orceld` answers `system.status`, and that a test client through `bin/orcel-mcp` lists tools, reads, is refused outside the workspace and stops at the approval. No more than that.
+- CI checks that this tarball unpacks, holds the expected files, carries a matching helper pin, that `orceld` answers `system.status`, and that a test client through `bin/orcel-mcp` lists tools, reads, is refused outside the workspace, stops at the approval, is refused an existing destination and a changed source, survives `orceld` being killed, and that a copy of the folder writes to the same task journal. No more than that.
