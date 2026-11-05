@@ -119,18 +119,19 @@ try {
         $n++
         # The app stops this task once it has seen an update.
         if (-not $livePreview.ok) {
-            if ($livePreview.error.message -like "*finished (stopped)*") { break }
+            if ($livePreview.error.message -like "*was stopped*") { break }
             throw "report/preview failed: $($livePreview | ConvertTo-Json -Compress -Depth 6)"
         }
+        $liveDigest = $livePreview.result.sha256
         Start-Sleep -Seconds 3
     } while (-not $app.HasExited -and $n -lt 20)
     Write-Output "PASS orceld previewed a second report while the app watched"
     $app.WaitForExit()
     if ($app.ExitCode -ne 0) { $failed = $true }
     # F4 slice 5: the kernel holds the stop, and only that task's.
-    $afterStop = Report "commit" @{ task_id = $secondId; name = "live.md"; content = "# Live`n"; expected_sha256 = $livePreview.result.sha256 } $n
+    $afterStop = Report "commit" @{ task_id = $secondId; name = "live.md"; content = "# Live`n"; expected_sha256 = $liveDigest } $n
     if ($afterStop.ok) { Write-Output "FAIL a stopped task committed"; $failed = $true }
-    elseif ($afterStop.error.message -notlike "*finished (stopped)*") { Write-Output "FAIL a stopped task's commit: $($afterStop | ConvertTo-Json -Compress -Depth 6)"; $failed = $true }
+    elseif ($afterStop.error.message -notlike "*was stopped*") { Write-Output "FAIL a stopped task's commit: $($afterStop | ConvertTo-Json -Compress -Depth 6)"; $failed = $true }
     else { Write-Output "PASS a stopped task's commit is refused" }
     $firstAgain = Report "preview" @{ task_id = $taskId; name = "q3-again.md"; content = "# Q3`n" } ($n + 1)
     if (-not $firstAgain.ok) { Write-Output "FAIL stop reached another task: $($firstAgain | ConvertTo-Json -Compress -Depth 6)"; $failed = $true }

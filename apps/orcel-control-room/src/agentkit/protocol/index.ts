@@ -42,10 +42,11 @@ export type ReadMethod = (typeof READ_METHODS)[number];
 
 /**
  * Every method orceld serves: the client's own READ_METHODS plus the
- * SG-000126 report task reads, which this client does not send yet. All of
- * them only read.
+ * SG-000126 report task reads, which this client does not send yet, and F4's
+ * `task.stop`, which it doesn't send either. All of them only read, except
+ * `task.stop`, which can only end a task.
  */
-export const ORCELD_METHODS = [...READ_METHODS, "task.list", "task.get"] as const;
+export const ORCELD_METHODS = [...READ_METHODS, "task.list", "task.get", "task.stop"] as const;
 
 /** Read-only names orceld reserves; it answers METHOD_UNAVAILABLE today. */
 export const RESERVED_READ_METHODS = ["devices.list"] as const;

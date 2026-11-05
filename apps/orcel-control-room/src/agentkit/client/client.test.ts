@@ -68,7 +68,7 @@ test("SG-000126 task reads stay daemon-only, even when advertised", async () => 
   assert.ok(capabilities.methods.includes("task.get"));
   const before = connector.sent.length;
 
-  for (const method of ["task.list", "task.get", "task.submit", "approval.respond"]) {
+  for (const method of ["task.list", "task.get", "task.stop", "task.submit", "approval.respond"]) {
     await assert.rejects(
       () => instance.request(method as never),
       (error: unknown) => error instanceof Error && "code" in error && error.code === "UNKNOWN_METHOD",
