@@ -6,7 +6,7 @@ Reply with the numbers and your answer, for example: "1 will do; 2 yes; 3 yes; 4
 
 | # | Decision | Recommended | Milestone it unblocks |
 |---|---|---|---|
-| 1 | Run the approval journey yourself, about 15 minutes | Do it | Core MVP (F4) |
+| 1 | Run the approval journey yourself, about 15 minutes, after about 20 for CI to build | Do it | Core MVP (F4) |
 | 2 | Allow task stop without paid signing | Yes | Core MVP (F4) |
 | 3 | Download two files to benchmark one model: the weights (2.74 GB) and `llama.cpp`'s runner (19.5 MB) | Yes | First real model capability |
 | 4 | Tauri for one desktop app on all three OSes | Yes | Cross-platform app |
@@ -21,7 +21,7 @@ Reply with the numbers and your answer, for example: "1 will do; 2 yes; 3 yes; 4
 - **Unlocks:** the first evidence of a real client driving Orcel to a verified report with your approval, one of F4's acceptance items.
 - **Recommended:** run `prep/F4_SLICE4_CLIENT_JOURNEY.md` with Claude Code. Alternatives: Codex; or later.
 - **Security and licensing:** you answer real prompts; no agent can do this for you. An unsigned build on your own PC, in a scratch folder. You temporarily remove your configured workspaces from Orcel's list (files untouched), and restore them afterwards.
-- **Cost:** none, about 15 minutes.
+- **Cost:** none, about 15 minutes, after about 20 for CI to build.
 - **Evidence:** the same journey up to the prompt passes in CI on every commit (#453); the kit checks the outcome (#608).
 - **Unqualified:** the approved commit through a real client has never run. That is the point.
 - **Reversible:** yes. It writes a scratch folder, Orcel's configuration (the workspace list, which you restore) and Orcel's journal and approval history. `orcel uninstall` removes the build.

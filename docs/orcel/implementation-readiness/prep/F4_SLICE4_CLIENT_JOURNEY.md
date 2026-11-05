@@ -1,6 +1,6 @@
 # F4 slice 4 runbook: the client journey with your approval
 
-**Status: READY TO RUN.** This is SG-000127 slice 4 (#446). Every step is prepared except the one only you can do: answering Orcel's local approval prompt. **About 15 minutes.** It costs nothing and publishes nothing.
+**Status: READY TO RUN.** This is SG-000127 slice 4 (#446). Every step is prepared except the one only you can do: answering Orcel's local approval prompt. **About 15 minutes at the prompt, plus about 20 for CI to build the release candidate first.** It costs nothing, and the only thing it makes available is that build, for 3 days.
 
 An agent must never answer this prompt: that would be manufacturing consent. So this tool approves nothing and never talks to orceld or the client. It only prepares a scratch folder and checks the evidence afterwards.
 
@@ -21,7 +21,17 @@ It proves that client version only, not every client.
 
 - Windows, with the Claude Code CLI installed (`claude --version`). Codex works the same way through `examples/mcp-clients/codex-config.toml`.
 - Rust and Node.js on PATH. `cargo` runs the kit; Node.js is an Orcel prerequisite.
-- An unsigned release candidate of the commit you are testing, from its CI run:
+- An unsigned release candidate of the commit you are testing. CI builds one on every run and keeps it only when asked, for 3 days, so ask for it when you're ready to run this. It can be downloaded by others during those days, for as long as the repository is public. Start a run on `main`, wait for it to finish, and download:
+
+```bash
+gh workflow run CI --repo TheHalfMoon/Orcel --ref main
+```
+
+```bash
+gh run list --repo TheHalfMoon/Orcel --workflow CI --event workflow_dispatch --limit 1 --json databaseId,headSha,status,conclusion
+```
+
+That gives the run id and commit SHA for the next command. The artifact is there once its job has finished, even if the run as a whole is marked failed, for example by a cancelled macOS job.
 
 ```bash
 gh run download <CI run id> --repo TheHalfMoon/Orcel --name orcel-release-candidate-<commit sha> --dir orcel-rc
