@@ -278,6 +278,66 @@ fn run_ax_cells(
     }
 }
 
+/// M-NAT-03: the element-addressed action types, repeated. Each changes the
+/// fixture's state, so every sample is a real effect.
+fn run_ax_latency(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    reference: &Value,
+    mut state: impl FnMut() -> Value + Copy,
+) {
+    let counter = state()["counter"].as_i64().expect("a counter");
+    conformance::semantic_latency(
+        host,
+        report,
+        (prefix, reference),
+        "click",
+        state,
+        |_| vec![("invoke", "Increment", "Button", None)],
+        |now, action| now["counter"] == counter + action as i64 + 1,
+    );
+    conformance::semantic_latency(
+        host,
+        report,
+        (prefix, reference),
+        "toggle",
+        state,
+        |action| {
+            let value = if action % 2 == 1 { "true" } else { "false" };
+            vec![("toggle", "I agree", "CheckBox", Some(value.to_owned()))]
+        },
+        |now, action| now["agreed"] == (action % 2 == 1),
+    );
+    conformance::semantic_latency(
+        host,
+        report,
+        (prefix, reference),
+        "select",
+        state,
+        |action| {
+            let size = if action % 2 == 1 { "Small" } else { "Medium" };
+            vec![("select", size, "RadioButton", None)]
+        },
+        |now, action| now["size"] == if action % 2 == 1 { "small" } else { "medium" },
+    );
+    // The text only reaches the state file when saved, so this is both requests.
+    conformance::semantic_latency(
+        host,
+        report,
+        (prefix, reference),
+        "set-value-and-save",
+        state,
+        |action| {
+            vec![
+                ("set_value", "Note", "Edit", Some(format!("note {action}"))),
+                ("invoke", "Save note", "Button", None),
+            ]
+        },
+        |now, action| now["note_saved"] == format!("note {action}").as_str(),
+    );
+}
+
 /// Ignored by default, so an absent fixture directory is reported as not
 /// run, never counted as a pass (#390). Run with `--include-ignored` and
 /// `ORCEL_XP08_FIXTURES` set; without the fixtures it then fails.
@@ -367,6 +427,7 @@ fn xp08_native_harness_is_conformant() {
         "a refused action changed the harness state"
     );
     run_ax_cells(&mut host, &mut report, &prefix, &observed.reference, state);
+    run_ax_latency(&mut host, &mut report, &prefix, &observed.reference, state);
 
     // XP-12: the pixel cells. A hover and a key chord are refused by policy
     // on every window system; Wayland serves no raw input; X11 and macOS
@@ -393,6 +454,14 @@ fn xp08_native_harness_is_conformant() {
         let window = conformance::probe_window(&mut host, &nonce);
         assert_eq!(window["process"]["pid"], probe.child.id(), "{window}");
         conformance::run_probe_cells(
+            &mut host,
+            &mut report,
+            &prefix,
+            &support::window_ref(&window),
+            &probe,
+            &hello,
+        );
+        conformance::raw_latency(
             &mut host,
             &mut report,
             &prefix,
