@@ -21,6 +21,20 @@ jobs:
       OCR_URL: https://github.com/alibaba/open-code-review/releases/download/v1.12.9/opencodereview-linux-amd64
       OCR_SHA256: 9105c7081b8362a1cb0167f1ddfd1437e147a0e3c9a5af89c03c8859a5b0f0e8
     steps:
+      # A failing step, not a job-level `if`: a skipped job would pass the required check.
+      # This job checks out the pull request, and pull_request_target runs in this
+      # repository's scope, so it isn't for a fork's code.
+      - name: Refuse a pull request from a fork
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "::error::OCR delegation doesn't run for a pull request from a fork; it stays unqualified."
+            exit 1
+          fi
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
@@ -50,7 +64,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           test "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" = "$BASE_SHA"
           "$OCR_BIN" delegate preview --format json --from "$BASE_SHA" --to "$HEAD_SHA" | tee "$OCR_OUT/ocr-preview.json"
-          python - <<'PY'
+          # Isolated: this runs inside the checkout, whose files must not be importable.
+          python -I -B - <<'PY'
           import hashlib
           import json
           import os

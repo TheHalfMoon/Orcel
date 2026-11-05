@@ -174,7 +174,7 @@ try {
   report.status = report.blocking_findings.length === 0 ? "PASSED" : "FAILED";
 } catch (error) {
   // This goes into a public artifact, which GitHub's log masking doesn't reach.
-  const message = error instanceof Error ? error.message : String(error);
+  const message = String(error instanceof Error ? error.message : error);
   const key = process.env.TYPESAFE_API_KEY;
   report.error = key ? message.split(key).join("***") : message;
 }
