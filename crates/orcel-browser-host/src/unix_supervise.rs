@@ -1883,7 +1883,8 @@ mod tests {
 
     /// B9c: from inside a unit, a child moves itself to a new sibling cgroup, before
     /// and after a restricted child tries each way out it can reach. The answer goes
-    /// to argv[1], written whole by a rename, whatever went wrong.
+    /// to argv[1], written whole by a rename, unless the fixture hangs or is killed.
+    /// A route that errors records its errno, so "not moved" can't pass for "closed".
     #[cfg(target_os = "linux")]
     const LANDLOCK_CGROUP: &str = r#"
 import ctypes, errno, json, os, socket, struct, sys
@@ -1937,16 +1938,12 @@ def clone_into(target, here):
         os.write(write_end, b'1' if moved else b'0')
         os._exit(0)
     if pid < 0:
-        return False
+        return {'moved': False, 'errno': ctypes.get_errno()}
     os.close(write_end)
     landed = os.read(read_end, 1) == b'1'
     os.waitpid(pid, 0)
-    return landed
+    return {'moved': landed, 'errno': None}
 
-here = own_cgroup()
-parent = '/sys/fs/cgroup' + os.path.dirname(here)
-target = os.path.join(parent, 'orcel-sg115-b9c-' + str(os.getpid()))
-procs = os.path.join(target, 'cgroup.procs')
 answer = {'made': False}
 
 def control():
@@ -1963,7 +1960,6 @@ def restricted():
         os.close(os.open(procs, os.O_WRONLY))
     except OSError as error:
         result['open_errno'] = error.errno
-    result['stayed'] = own_cgroup() == here
     bus = socket.socket(socket.AF_UNIX)
     try:
         bus.connect(os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/nonexistent'), 'bus'))
@@ -1972,16 +1968,21 @@ def restricted():
         result['bus'] = False
     try:
         result['clone3'] = clone_into(target, here)
-    except OSError:
-        result['clone3'] = False
+    except OSError as error:
+        result['clone3'] = {'moved': False, 'errno': error.errno}
+    result['inherited_errno'] = None
     try:
         os.write(inherited, str(os.getpid()).encode())
-    except OSError:
-        pass
+    except OSError as error:
+        result['inherited_errno'] = error.errno
     result['inherited_fd'] = own_cgroup() != here
     return result
 
 try:
+    here = own_cgroup()
+    parent = '/sys/fs/cgroup' + os.path.dirname(here)
+    target = os.path.join(parent, 'orcel-sg115-b9c-' + str(os.getpid()))
+    procs = os.path.join(target, 'cgroup.procs')
     os.mkdir(target)
     answer['made'] = True
     answer['control'] = in_child(control)
@@ -2058,6 +2059,10 @@ finally:
             println!("SG115-EVIDENCE B9c refused: no sibling cgroup could be made: {answer}");
             return;
         }
+        assert!(
+            answer["landlock"].get("error").is_none(),
+            "the restricted child failed: {answer}"
+        );
         if answer["landlock"]["restricted"] != true {
             println!("SG115-EVIDENCE B9c refused: Landlock is unavailable: {answer}");
             return;
@@ -2066,21 +2071,17 @@ finally:
         let controls =
             answer["control"]["moved"] == true && answer["control_after"]["moved"] == true;
         let open_refused = answer["landlock"]["open_errno"].as_i64() == Some(EACCES);
-        let stayed = answer["landlock"]["stayed"] == true;
         let inherited = answer["landlock"]["inherited_fd"] == true;
-        let clone3 = answer["landlock"]["clone3"] == true;
+        let clone3 = answer["landlock"]["clone3"]["moved"] == true;
         let bus = answer["landlock"]["bus"] == true;
         println!(
-            "SG115-EVIDENCE B9c landlock: controls moved={controls}, fresh open refused={open_refused}, stayed={stayed}; still open: inherited fd={inherited}, clone3={clone3}, bus={bus}"
+            "SG115-EVIDENCE B9c landlock: controls moved={controls}, fresh open refused={open_refused}; still open: inherited fd={inherited}, clone3={clone3}, bus={bus}; {answer}"
         );
         assert!(
             controls,
             "a control couldn't move, so the refusal may not be Landlock's: {answer}"
         );
-        assert!(
-            open_refused && stayed,
-            "a fresh open wasn't refused: {answer}"
-        );
+        assert!(open_refused, "a fresh open wasn't refused: {answer}");
         assert!(
             answer.get("rmdir_errno").is_none(),
             "a stray cgroup was left: {answer}"

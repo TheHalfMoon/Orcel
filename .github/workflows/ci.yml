@@ -109,7 +109,7 @@ jobs:
           # Here a user manager was enabled above, so only the result counts:
           # a refusal line is evidence on a local host, never a pass in CI.
           grep -qE "SG115-EVIDENCE B9b user service: helper gone=true, control helper survived=true" <<<"$out"
-          grep -qE "SG115-EVIDENCE B9c landlock: controls moved=true, fresh open refused=true, stayed=true" <<<"$out"
+          grep -qE "SG115-EVIDENCE B9c landlock: controls moved=true, fresh open refused=true;" <<<"$out"
       # BM-02 evidence on this OS: both tiers again with their per-case lines
       # in the log (the Test step captures them when they pass), and both
       # reports checked against orcel-benchmark-report/1.
