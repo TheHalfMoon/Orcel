@@ -614,6 +614,20 @@ is untouched.
 - `cua-driver-core/src/session_authorization.rs`: the idle TTLs and the sleep
   in that one test. Test-only; no production line changes.
 
+## P-15: a child window destroyed during the X11 walk isn't a failure (#629)
+
+Upstream walks down from the target window to find the one under a pixel frame's
+point. Between listing a window's children and querying one of them, that child
+can be destroyed, and the `BadWindow` reply failed the whole action as
+`provider_unavailable`. M-NAT-03's repeated drags on X11 hit this (PR #629's first
+run). The patch skips that child and goes on to the next sibling under the point,
+which is what the walk would have found a moment later. The walk stays inside the
+target's tree, and the target itself going away is still an error.
+
+- `platform-linux/src/input/mod.rs`: `unless_child_gone`, used by
+  `deepest_child_at_point` and `window_path_at_point`. It's public so that
+  `orcel-native-host` can test it: this crate's own tests don't build here.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
