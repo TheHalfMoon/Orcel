@@ -421,6 +421,7 @@ fn xp08_native_harness_is_conformant() {
 
     drop(harness);
     conformance::closed_window_is_stale(&mut host, &mut report, &prefix, &observed.reference);
+    report.host_memory(&prefix, host.rss_mb_peak());
     assert!(host.shutdown().success());
     report.write(&format!(
         "native.{}.{}",
