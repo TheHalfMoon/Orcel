@@ -390,6 +390,8 @@ mod tests {
         let lookup = |name: &str| match name {
             "HOME" => Some(home.clone().into_os_string()),
             "XDG_STATE_HOME" => None,
+            // Other tests in this process set these overrides while this one runs.
+            name if name.starts_with("ORCEL_") => None,
             _ => std::env::var_os(name),
         };
         let roots = orcel_policy::protected_state::protected_state_roots_from(&lookup);
