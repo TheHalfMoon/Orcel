@@ -52,6 +52,9 @@ mod profile_gate;
 mod remote_lease;
 mod report_check;
 mod report_task;
+// F5 Journey 2: inert until founder decision 7 (prep/F5_SPREADSHEET_JOURNEY.md).
+#[cfg(test)]
+mod report_workbook;
 mod resume_key;
 mod search;
 mod secret_store;
