@@ -598,11 +598,23 @@ fn installed_release_fits_the_400_mb_budget() {
             .any(|file| file["path"] == "Orcel.Desktop.exe"),
         "the Windows app is not a manifest file"
     );
-    let opened = json_ok(&orcel(
-        &root.join("bin").join("orcel.exe"),
-        &local,
-        &["app", "--json"],
-    ));
+    // Its output must end when `orcel` exits. The open app holding `orcel`'s pipe would
+    // make anyone reading it wait until the app closes, so this has a limit of its own.
+    let opening = Command::new(root.join("bin").join("orcel.exe"))
+        .args(["app", "--json"])
+        .env("LOCALAPPDATA", &local)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (answer, answered) = std::sync::mpsc::channel();
+    std::thread::spawn(move || answer.send(opening.wait_with_output()));
+    let opened = json_ok(
+        &answered
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the open app kept `orcel app`'s output open")
+            .unwrap(),
+    );
     let pid = opened["pid"].as_u64().expect("the app's pid").to_string();
     std::thread::sleep(Duration::from_secs(5));
     let running = Command::new("tasklist")

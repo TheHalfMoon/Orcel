@@ -438,6 +438,9 @@ pub fn app(args: &mut Args) -> Result<Output, LifecycleError> {
             "Orcel {version} was released without the app; update to open it"
         )));
     }
+    // Or the app would keep a caller's pipe to this process open until it closes.
+    #[cfg(windows)]
+    orcel_lifecycle::runtime::disinherit_standard_handles();
     let child = std::process::Command::new(&path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
