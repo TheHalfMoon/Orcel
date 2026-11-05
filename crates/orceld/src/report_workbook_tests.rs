@@ -150,7 +150,7 @@ fn a_value_that_may_be_stale_confirms_nothing() {
 }
 
 #[test]
-fn a_workbook_with_an_outside_source_confirms_no_formula() {
+fn a_workbook_with_an_outside_source_confirms_nothing() {
     let notice = "Defined names that may reach outside: 1. Not used or refreshed, so values depending on them may be stale.";
     let rows = "## Sheet: S\n\n| A1 | 41 | number |  | =Rate |  |\n| B1 | 7 | number |  |  |  |\n";
     let declared = format!("# Workbook\n\n{notice}\n\n{rows}");
@@ -161,8 +161,22 @@ fn a_workbook_with_an_outside_source_confirms_no_formula() {
     );
     assert_eq!(
         cell_value(&declared, "S", "B1"),
+        None,
+        "a query table fills plain cells"
+    );
+
+    let manual = format!(
+        "# Workbook\n\nThis workbook calculates manually, so saved values may be stale.\n\n{rows}"
+    );
+    assert_eq!(
+        cell_value(&manual, "S", "A1"),
+        None,
+        "a formula may not have run"
+    );
+    assert_eq!(
+        cell_value(&manual, "S", "B1"),
         Some("7"),
-        "a typed value doesn't"
+        "a typed value is what it is"
     );
 
     let plain = format!("# Workbook\n\n{rows}");
