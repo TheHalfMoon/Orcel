@@ -154,17 +154,25 @@ fn names_a_cell_first(line: &str) -> bool {
 /// The saved value of a cell in the parser's Markdown, exactly as the table shows
 /// it. `sheet` is the whole title, which the parser keeps unique. `None` if the sheet
 /// or the cell isn't there, or the cell has no saved value: a missing result isn't
-/// zero, and it can't confirm any figure. Nor can a value that may be stale: a
-/// formula marked as reaching outside, or any formula at all in a workbook declaring
-/// an outside source, since it may reach one through a defined name.
+/// zero, and it can't confirm any figure. Nor can a value that may be stale: anything
+/// in a workbook declaring an outside source, since a formula may reach one through a
+/// defined name and a query table fills plain cells; a formula marked as reaching
+/// outside; or any formula in a workbook that calculates manually. Refusing more
+/// than strictly needed is the right way for a check to be wrong.
 pub(crate) fn cell_value<'a>(markdown: &'a str, sheet: &str, cell: &str) -> Option<&'a str> {
     let mut in_sheet = false;
     // Before the first sheet: the reader's notices. A sheet's name is listed with a
     // leading "- ", so a name can't pass for a notice.
-    let outside_sources = markdown
-        .lines()
-        .take_while(|line| !line.starts_with("## Sheet: "))
-        .any(|line| !line.starts_with("- ") && line.contains("Not used or refreshed"));
+    let notice = |phrase: &str| {
+        markdown
+            .lines()
+            .take_while(|line| !line.starts_with("## Sheet: "))
+            .any(|line| !line.starts_with("- ") && line.contains(phrase))
+    };
+    if notice("Not used or refreshed") {
+        return None;
+    }
+    let manual = notice("calculates manually");
     for line in markdown.lines() {
         if let Some(title) = line.strip_prefix("## Sheet: ") {
             in_sheet = title == sheet;
@@ -184,7 +192,7 @@ pub(crate) fn cell_value<'a>(markdown: &'a str, sheet: &str, cell: &str) -> Opti
         let (kind, after) = split_cell(after)?;
         let (_format, after) = split_cell(after)?;
         let (formula, note) = split_cell(after)?;
-        let stale = note.contains("external") || (outside_sources && !formula.is_empty());
+        let stale = note.contains("external") || (manual && !formula.is_empty());
         return (kind != "empty" && !stale).then_some(value);
     }
     None
