@@ -158,8 +158,9 @@ head and CI: this checkpoint can't name its own merge.
    #625 (native host memory) and #626 (a broken pipe to `orceld` no longer ends the
    MCP edge; longer tarball journey). #627 (refusals name the source) followed.
    Evidence so far, all scripted or test clients, never a model or a real client:
-   browser tasks 15/15 with no timeouts at about 1.2 s each; native host peak 6.6 MiB
-   on X11, 6.7 on Sway, 11.1 on macOS, under the suite and not idle; dev tarballs reach
+   browser tasks 15/15 with no timeouts, on Windows only, p50 1326 to 1842 ms and p95
+   up to 2141 ms; native host peak 6.7 MiB on X11, 6.4 to 6.9 on Sway across three runs,
+   11.0 on macOS, under the suite and not idle; dev tarballs reach
    the approval and stop (macOS `APPROVAL_DENIED`, Linux `APPROVAL_UNAVAILABLE`), and
    survive a killed `orceld` in the same session. Branch
    protection needs each PR up to date with main, so PRs merge one at a
@@ -178,7 +179,7 @@ head and CI: this checkpoint can't name its own merge.
 4. Next engineering, in order: the next product milestone that needs no
    founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`), with
    these candidates: the Agent surviving an `orceld`-only restart with a saved run
-   record; M-NAT-03 (100 actions per type); M-BR-04 (browser memory); checked figures
+   record; M-BR-04 (browser memory); checked figures
    for CSV reports, text only; a terminal task timeline on macOS and Linux, once
    someone decides whether that client may use `task.*`. Then #438 when its new
    timeline first prints; a cgroup the engine cannot leave (SG-000115 class 2, which
@@ -187,6 +188,8 @@ head and CI: this checkpoint can't name its own merge.
 5. Known CI flakes: toolchain install conflict on macOS, and once on Ubuntu in
    #627's `Orcel Agent M1` job (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
+   Seen once, not yet tracked: `unix_rehearsal::tests::survivors_and_unverified_coverage_keep_the_sink_and_the_profile`
+   on macOS, and the upstream-asset parity tests when GitHub blob fetches fail.
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
    A6b, B1 to B5, B5b, B6a, B6b, B7, B8, B8b, B9a and B9b slices; the agent A1-A3 tests; P-13 and P-14; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
