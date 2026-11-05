@@ -1027,7 +1027,23 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - name: Test
+        env:
+          # M-BR-01 and M-BR-02: a scripted plan on the controlled site, Windows only.
+          ORCEL_BM_BROWSER_REPORT: ${{ runner.temp }}/browser-tasks.report.json
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: npm test
+      - name: Check and keep the browser task report
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/browser-tasks.report.json"
+          cat "$RUNNER_TEMP/browser-tasks.report.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: browser-tasks-report
+          path: ${{ runner.temp }}/browser-tasks.report.json
+          if-no-files-found: ignore
 
   # CR-02: the headless Control Room client against the real orceld app API
   # (CR-01) on each OS. ORCEL_REQUIRE_LIVE_ORCELD makes the contract and
@@ -1552,6 +1568,34 @@ jobs:
   # gate signing). It unpacks, holds exactly the expected files with a
   # matching helper pin, fails its checksum when tampered with, and orceld
   # answers system.status from it.
+  # F4 slice 5a: the Windows app against a real orceld, under UI Automation on a
+  # hosted runner only, never on anyone's desktop. Nothing reaches the approval
+  # broker. It shows a task, and a second task's update with nothing typed.
+  windows-app-tasks:
+    name: Windows app task timeline / windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Build orceld
+        run: cargo build --locked -p orceld
+      - name: The app's self-test
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/build.ps1 -OutputDirectory "$env:RUNNER_TEMP/app"
+          & "$env:RUNNER_TEMP/app/Orcel.Smoke.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # The state stays under the user profile, the script's default: orceld
+      # refuses a state root under the hosted runner's D:\, which isn't this user's.
+      - name: A live orceld's tasks in the app
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/tests/e2e-tasks.ps1 -Orceld "$env:GITHUB_WORKSPACE/target/debug/orceld.exe" -BuildDirectory "$env:RUNNER_TEMP/app"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   macos-dev-package:
     name: macOS dev package / macos-latest
     runs-on: macos-latest

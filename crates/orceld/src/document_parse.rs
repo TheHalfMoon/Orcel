@@ -221,8 +221,21 @@ pub fn parse_committed(
         )
         .map_err(|error| ProviderError::new(error.code, error.message))?;
 
-    let stage = Stage::create(&digest)?;
-    std::fs::write(stage.input.join(INPUT_NAME), &bytes)
+    let document = run_parser(&bytes, &digest, helper, parser)?;
+    Ok(result(download, parser, &document))
+}
+
+/// Run the pinned parser under the contained tier over verified bytes, staged
+/// in a fresh private directory named from `stage_key`. The caller has already
+/// decided these bytes may be parsed. The Markdown is untrusted document content.
+pub(crate) fn run_parser(
+    bytes: &[u8],
+    stage_key: &str,
+    helper: &HelperPin,
+    parser: &ParserPin,
+) -> Result<ParsedDocument, ProviderError> {
+    let stage = Stage::create(stage_key)?;
+    std::fs::write(stage.input.join(INPUT_NAME), bytes)
         .map_err(|error| unavailable(format!("the parser input cannot be staged: {error}")))?;
     parser.verify()?;
     let spec = document_parser::spec(
@@ -232,37 +245,30 @@ pub fn parse_committed(
         stage.work.clone(),
     );
     let run = run_contained(helper, &spec).map_err(contained_tier::map_contained_error)?;
-    let document = match run.outcome {
-        ContainedOutcome::Exited(0) => decode_frame(&run.stdout).map_err(frame_error)?,
+    match run.outcome {
+        ContainedOutcome::Exited(0) => decode_frame(&run.stdout).map_err(frame_error),
         ContainedOutcome::Exited(code) if code == EXIT_REFUSED => {
-            return Err(match decode_frame(&run.stdout) {
+            Err(match decode_frame(&run.stdout) {
                 Err(FrameError::Refused(refusal)) => refusal_error(refusal),
                 _ => crashed(),
             })
         }
-        ContainedOutcome::TimedOut => {
-            return Err(ProviderError::new(
-                FailureCode::ProcessTimeout,
-                "document_parse_failed:timeout: the document parser exceeded its timeout and was ended",
-            ))
-        }
+        ContainedOutcome::TimedOut => Err(ProviderError::new(
+            FailureCode::ProcessTimeout,
+            "document_parse_failed:timeout: the document parser exceeded its timeout and was ended",
+        )),
         // FailureCode has no resource-ceiling variant (adding one changes the
         // wire contract), so the ceiling keeps its own message code.
-        ContainedOutcome::ResourceLimit => {
-            return Err(ProviderError::new(
-                FailureCode::PostconditionFailed,
-                "document_parse_failed:resource_limit: the document parser reached its CPU or memory ceiling and was ended",
-            ))
-        }
-        ContainedOutcome::OutputLimit(_) => {
-            return Err(ProviderError::new(
-                FailureCode::OutputLimit,
-                "the document parser exceeded its output bound and was ended",
-            ))
-        }
-        ContainedOutcome::Exited(_) | ContainedOutcome::Signaled(_) => return Err(crashed()),
-    };
-    Ok(result(download, parser, &document))
+        ContainedOutcome::ResourceLimit => Err(ProviderError::new(
+            FailureCode::PostconditionFailed,
+            "document_parse_failed:resource_limit: the document parser reached its CPU or memory ceiling and was ended",
+        )),
+        ContainedOutcome::OutputLimit(_) => Err(ProviderError::new(
+            FailureCode::OutputLimit,
+            "the document parser exceeded its output bound and was ended",
+        )),
+        ContainedOutcome::Exited(_) | ContainedOutcome::Signaled(_) => Err(crashed()),
+    }
 }
 
 fn result(download: &CommittedDownload, parser: &ParserPin, document: &ParsedDocument) -> Value {

@@ -101,6 +101,14 @@ try {
         Check "tasks reports an absent app API instead of inventing tasks" ($null -ne $tasks) "$tasks"
     }
 
+    if ($env:ORCEL_E2E_LIVE_SIGNAL) {
+        # Tell the driver the app is watching, then type nothing: orceld's next
+        # task update must appear by itself.
+        [IO.File]::WriteAllText($env:ORCEL_E2E_LIVE_SIGNAL, "ready")
+        $live = WaitForMessage $window $env:ORCEL_E2E_EXPECT_LIVE_UPDATE 30000
+        Check "a task update appears with nothing typed" ($null -ne $live) "$live"
+    }
+
     SendCommand $window "status"
     $status = WaitForMessage $window $(if ($expectInstalled) { "is installed and not running" } else { "is not installed" }) 15000
     Check "status command shows the runtime's own state" ($null -ne $status) "$status"
