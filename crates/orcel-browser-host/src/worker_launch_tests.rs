@@ -5005,7 +5005,9 @@ fn bench_stale_target(
 /// than ending the benchmark, since #438 is open and its rate is part of what's
 /// measured. Any other failure fails the test, and so does a case with no passing
 /// run, which a real hang would be. The report is written either way. Tabs aren't
-/// covered: they wait for SG-000122. M-BR-04 isn't measured here.
+/// covered: they wait for SG-000122. M-BR-04: each row's `commit_mb_peak` is the most
+/// memory the worker's job had committed across its runs, which is the worker and the
+/// engine. The host isn't in it: here that's this test process, not `orceld`.
 #[test]
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn bm_browser_tasks_on_the_controlled_site() {
@@ -5028,6 +5030,7 @@ fn bm_browser_tasks_on_the_controlled_site() {
         let mut steps = 0;
         let mut timeouts = 0;
         let mut failed = 0;
+        let mut commit_peak = 0;
         for repetition in 0..REPETITIONS {
             // A new fixture and lifetime for each run, so no run inherits a page.
             let fixture = HttpsFixture::start();
@@ -5062,6 +5065,10 @@ fn bm_browser_tasks_on_the_controlled_site() {
                     other_failures.push(format!("{case} run {repetition}: {reason}"));
                 }
             }
+            match worker.process.peak_committed_bytes() {
+                Ok(bytes) => commit_peak = commit_peak.max(bytes),
+                Err(error) => other_failures.push(format!("{case} run {repetition}: {error:?}")),
+            }
         }
         times.sort_by(f64::total_cmp);
         let at = |share: f64| {
@@ -5095,6 +5102,15 @@ fn bm_browser_tasks_on_the_controlled_site() {
         });
         if !times.is_empty() {
             row["latency_ms"] = serde_json::json!({ "p50": at(0.5), "p95": at(0.95) });
+            // A run that worked with nothing committed means the reading is wrong.
+            if commit_peak == 0 {
+                other_failures.push(format!("{case}: the job's memory was never read"));
+            }
+            let commit_mb_peak = commit_peak as f64 / (1024.0 * 1024.0);
+            println!(
+                "BM-BROWSER {case}: worker and engine committed {commit_mb_peak:.0} MiB at peak"
+            );
+            row["commit_mb_peak"] = serde_json::json!(commit_mb_peak);
         }
         rows.push(row);
     }

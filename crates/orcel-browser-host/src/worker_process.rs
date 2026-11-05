@@ -405,6 +405,31 @@ impl WorkerProcess {
         Ok(info.ActiveProcesses)
     }
 
+    /// M-BR-04 (test builds only): the most memory the job's processes, the worker and
+    /// the engine, have had committed at once. Committed memory, not resident.
+    #[cfg(test)]
+    pub(crate) fn peak_committed_bytes(&self) -> Result<usize, HostError> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        };
+        // SAFETY: zeroed limit information is a valid out-parameter.
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: pointer and size describe `info`.
+        if unsafe {
+            QueryInformationJobObject(
+                self.job.handle(),
+                JobObjectExtendedLimitInformation,
+                &mut info as *mut _ as *mut c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(platform_error("QueryInformationJobObject(limits)"));
+        }
+        Ok(info.PeakJobMemoryUsed)
+    }
+
     /// Every process in the job with its image path and OS command line. A
     /// process that exits during the snapshot is skipped; any other failure
     /// to inspect a member fails closed.
