@@ -60,3 +60,7 @@ installed `orcel.exe` by its full path, and each stdio entrypoint and the loopba
 HTTP example must reach the same tools. **This shows the configuration and the
 protocol, not the client:** no Claude, Codex or Vibe Code runs in it, their versions
 aren't qualified by it, and finding `orcel` on `PATH` isn't tested.
+
+## macOS and Linux development builds
+
+These examples use the installed `orcel` command, which installs on Windows. An unsigned development tarball has `bin/orcel-mcp` instead: see `distribution/macos/README.md` and `distribution/linux/README.md`.
