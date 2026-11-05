@@ -152,13 +152,18 @@ C:\orcel-f4-app\Orcel.Desktop.exe
 Type `tasks` and press Enter. Expected, with shell and process sessions labelled unavailable:
 
 - "After the restart", with its title, is `sources read`.
-- The tasks from before you ended `orceld` have **no title, which is expected**: titles are never written to the journal. The one from F shows `failed`, with the step `run orceld_run_ended`, because its `orceld` is gone and it can't continue. Nothing is wrong with your report from B: it stays `verified`.
+- It says "showing 5 of 6". The app lists the newest five, so **the report from B is the one left out**. It's in the history below.
+- The tasks from before you ended `orceld` have **no title, which is expected**: titles are never written to the journal.
+- **The tasks from D and F both show `failed`, which is expected**, with the step `run orceld_run_ended`, because their `orceld` is gone and they can't continue. D's report was refused as intended, and F's was never committed.
+- The tasks from C and E keep `approval denied` and `stale`.
 
-Note whether that's what you saw: the kit doesn't read the app. From the checkout, this prints the same history from the journal:
+Note whether that's what you saw: the kit doesn't read the app. From the checkout, this prints the history from the journal, all six tasks including B's `verified`:
 
 ```bash
 cargo run -p orcel-lifecycle --example f4_journey -- history C:/orcel-f4-journey
 ```
+
+It shows what was written, so D and F appear as `observed` and `proposed` with no `run` step. The `failed` state in the app is `orceld` restoring them after the restart. The two views differ for that reason only.
 
 ### 4. Save the transcript
 
