@@ -4974,6 +4974,56 @@ fn bench_download(
     Ok(3)
 }
 
+/// M-WI-01: the fixture site, its robots and sitemap honoured, as the crawl test sets
+/// out. The answer is the pages opened, and a wrong set of pages fails the run.
+fn bench_crawl(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    use crate::crawl::CrawlSpec;
+    use std::sync::atomic::AtomicBool;
+    let crawl_spec = CrawlSpec {
+        start_url: "https://fixture.test/site/".into(),
+        max_pages: 20,
+        max_depth: 2,
+        include_paths: Vec::new(),
+        exclude_paths: vec!["/site/private".into()],
+        pattern_kind: Default::default(),
+        search: None,
+        extract: Some(crate::extraction::ExtractOptions::default()),
+        robots: true,
+        sitemaps: true,
+        deadline: Duration::from_secs(120),
+    };
+    let report = match worker.crawl_site(&crawl_spec, scope, &AtomicBool::new(false)) {
+        Ok(report) => report,
+        Err(HostError::Unavailable(UnavailableReason::TimedOut)) => {
+            return Err("TimedOut".into());
+        }
+        Err(error) => return Err(format!("{error:?}")),
+    };
+    let urls: Vec<&str> = report.pages.iter().map(|page| page.url.as_str()).collect();
+    if report.stopped.is_some() || urls != BENCH_CRAWL_PAGES {
+        return Err(format!("stopped {:?}, opened {urls:?}", report.stopped));
+    }
+    Ok(urls.len() as u64)
+}
+
+/// What the fixture site's crawl opens, in order: the sitemap's page, but not the
+/// excluded or robots-disallowed ones.
+const BENCH_CRAWL_PAGES: [&str; 10] = [
+    "https://fixture.test/site/",
+    "https://fixture.test/site/only-in-sitemap",
+    "https://fixture.test/site/a",
+    "https://fixture.test/site/b",
+    "https://fixture.test/site/moved",
+    "https://fixture.test/site/away",
+    "https://fixture.test/site/missing",
+    "https://fixture.test/site/dl",
+    "https://fixture.test/site/c",
+    "https://fixture.test/site/deep/1",
+];
+
 /// An approval from before a navigation is refused, and it isn't spent (M-BR-02).
 fn bench_stale_target(
     worker: &mut BrowserWorker,
@@ -5012,12 +5062,14 @@ fn bench_stale_target(
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn bm_browser_tasks_on_the_controlled_site() {
     const REPETITIONS: usize = 3;
-    let tasks: [(&str, BrowserTask); 5] = [
+    let tasks: [(&str, BrowserTask); 6] = [
         ("controlled-site/form/fill-select-check", bench_form),
         ("controlled-site/dialog/dismissed", bench_dialog),
         ("controlled-site/upload/staged-file", bench_upload),
         ("controlled-site/download/create-only", bench_download),
         ("controlled-site/stale/refused", bench_stale_target),
+        // M-WI-01: steps is pages and the latency is the whole crawl.
+        ("controlled-site/crawl/site", bench_crawl),
     ];
     let scope = crate::observation::ObservationScope {
         workspace: "workspace".into(),
