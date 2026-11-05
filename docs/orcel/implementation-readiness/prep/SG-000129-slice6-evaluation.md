@@ -8,7 +8,7 @@ performance. No model inference ran, and nothing was downloaded.
 
 ## What runs
 
-`python -m orcel_bench agent-eval` lives in `tests/benchmarks/orcel_bench/agent_eval.py`. It runs six synthetic tasks through three configurations of the Orcel Agent. Each episode uses the real MCP edge (`apps/orcel-mcp`) and a fresh test orceld.
+`python -m orcel_bench agent-eval` lives in `tests/benchmarks/orcel_bench/agent_eval.py`. It runs six synthetic tasks, and on macOS and Linux a seventh with `orceld` alone killed, through three configurations of the Orcel Agent. Each episode uses the real MCP edge (`apps/orcel-mcp`) and a fresh test orceld.
 
 All three configurations are the code at the commit under test, not the historical M1 or M2 releases. M2-era code had no output preview, so the oversized-output task cannot tell m2 from m3.
 

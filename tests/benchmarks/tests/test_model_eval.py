@@ -13,7 +13,8 @@ if str(BENCH) not in sys.path:
 from orcel_bench.model_eval import BAR, REPEATS, TASKS, evaluate, score_row, task_named  # noqa: E402
 
 LABEL = "model:Qwen/Qwen3.5-4B@" + "a" * 40
-#: The scripted plans' names (`agent_eval.PLANS`), without importing the agent.
+#: The scripted plans' names (`agent_eval.PLANS`), without importing the agent,
+#: and without `orceld_killed`, which has no model task.
 SCRIPTED_PLANS = {"loop_trap", "long_context", "oversized_output", "injected_instructions", "refused_read",
                   "kill_resume"}
 
