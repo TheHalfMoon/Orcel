@@ -94,7 +94,7 @@ try {
 
     SendCommand $window "tasks"
     if ($env:ORCEL_E2E_APP_API_INSTANCE) {
-        $tasks = WaitForMessage $window "Report tasks in this orceld run" 15000
+        $tasks = WaitForMessage $window "Report tasks orceld knows of" 15000
         Check "tasks shows the live orceld's report tasks" ($null -ne $tasks -and $tasks -like "*$($env:ORCEL_E2E_EXPECT_TASK_TITLE)*") "$(($tasks -split "`n") -join ' | ')"
     } else {
         $tasks = WaitForMessage $window "Task timeline unavailable" 15000
