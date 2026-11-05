@@ -1723,6 +1723,32 @@ mod platform {
 
         /// #438 (test builds only): the last 2 KiB of the worker's stderr,
         /// control characters other than newlines removed.
+        /// #438: which of the engine's processes are alive at a timeout, by type only
+        /// (a missing network service would say what it's waiting for). No other
+        /// argument is printed, because they hold the profile path and test values.
+        #[cfg(test)]
+        fn print_engine_processes(&self) {
+            match self.process.snapshot() {
+                Ok(processes) => {
+                    let mut kinds: Vec<&str> = processes
+                        .iter()
+                        .flat_map(|process| {
+                            process.argv.iter().filter_map(|arg| {
+                                arg.strip_prefix("--utility-sub-type=")
+                                    .or_else(|| arg.strip_prefix("--type="))
+                            })
+                        })
+                        .collect();
+                    kinds.sort_unstable();
+                    eprintln!(
+                        "SG108-DIAG engine at the timeout: {} processes, types {kinds:?}",
+                        processes.len()
+                    );
+                }
+                Err(error) => eprintln!("SG108-DIAG engine at the timeout: {error:?}"),
+            }
+        }
+
         #[cfg(test)]
         fn print_stderr_tail(&self) {
             // One file per lifetime (process id and a nanosecond stamp), so
@@ -1939,6 +1965,7 @@ mod platform {
                         // #438: the worker's stage timeline of a timeout.
                         if reason == "timeout" {
                             self.print_stderr_tail();
+                            self.print_engine_processes();
                         }
                     }
                     return Err(navigation_failure(&reason));
