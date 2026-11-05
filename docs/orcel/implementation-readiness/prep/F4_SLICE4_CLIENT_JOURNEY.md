@@ -1,6 +1,6 @@
 # F4 slice 4 runbook: the client journey with your approval
 
-**Status: READY TO RUN.** This is SG-000127 slice 4 (#446). Every step is prepared except the one only you can do: answering Orcel's local approval prompt. **About 15 minutes.** It costs nothing and publishes nothing.
+**Status: READY TO RUN.** This is SG-000127 slice 4 (#446). Every step is prepared except the one only you can do: answering Orcel's local approval prompt. **About 15 minutes at the prompt, plus about 20 for CI to build the release candidate first.** It costs nothing, and the only thing it makes available is that build, for 3 days.
 
 An agent must never answer this prompt: that would be manufacturing consent. So this tool approves nothing and never talks to orceld or the client. It only prepares a scratch folder and checks the evidence afterwards.
 
@@ -28,8 +28,10 @@ gh workflow run CI --repo TheHalfMoon/Orcel --ref main
 ```
 
 ```bash
-gh run list --repo TheHalfMoon/Orcel --workflow CI --event workflow_dispatch --limit 1
+gh run list --repo TheHalfMoon/Orcel --workflow CI --event workflow_dispatch --limit 1 --json databaseId,headSha,status,conclusion
 ```
+
+That gives the run id and commit SHA for the next command. The artifact is there once its job has finished, even if the run as a whole is marked failed, for example by a cancelled macOS job.
 
 ```bash
 gh run download <CI run id> --repo TheHalfMoon/Orcel --name orcel-release-candidate-<commit sha> --dir orcel-rc

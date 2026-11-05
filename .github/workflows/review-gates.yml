@@ -63,6 +63,12 @@ jobs:
           git cat-file -e "$HEAD_SHA^{commit}"
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           test "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" = "$BASE_SHA"
+          # OCR reads its rules from the working tree, here the pull request's. A change
+          # to them could take the pull request's own files out of its review.
+          if ! git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- .opencodereview; then
+            echo "::error::This pull request changes .opencodereview; that needs its own review outside this gate."
+            exit 1
+          fi
           "$OCR_BIN" delegate preview --format json --from "$BASE_SHA" --to "$HEAD_SHA" | tee "$OCR_OUT/ocr-preview.json"
           # Isolated: this runs inside the checkout, whose files must not be importable.
           python -I -B - <<'PY'
