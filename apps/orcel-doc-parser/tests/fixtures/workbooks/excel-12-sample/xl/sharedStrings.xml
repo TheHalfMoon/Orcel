@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="11" uniqueCount="11"><si><t>Test spreadsheet</t></si><si><t>2nd row</t></si><si><t>2nd row 2nd column</t></si><si><t>Start of 2nd sheet</t></si><si><t>Sheet 2 row 2</t></si><si><t>This one is red</t></si><si><t>I'm in bold blue, on a yellow background</t></si><si><t>cb=1</t></si><si><t>cb=10</t></si><si><t>cb=2</t></si><si><t>cb=sum</t></si></sst>
