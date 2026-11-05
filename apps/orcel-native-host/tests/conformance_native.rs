@@ -407,6 +407,7 @@ fn xp08_native_harness_is_conformant() {
         &observed.reference,
         state,
     );
+    conformance::observation_latency(&mut host, &mut report, &prefix, &observed.reference, state);
 
     // XP-11: refusals first, while the fixture is untouched, then the
     // measured actions.
