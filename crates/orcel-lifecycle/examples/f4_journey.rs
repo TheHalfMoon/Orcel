@@ -231,8 +231,9 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
         (cut_off
             && later_orceld
             && read_back.contains(id)
-            && read_back.contains("completed")
-            && read_back.contains("unknown"))
+            && ["completed", "unknown", "observe", "preview"]
+                .iter()
+                .all(|field| read_back.contains(field)))
         .then(|| format!("{id}: cut off after its preview, and read back by the client"))
     });
     let taken = fs::read(dir.join("reports").join("taken.md")).unwrap_or_default();
@@ -583,7 +584,7 @@ mod tests {
             failed(&checks(
                 &dir,
                 &refs,
-                "task_resume_summary rpt-e completed unknown, the tool returned approval_id 123\n"
+                "task_resume_summary rpt-e completed observe preview unknown, the tool returned approval_id 123\n"
             )),
             vec![
                 "the user's existing file is untouched",
@@ -612,10 +613,14 @@ mod tests {
             &tasks,
             "call task_resume_summary for rpt-e: refused\n"
         ));
+        assert!(fails(
+            &tasks,
+            "task_resume_summary for rpt-e could not be completed and the outcome is unknown\n"
+        ));
         // The summary's words before the call don't count.
         assert!(fails(
             &tasks,
-            "completed unknown rpt-e, then task_resume_summary\n"
+            "completed unknown observe preview rpt-e, then task_resume_summary\n"
         ));
         // Every task from one orceld: nothing died.
         tasks[4]["owner"] = tasks[0]["owner"].clone();
