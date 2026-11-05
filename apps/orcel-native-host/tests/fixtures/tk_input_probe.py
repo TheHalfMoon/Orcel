@@ -140,5 +140,5 @@ def start():
 
 
 root.after(500, start)
-root.after(120000, root.destroy)
+root.after(1200000, root.destroy)
 root.mainloop()

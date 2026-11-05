@@ -1325,6 +1325,150 @@ pub fn run_action(
     );
 }
 
+/// M-NAT-03: how many of each action type a latency row times.
+const ACTIONS_PER_TYPE: usize = 100;
+
+/// How often a latency sample looks at the fixture: its resolution.
+const LATENCY_POLL: Duration = Duration::from_millis(5);
+
+/// One `semantic_action` of a latency sample: verb, element name, control type, value.
+pub type SemanticStep = (&'static str, &'static str, &'static str, Option<String>);
+
+/// Waits until the fixture's own state shows the effect, and panics if it never does.
+fn await_effect(case: &str, mut shown: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !shown() {
+        assert!(
+            Instant::now() < deadline,
+            "{case}: the fixture never showed the effect"
+        );
+        std::thread::sleep(LATENCY_POLL);
+    }
+}
+
+/// M-NAT-03 for one semantic action type: from the request to the fixture's own
+/// state showing the effect, [`ACTIONS_PER_TYPE`] times. Each action observes the
+/// window first, outside the timing, as a client does after a change. The pointer,
+/// focus and stacking must be where they were once all of them are done.
+pub fn semantic_latency(
+    host: &mut Host,
+    report: &mut Report,
+    (prefix, reference): (&str, &Value),
+    case: &str,
+    mut state: impl FnMut() -> Value,
+    steps: impl Fn(usize) -> Vec<SemanticStep>,
+    done: impl Fn(&Value, usize) -> bool,
+) {
+    let before = oracles(host, state());
+    let mut samples = Vec::with_capacity(ACTIONS_PER_TYPE);
+    for action in 0..ACTIONS_PER_TYPE {
+        let nodes = fresh_nodes(host, reference);
+        let requests: Vec<Value> = steps(action)
+            .into_iter()
+            .map(|(verb, element, control, value)| {
+                let id = strict_element_id(&nodes, element, Some(control));
+                let mut fields = json!({
+                    "window": reference,
+                    "semantic_action": verb,
+                    "element_runtime_id": id,
+                });
+                if let Some(value) = value {
+                    fields["value"] = json!(value);
+                }
+                fields
+            })
+            .collect();
+        let started = Instant::now();
+        for fields in requests {
+            let reply = host.request("semantic_action", fields);
+            assert_eq!(reply["ok"], true, "{case} {action}: {reply}");
+            assert_eq!(
+                reply["action"]["state"], "completed",
+                "{case} {action}: {reply}"
+            );
+        }
+        await_effect(case, || done(&state(), action));
+        samples.push(started.elapsed());
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    let after = oracles(host, state());
+    assert_eq!(before.cursor, after.cursor, "{case}: the pointer moved");
+    assert_eq!(
+        before.desktop, after.desktop,
+        "{case}: focus or stacking changed"
+    );
+    report.pass(
+        format!("{prefix}/latency/ax/{case}"),
+        "measured",
+        &samples,
+        ACTIONS_PER_TYPE,
+    );
+}
+
+/// M-NAT-03 for the raw input types, on the input probe: from the request to the
+/// application's journal holding the fewest events the cell expects, [`ACTIONS_PER_TYPE`]
+/// times. An action can send more, so this can stop before its last event. What the
+/// events are is [`run_probe_cells`]' check: this only counts them.
+pub fn raw_latency(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    reference: &Value,
+    probe: &crate::support::Probe,
+    hello: &Value,
+) {
+    let state = || crate::support::read_state(&probe.state).expect("the probe keeps its state");
+    for cell in probe_cells() {
+        if !matches!(cell.case, "click" | "drag" | "scroll" | "type-text") {
+            continue;
+        }
+        let case = format!("{prefix}/latency/px/{}", cell.case);
+        if hello["capabilities"][cell.op]["support"] != "delivered" {
+            report.refused_with(case, "unavailable");
+            continue;
+        }
+        let before = oracles(host, state());
+        let mut samples = Vec::with_capacity(ACTIONS_PER_TYPE);
+        for _ in 0..ACTIONS_PER_TYPE {
+            // A late event of the last action mustn't count toward this one: start
+            // once the journal has been still for a while.
+            let mut seen = crate::support::events(&state()).len();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                std::thread::sleep(Duration::from_millis(50));
+                let now = crate::support::events(&state()).len();
+                if now == seen {
+                    break;
+                }
+                seen = now;
+                assert!(
+                    Instant::now() < deadline,
+                    "{case}: the journal never settled"
+                );
+            }
+            let mut fields = cell.fields.clone();
+            fields["window"] = reference.clone();
+            fields["expected_last_input_tick"] = json!(live_tick(host));
+            let started = Instant::now();
+            let reply = host.request(cell.op, fields);
+            assert_eq!(reply["ok"], true, "{case}: {reply}");
+            assert_eq!(reply["action"]["state"], "completed", "{case}: {reply}");
+            await_effect(&case, || {
+                crate::support::events(&state()).len() >= seen + cell.wanted
+            });
+            samples.push(started.elapsed());
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        let after = oracles(host, state());
+        assert_eq!(before.cursor, after.cursor, "{case}: the pointer moved");
+        assert_eq!(
+            before.desktop, after.desktop,
+            "{case}: focus or stacking changed"
+        );
+        report.pass(case, "measured", &samples, ACTIONS_PER_TYPE);
+    }
+}
+
 /// Sends `fields` as a `semantic_action` and requires the exact refusal
 /// `expected`, with every oracle, fixture state included, unchanged.
 pub fn refused_action(
