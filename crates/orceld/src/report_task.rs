@@ -938,17 +938,14 @@ fn start(
         }
         #[cfg(test)]
         if let Some(found) = crate::report_workbook::observed_if_workbook(workspace, source) {
-            let (record, text) = found?;
+            let (record, text) = found.map_err(|failure| named_source(source, failure))?;
             observed.push(record);
             texts.push(text);
             continue;
         }
-        let read = provider.read_text(source).map_err(|failure| {
-            error(
-                failure.code,
-                format!("report source {source}: {}", failure.message),
-            )
-        })?;
+        let read = provider
+            .read_text(source)
+            .map_err(|failure| named_source(source, failure))?;
         let text = read
             .get("text")
             .and_then(Value::as_str)
@@ -1003,6 +1000,14 @@ fn start(
             }))
             .collect::<Vec<_>>(),
     }))
+}
+
+/// The same failure, saying which of the task's sources it is about.
+fn named_source(source: &str, failure: ProviderError) -> ProviderError {
+    error(
+        failure.code,
+        format!("report source {source}: {}", failure.message),
+    )
 }
 
 /// Whether the workspace entry at `relative` is itself a link or reparse
