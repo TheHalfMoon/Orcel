@@ -153,6 +153,10 @@ Orcel isn't finished while its core user journeys are incomplete. These five are
 If a session ends, resume from here (2026-11-05). Check GitHub for the current
 head and CI: this checkpoint can't name its own merge.
 
+Plans and the founder decision documents are kept privately, at the same paths, and the
+files here are short notes (founder decision, 2026-11-06). Read the private copies for
+those. Orcel itself stays public.
+
 1. Merged since the last checkpoint: #617 (XLSX reader, decision 7 still open),
    #621 (MCP from the dev tarballs), #622 (live task timeline in the Windows app),
    #623 (workbook source, test-only), #624 (browser tasks on the controlled site),
