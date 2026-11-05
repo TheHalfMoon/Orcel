@@ -156,7 +156,7 @@ head and CI: this checkpoint can't name its own merge.
    #621 (MCP from the dev tarballs), #622 (live task timeline in the Windows app),
    #623 (workbook source, test-only), #624 (browser tasks on the controlled site),
    #625 (native host memory) and #626 (a broken pipe to `orceld` no longer ends the
-   MCP edge; longer tarball journey). #627 (refusals name the source) comes next.
+   MCP edge; longer tarball journey). #627 (refusals name the source) followed.
    Evidence so far, all scripted or test clients, never a model or a real client:
    browser tasks 15/15 with no timeouts at about 1.2 s each; native host peak 6.6 MiB
    on X11, 6.7 on Sway, 11.1 on macOS, under the suite and not idle; dev tarballs reach
@@ -175,7 +175,7 @@ head and CI: this checkpoint can't name its own merge.
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
-4. Next engineering, in order: #627; then the next product milestone that needs no
+4. Next engineering, in order: the next product milestone that needs no
    founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`), with
    these candidates: the Agent surviving an `orceld`-only restart with a saved run
    record; M-NAT-03 (100 actions per type); M-BR-04 (browser memory); checked figures
