@@ -42,7 +42,7 @@ As built (XP-08):
 | M-BR-01 | Task success rate | controlled-site task set (forms, multi-step, tabs, dialogs, downloads, uploads) with host-side oracles |
 | M-BR-02 | Step error rate and TargetStale rate | same set, before and after BR-01 |
 | M-BR-03 | Wall time per task P50/P95; agent steps; model calls; input/output tokens | same planner (pinned client and model id), 5 repetitions |
-| M-BR-04 | Memory of host + worker + engine | sampled |
+| M-BR-04 | Memory of host + worker + engine | sampled; so far the worker's and engine's peak committed memory on Windows, from their Job Object (`commit_mb_peak`), without the host |
 | M-WI-01 | Crawl throughput pages/min and robots/sitemap correctness | local fixture site with known graph |
 | M-WI-02 | Extraction tokens with and without relevance filtering, and answer accuracy on fixture questions | fixture pages |
 
@@ -68,7 +68,7 @@ The five journeys in `IMPLEMENTATION_ROADMAP.md` run on Windows first, then macO
   "rows": [
     {"case": "shared-web/click/ax/background", "status": "pass", "observed": "delivered",
      "latency_ms": {"p50": 0, "p95": 0}, "steps": 0, "model_calls": 0, "tokens_in": 0, "tokens_out": 0,
-     "rss_mb_peak": 0, "evidence": "path or run id"}
+     "rss_mb_peak": 0, "commit_mb_peak": 0, "evidence": "path or run id"}
   ]
 }
 ```

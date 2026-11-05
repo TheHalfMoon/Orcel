@@ -5006,8 +5006,8 @@ fn bench_stale_target(
 /// measured. Any other failure fails the test, and so does a case with no passing
 /// run, which a real hang would be. The report is written either way. Tabs aren't
 /// covered: they wait for SG-000122. M-BR-04: each row's `commit_mb_peak` is the most
-/// memory the worker's job had committed across its runs, which is the worker and the
-/// engine. The host isn't in it: here that's this test process, not `orceld`.
+/// memory the worker's job had committed across its passing runs, which is the worker
+/// and the engine. The host isn't in it: here that's this test process, not `orceld`.
 #[test]
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn bm_browser_tasks_on_the_controlled_site() {
@@ -5055,6 +5055,12 @@ fn bm_browser_tasks_on_the_controlled_site() {
                 Ok(count) => {
                     steps = count;
                     times.push(started.elapsed().as_secs_f64() * 1000.0);
+                    match worker.process.peak_committed_bytes() {
+                        Ok(bytes) => commit_peak = commit_peak.max(bytes),
+                        Err(error) => {
+                            other_failures.push(format!("{case} run {repetition}: {error:?}"));
+                        }
+                    }
                 }
                 Err(reason) if reason.contains("TimedOut") => {
                     timeouts += 1;
@@ -5064,10 +5070,6 @@ fn bm_browser_tasks_on_the_controlled_site() {
                     failed += 1;
                     other_failures.push(format!("{case} run {repetition}: {reason}"));
                 }
-            }
-            match worker.process.peak_committed_bytes() {
-                Ok(bytes) => commit_peak = commit_peak.max(bytes),
-                Err(error) => other_failures.push(format!("{case} run {repetition}: {error:?}")),
             }
         }
         times.sort_by(f64::total_cmp);
