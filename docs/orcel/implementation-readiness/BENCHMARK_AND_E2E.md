@@ -44,7 +44,7 @@ As built (XP-08):
 | M-BR-03 | Wall time per task P50/P95; agent steps; model calls; input/output tokens | same planner (pinned client and model id), 5 repetitions |
 | M-BR-04 | Memory of host + worker + engine | sampled; so far the worker's and engine's peak committed memory on Windows, from their Job Object (`commit_mb_peak`), without the host |
 | M-WI-01 | Crawl throughput pages/min and robots/sitemap correctness | local fixture site with known graph; on Windows, the `browser-tasks` row `controlled-site/crawl/site`, with the 10 pages visited as `steps`, 6 of them read, and the crawl as `latency_ms` |
-| M-WI-02 | Extraction tokens with and without relevance filtering, and answer accuracy on fixture questions | fixture pages |
+| M-WI-02 | Extraction tokens with and without relevance filtering, and answer accuracy on fixture questions | fixture pages; so far characters and a labelled token estimate on three synthetic pages, and that the answer survives (`extract.test.ts`). Answer accuracy needs a model. The filter isn't reachable from the host yet |
 
 Comparison baselines (same planner, same tasks): Orcel before the change; Playwright-MCP package used directly (reference only, in a disposable profile, never shipped). Browser Use's agent may be run as an external reference in a disposable environment; its Python runtime is never part of Orcel.
 

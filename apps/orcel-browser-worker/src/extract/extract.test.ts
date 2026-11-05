@@ -386,3 +386,95 @@ test("WI-03: relevance filtering keeps the asked-for section, drops the rest, an
   // An empty query is no filter at all.
   assert.equal(extractMarkdown(snapshot("https://fixture.test/help", ...body), { relevance: { query: "", method: "bm25" } }).markdown, whole.markdown);
 });
+
+// M-WI-02: how much less text reaches the client with relevance filtering, on three
+// fixture pages, and whether each page's answer survives it. There's no tokenizer in the
+// repository, so this reports characters, and a labelled estimate of a quarter of those.
+// Keeping the answer isn't answer accuracy, which needs a model to answer from the text.
+const M_WI_02_PAGES: ReadonlyArray<{
+  name: string;
+  query: string;
+  threshold: number;
+  answer: RegExp;
+  noise: RegExp;
+  body: Spec[];
+}> = [
+  {
+    name: "help-centre",
+    query: "refund policy",
+    threshold: 0.5,
+    answer: /within thirty days to the original card/,
+    noise: /warehouse|hiring|Copyright/,
+    body: [
+      el("nav", {}, el("a", { href: "/" }, "Home"), el("a", { href: "/shop" }, "Shop"), el("a", { href: "/help" }, "Help")),
+      el("h2", {}, "Shipping"),
+      el("p", {}, "Orders ship within two business days from our warehouse in the north."),
+      el("p", {}, "Deliveries to islands and remote addresses can take up to two further weeks."),
+      el("h2", {}, "Refund policy"),
+      el("p", {}, "Under this refund policy, money is returned within thirty days to the original card."),
+      el("h2", {}, "Careers"),
+      el("p", {}, "We are hiring engineers, designers and support staff in three offices."),
+      el("footer", {}, "Copyright and legal notices")
+    ]
+  },
+  {
+    name: "product-page",
+    query: "battery life hours",
+    threshold: 0.5,
+    answer: /battery life is eleven hours/,
+    noise: /newsletter|Copyright|colours/,
+    body: [
+      el("nav", {}, el("a", { href: "/" }, "Home"), el("a", { href: "/laptops" }, "Laptops")),
+      el("h2", {}, "Design"),
+      el("p", {}, "The aluminium case comes in four colours and weighs just over a kilogram."),
+      el("h2", {}, "Battery"),
+      el("p", {}, "Rated battery life is eleven hours of mixed use, in hours measured by the maker."),
+      el("h2", {}, "Keep in touch"),
+      el("p", {}, "Join our newsletter for offers, events and early access to new products."),
+      el("footer", {}, "Copyright and legal notices")
+    ]
+  },
+  {
+    name: "news-article",
+    query: "council budget vote",
+    threshold: 0.5,
+    answer: /council budget vote passed by nine to four/,
+    noise: /weather|Copyright|crossword/,
+    body: [
+      el("nav", {}, el("a", { href: "/" }, "News"), el("a", { href: "/sport" }, "Sport")),
+      el("h2", {}, "City hall"),
+      el("p", {}, "The council budget vote passed by nine to four after a long evening session."),
+      el("h2", {}, "Today's weather"),
+      el("p", {}, "Light rain clears by noon, and the weather stays mild into the weekend."),
+      el("h2", {}, "Puzzles"),
+      el("p", {}, "Today's crossword and number puzzles are on the back page as usual."),
+      el("footer", {}, "Copyright and legal notices")
+    ]
+  }
+];
+
+test("M-WI-02: relevance filtering sends less text and keeps the answer", () => {
+  for (const page of M_WI_02_PAGES) {
+    const url = `https://fixture.test/${page.name}`;
+    const whole = extractMarkdown(snapshot(url, ...page.body));
+    const bm25 = extractMarkdown(snapshot(url, ...page.body), {
+      relevance: { method: "bm25", query: page.query, threshold: page.threshold }
+    });
+    const pruned = extractMarkdown(snapshot(url, ...page.body), { relevance: { method: "pruning" } });
+    for (const [method, extraction] of [["none", whole], ["bm25", bm25], ["pruning", pruned]] as const) {
+      assert.equal(extraction.truncated, false, `${page.name} ${method} ran out of budget`);
+      assert.match(extraction.markdown, page.answer, `${page.name} ${method} lost the answer`);
+    }
+    assert.match(whole.markdown, page.noise, `${page.name}: the page has noise to remove`);
+    assert.doesNotMatch(bm25.markdown, page.noise, `${page.name}: bm25 kept the noise`);
+    assert.ok(bm25.markdown.length < whole.markdown.length, `${page.name}: bm25 sent no less`);
+    const estimate = (text: string): number => Math.ceil(text.length / 4);
+    const share = (text: string): string => `${Math.round((100 * text.length) / whole.markdown.length)}%`;
+    console.log(
+      `M-WI-02 ${page.name}: chars none ${whole.markdown.length}, ` +
+        `bm25 ${bm25.markdown.length} (${share(bm25.markdown)}, threshold ${page.threshold}), ` +
+        `pruning ${pruned.markdown.length} (${share(pruned.markdown)}); ` +
+        `estimated tokens at 4 chars each: ${estimate(whole.markdown)}, ${estimate(bm25.markdown)}, ${estimate(pruned.markdown)}`
+    );
+  }
+});
