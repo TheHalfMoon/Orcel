@@ -204,6 +204,9 @@ pub(crate) struct ReportTask {
     report: Option<Proposal>,
     check: Option<Value>,
     state: TaskState,
+    /// Why the task went stale, naming what changed, for every later call.
+    /// Not journaled: a task of an earlier run is refused for that instead.
+    stale_reason: Option<String>,
     steps: Vec<Step>,
     next_step: u64,
     created_at_ms: u64,
@@ -466,7 +469,9 @@ impl TaskRegistry {
         match task.state {
             TaskState::Stale => Err(error(
                 FailureCode::TargetStale,
-                "the task is stale: a source or the folder changed; start a new task",
+                task.stale_reason
+                    .clone()
+                    .unwrap_or_else(|| "a source or the folder changed; start a new task".into()),
             )),
             TaskState::Committing => {
                 Err(error(FailureCode::InvalidRequest, "the task is committing"))
@@ -938,7 +943,12 @@ fn start(
             texts.push(text);
             continue;
         }
-        let read = provider.read_text(source)?;
+        let read = provider.read_text(source).map_err(|failure| {
+            error(
+                failure.code,
+                format!("report source {source}: {}", failure.message),
+            )
+        })?;
         let text = read
             .get("text")
             .and_then(Value::as_str)
@@ -965,6 +975,7 @@ fn start(
         report: None,
         check: None,
         state: TaskState::Observed,
+        stale_reason: None,
         steps: Vec::new(),
         next_step: 0,
         created_at_ms: now,
@@ -1106,7 +1117,7 @@ fn blocked(
     reason: Blocked,
 ) -> ProviderError {
     match &reason {
-        Blocked::Stale(_) => {
+        Blocked::Stale(failure) => {
             // Conditional: a stop made while the check ran is never rewritten
             // as stale.
             tasks.update_if(
@@ -1114,7 +1125,10 @@ fn blocked(
                 kind,
                 "stale",
                 |task| from.contains(&task.state),
-                |task| task.state = TaskState::Stale,
+                |task| {
+                    task.state = TaskState::Stale;
+                    task.stale_reason = Some(failure.message.clone());
+                },
             );
         }
         Blocked::Exists(_) => tasks.update(task_id, kind, "destination_exists", |_| {}),

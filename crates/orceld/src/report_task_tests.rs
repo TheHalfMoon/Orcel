@@ -514,6 +514,37 @@ fn sg126_a_changed_source_makes_the_task_stale_and_writes_nothing() {
         // A stale task stays stale; a new task observes the sources again.
         let again = preview(&scene, &tasks, &task, "q3.md", &report).unwrap_err();
         assert_eq!(again.code, FailureCode::TargetStale, "{when}");
+        assert_eq!(
+            again.message, refused.message,
+            "{when}: it still says which"
+        );
+    }
+}
+
+#[test]
+fn a_source_that_cannot_be_read_is_named_in_the_refusal() {
+    let scene = Scene::new("named");
+    let approval = consent(&scene, &[]);
+    let tasks = TaskRegistry::new();
+    std::fs::write(scene.root().join("data/binary.csv"), [0xff, 0xfe, 0x00]).unwrap();
+    let provider = FsProvider::new(&scene.workspace.root).unwrap();
+    for second in ["data/missing.csv", "data/binary.csv"] {
+        let direct = provider.read_text(second).unwrap_err();
+        let refused = dispatch(
+            &scene.workspace,
+            &approval.broker,
+            &tasks,
+            &request(
+                "start",
+                json!({"title": "Q3", "sources": ["data/q3.csv", second], "folder": "reports"}),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            refused.message,
+            format!("report source {second}: {}", direct.message)
+        );
+        assert_eq!(refused.code, direct.code, "the code is unchanged");
     }
 }
 

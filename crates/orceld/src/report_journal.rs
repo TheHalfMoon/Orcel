@@ -238,6 +238,7 @@ fn restored_task(line: TaskLine, run: &str) -> ReportTask {
         folder_resolved: PathBuf::new(),
         folder_canonical: line.folder_canonical,
         sources: line.sources.into_iter().map(source).collect(),
+        stale_reason: None,
         proposal: line.proposal.map(proposal),
         report: line.report.map(proposal),
         check: line.check,
