@@ -4974,6 +4974,95 @@ fn bench_download(
     Ok(3)
 }
 
+/// M-WI-01: the fixture site, its robots and sitemap honoured, as the crawl test sets
+/// out. The answer is the pages visited, of which [`BENCH_CRAWL_READ`] are read; the
+/// others fail or are refused by design. A timeout anywhere counts as this benchmark's
+/// timeouts do, and a wrong set of pages or a page with the wrong outcome fails the run.
+fn bench_crawl(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    use crate::crawl::CrawlSpec;
+    use std::sync::atomic::AtomicBool;
+    let crawl_spec = CrawlSpec {
+        start_url: "https://fixture.test/site/".into(),
+        max_pages: 20,
+        max_depth: 2,
+        include_paths: Vec::new(),
+        exclude_paths: vec!["/site/private".into()],
+        pattern_kind: Default::default(),
+        search: None,
+        extract: Some(crate::extraction::ExtractOptions::default()),
+        robots: true,
+        sitemaps: true,
+        deadline: Duration::from_secs(120),
+    };
+    let report = match worker.crawl_site(&crawl_spec, scope, &AtomicBool::new(false)) {
+        Ok(report) => report,
+        Err(HostError::Unavailable(UnavailableReason::TimedOut)) => {
+            return Err("TimedOut".into());
+        }
+        Err(error) => return Err(format!("{error:?}")),
+    };
+    // A timed-out page comes back in the report, not as an error from the crawl.
+    let timed_out = HostError::Unavailable(UnavailableReason::TimedOut).to_string();
+    if report.stopped == Some(crate::crawl::CrawlStop::Deadline)
+        || report
+            .pages
+            .iter()
+            .any(|page| page.failure.as_deref() == Some(timed_out.as_str()))
+    {
+        return Err("TimedOut".into());
+    }
+    let urls: Vec<&str> = report.pages.iter().map(|page| page.url.as_str()).collect();
+    if report.stopped.is_some() || urls != BENCH_CRAWL_PAGES {
+        return Err(format!("stopped {:?}, opened {urls:?}", report.stopped));
+    }
+    for page in &report.pages {
+        let read = BENCH_CRAWL_READ.contains(&page.url.as_str());
+        let outcome = (page.failure.is_none(), page.extraction.is_some());
+        let right = if read {
+            outcome == (true, true)
+        } else if page.url.ends_with("/missing") {
+            page.status == 404 && !outcome.1
+        } else {
+            !outcome.0 && !outcome.1
+        };
+        if !right {
+            return Err(format!(
+                "{}: status {}, failure {:?}, read {}",
+                page.url, page.status, page.failure, outcome.1
+            ));
+        }
+    }
+    Ok(urls.len() as u64)
+}
+
+/// Of those pages, the ones whose text is read.
+const BENCH_CRAWL_READ: [&str; 6] = [
+    "https://fixture.test/site/",
+    "https://fixture.test/site/only-in-sitemap",
+    "https://fixture.test/site/a",
+    "https://fixture.test/site/b",
+    "https://fixture.test/site/moved",
+    "https://fixture.test/site/deep/1",
+];
+
+/// What the fixture site's crawl visits, in order: the sitemap's page, but not the
+/// excluded or robots-disallowed ones.
+const BENCH_CRAWL_PAGES: [&str; 10] = [
+    "https://fixture.test/site/",
+    "https://fixture.test/site/only-in-sitemap",
+    "https://fixture.test/site/a",
+    "https://fixture.test/site/b",
+    "https://fixture.test/site/moved",
+    "https://fixture.test/site/away",
+    "https://fixture.test/site/missing",
+    "https://fixture.test/site/dl",
+    "https://fixture.test/site/c",
+    "https://fixture.test/site/deep/1",
+];
+
 /// An approval from before a navigation is refused, and it isn't spent (M-BR-02).
 fn bench_stale_target(
     worker: &mut BrowserWorker,
@@ -4999,7 +5088,7 @@ fn bench_stale_target(
     }
 }
 
-/// M-BR-01 and M-BR-02 on the controlled site, with a scripted plan through the real
+/// M-BR-01, M-BR-02 and M-WI-01 on the controlled site, with a scripted plan through the real
 /// host, worker and engine, and host-side oracles: **a scripted plan, not a planner
 /// or a model.** A timeout in one run, including a failed launch, is recorded rather
 /// than ending the benchmark, since #438 is open and its rate is part of what's
@@ -5012,12 +5101,14 @@ fn bench_stale_target(
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn bm_browser_tasks_on_the_controlled_site() {
     const REPETITIONS: usize = 3;
-    let tasks: [(&str, BrowserTask); 5] = [
+    let tasks: [(&str, BrowserTask); 6] = [
         ("controlled-site/form/fill-select-check", bench_form),
         ("controlled-site/dialog/dismissed", bench_dialog),
         ("controlled-site/upload/staged-file", bench_upload),
         ("controlled-site/download/create-only", bench_download),
         ("controlled-site/stale/refused", bench_stale_target),
+        // M-WI-01: steps is pages visited and the latency is the whole crawl.
+        ("controlled-site/crawl/site", bench_crawl),
     ];
     let scope = crate::observation::ObservationScope {
         workspace: "workspace".into(),
