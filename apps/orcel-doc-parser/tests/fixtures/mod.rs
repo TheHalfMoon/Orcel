@@ -645,3 +645,574 @@ pub fn object_stream_member_pdf(containers: usize) -> Vec<u8> {
     }
     pdf(&objects, "")
 }
+
+// ---------------------------------------------------------------------------
+// Workbooks. Written by hand to the shape Excel saves (shared strings, styles,
+// shared formulas). Not files saved by Excel, which isn't available on CI.
+// ---------------------------------------------------------------------------
+
+const SHEET_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const REL_BASE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+fn xlsx_content_types(extra: &str) -> Vec<u8> {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+         <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+         <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+         <Override PartName=\"/xl/workbook.xml\" \
+         ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>\
+         {extra}</Types>"
+    )
+    .into_bytes()
+}
+
+fn xlsx_root_rels(target: &str) -> Vec<u8> {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+         <Relationship Id=\"rId1\" Type=\"{REL_BASE}/officeDocument\" Target=\"{target}\"/></Relationships>"
+    )
+    .into_bytes()
+}
+
+fn workbook_xml(sheets: &str, extra: &str) -> Vec<u8> {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <workbook xmlns=\"{SHEET_NS}\" xmlns:r=\"{R_NS}\"><sheets>{sheets}</sheets>{extra}</workbook>"
+    )
+    .into_bytes()
+}
+
+fn workbook_rels(entries: &str) -> Vec<u8> {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{entries}</Relationships>"
+    )
+    .into_bytes()
+}
+
+fn relationship(id: &str, kind: &str, target: &str) -> String {
+    format!("<Relationship Id=\"{id}\" Type=\"{REL_BASE}/{kind}\" Target=\"{target}\"/>")
+}
+
+fn sheet_xml(cells: &str) -> Vec<u8> {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <worksheet xmlns=\"{SHEET_NS}\"><sheetData><row r=\"1\">{cells}</row></sheetData></worksheet>"
+    )
+    .into_bytes()
+}
+
+fn one_sheet_package(sheet: Vec<u8>, name: &str) -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml(
+                &format!("<sheet name=\"{name}\" sheetId=\"1\" r:id=\"rId1\"/>"),
+                "",
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&relationship("rId1", "worksheet", "worksheets/sheet1.xml")),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet),
+    ])
+}
+
+/// The Journey 2 fixture: known cells, formula values and currency totals.
+pub fn workbook() -> Vec<u8> {
+    let shared = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><sst xmlns=\"{SHEET_NS}\" count=\"2\" uniqueCount=\"2\">\
+         <si><t>Region</t></si>\
+         <si><r><rPr><b/></rPr><t>Bold </t></r><r><t>words</t></r><rPh sb=\"0\" eb=\"1\"><t>phonetic</t></rPh></si>\
+         </sst>"
+    );
+    let styles = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><styleSheet xmlns=\"{SHEET_NS}\">\
+         <numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"&quot;$&quot;#,##0.00\"/></numFmts>\
+         <cellXfs count=\"3\"><xf numFmtId=\"0\"/><xf numFmtId=\"164\"/><xf numFmtId=\"9\"/></cellXfs></styleSheet>"
+    );
+    let sales = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><worksheet xmlns=\"{SHEET_NS}\"><sheetData>\
+         <row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row>\
+         <row r=\"2\"><c r=\"B2\" s=\"1\"><v>1250.50</v></c>\
+           <c r=\"C2\" s=\"2\"><f t=\"shared\" ref=\"C2:C3\" si=\"0\">B2/B4</f><v>0.5</v></c>\
+           <c r=\"D2\" t=\"s\"><v>1</v></c><c r=\"E2\" t=\"b\"><v>1</v></c></row>\
+         <row r=\"3\"><c r=\"B3\" s=\"1\"><v>749.25</v></c>\
+           <c r=\"C3\" s=\"2\"><f t=\"shared\" si=\"0\"/><v>0.25</v></c>\
+           <c r=\"D3\" t=\"inlineStr\"><is><t>inline</t></is></c>\
+           <c r=\"E3\" t=\"e\"><f>1/0</f><v>#DIV/0!</v></c></row>\
+         <row r=\"4\"><c r=\"B4\" s=\"1\"><f>SUM(B2:B3)</f><v>1999.75</v></c></row>\
+         </sheetData></worksheet>"
+    );
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml(
+                "<sheet name=\"Sales\" sheetId=\"1\" r:id=\"rId1\"/>\
+                 <sheet name=\"Audit\" sheetId=\"2\" state=\"hidden\" r:id=\"rId2\"/>",
+                "",
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "{}{}{}{}",
+                relationship("rId1", "worksheet", "worksheets/sheet1.xml"),
+                relationship("rId2", "worksheet", "worksheets/sheet2.xml"),
+                relationship("rId3", "sharedStrings", "sharedStrings.xml"),
+                relationship("rId4", "styles", "styles.xml"),
+            )),
+        ),
+        ("xl/sharedStrings.xml", shared.into_bytes()),
+        ("xl/styles.xml", styles.into_bytes()),
+        ("xl/worksheets/sheet1.xml", sales.into_bytes()),
+        (
+            "xl/worksheets/sheet2.xml",
+            sheet_xml("<c r=\"A1\"><f>1+1</f></c>"),
+        ),
+    ])
+}
+
+/// Any worksheet XML, as one sheet.
+pub fn workbook_with_sheet_xml(xml: &str) -> Vec<u8> {
+    one_sheet_package(xml.as_bytes().to_vec(), "Sheet1")
+}
+
+/// `namespaced` is put on the `worksheet` element, for prefixed elements.
+pub fn worksheet_xml(namespaces: &str, data: &str) -> String {
+    format!("<worksheet xmlns=\"{SHEET_NS}\" {namespaces}>{data}</worksheet>")
+}
+
+/// A first sheet of `cells`, then a second of any XML.
+pub fn workbook_with_two_sheets(cells: &str, second: &str) -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml(
+                "<sheet name=\"A\" sheetId=\"1\" r:id=\"rId1\"/><sheet name=\"B\" sheetId=\"2\" r:id=\"rId2\"/>",
+                "",
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "{}{}",
+                relationship("rId1", "worksheet", "worksheets/sheet1.xml"),
+                relationship("rId2", "worksheet", "worksheets/sheet2.xml"),
+            )),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet_xml(cells)),
+        ("xl/worksheets/sheet2.xml", second.as_bytes().to_vec()),
+    ])
+}
+
+/// Each sheet its own part, one cell each.
+pub fn workbook_with_many_sheets(count: usize) -> Vec<u8> {
+    let sheets: String = (1..=count)
+        .map(|n| format!("<sheet name=\"S{n}\" sheetId=\"{n}\" r:id=\"rId{n}\"/>"))
+        .collect();
+    let rels: String = (1..=count)
+        .map(|n| {
+            relationship(
+                &format!("rId{n}"),
+                "worksheet",
+                &format!("worksheets/sheet{n}.xml"),
+            )
+        })
+        .collect();
+    let parts: Vec<(String, Vec<u8>)> = (1..=count)
+        .map(|n| {
+            (
+                format!("xl/worksheets/sheet{n}.xml"),
+                sheet_xml("<c r=\"A1\"><v>1</v></c>"),
+            )
+        })
+        .collect();
+    let mut entries: Vec<(&str, Vec<u8>)> = vec![
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        ("xl/workbook.xml", workbook_xml(&sheets, "")),
+        ("xl/_rels/workbook.xml.rels", workbook_rels(&rels)),
+    ];
+    entries.extend(parts.iter().map(|(name, xml)| (name.as_str(), xml.clone())));
+    zip(&entries)
+}
+
+/// A workbook.xml body and shared strings of any XML.
+pub fn workbook_with_parts(workbook_body: &str, strings: &str) -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            format!(
+                "<workbook xmlns=\"{SHEET_NS}\" xmlns:r=\"{R_NS}\" xmlns:mc=\"urn:mc\">{workbook_body}</workbook>"
+            )
+            .into_bytes(),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "{}{}",
+                relationship("rId1", "worksheet", "worksheets/sheet1.xml"),
+                relationship("rId2", "sharedStrings", "sharedStrings.xml"),
+            )),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet_xml("<c r=\"A1\" t=\"s\"><v>0</v></c>")),
+        (
+            "xl/sharedStrings.xml",
+            format!("<sst xmlns=\"{SHEET_NS}\" xmlns:mc=\"urn:mc\">{strings}</sst>").into_bytes(),
+        ),
+    ])
+}
+
+/// A worksheet and a chart sheet, which holds no cells.
+pub fn workbook_with_chart_sheet() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml(
+                "<sheet name=\"Data\" sheetId=\"1\" r:id=\"rId1\"/><sheet name=\"Chart\" sheetId=\"2\" r:id=\"rId2\"/>",
+                "",
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "{}{}",
+                relationship("rId1", "worksheet", "worksheets/sheet1.xml"),
+                relationship("rId2", "chartsheet", "chartsheets/sheet1.xml"),
+            )),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet_xml("<c r=\"A1\"><v>1</v></c>")),
+        ("xl/chartsheets/sheet1.xml", b"<chartsheet/>".to_vec()),
+    ])
+}
+
+/// The sheet's relationship named under a foreign prefix must not win.
+pub fn workbook_with_foreign_sheet_id() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            format!(
+                "<workbook xmlns=\"{SHEET_NS}\" xmlns:r=\"{R_NS}\" xmlns:x=\"urn:x\"><sheets>\
+                 <sheet name=\"S\" sheetId=\"1\" x:id=\"rId2\" r:id=\"rId1\"/></sheets></workbook>"
+            )
+            .into_bytes(),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "{}{}",
+                relationship("rId1", "worksheet", "worksheets/real.xml"),
+                relationship("rId2", "worksheet", "worksheets/decoy.xml"),
+            )),
+        ),
+        (
+            "xl/worksheets/real.xml",
+            sheet_xml("<c r=\"A1\"><v>111</v></c>"),
+        ),
+        (
+            "xl/worksheets/decoy.xml",
+            sheet_xml("<c r=\"A1\"><v>999</v></c>"),
+        ),
+    ])
+}
+
+/// Two sheets whose names differ only by case, as Excel never allows.
+pub fn workbook_with_duplicate_sheet_names() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml(
+                "<sheet name=\"Data\" sheetId=\"1\" r:id=\"rId1\"/><sheet name=\"DATA\" sheetId=\"2\" r:id=\"rId1\"/>",
+                "",
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&relationship("rId1", "worksheet", "worksheets/sheet1.xml")),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet_xml("<c r=\"A1\"><v>1</v></c>")),
+    ])
+}
+
+/// Everything a workbook can declare that may make saved values stale.
+pub fn workbook_with_stale_sources() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml(
+                "<sheet name=\"S\" sheetId=\"1\" r:id=\"rId1\"/>",
+                "<definedNames><definedName name=\"Live\">WEBSERVICE(&quot;http://x&quot;)</definedName>\
+                 <definedName name=\"Local\">S!$A$1</definedName></definedNames>\
+                 <calcPr calcMode=\"manual\"/>",
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "{}{}",
+                relationship("rId1", "worksheet", "worksheets/sheet1.xml"),
+                relationship("rId2", "pivotCacheDefinition", "pivotCache/def1.xml"),
+            )),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet_xml("<c r=\"A1\"><v>1</v></c>")),
+        (
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            workbook_rels(&relationship("rId1", "queryTable", "../queryTables/q1.xml")),
+        ),
+        ("xl/pivotCache/def1.xml", b"<pivotCacheDefinition/>".to_vec()),
+        ("xl/queryTables/q1.xml", b"<queryTable/>".to_vec()),
+    ])
+}
+
+/// External workbook link, data connections and recalculation on load.
+pub fn linked_workbook() -> Vec<u8> {
+    let sheet = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><worksheet xmlns=\"{SHEET_NS}\"><sheetData>\
+         <row r=\"1\"><c r=\"A1\"><f t=\"shared\" ref=\"A1:A2\" si=\"3\">[1]Rates!A1</f><v>41</v></c></row>\
+         <row r=\"2\"><c r=\"A2\"><f t=\"shared\" si=\"3\"/><v>41</v></c></row>\
+         </sheetData></worksheet>"
+    );
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml(
+                "<sheet name=\"Linked\" sheetId=\"1\" r:id=\"rId1\"/>",
+                "<externalReferences><externalReference r:id=\"rId2\"/></externalReferences>\
+                 <calcPr fullCalcOnLoad=\"1\"/>",
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "{}{}{}",
+                relationship("rId1", "worksheet", "worksheets/sheet1.xml"),
+                relationship("rId2", "externalLink", "externalLinks/externalLink1.xml"),
+                relationship("rId3", "connections", "connections.xml"),
+            )),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet.into_bytes()),
+        (
+            "xl/externalLinks/externalLink1.xml",
+            format!("<externalLink xmlns=\"{SHEET_NS}\"/>").into_bytes(),
+        ),
+        (
+            "xl/externalLinks/_rels/externalLink1.xml.rels",
+            workbook_rels(&format!(
+                "<Relationship Id=\"rId1\" Type=\"{REL_BASE}/externalLinkPath\" \
+                 Target=\"https://attacker.example/rates.xlsx\" TargetMode=\"External\"/>"
+            )),
+        ),
+        (
+            "xl/connections.xml",
+            format!("<connections xmlns=\"{SHEET_NS}\"/>").into_bytes(),
+        ),
+    ])
+}
+
+pub fn workbook_with_cells(cells: &str) -> Vec<u8> {
+    one_sheet_package(sheet_xml(cells), "Sheet1")
+}
+
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\n', "&#10;")
+}
+
+pub fn workbook_with_text(text: &str) -> Vec<u8> {
+    workbook_with_cells(&format!(
+        "<c r=\"A1\" t=\"inlineStr\"><is><t>{}</t></is></c>",
+        xml_escape(text)
+    ))
+}
+
+pub fn workbook_with_sheet_name(name: &str) -> Vec<u8> {
+    one_sheet_package(sheet_xml("<c r=\"A1\"><v>1</v></c>"), &xml_escape(name))
+}
+
+pub fn workbook_without_sheets() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        ("xl/workbook.xml", workbook_xml("", "")),
+    ])
+}
+
+pub fn workbook_with_external_sheet() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml("<sheet name=\"S\" sheetId=\"1\" r:id=\"rId1\"/>", ""),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "<Relationship Id=\"rId1\" Type=\"{REL_BASE}/worksheet\" \
+                 Target=\"https://attacker.example/s.xml\" TargetMode=\"External\"/>"
+            )),
+        ),
+    ])
+}
+
+pub fn workbook_missing_sheet_part() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml("<sheet name=\"S\" sheetId=\"1\" r:id=\"rId1\"/>", ""),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&relationship("rId1", "worksheet", "worksheets/sheet1.xml")),
+        ),
+    ])
+}
+
+pub fn workbook_with_dtd_sheet() -> Vec<u8> {
+    one_sheet_package(
+        b"<!DOCTYPE worksheet [<!ENTITY a \"b\">]><worksheet/>".to_vec(),
+        "S",
+    )
+}
+
+pub fn binary_workbook(content_type: &str) -> Vec<u8> {
+    zip(&[
+        (
+            "[Content_Types].xml",
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+                 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+                 <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+                 <Default Extension=\"bin\" ContentType=\"{content_type}\"/></Types>"
+            )
+            .into_bytes(),
+        ),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.bin")),
+        ("xl/workbook.bin", b"binary".to_vec()),
+    ])
+}
+
+pub fn macrosheet_workbook_by_part() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml("<sheet name=\"S\" sheetId=\"1\" r:id=\"rId1\"/>", ""),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&relationship("rId1", "worksheet", "worksheets/sheet1.xml")),
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            sheet_xml("<c r=\"A1\"><v>1</v></c>"),
+        ),
+        ("xl/macrosheets/sheet1.xml", b"<xm/>".to_vec()),
+    ])
+}
+
+pub fn macrosheet_workbook_by_type() -> Vec<u8> {
+    zip(&[
+        (
+            "[Content_Types].xml",
+            xlsx_content_types(
+                "<Override PartName=\"/xl/other/m.xml\" \
+                 ContentType=\"application/vnd.ms-excel.macrosheet+xml\"/>",
+            ),
+        ),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml("<sheet name=\"S\" sheetId=\"1\" r:id=\"rId1\"/>", ""),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&relationship("rId1", "worksheet", "worksheets/sheet1.xml")),
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            sheet_xml("<c r=\"A1\"><v>1</v></c>"),
+        ),
+        ("xl/other/m.xml", b"<xm/>".to_vec()),
+    ])
+}
+
+pub fn macrosheet_workbook_by_relationship() -> Vec<u8> {
+    zip(&[
+        ("[Content_Types].xml", xlsx_content_types("")),
+        ("_rels/.rels", xlsx_root_rels("xl/workbook.xml")),
+        (
+            "xl/workbook.xml",
+            workbook_xml("<sheet name=\"S\" sheetId=\"1\" r:id=\"rId1\"/>", ""),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            workbook_rels(&format!(
+                "{}<Relationship Id=\"rId2\" Type=\"http://schemas.microsoft.com/office/2006/relationships/xlMacrosheet\" Target=\"other/m.xml\"/>",
+                relationship("rId1", "worksheet", "worksheets/sheet1.xml")
+            )),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet_xml("<c r=\"A1\"><v>1</v></c>")),
+        ("xl/other/m.xml", b"<xm/>".to_vec()),
+    ])
+}
+
+/// A committed unzipped workbook from other software (`WORKBOOKS.md`), zipped
+/// again with its content types first, as a package must have.
+pub fn unpacked(name: &str) -> Vec<u8> {
+    fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) {
+        for entry in std::fs::read_dir(dir).expect("fixture directory") {
+            let path = entry.expect("fixture entry").path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else {
+                let relative = path.strip_prefix(root).expect("inside the fixture");
+                let parts: Vec<String> = relative
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                out.push((parts.join("/"), std::fs::read(&path).expect("fixture part")));
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/workbooks")
+        .join(name);
+    let mut parts = Vec::new();
+    walk(&root, &root, &mut parts);
+    assert!(!parts.is_empty(), "no fixture named {name}");
+    parts.sort_by_key(|(part, _)| (part != "[Content_Types].xml", part.clone()));
+    let entries: Vec<(&str, Vec<u8>)> = parts
+        .iter()
+        .map(|(part, bytes)| (part.as_str(), bytes.clone()))
+        .collect();
+    zip(&entries)
+}

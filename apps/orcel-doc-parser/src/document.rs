@@ -31,6 +31,8 @@
 //!   declares (`[Content_Types].xml` and every relationship part), with the
 //!   well-known part names as a second check (`classify_package`);
 //! - the donor's part budget (128 MiB) is replaced by [`MAX_ARCHIVE_BYTES`];
+//! - an XLSX goes to Orcel's own [`crate::workbook`], not to anydoc, so each
+//!   cell keeps its source reference. Excel 4 macro sheets are active content;
 //! - every error is one closed [`ParseRefusal`] code.
 //!
 //! Nothing in the package is run or followed: macros are refused, external
@@ -89,6 +91,14 @@ pub fn convert(bytes: &[u8]) -> Result<OfficeText, ParseRefusal> {
         Some(anydoc::Format::Excel) => (DocumentFormat::Xlsx, anydoc::Format::Excel),
         _ => return Err(ParseRefusal::UnsupportedFormat),
     };
+    if format == DocumentFormat::Xlsx {
+        let (markdown, sheets) = crate::workbook::convert(bytes)?;
+        return Ok(OfficeText {
+            format,
+            markdown,
+            pages: sheets,
+        });
+    }
     let markdown = convert_document_to_markdown(bytes, anydoc_format)?;
     Ok(OfficeText {
         format,
@@ -201,13 +211,22 @@ fn preflight_archive(bytes: &[u8]) -> Result<usize, ParseRefusal> {
 
 /// Content types that mark a macro project, macro data, an ActiveX control
 /// or a macro-enabled main part, wherever the package names it.
-const ACTIVE_CONTENT_TYPES: [&str; 4] = ["vbaproject", "vbadata", "activex", "macroenabled"];
+const ACTIVE_CONTENT_TYPES: [&str; 5] = [
+    "vbaproject",
+    "vbadata",
+    "activex",
+    "macroenabled",
+    "macrosheet",
+];
 /// Relationship types (the last path segment) to the same.
-const ACTIVE_RELATIONSHIPS: [&str; 4] = [
+const ACTIVE_RELATIONSHIPS: [&str; 7] = [
     "vbaproject",
     "wordvbadata",
     "activexcontrol",
     "activexcontrolbinary",
+    "xlmacrosheet",
+    "xlintlmacrosheet",
+    "macrosheet",
 ];
 const SLIDE_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
@@ -268,6 +287,7 @@ fn is_active_part(name: &str) -> bool {
         || lower.ends_with("vbadata.xml")
         || lower.contains("/activex/")
         || lower.starts_with("activex/")
+        || lower.contains("macrosheets/")
 }
 
 fn is_page_part(name: &str) -> bool {
@@ -369,7 +389,7 @@ struct Relationship {
     kind: RepeatingPartKind,
 }
 
-struct ZipReadBudget {
+pub(crate) struct ZipReadBudget {
     bytes_remaining: u64,
     parts_remaining: usize,
 }
@@ -379,6 +399,17 @@ impl Default for ZipReadBudget {
         Self {
             bytes_remaining: MAX_OOXML_TOTAL_BYTES,
             parts_remaining: MAX_OOXML_PARTS,
+        }
+    }
+}
+
+impl ZipReadBudget {
+    /// Every part of a workbook can be read once, and a sheet's relationships
+    /// too, so the part count isn't what stops a workbook of many sheets.
+    pub(crate) fn for_workbook() -> Self {
+        Self {
+            bytes_remaining: MAX_OOXML_TOTAL_BYTES,
+            parts_remaining: MAX_ARCHIVE_ENTRIES * 2,
         }
     }
 }
@@ -458,7 +489,7 @@ fn extract_docx_headers_and_footers(data: &[u8]) -> (String, String) {
     (headers.join("\n\n"), footers.join("\n\n"))
 }
 
-fn read_zip_text<R: Read + std::io::Seek>(
+pub(crate) fn read_zip_text<R: Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
     name: &str,
     budget: &mut ZipReadBudget,
@@ -529,14 +560,14 @@ fn parse_repeating_relationships(xml: &str) -> HashMap<String, Relationship> {
         .collect()
 }
 
-fn relationship_part_for(part: &str) -> String {
+pub(crate) fn relationship_part_for(part: &str) -> String {
     match part.rsplit_once('/') {
         Some((parent, file_name)) => format!("{parent}/_rels/{file_name}.rels"),
         None => format!("_rels/{part}.rels"),
     }
 }
 
-fn resolve_part(base: &str, target: &str) -> Option<String> {
+pub(crate) fn resolve_part(base: &str, target: &str) -> Option<String> {
     if target.starts_with('/') {
         return normalize_part(target);
     }
