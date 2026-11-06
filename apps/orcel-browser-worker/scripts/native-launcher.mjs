@@ -6,7 +6,7 @@
 // count as evidence. Run after `npm --prefix apps/orcel-browser-worker test`
 // (which builds dist/).
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -36,6 +36,12 @@ if (!existsSync(main)) {
 // window in the job when Windows Update and Defender signature work starts. Nothing else runs.
 const loopStart = Date.now();
 for (let round = 1; Date.now() - loopStart < 660000; round += 1) {
+  // The intervention: ask for the Defender signature update at the start of round 3, on this
+  // runner only, and see whether the slow round moves with it.
+  if (round === 3) {
+    process.stderr.write(`LOOP-TRIGGER Update-MpSignature at ${new Date().toISOString()}\n`);
+    spawn("powershell.exe", ["-NoProfile", "-Command", "Update-MpSignature"], { stdio: "ignore", detached: true }).unref();
+  }
   const began = Date.now();
   const loop = spawnSync(
     "cargo",
@@ -53,6 +59,13 @@ for (let round = 1; Date.now() - loopStart < 660000; round += 1) {
   process.stderr.write(
     `LOOP round ${round} at ${new Date(began).toISOString()} took ${Date.now() - began} ms, exit ${loop.status}, marks ${failures.join(",") || "none"}\n`
   );
+  // Which task took the time, for a slow round.
+  if (Date.now() - began > 60000 && round > 1) {
+    const combined = (loop.stderr ?? "") + (loop.stdout ?? "");
+    for (const line of combined.split("\n").filter((text) => /BM-BROWSER|navigation timeline|failed: |SG108-DIAG engine at/.test(text)).slice(0, 40)) {
+      process.stderr.write(`LOOP-SLOW ${round} ${line.slice(0, 200)}\n`);
+    }
+  }
   if (loop.status !== 0) {
     process.stderr.write(`LOOP-FAIL ${((loop.stderr ?? "") + (loop.stdout ?? "")).split("\n").filter((line) => /panicked|stopped Some|failed:/.test(line)).slice(0, 8).join(" | ").slice(0, 800)}\n`);
   }
