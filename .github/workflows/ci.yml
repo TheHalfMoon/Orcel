@@ -1757,8 +1757,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           node --test scripts/check-lopdf-advisories.test.mjs
-          node --test scripts/provenance.test.mjs
           node scripts/check-lopdf-advisories.mjs
+      - name: Provenance requires the .NET SDK version
+        run: node --test scripts/provenance.test.mjs
       - name: Validate SpecGrain JSON and canonical evidence
         shell: python
         run: |
