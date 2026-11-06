@@ -79,4 +79,5 @@ if __name__ == "__main__":
     root = prune(tree.root)
     if root is None:
         raise SystemExit("the page has no text")
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     json.dump(root["children"], sys.stdout, ensure_ascii=False, indent=0)
