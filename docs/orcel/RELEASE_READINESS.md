@@ -189,8 +189,9 @@ those. Orcel itself stays public.
    reachable `DISPLAY` and is skipped on CI's Sway. It catches and undoes a late focus
    steal, so it isn't a saving to take. The X11 raw click pays the same watch, which leaves about
    520 ms of its 762 unexplained. The 250 ms human-input quiet wait (`worker.rs`) isn't it: a
-   local run on Xvfb in WSL, 40 samples each, left click p50 at 840 ms and 843 ms with 350 ms
-   more between actions, drag 1120 and 1150, scroll 906 and 920. `EFFECT_SETTLE` is on the uinput route, which Xvfb doesn't use. `list_windows` p50 27 ms on X11,
+   local run on Xvfb in WSL, with `raw_latency` changed by hand to 40 samples each and a sleep
+   before each action, left click p50 at 840 ms and 843 ms with 350 ms more between actions,
+   drag 1120 and 1150, scroll 906 and 920. `EFFECT_SETTLE` is on the uinput route, which Xvfb doesn't use. `list_windows` p50 27 ms on X11,
    44 on Sway, 73 on macOS, and `observe_window` 50, 78, 121, with no Windows figure yet
    to check M-NAT-01's 1.5x target against. A crawl of ten pages, six read, takes about
    2.2 s on Windows, with 359 MiB committed at peak. #438's latest timeline shows a
@@ -212,10 +213,12 @@ those. Orcel itself stays public.
 4. Next engineering, in order: the next product milestone that needs no
    founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`), with
    these candidates: the rest of the X11 raw click's time; M-WI-02's real tokens and answer
-   accuracy (#642 measured characters; these need a scoring method or a planner); a terminal task timeline
+   accuracy (#642 measured characters; tokens need a tokenizer, accuracy a scoring method or a
+   planner); a terminal task timeline
    on macOS and Linux, once someone decides whether that client may use `task.*`.
    Checked figures for CSV reports aren't on the roadmap and would change what
-   `verified` means, so they need adopting first. Then #438 (running the tests in another order would separate position from route; process list at a timeout and after a passing navigation both print now)
+   `verified` means, so they need adopting first. Then #438 (running the tests in another order would separate
+   position from route; the process list at a timeout and after a passing navigation both print now)
    and #649 when its evidence first prints. A cgroup the engine cannot leave stays open: B9c shows Landlock alone
    doesn't do it (an inherited descriptor, `clone3` and the user bus all get past it),
    and refusing `clone3` needs a real engine to test against, which waits on activation.
