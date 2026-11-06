@@ -1,6 +1,6 @@
 # Orcel on macOS: unsigned development tarball
 
-**This is a development build, not a release.** It is unsigned and not notarized. Signing, notarization and an app bundle are XP-16, which waits on FD-05 (a paid Apple Developer ID). It is not a published product: the CI artifact of this public repository can be downloaded, but it is never released or offered as one.
+**This is a development build, not a release.** It is unsigned and not notarized. Signing, notarization and an app bundle are XP-16, which waits on FD-05 (a paid Apple Developer ID). It is not a published product: the CI artifact of this public repository, kept only on a manual run and for 3 days, can be downloaded, but it is never released or offered as one.
 
 No paid Apple membership is needed to build or run it for local engineering.
 

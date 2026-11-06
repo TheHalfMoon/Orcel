@@ -592,7 +592,7 @@ namespace Orcel.DesktopPreview
             if (ids.Count == 0) return "No report tasks in this orceld run. Tasks are started by a connected local MCP client; this app only shows them.";
             StringBuilder text = new StringBuilder();
             int total = TaskCount(list);
-            text.Append("Report tasks in this orceld run, newest first (showing " + ids.Count + " of " + total + "; titles and paths come from the planner and the workspace and are not verified):");
+            text.Append("Report tasks orceld knows of, newest first (showing " + ids.Count + " of " + total + "; titles and paths come from the planner and the workspace and are not verified):");
             for (int i = 0; i < ids.Count; i++)
             {
                 Dictionary<string, object> task = i < tasks.Count ? tasks[i] : null;
@@ -1099,7 +1099,7 @@ namespace Orcel.DesktopPreview
             Border transcriptCard = Card(conversation, Colors.Sidebar, new Thickness(14));
             Grid.SetRow(transcriptCard, 1);
             center.Children.Add(transcriptCard);
-            AddMessage(false, "Welcome to Orcel. Type help, status, version, doctor, devices, or files. Other requests are not executed or sent anywhere.");
+            AddMessage(false, "Welcome to Orcel. Type help, status, version, doctor, devices, files, or tasks. Other requests are not executed or sent anywhere.");
 
             Grid composer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
             composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

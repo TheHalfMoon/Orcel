@@ -19,7 +19,7 @@ This package revises the Opus proposal; the founder adopted it as planning direc
 | WPF decision, app tests, full size criteria | UI_UX_AND_APP_SIZE_BUDGET.md |
 | #278 independent validation and repair gates (repaired by PR #286) | SECURITY_THREAT_MODEL.md |
 | Minimum native benchmark evidence | BENCHMARK_AND_E2E_PLAN.md |
-| Pricing-deferred cost assumptions | INFRASTRUCTURE_AND_UNIT_ECONOMICS.md, tools/unit_economics.py |
+| Pricing-deferred cost assumptions | INFRASTRUCTURE_AND_UNIT_ECONOMICS.md |
 | Two roadmaps, all25 packet dispositions, five journeys | IMPLEMENTATION_ROADMAP.md |
 | Decision rationale and scope | OPUS_TO_SOL_CHANGELOG.md |
 | ADOPTED cross-platform revision (2026-10-18): Opus handoff, audit, donor registry, transplant matrix, blueprints, backlog | implementation-readiness/README.md |

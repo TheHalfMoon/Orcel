@@ -1130,6 +1130,18 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      # The action installs stable, but the repository pins another toolchain, which
+      # would otherwise be installed by the first `cargo`, on top of whatever the image
+      # left: "recovering from a partially installed toolchain", then a clippy conflict.
+      - name: Install the pinned toolchain from clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          test -n "$pin"
+          rustup toolchain uninstall "$pin" || true
+          rustup toolchain install "$pin" --profile minimal --component rustfmt --component clippy --no-self-update
+          cargo --version
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
@@ -1300,12 +1312,15 @@ jobs:
           $sums = Get-ChildItem $out -File | Where-Object Name -ne "SHA256SUMS.txt" | Sort-Object Name | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
           [System.IO.File]::WriteAllText((Join-Path $out "SHA256SUMS.txt"), (($sums -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
           Get-Content (Join-Path $out "SHA256SUMS.txt")
+      # Built and checked on every run, and kept only when someone asks: artifacts of a
+      # public repository can be downloaded, and Orcel isn't published.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: orcel-release-candidate-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/dist/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 3
 
   relay-container:
     name: Relay container / ubuntu-latest
@@ -1670,11 +1685,13 @@ jobs:
             echo "a tampered tarball passed its checksum" >&2
             exit 1
           fi
+      # As with the release candidate: kept only when someone asks.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: orcel-macos-unsigned-dev-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ env.DIST }}/
-          retention-days: 14
+          retention-days: 3
 
   supply-chain:
     name: Supply chain audit
