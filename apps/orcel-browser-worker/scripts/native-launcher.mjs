@@ -32,35 +32,18 @@ if (!existsSync(main)) {
   process.stderr.write(`browser-launcher:native: ${main} is missing; build the worker first\n`);
   process.exit(1);
 }
-// EXPERIMENT for #438, not to be merged: the four tests that time out run last, not early.
-const MOVED = [
-  "a_page_is_extracted_as_untrusted_markdown_in_pieces_without_hidden_text",
-  "a_staged_file_never_outlives_a_worker_that_dies_or_hangs",
-  "a_stalled_cancelled_or_killed_download_is_typed_and_commits_nothing",
-  "an_approved_activation_follows_the_latest_dated_link_and_nothing_else"
-];
-const nativeRun = (filter, selection) =>
-  spawnSync(
-    "cargo",
-    ["test", "-p", "orcel-browser-host", "--lib", ...filter, "--", "--ignored", "--test-threads=1", "--nocapture", ...selection],
-    {
-      cwd: repo,
-      stdio: ["ignore", "pipe", "inherit"],
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      shell: false,
-      env: { ...process.env, ORCEL_SG108_NODE: process.execPath, ORCEL_SG108_WORKER_MAIN: main }
-    }
-  );
-const others = nativeRun(["native_tests"], MOVED.flatMap((name) => ["--skip", name]));
-process.stdout.write(others.stdout ?? "");
-process.stderr.write("ORDER-EXPERIMENT the other tests finished; the four moved tests start now\n");
-// libtest's filters are "any of", so naming native_tests as well would run them all.
-const moved = nativeRun([], MOVED);
-process.stdout.write(moved.stdout ?? "");
-process.stderr.write(`ORDER-EXPERIMENT others exit ${others.status}, moved exit ${moved.status}\n`);
-process.exit(others.status === 0 && moved.status === 0 ? 0 : 1);
-const result = nativeRun(["native_tests"], []);
+const result = spawnSync(
+  "cargo",
+  ["test", "-p", "orcel-browser-host", "--lib", "native_tests", "--", "--ignored", "--test-threads=1", "--nocapture"],
+  {
+    cwd: repo,
+    stdio: ["ignore", "pipe", "inherit"],
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    shell: false,
+    env: { ...process.env, ORCEL_SG108_NODE: process.execPath, ORCEL_SG108_WORKER_MAIN: main }
+  }
+);
 if (result.error) {
   process.stderr.write(`browser-launcher:native: could not run cargo: ${result.error.message}\n`);
   process.exit(1);

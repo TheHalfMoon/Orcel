@@ -1017,6 +1017,36 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # EXPERIMENT for #438, not to be merged: what the machine does in the job's first 15 minutes.
+      - name: Start a process sampler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:RUNNER_TEMP "sampler.ps1"
+          @'
+          $log = Join-Path $env:RUNNER_TEMP "sampler.log"
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $last = @{}
+          $known = @{}
+          while ($clock.Elapsed.TotalMinutes -lt 15) {
+            $rows = @()
+            $fresh = @()
+            foreach ($p in Get-Process) {
+              $cpu = 0.0
+              try { $cpu = $p.TotalProcessorTime.TotalSeconds } catch {}
+              if ($last.ContainsKey($p.Id)) { $rows += [pscustomobject]@{ n = $p.ProcessName; d = $cpu - $last[$p.Id] } }
+              $last[$p.Id] = $cpu
+              if (-not $known.ContainsKey($p.ProcessName)) { $known[$p.ProcessName] = $true; $fresh += $p.ProcessName }
+            }
+            $top = ($rows | Sort-Object d -Descending | Select-Object -First 6 | ForEach-Object { "{0}={1:n1}" -f $_.n, $_.d }) -join " "
+            $os = Get-CimInstance Win32_OperatingSystem
+            $line = "{0,4}s free {1}MB top {2}" -f [int]$clock.Elapsed.TotalSeconds, [int]($os.FreePhysicalMemory / 1024), $top
+            if ($fresh -and $clock.Elapsed.TotalSeconds -gt 15) { $line += " new " + ($fresh -join ",") }
+            Add-Content $log $line
+            Start-Sleep -Seconds 10
+          }
+          '@ | Set-Content $script
+          Start-Process pwsh -WindowStyle Hidden -ArgumentList @("-NoProfile", "-File", $script)
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -1033,6 +1063,10 @@ jobs:
           ORCEL_BM_BROWSER_REPORT: ${{ runner.temp }}/browser-tasks.report.json
           ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: npm test
+      - name: Print the process sampler
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: Get-Content (Join-Path $env:RUNNER_TEMP "sampler.log") | ForEach-Object { "SAMPLER $_" }
       - name: Check and keep the browser task report
         if: runner.os == 'Windows'
         shell: bash
