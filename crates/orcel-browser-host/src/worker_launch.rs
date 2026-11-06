@@ -1721,11 +1721,11 @@ mod platform {
             }
         }
 
-        /// #438: which of the engine's processes are alive at a timeout, by type only
-        /// (a missing network service would say what it's waiting for). No other
-        /// argument is printed, because they hold the profile path and test values.
+        /// #438: which of the engine's processes are alive, by type only (a missing
+        /// network service would say what it's waiting for). No other argument is
+        /// printed, because they hold the profile path and test values.
         #[cfg(test)]
-        fn print_engine_processes(&self) {
+        fn engine_processes(&self) -> String {
             match self.process.snapshot() {
                 Ok(processes) => {
                     let mut kinds: Vec<&str> = processes
@@ -1738,12 +1738,26 @@ mod platform {
                         })
                         .collect();
                     kinds.sort_unstable();
-                    eprintln!(
-                        "SG108-DIAG engine at the timeout: {} processes, types {kinds:?}",
-                        processes.len()
-                    );
+                    format!("{} processes, types {kinds:?}", processes.len())
                 }
-                Err(error) => eprintln!("SG108-DIAG engine at the timeout: {error:?}"),
+                Err(error) => format!("{error:?}"),
+            }
+        }
+
+        /// #438: the same list after the first navigation that passes in this test
+        /// run, to compare with the list at a timeout. Written to the real stderr, since
+        /// the test harness keeps `eprintln!` of a passing test from the job's log.
+        #[cfg(test)]
+        fn print_passing_baseline(&self) {
+            use std::io::Write;
+            static PRINTED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !PRINTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "SG108-DIAG engine after a passing navigation: {}",
+                    self.engine_processes()
+                );
             }
         }
 
@@ -1965,7 +1979,10 @@ mod platform {
                         // #438: the worker's stage timeline of a timeout.
                         if reason == "timeout" {
                             self.print_stderr_tail();
-                            self.print_engine_processes();
+                            eprintln!(
+                                "SG108-DIAG engine at the timeout: {}",
+                                self.engine_processes()
+                            );
                         }
                     }
                     return Err(navigation_failure(&reason));
@@ -1986,6 +2003,10 @@ mod platform {
                 }
             };
             self.policy.commit(&committed)?;
+            #[cfg(test)]
+            if !text {
+                self.print_passing_baseline();
+            }
             // A new document: earlier node identities are stale. The
             // document generation advances only on a commit.
             let next = self
