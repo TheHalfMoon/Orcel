@@ -1,6 +1,8 @@
-"""Turns a saved HTML page into the Spec tree extract.test.ts's snapshot builder takes:
-elements with an href at most, and text. Scripts, styles and comments are dropped. Everything
-else stays, navigation and footers included, since removing those is what's being measured."""
+"""Turns a saved HTML page into the `body` of a fixture: tags, links and text, in the form
+extract.test.ts reads. Dropped: scripts, styles, comments, images, and forms and their controls,
+including visible text such as a search box's label or a button's. So the "no filter" figure
+is a little lower than a browser's. Navigation and footers stay, since removing those is what's
+being measured. CSS isn't read, so text a browser would hide stays too."""
 import json
 import sys
 from html.parser import HTMLParser
@@ -12,7 +14,7 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "met
 class Tree(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.root = {"kind": "el", "tag": "body", "attrs": {}, "style": {}, "children": []}
+        self.root = {"tag": "body", "children": []}
         self.stack = [self.root]
         self.skip = 0
 
@@ -27,10 +29,10 @@ class Tree(HTMLParser):
             return
         if tag in VOID or tag in {"html", "body"}:
             return
-        node = {"kind": "el", "tag": tag, "attrs": {}, "style": {}, "children": []}
+        node = {"tag": tag, "children": []}
         href = dict(attrs).get("href")
         if tag == "a" and href and href.startswith(("http", "/")):
-            node["attrs"]["href"] = href
+            node["href"] = href
         self.stack[-1]["children"].append(node)
         self.stack.append(node)
 
@@ -49,25 +51,25 @@ class Tree(HTMLParser):
             return
         text = " ".join(data.split())
         if text:
-            self.stack[-1]["children"].append({"kind": "text", "text": text, "style": {}})
+            self.stack[-1]["children"].append(text)
 
 
 def prune(node):
     """Removes elements with no text under them, and flattens wrappers holding one child."""
-    if node["kind"] == "text":
+    if isinstance(node, str):
         return node
     kept = [child for child in (prune(c) for c in node["children"]) if child is not None]
     if not kept:
         return None
     node["children"] = kept
-    if node["tag"] in {"div", "span", "section", "article"} and len(kept) == 1 and kept[0]["kind"] == "el":
+    if node["tag"] in {"div", "span", "section", "article"} and len(kept) == 1 and not isinstance(kept[0], str):
         return kept[0]
     return node
 
 
 def words(node):
-    if node["kind"] == "text":
-        return node["text"]
+    if isinstance(node, str):
+        return node
     return " ".join(words(child) for child in node["children"])
 
 
@@ -75,6 +77,6 @@ if __name__ == "__main__":
     tree = Tree()
     tree.feed(open(sys.argv[1], encoding="utf-8", errors="replace").read())
     root = prune(tree.root)
-    if len(sys.argv) > 2:
-        json.dump(root["children"], open(sys.argv[2], "w", encoding="utf-8", newline="\n"), ensure_ascii=False, separators=(",", ":"))
-    print(words(root))
+    if root is None:
+        raise SystemExit("the page has no text")
+    json.dump(root["children"], sys.stdout, ensure_ascii=False, indent=0)
