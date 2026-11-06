@@ -205,7 +205,7 @@ It reads orceld's own journal (`%LOCALAPPDATA%\Orcel\report-tasks.jsonl`), which
 - `evidence/history.json`: each task's steps and outcomes, without file text;
 - `evidence/transcript.redacted.txt`: the transcript through Orcel's log redactor.
 
-Attach `summary.json` and `history.json` to #446, which is a public issue in a public repository. SG-000127 also asks for the redacted transcript. **Keep that on your PC, and read it before deciding where it goes**: the redactor catches credentials, not everything you might not want public, such as home paths or other text from your session. Say on #446 that it exists and where you've kept it.
+Attach `summary.json` and `history.json` to #446, which is a public issue in a public repository. SG-000127 also asks for the redacted transcript. **Keep that on your PC, and read it before deciding where it goes**: the redactor catches credentials, not everything you might not want public, such as home paths or other text from your session. Say on #446 that it exists and that you read it, without its path. The kit can't judge prompt A or a client's wording, so a closeout resting on this run names who read the transcript.
 
 ### 6. Afterwards
 
