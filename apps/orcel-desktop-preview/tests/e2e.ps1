@@ -71,7 +71,15 @@ try {
     $window = WaitFor { ById $root "OrcelMainWindow" } 15000
     $startupMs = $clock.ElapsedMilliseconds
     Check "window appears" ($null -ne $window) "startup ${startupMs} ms"
-    if ($null -eq $window) { throw "window not found" }
+    if ($null -eq $window) {
+        # Evidence for a stall seen on CI: slow, hung or gone. The check above has already failed.
+        $process.Refresh()
+        Write-Output "DIAG app process: exited $($process.HasExited), responding $(if (-not $process.HasExited) { $process.Responding }), main window handle $($process.MainWindowHandle), title $($process.MainWindowTitle)"
+        if ($process.HasExited) { Write-Output "DIAG app exit code: $($process.ExitCode)" }
+        $late = WaitFor { ById $root "OrcelMainWindow" } 30000
+        Write-Output "DIAG window $(if ($late) { "appeared late" } else { "still absent" }) at $($clock.ElapsedMilliseconds) ms"
+        throw "window not found"
+    }
     $windowProcess = $window.Current.ProcessId
     Check "window belongs to the launched process" ($windowProcess -eq $process.Id) "pid $windowProcess"
 
