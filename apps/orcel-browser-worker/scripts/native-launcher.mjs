@@ -32,6 +32,32 @@ if (!existsSync(main)) {
   process.stderr.write(`browser-launcher:native: ${main} is missing; build the worker first\n`);
   process.exit(1);
 }
+// EXPERIMENT for #438, not to be merged: browser tasks in a loop for 11 minutes, through the
+// window in the job when Windows Update and Defender signature work starts. Nothing else runs.
+const loopStart = Date.now();
+for (let round = 1; Date.now() - loopStart < 660000; round += 1) {
+  const began = Date.now();
+  const loop = spawnSync(
+    "cargo",
+    ["test", "-p", "orcel-browser-host", "--lib", "bm_browser_tasks_on_the_controlled_site", "--", "--ignored", "--test-threads=1", "--nocapture"],
+    {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      shell: false,
+      env: { ...process.env, ORCEL_SG108_NODE: process.execPath, ORCEL_SG108_WORKER_MAIN: main }
+    }
+  );
+  const failures = ((loop.stderr ?? "") + (loop.stdout ?? "")).match(/failed: timeout|TimedOut|RobotsUnreachable|LaunchFailed/g) ?? [];
+  process.stderr.write(
+    `LOOP round ${round} at ${new Date(began).toISOString()} took ${Date.now() - began} ms, exit ${loop.status}, marks ${failures.join(",") || "none"}\n`
+  );
+  if (loop.status !== 0) {
+    process.stderr.write(`LOOP-FAIL ${((loop.stderr ?? "") + (loop.stdout ?? "")).split("\n").filter((line) => /panicked|stopped Some|failed:/.test(line)).slice(0, 8).join(" | ").slice(0, 800)}\n`);
+  }
+}
+process.exit(0);
 const result = spawnSync(
   "cargo",
   ["test", "-p", "orcel-browser-host", "--lib", "native_tests", "--", "--ignored", "--test-threads=1", "--nocapture"],
