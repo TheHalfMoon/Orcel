@@ -102,12 +102,13 @@ fn profile(label: &str) -> String {
     format!("Orcel.SG000013.{label}.{suffix}")
 }
 
-/// #292: the success test's own limit. This test qualifies containment
-/// (AppContainer, job assignment before resume, quiescence), not start-up
-/// latency: Windows PowerShell 5.1 has twice taken more than 30 s to start
-/// inside the AppContainer on a loaded hosted runner (median about 0.4 s
-/// locally). Production keeps `ExecutionLimits::default()` (30 s); the
-/// timeout path itself is qualified by the 3 s timeout test below.
+/// #292: the limit of the tests that need PowerShell to start. They qualify
+/// containment (AppContainer, job assignment before resume, quiescence, output
+/// limits), not start-up latency: Windows PowerShell 5.1 has taken 99 s to start
+/// inside the AppContainer on a hosted runner, while an uncontained start right
+/// after took 136 ms, so the stall is the container's and its cause is open.
+/// Production keeps `ExecutionLimits::default()` (30 s); the timeout path itself
+/// is qualified by the 3 s timeout test below.
 const COLD_START_ALLOWANCE: Duration = Duration::from_secs(120);
 
 /// How long an uncontained `powershell -Command exit` takes right now: on a
@@ -128,6 +129,23 @@ fn uncontained_start_millis() -> Option<u128> {
         .status()
         .ok()?;
     status.success().then(|| started.elapsed().as_millis())
+}
+
+/// How long this contained run took, in the CI log whether it passes or not, and
+/// marked if a real user at the production limit would have hit the timeout.
+fn start_evidence(what: &str, elapsed: Duration) {
+    let uncontained = uncontained_start_millis();
+    evidence(&format!(
+        "SG013-EVIDENCE contained PowerShell {what} took {} ms; uncontained start {uncontained:?} ms",
+        elapsed.as_millis(),
+    ));
+    if elapsed > ExecutionLimits::default().timeout {
+        evidence(&format!(
+            "SG013-SLOW contained PowerShell {what} took {} ms, over the production {} s limit",
+            elapsed.as_millis(),
+            ExecutionLimits::default().timeout.as_secs()
+        ));
+    }
 }
 
 #[test]
@@ -202,21 +220,22 @@ fn windows_private_powershell_timeout_is_verified_and_typed() {
 fn windows_private_powershell_stdout_limit_is_verified_and_typed() {
     let root = workspace("StdoutLimit");
     let limits = ExecutionLimits {
-        // A cold, zero-capability AppContainer PowerShell can take well over
-        // ten seconds to start on a loaded runner. The generous timeout only
-        // gives it time to write; the script then sleeps far longer than the
-        // timeout, so the asserted OutputLimit can come only from the limit
-        // being enforced, not from a normal exit or the timeout.
-        timeout: Duration::from_secs(60),
+        // The generous timeout only gives it time to start and write (#292). The
+        // script then sleeps far longer than the timeout, so the asserted OutputLimit
+        // can come only from the limit being enforced, not from a normal exit or the
+        // timeout.
+        timeout: COLD_START_ALLOWANCE,
         stdout_bytes: 32,
         stderr_bytes: 1024,
     };
     let plan = powershell_plan(
         &root,
-        "[Console]::Out.Write(('x' * 4096)); [Threading.Thread]::Sleep(120000)",
+        "[Console]::Out.Write(('x' * 4096)); [Threading.Thread]::Sleep(300000)",
         limits,
     );
+    let started = std::time::Instant::now();
     let result = execute_contained(plan, &profile("StdoutLimit"));
+    start_evidence("stdout limit", started.elapsed());
     assert_eq!(
         result,
         Err(PrivateExecutionFailure::OutputLimit(OutputStream::Stdout))
@@ -228,21 +247,19 @@ fn windows_private_powershell_stdout_limit_is_verified_and_typed() {
 fn windows_private_powershell_stderr_limit_is_verified_and_typed() {
     let root = workspace("StderrLimit");
     let limits = ExecutionLimits {
-        // A cold, zero-capability AppContainer PowerShell can take well over
-        // ten seconds to start on a loaded runner. The generous timeout only
-        // gives it time to write; the script then sleeps far longer than the
-        // timeout, so the asserted OutputLimit can come only from the limit
-        // being enforced, not from a normal exit or the timeout.
-        timeout: Duration::from_secs(60),
+        // As in the stdout test: time to start and write, then the limit (#292).
+        timeout: COLD_START_ALLOWANCE,
         stdout_bytes: 1024,
         stderr_bytes: 32,
     };
     let plan = powershell_plan(
         &root,
-        "[Console]::Error.Write(('e' * 4096)); [Threading.Thread]::Sleep(120000)",
+        "[Console]::Error.Write(('e' * 4096)); [Threading.Thread]::Sleep(300000)",
         limits,
     );
+    let started = std::time::Instant::now();
     let result = execute_contained(plan, &profile("StderrLimit"));
+    start_evidence("stderr limit", started.elapsed());
     assert_eq!(
         result,
         Err(PrivateExecutionFailure::OutputLimit(OutputStream::Stderr))
