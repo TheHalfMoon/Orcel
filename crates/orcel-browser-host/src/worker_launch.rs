@@ -1744,17 +1744,25 @@ mod platform {
             }
         }
 
+        /// #438: seconds since this test run's first navigation. Every stall on record
+        /// is in the first 13 of the 35 tests, in run order, so how early it comes matters.
+        #[cfg(test)]
+        fn run_elapsed() -> u64 {
+            static FIRST: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            FIRST
+                .get_or_init(std::time::Instant::now)
+                .elapsed()
+                .as_secs()
+        }
+
         /// #438: the same list after the first navigation that passes in this test
-        /// run, to compare with the list at a timeout. Written to the real stderr, since
-        /// the test harness keeps `eprintln!` of a passing test from the job's log.
+        /// run, to compare with the list at a timeout.
         #[cfg(test)]
         fn print_passing_baseline(&self) {
-            use std::io::Write;
             static PRINTED: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
             if !PRINTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                let _ = writeln!(
-                    std::io::stderr(),
+                eprintln!(
                     "SG108-DIAG engine after a passing navigation: {}",
                     self.engine_processes()
                 );
@@ -1940,6 +1948,8 @@ mod platform {
             } else {
                 self.send(&WorkerRequest::Navigate { nav_id: id, url })?;
             }
+            #[cfg(test)]
+            Self::run_elapsed();
             let (committed, status, body) = match self.reply(WORKER_NAVIGATION_TIMEOUT)? {
                 WorkerReply::Navigated {
                     nav_id: done,
@@ -1980,7 +1990,8 @@ mod platform {
                         if reason == "timeout" {
                             self.print_stderr_tail();
                             eprintln!(
-                                "SG108-DIAG engine at the timeout: {}",
+                                "SG108-DIAG engine at the timeout, {} s into the run: {}",
+                                Self::run_elapsed(),
                                 self.engine_processes()
                             );
                         }
