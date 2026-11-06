@@ -1,8 +1,8 @@
 # F4 slice 4 runbook: the client journey with your approval
 
-**Status: READY TO RUN.** This is SG-000127 slice 4 (#446). Every step is prepared except the one only you can do: answering Orcel's local approval prompt. **About 15 minutes at the prompt, plus about 20 for CI to build the release candidate first.** It costs nothing, and the only thing it makes available is that build, for 3 days.
+**Status: READY TO RUN.** This is SG-000127 slice 4 (#446). Every step is prepared except the one only you can do: answering Orcel's local approval prompt. **About 15 minutes at the prompt, plus about 20 for CI to build the release candidate and kit first.** It costs nothing, and the only things it makes available are that build and its kit, for 3 days.
 
-An agent must never answer this prompt: that would be manufacturing consent. So this tool approves nothing and never talks to orceld or the client. It only prepares a scratch folder and checks the evidence afterwards.
+An agent must never answer this prompt: that would be manufacturing consent. So this tool approves nothing and never talks to the client. It prepares a scratch folder, asks `orcel doctor` for `orceld`'s status once in `ready`, which requests no approval, and checks the evidence afterwards.
 
 ## What it proves
 
@@ -22,8 +22,10 @@ It proves that client version only, not every client.
 ## Before you start
 
 - Windows, with the Claude Code CLI installed (`claude --version`). Codex works the same way through `examples/mcp-clients/codex-config.toml`.
-- Rust and Node.js on PATH. `cargo` runs the kit; Node.js is an Orcel prerequisite.
-- An unsigned release candidate of the commit you are testing. CI builds one on every run and keeps it only when asked, for 3 days, so ask for it when you're ready to run this. It can be downloaded by others during those days, for as long as the repository is public. Start a run on `main`, wait for it to finish, and download:
+- **At the keyboard, on your own unlocked desktop**, not over SSH or as a service. Orcel doesn't check this: elsewhere the message box shows nowhere, and the client just waits until it gives up.
+- **Git Bash** for the commands here, unless a step says otherwise. Some won't work in PowerShell or Command Prompt.
+- Node.js on PATH, an Orcel prerequisite, and the GitHub CLI (`gh`).
+- An unsigned release candidate of the commit you are testing, and the kit built with it. CI builds both on every run and keeps them only when asked, for 3 days, so ask for them when you're ready to run this. They can be downloaded by others during those days, for as long as the repository is public. Start a run on `main`:
 
 ```bash
 gh workflow run CI --repo TheHalfMoon/Orcel --ref main
@@ -33,45 +35,61 @@ gh workflow run CI --repo TheHalfMoon/Orcel --ref main
 gh run list --repo TheHalfMoon/Orcel --workflow CI --event workflow_dispatch --limit 1 --json databaseId,headSha,status,conclusion
 ```
 
-That gives the run id and commit SHA for the next command. The artifact is there once its job has finished, even if the run as a whole is marked failed, for example by a cancelled macOS job.
+That gives the run id and commit SHA for the next commands. Right after starting a run it can still show the previous one, so check that its `status` isn't `completed`, or ask again after a few seconds.
+
+Wait for one job, not the whole run. **Release qualification** takes about 15 minutes, and a whole run from 30 minutes to over 3 hours, depending on the runners. The artifacts are there once that job has passed, even if the run is later marked failed, for example by a cancelled macOS job:
+
+```bash
+gh run view <CI run id> --repo TheHalfMoon/Orcel --json jobs --jq '.jobs[] | select(.name | startswith("Release qualification")) | .status + " " + .conclusion'
+```
 
 ```bash
 gh run download <CI run id> --repo TheHalfMoon/Orcel --name orcel-release-candidate-<commit sha> --dir orcel-rc
 ```
 
-The artifact holds `orcel-<version>-windows-x64.zip` with its manifest, SBOM and checksums. **Extract the zip** into `orcel-rc/release`: `orcel.exe` needs `manifest.json` beside it.
+```bash
+gh run download <CI run id> --repo TheHalfMoon/Orcel --name orcel-f4-kit-<commit sha> --dir orcel-kit
+```
 
-Unsigned means Windows may warn. This is a development build, **not a release**.
+If a download finds nothing while the run is still going, wait for the run to finish. The first artifact holds `orcel-<version>-windows-x64.zip` with its manifest, SBOM and checksums. **Extract the zip** into `orcel-rc/release`: `orcel.exe` needs `manifest.json` beside it. The second is `f4_journey.exe`, the kit. Run the kit's commands below from the folder holding `orcel-rc` and `orcel-kit`.
+
+Unsigned means Windows may warn, and Defender may hold these files. This is a development build, **not a release**.
+
+With a Rust toolchain (MSVC Build Tools included), you can instead check out the commit and replace `orcel-kit/f4_journey.exe` below with `cargo run -p orcel-lifecycle --example f4_journey --`, about 5 minutes to compile. That kit compares the release candidate with your checkout, so run it from there and give the full path to `orcel-rc`.
 
 ## Steps
 
 ### 1. Install and prepare
 
-From a checkout of the same commit:
-
 ```bash
 orcel-rc/release/orcel.exe install --node "$(where node | head -1)"
 ```
 
+Install puts `orcel` on PATH; open a new terminal if it isn't found, and go back to the folder holding `orcel-rc` and `orcel-kit`. **If Orcel is already installed** at another version, install refuses. Use `orcel update --source orcel-rc/release` instead, and `orcel rollback` in step 6. At the same version, install replaces what's there, with no version to roll back to.
+
+**The scratch folder must be the only workspace.** Orcel uses the first configured workspace as the default, and an existing id is refused. So first run `orcel workspace list`, write down what's there, and `orcel workspace remove <id>` each one. You restore them in step 6. Removing a workspace from configuration never touches its files.
+
 ```bash
-cargo run -p orcel-lifecycle --example f4_journey -- prepare C:/orcel-f4-journey
+orcel-kit/f4_journey.exe prepare C:/orcel-f4-journey
 ```
 
 ```bash
 orcel workspace add default "C:/orcel-f4-journey"
 ```
 
-Install puts `orcel` on PATH; open a new terminal if it isn't found.
-
-**The scratch folder must be the only workspace.** Orcel uses the first configured workspace as the default, and an existing id is refused. So before `workspace add`, run `orcel workspace list`, write down what's there, and `orcel workspace remove <id>` each one. You restore them in step 6. Removing a workspace from configuration never touches its files.
-
-Then check that everything is in place. It reads the configuration, and approves nothing and starts no client:
+Then check that everything is in place. It reads the configuration and asks `orcel doctor` whether `orceld` answers. It approves nothing and starts no client:
 
 ```bash
-cargo run -p orcel-lifecycle --example f4_journey -- ready C:/orcel-f4-journey --release-candidate orcel-rc
+orcel-kit/f4_journey.exe ready C:/orcel-f4-journey --release-candidate orcel-rc
 ```
 
-Every check should say `PASS`. It also checks that the release candidate was built from the commit you've checked out, using its provenance file, and that its zip is the file that provenance hashed. Run it from your checkout, with `orcel-rc` being the folder you downloaded the artifact to, and not the extracted `release` folder.
+Every check should say `PASS`. It also checks that the release candidate was built from the same commit as the kit, using its provenance file, and that its zip is the file that provenance hashed. `orcel-rc` is the folder you downloaded the artifact to, and not the extracted `release` folder.
+
+**If orceld won't start.** `orceld` refuses a state folder that someone else can delete from, and that includes rights inherited from `AppData`, which some sandboxing tools add for their own group. `orcel doctor` names what it found. Don't weaken the check. The options, simplest first:
+
+- Run the whole journey from a clean Windows user.
+- Remove that grant from `AppData`, if you're sure what added it and that nothing still needs it. That's your decision, and it can affect that tool.
+- Set `LOCALAPPDATA` to a folder of your own that passes, before installing, in **every** terminal of this journey, the client's included. This should work, and hasn't been tried.
 
 ### 2. Start the client and record what it is
 
@@ -95,7 +113,7 @@ The scratch folder's `.mcp.json` launches `orcel mcp stdio`. Accept the project'
 
 Expected: **no shell tool.** `process_spawn` is listed: it runs one registered executable (argv only, no shell) and needs a trusted workspace. This is the client's view of the SG-000096 shell being unarmed.
 
-**B. Approved.** A Windows message box titled **Orcel approval SOFT** appears, naming the action, target, size and digest. No is the default button. **Read it, then click Yes.**
+**B. Approved.** A Windows message box titled **Orcel approval SOFT** appears, naming the action, target, size and digest. If you don't see it, check the taskbar. No is the default button. **Read it, then click Yes within 5 minutes.** Orcel treats a later Yes as denied, and the client reports `APPROVAL_DENIED`. If that happens, ask it to commit again, and answer the new box. That retried report still counts as approved, not as the denied path of C.
 
 > Using Orcel's report tools: call report_start with title "Q3 revenue", sources ["data/q3.csv"] and folder "reports". Write a one-paragraph report with the total revenue in dollars. Call report_preview with name "q3.md", then report_commit with the same content and the sha256 the preview returned. Show me each tool result.
 
@@ -117,10 +135,10 @@ Expected: refused, because the destination exists. `reports/taken.md` is unchang
 
 > Start a new report task the same way, for a report named "q3-stale.md", and preview it. Do not commit yet.
 
-In a second terminal, **in your checkout of the commit**, not the scratch folder, change the source:
+In a second terminal, in the folder holding `orcel-kit`, not the scratch folder, change the source:
 
 ```bash
-cargo run -p orcel-lifecycle --example f4_journey -- change-source C:/orcel-f4-journey
+orcel-kit/f4_journey.exe change-source C:/orcel-f4-journey
 ```
 
 Then back in the client. No Orcel prompt:
@@ -158,29 +176,27 @@ orcel app
 Type `tasks` and press Enter. Expected, with shell and process sessions labelled unavailable:
 
 - "After the restart", with its title, is `sources read`.
-- It says "showing 5 of 6". The app lists the newest five, so **the report from B is the one left out**. It's in the history below.
+- It says "showing 5 of 6". The app lists the newest five, so **the report from B is the one left out**. It's in the history below. The journal outlives an uninstall, so after an earlier attempt on this PC the app shows more tasks than this, and older ones. A retry needs a new scratch folder (`prepare` refuses one that isn't empty), and the kit reads only that folder's tasks.
 - The tasks from before you ended `orceld` have **no title, which is expected**: titles are never written to the journal.
 - **The tasks from D and F both show `failed`, which is expected**, with the step `run orceld_run_ended`, because their `orceld` is gone and they can't continue. D's report was refused as intended, and F's was never committed.
 - The tasks from C and E keep `approval denied` and `stale`.
 
-Note whether that's what you saw: the kit doesn't read the app. From the checkout, this prints the history from the journal, all six tasks including B's `verified`:
+Note whether that's what you saw: the kit doesn't read the app. This prints the history from the journal, all six tasks including B's `verified`:
 
 ```bash
-cargo run -p orcel-lifecycle --example f4_journey -- history C:/orcel-f4-journey
+orcel-kit/f4_journey.exe history C:/orcel-f4-journey
 ```
 
 It shows what was written, so D and F appear as `observed` and `proposed` with no `run` step. The `failed` state in the app is `orceld` restoring them after the restart. The two views differ for that reason only.
 
 ### 4. Save the transcript
 
-In Claude Code, run `/export` and save to `C:/orcel-f4-journey-transcript.txt`, outside the workspace. Copying the terminal's text into that file also works.
+In Claude Code, run `/export` and save to `orcel-f4-journey-transcript.txt` in your user folder (`%USERPROFILE%`), outside the workspace. Copying the terminal's text into that file also works. Check that the tool results and the whole `rpt-` task ids are there: the kit looks for them.
 
 ### 5. Check the evidence
 
-From your checkout:
-
 ```bash
-cargo run -p orcel-lifecycle --example f4_journey -- evidence C:/orcel-f4-journey --client "Claude Code <version>" --transcript C:/orcel-f4-journey-transcript.txt
+orcel-kit/f4_journey.exe evidence C:/orcel-f4-journey --client "Claude Code <version>" --transcript "$USERPROFILE/orcel-f4-journey-transcript.txt"
 ```
 
 It reads orceld's own journal (`%LOCALAPPDATA%\Orcel\report-tasks.jsonl`), which records steps and outcomes but never file contents, and the workspace. It prints `PASS` or `FAIL` for each path and writes:
@@ -193,17 +209,18 @@ Attach `summary.json` and `history.json` to #446, which is a public issue in a p
 
 ### 6. Afterwards
 
-Close the Windows app first. An open app holds its file in the install, which could stop `orcel uninstall` removing it.
+Close the Windows app, and leave the client with `/exit`. An open app or client holds files in the install, which could stop `orcel uninstall` removing them.
 
 ```bash
 orcel workspace remove default
 ```
 
-Add back the workspaces you removed in step 1, in their original order. `orcel uninstall` removes the release if you installed it only for this.
+Add back the workspaces you removed in step 1, in their original order. `orcel uninstall` removes the release if you installed it only for this, or `orcel rollback` returns you to the version you updated from.
 
 ## What this leaves open
 
 - **Prompt A and the Windows app in G** are read by a person: the kit doesn't parse either.
+- **First shown by your run:** the kit's upload and download on a manual run, `ready` against an installed release, the Yes through that release, whether the box takes focus, how long the client waits on a tool call, whether `/export` keeps tool results and whole task ids, and how Defender treats the unsigned files.
 - **Rehearsed without you, up to the prompt:** on a real `orceld` and MCP edge in WSL, with a test client and no approval, in this order, the kit passes recovery and the existing destination, and fails approved, denied and stale as it should. The Windows run of F and G, and any real client, are first shown by you.
 - **Recovery:** the kit requires a task cut off after its preview, a second `orceld` in the journal and the transcript naming `task_resume_summary` with that task. It looks for the summary's own fields in the transcript, so a client that hides tool results fails this check. It can't tell that you ended `orceld` by hand rather than the client restarting.
 - **The installed-release journey through uninstall** and **stop and takeover** are other acceptance items, not this one.

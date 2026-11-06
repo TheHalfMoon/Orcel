@@ -2,7 +2,8 @@
 //!
 //! One supported client runs the report journey against an installed orceld
 //! over local stdio, and a person answers Orcel's local approval prompt. This
-//! tool never approves anything and never talks to orceld or the client. It
+//! tool never approves anything and never talks to the client. Its one contact
+//! with orceld is `ready` asking `orcel doctor`, which reads a status. It
 //! prepares a scratch workspace, changes its source when the runbook says so,
 //! and afterwards checks the evidence from orceld's own journal and the
 //! workspace, and redacts the transcript with the product's redactor.
@@ -104,7 +105,27 @@ fn ready_checks(dir: &Path, workspaces: &str) -> Vec<Check> {
     ]
 }
 
-/// Whether the downloaded release candidate is the one this checkout builds: its
+/// Whether `orceld` started and answered. `doctor` is the output of
+/// `orcel doctor --json`. Listing workspaces doesn't need `orceld`, so without this
+/// a machine whose state folder `orceld` refuses passes, and the journey first fails
+/// at the report tools.
+fn orceld_check(doctor: &str) -> Check {
+    let report: Value = serde_json::from_str(doctor).unwrap_or(Value::Null);
+    let ipc = report["doctor"]["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "ipc"));
+    let detail = ipc
+        .and_then(|ipc| ipc["detail"].as_str())
+        .unwrap_or("no result");
+    check(
+        "orceld starts and answers",
+        ipc.filter(|ipc| ipc["status"] == "pass")
+            .map(|_| detail.to_owned()),
+        &format!("{detail}; see \"If orceld won't start\" in the runbook"),
+    )
+}
+
+/// Whether the downloaded release candidate is the one this kit or checkout builds: its
 /// provenance names this commit, and its zip is the file the provenance hashed.
 /// A journey run against another commit's build is evidence about neither.
 fn release_checks(provenance: &str, head: &str, zips: &[(String, Vec<u8>)]) -> Vec<Check> {
@@ -125,7 +146,7 @@ fn release_checks(provenance: &str, head: &str, zips: &[(String, Vec<u8>)]) -> V
         check(
             "the release candidate was built from this commit",
             same_commit.then(|| format!("both at {head}")),
-            &format!("its provenance says {revision:?}, this checkout is {head:?}"),
+            &format!("its provenance says {revision:?}, this kit expects {head:?}"),
         ),
         check(
             "the release candidate's zip matches its provenance",
@@ -151,16 +172,23 @@ fn release_candidate(folder: &Path) -> Result<Vec<Check>, String> {
         }
     }
     let provenance = provenance.ok_or_else(|| format!("no provenance in {}", folder.display()))?;
-    let head = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .map_err(|error| format!("git didn't run ({error}); run this from the checkout"))?;
-    let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+    // CI's kit knows the commit it was built from. A kit built by hand asks the checkout.
+    let head = match option_env!("ORCEL_F4_KIT_COMMIT") {
+        Some(commit) => commit.to_owned(),
+        None => {
+            let head = std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .map_err(|error| format!("git didn't run ({error}); run this from the checkout"))?;
+            String::from_utf8_lossy(&head.stdout).trim().to_owned()
+        }
+    };
     Ok(release_checks(&provenance, &head, &zips))
 }
 
-/// Reads the configuration through the installed `orcel`. Approves nothing and
-/// starts no client.
+/// Reads the configuration through the installed `orcel`, and asks `orcel doctor`
+/// whether `orceld` answers, which starts it for a moment. Approves nothing and starts
+/// no client.
 fn ready(dir: &Path, candidate: Option<&Path>) -> Result<bool, String> {
     let orcel = |args: &[&str]| {
         std::process::Command::new("orcel")
@@ -177,6 +205,8 @@ fn ready(dir: &Path, candidate: Option<&Path>) -> Result<bool, String> {
     );
     let listed = orcel(&["workspace", "list", "--json"])?;
     let mut results = ready_checks(dir, &String::from_utf8_lossy(&listed.stdout));
+    let doctor = orcel(&["doctor", "--json"])?;
+    results.push(orceld_check(&String::from_utf8_lossy(&doctor.stdout)));
     if let Some(folder) = candidate {
         results.extend(release_candidate(folder)?);
     }
@@ -259,6 +289,11 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
             )
         })
     });
+    // A denial retried to a Yes, as the runbook allows at B, isn't the denied path.
+    let denied = tasks
+        .iter()
+        .find(|task| task["state"] == "approval_denied" && has_step(task, "approval", "denied"))
+        .and_then(|task| task["id"].as_str().map(str::to_owned));
     let by_step = |kind: &str, outcome: &str| {
         tasks
             .iter()
@@ -307,7 +342,7 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
         ),
         check(
             "denied approval refused",
-            by_step("approval", "denied"),
+            denied,
             "no task recorded a denied approval",
         ),
         check(
@@ -623,6 +658,19 @@ mod tests {
     }
 
     #[test]
+    fn a_denial_retried_to_a_yes_is_not_the_denied_path() {
+        let dir = scratch("retried");
+        let mut tasks = complete(&dir);
+        tasks[1]["state"] = json!("verified");
+        let refs: Vec<&Value> = tasks.iter().collect();
+        assert_eq!(
+            failed(&checks(&dir, &refs, TRANSCRIPT)),
+            vec!["denied approval refused"]
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_report_that_differs_on_disk_is_not_verified() {
         let dir = scratch("tampered");
         let tasks = complete(&dir);
@@ -747,6 +795,26 @@ mod tests {
             failed(&release_checks("not json", "abc123", &[zip])),
             vec![commit, bytes]
         );
+    }
+
+    #[test]
+    fn ready_needs_orceld_to_answer() {
+        let doctor = |status: &str| {
+            json!({"ok": false, "doctor": {"checks": [
+                {"name": "install", "status": "pass", "detail": "fine"},
+                {"name": "ipc", "status": status, "detail": "the state folder is refused"},
+            ]}})
+            .to_string()
+        };
+        assert!(orceld_check(&doctor("pass")).passed);
+        // Not answering isn't a pass, nor is not knowing.
+        for status in ["fail", "unknown", "warn"] {
+            let result = orceld_check(&doctor(status));
+            assert!(!result.passed, "{status}");
+            assert!(result.detail.contains("the state folder is refused"));
+        }
+        assert!(!orceld_check("not json").passed);
+        assert!(!orceld_check(&json!({"doctor": {"checks": []}}).to_string()).passed);
     }
 
     #[test]
