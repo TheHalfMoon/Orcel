@@ -65,7 +65,7 @@ With a Rust toolchain (MSVC Build Tools included), you can instead check out the
 orcel-rc/release/orcel.exe install --node "$(where node | head -1)"
 ```
 
-Install puts `orcel` on PATH; open a new terminal if it isn't found, and go back to the folder holding `orcel-rc` and `orcel-kit`. **If Orcel is already installed** at another version, install refuses. Use `orcel update --source orcel-rc/release` instead, and `orcel rollback` in step 6. At the same version, install replaces what's there, with no version to roll back to.
+Install puts `orcel` on PATH; open a new terminal if it isn't found, and go back to the folder holding `orcel-rc` and `orcel-kit`. **If Orcel is already installed** at another version, install refuses. Use `orcel update --source orcel-rc/release` instead, and `orcel rollback` in step 6. At the same version, install replaces what's there, and you can't roll back to the build it replaces.
 
 **The scratch folder must be the only workspace.** Orcel uses the first configured workspace as the default, and an existing id is refused. So first run `orcel workspace list`, write down what's there, and `orcel workspace remove <id>` each one. You restore them in step 6. Removing a workspace from configuration never touches its files.
 

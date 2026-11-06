@@ -170,7 +170,11 @@ those. Orcel itself stays public.
    preflight, ready for a person at a real prompt), #643 (build packages kept only on a manual
    run, for 3 days, and both review jobs refuse forks), #644 (plans moved to private documents),
    #645 (clean toolchain in the agent job; PowerShell limit tests get time to start) and #646
-   (the Windows app ships in the release, opened with `orcel app`).
+   (the Windows app ships in the release, opened with `orcel app`). Then #641 (the five tracks),
+   #642 (M-WI-02 on five real pages: text reduction only, no tokens or answer accuracy), #647
+   (provenance needs the .NET SDK's version), #648 (the F4 kit built by CI, `ready` needs `orceld`
+   to answer, runbook corrected from an audit) and #650 (evidence for #438 and #649, no limit
+   changed).
    Evidence so far, all scripted or test clients, never a model or a real client:
    browser tasks 15/15 with no timeouts, on Windows only, p50 about 1.0 to 1.8 s across
    runs; native host peak 6.7 MiB on X11, 6.4 to 6.9 on Sway across three runs,
@@ -184,8 +188,9 @@ those. Orcel itself stays public.
    fits the focus guard's settle watch of about 240 ms (`focus_guard.rs`), which needs a
    reachable `DISPLAY` and is skipped on CI's Sway. It catches and undoes a late focus
    steal, so it isn't a saving to take. The X11 raw click pays the same watch, which leaves about
-   520 ms of its 762 unexplained; a 250 ms human-input quiet wait (`worker.rs`) is a lead,
-   not measured. `EFFECT_SETTLE` is on the uinput route, which Xvfb doesn't use. `list_windows` p50 27 ms on X11,
+   520 ms of its 762 unexplained. The 250 ms human-input quiet wait (`worker.rs`) isn't it: a
+   local run on Xvfb in WSL, 40 samples each, left click p50 at 840 ms and 843 ms with 350 ms
+   more between actions, drag 1120 and 1150, scroll 906 and 920. `EFFECT_SETTLE` is on the uinput route, which Xvfb doesn't use. `list_windows` p50 27 ms on X11,
    44 on Sway, 73 on macOS, and `observe_window` 50, 78, 121, with no Windows figure yet
    to check M-NAT-01's 1.5x target against. A crawl of ten pages, six read, takes about
    2.2 s on Windows, with 359 MiB committed at peak. #438's latest timeline shows a
@@ -206,19 +211,19 @@ those. Orcel itself stays public.
    then `node scripts/check-vendored-cua.mjs` on a commit.
 4. Next engineering, in order: the next product milestone that needs no
    founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`), with
-   these candidates: the rest of the X11 raw click's time; M-WI-02's token reduction
-   (its answer accuracy needs a scoring method or a planner); a terminal task timeline
+   these candidates: the rest of the X11 raw click's time; M-WI-02's real tokens and answer
+   accuracy (#642 measured characters; these need a scoring method or a planner); a terminal task timeline
    on macOS and Linux, once someone decides whether that client may use `task.*`.
    Checked figures for CSV reports aren't on the roadmap and would change what
-   `verified` means, so they need adopting first. Then #438 when #635's process list
-   first prints. A cgroup the engine cannot leave stays open: B9c shows Landlock alone
+   `verified` means, so they need adopting first. Then #438, whose process list has printed
+   (nothing had died; compare it with #650's baseline) and #649 when its evidence first prints. A cgroup the engine cannot leave stays open: B9c shows Landlock alone
    doesn't do it (an inherited descriptor, `clone3` and the user bus all get past it),
    and refusing `clone3` needs a real engine to test against, which waits on activation.
    Then what the founder's answers to
    `FOUNDER_DECISION_PACKET.md` unlock.
-5. Known CI flakes: toolchain install conflict on macOS (the `Orcel Agent M1` job now
+5. Known CI flakes: toolchain install conflict on macOS and Ubuntu (the `Orcel Agent M1` job now
    installs its toolchain from clean, #645; rerun failed jobs elsewhere),
-   #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
+   #438, #649 (the Windows app's window; not known to be the runner), #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
    Seen once, not yet tracked: `unix_rehearsal::tests::survivors_and_unverified_coverage_keep_the_sink_and_the_profile`
    on macOS, and the upstream-asset parity tests when GitHub blob fetches fail.
    Wording: GitHub reads "fix #N" and "close #N" as closing keywords even after "doesn't",
