@@ -1,6 +1,6 @@
 """Turns a saved HTML page into the `body` of a fixture: tags, links and text, in the form
-extract.test.ts reads. Dropped: scripts, styles, comments, images, and forms and their controls,
-including visible text such as a search box's label or a button's. So the "no filter" figure
+extract.test.ts reads. Dropped: everything in DROP, such as scripts, styles, images and forms and
+their controls, and comments. That includes visible text such as a search box's label or a button's. So the "no filter" figure
 is a little lower than a browser's. Navigation and footers stay, since removing those is what's
 being measured. CSS isn't read, so text a browser would hide stays too."""
 import json
