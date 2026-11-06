@@ -1130,6 +1130,18 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      # The action installs stable, but the repository pins another toolchain, which
+      # would otherwise be installed by the first `cargo`, on top of whatever the image
+      # left: "recovering from a partially installed toolchain", then a clippy conflict.
+      - name: Install the pinned toolchain from clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          test -n "$pin"
+          rustup toolchain uninstall "$pin" || true
+          rustup toolchain install "$pin" --profile minimal --component rustfmt --component clippy --no-self-update
+          cargo --version
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"

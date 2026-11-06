@@ -420,6 +420,42 @@ pub fn stop(args: &mut Args) -> Result<Output, LifecycleError> {
     })
 }
 
+/// Opens the Windows app from the active, verified install, and doesn't wait for it.
+/// The path comes only from the install, never from an argument or PATH.
+pub fn app(args: &mut Args) -> Result<Output, LifecycleError> {
+    args.finish()?;
+    if !cfg!(windows) {
+        return Err(LifecycleError::usage(
+            "the Orcel app is only on Windows for now",
+        ));
+    }
+    let layout = Layout::for_current_user()?;
+    let version = active_version(&layout)?;
+    let path = layout.version_dir(&version).join("Orcel.Desktop.exe");
+    // A rollback can land on a release from before the app shipped.
+    if !path.is_file() {
+        return Err(LifecycleError::usage(format!(
+            "Orcel {version} was released without the app; update to open it"
+        )));
+    }
+    // Or the app would keep a caller's pipe to this process open until it closes.
+    #[cfg(windows)]
+    orcel_lifecycle::runtime::disinherit_standard_handles();
+    let child = std::process::Command::new(&path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            LifecycleError::usage(format!("could not open {}: {error}", path.display()))
+        })?;
+    Ok(Output {
+        exit_code: 0,
+        human: "Opened the Orcel app.\n".into(),
+        json: json!({"ok": true, "pid": child.id(), "version": version}),
+    })
+}
+
 pub fn status(args: &mut Args) -> Result<Output, LifecycleError> {
     args.finish()?;
     let layout = Layout::for_current_user()?;

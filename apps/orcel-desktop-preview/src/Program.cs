@@ -1099,7 +1099,7 @@ namespace Orcel.DesktopPreview
             Border transcriptCard = Card(conversation, Colors.Sidebar, new Thickness(14));
             Grid.SetRow(transcriptCard, 1);
             center.Children.Add(transcriptCard);
-            AddMessage(false, "Welcome to Orcel. Type help, status, version, doctor, devices, or files. Other requests are not executed or sent anywhere.");
+            AddMessage(false, "Welcome to Orcel. Type help, status, version, doctor, devices, files, or tasks. Other requests are not executed or sent anywhere.");
 
             Grid composer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
             composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

@@ -50,6 +50,7 @@ Runtime:
   orcel stop [--wait <seconds>]           Stop it and verify termination.
   orcel status                            Show install, configuration, and runtime state.
   orcel doctor                            Run diagnostics; exits non-zero on failures.
+  orcel app                               Open the Windows app from the verified install.
 
 Local MCP (no tunnel required):
   orcel mcp stdio                         Run the authoritative MCP server over stdio
@@ -287,6 +288,7 @@ fn run(args: &mut Args) -> Result<Output, LifecycleError> {
         "stop" => commands::stop(args),
         "status" => commands::status(args),
         "doctor" => commands::doctor(args),
+        "app" => commands::app(args),
         "approvals" => commands::approvals(args),
         "emergency-revoke" => commands::emergency_revoke(args),
         "full-control" => commands::full_control(args),
