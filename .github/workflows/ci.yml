@@ -1312,6 +1312,19 @@ jobs:
           $sums = Get-ChildItem $out -File | Where-Object Name -ne "SHA256SUMS.txt" | Sort-Object Name | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
           [System.IO.File]::WriteAllText((Join-Path $out "SHA256SUMS.txt"), (($sums -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
           Get-Content (Join-Path $out "SHA256SUMS.txt")
+      # The F4 runbook's kit, so a person needs no Rust toolchain. It knows this commit,
+      # and refuses a release candidate built from another.
+      - name: Build the F4 journey kit
+        shell: pwsh
+        env:
+          ORCEL_F4_KIT_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          cargo build --locked --release -p orcel-lifecycle --example f4_journey
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $scratch = Join-Path $env:RUNNER_TEMP "f4-kit-check"
+          target/release/examples/f4_journey.exe prepare $scratch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $scratch "data/q3.csv"))) { throw "the kit prepared nothing" }
       # Built and checked on every run, and kept only when someone asks: artifacts of a
       # public repository can be downloaded, and Orcel isn't published.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -1319,6 +1332,13 @@ jobs:
         with:
           name: orcel-release-candidate-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: orcel-f4-kit-${{ github.event.pull_request.head.sha || github.sha }}
+          path: target/release/examples/f4_journey.exe
           if-no-files-found: error
           retention-days: 3
 
