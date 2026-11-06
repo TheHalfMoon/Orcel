@@ -119,7 +119,10 @@ test("public launch links stay on canonical Orcel repository, docs, and Releases
 
   assert.match(page, /const github = "https:\/\/github\.com\/TheHalfMoon\/Orcel"/);
   assert.match(page, /const releases = `\$\{github\}\/releases`/);
-  assert.match(page, /View verified releases/);
+  assert.match(page, /Browse release archive/);
+  assert.match(page, /v0[.]1[.]0 is a pre-rename archival build, not a qualified Orcel installer/);
+  assert.match(page, /Browser and desktop UI actuation are not exposed over MCP/);
+  assert.doesNotMatch(page, /View verified releases/, "do not imply an Orcel installer is already published");
   assert.equal(page.includes("/releases/download/"), false, "website must not link directly to release artifacts");
   assert.equal(page.includes(".zip"), false, "website must not hard-code downloadable archives");
 
