@@ -2,7 +2,8 @@
 //!
 //! One supported client runs the report journey against an installed orceld
 //! over local stdio, and a person answers Orcel's local approval prompt. This
-//! tool never approves anything and never talks to orceld or the client. It
+//! tool never approves anything and never talks to the client. Its one contact
+//! with orceld is `ready` asking `orcel doctor`, which reads a status. It
 //! prepares a scratch workspace, changes its source when the runbook says so,
 //! and afterwards checks the evidence from orceld's own journal and the
 //! workspace, and redacts the transcript with the product's redactor.
@@ -145,7 +146,7 @@ fn release_checks(provenance: &str, head: &str, zips: &[(String, Vec<u8>)]) -> V
         check(
             "the release candidate was built from this commit",
             same_commit.then(|| format!("both at {head}")),
-            &format!("its provenance says {revision:?}, this checkout is {head:?}"),
+            &format!("its provenance says {revision:?}, this kit expects {head:?}"),
         ),
         check(
             "the release candidate's zip matches its provenance",
@@ -288,6 +289,11 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
             )
         })
     });
+    // A denial retried to a Yes, as the runbook allows at B, isn't the denied path.
+    let denied = tasks
+        .iter()
+        .find(|task| task["state"] == "approval_denied" && has_step(task, "approval", "denied"))
+        .and_then(|task| task["id"].as_str().map(str::to_owned));
     let by_step = |kind: &str, outcome: &str| {
         tasks
             .iter()
@@ -336,7 +342,7 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
         ),
         check(
             "denied approval refused",
-            by_step("approval", "denied"),
+            denied,
             "no task recorded a denied approval",
         ),
         check(
@@ -648,6 +654,19 @@ mod tests {
                 .collect();
             assert_eq!(failed(&checks(&dir, &refs, TRANSCRIPT)), vec![name]);
         }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_denial_retried_to_a_yes_is_not_the_denied_path() {
+        let dir = scratch("retried");
+        let mut tasks = complete(&dir);
+        tasks[1]["state"] = json!("verified");
+        let refs: Vec<&Value> = tasks.iter().collect();
+        assert_eq!(
+            failed(&checks(&dir, &refs, TRANSCRIPT)),
+            vec!["denied approval refused"]
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
