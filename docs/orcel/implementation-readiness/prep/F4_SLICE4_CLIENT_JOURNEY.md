@@ -149,14 +149,10 @@ Then one more task, which shows the new `orceld` works, and gives it a task of i
 
 > Start a new report task the same way, with the title "After the restart", and show me the result. Do not preview or commit it.
 
-**G. The task history.** With the client still open, in a regular Windows PowerShell at the repository root, build and open the Windows app:
+**G. The task history.** With the client still open, in another terminal, open the Windows app from the install:
 
 ```bash
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\apps\orcel-desktop-preview\build.ps1 -OutputDirectory C:\orcel-f4-app
-```
-
-```bash
-C:\orcel-f4-app\Orcel.Desktop.exe
+orcel app
 ```
 
 Type `tasks` and press Enter. Expected, with shell and process sessions labelled unavailable:
@@ -196,6 +192,8 @@ It reads orceld's own journal (`%LOCALAPPDATA%\Orcel\report-tasks.jsonl`), which
 Attach `summary.json` and `history.json` to #446, which is a public issue in a public repository. SG-000127 also asks for the redacted transcript. **Keep that on your PC, and read it before deciding where it goes**: the redactor catches credentials, not everything you might not want public, such as home paths or other text from your session. Say on #446 that it exists and where you've kept it.
 
 ### 6. Afterwards
+
+Close the Windows app first. An open app holds its file in the install, which could stop `orcel uninstall` removing it.
 
 ```bash
 orcel workspace remove default

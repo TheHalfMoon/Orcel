@@ -112,6 +112,24 @@ if (!existsSync(containHelper)) {
 }
 copyFileSync(containHelper, join(out, "orcel-contain.exe"));
 writeFileSync(join(out, "orcel-contain.sha256"), `${sha256(join(out, "orcel-contain.exe"))}\n`);
+// SG-000127: the Windows app, built deterministically by build.ps1. It only starts
+// `orcel` from the install and reads the local app API.
+const appBuild = join(targetDir, "windows-app");
+execFileSync(
+  "powershell.exe",
+  [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    join(repo, "apps", "orcel-desktop-preview", "build.ps1"),
+    "-OutputDirectory",
+    appBuild,
+    "-Deterministic"
+  ],
+  { stdio: "inherit" }
+);
+copyFileSync(join(appBuild, "Orcel.Desktop.exe"), join(out, "Orcel.Desktop.exe"));
 copyFileSync(join(repo, "LICENSE"), join(out, "LICENSE"));
 
 stageMcpPayload(repo, out, fail);
