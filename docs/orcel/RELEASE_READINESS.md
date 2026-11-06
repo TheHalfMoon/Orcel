@@ -215,8 +215,8 @@ those. Orcel itself stays public.
    accuracy (#642 measured characters; these need a scoring method or a planner); a terminal task timeline
    on macOS and Linux, once someone decides whether that client may use `task.*`.
    Checked figures for CSV reports aren't on the roadmap and would change what
-   `verified` means, so they need adopting first. Then #438, whose process list has printed
-   (nothing had died; compare it with #650's baseline) and #649 when its evidence first prints. A cgroup the engine cannot leave stays open: B9c shows Landlock alone
+   `verified` means, so they need adopting first. Then #438 (running the tests in another order would separate position from route; process list at a timeout and after a passing navigation both print now)
+   and #649 when its evidence first prints. A cgroup the engine cannot leave stays open: B9c shows Landlock alone
    doesn't do it (an inherited descriptor, `clone3` and the user bus all get past it),
    and refusing `clone3` needs a real engine to test against, which waits on activation.
    Then what the founder's answers to
