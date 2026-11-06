@@ -136,21 +136,21 @@ checkpoint at the end says where engineering stands.
 | The Mac with Chrome or Edge installed | Positive vendor-bundle evidence on hardware (CI has it hosted) |
 | `remote-desktop-commander` OAuth (`/mcp` in an interactive terminal) | Remote runs on the user's devices from this agent |
 
-## Completion, tracked separately (2026-11-05)
+## Completion, tracked separately (2026-11-06)
 
-Orcel isn't finished while its core user journeys are incomplete. These five are separate, and one being ahead says nothing about another. Nothing is signed, published or released.
+Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished while its core user journeys are incomplete. These five are separate, and one being ahead says nothing about another. Nothing is signed, published or released.
 
 | Track | State | What's open |
 |---|---|---|
 | **1. Engineering** | Class 1 merged on exact-head green CI with independent review; class 2 in progress | Slice 5's surface is a draft waiting on decision 2. The rest of section 2 |
-| **2. Real end-to-end product** | **Not complete. No real client has driven a real approval to a verified report.** The installed Windows journey passes in release qualification up to the prompt (`release_qualification.rs`, `orcel mcp stdio`), with a test client | Founder decision numbers here are `FOUNDER_DECISION_PACKET.md`'s. Slice 4 needs the founder at the prompt (`prep/F4_SLICE4_CLIENT_JOURNEY.md`). Slice 5 (stop and takeover) needs decision 2. Slice 7 needs decision 6. Then the F4 closeout |
+| **2. Real end-to-end product** | **Not complete. No real client has driven a real approval to a verified report.** The installed Windows journey passes in release qualification up to the prompt (`release_qualification.rs`, `orcel mcp stdio`), with a test client | Slice 4 needs the founder at the prompt (`prep/F4_SLICE4_CLIENT_JOURNEY.md`). Slice 5 (stop and takeover) needs decision 2. Slice 7 needs decision 6. Then the F4 closeout |
 | **3. AI model** | **No model has been run.** Every agent result is scripted, and labelled so. The harness and scoring exist (`model_eval.py`, `model_run.py`, `model_memory.py`), and have only run against a stub | Decision 3 approves the download. A model may miss the bar, and then the honest result is "no qualified model yet" |
 | **4. Cross-platform** | Windows and Linux lifecycle qualified on CI. Unsigned dev tarballs for macOS and Linux reach the approval through a test client. The Windows app has no macOS or Linux equal (decision 4) | macOS package (FD-05). macOS and Linux browser launch waits for SG-000115. Real GNOME and KDE approvals, and macOS direct-capture consent, need a person |
-| **5. Security and release** | No accepted risks. SG-000115's residuals are open founder decisions, and B9c shows Landlock alone doesn't close the cgroup. Release isn't authorized | Signing, publication, and the residuals in section 4. **The GitHub repository is public**, and the founder's standing preference is not to publish without authorization (directive of 2026-11-05): that's for the founder to settle |
+| **5. Security and release** | No accepted risks. SG-000115's residuals are open founder decisions, and B9c shows Landlock alone doesn't close the cgroup. Release isn't authorized | Signing, publication, and the residuals in section 4. The repository stays public by founder decision (2026-11-06), with plans kept privately. Earlier versions of those plans remain in public history, which is treated as already disclosed. Irreversible cleanup would be its own decision |
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-05). Check GitHub for the current
+If a session ends, resume from here (2026-11-06). Check GitHub for the current
 head and CI: this checkpoint can't name its own merge.
 
 Plans and the founder decision documents are kept privately, at the same paths, and the
@@ -166,7 +166,11 @@ those. Orcel itself stays public.
    Linux), #631 (M-BR-04, worker and engine only), #633 (M-NAT-01, 200 calls), #634
    (M-WI-01, crawl), #635 (#438: the engine's processes at a timeout), #636 (B9c:
    Landlock alone doesn't give a cgroup the engine can't leave) and #637 (a test race
-   on `ORCEL_TRUST_PATH`) followed.
+   on `ORCEL_TRUST_PATH`) followed. Then #639 (the F4 journey with recovery, history and a
+   preflight, ready for a person at a real prompt), #643 (build packages kept only on a manual
+   run, for 3 days, and both review jobs refuse forks), #644 (plans moved to private documents),
+   #645 (clean toolchain in the agent job; PowerShell limit tests get time to start) and #646
+   (the Windows app ships in the release, opened with `orcel app`).
    Evidence so far, all scripted or test clients, never a model or a real client:
    browser tasks 15/15 with no timeouts, on Windows only, p50 about 1.0 to 1.8 s across
    runs; native host peak 6.7 MiB on X11, 6.4 to 6.9 on Sway across three runs,
@@ -212,8 +216,8 @@ those. Orcel itself stays public.
    and refusing `clone3` needs a real engine to test against, which waits on activation.
    Then what the founder's answers to
    `FOUNDER_DECISION_PACKET.md` unlock.
-5. Known CI flakes: toolchain install conflict on macOS, and once on Ubuntu in
-   #627's `Orcel Agent M1` job (rerun failed jobs),
+5. Known CI flakes: toolchain install conflict on macOS (the `Orcel Agent M1` job now
+   installs its toolchain from clean, #645; rerun failed jobs elsewhere),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
    Seen once, not yet tracked: `unix_rehearsal::tests::survivors_and_unverified_coverage_keep_the_sink_and_the_profile`
    on macOS, and the upstream-asset parity tests when GitHub blob fetches fail.
