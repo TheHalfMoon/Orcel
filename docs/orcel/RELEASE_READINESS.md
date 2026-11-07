@@ -136,7 +136,7 @@ checkpoint at the end says where engineering stands.
 | The Mac with Chrome or Edge installed | Positive vendor-bundle evidence on hardware (CI has it hosted) |
 | `remote-desktop-commander` OAuth (`/mcp` in an interactive terminal) | Remote runs on the user's devices from this agent |
 
-## Completion, tracked separately (2026-11-06)
+## Completion, tracked separately (2026-11-07)
 
 Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished while its core user journeys are incomplete. These five are separate, and one being ahead says nothing about another. Nothing is signed, published or released.
 
@@ -150,7 +150,7 @@ Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-06). Check GitHub for the current
+If a session ends, resume from here (2026-11-07). Check GitHub for the current
 head and CI: this checkpoint can't name its own merge.
 
 Plans and the founder decision documents are kept privately, at the same paths, and the
@@ -176,7 +176,7 @@ those. Orcel itself stays public.
    to answer, runbook corrected from an audit) and #650 (evidence for #438 and #649, no limit
    changed). Then #654, #656 and #657: Windows state moves to `%USERPROFILE%\.orcel`, since other
    software on an ordinary account can hold rights on `AppData` that the unchanged ancestor check
-   rightly refuses. `orceld` and the commands that write state refuse while data at
+   rightly refuses. `orceld` and most commands that write state refuse while data at
    `%LOCALAPPDATA%\Orcel` is undecided, and `orcel state migrate` or `keep-separate` decides. Real
    binaries on a real Windows account with those grants, non-elevated, show it creating the private
    root, restarting, and refusing the old location, foreign grants and hard links. A real install
@@ -214,7 +214,7 @@ those. Orcel itself stays public.
    `tierc-observe`, `tierc-act`) runs on CI runners only. Locally, run only filtered
    `orcel-provider-uia` tests. Rust builds also work natively here with the pinned MSVC
    toolchain, which lacks clippy and rustfmt: use WSL for clippy for the Windows target, and
-   `cargo +stable fmt`. `orceld` is built from `crates/orceld/src/sg000039_main.rs`, not
+   `cargo +stable fmt` or WSL's rustfmt (stable can drift from the pin). `orceld` is built from `crates/orceld/src/sg000039_main.rs`, not
    `main.rs`: a change meant for the binary needs a test that runs the binary.
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
@@ -230,7 +230,7 @@ those. Orcel itself stays public.
    `StorSvc` or VSS burst after a Defender update, in 3 of 3 runs, gone in the 2 runs with `StorSvc`
    stopped and the update running, but with no navigation timeout in any of them, so its link to
    this issue is unproven. Compare `MACHINE` lines at the next real timeout. Don't change Windows
-   services on a person's machine for this. Then #649 and #653 when their evidence first prints,
+   services on a person's machine for this. Then #649 when its evidence first prints, #653 by comparing supervisor logs if it recurs,
    and #655 (uninstall's lists miss some state). A cgroup the engine cannot leave stays open: B9c shows Landlock alone
    doesn't do it (an inherited descriptor, `clone3` and the user bus all get past it),
    and refusing `clone3` needs a real engine to test against, which waits on activation.
