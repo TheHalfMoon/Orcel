@@ -113,6 +113,13 @@ impl Drop for Cleanup {
             let _ = Command::new(&cli)
                 .args(["stop", "--json"])
                 .env("USERPROFILE", &self.local)
+                // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+                .env(
+                    "LOCALAPPDATA",
+                    std::path::Path::new(&self.local)
+                        .join("AppData")
+                        .join("Local"),
+                )
                 .output();
         }
         for dir in self
@@ -168,6 +175,11 @@ fn orcel(exe: &Path, local: &Path, args: &[&str]) -> Output {
     let output = Command::new(exe)
         .args(args)
         .env("USERPROFILE", local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(local).join("AppData").join("Local"),
+        )
         .output()
         .unwrap();
     let all = format!(
@@ -417,9 +429,19 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
     assert_eq!(status["runtime"]["state"], "running", "{status}");
     let doctor = orcel(&cli, &local, &["doctor", "--json"]);
-    let doctor_text = String::from_utf8_lossy(&doctor.stdout);
-    assert!(doctor_text.contains("update_state"), "{doctor_text}");
-    assert!(doctor_text.contains("was restored"), "{doctor_text}");
+    let doctor_json: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    let update_state = doctor_json["doctor"]["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "update_state"))
+        .unwrap_or_else(|| panic!("no update_state check: {doctor_json}"));
+    // It reports the failure; the integrity check says what is active.
+    assert_eq!(update_state["status"], "warn", "{update_state}");
+    assert!(
+        update_state["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("failed")),
+        "{update_state}"
+    );
 
     // Stop and uninstall; user data is retained until purged.
     let stopped = json_ok(&orcel(&cli, &local, &["stop", "--json"]));
@@ -603,6 +625,11 @@ fn installed_release_fits_the_400_mb_budget() {
     let opening = Command::new(root.join("bin").join("orcel.exe"))
         .args(["app", "--json"])
         .env("USERPROFILE", &local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(&local).join("AppData").join("Local"),
+        )
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -674,6 +701,11 @@ impl McpStdio {
         let mut child = Command::new(cli)
             .args(args)
             .env("USERPROFILE", local)
+            // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+            .env(
+                "LOCALAPPDATA",
+                std::path::Path::new(local).join("AppData").join("Local"),
+            )
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(fs::File::create(&stderr).unwrap())
@@ -1245,6 +1277,11 @@ fn installed_release_serves_every_client_example() {
         Command::new(&cli)
             .args(["mcp", "serve", "--port", &port.to_string()])
             .env("USERPROFILE", &local)
+            // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+            .env(
+                "LOCALAPPDATA",
+                std::path::Path::new(&local).join("AppData").join("Local"),
+            )
             .env("ORCEL_LOOPBACK_TOKEN", token)
             .stdin(std::process::Stdio::null())
             .stdout(fs::File::create(project.join("serve-stdout.log")).unwrap())

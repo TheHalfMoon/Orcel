@@ -196,6 +196,13 @@ fn orcel(exe: &Path, local_app_data: &Path, args: &[&str]) -> Output {
     Command::new(exe)
         .args(args)
         .env("USERPROFILE", local_app_data)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(local_app_data)
+                .join("AppData")
+                .join("Local"),
+        )
         .output()
         .unwrap()
 }

@@ -96,6 +96,13 @@ impl Drop for Cleanup {
             let _ = Command::new(&cli)
                 .args(["stop", "--json"])
                 .env("USERPROFILE", &self.local)
+                // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+                .env(
+                    "LOCALAPPDATA",
+                    std::path::Path::new(&self.local)
+                        .join("AppData")
+                        .join("Local"),
+                )
                 .output();
         }
         for dir in self.dirs.iter().chain(std::iter::once(&self.local)) {
@@ -149,6 +156,11 @@ fn orcel(exe: &Path, local: &Path, args: &[&str]) -> Output {
     Command::new(exe)
         .args(args)
         .env("USERPROFILE", local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(local).join("AppData").join("Local"),
+        )
         .output()
         .unwrap()
 }

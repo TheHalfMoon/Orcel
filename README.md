@@ -182,7 +182,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 
 | Command | Purpose |
 |---|---|
-| `orcel status` | Installed version, configuration, and whether the runtime is running |
+| `orcel status` | Installed version, configuration, and whether the optional ChatGPT tunnel is running |
 | `orcel doctor` | Full diagnostics; exits non-zero if any check fails (`--json` for details) |
 | `orcel stop` | Stops the tunnel client and everything it started, and confirms they exited |
 | `orcel workspace list` | Workspaces and their trust state |
@@ -192,7 +192,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 
 ## Diagnose problems
 
-Run `orcel doctor`. Each check reports `PASS`, `WARN`, `FAIL`, or `????` (could not be checked) with one line of evidence — Orcel never reports health it did not observe. Logs are currently stored in the compatibility path `%USERPROFILE%\.orcel\logs` (`tunnel.log`, `supervisor.log`, `lifecycle.log`); tunnel output is redacted before it is written.
+Run `orcel doctor`. A ChatGPT tunnel that isn't configured is a `WARN`, not a failure: local MCP clients don't need one. Each check reports `PASS`, `WARN`, `FAIL`, or `????` (could not be checked) with one line of evidence — Orcel never reports health it did not observe. Logs are currently stored in the compatibility path `%USERPROFILE%\.orcel\logs` (`tunnel.log`, `supervisor.log`, `lifecycle.log`); tunnel output is redacted before it is written.
 
 ## Update
 
