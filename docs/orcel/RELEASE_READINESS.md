@@ -136,7 +136,7 @@ checkpoint at the end says where engineering stands.
 | The Mac with Chrome or Edge installed | Positive vendor-bundle evidence on hardware (CI has it hosted) |
 | `remote-desktop-commander` OAuth (`/mcp` in an interactive terminal) | Remote runs on the user's devices from this agent |
 
-## Completion, tracked separately (2026-11-06)
+## Completion, tracked separately (2026-11-07)
 
 Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished while its core user journeys are incomplete. These five are separate, and one being ahead says nothing about another. Nothing is signed, published or released.
 
@@ -150,7 +150,7 @@ Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-06). Check GitHub for the current
+If a session ends, resume from here (2026-11-07). Check GitHub for the current
 head and CI: this checkpoint can't name its own merge.
 
 Plans and the founder decision documents are kept privately, at the same paths, and the
@@ -174,7 +174,14 @@ those. Orcel itself stays public.
    #642 (M-WI-02 on five real pages: text reduction only, no tokens or answer accuracy), #647
    (provenance needs the .NET SDK's version), #648 (the F4 kit built by CI, `ready` needs `orceld`
    to answer, runbook corrected from an audit) and #650 (evidence for #438 and #649, no limit
-   changed).
+   changed). Then #654, #656 and #657: Windows state moves to `%USERPROFILE%\.orcel`, since other
+   software on an ordinary account can hold rights on `AppData` that the unchanged ancestor check
+   rightly refuses. `orceld` and most commands that write state refuse while data at
+   `%LOCALAPPDATA%\Orcel` is undecided, and `orcel state migrate` or `keep-separate` decides. Real
+   binaries on a real Windows account with those grants, non-elevated, show it creating the private
+   root, restarting, and refusing the old location, foreign grants and hard links. A real install
+   under the new root ran only in CI's release qualification. #656 samples the machine in the
+   Windows Node job, and prints `MACHINE` lines to set a timeout against.
    Evidence so far, all scripted or test clients, never a model or a real client:
    browser tasks 15/15 with no timeouts, on Windows only, p50 about 1.0 to 1.8 s across
    runs; native host peak 6.7 MiB on X11, 6.4 to 6.9 on Sway across three runs,
@@ -200,13 +207,15 @@ those. Orcel itself stays public.
    protection needs each PR up to date with main, so PRs merge one at a
    time: merge main in, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
-2. Local runs on Windows need a private temp folder (`TEMP`/`TMP` outside
-   AppData, or `ORCEL_BM02_STATE_PARENT` for Tier A): this host's AppData
-   grants an app-container SID delete rights, so orceld and the agent store
-   refuse it. GUI work (`tests/memory.ps1`, `tierc-observe`, `tierc-act`)
-   runs on CI runners only. Locally, run only filtered `orcel-provider-uia`
-   tests. Rust builds run in WSL Ubuntu (copy the tree without `target`,
-   touch the sources, use a per-PR `CARGO_TARGET_DIR`); rustfmt is there too.
+2. Local test runs on Windows need a private temp folder (`TEMP`/`TMP` outside
+   AppData and outside the repository, or `ORCEL_BM02_STATE_PARENT` for Tier A):
+   this host grants others rights on both, which tests' private folders inherit or
+   are refused under. The real root isn't affected. GUI work (`tests/memory.ps1`,
+   `tierc-observe`, `tierc-act`) runs on CI runners only. Locally, run only filtered
+   `orcel-provider-uia` tests. Rust builds also work natively here with the pinned MSVC
+   toolchain, which lacks clippy and rustfmt: use WSL for clippy for the Windows target, and
+   `cargo +stable fmt` or WSL's rustfmt (stable can drift from the pin). `orceld` is built from `crates/orceld/src/sg000039_main.rs`, not
+   `main.rs`: a change meant for the binary needs a test that runs the binary.
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
@@ -217,16 +226,19 @@ those. Orcel itself stays public.
    planner); a terminal task timeline
    on macOS and Linux, once someone decides whether that client may use `task.*`.
    Checked figures for CSV reports aren't on the roadmap and would change what
-   `verified` means, so they need adopting first. Then #438 (running the tests in another order would separate
-   position from route; the process list at a timeout and after a passing navigation both print now)
-   and #649 when its evidence first prints. A cgroup the engine cannot leave stays open: B9c shows Landlock alone
+   `verified` means, so they need adopting first. Then #438: a browser loop on CI shows about 40 s of slowdown during a
+   `StorSvc` or VSS burst after a Defender update, in 3 of 3 runs, gone in the 2 runs with `StorSvc`
+   stopped and the update running, but with no navigation timeout in any of them, so its link to
+   this issue is unproven. Compare `MACHINE` lines at the next real timeout. Don't change Windows
+   services on a person's machine for this. Then #649 when its evidence first prints, #653 by comparing supervisor logs if it recurs,
+   and #655 (uninstall's lists miss some state). A cgroup the engine cannot leave stays open: B9c shows Landlock alone
    doesn't do it (an inherited descriptor, `clone3` and the user bus all get past it),
    and refusing `clone3` needs a real engine to test against, which waits on activation.
    Then what the founder's answers to
    `FOUNDER_DECISION_PACKET.md` unlock.
 5. Known CI flakes: toolchain install conflict on macOS and Ubuntu (the `Orcel Agent M1` job now
    installs its toolchain from clean, #645; rerun failed jobs elsewhere),
-   #438, #649 (the Windows app's window; not known to be the runner), #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
+   #438, #649 (the Windows app's window; not known to be the runner), #653 (the MCP edge didn't answer within 60 s in the lifecycle test; seen once), #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
    Seen once, not yet tracked: `unix_rehearsal::tests::survivors_and_unverified_coverage_keep_the_sink_and_the_profile`
    on macOS, and the upstream-asset parity tests when GitHub blob fetches fail.
    Wording: GitHub reads "fix #N" and "close #N" as closing keywords even after "doesn't",
