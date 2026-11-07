@@ -611,13 +611,15 @@ fn installed_release_fits_the_400_mb_budget() {
 
     // SG-000127: the packaged app opens from the install, and stays open. It isn't in
     // REQUIRED_FILES, which would stop a rollback to a release without it.
-    assert!(!orcel_lifecycle::manifest::REQUIRED_FILES.contains(&"Orcel.Desktop.exe"));
+    assert!(
+        !orcel_lifecycle::manifest::REQUIRED_FILES.contains(&orcel_lifecycle::install::APP_FILE)
+    );
     assert!(
         manifest["files"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|file| file["path"] == "Orcel.Desktop.exe"),
+            .any(|file| file["path"] == orcel_lifecycle::install::APP_FILE),
         "the Windows app is not a manifest file"
     );
     // Its output must end when `orcel` exits. The open app holding `orcel`'s pipe would

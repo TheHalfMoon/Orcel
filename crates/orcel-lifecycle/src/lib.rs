@@ -207,15 +207,25 @@ pub(crate) mod test_support {
     }
 
     /// Writes a synthetic release: every required file plus one nested
-    /// dependency file, and a matching manifest.
+    /// dependency file, and a matching manifest. It has no Windows app.
     pub fn release_dir(version: &str) -> PathBuf {
-        let dir = temp_dir(&format!("release-{version}"));
+        release_with(version, "release", &[])
+    }
+
+    /// As `release_dir`, with the Windows app.
+    pub fn release_dir_with_app(version: &str) -> PathBuf {
+        release_with(version, "release-app", &[crate::install::APP_FILE])
+    }
+
+    fn release_with(version: &str, label: &str, extra: &[&str]) -> PathBuf {
+        let dir = temp_dir(&format!("{label}-{version}"));
         let mut files = Vec::new();
         let mut paths = REQUIRED_FILES
             .iter()
             .map(|path| path.to_string())
             .collect::<Vec<_>>();
         paths.push("app/orcel-mcp/node_modules/zod/package.json".into());
+        paths.extend(extra.iter().map(|path| path.to_string()));
         for path in paths {
             let contents = format!("{path} for {version}").into_bytes();
             let target = crate::manifest::join_relative(&dir, &path);
