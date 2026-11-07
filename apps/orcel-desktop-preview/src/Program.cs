@@ -246,8 +246,15 @@ namespace Orcel.DesktopPreview
         /// local MCP clients start Orcel themselves, so "not running" never means Orcel is down.
         internal string Tunnel()
         {
-            if (TunnelConfigured == false && State == "not_running") return "ChatGPT tunnel not configured (optional)";
+            if (Unconfigured()) return "ChatGPT tunnel not configured (optional)";
             return "ChatGPT tunnel " + Describe(State);
+        }
+
+        /// As the CLI decides it: no tunnel configured and no supervisor record at all. A stale
+        /// record keeps its detail.
+        internal bool Unconfigured()
+        {
+            return TunnelConfigured == false && State == "not_running" && Detail == "no supervisor record";
         }
 
         internal string Headline()
@@ -843,7 +850,7 @@ namespace Orcel.DesktopPreview
             // The CLI's own error, such as a corrupt record: shown, never treated as healthy.
             if (json != null && result.ExitCode != 0 && json.ContainsKey("ok") && false.Equals(json["ok"])
                 && json.TryGetValue("error", out error) && !string.IsNullOrEmpty(Text(error as Dictionary<string, object>, "message")))
-                return new RuntimeStatus { Availability = RuntimeAvailability.Failed, Detail = Text((Dictionary<string, object>)error, "message") };
+                return new RuntimeStatus { Availability = RuntimeAvailability.Failed, Detail = Plain(Text((Dictionary<string, object>)error, "message")) };
             if (json == null || result.ExitCode != 0 || !(json.ContainsKey("ok") && true.Equals(json["ok"]))
                 || !json.TryGetValue("runtime", out runtime) || !(runtime is Dictionary<string, object>))
                 return new RuntimeStatus { Availability = RuntimeAvailability.Incompatible };
@@ -862,22 +869,41 @@ namespace Orcel.DesktopPreview
             };
         }
 
+        /// Runtime text can quote a state file, so it may not start a line or reorder the display.
+        /// Unlike a title it isn't cut: it carries whole paths. It ends as a sentence.
+        internal static string Plain(string value)
+        {
+            StringBuilder text = new StringBuilder();
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+                {
+                    text.Append(c).Append(value[++i]);
+                    continue;
+                }
+                text.Append(Timeline.Safe(c));
+            }
+            string plain = text.ToString().Trim();
+            return plain.EndsWith(".") || plain.EndsWith("!") || plain.EndsWith("?") ? plain : plain + ".";
+        }
+
         internal static string StatusMessage(RuntimeStatus status)
         {
             if (status.Availability == RuntimeAvailability.NotInstalled)
                 return "The Orcel runtime is not installed for this Windows user. No operation was attempted. "
-                    + "Next: run `orcel install` from the extracted release in a terminal, then Refresh status.";
+                    + "Next: in a terminal in the extracted release folder, run `.\\orcel.exe install`, then Refresh status.";
             if (status.Availability == RuntimeAvailability.Unresponsive)
                 return "The Orcel runtime did not answer a read-only status query in time. No action was performed. "
-                    + "Next: type `doctor` for the health check.";
+                    + "Next: Refresh status. If it keeps failing, repair the install with `.\\orcel.exe install` from the extracted release folder.";
             if (status.Availability == RuntimeAvailability.Incompatible)
                 return "The installed Orcel runtime returned a response this preview does not understand. No action was performed. "
-                    + "Next: check that this app and the installed release are the same version (`version`).";
+                    + "Next: use this app from the same release as the installed runtime; `version` shows the installed release.";
             if (status.Availability == RuntimeAvailability.Failed)
-                return "Orcel status reported an error: " + status.Detail + " No action was performed. Next: type `doctor` for the health check.";
+                return "Orcel status reported an error: " + status.Detail + " No action was performed. `doctor` runs the full health check.";
             StringBuilder text = new StringBuilder();
             text.Append("Orcel runtime ").Append(status.Version).Append(" is installed. ").Append(status.Tunnel());
-            if (!string.IsNullOrEmpty(status.Detail) && !(status.TunnelConfigured == false && status.State == "not_running"))
+            if (!string.IsNullOrEmpty(status.Detail) && !status.Unconfigured())
                 text.Append(" (").Append(status.Detail).Append(")");
             text.Append(".");
             if (status.Workspaces.HasValue) text.Append(" Workspaces configured: ").Append(status.Workspaces.Value).Append(".");
@@ -1168,6 +1194,7 @@ namespace Orcel.DesktopPreview
             deviceState.Text = "Checking runtime";
             deviceState.FontSize = 12; deviceState.Foreground = Colors.Muted;
             deviceState.Margin = new Thickness(0, 6, 0, 0);
+            deviceState.TextWrapping = TextWrapping.Wrap;
             AutomationProperties.SetAutomationId(deviceState, "DeviceState");
             host.Children.Add(deviceState);
             Border deviceCard = Card(host, Colors.Sidebar, new Thickness(16));
@@ -1443,7 +1470,11 @@ namespace Orcel.DesktopPreview
             expect(Interpret.StatusMessage(stale).Contains("ChatGPT tunnel not running (stale supervisor record).") && !Interpret.StatusMessage(stale).Contains("Next:"), "a configured tunnel shows its detail");
             RuntimeStatus failed = Interpret.Status(new CliResult { ExitCode = 7, Stdout =
                 "{\"ok\":false,\"error\":{\"kind\":\"state\",\"message\":\"C:\\\\x\\\\supervisor.json is corrupt\"}}" });
-            expect(failed.Availability == RuntimeAvailability.Failed && Interpret.StatusMessage(failed).Contains("supervisor.json is corrupt"), "the runtime's own error is shown");
+            expect(failed.Availability == RuntimeAvailability.Failed && Interpret.StatusMessage(failed).Contains("supervisor.json is corrupt. No action"), "the runtime's own error is shown as a sentence");
+            expect(Interpret.Plain("a\nb\u202Ec") == "a b c.", "runtime text can't start a line or reorder the display");
+            RuntimeStatus staleUnset = Interpret.Status(new CliResult { ExitCode = 0, Stdout =
+                "{\"installed\":\"0.2.0\",\"ok\":true,\"runtime\":{\"detail\":\"stale supervisor record\",\"state\":\"not_running\"},\"tunnel_configured\":false,\"workspaces\":1}" });
+            expect(Interpret.StatusMessage(staleUnset).Contains("ChatGPT tunnel not running (stale supervisor record)."), "a stale record isn't hidden as unconfigured");
             expect(Interpret.Status(new CliResult { TimedOut = true }).Availability == RuntimeAvailability.Unresponsive, "timeout is unresponsive");
             expect(Interpret.Status(new CliResult { ExitCode = 0, Stdout = "not json" }).Availability == RuntimeAvailability.Incompatible, "garbage is incompatible");
             expect(Interpret.Status(new CliResult { ExitCode = 2, Stdout = "{\"ok\":false}" }).Availability == RuntimeAvailability.Incompatible, "error is never reported as healthy");
