@@ -182,7 +182,8 @@ mod imp {
         // What to do about a record that can't be trusted, with its full path.
         let fix = |problem: &str| {
             LifecycleError::state(format!(
-                "{problem}. Check that no orcel.exe under {} is running, then delete {}",
+                "{problem}. Close MCP clients using Orcel, check that no orcel.exe under {} is \
+                 running (`Get-Process orcel | Select-Object Id,Path`), then delete {}",
                 layout.root.display(),
                 path.display()
             ))

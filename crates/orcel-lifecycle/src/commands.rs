@@ -491,7 +491,8 @@ pub fn status(args: &mut Args) -> Result<Output, LifecycleError> {
         Err(error) => human.push_str(&format!("configured: error: {}\n", error.message)),
     }
     let tunnel_unset = matches!(&config, Ok(config) if config.tunnel.is_none());
-    if tunnel_unset && runtime.state == RunState::NotRunning && runtime.supervisor_pid.is_none() {
+    if tunnel_unset && runtime.state == RunState::NotRunning && !layout.supervisor_record().exists()
+    {
         human.push_str("ChatGPT tunnel: not configured (optional)\n");
     } else {
         human.push_str(&describe(&runtime));
@@ -499,7 +500,7 @@ pub fn status(args: &mut Args) -> Result<Output, LifecycleError> {
     if installed.is_some() {
         human.push_str(
             "Local MCP clients start Orcel with `orcel mcp stdio` when they need it. \
-             `orcel doctor` checks that it answers.\n",
+             `orcel doctor` checks that orceld answers.\n",
         );
     }
     Ok(Output {
@@ -556,14 +557,21 @@ pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
                 legacy.display(),
                 layout.root.display()
             );
-            if matches!(state, LegacyState::Undecided(_)) {
+            let interrupted = matches!(&state, LegacyState::Undecided(file)
+                if file.ends_with(orcel_platform::legacy::MIGRATION_IN_PROGRESS));
+            if interrupted {
+                human.push_str(
+                    "A migration was interrupted. Run `orcel state migrate` to finish it; \
+                     keep-separate is refused until it does.\n",
+                );
+            } else if matches!(state, LegacyState::Undecided(_)) {
                 human.push_str(
                     "Decide once, then orceld starts:\n  \
                      `orcel state migrate` copies your history, trust and settings here. \
                      Full-control grants, remote leases and this device's pairing are granted \
                      again instead.\n  \
-                     `orcel state keep-separate` starts fresh here, and Orcel won't use the \
-                     earlier folder.\n  Neither changes or deletes the earlier folder.\n",
+                     `orcel state keep-separate` uses only what's here, and Orcel won't use \
+                     the earlier folder.\n  Neither changes or deletes the earlier folder.\n",
                 );
             }
             if let Some(found) = &found {
@@ -960,7 +968,7 @@ pub fn rollback(args: &mut Args) -> Result<Output, LifecycleError> {
             if report.restarted {
                 " and restarted"
             } else {
-                "; Orcel is not running, start it with `orcel start`"
+                "; the ChatGPT tunnel is not running, start it with `orcel start` if you use it"
             }
         ),
         json: json!({"ok": true, "rollback": report}),

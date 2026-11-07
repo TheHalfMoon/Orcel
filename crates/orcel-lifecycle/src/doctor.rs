@@ -183,16 +183,27 @@ pub fn run_with_approval_history(
             Some(state.active.version.clone())
         }
         Err(error) => {
-            let next = if error.kind == crate::ErrorKind::NotInstalled {
-                "install it with `orcel install` from the extracted release"
-            } else {
-                "repair it with `orcel install --source <release-dir>` using the extracted \
-                 release of the installed version"
+            // A same-version install repairs the payload, but it reads both records first, so
+            // it can't repair one it can't read.
+            let records = (
+                crate::layout::read_current(layout),
+                crate::layout::read_install(layout),
+            );
+            let next = match records {
+                _ if error.kind == crate::ErrorKind::NotInstalled => {
+                    "; install it with `orcel install` from the extracted release".to_owned()
+                }
+                (Ok(Some(current)), Ok(_)) => format!(
+                    "; repair it with `orcel install --source <release-dir>` using the extracted \
+                     release of Orcel {}",
+                    current.version
+                ),
+                _ => String::new(),
             };
             checks.push(check(
                 "install_integrity",
                 CheckStatus::Fail,
-                format!("{}; {next}", error.message),
+                format!("{}{next}", error.message),
             ));
             None
         }
@@ -297,9 +308,10 @@ pub fn run_with_approval_history(
 
     match crate::lifecycle::status(layout) {
         Ok(status) => {
+            // Only with no record at all: a stale one still deserves its WARN.
             let idle = tunnel_unset
                 && status.state == crate::lifecycle::RunState::NotRunning
-                && status.supervisor_pid.is_none();
+                && !layout.supervisor_record().exists();
             let (process, health) = match status.state {
                 crate::lifecycle::RunState::Running => (CheckStatus::Pass, CheckStatus::Pass),
                 crate::lifecycle::RunState::Degraded => (CheckStatus::Warn, CheckStatus::Warn),
@@ -425,11 +437,12 @@ pub fn run_with_approval_history(
             crate::update::UpdateState::Failed => check(
                 "update_state",
                 CheckStatus::Warn,
+                // Not "restored": when restoring failed too, the marker says the same. The
+                // integrity check above says what is active.
                 format!(
-                    "the update from {} to {} failed and {} was restored: {}",
+                    "the update from {} to {} failed: {}",
                     marker.from,
                     marker.to,
-                    marker.from,
                     marker.reason.unwrap_or_default()
                 ),
             ),

@@ -345,8 +345,7 @@ impl<'a> Updater<'a> {
                 )),
                 Err(restore) => LifecycleError::state(format!(
                     "the update to {to} failed ({reason}) and restoring {from} also failed: {}; \
-                     run `orcel doctor`, then repair with `orcel install --source <release-dir>` \
-                     using the extracted release of {from}",
+                     run `orcel doctor`, which names the version to repair with",
                     restore.message
                 )),
             });
@@ -582,8 +581,7 @@ impl<'a> Updater<'a> {
                 )),
                 Err(restore) => LifecycleError::state(format!(
                     "rollback to {previous} failed ({}) and restoring {from} also failed: {}; \
-                     run `orcel doctor`, then repair with `orcel install --source <release-dir>` \
-                     using the extracted release of {from}",
+                     run `orcel doctor`, which names the version to repair with",
                     error.message, restore.message
                 )),
             });
