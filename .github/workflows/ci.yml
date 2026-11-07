@@ -1020,6 +1020,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # #438: so a navigation timeout can be set against what the machine was doing.
+      - name: Start the machine sampler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Start-Process pwsh -WindowStyle Hidden -ArgumentList @("-NoProfile", "-File", "scripts/ci-machine-sampler.ps1", "-Log", (Join-Path $env:RUNNER_TEMP "machine-sampler.log"))
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.19.0"
@@ -1033,6 +1038,23 @@ jobs:
           ORCEL_BM_BROWSER_REPORT: ${{ runner.temp }}/browser-tasks.report.json
           ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: npm test
+      - name: Print the machine sampler
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "machine-sampler.log"
+          if (Test-Path $log) { Get-Content $log | ForEach-Object { "MACHINE $_" } }
+          $since = (Get-Date).AddHours(-2)
+          foreach ($filter in @(
+            @{ LogName = "Application"; ProviderName = "VSS"; StartTime = $since },
+            @{ LogName = "System"; ProviderName = "Microsoft-Windows-WindowsUpdateClient"; StartTime = $since },
+            @{ LogName = "Microsoft-Windows-Windows Defender/Operational"; Id = 1152, 2000; StartTime = $since }
+          )) {
+            Get-WinEvent -FilterHashtable $filter -MaxEvents 20 -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object {
+              "MACHINE-EVENT $($_.TimeCreated.ToUniversalTime().ToString('HH:mm:ss')) $($_.ProviderName) $($_.Id)"
+            }
+          }
+          exit 0
       - name: Check and keep the browser task report
         if: runner.os == 'Windows'
         shell: bash
