@@ -9,6 +9,8 @@ use crate::paths::{absolute_var, StateLayout};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+/// Written before a migration places its first file, removed once the decision is recorded.
+pub const MIGRATION_IN_PROGRESS: &str = "legacy-migration-in-progress";
 /// First line of the decision file.
 pub const DECISION_SCHEMA: &str = "orcel-legacy-state-decision-v1";
 pub const DECISION_MIGRATED: &str = "migrated";
@@ -122,10 +124,15 @@ fn first_file(dir: &Path, top: bool) -> Result<Option<PathBuf>, (PathBuf, String
 }
 
 /// What `legacy` holds, given the decision recorded under `state_root`. A decision comes first,
-/// so a person who has decided is never held up by what can't be read there.
+/// so a person who has decided is never held up by what can't be read there. Next, an unfinished
+/// migration: even with the earlier root gone, what it placed is only part of the state.
 pub fn examine(legacy: &Path, state_root: &Path) -> LegacyState {
     if let Some(decision) = read_decision(state_root) {
         return LegacyState::Decided(decision);
+    }
+    let in_progress = state_root.join(MIGRATION_IN_PROGRESS);
+    if std::fs::symlink_metadata(&in_progress).is_ok() {
+        return LegacyState::Undecided(in_progress);
     }
     match std::fs::symlink_metadata(legacy) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return LegacyState::None,
@@ -159,6 +166,12 @@ pub fn gate(lookup: &dyn Fn(&str) -> Option<OsString>, state_root: &Path) -> Res
     };
     match examine(&legacy, state_root) {
         LegacyState::None | LegacyState::Decided(_) => Ok(()),
+        LegacyState::Undecided(file) if file.ends_with(MIGRATION_IN_PROGRESS) => Err(format!(
+            "a migration of earlier Orcel state was interrupted, so {} holds only part of it. \
+             Nothing was changed. Run `orcel state migrate` to finish it, or `orcel state \
+             keep-separate`, which says what to remove if that can't be done",
+            state_root.display()
+        )),
         LegacyState::Undecided(file) => Err(format!(
             "earlier Orcel state is at {} (for example {}), and nobody has decided what happens \
              to it. Nothing was changed. Run `orcel state status`, then `orcel state migrate` or \

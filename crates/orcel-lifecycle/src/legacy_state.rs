@@ -51,9 +51,8 @@ const LOCKS: [&str; 3] = [
     "mutations.jsonl.lock",
 ];
 const STAGING_PREFIX: &str = "legacy-import-";
-/// Written before the first file is placed and removed once the decision is recorded: only this
-/// tells an interrupted migration's copies from state in normal use.
-const IN_PROGRESS: &str = "legacy-migration-in-progress";
+/// Only this tells an interrupted migration's copies from state in normal use.
+const IN_PROGRESS: &str = legacy::MIGRATION_IN_PROGRESS;
 
 /// What an earlier root holds, sorted by what migration would do with it.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -204,6 +203,37 @@ fn refuse_if_decided(root: &Path) -> Result<(), LifecycleError> {
     }
 }
 
+/// Removes what an earlier attempt staged, which only ever holds copies. A link or file planted
+/// under that name is removed itself, and never followed.
+fn clear_staging(root: &Path) -> Result<(), LifecycleError> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(read_err(root, error)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| read_err(root, error))?;
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(STAGING_PREFIX)
+        {
+            continue;
+        }
+        let planted = entry.path();
+        let metadata = fs::symlink_metadata(&planted).map_err(|error| read_err(&planted, error))?;
+        let removed = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            fs::remove_dir_all(&planted)
+        } else if metadata.is_dir() {
+            fs::remove_dir(&planted)
+        } else {
+            fs::remove_file(&planted)
+        };
+        removed.map_err(|error| io(&planted, error))?;
+    }
+    Ok(())
+}
+
 /// Copied files and what stayed, for the person to read.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MigrateReport {
@@ -258,27 +288,7 @@ pub fn migrate(
     }
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
 
-    // Clear what an earlier attempt staged; it only ever holds copies.
-    for entry in fs::read_dir(root).map_err(|error| read_err(root, error))? {
-        let entry = entry.map_err(|error| read_err(root, error))?;
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(STAGING_PREFIX)
-        {
-            let planted = entry.path();
-            let metadata =
-                fs::symlink_metadata(&planted).map_err(|error| read_err(&planted, error))?;
-            let removed = if metadata.is_dir() && !metadata.file_type().is_symlink() {
-                fs::remove_dir_all(&planted)
-            } else if metadata.is_dir() {
-                fs::remove_dir(&planted)
-            } else {
-                fs::remove_file(&planted)
-            };
-            removed.map_err(|error| io(&planted, error))?;
-        }
-    }
+    clear_staging(root)?;
     let staging = root.join(format!("{STAGING_PREFIX}{}", std::process::id()));
     paths::ensure_private_dir(&staging).map_err(|error| io(&staging, error))?;
 
@@ -326,7 +336,24 @@ pub fn migrate(
         to_place.push(relative.clone());
     }
     let in_progress = root.join(IN_PROGRESS);
-    fs::write(&in_progress, b"").map_err(|error| io(&in_progress, error))?;
+    // A real marker stays, so a crash here never leaves copies without one. Anything else under
+    // that name, such as a link, is removed and never followed.
+    let marked = match fs::symlink_metadata(&in_progress) {
+        Ok(metadata) if metadata.is_file() => true,
+        Ok(_) => {
+            fs::remove_file(&in_progress).map_err(|error| io(&in_progress, error))?;
+            false
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(read_err(&in_progress, error)),
+    };
+    if !marked {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&in_progress)
+            .map_err(|error| io(&in_progress, error))?;
+    }
     for relative in &to_place {
         let target = root.join(relative);
         let parent = target.parent().expect("a target has a folder");
@@ -368,15 +395,23 @@ pub fn keep_separate(legacy: &Path, root: &Path) -> Result<(), LifecycleError> {
             .filter(|target| fs::symlink_metadata(target).is_ok())
             .map(|target| target.display().to_string())
             .collect();
+        let listed = if copied.is_empty() {
+            format!(
+                "The earlier state can't be read, so what it copied can't be listed: look in {}",
+                root.display()
+            )
+        } else {
+            format!("Those it may have copied: {}", copied.join(", "))
+        };
         return Err(refuse(format!(
             "a migration was interrupted, so a decision would start Orcel on part of what it \
-             copied. Run `orcel state migrate` to finish it. If that's refused, remove {} and \
-             what it copied, and try again. Those it may have copied: {}",
-            in_progress.display(),
-            copied.join(", ")
+             copied. Run `orcel state migrate` to finish it. If that's refused, remove what it \
+             copied, then {}, and try again. {listed}",
+            in_progress.display()
         )));
     }
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
+    clear_staging(root)?;
     record(root, DECISION_KEPT_SEPARATE)
 }
 
@@ -677,6 +712,45 @@ mod tests {
             examine(&legacy, &root),
             LegacyState::Decided(DECISION_KEPT_SEPARATE.into())
         );
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_rerun_keeps_the_marker_it_finds() {
+        let (base, legacy, root) = scratch("marker-kept");
+        paths::ensure_private_dir(&root).unwrap();
+        fs::write(root.join(IN_PROGRESS), b"").unwrap();
+        // Differing, so the rerun stops after the marker's turn would have come: it stays.
+        fs::write(root.join("trust.jsonl"), "newer").unwrap();
+        assert!(run(&legacy, &root).is_err());
+        assert!(root.join(IN_PROGRESS).is_file());
+        assert!(keep_separate(&legacy, &root).is_err());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn keep_separate_clears_what_a_crash_staged() {
+        let (base, legacy, root) = scratch("staged");
+        paths::ensure_private_dir(&root).unwrap();
+        let staged = root.join(format!("{STAGING_PREFIX}1"));
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(staged.join("key"), "secret").unwrap();
+        keep_separate(&legacy, &root).unwrap();
+        assert!(!staged.exists());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_as_the_marker_is_replaced_not_followed() {
+        let (base, legacy, root) = scratch("marker-link");
+        paths::ensure_private_dir(&root).unwrap();
+        let victim = base.join("victim");
+        fs::write(&victim, "keep me").unwrap();
+        std::os::unix::fs::symlink(&victim, root.join(IN_PROGRESS)).unwrap();
+        run(&legacy, &root).unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"keep me");
+        assert!(fs::symlink_metadata(root.join(IN_PROGRESS)).is_err());
         fs::remove_dir_all(&base).unwrap();
     }
 
