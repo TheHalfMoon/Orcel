@@ -147,6 +147,9 @@ pub fn gate(lookup: &dyn Fn(&str) -> Option<OsString>, state_root: &Path) -> Res
     if StateLayout::current() != Some(StateLayout::Windows) {
         return Ok(());
     }
+    if read_decision(state_root).is_some() {
+        return Ok(());
+    }
     let Some(legacy) = legacy_root_from(lookup) else {
         return Err(
             "the earlier Orcel state location can't be found, so nothing there can be shown to be \

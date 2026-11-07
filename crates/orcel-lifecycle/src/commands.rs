@@ -501,6 +501,12 @@ pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let lookup = |name: &str| std::env::var_os(name);
     let Some(legacy) = legacy_root_from(&lookup) else {
+        if cfg!(windows) {
+            return Err(LifecycleError::state(
+                "the earlier state location can't be found: LOCALAPPDATA is unusable and Windows \
+                 didn't name the folder",
+            ));
+        }
         let human = "This platform has no earlier state location.\n".to_owned();
         return Ok(Output {
             exit_code: 0,
@@ -590,7 +596,7 @@ pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
                 legacy.display()
             );
             human.push_str(
-                "Full-control authority and remote leases aren't copied: grant them again.\n",
+                "Full-control authority, remote leases and this device's key and pairing aren't copied: grant them again.\n",
             );
             if report.payload {
                 human.push_str("Reinstall Orcel, and remove the earlier install with its own `orcel uninstall`.\n");

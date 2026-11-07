@@ -5,8 +5,13 @@
 //! trust or keys, and copying them would launder that. That's what their permissions show now:
 //! it can't show what they allowed before. It never deletes or changes the source, and never
 //! overwrites. It stages everything first and verifies it, so a crash leaves nothing half-trusted,
-//! and running it again finishes the job. Live authority isn't copied: full-control authority and
-//! remote leases are granted again. Payload is reinstalled, not copied.
+//! and running it again finishes the job. Payload is reinstalled, not copied.
+//!
+//! Live authority and identity aren't copied, since a copy would stay valid beside the original
+//! and a revocation or rotation would reach only one: full-control authority, remote leases, and
+//! the device's key and pairing are granted again. Workspace trust and the executable registry
+//! are copied: they're the person's own choices, and Orcel rechecks a registered executable when
+//! it runs one.
 
 use crate::LifecycleError;
 use orcel_platform::legacy::{self, DECISION_KEPT_SEPARATE, DECISION_MIGRATED, DECISION_SCHEMA};
@@ -29,9 +34,13 @@ const DATA_FILES: [&str; 7] = [
 const DATA_DIRS: [&str; 2] = ["state", "secrets"];
 /// Under `state`, with the payload it describes: not user data.
 const SKIPPED_IN_STATE: [&str; 1] = ["update.json"];
-/// Under `state`, live authority: a copy would stay valid beside the original, and a revocation
-/// would reach only one of them.
-const AUTHORITY_IN_STATE: &str = "authority";
+/// Live authority and identity, relative to the root: granted again, not copied.
+const NOT_COPIED: [&str; 4] = [
+    "state/authority",
+    "state/remote/uplink.json",
+    "state/device/device_key.json",
+    "secrets/device.key.dpapi",
+];
 const QUARANTINE_PREFIX: &str = "approval-history.jsonl.quarantine-";
 /// Left by a crash or a live writer: the data isn't at rest.
 const UNCLEAN_SUFFIXES: [&str; 1] = [".rewrite"];
@@ -120,16 +129,13 @@ pub fn inventory(legacy: &Path) -> Result<Inventory, LifecycleError> {
             found.left.push(name);
         }
     }
-    if found
-        .data
-        .iter()
-        .any(|path| path.starts_with(Path::new("state").join(AUTHORITY_IN_STATE)))
-    {
-        found.left.push(format!("state/{AUTHORITY_IN_STATE}"));
+    for name in NOT_COPIED {
+        let matched = |path: &PathBuf| path.starts_with(Path::new(name));
+        if found.data.iter().any(matched) {
+            found.left.push(name.to_owned());
+        }
+        found.data.retain(|path| !matched(path));
     }
-    found
-        .data
-        .retain(|path| !path.starts_with(Path::new("state").join(AUTHORITY_IN_STATE)));
     found.data.retain(|path| {
         !(path.starts_with("state")
             && SKIPPED_IN_STATE
@@ -342,20 +348,26 @@ pub fn migrate(
     })
 }
 
-/// Records that the earlier state stays where it is, unused. Deletes nothing. Refused while an
-/// interrupted migration's copies are in place: a decision would start Orcel on half of them.
+/// Records that the earlier state stays where it is, unused. Deletes nothing. Refused while
+/// anything migration would place is already there: only an interrupted migration puts it there,
+/// and a decision would start Orcel on part of it.
 pub fn keep_separate(legacy: &Path, root: &Path) -> Result<(), LifecycleError> {
     refuse_if_decided(root)?;
     if let Ok(found) = inventory(legacy) {
-        for relative in &found.data {
-            let target = root.join(relative);
-            if target.is_file() && digest(&target)? == digest(&legacy.join(relative))? {
-                return Err(refuse(format!(
-                    "{} is a copy from an interrupted migration. Run `orcel state migrate` to \
-                     finish it, or remove what it copied",
-                    target.display()
-                )));
-            }
+        let copied: Vec<String> = found
+            .data
+            .iter()
+            .map(|relative| root.join(relative))
+            .filter(|target| fs::symlink_metadata(target).is_ok())
+            .map(|target| target.display().to_string())
+            .collect();
+        if !copied.is_empty() {
+            return Err(refuse(format!(
+                "an interrupted migration left copies in place, so a decision would start Orcel \
+                 on part of them. Run `orcel state migrate` to finish it. If that's refused, \
+                 remove these and try again: {}",
+                copied.join(", ")
+            )));
         }
     }
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
@@ -579,11 +591,47 @@ mod tests {
         fs::create_dir_all(&authority).unwrap();
         fs::write(authority.join("authority.key"), "key").unwrap();
         fs::write(legacy.join("remote_leases.json"), "{}").unwrap();
+        for (folder, file) in [
+            ("remote", "uplink.json"),
+            ("device", "device_key.json"),
+            ("device", "revocations.json"),
+        ] {
+            fs::create_dir_all(legacy.join("state").join(folder)).unwrap();
+            fs::write(legacy.join("state").join(folder).join(file), "{}").unwrap();
+        }
+        fs::write(legacy.join("secrets").join("device.key.dpapi"), "key").unwrap();
+        fs::write(legacy.join("executable_registry.json"), "{}").unwrap();
         let report = run(&legacy, &root).unwrap();
         assert!(!root.join("state").join("authority").exists());
         assert!(!root.join("remote_leases.json").exists());
-        assert!(report.left.contains(&"remote_leases.json".to_owned()));
-        assert!(report.left.contains(&"state/authority".to_owned()));
+        assert!(!root
+            .join("state")
+            .join("remote")
+            .join("uplink.json")
+            .exists());
+        assert!(!root
+            .join("state")
+            .join("device")
+            .join("device_key.json")
+            .exists());
+        assert!(!root.join("secrets").join("device.key.dpapi").exists());
+        for left in [
+            "remote_leases.json",
+            "state/authority",
+            "state/remote/uplink.json",
+            "state/device/device_key.json",
+            "secrets/device.key.dpapi",
+        ] {
+            assert!(report.left.contains(&left.to_owned()), "{left}");
+        }
+        // Dropping these would lose a revocation, or the person's own choices.
+        assert!(root
+            .join("state")
+            .join("device")
+            .join("revocations.json")
+            .exists());
+        assert!(root.join("executable_registry.json").exists());
+        assert!(root.join("secrets").join("a.dpapi").exists());
         assert!(authority.join("authority.key").exists());
         fs::remove_dir_all(&base).unwrap();
     }
@@ -595,7 +643,12 @@ mod tests {
         fs::write(root.join("trust.jsonl"), "trust").unwrap();
         let error = keep_separate(&legacy, &root).unwrap_err().message;
         assert!(error.contains("interrupted"), "{error}");
+        assert!(error.contains("trust.jsonl"), "{error}");
         assert!(matches!(examine(&legacy, &root), LegacyState::Undecided(_)));
+        // The source moving on since doesn't make the copy any less partial.
+        fs::write(legacy.join("trust.jsonl"), "newer").unwrap();
+        assert!(keep_separate(&legacy, &root).is_err());
+        fs::write(legacy.join("trust.jsonl"), "trust").unwrap();
         run(&legacy, &root).unwrap();
         fs::remove_dir_all(&base).unwrap();
     }
