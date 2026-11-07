@@ -23,6 +23,8 @@ pub mod platform;
 pub mod remote;
 #[cfg(windows)]
 pub mod runtime;
+#[cfg(windows)]
+pub mod start_menu;
 pub mod tunnel_route;
 pub mod update;
 pub mod version;
@@ -170,6 +172,16 @@ impl platform::Platform for UnsupportedPlatform {
             "the user PATH is managed on Windows only",
         ))
     }
+    fn add_start_menu_entry(&self, _cli: &std::path::Path) -> Result<(), LifecycleError> {
+        Err(LifecycleError::platform(
+            "the Start Menu is on Windows only",
+        ))
+    }
+    fn remove_start_menu_entry(&self, _cli: &std::path::Path) -> Result<bool, LifecycleError> {
+        Err(LifecycleError::platform(
+            "the Start Menu is on Windows only",
+        ))
+    }
     fn node_version(&self, node: &std::path::Path) -> Result<version::Version, LifecycleError> {
         platform::run_node_version(node)
     }
@@ -238,6 +250,8 @@ pub(crate) mod test_support {
         pub acl_ok: bool,
         pub path: RefCell<Vec<PathBuf>>,
         pub protected: RefCell<Vec<PathBuf>>,
+        pub start_menu: RefCell<Option<PathBuf>>,
+        pub start_menu_fails: bool,
     }
 
     impl Default for FakePlatform {
@@ -249,6 +263,8 @@ pub(crate) mod test_support {
                 acl_ok: true,
                 path: RefCell::new(Vec::new()),
                 protected: RefCell::new(Vec::new()),
+                start_menu: RefCell::new(None),
+                start_menu_fails: false,
             }
         }
     }
@@ -290,6 +306,21 @@ pub(crate) mod test_support {
             let before = path.len();
             path.retain(|entry| entry != dir);
             Ok(path.len() != before)
+        }
+        fn add_start_menu_entry(&self, cli: &Path) -> Result<(), LifecycleError> {
+            if self.start_menu_fails {
+                return Err(LifecycleError::platform("no Start Menu here"));
+            }
+            *self.start_menu.borrow_mut() = Some(cli.to_path_buf());
+            Ok(())
+        }
+        fn remove_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
+            let mut entry = self.start_menu.borrow_mut();
+            if entry.as_deref() == Some(cli) {
+                *entry = None;
+                return Ok(true);
+            }
+            Ok(false)
         }
         fn node_version(&self, _node: &Path) -> Result<Version, LifecycleError> {
             Version::parse(&format!("{}.0.0", self.node_major))

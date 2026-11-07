@@ -10,7 +10,8 @@ Orcel - Computer Orchestration & Trusted Runtime Access
 
 Install and maintenance:
   orcel install [--source <release-dir>] [--node <node.exe>] [--no-path]
-      Install or repair the per-user install under %USERPROFILE%\\.orcel. The release
+      Install or repair the per-user install under %USERPROFILE%\\.orcel, adding it to your
+      PATH and the Start Menu, neither of which --no-path touches. The release
       directory defaults to the directory containing this orcel.exe. Every payload
       file is verified against manifest.json before anything is copied. Administrator
       rights are not required; an elevated \"Run as administrator\" prompt is refused.
@@ -349,6 +350,13 @@ fn install(args: &mut Args) -> Result<Output, LifecycleError> {
     } else {
         human.push_str("  PATH: not modified\n");
     }
+    if report.start_menu_added {
+        human.push_str("  Start Menu: Orcel opens the app\n");
+    } else if let Some(problem) = &report.start_menu_problem {
+        human.push_str(&format!(
+            "  Start Menu: no entry ({problem}). `orcel app` opens the app\n"
+        ));
+    }
     human.push_str("  User data kept across updates and uninstall:\n");
     for path in &report.retained_data {
         human.push_str(&format!("    {}\n", path.display()));
@@ -416,6 +424,12 @@ fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
     }
     if report.path_entry_removed {
         human.push_str("  PATH: the Orcel bin directory was removed from your user PATH\n");
+    }
+    if report.start_menu_removed {
+        human.push_str("  Start Menu: the Orcel entry was removed\n");
+    }
+    if let Some(problem) = &report.start_menu_problem {
+        human.push_str(&format!("  Start Menu: left as it is ({problem})\n"));
     }
     if let Some(relocated) = &report.relocated_cli {
         human.push_str(&format!(

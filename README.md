@@ -205,7 +205,7 @@ Orcel never checks for or downloads updates by itself.
 
 ## Uninstall
 
-- `orcel uninstall` stops Orcel and removes its programs and the PATH entry. Your configuration, tunnel key, logs, and audit/approval/trust history are **kept** and listed.
+- `orcel uninstall` stops Orcel and removes its programs, the PATH entry and its Start Menu entry. Your configuration, tunnel key, logs, and audit/approval/trust history are **kept** and listed.
 - `orcel uninstall --purge-data --yes` also deletes that data, including stored secrets, the executable registry and leases. Anything under the folder that isn't Orcel's stays, and is named in the report.
 - Your workspaces are never touched.
 
