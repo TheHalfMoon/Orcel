@@ -92,7 +92,7 @@ try {
     $runtime = WaitFor { $t = (ById $window "RuntimeState").Current.Name; if ($t -and $t -ne "Checking...") { $t } } 15000
     $readyMs = $clock.ElapsedMilliseconds
     if ($expectInstalled) {
-        Check "runtime panel reports the real install" ($runtime -like "Orcel runtime 0.*" -and $runtime -like "*not running*") "$runtime (after ${readyMs} ms)"
+        Check "runtime panel reports the real install" ($runtime -like "Orcel runtime 0.*" -and $runtime -like "*ChatGPT tunnel*") "$runtime (after ${readyMs} ms)"
     } else {
         Check "runtime panel reports not installed" ($runtime -eq "Not installed") "$runtime"
     }
@@ -118,7 +118,7 @@ try {
     }
 
     SendCommand $window "status"
-    $status = WaitForMessage $window $(if ($expectInstalled) { "is installed and not running" } else { "is not installed" }) 15000
+    $status = WaitForMessage $window $(if ($expectInstalled) { "is installed. ChatGPT tunnel" } else { "is not installed" }) 15000
     Check "status command shows the runtime's own state" ($null -ne $status) "$status"
 
 

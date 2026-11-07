@@ -228,7 +228,8 @@ namespace Orcel.DesktopPreview
         private static extern bool CloseHandle(IntPtr handle);
     }
 
-    internal enum RuntimeAvailability { NotInstalled, Unresponsive, Incompatible, Installed }
+    /// Failed: the runtime answered with its own error, which the app shows as it is.
+    internal enum RuntimeAvailability { NotInstalled, Unresponsive, Incompatible, Failed, Installed }
 
     /// What the app truthfully knows about the local Orcel runtime.
     internal sealed class RuntimeStatus
@@ -238,6 +239,16 @@ namespace Orcel.DesktopPreview
         internal string State;
         internal string Detail;
         internal int? Workspaces;
+        /// Null when the status didn't say.
+        internal bool? TunnelConfigured;
+
+        /// The background runtime `orcel start` runs carries only the optional ChatGPT tunnel;
+        /// local MCP clients start Orcel themselves, so "not running" never means Orcel is down.
+        internal string Tunnel()
+        {
+            if (TunnelConfigured == false && State == "not_running") return "ChatGPT tunnel not configured (optional)";
+            return "ChatGPT tunnel " + Describe(State);
+        }
 
         internal string Headline()
         {
@@ -246,7 +257,8 @@ namespace Orcel.DesktopPreview
                 case RuntimeAvailability.NotInstalled: return "Not installed";
                 case RuntimeAvailability.Unresponsive: return "Installed • not responding";
                 case RuntimeAvailability.Incompatible: return "Installed • incompatible response";
-                default: return "Orcel runtime " + Version + " • " + Describe(State);
+                case RuntimeAvailability.Failed: return "Installed • status reported an error";
+                default: return "Orcel runtime " + Version + " • " + Tunnel();
             }
         }
 
@@ -827,6 +839,11 @@ namespace Orcel.DesktopPreview
             if (result.FailedToStart || result.TimedOut) return new RuntimeStatus { Availability = RuntimeAvailability.Unresponsive };
             Dictionary<string, object> json = Parse(result.Stdout);
             object runtime = null;
+            object error;
+            // The CLI's own error, such as a corrupt record: shown, never treated as healthy.
+            if (json != null && result.ExitCode != 0 && json.ContainsKey("ok") && false.Equals(json["ok"])
+                && json.TryGetValue("error", out error) && !string.IsNullOrEmpty(Text(error as Dictionary<string, object>, "message")))
+                return new RuntimeStatus { Availability = RuntimeAvailability.Failed, Detail = Text((Dictionary<string, object>)error, "message") };
             if (json == null || result.ExitCode != 0 || !(json.ContainsKey("ok") && true.Equals(json["ok"]))
                 || !json.TryGetValue("runtime", out runtime) || !(runtime is Dictionary<string, object>))
                 return new RuntimeStatus { Availability = RuntimeAvailability.Incompatible };
@@ -834,28 +851,38 @@ namespace Orcel.DesktopPreview
             string version = Text(json, "installed");
             if (version == null) return new RuntimeStatus { Availability = RuntimeAvailability.NotInstalled };
             int workspaces;
+            object tunnel;
             return new RuntimeStatus {
                 Availability = RuntimeAvailability.Installed,
                 Version = version,
                 State = Text(runtimeMap, "state"),
                 Detail = Text(runtimeMap, "detail"),
-                Workspaces = int.TryParse(Text(json, "workspaces"), out workspaces) ? (int?)workspaces : null
+                Workspaces = int.TryParse(Text(json, "workspaces"), out workspaces) ? (int?)workspaces : null,
+                TunnelConfigured = json.TryGetValue("tunnel_configured", out tunnel) && tunnel is bool ? (bool?)(bool)tunnel : null
             };
         }
 
         internal static string StatusMessage(RuntimeStatus status)
         {
             if (status.Availability == RuntimeAvailability.NotInstalled)
-                return "The Orcel runtime is not installed for this Windows user. No operation was attempted.";
+                return "The Orcel runtime is not installed for this Windows user. No operation was attempted. "
+                    + "Next: run `orcel install` from the extracted release in a terminal, then Refresh status.";
             if (status.Availability == RuntimeAvailability.Unresponsive)
-                return "The Orcel runtime did not answer a read-only status query in time. No action was performed.";
+                return "The Orcel runtime did not answer a read-only status query in time. No action was performed. "
+                    + "Next: type `doctor` for the health check.";
             if (status.Availability == RuntimeAvailability.Incompatible)
-                return "The installed Orcel runtime returned a response this preview does not understand. No action was performed.";
+                return "The installed Orcel runtime returned a response this preview does not understand. No action was performed. "
+                    + "Next: check that this app and the installed release are the same version (`version`).";
+            if (status.Availability == RuntimeAvailability.Failed)
+                return "Orcel status reported an error: " + status.Detail + " No action was performed. Next: type `doctor` for the health check.";
             StringBuilder text = new StringBuilder();
-            text.Append("Orcel runtime ").Append(status.Version).Append(" is installed and ").Append(RuntimeStatus.Describe(status.State));
-            if (!string.IsNullOrEmpty(status.Detail)) text.Append(" (").Append(status.Detail).Append(")");
+            text.Append("Orcel runtime ").Append(status.Version).Append(" is installed. ").Append(status.Tunnel());
+            if (!string.IsNullOrEmpty(status.Detail) && !(status.TunnelConfigured == false && status.State == "not_running"))
+                text.Append(" (").Append(status.Detail).Append(")");
             text.Append(".");
             if (status.Workspaces.HasValue) text.Append(" Workspaces configured: ").Append(status.Workspaces.Value).Append(".");
+            if (status.Workspaces == 0)
+                text.Append(" Next: add the folder Orcel may work in with `orcel workspace add <id> <folder>` in a terminal.");
             return text.ToString();
         }
 
@@ -1408,7 +1435,15 @@ namespace Orcel.DesktopPreview
             RuntimeStatus installed = Interpret.Status(new CliResult { ExitCode = 0, Stdout =
                 "{\"installed\":\"0.2.0\",\"ok\":true,\"runtime\":{\"detail\":\"no supervisor record\",\"state\":\"not_running\"},\"tunnel_configured\":false,\"workspaces\":0}" });
             expect(installed.Availability == RuntimeAvailability.Installed && installed.Version == "0.2.0", "status parses");
-            expect(Interpret.StatusMessage(installed).Contains("not running (no supervisor record)"), "status message is truthful");
+            expect(Interpret.StatusMessage(installed).Contains("is installed. ChatGPT tunnel not configured (optional)."), "status message is truthful");
+            expect(Interpret.StatusMessage(installed).Contains("Next: add the folder"), "no workspace names the next step");
+            expect(installed.Headline() == "Orcel runtime 0.2.0 • ChatGPT tunnel not configured (optional)", "headline names the tunnel");
+            RuntimeStatus stale = Interpret.Status(new CliResult { ExitCode = 0, Stdout =
+                "{\"installed\":\"0.2.0\",\"ok\":true,\"runtime\":{\"detail\":\"stale supervisor record\",\"state\":\"not_running\"},\"tunnel_configured\":true,\"workspaces\":1}" });
+            expect(Interpret.StatusMessage(stale).Contains("ChatGPT tunnel not running (stale supervisor record).") && !Interpret.StatusMessage(stale).Contains("Next:"), "a configured tunnel shows its detail");
+            RuntimeStatus failed = Interpret.Status(new CliResult { ExitCode = 7, Stdout =
+                "{\"ok\":false,\"error\":{\"kind\":\"state\",\"message\":\"C:\\\\x\\\\supervisor.json is corrupt\"}}" });
+            expect(failed.Availability == RuntimeAvailability.Failed && Interpret.StatusMessage(failed).Contains("supervisor.json is corrupt"), "the runtime's own error is shown");
             expect(Interpret.Status(new CliResult { TimedOut = true }).Availability == RuntimeAvailability.Unresponsive, "timeout is unresponsive");
             expect(Interpret.Status(new CliResult { ExitCode = 0, Stdout = "not json" }).Availability == RuntimeAvailability.Incompatible, "garbage is incompatible");
             expect(Interpret.Status(new CliResult { ExitCode = 2, Stdout = "{\"ok\":false}" }).Availability == RuntimeAvailability.Incompatible, "error is never reported as healthy");
