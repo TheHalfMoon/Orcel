@@ -20,6 +20,7 @@ pub mod paths;
 pub mod peer;
 pub mod process;
 pub mod session;
+pub mod stores;
 
 pub use paths::PlatformError;
 pub use peer::PeerIdentity;

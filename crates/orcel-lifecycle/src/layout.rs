@@ -1,6 +1,7 @@
 //! Per-user install layout under the Orcel state root and its records.
 
 use crate::LifecycleError;
+use orcel_platform::stores::{self, Class, Kind};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fs;
@@ -9,15 +10,6 @@ use std::path::{Path, PathBuf};
 
 pub const CURRENT_SCHEMA: &str = "orcel-current-v1";
 pub const INSTALL_SCHEMA: &str = "orcel-install-v1";
-
-/// What a crash in the middle of an atomic write leaves at the root.
-const CRASH_LEFTOVERS: [&str; 5] = [
-    ".report-tasks.key.tmp-",
-    ".remote_leases.json.tmp-",
-    ".executable_registry.json.tmp-",
-    ".current.json.tmp-",
-    ".install.json.tmp-",
-];
 
 /// Paths of the per-user install rooted at the XP-01 state root
 /// (`%USERPROFILE%\.orcel` on Windows).
@@ -59,31 +51,31 @@ impl Layout {
     }
 
     pub fn bin_dir(&self) -> PathBuf {
-        self.root.join("bin")
+        stores::BIN.path(&self.root)
     }
     pub fn bin_cli(&self) -> PathBuf {
         self.bin_dir().join("orcel.exe")
     }
     pub fn versions_dir(&self) -> PathBuf {
-        self.root.join("versions")
+        stores::VERSIONS.path(&self.root)
     }
     pub fn version_dir(&self, version: &str) -> PathBuf {
         self.versions_dir().join(version)
     }
     pub fn current_file(&self) -> PathBuf {
-        self.root.join("current.json")
+        stores::CURRENT.path(&self.root)
     }
     pub fn install_file(&self) -> PathBuf {
-        self.root.join("install.json")
+        stores::INSTALL.path(&self.root)
     }
     pub fn state_dir(&self) -> PathBuf {
-        self.root.join("state")
+        stores::STATE.path(&self.root)
     }
     pub fn logs_dir(&self) -> PathBuf {
-        self.root.join("logs")
+        stores::LOGS.path(&self.root)
     }
     pub fn run_dir(&self) -> PathBuf {
-        self.root.join("run")
+        stores::RUN.path(&self.root)
     }
     pub fn supervisor_record(&self) -> PathBuf {
         self.run_dir().join("supervisor.json")
@@ -98,10 +90,10 @@ impl Layout {
         self.run_dir().join("tunnel-health.url")
     }
     pub fn config_file(&self) -> PathBuf {
-        self.state_dir().join("config.json")
+        stores::CONFIG.path(&self.root)
     }
     pub fn secrets_dir(&self) -> PathBuf {
-        self.state_dir().join("secrets")
+        stores::TUNNEL_SECRETS.path(&self.root)
     }
     pub fn runtime_key_file(&self) -> PathBuf {
         self.secrets_dir().join("tunnel-runtime-key")
@@ -113,74 +105,43 @@ impl Layout {
         self.logs_dir().join("supervisor.log")
     }
 
-    /// User-owned data that uninstall retains unless purging is requested.
+    /// User-owned data that uninstall retains unless purging is requested: every top-level
+    /// store that isn't program files, and the siblings of one found on disk. From the registry
+    /// in `orcel_platform::stores`, so a new store is here as soon as it's registered.
     pub fn retained_data(&self) -> Vec<PathBuf> {
-        let mut data = vec![
-            self.state_dir(),
-            self.logs_dir(),
-            self.root.join("audit.jsonl"),
-            self.root.join("approval-history.jsonl"),
-            // Single-writer lock created beside the approval ledger (#278).
-            self.root.join("approval-history.jsonl.lock"),
-            self.root.join("trust.jsonl"),
-            self.root.join("browser-profile"),
-            // SG-000120 RJ-02: the report task journal, its single-writer
-            // lock and a compaction rewrite left by a crash.
-            self.root.join("report-tasks.jsonl"),
-            self.root.join("report-tasks.jsonl.lock"),
-            self.root.join("report-tasks.jsonl.rewrite"),
-            // SG-000120 RJ-03: the resume fingerprint key.
-            self.root.join("report-tasks.key"),
-            self.root.join("mutations.jsonl"),
-            self.root.join("mutations.jsonl.lock"),
-            self.root.join("mutations.jsonl.rewrite"),
-            // Secret blobs, what's run and who holds a lease: a purge must not leave these.
-            self.root.join("secrets"),
-            self.root.join("executable_registry.json"),
-            self.root.join("remote_leases.json"),
-            // Scratch left by short-lived runs, and by a qualification.
-            self.root.join("contained-runs"),
-            self.root.join("document-parse"),
-            self.root.join("sg-000012-qualification"),
-            // An unfinished migration of earlier state.
-            self.root
-                .join(orcel_platform::legacy::MIGRATION_IN_PROGRESS),
-        ];
-        // Approval ledgers quarantined by `orcel approvals recover` (#278),
-        // a new chain staged by a recovery that was interrupted, and a
-        // migration's staging.
+        self.top_level(|class| class != Class::Payload)
+    }
+
+    /// Executable state that uninstall removes: the program files, from the same registry.
+    pub fn executable_state(&self) -> Vec<PathBuf> {
+        self.top_level(|class| class == Class::Payload)
+    }
+
+    /// The registered top-level stores of the classes `wanted` picks, in registry order, then
+    /// what's on disk that one of them owns (a sibling or a staging folder), sorted.
+    fn top_level(&self, wanted: impl Fn(Class) -> bool) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = stores::STORES
+            .iter()
+            .filter(|store| {
+                store.is_top_level() && store.kind != Kind::NumberedDirs && wanted(store.class)
+            })
+            .map(|store| store.path(&self.root))
+            .collect();
         if let Ok(entries) = std::fs::read_dir(&self.root) {
-            let mut quarantined: Vec<PathBuf> = entries
+            let mut found: Vec<PathBuf> = entries
                 .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| !paths.contains(path))
                 .filter(|path| {
                     path.file_name()
                         .and_then(|name| name.to_str())
-                        .is_some_and(|name| {
-                            name.starts_with("approval-history.jsonl.quarantine-")
-                                || name.starts_with("approval-history.jsonl.recovering-")
-                                // What an interrupted migration staged, which can hold keys.
-                                || crate::legacy_state::is_staging_name(name)
-                                // Crash leftovers of a store's atomic write hold its contents,
-                                // and of a record's.
-                                || CRASH_LEFTOVERS.iter().any(|prefix| name.starts_with(prefix))
-                        })
+                        .and_then(stores::owner)
+                        .is_some_and(|store| wanted(store.class))
                 })
                 .collect();
-            quarantined.sort();
-            data.extend(quarantined);
+            found.sort();
+            paths.extend(found);
         }
-        data
-    }
-
-    /// Executable state that uninstall removes.
-    pub fn executable_state(&self) -> Vec<PathBuf> {
-        vec![
-            self.versions_dir(),
-            self.bin_dir(),
-            self.current_file(),
-            self.install_file(),
-            self.run_dir(),
-        ]
+        paths
     }
 
     /// Guards every destructive operation: the target must lie strictly

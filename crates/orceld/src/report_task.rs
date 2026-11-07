@@ -328,7 +328,7 @@ impl TaskRegistry {
         // The fingerprint key lives beside the journal, so a task's session
         // fingerprint means the same after a restart.
         registry.fingerprints = match crate::resume_key::FingerprintKey::load_or_create(
-            &path.with_extension("key"),
+            &path.with_extension("key"), // registry: REPORT_TASKS_KEY, tested in stores
         ) {
             Ok(key) => Some(key),
             Err(failure) => {
@@ -616,7 +616,7 @@ pub(crate) fn default_journal_path() -> Result<PathBuf, orcel_platform::Platform
     }
     let root = paths::state_root()?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("report-tasks.jsonl"))
+    Ok(orcel_platform::stores::REPORT_TASKS.path(&root))
 }
 
 pub(crate) fn is_report_request(request: &RequestEnvelope) -> bool {

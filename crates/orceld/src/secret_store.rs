@@ -352,7 +352,7 @@ pub fn legacy_device_key_path(
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, SecretError> {
     orcel_platform::paths::state_root_from(lookup)
-        .map(|root| root.join("state").join("device").join("device_key.json"))
+        .map(|root| orcel_platform::stores::DEVICE_KEY_RECORD.path(&root))
         .map_err(|_| SecretError::Unavailable("the Orcel state root is unavailable"))
 }
 
@@ -924,7 +924,7 @@ mod platform {
         lookup: &dyn Fn(&str) -> Option<OsString>,
     ) -> Result<Box<dyn SecretBackend>, SecretError> {
         let dir = orcel_platform::paths::state_root_from(lookup)
-            .map(|root| root.join("secrets"))
+            .map(|root| orcel_platform::stores::SECRETS.path(&root))
             .map_err(|_| SecretError::Unavailable("the Orcel state root is unavailable"))?;
         Ok(Box::new(DpapiFiles { dir }))
     }

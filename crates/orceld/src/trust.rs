@@ -258,7 +258,7 @@ pub fn default_trust_path_from(
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("trust.jsonl"))
+    Ok(orcel_platform::stores::TRUST.path(&root))
 }
 
 fn record_checksum(record: &StoredTrust) -> String {

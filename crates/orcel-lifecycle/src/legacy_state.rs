@@ -16,31 +16,29 @@
 use crate::LifecycleError;
 use orcel_platform::legacy::{self, DECISION_KEPT_SEPARATE, DECISION_MIGRATED, DECISION_SCHEMA};
 use orcel_platform::paths;
+use orcel_platform::stores::{self, Class, Migrate};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Single files of user data at the root.
-const DATA_FILES: [&str; 7] = [
-    "audit.jsonl",
-    "approval-history.jsonl",
-    "trust.jsonl",
-    "executable_registry.json",
-    "report-tasks.jsonl",
-    "report-tasks.key",
-    "mutations.jsonl",
-];
-/// Directories of user data, whole.
-const DATA_DIRS: [&str; 2] = ["state", "secrets"];
-/// Under `state`, with the payload it describes: not user data.
-const SKIPPED_IN_STATE: [&str; 1] = ["update.json"];
-/// Live authority and identity, relative to the root: granted again, not copied.
-const NOT_COPIED: [&str; 4] = [
-    "state/authority",
-    "state/remote/uplink.json",
-    "state/device/device_key.json",
-    "secrets/device.key.dpapi",
-];
+/// Whether the top-level entry `name` is user data migration copies whole: a registered store
+/// of the person's that isn't left behind.
+fn copied_whole(name: &str) -> bool {
+    stores::STORES.iter().any(|store| {
+        store.is_top_level()
+            && store.relative == name
+            && store.class == Class::UserData
+            && store.migrate == Migrate::Copy
+    })
+}
+
+/// Stores inside a copied folder that stay behind: user data that's live authority or identity,
+/// reported as left, and program-file records, dropped without a word.
+fn left_inside() -> impl Iterator<Item = &'static stores::Store> {
+    stores::STORES
+        .iter()
+        .filter(|store| !store.is_top_level() && store.migrate == Migrate::Leave)
+}
 const QUARANTINE_PREFIX: &str = "approval-history.jsonl.quarantine-";
 /// Left by a crash or a live writer: the data isn't at rest.
 const UNCLEAN_SUFFIXES: [&str; 1] = [".rewrite"];
@@ -50,7 +48,7 @@ const LOCKS: [&str; 3] = [
     "report-tasks.jsonl.lock",
     "mutations.jsonl.lock",
 ];
-pub(crate) const STAGING_PREFIX: &str = "legacy-import-";
+pub(crate) const STAGING_PREFIX: &str = stores::MIGRATION_STAGING.relative;
 /// Whether `name` is a staging folder migration made: its prefix and a process id, and nothing
 /// else, so a person's own file with a similar name is never taken for one.
 pub(crate) fn is_staging_name(name: &str) -> bool {
@@ -59,6 +57,7 @@ pub(crate) fn is_staging_name(name: &str) -> bool {
 }
 
 /// Only this tells an interrupted migration's copies from state in normal use.
+#[cfg(test)]
 const IN_PROGRESS: &str = legacy::MIGRATION_IN_PROGRESS;
 
 /// What an earlier root holds, sorted by what migration would do with it.
@@ -127,30 +126,21 @@ pub fn inventory(legacy: &Path) -> Result<Inventory, LifecycleError> {
             found
                 .unclean
                 .push(format!("{name} was left by an interrupted write"));
-        } else if DATA_DIRS.contains(&name.as_str())
-            || DATA_FILES.contains(&name.as_str())
-            || name.starts_with(QUARANTINE_PREFIX)
-        {
+        } else if copied_whole(&name) || name.starts_with(QUARANTINE_PREFIX) {
             collect(legacy, &relative, &mut found.data)?;
         } else {
-            found.payload |=
-                ["bin", "versions", "current.json", "install.json"].contains(&name.as_str());
+            found.payload |= stores::owner(&name)
+                .is_some_and(|store| store.class == Class::Payload && store.relative != "run");
             found.left.push(name);
         }
     }
-    for name in NOT_COPIED {
-        let matched = |path: &PathBuf| path.starts_with(Path::new(name));
-        if found.data.iter().any(matched) {
-            found.left.push(name.to_owned());
+    for store in left_inside() {
+        let matched = |path: &PathBuf| path.starts_with(Path::new(store.relative));
+        if store.class == Class::UserData && found.data.iter().any(matched) {
+            found.left.push(store.relative.to_owned());
         }
         found.data.retain(|path| !matched(path));
     }
-    found.data.retain(|path| {
-        !(path.starts_with("state")
-            && SKIPPED_IN_STATE
-                .iter()
-                .any(|name| path.file_name().is_some_and(|file| file == *name)))
-    });
     found.data.sort();
     found.left.sort();
     found.unclean.sort();
@@ -292,7 +282,7 @@ pub fn migrate(
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
 
     clear_staging(root)?;
-    let staging = root.join(format!("{STAGING_PREFIX}{}", std::process::id()));
+    let staging = stores::MIGRATION_STAGING.numbered(root, std::process::id());
     paths::ensure_private_dir(&staging).map_err(|error| io(&staging, error))?;
 
     let mut to_place = Vec::new();
@@ -338,7 +328,7 @@ pub fn migrate(
         }
         to_place.push(relative.clone());
     }
-    let in_progress = root.join(IN_PROGRESS);
+    let in_progress = stores::MIGRATION_IN_PROGRESS.path(root);
     // A real marker stays, so a crash here never leaves copies without one. Anything else under
     // that name, such as a link, is removed and never followed.
     let marked = match fs::symlink_metadata(&in_progress) {
@@ -388,7 +378,7 @@ pub fn migrate(
 /// migration is unfinished: a decision would start Orcel on part of what it copied.
 pub fn keep_separate(legacy: &Path, root: &Path) -> Result<(), LifecycleError> {
     refuse_if_decided(root)?;
-    let in_progress = root.join(IN_PROGRESS);
+    let in_progress = stores::MIGRATION_IN_PROGRESS.path(root);
     if fs::symlink_metadata(&in_progress).is_ok() {
         let copied: Vec<String> = inventory(legacy)
             .map(|found| found.data)

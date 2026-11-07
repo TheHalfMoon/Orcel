@@ -426,7 +426,7 @@ impl Stage {
     fn create(digest: &str) -> Result<Self, ProviderError> {
         let state = orcel_platform::paths::state_root()
             .map_err(|error| unavailable(format!("state root is unavailable: {error}")))?;
-        let runs = state.join("document-parse");
+        let runs = orcel_platform::stores::DOCUMENT_PARSE.path(&state);
         contained_tier::private_dir_builder(true)
             .create(&runs)
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
@@ -436,24 +436,24 @@ impl Stage {
         // download never share, or remove, each other's stage.
         static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let root = runs.join(format!(
+        let dir = runs.join(format!(
             "{}-{sequence}-{}",
             std::process::id(),
             &digest[..16]
         ));
         // A leftover from a crashed run with the same name is not reused.
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&dir);
         let made = |path: &Path| {
             contained_tier::private_dir_builder(false)
                 .create(path)
                 .map_err(|error| unavailable(format!("document parse directory: {error}")))
         };
-        made(&root)?;
-        // From here on, dropping the stage removes everything below `root`.
+        made(&dir)?;
+        // From here on, dropping the stage removes everything below `dir`.
         let mut stage = Self {
-            input: root.join("input"),
-            work: root.join("work"),
-            root,
+            input: dir.join("input"),
+            work: dir.join("work"),
+            root: dir,
         };
         made(&stage.input)?;
         made(&stage.work)?;

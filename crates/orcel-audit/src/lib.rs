@@ -89,7 +89,7 @@ pub fn default_audit_path_from(
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("audit.jsonl"))
+    Ok(orcel_platform::stores::AUDIT.path(&root))
 }
 
 #[cfg(test)]

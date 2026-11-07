@@ -1427,7 +1427,7 @@ mod unix {
             return Ok(runtime.join("orcel"));
         }
         orcel_platform::paths::state_root_for(layout, lookup)
-            .map(|root| root.join("run"))
+            .map(|root| orcel_platform::stores::RUN.path(&root))
             .map_err(|error| error.to_string())
     }
 
@@ -1446,7 +1446,7 @@ mod unix {
 
     /// The lock file of the socket at `path`: `app-api<suffix>.lock`.
     pub(super) fn lock_path(path: &Path) -> PathBuf {
-        path.with_extension("lock")
+        path.with_extension("lock") // registry: inside `run`, beside the socket
     }
 
     /// Takes the advisory lock that makes the endpoint single-instance per

@@ -66,7 +66,7 @@ fn unavailable(message: impl Into<String>) -> PolicyError {
 }
 
 pub fn authority_dir(root: &Path) -> PathBuf {
-    root.join("state").join("authority")
+    orcel_platform::stores::AUTHORITY.path(root)
 }
 
 pub fn authority_key_path(root: &Path) -> PathBuf {
