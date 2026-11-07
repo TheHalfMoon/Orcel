@@ -182,6 +182,9 @@ impl platform::Platform for UnsupportedPlatform {
             "the Start Menu is on Windows only",
         ))
     }
+    fn has_start_menu_entry(&self, _cli: &std::path::Path) -> Result<bool, LifecycleError> {
+        Ok(false)
+    }
     fn node_version(&self, node: &std::path::Path) -> Result<version::Version, LifecycleError> {
         platform::run_node_version(node)
     }
@@ -323,6 +326,9 @@ pub(crate) mod test_support {
             }
             *self.start_menu.borrow_mut() = Some(cli.to_path_buf());
             Ok(())
+        }
+        fn has_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
+            Ok(self.start_menu.borrow().as_deref() == Some(cli))
         }
         fn remove_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
             let mut entry = self.start_menu.borrow_mut();

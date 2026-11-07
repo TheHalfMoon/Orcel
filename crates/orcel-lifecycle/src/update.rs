@@ -11,7 +11,7 @@
 //! modified by update or rollback.
 
 use crate::config::CONFIG_SCHEMA_VERSION;
-use crate::install::Installer;
+use crate::install::{Installer, StartMenuChange};
 use crate::layout::{
     read_json, write_json_atomic, CurrentRecord, InstallRecord, Layout, CURRENT_SCHEMA,
     INSTALL_SCHEMA,
@@ -73,6 +73,8 @@ pub struct UpdateReport {
     pub direction: String,
     pub restarted: bool,
     pub pruned: Vec<String>,
+    /// Only when a version was activated.
+    pub start_menu: Option<StartMenuChange>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +82,7 @@ pub struct RollbackReport {
     pub from: String,
     pub to: String,
     pub restarted: bool,
+    pub start_menu: StartMenuChange,
 }
 
 pub fn update_marker_path(layout: &Layout) -> std::path::PathBuf {
@@ -247,19 +250,25 @@ impl<'a> Updater<'a> {
                 release.manifest.config_schema.min, release.manifest.config_schema.max
             )));
         }
-        let report = |outcome, restarted, pruned| UpdateReport {
+        let report = |outcome, restarted, pruned, start_menu| UpdateReport {
             outcome,
             from: from.clone(),
             to: to.clone(),
             direction: direction.into(),
             restarted,
             pruned,
+            start_menu,
         };
         if options.check_only {
-            return Ok(report(UpdateOutcome::Checked, false, Vec::new()));
+            return Ok(report(UpdateOutcome::Checked, false, Vec::new(), None));
         }
         if direction == "same" && !options.reinstall {
-            return Ok(report(UpdateOutcome::AlreadyCurrent, false, Vec::new()));
+            return Ok(report(
+                UpdateOutcome::AlreadyCurrent,
+                false,
+                Vec::new(),
+                None,
+            ));
         }
 
         let was_running = stop_if_running(&self.layout)?;
@@ -361,12 +370,19 @@ impl<'a> Updater<'a> {
             keep.push(previous);
         }
         let pruned = prune(&self.layout, &keep);
+        let start_menu =
+            installer.reconcile_start_menu(&version_dir, previous_record.path_entry_added);
         crate::logs::transcript(
             &self.layout,
             &format!("update {from} -> {to} ({direction}) succeeded"),
         );
         let restarted = was_running && restart(&self.layout, self.platform)?;
-        Ok(report(UpdateOutcome::Updated, restarted, pruned))
+        Ok(report(
+            UpdateOutcome::Updated,
+            restarted,
+            pruned,
+            Some(start_menu),
+        ))
     }
 
     fn restore(
@@ -485,6 +501,10 @@ impl<'a> Updater<'a> {
         installer.protect_root()?;
         installer.verify()?;
         let _ = std::fs::remove_file(update_marker_path(&self.layout));
+        let start_menu = installer.reconcile_start_menu(
+            &self.layout.version_dir(&marker.from),
+            record.path_entry_added,
+        );
         crate::logs::transcript(
             &self.layout,
             &format!(
@@ -496,6 +516,7 @@ impl<'a> Updater<'a> {
             from: marker.to.clone(),
             to: marker.from.clone(),
             restarted: false,
+            start_menu,
         })
     }
 
@@ -587,6 +608,7 @@ impl<'a> Updater<'a> {
             });
         }
         let _ = std::fs::remove_file(update_marker_path(&self.layout));
+        let start_menu = installer.reconcile_start_menu(&previous_dir, record.path_entry_added);
         crate::logs::transcript(
             &self.layout,
             &format!("rollback {from} -> {previous} succeeded"),
@@ -596,6 +618,7 @@ impl<'a> Updater<'a> {
             from,
             to: previous,
             restarted,
+            start_menu,
         })
     }
 }
@@ -697,6 +720,16 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_update_leaves_the_start_menu_entry_alone() {
+        let (layout, platform) = setup("0.2.0");
+        *platform.start_menu.borrow_mut() = Some(layout.bin_cli());
+        Updater::new(layout.clone(), &platform)
+            .update(&release_dir("0.3.0"), &UpdateOptions::default())
+            .unwrap_err();
+        assert_eq!(*platform.start_menu.borrow(), Some(layout.bin_cli()));
+    }
+
+    #[test]
     fn start_is_refused_while_an_update_is_pending() {
         let (layout, platform) = setup("0.2.0");
         write_marker(&layout, UpdateState::Pending, "0.2.0", "0.3.0", None).unwrap();
@@ -748,6 +781,7 @@ mod tests {
 
         let report = Updater::new(layout.clone(), &platform).rollback().unwrap();
         assert_eq!(report.to, "0.2.0");
+        assert_eq!(report.start_menu, StartMenuChange::Unchanged);
         let state = installer.verify().unwrap();
         assert_eq!(state.active.version, "0.2.0");
         assert_eq!(state.record.previous.as_deref(), Some("0.3.0"));

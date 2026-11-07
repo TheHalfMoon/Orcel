@@ -148,7 +148,9 @@ pub fn read_entry(path: &Path) -> Result<(PathBuf, String), LifecycleError> {
 /// attached to its console and its standard error is that console, as when the Start Menu entry
 /// started it. From a terminal, the shell shares the console, so nothing is shown and the message
 /// goes to standard error as usual. A caller that redirects standard error, or asked for JSON,
-/// reads the error itself, so a dialog that nobody may be there to close never blocks it.
+/// reads the error itself, so a dialog that nobody may be there to close never blocks it. Nor
+/// does a session without a visible desktop: a task set to run whether or not the user is logged
+/// on, or a service, gets a hidden window station, where a dialog would wait for nobody.
 pub fn show_if_no_terminal(message: &str, json: bool) {
     use windows_sys::Win32::System::Console::{
         GetConsoleMode, GetConsoleProcessList, GetStdHandle, STD_ERROR_HANDLE,
@@ -156,7 +158,7 @@ pub fn show_if_no_terminal(message: &str, json: bool) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND,
     };
-    if json {
+    if json || !desktop_is_visible() {
         return;
     }
     let mut mode = 0_u32;
@@ -184,10 +186,48 @@ pub fn show_if_no_terminal(message: &str, json: bool) {
     }
 }
 
+/// Whether this process's window station is the interactive, visible one (`WSF_VISIBLE`). When it
+/// can't be told, it's taken as hidden: the message still reaches standard error.
+fn desktop_is_visible() -> bool {
+    use windows_sys::Win32::System::StationsAndDesktops::{
+        GetProcessWindowStation, GetUserObjectInformationW, UOI_FLAGS, USEROBJECTFLAGS,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::WSF_VISIBLE;
+    let mut flags = USEROBJECTFLAGS {
+        fInherit: 0,
+        fReserved: 0,
+        dwFlags: 0,
+    };
+    let mut needed = 0_u32;
+    // SAFETY: the station handle belongs to this process and isn't closed here. The call writes at
+    // most the stated size of `flags`, which is a `USEROBJECTFLAGS`, and `needed`.
+    let read = unsafe {
+        let station = GetProcessWindowStation();
+        station != 0
+            && GetUserObjectInformationW(
+                station,
+                UOI_FLAGS,
+                (&mut flags as *mut USEROBJECTFLAGS).cast(),
+                std::mem::size_of::<USEROBJECTFLAGS>() as u32,
+                &mut needed,
+            ) != 0
+    };
+    read && flags.dwFlags & WSF_VISIBLE as u32 != 0
+}
+
 /// Whether two Windows paths name the same place as written: case and separators aside.
 fn same_path(left: &Path, right: &Path) -> bool {
     let normal = |path: &Path| path.to_string_lossy().replace('/', "\\").to_lowercase();
     normal(left) == normal(right)
+}
+
+/// Whether the entry at `path` is there and opens the app through `cli`: Orcel's own.
+pub fn is_ours(path: &Path, cli: &Path) -> Result<bool, LifecycleError> {
+    if std::fs::symlink_metadata(path).is_err() {
+        return Ok(false);
+    }
+    let (target, arguments) = read_entry(path)?;
+    Ok(same_path(&target, cli) && arguments == ARGUMENTS)
 }
 
 /// Removes the entry at `path` if it opens the app through `cli`. A missing one is fine, and one

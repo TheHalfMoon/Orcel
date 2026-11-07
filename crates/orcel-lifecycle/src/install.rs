@@ -19,6 +19,21 @@ pub struct InstallOptions {
 /// The Windows app in a release. It isn't a required file, so a release can come without it.
 pub const APP_FILE: &str = "Orcel.Desktop.exe";
 
+/// What an update or rollback did to the Start Menu entry. It's a convenience, so none of this
+/// fails the update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "change", content = "detail")]
+pub enum StartMenuChange {
+    /// The version has the app, and the entry was added or rewritten to open it.
+    Present,
+    /// The version has no app, so Orcel's own entry was removed rather than left to fail.
+    Removed,
+    /// Nothing to do: no entry wanted, or none there for a version without the app.
+    Unchanged,
+    /// It couldn't be checked or changed, for example a shortcut of someone else's by that name.
+    Problem(String),
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallReport {
     pub version: String,
@@ -370,6 +385,36 @@ impl<'a> Installer<'a> {
             record,
             manifest,
         })
+    }
+
+    /// Brings the Start Menu entry in line with the version now active in `version_dir`. The
+    /// entry is wanted when Orcel's own is already there, or when install put Orcel on PATH,
+    /// which it does only without `--no-path`; `install.json` can't take a new field without
+    /// breaking a rollback to an older version, so the wish is read from these. A shortcut of
+    /// someone else's by that name is never touched.
+    pub fn reconcile_start_menu(
+        &self,
+        version_dir: &Path,
+        path_entry_added: bool,
+    ) -> StartMenuChange {
+        let cli = self.layout.bin_cli();
+        let ours = match self.platform.has_start_menu_entry(&cli) {
+            Ok(ours) => ours,
+            Err(error) => return StartMenuChange::Problem(error.message),
+        };
+        let app = version_dir.join(APP_FILE).is_file();
+        let result = match (app, ours || path_entry_added) {
+            (true, true) => self
+                .platform
+                .add_start_menu_entry(&cli)
+                .map(|()| StartMenuChange::Present),
+            (false, _) if ours => self
+                .platform
+                .remove_start_menu_entry(&cli)
+                .map(|_| StartMenuChange::Removed),
+            _ => Ok(StartMenuChange::Unchanged),
+        };
+        result.unwrap_or_else(|error| StartMenuChange::Problem(error.message))
     }
 
     pub fn uninstall(&self, options: &UninstallOptions) -> Result<UninstallReport, LifecycleError> {
@@ -927,6 +972,55 @@ mod tests {
             .unwrap();
         assert!(!report.start_menu_added);
         assert!(report.start_menu_problem.is_some());
+    }
+
+    #[test]
+    fn update_and_rollback_bring_the_start_menu_in_line_with_the_version() {
+        let root = temp_dir("start-menu-reconcile").join("Orcel");
+        let layout = Layout::new(&root);
+        let cli = layout.bin_cli();
+        let with_app = root.join("versions").join("0.3.0");
+        let without_app = root.join("versions").join("0.2.0");
+        fs::create_dir_all(&with_app).unwrap();
+        fs::create_dir_all(&without_app).unwrap();
+        fs::write(with_app.join(APP_FILE), b"app").unwrap();
+        let entry = |platform: &FakePlatform| platform.start_menu.borrow().clone();
+        // (version has the app, Orcel's entry is there, install put Orcel on PATH) -> outcome.
+        let cases = [
+            (true, false, true, StartMenuChange::Present, true),
+            (true, false, false, StartMenuChange::Unchanged, false),
+            (true, true, false, StartMenuChange::Present, true),
+            (false, true, true, StartMenuChange::Removed, false),
+            (false, true, false, StartMenuChange::Removed, false),
+            (false, false, true, StartMenuChange::Unchanged, false),
+        ];
+        for (app, ours, on_path, expected, after) in cases {
+            let platform = FakePlatform::default();
+            if ours {
+                *platform.start_menu.borrow_mut() = Some(cli.clone());
+            }
+            let installer = Installer::new(layout.clone(), &platform);
+            let dir = if app { &with_app } else { &without_app };
+            let change = installer.reconcile_start_menu(dir, on_path);
+            assert_eq!(
+                change, expected,
+                "app {app}, ours {ours}, on PATH {on_path}"
+            );
+            assert_eq!(
+                entry(&platform).is_some(),
+                after,
+                "app {app}, ours {ours}, on PATH {on_path}"
+            );
+        }
+        // Someone else's shortcut by that name, or a Start Menu that can't be written, is
+        // reported and doesn't fail anything.
+        let platform = FakePlatform {
+            start_menu_fails: true,
+            ..FakePlatform::default()
+        };
+        let change =
+            Installer::new(layout.clone(), &platform).reconcile_start_menu(&with_app, true);
+        assert!(matches!(change, StartMenuChange::Problem(_)), "{change:?}");
     }
 
     #[test]

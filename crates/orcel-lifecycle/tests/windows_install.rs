@@ -72,8 +72,11 @@ fn the_start_menu_entry_is_a_real_shortcut_and_only_ours_is_removed() {
     let entry = dir.join("Orcel.lnk");
 
     assert!(!platform.remove_start_menu_entry(cli).unwrap());
+    assert!(!platform.has_start_menu_entry(cli).unwrap());
     platform.add_start_menu_entry(cli).unwrap();
     assert!(entry.is_file());
+    assert!(platform.has_start_menu_entry(cli).unwrap());
+    assert!(!platform.has_start_menu_entry(other).unwrap());
     let (target, arguments) = orcel_lifecycle::start_menu::read_entry(&entry).unwrap();
     assert_eq!(target, cli);
     assert_eq!(arguments, "app");
@@ -93,8 +96,9 @@ fn the_start_menu_entry_is_a_real_shortcut_and_only_ours_is_removed() {
     assert!(platform.remove_start_menu_entry(spelled).unwrap());
     assert!(!entry.exists());
 
-    // So does something that isn't a shortcut at all.
+    // So does something that isn't a shortcut at all, which can't be told to be ours.
     fs::write(&entry, b"not a shortcut").unwrap();
+    assert!(platform.has_start_menu_entry(cli).is_err());
     assert!(platform.remove_start_menu_entry(cli).is_err());
     assert!(platform.add_start_menu_entry(cli).is_err());
     assert_eq!(fs::read(&entry).unwrap(), b"not a shortcut");
