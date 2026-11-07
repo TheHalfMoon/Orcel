@@ -51,6 +51,9 @@ const LOCKS: [&str; 3] = [
     "mutations.jsonl.lock",
 ];
 const STAGING_PREFIX: &str = "legacy-import-";
+/// Written before the first file is placed and removed once the decision is recorded: only this
+/// tells an interrupted migration's copies from state in normal use.
+const IN_PROGRESS: &str = "legacy-migration-in-progress";
 
 /// What an earlier root holds, sorted by what migration would do with it.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -322,6 +325,8 @@ pub fn migrate(
         }
         to_place.push(relative.clone());
     }
+    let in_progress = root.join(IN_PROGRESS);
+    fs::write(&in_progress, b"").map_err(|error| io(&in_progress, error))?;
     for relative in &to_place {
         let target = root.join(relative);
         let parent = target.parent().expect("a target has a folder");
@@ -340,6 +345,7 @@ pub fn migrate(
     }
     fs::remove_dir_all(&staging).map_err(|error| io(&staging, error))?;
     record(root, DECISION_MIGRATED)?;
+    fs::remove_file(&in_progress).map_err(|error| io(&in_progress, error))?;
     Ok(MigrateReport {
         copied: to_place.len(),
         already_there,
@@ -348,27 +354,27 @@ pub fn migrate(
     })
 }
 
-/// Records that the earlier state stays where it is, unused. Deletes nothing. Refused while
-/// anything migration would place is already there: only an interrupted migration puts it there,
-/// and a decision would start Orcel on part of it.
+/// Records that the earlier state stays where it is, unused. Deletes nothing. Refused while a
+/// migration is unfinished: a decision would start Orcel on part of what it copied.
 pub fn keep_separate(legacy: &Path, root: &Path) -> Result<(), LifecycleError> {
     refuse_if_decided(root)?;
-    if let Ok(found) = inventory(legacy) {
-        let copied: Vec<String> = found
-            .data
+    let in_progress = root.join(IN_PROGRESS);
+    if fs::symlink_metadata(&in_progress).is_ok() {
+        let copied: Vec<String> = inventory(legacy)
+            .map(|found| found.data)
+            .unwrap_or_default()
             .iter()
             .map(|relative| root.join(relative))
             .filter(|target| fs::symlink_metadata(target).is_ok())
             .map(|target| target.display().to_string())
             .collect();
-        if !copied.is_empty() {
-            return Err(refuse(format!(
-                "an interrupted migration left copies in place, so a decision would start Orcel \
-                 on part of them. Run `orcel state migrate` to finish it. If that's refused, \
-                 remove these and try again: {}",
-                copied.join(", ")
-            )));
-        }
+        return Err(refuse(format!(
+            "a migration was interrupted, so a decision would start Orcel on part of what it \
+             copied. Run `orcel state migrate` to finish it. If that's refused, remove {} and \
+             what it copied, and try again. Those it may have copied: {}",
+            in_progress.display(),
+            copied.join(", ")
+        )));
     }
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
     record(root, DECISION_KEPT_SEPARATE)
@@ -637,19 +643,40 @@ mod tests {
     }
 
     #[test]
-    fn keep_separate_is_refused_on_an_interrupted_migrations_copies() {
+    fn keep_separate_is_refused_while_a_migration_is_unfinished() {
         let (base, legacy, root) = scratch("half");
         paths::ensure_private_dir(&root).unwrap();
+        fs::write(root.join(IN_PROGRESS), b"").unwrap();
         fs::write(root.join("trust.jsonl"), "trust").unwrap();
         let error = keep_separate(&legacy, &root).unwrap_err().message;
         assert!(error.contains("interrupted"), "{error}");
         assert!(error.contains("trust.jsonl"), "{error}");
+        assert!(error.contains(IN_PROGRESS), "{error}");
         assert!(matches!(examine(&legacy, &root), LegacyState::Undecided(_)));
-        // The source moving on since doesn't make the copy any less partial.
+        // The source moving on doesn't make the copy any less partial.
         fs::write(legacy.join("trust.jsonl"), "newer").unwrap();
         assert!(keep_separate(&legacy, &root).is_err());
         fs::write(legacy.join("trust.jsonl"), "trust").unwrap();
         run(&legacy, &root).unwrap();
+        assert!(!root.join(IN_PROGRESS).exists());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// An older build wrote to the earlier root after the current one was in use. Those files are
+    /// the person's real state, not leftovers, and nothing should tell them to delete it.
+    #[test]
+    fn keep_separate_works_over_state_in_normal_use() {
+        let (base, legacy, root) = scratch("in-use");
+        paths::ensure_private_dir(&root).unwrap();
+        fs::write(root.join("trust.jsonl"), "current").unwrap();
+        fs::write(root.join("approval-history.jsonl"), "current").unwrap();
+        assert!(run(&legacy, &root).unwrap_err().message.contains("differs"));
+        keep_separate(&legacy, &root).unwrap();
+        assert_eq!(fs::read(root.join("trust.jsonl")).unwrap(), b"current");
+        assert_eq!(
+            examine(&legacy, &root),
+            LegacyState::Decided(DECISION_KEPT_SEPARATE.into())
+        );
         fs::remove_dir_all(&base).unwrap();
     }
 
