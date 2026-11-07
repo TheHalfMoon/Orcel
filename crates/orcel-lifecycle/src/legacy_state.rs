@@ -299,25 +299,15 @@ mod tests {
         Ok(())
     }
 
-    /// Under the working tree: the state root's ancestor check refuses a shared temp folder
-    /// on some machines, and these tests are about migration.
     fn scratch(label: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let base = std::env::var_os("CARGO_TARGET_TMPDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join("..")
-                    .join("target")
-            })
-            .join(format!(
-                "legacy-state-{label}-{}-{:?}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
+        let base = std::env::temp_dir().join(format!(
+            "legacy-state-{label}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let legacy = base.join("Orcel");
         fs::create_dir_all(legacy.join("state").join("secrets")).unwrap();
         fs::create_dir_all(legacy.join("secrets")).unwrap();

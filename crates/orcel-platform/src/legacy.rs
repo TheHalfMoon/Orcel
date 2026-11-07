@@ -162,12 +162,15 @@ mod tests {
 
     #[test]
     fn only_windows_has_an_earlier_root() {
-        let lookup = |name: &str| {
-            (name == "LOCALAPPDATA").then(|| OsString::from(r"C:\Users\u\AppData\Local"))
+        let local = if cfg!(windows) {
+            r"C:\Users\u\AppData\Local"
+        } else {
+            "/home/u/local"
         };
+        let lookup = |name: &str| (name == "LOCALAPPDATA").then(|| OsString::from(local));
         assert_eq!(
             legacy_root_for(StateLayout::Windows, &lookup),
-            Some(PathBuf::from(r"C:\Users\u\AppData\Local").join("Orcel"))
+            Some(PathBuf::from(local).join("Orcel"))
         );
         assert_eq!(legacy_root_for(StateLayout::Xdg, &lookup), None);
         assert_eq!(legacy_root_for(StateLayout::MacOs, &lookup), None);
