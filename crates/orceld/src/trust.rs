@@ -7,6 +7,9 @@ use std::collections::BTreeMap;
 
 const TRUST_SCHEMA: &str = "orcel-trust-v1";
 
+/// How long a trust change waits for another Orcel session's change to finish.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredTrust {
     schema: String,
@@ -48,6 +51,41 @@ pub struct TrustStore {
     tip: String,
 }
 
+/// The verified records of a trust file, in order, and whether anything after the last of them
+/// isn't a valid next record.
+struct Chain {
+    records: Vec<StoredTrust>,
+    damaged: bool,
+}
+
+impl Chain {
+    fn parse(text: &str) -> Self {
+        let mut records = Vec::new();
+        let mut tip = String::from("GENESIS");
+        let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+        for line in lines.by_ref() {
+            let Ok(record) = serde_json::from_str::<StoredTrust>(line) else {
+                return Self {
+                    records,
+                    damaged: true,
+                };
+            };
+            if record.schema != TRUST_SCHEMA || !verify_checksum(&record, &tip) {
+                return Self {
+                    records,
+                    damaged: true,
+                };
+            }
+            tip = record.checksum.clone();
+            records.push(record);
+        }
+        Self {
+            records,
+            damaged: false,
+        }
+    }
+}
+
 impl TrustStore {
     pub fn load_or_create(path: std::path::PathBuf) -> Self {
         let mut store = Self {
@@ -58,29 +96,25 @@ impl TrustStore {
         };
         if store.path.is_file() {
             if let Ok(text) = std::fs::read_to_string(&store.path) {
-                let mut tip = String::from("GENESIS");
-                for line in text.lines() {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    let Ok(record) = serde_json::from_str::<StoredTrust>(line) else {
-                        break;
-                    };
-                    if record.schema != TRUST_SCHEMA || !verify_checksum(&record, &tip) {
-                        break;
-                    }
-                    tip = record.checksum.clone();
-                    store
-                        .records
-                        .insert(record.workspace_id.clone(), record.clone());
-                    store.history.push(record);
-                }
-                store.tip = tip;
+                store.adopt(Chain::parse(&text).records);
             }
         } else if let Some(parent) = store.path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         store
+    }
+
+    /// Replaces what this store knows with `records`, a verified chain.
+    fn adopt(&mut self, records: Vec<StoredTrust>) {
+        self.records.clear();
+        self.tip = records
+            .last()
+            .map_or_else(|| String::from("GENESIS"), |record| record.checksum.clone());
+        for record in &records {
+            self.records
+                .insert(record.workspace_id.clone(), record.clone());
+        }
+        self.history = records;
     }
 
     pub fn get(&self, workspace_id: &str) -> TrustStatus {
@@ -163,6 +197,85 @@ impl TrustStore {
                 "trust provenance method is empty",
             ));
         }
+        let path = self.path.clone();
+        // Another orceld (one per MCP session) may have written since this store was loaded,
+        // for example while an approval was open. Under the file's lock, the change is made
+        // against the file as it is now.
+        orcel_journal::with_lock(&path, LOCK_WAIT, || {
+            Ok(self.apply_locked(
+                workspace_id,
+                trusted,
+                policy_revision,
+                provenance_method,
+                now_ms,
+            ))
+        })
+        .map_err(|error| {
+            ProviderError::new(
+                FailureCode::ApprovalUnavailable,
+                format!("trust can't be changed now: {error}; try again"),
+            )
+        })?
+    }
+
+    fn apply_locked(
+        &mut self,
+        workspace_id: &str,
+        trusted: bool,
+        policy_revision: &str,
+        provenance_method: &str,
+        now_ms: u64,
+    ) -> Result<TrustStatus, ProviderError> {
+        let on_disk = match std::fs::read_to_string(&self.path) {
+            Ok(text) => Chain::parse(&text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Chain {
+                records: Vec::new(),
+                damaged: false,
+            },
+            Err(error) => {
+                return Err(ProviderError::new(
+                    FailureCode::ApprovalUnavailable,
+                    format!(
+                        "the trust store {} can't be read ({error}); trust wasn't changed",
+                        self.path.display()
+                    ),
+                ))
+            }
+        };
+        // A record appended after damage would never be read back, so the change would be
+        // reported and then lost.
+        if on_disk.damaged {
+            return Err(ProviderError::new(
+                FailureCode::ApprovalUnavailable,
+                format!(
+                    "the trust store {} is damaged after its record {}; trust wasn't changed, \
+                     and the file is left as it is",
+                    self.path.display(),
+                    on_disk.records.len()
+                ),
+            ));
+        }
+        let state = |records: &[StoredTrust]| {
+            records
+                .iter()
+                .rev()
+                .find(|record| record.workspace_id == workspace_id)
+                .map(|record| (record.trusted, record.revision))
+        };
+        let known = self
+            .records
+            .get(workspace_id)
+            .map(|record| (record.trusted, record.revision));
+        // The approval was for the state this store showed; any other change to this
+        // workspace since then makes it stale. Changes to other workspaces are kept.
+        if state(&on_disk.records) != known {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "workspace trust was changed in another Orcel session after this approval; \
+                 trust change fails closed, so request it again",
+            ));
+        }
+        self.adopt(on_disk.records);
         let revision = self
             .records
             .get(workspace_id)
@@ -180,8 +293,8 @@ impl TrustStore {
             checksum: String::new(),
         };
         record.checksum = record_checksum(&record);
-        self.tip = record.checksum.clone();
         self.append_to_file(&record)?;
+        self.tip = record.checksum.clone();
         self.records.insert(workspace_id.to_owned(), record.clone());
         self.history.push(record.clone());
         Ok(TrustStatus {
@@ -194,32 +307,31 @@ impl TrustStore {
         })
     }
 
+    /// Appends `record` as one write, and returns only once it's on disk: a change isn't
+    /// reported until it would survive a crash.
     fn append_to_file(&self, record: &StoredTrust) -> Result<(), ProviderError> {
         use std::io::Write as _;
+        let persist = |error: std::io::Error| {
+            ProviderError::new(
+                FailureCode::ApprovalUnavailable,
+                format!("persist trust record: {error}"),
+            )
+        };
+        let mut line = serde_json::to_vec(record).map_err(|error| {
+            ProviderError::new(
+                FailureCode::ApprovalUnavailable,
+                format!("serialize trust record: {error}"),
+            )
+        })?;
+        line.push(b'\n');
         let mut file = files::open_private_append(&self.path).map_err(|error| {
             ProviderError::new(
                 FailureCode::ApprovalUnavailable,
                 format!("persist trust record: {error}"),
             )
         })?;
-        serde_json::to_writer(&mut file, record).map_err(|error| {
-            ProviderError::new(
-                FailureCode::ApprovalUnavailable,
-                format!("serialize trust record: {error}"),
-            )
-        })?;
-        file.write_all(b"\n").map_err(|error| {
-            ProviderError::new(
-                FailureCode::ApprovalUnavailable,
-                format!("persist trust record: {error}"),
-            )
-        })?;
-        file.flush().map_err(|error| {
-            ProviderError::new(
-                FailureCode::ApprovalUnavailable,
-                format!("persist trust record: {error}"),
-            )
-        })?;
+        file.write_all(&line).map_err(persist)?;
+        file.sync_data().map_err(persist)?;
         Ok(())
     }
 
@@ -372,6 +484,77 @@ mod tests {
         assert!(!store.get("default").trusted);
         assert!(store.history.is_empty());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn sessions_keep_each_others_changes_to_other_workspaces() {
+        // Two orcelds load the store, then each changes a different workspace, as when one
+        // approval is open while another session grants. Neither change may be lost.
+        let path = temp_path("sessions");
+        TrustStore::load_or_create(path.clone())
+            .grant("ws", "sg-000020-v1", "test-hello", 1_000)
+            .expect("grant");
+        let mut first = TrustStore::load_or_create(path.clone());
+        let mut second = TrustStore::load_or_create(path.clone());
+        first
+            .grant("other", "sg-000020-v1", "test-hello", 2_000)
+            .expect("grant other");
+        let revoked = second
+            .revoke_workspace("ws", "sg-000020-v1", "test-hello", 3_000)
+            .expect("revoke");
+        assert_eq!(revoked.revision, 2);
+        let reloaded = TrustStore::load_or_create(path.clone());
+        assert!(!reloaded.get("ws").trusted, "the revoke must not be lost");
+        assert_eq!(reloaded.get("ws").revision, 2);
+        assert!(reloaded.get("other").trusted);
+        assert_eq!(reloaded.history.len(), 3);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_change_to_the_same_workspace_in_another_session_makes_this_one_stale() {
+        let path = temp_path("stale");
+        TrustStore::load_or_create(path.clone())
+            .grant("ws", "sg-000020-v1", "test-hello", 1_000)
+            .expect("grant");
+        let mut first = TrustStore::load_or_create(path.clone());
+        let mut second = TrustStore::load_or_create(path.clone());
+        first
+            .revoke_workspace("ws", "sg-000020-v1", "test-hello", 2_000)
+            .expect("revoke");
+        // Approved against revision 1, which is no longer what the file says.
+        let error = second
+            .grant("ws", "sg-000020-v1", "test-hello", 3_000)
+            .expect_err("stale");
+        assert_eq!(error.code, FailureCode::TargetStale);
+        let reloaded = TrustStore::load_or_create(path.clone());
+        assert!(!reloaded.get("ws").trusted);
+        assert_eq!(reloaded.get("ws").revision, 2);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_damaged_store_refuses_changes_and_keeps_its_file() {
+        let path = temp_path("damaged");
+        let mut store = TrustStore::load_or_create(path.clone());
+        store
+            .grant("ws", "sg-000020-v1", "test-hello", 1_000)
+            .expect("grant");
+        store
+            .revoke_workspace("ws", "sg-000020-v1", "test-hello", 2_000)
+            .expect("revoke");
+        // A torn last record, as after a crash mid-write.
+        let text = std::fs::read(&path).expect("read");
+        let torn = &text[..text.len() - 20];
+        std::fs::write(&path, torn).expect("tear");
+        let mut store = TrustStore::load_or_create(path.clone());
+        let error = store
+            .revoke_workspace("ws", "sg-000020-v1", "test-hello", 3_000)
+            .expect_err("damaged");
+        assert_eq!(error.code, FailureCode::ApprovalUnavailable);
+        assert!(error.message.contains("damaged"), "{}", error.message);
+        assert_eq!(std::fs::read(&path).expect("read"), torn);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
