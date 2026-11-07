@@ -566,7 +566,7 @@ pub(crate) fn default_path() -> Result<PathBuf, orcel_platform::PlatformError> {
     }
     let root = paths::state_root()?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("mutations.jsonl"))
+    Ok(orcel_platform::stores::MUTATIONS.path(&root))
 }
 
 /// Opens this orceld's mutation journal: reconciles what exited runs left

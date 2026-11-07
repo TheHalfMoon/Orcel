@@ -2183,7 +2183,7 @@ pub fn default_approval_history_path_from(
     }
     let root = orcel_platform::paths::state_root_from(lookup)?;
     orcel_platform::paths::ensure_private_dir(&root)?;
-    Ok(root.join("approval-history.jsonl"))
+    Ok(orcel_platform::stores::APPROVAL_HISTORY.path(&root))
 }
 
 fn history_path_unavailable(error: PlatformError) -> ApprovalError {

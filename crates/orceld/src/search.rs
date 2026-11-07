@@ -369,7 +369,7 @@ const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 impl FileUsage {
     pub fn open_default() -> Self {
         let path = orcel_platform::paths::state_root()
-            .map(|root| root.join("state").join("search").join("usage.json"))
+            .map(|root| orcel_platform::stores::SEARCH_USAGE.path(&root))
             .map_err(|_| USAGE_UNAVAILABLE);
         Self { path }
     }

@@ -10,7 +10,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// Written before a migration places its first file, removed once the decision is recorded.
-pub const MIGRATION_IN_PROGRESS: &str = "legacy-migration-in-progress";
+pub const MIGRATION_IN_PROGRESS: &str = crate::stores::MIGRATION_IN_PROGRESS.relative;
 /// First line of the decision file.
 pub const DECISION_SCHEMA: &str = "orcel-legacy-state-decision-v1";
 pub const DECISION_MIGRATED: &str = "migrated";
@@ -84,7 +84,7 @@ fn known_local_app_data() -> Option<PathBuf> {
 
 /// Where the decision is recorded, in the private current root.
 pub fn decision_file(state_root: &Path) -> PathBuf {
-    state_root.join("state").join("legacy-state-decision.txt")
+    crate::stores::LEGACY_DECISION.path(state_root)
 }
 
 /// The recorded decision. A file that isn't exactly a decision is no decision.

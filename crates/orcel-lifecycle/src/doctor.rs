@@ -411,8 +411,11 @@ pub fn run_with_approval_history(
 
     checks.push(legacy_state(layout));
     checks.push(approval_history(approval_path));
-    for (name, file) in [("trust_state", "trust.jsonl"), ("audit_log", "audit.jsonl")] {
-        let path = layout.root.join(file);
+    for (name, store) in [
+        ("trust_state", orcel_platform::stores::TRUST),
+        ("audit_log", orcel_platform::stores::AUDIT),
+    ] {
+        let path = store.path(&layout.root);
         checks.push(if !path.exists() {
             check(name, CheckStatus::Pass, "no records yet")
         } else {

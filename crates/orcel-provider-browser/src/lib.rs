@@ -725,7 +725,7 @@ pub fn default_profile_root_from(
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("browser-profile"))
+    Ok(orcel_platform::stores::BROWSER_PROFILE.path(&root))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
