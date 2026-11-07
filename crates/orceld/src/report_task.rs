@@ -328,7 +328,7 @@ impl TaskRegistry {
         // The fingerprint key lives beside the journal, so a task's session
         // fingerprint means the same after a restart.
         registry.fingerprints = match crate::resume_key::FingerprintKey::load_or_create(
-            &path.with_extension("key"),
+            &path.with_extension("key"), // registry: REPORT_TASKS_KEY, tested in stores
         ) {
             Ok(key) => Some(key),
             Err(failure) => {

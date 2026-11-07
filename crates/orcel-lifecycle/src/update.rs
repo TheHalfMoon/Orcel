@@ -83,7 +83,7 @@ pub struct RollbackReport {
 }
 
 pub fn update_marker_path(layout: &Layout) -> std::path::PathBuf {
-    layout.state_dir().join("update.json")
+    orcel_platform::stores::UPDATE_MARKER.path(&layout.root)
 }
 
 /// Reads and validates `state\update.json`; malformed markers are errors.

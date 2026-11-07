@@ -1113,3 +1113,15 @@ fn xp19_orphan_migration_temp_files_are_removed() {
     assert!(nested.is_dir());
     let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
 }
+
+#[test]
+fn the_device_key_blob_is_the_registered_store() {
+    // Migration leaves this device's key behind by its registered name, so the two must agree.
+    let root = std::path::Path::new("root");
+    assert_eq!(
+        orcel_platform::stores::SECRETS
+            .path(root)
+            .join(format!("{}.dpapi", SecretName::DeviceKey.as_str())),
+        orcel_platform::stores::DEVICE_KEY.path(root)
+    );
+}

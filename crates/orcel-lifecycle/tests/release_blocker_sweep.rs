@@ -1019,6 +1019,18 @@ fn xp01b_moved_stores_never_name_the_shared_temp_directory() {
 /// store: register it in `crates/orcel-platform/src/stores.rs` first.
 const STATE_ROOT_RESOLVERS: &[(&str, &str)] = &[
     ("crates/orcel-approval/src/lib.rs", "the approval ledger"),
+    (
+        "crates/orceld/src/app_api.rs",
+        "the runtime folder when there's no private one",
+    ),
+    (
+        "crates/orceld/src/sg000039_main.rs",
+        "orceld's entry: the earlier-state gate",
+    ),
+    (
+        "crates/orcel-lifecycle/src/linux.rs",
+        "the Linux layout's root",
+    ),
     ("crates/orcel-audit/src/lib.rs", "the audit log"),
     (
         "crates/orcel-lifecycle/src/layout.rs",
@@ -1066,18 +1078,74 @@ const STATE_ROOT_RESOLVERS: &[(&str, &str)] = &[
     ("crates/orceld/src/trust.rs", "workspace trust"),
 ];
 
-/// A literal name joined straight onto a state root, which skips the registry: a variable named
-/// exactly `root`, `state` or `state_root`, not `data_root` or `stage_root`.
-fn joins_a_literal_onto_a_root(line: &str) -> bool {
-    ["root", "state", "state_root"].iter().any(|name| {
-        let shape = format!("{name}.join(\"");
-        line.match_indices(&shape).any(|(at, _)| {
-            !line[..at]
-                .chars()
-                .next_back()
-                .is_some_and(|before| before.is_alphanumeric() || before == '_')
-        })
+const ROOT_NAMES: [&str; 3] = ["root", "state", "state_root"];
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Whether what's passed to a `join(` starting at `rest` names a store: a string literal, a
+/// `format!`, or a constant such as `MIGRATION_IN_PROGRESS` or `legacy::IN_PROGRESS`. A variable
+/// passes, as do names built under a registered folder.
+fn names_a_store(rest: &str) -> bool {
+    let rest = rest.trim_start();
+    if rest.starts_with('"') || rest.starts_with("format!") {
+        return true;
+    }
+    let path: String = rest
+        .chars()
+        .take_while(|c| is_word(*c) || *c == ':')
+        .collect();
+    let last = path.rsplit("::").next().unwrap_or("");
+    last.len() > 1
+        && last.chars().any(|c| c.is_ascii_uppercase())
+        && last
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Whether `text` ends with a root variable: `root`, `state` or `state_root`, as a whole word.
+fn ends_with_a_root(text: &str) -> bool {
+    ROOT_NAMES.iter().any(|name| {
+        text.strip_suffix(name)
+            .is_some_and(|before| !before.chars().next_back().is_some_and(is_word))
     })
+}
+
+/// A store named straight onto a state root, which skips the registry. It covers a variable named
+/// exactly `root`, `state` or `state_root` (not `data_root`), with `.join(` on the same line or,
+/// as rustfmt splits chains, the next one; and `Path::new(&...root).join(`. `previous` is the
+/// line before.
+fn joins_a_store_onto_a_root(line: &str, previous: &str) -> bool {
+    let same_line = ROOT_NAMES.iter().any(|name| {
+        let shape = format!("{name}.join(");
+        line.match_indices(&shape).any(|(at, _)| {
+            !line[..at].chars().next_back().is_some_and(is_word)
+                && names_a_store(&line[at + shape.len()..])
+        })
+    });
+    let split = line
+        .trim_start()
+        .strip_prefix(".join(")
+        .is_some_and(|rest| ends_with_a_root(previous.trim_end()) && names_a_store(rest));
+    let wrapped = (line.contains("Path::new(") || line.contains("PathBuf::from("))
+        && line
+            .match_indices("root).join(")
+            .any(|(at, _)| names_a_store(&line[at + "root).join(".len()..]));
+    same_line || split || wrapped
+}
+
+/// Production Rust: not a test file, a test module or an example. Unlike `is_test_file`, the
+/// `sg000` files count, since orceld's real entry is one of them.
+fn is_production_rust(relative: &str, test_modules: &[String]) -> bool {
+    relative.ends_with(".rs")
+        && (relative.starts_with("crates/") || relative.starts_with("apps/"))
+        && !vendored(relative)
+        && !relative.ends_with("tests.rs")
+        && !relative.contains("/tests/")
+        && !relative.contains("examples/")
+        && !relative.contains("benches/")
+        && !test_modules.iter().any(|module| module == relative)
 }
 
 #[test]
@@ -1088,23 +1156,25 @@ fn state_stores_are_named_only_through_the_registry() {
     let mut hits = Vec::new();
     let mut used = vec![false; STATE_ROOT_RESOLVERS.len()];
     for (relative, text) in &files {
-        if !relative.ends_with(".rs")
-            || vendored(relative)
-            || is_test_file(relative)
-            || test_modules.contains(relative)
-            || !(relative.starts_with("crates/") || relative.starts_with("apps/"))
-        {
+        if !is_production_rust(relative, &test_modules) {
             continue;
         }
         let resolver = STATE_ROOT_RESOLVERS
             .iter()
             .position(|(path, _)| path == relative);
         let lifecycle = relative.starts_with("crates/orcel-lifecycle/src/");
+        let mut previous = "";
         for (number, line) in non_test_lines(text) {
             if line.trim_start().starts_with("//") {
                 continue;
             }
-            if line.contains("state_root(") || line.contains("state_root_from(") {
+            let before = std::mem::replace(&mut previous, line);
+            // A deliberate exception names the store it means, for review.
+            let excepted = line.contains("// registry:");
+            if ["state_root(", "state_root_from(", "state_root_for("]
+                .iter()
+                .any(|call| line.contains(call))
+            {
                 match resolver {
                     Some(index) => used[index] = true,
                     None => hits.push(format!(
@@ -1114,9 +1184,19 @@ fn state_stores_are_named_only_through_the_registry() {
                     )),
                 }
             }
-            if (resolver.is_some() || lifecycle) && joins_a_literal_onto_a_root(line) {
+            if (resolver.is_some() || lifecycle)
+                && !excepted
+                && joins_a_store_onto_a_root(line, before)
+            {
                 hits.push(format!(
                     "{relative}:{number}: names a store without the registry: {}",
+                    line.trim()
+                ));
+            }
+            // A sibling name derived from a store's path, like `report-tasks.key`.
+            if resolver.is_some() && !excepted && line.contains(".with_extension(") {
+                hits.push(format!(
+                    "{relative}:{number}: derives a store name without the registry: {}",
                     line.trim()
                 ));
             }
@@ -1134,4 +1214,38 @@ fn state_stores_are_named_only_through_the_registry() {
         .map(|((path, _), _)| *path)
         .collect();
     assert!(stale.is_empty(), "stale resolver entries: {stale:?}");
+}
+
+#[test]
+fn the_store_guard_catches_the_shapes_it_claims() {
+    let caught = [
+        ("root.join(\"x\")", ""),
+        ("layout.root.join(\"x\")", ""),
+        ("root.join(SOME_STORE)", ""),
+        ("state.join(legacy::IN_PROGRESS)", ""),
+        ("root.join(format!(\"x{n}\"))", ""),
+        ("    .join(\"x\");", "        .root"),
+        ("Path::new(&layout.root).join(\"x\")", ""),
+    ];
+    for (line, previous) in caught {
+        assert!(joins_a_store_onto_a_root(line, previous), "{line}");
+    }
+    let passed = [
+        ("root.join(relative)", ""),
+        ("data_root.join(\"x\")", ""),
+        ("workspace_root.join(\"x\")", ""),
+        ("authority_dir(root).join(KEY_FILE_NAME)", ""),
+        ("    .join(\"x\");", "        .data_root"),
+    ];
+    for (line, previous) in passed {
+        assert!(!joins_a_store_onto_a_root(line, previous), "{line}");
+    }
+    assert!(is_production_rust(
+        "crates/orceld/src/sg000039_main.rs",
+        &[]
+    ));
+    assert!(!is_production_rust(
+        "crates/orceld/src/app_api/tests.rs",
+        &[]
+    ));
 }

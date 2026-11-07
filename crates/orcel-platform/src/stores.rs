@@ -170,6 +170,12 @@ impl Store {
             .fold(root.to_path_buf(), |path, part| path.join(part))
     }
 
+    /// Folder `number` of a numbered store, such as one migration's staging folder.
+    pub fn numbered(&self, root: &Path, number: u32) -> PathBuf {
+        debug_assert_eq!(self.kind, Kind::NumberedDirs);
+        root.join(format!("{}{number}", self.relative))
+    }
+
     /// Whether it sits directly under the root.
     pub fn is_top_level(&self) -> bool {
         !self.relative.contains('/')
@@ -274,5 +280,17 @@ mod tests {
         let root = Path::new("root");
         assert_eq!(AUTHORITY.path(root), root.join("state").join("authority"));
         assert_eq!(AUDIT.path(root), root.join("audit.jsonl"));
+    }
+
+    #[test]
+    fn names_derived_from_another_store_match_the_registry() {
+        // report_task keeps its fingerprint key beside the journal.
+        assert_eq!(
+            Path::new(REPORT_TASKS.relative).with_extension("key"),
+            Path::new(REPORT_TASKS_KEY.relative)
+        );
+        let staging = MIGRATION_STAGING.numbered(Path::new("r"), 7);
+        assert_eq!(staging, Path::new("r").join("legacy-import-7"));
+        assert!(MIGRATION_STAGING.owns("legacy-import-7"));
     }
 }

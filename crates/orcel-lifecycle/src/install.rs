@@ -438,10 +438,7 @@ impl<'a> Installer<'a> {
 
         // Last, and only if the rest went: while part of an interrupted migration's copies remain,
         // the marker is what keeps orceld from starting on them.
-        let marker = self
-            .layout
-            .root
-            .join(orcel_platform::legacy::MIGRATION_IN_PROGRESS);
+        let marker = orcel_platform::stores::MIGRATION_IN_PROGRESS.path(&self.layout.root);
         for path in self.layout.retained_data() {
             if !path.exists() {
                 continue;

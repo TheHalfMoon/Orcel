@@ -57,6 +57,7 @@ pub(crate) fn is_staging_name(name: &str) -> bool {
 }
 
 /// Only this tells an interrupted migration's copies from state in normal use.
+#[cfg(test)]
 const IN_PROGRESS: &str = legacy::MIGRATION_IN_PROGRESS;
 
 /// What an earlier root holds, sorted by what migration would do with it.
@@ -281,7 +282,7 @@ pub fn migrate(
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
 
     clear_staging(root)?;
-    let staging = root.join(format!("{STAGING_PREFIX}{}", std::process::id()));
+    let staging = stores::MIGRATION_STAGING.numbered(root, std::process::id());
     paths::ensure_private_dir(&staging).map_err(|error| io(&staging, error))?;
 
     let mut to_place = Vec::new();
@@ -327,7 +328,7 @@ pub fn migrate(
         }
         to_place.push(relative.clone());
     }
-    let in_progress = root.join(IN_PROGRESS);
+    let in_progress = stores::MIGRATION_IN_PROGRESS.path(root);
     // A real marker stays, so a crash here never leaves copies without one. Anything else under
     // that name, such as a link, is removed and never followed.
     let marked = match fs::symlink_metadata(&in_progress) {
@@ -377,7 +378,7 @@ pub fn migrate(
 /// migration is unfinished: a decision would start Orcel on part of what it copied.
 pub fn keep_separate(legacy: &Path, root: &Path) -> Result<(), LifecycleError> {
     refuse_if_decided(root)?;
-    let in_progress = root.join(IN_PROGRESS);
+    let in_progress = stores::MIGRATION_IN_PROGRESS.path(root);
     if fs::symlink_metadata(&in_progress).is_ok() {
         let copied: Vec<String> = inventory(legacy)
             .map(|found| found.data)
