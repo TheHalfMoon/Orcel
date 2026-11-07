@@ -413,8 +413,17 @@ impl<'a> Installer<'a> {
             }
         }
 
+        // Last, and only if the rest went: while part of an interrupted migration's copies remain,
+        // the marker is what keeps orceld from starting on them.
+        let marker = self
+            .layout
+            .root
+            .join(orcel_platform::legacy::MIGRATION_IN_PROGRESS);
         for path in self.layout.retained_data() {
             if !path.exists() {
+                continue;
+            }
+            if options.purge_data && path == marker {
                 continue;
             }
             if options.purge_data {
@@ -427,10 +436,29 @@ impl<'a> Installer<'a> {
             }
         }
 
+        if options.purge_data && marker.exists() {
+            if report.residual.is_empty() {
+                match remove_path(&self.layout, &marker) {
+                    Ok(()) => report.purged.push(marker),
+                    Err(_) => report.residual.push(marker),
+                }
+            } else {
+                report.residual.push(marker);
+            }
+        }
+
         if options.purge_data && root_exists && report.residual.is_empty() {
             match fs::remove_dir(&self.layout.root) {
                 Ok(()) => report.purged.push(self.layout.root.clone()),
-                Err(_) => report.residual.push(self.layout.root.clone()),
+                Err(_) => {
+                    // Name what's in the way: it isn't Orcel's, so a purge left it.
+                    if let Ok(entries) = fs::read_dir(&self.layout.root) {
+                        report.residual.extend(
+                            entries.filter_map(|entry| entry.ok().map(|entry| entry.path())),
+                        );
+                    }
+                    report.residual.push(self.layout.root.clone());
+                }
             }
         }
         Ok(report)
@@ -642,6 +670,207 @@ mod tests {
             .purged
             .contains(&root.join("approval-history.jsonl.lock")));
         assert!(report.purged.contains(&quarantined));
+    }
+
+    /// Every store Orcel keeps at the root: what uninstall says it kept, and what a purge removes.
+    #[test]
+    fn every_store_is_retained_and_then_purged() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-all").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        let stores = [
+            "secrets/service.name.dpapi",
+            "state/secrets/tunnel-runtime-key",
+            "state/authority/authority.key",
+            "state/device/device_key.json",
+            "state/remote/uplink.json",
+            "state/search/usage.json",
+            "state/legacy-state-decision.txt",
+            "executable_registry.json",
+            "remote_leases.json",
+            "audit.jsonl",
+            "trust.jsonl",
+            "report-tasks.jsonl",
+            "report-tasks.key",
+            "mutations.jsonl",
+            "browser-profile/live/pages.jsonl",
+            "contained-runs/old/left",
+            "document-parse/old/left",
+            "sg-000012-qualification/old/sentinel",
+            "legacy-migration-in-progress",
+            "legacy-import-1/state/secrets/key",
+            ".report-tasks.key.tmp-1-2",
+            ".remote_leases.json.tmp-1-2",
+            ".executable_registry.json.tmp-1-2",
+            ".current.json.tmp-1-2",
+            ".install.json.tmp-1-2",
+            "report-tasks.jsonl.lock",
+            "report-tasks.jsonl.rewrite",
+            "mutations.jsonl.lock",
+            "mutations.jsonl.rewrite",
+            "approval-history.jsonl",
+            "approval-history.jsonl.lock",
+            "approval-history.jsonl.quarantine-1-abc",
+            "approval-history.jsonl.recovering-1",
+            "logs/supervisor.log",
+        ];
+        for store in stores {
+            let path = root.join(store);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"x").unwrap();
+        }
+        let retained = Layout::new(&root).retained_data();
+        for store in stores {
+            let path = root.join(store);
+            assert!(
+                retained.iter().any(|kept| path.starts_with(kept)),
+                "{store} isn't reported as kept"
+            );
+        }
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        assert!(report.residual.is_empty(), "{:?}", report.residual);
+        assert!(!root.exists());
+    }
+
+    /// A purge removes what's known to be Orcel's. Anything else stays, and is reported.
+    #[test]
+    fn a_purge_leaves_and_reports_what_it_doesnt_recognise() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-unknown").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        fs::write(root.join("somebody-elses.txt"), b"keep").unwrap();
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        assert!(report.residual.contains(&root), "{:?}", report.residual);
+        assert!(
+            report.residual.contains(&root.join("somebody-elses.txt")),
+            "{:?}",
+            report.residual
+        );
+        assert_eq!(fs::read(root.join("somebody-elses.txt")).unwrap(), b"keep");
+    }
+
+    /// A similar name isn't migration's staging.
+    #[test]
+    fn a_purge_only_takes_real_staging_folders() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-similar").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        for name in [
+            "legacy-import-my-notes.txt",
+            "legacy-import-",
+            "legacy-importer",
+        ] {
+            fs::write(root.join(name), b"keep").unwrap();
+        }
+        fs::create_dir_all(root.join("legacy-import-7")).unwrap();
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        for name in [
+            "legacy-import-my-notes.txt",
+            "legacy-import-",
+            "legacy-importer",
+        ] {
+            assert_eq!(fs::read(root.join(name)).unwrap(), b"keep", "{name}");
+        }
+        assert!(!root.join("legacy-import-7").exists());
+        assert!(report.residual.contains(&root));
+    }
+
+    /// While something couldn't be removed, the marker stays and keeps the gate closed.
+    #[test]
+    fn a_partial_purge_keeps_the_migration_marker() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-partial").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        let marker = root.join("legacy-migration-in-progress");
+        fs::write(&marker, b"").unwrap();
+        // A store that can't be removed: a non-empty read-only folder on Unix, an open file on
+        // Windows.
+        fs::write(root.join("trust.jsonl"), b"x").unwrap();
+        #[cfg(windows)]
+        let _held = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(root.join("trust.jsonl"))
+                .unwrap()
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let held = root.join("browser-profile");
+            fs::create_dir_all(&held).unwrap();
+            fs::write(held.join("file"), b"x").unwrap();
+            fs::set_permissions(&held, fs::Permissions::from_mode(0o500)).unwrap();
+        }
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                root.join("browser-profile"),
+                fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        }
+        assert!(!report.residual.is_empty());
+        assert!(marker.exists());
+        assert!(report.residual.contains(&marker));
+    }
+
+    /// Without `--purge-data`, nothing goes, and everything is reported.
+    #[test]
+    fn a_plain_uninstall_keeps_and_reports_every_store() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("uninstall-plain").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        let stores = [
+            "secrets/service.name.dpapi",
+            "executable_registry.json",
+            "remote_leases.json",
+            "contained-runs/old/left",
+            "legacy-migration-in-progress",
+            "legacy-import-1/key",
+        ];
+        for store in stores {
+            let path = root.join(store);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"x").unwrap();
+        }
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: false })
+            .unwrap();
+        for store in stores {
+            let path = root.join(store);
+            assert_eq!(fs::read(&path).unwrap(), b"x", "{store}");
+            assert!(
+                report.retained.iter().any(|kept| path.starts_with(kept)),
+                "{store} isn't reported as kept"
+            );
+        }
     }
 
     #[test]
