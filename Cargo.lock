@@ -1092,6 +1092,7 @@ version = "0.2.0"
 dependencies = [
  "orcel-approval",
  "orcel-lifecycle",
+ "orcel-platform",
  "orcel-policy",
  "serde_json",
  "sha2 0.10.9",

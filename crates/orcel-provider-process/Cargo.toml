@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 
 [dev-dependencies]
+orcel-platform = { path = "../orcel-platform" }
 orcel-policy = { path = "../orcel-policy" }
 orcel-lifecycle = { path = "../orcel-lifecycle" }
 orcel-approval = { path = "../orcel-approval", features = ["test-support"] }
