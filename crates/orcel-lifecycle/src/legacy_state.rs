@@ -50,7 +50,7 @@ const LOCKS: [&str; 3] = [
     "report-tasks.jsonl.lock",
     "mutations.jsonl.lock",
 ];
-const STAGING_PREFIX: &str = "legacy-import-";
+pub(crate) const STAGING_PREFIX: &str = "legacy-import-";
 /// Only this tells an interrupted migration's copies from state in normal use.
 const IN_PROGRESS: &str = legacy::MIGRATION_IN_PROGRESS;
 

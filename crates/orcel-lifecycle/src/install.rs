@@ -644,6 +644,74 @@ mod tests {
         assert!(report.purged.contains(&quarantined));
     }
 
+    /// Every store Orcel keeps at the root: what uninstall says it kept, and what a purge removes.
+    #[test]
+    fn every_store_is_retained_and_then_purged() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-all").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        let stores = [
+            "secrets/service.name.dpapi",
+            "state/secrets/tunnel-runtime-key",
+            "state/authority/authority.key",
+            "state/device/device_key.json",
+            "state/remote/uplink.json",
+            "state/search/usage.json",
+            "state/legacy-state-decision.txt",
+            "executable_registry.json",
+            "remote_leases.json",
+            "audit.jsonl",
+            "trust.jsonl",
+            "report-tasks.jsonl",
+            "report-tasks.key",
+            "mutations.jsonl",
+            "browser-profile/live/pages.jsonl",
+            "contained-runs/old/left",
+            "document-parse/old/left",
+            "sg-000012-qualification/old/sentinel",
+            "legacy-migration-in-progress",
+            "legacy-import-1/state/secrets/key",
+        ];
+        for store in stores {
+            let path = root.join(store);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"x").unwrap();
+        }
+        let retained = Layout::new(&root).retained_data();
+        for store in stores {
+            let path = root.join(store);
+            assert!(
+                retained.iter().any(|kept| path.starts_with(kept)),
+                "{store} isn't reported as kept"
+            );
+        }
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        assert!(report.residual.is_empty(), "{:?}", report.residual);
+        assert!(!root.exists());
+    }
+
+    /// A purge removes what's known to be Orcel's. Anything else stays, and is reported.
+    #[test]
+    fn a_purge_leaves_and_reports_what_it_doesnt_recognise() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-unknown").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        fs::write(root.join("somebody-elses.txt"), b"keep").unwrap();
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        assert!(report.residual.contains(&root), "{:?}", report.residual);
+        assert_eq!(fs::read(root.join("somebody-elses.txt")).unwrap(), b"keep");
+    }
+
     #[test]
     fn running_supervisor_blocks_uninstall() {
         let platform = FakePlatform::default();

@@ -125,9 +125,21 @@ impl Layout {
             self.root.join("mutations.jsonl"),
             self.root.join("mutations.jsonl.lock"),
             self.root.join("mutations.jsonl.rewrite"),
+            // Secret blobs, what's run and who holds a lease: a purge must not leave these.
+            self.root.join("secrets"),
+            self.root.join("executable_registry.json"),
+            self.root.join("remote_leases.json"),
+            // Scratch left by short-lived runs, and by a qualification.
+            self.root.join("contained-runs"),
+            self.root.join("document-parse"),
+            self.root.join("sg-000012-qualification"),
+            // An unfinished migration of earlier state.
+            self.root
+                .join(orcel_platform::legacy::MIGRATION_IN_PROGRESS),
         ];
         // Approval ledgers quarantined by `orcel approvals recover` (#278),
-        // and a new chain staged by a recovery that was interrupted.
+        // a new chain staged by a recovery that was interrupted, and a
+        // migration's staging.
         if let Ok(entries) = std::fs::read_dir(&self.root) {
             let mut quarantined: Vec<PathBuf> = entries
                 .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -137,6 +149,8 @@ impl Layout {
                         .is_some_and(|name| {
                             name.starts_with("approval-history.jsonl.quarantine-")
                                 || name.starts_with("approval-history.jsonl.recovering-")
+                                // What an interrupted migration staged, which can hold keys.
+                                || name.starts_with(crate::legacy_state::STAGING_PREFIX)
                         })
                 })
                 .collect();
