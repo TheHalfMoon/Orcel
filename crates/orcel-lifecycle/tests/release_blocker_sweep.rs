@@ -1012,3 +1012,126 @@ fn xp01b_moved_stores_never_name_the_shared_temp_directory() {
         assert!(hits.is_empty(), "{hits:?}");
     }
 }
+
+/// #655: the files that may resolve Orcel's per-user state root, with what each builds there.
+/// Each resolves through `orcel_platform::stores`, so a store is registered before anything
+/// creates it, and uninstall and migration follow the registry. A new file here means a new
+/// store: register it in `crates/orcel-platform/src/stores.rs` first.
+const STATE_ROOT_RESOLVERS: &[(&str, &str)] = &[
+    ("crates/orcel-approval/src/lib.rs", "the approval ledger"),
+    ("crates/orcel-audit/src/lib.rs", "the audit log"),
+    (
+        "crates/orcel-lifecycle/src/layout.rs",
+        "the install, its records, state and logs",
+    ),
+    ("crates/orcel-platform/src/paths.rs", "the root itself"),
+    (
+        "crates/orcel-policy/src/executable_registry.rs",
+        "the executable registry",
+    ),
+    (
+        "crates/orcel-policy/src/full_control_store.rs",
+        "full-control authority",
+    ),
+    (
+        "crates/orcel-policy/src/protected_state.rs",
+        "the roots a workspace mustn't overlap",
+    ),
+    ("crates/orcel-policy/src/remote_session.rs", "remote leases"),
+    (
+        "crates/orcel-provider-browser/src/lib.rs",
+        "the browser profile",
+    ),
+    (
+        "crates/orceld/src/contained_tier.rs",
+        "contained runs' scratch",
+    ),
+    (
+        "crates/orceld/src/document_parse.rs",
+        "document parsing's scratch",
+    ),
+    (
+        "crates/orceld/src/mutation_journal.rs",
+        "the mutation journal",
+    ),
+    (
+        "crates/orceld/src/report_task.rs",
+        "the report task journal",
+    ),
+    ("crates/orceld/src/search.rs", "search usage"),
+    (
+        "crates/orceld/src/secret_store.rs",
+        "secret blobs and the earlier device key record",
+    ),
+    ("crates/orceld/src/trust.rs", "workspace trust"),
+];
+
+/// A literal name joined straight onto a state root, which skips the registry: a variable named
+/// exactly `root`, `state` or `state_root`, not `data_root` or `stage_root`.
+fn joins_a_literal_onto_a_root(line: &str) -> bool {
+    ["root", "state", "state_root"].iter().any(|name| {
+        let shape = format!("{name}.join(\"");
+        line.match_indices(&shape).any(|(at, _)| {
+            !line[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|before| before.is_alphanumeric() || before == '_')
+        })
+    })
+}
+
+#[test]
+fn state_stores_are_named_only_through_the_registry() {
+    let root = repo_root();
+    let files = text_files(&root);
+    let test_modules = test_only_modules(&files);
+    let mut hits = Vec::new();
+    let mut used = vec![false; STATE_ROOT_RESOLVERS.len()];
+    for (relative, text) in &files {
+        if !relative.ends_with(".rs")
+            || vendored(relative)
+            || is_test_file(relative)
+            || test_modules.contains(relative)
+            || !(relative.starts_with("crates/") || relative.starts_with("apps/"))
+        {
+            continue;
+        }
+        let resolver = STATE_ROOT_RESOLVERS
+            .iter()
+            .position(|(path, _)| path == relative);
+        let lifecycle = relative.starts_with("crates/orcel-lifecycle/src/");
+        for (number, line) in non_test_lines(text) {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if line.contains("state_root(") || line.contains("state_root_from(") {
+                match resolver {
+                    Some(index) => used[index] = true,
+                    None => hits.push(format!(
+                        "{relative}:{number}: resolves the state root outside the listed \
+                         resolvers: {}",
+                        line.trim()
+                    )),
+                }
+            }
+            if (resolver.is_some() || lifecycle) && joins_a_literal_onto_a_root(line) {
+                hits.push(format!(
+                    "{relative}:{number}: names a store without the registry: {}",
+                    line.trim()
+                ));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "state stores must come from orcel_platform::stores (#655):\n{}",
+        hits.join("\n")
+    );
+    let stale: Vec<_> = STATE_ROOT_RESOLVERS
+        .iter()
+        .zip(&used)
+        .filter(|(_, used)| !**used)
+        .map(|((path, _), _)| *path)
+        .collect();
+    assert!(stale.is_empty(), "stale resolver entries: {stale:?}");
+}

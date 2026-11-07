@@ -153,7 +153,7 @@ impl Scratch {
     fn create(request_digest: &str) -> Result<Self, ProviderError> {
         let root = orcel_platform::paths::state_root()
             .map_err(|error| unavailable(format!("state root is unavailable: {error}")))?;
-        let runs = root.join("contained-runs");
+        let runs = orcel_platform::stores::CONTAINED_RUNS.path(&root);
         private_dir_builder(true)
             .create(&runs)
             .map_err(|error| unavailable(format!("contained scratch root: {error}")))?;

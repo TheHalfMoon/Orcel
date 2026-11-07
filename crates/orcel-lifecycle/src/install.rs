@@ -704,55 +704,52 @@ mod tests {
         installer
             .install(&release_dir("0.2.0"), &options())
             .unwrap();
-        let stores = [
-            "secrets/service.name.dpapi",
-            "state/secrets/tunnel-runtime-key",
-            "state/authority/authority.key",
-            "state/device/device_key.json",
-            "state/remote/uplink.json",
-            "state/search/usage.json",
-            "state/legacy-state-decision.txt",
-            "executable_registry.json",
-            "remote_leases.json",
-            "audit.jsonl",
-            "trust.jsonl",
-            "report-tasks.jsonl",
-            "report-tasks.key",
-            "mutations.jsonl",
-            "browser-profile/live/pages.jsonl",
-            "contained-runs/old/left",
-            "document-parse/old/left",
-            "sg-000012-qualification/old/sentinel",
-            "legacy-migration-in-progress",
-            "legacy-import-1/state/secrets/key",
-            ".report-tasks.key.tmp-1-2",
-            ".remote_leases.json.tmp-1-2",
-            ".executable_registry.json.tmp-1-2",
-            ".current.json.tmp-1-2",
-            ".install.json.tmp-1-2",
-            "report-tasks.jsonl.lock",
-            "report-tasks.jsonl.rewrite",
-            "mutations.jsonl.lock",
-            "mutations.jsonl.rewrite",
-            "approval-history.jsonl",
-            "approval-history.jsonl.lock",
-            "approval-history.jsonl.quarantine-1-abc",
-            "approval-history.jsonl.recovering-1",
-            "logs/supervisor.log",
-        ];
-        for store in stores {
+        // Every registered store, so one registered later is checked too, and one sibling of
+        // each kind the naming rule gives a file store.
+        let mut stores: Vec<String> = orcel_platform::stores::STORES
+            .iter()
+            .map(|store| match store.kind {
+                orcel_platform::stores::Kind::File => store.relative.to_owned(),
+                orcel_platform::stores::Kind::Dir => format!("{}/inside", store.relative),
+                orcel_platform::stores::Kind::NumberedDirs => format!("{}1/inside", store.relative),
+            })
+            .collect();
+        stores.extend(
+            [
+                ".report-tasks.key.tmp-1-2",
+                ".remote_leases.json.tmp-1-2",
+                ".executable_registry.json.tmp-1-2",
+                ".current.json.tmp-1-2",
+                ".install.json.tmp-1-2",
+                "report-tasks.jsonl.lock",
+                "mutations.jsonl.rewrite",
+                "approval-history.jsonl.quarantine-1-abc",
+                "approval-history.jsonl.recovering-1",
+            ]
+            .map(String::from),
+        );
+        let stores: Vec<&str> = stores.iter().map(String::as_str).collect();
+        for store in stores.iter().copied() {
             let path = root.join(store);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, b"x").unwrap();
         }
-        let retained = Layout::new(&root).retained_data();
-        for store in stores {
+        // Each is the person's, kept and reported, or a program file's, removed.
+        let layout = Layout::new(&root);
+        let retained = layout.retained_data();
+        let removed = layout.executable_state();
+        for store in stores.iter().copied() {
             let path = root.join(store);
             assert!(
-                retained.iter().any(|kept| path.starts_with(kept)),
-                "{store} isn't reported as kept"
+                retained
+                    .iter()
+                    .chain(&removed)
+                    .any(|listed| path.starts_with(listed)),
+                "{store} is neither kept nor removed"
             );
         }
+        let payload_leftover = root.join(".current.json.tmp-1-2");
+        assert!(removed.contains(&payload_leftover), "{removed:?}");
         let report = installer
             .uninstall(&UninstallOptions { purge_data: true })
             .unwrap();

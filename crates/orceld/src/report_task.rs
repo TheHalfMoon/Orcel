@@ -616,7 +616,7 @@ pub(crate) fn default_journal_path() -> Result<PathBuf, orcel_platform::Platform
     }
     let root = paths::state_root()?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("report-tasks.jsonl"))
+    Ok(orcel_platform::stores::REPORT_TASKS.path(&root))
 }
 
 pub(crate) fn is_report_request(request: &RequestEnvelope) -> bool {

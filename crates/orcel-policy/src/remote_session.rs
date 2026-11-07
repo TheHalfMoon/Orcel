@@ -542,7 +542,7 @@ pub fn default_lease_store_path_from(
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("remote_leases.json"))
+    Ok(orcel_platform::stores::REMOTE_LEASES.path(&root))
 }
 
 /// Load the lease store. A missing, unreadable, corrupt, or tampered store
