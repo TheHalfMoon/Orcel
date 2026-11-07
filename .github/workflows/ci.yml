@@ -1023,6 +1023,7 @@ jobs:
       # #438: so a navigation timeout can be set against what the machine was doing.
       - name: Start the machine sampler
         if: runner.os == 'Windows'
+        continue-on-error: true
         shell: pwsh
         run: Start-Process pwsh -WindowStyle Hidden -ArgumentList @("-NoProfile", "-File", "scripts/ci-machine-sampler.ps1", "-Log", (Join-Path $env:RUNNER_TEMP "machine-sampler.log"))
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -1040,6 +1041,7 @@ jobs:
         run: npm test
       - name: Print the machine sampler
         if: always() && runner.os == 'Windows'
+        continue-on-error: true
         shell: pwsh
         run: |
           $log = Join-Path $env:RUNNER_TEMP "machine-sampler.log"
