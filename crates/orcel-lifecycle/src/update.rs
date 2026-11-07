@@ -263,11 +263,16 @@ impl<'a> Updater<'a> {
             return Ok(report(UpdateOutcome::Checked, false, Vec::new(), None));
         }
         if direction == "same" && !options.reinstall {
+            // Also where an interrupted update was just completed, which didn't reconcile.
+            let start_menu = installer.reconcile_start_menu(
+                &self.layout.version_dir(&from),
+                state.record.path_entry_added,
+            );
             return Ok(report(
                 UpdateOutcome::AlreadyCurrent,
                 false,
                 Vec::new(),
-                None,
+                Some(start_menu),
             ));
         }
 

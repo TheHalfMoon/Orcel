@@ -1002,11 +1002,14 @@ fn start_menu_line(change: &orcel_lifecycle::install::StartMenuChange) -> String
     use orcel_lifecycle::install::StartMenuChange;
     match change {
         StartMenuChange::Present | StartMenuChange::Unchanged => String::new(),
-        StartMenuChange::Removed => {
-            "  Start Menu: entry removed, since this version has no Orcel app\n".into()
-        }
+        // A version without the app may predate this, so its own `orcel update` won't put the
+        // entry back; a repair from the newer version does.
+        StartMenuChange::Removed => "  Start Menu: entry removed, since this version has no Orcel \
+             app. After moving to a version with it, run that release's `orcel install` to add \
+             it again\n"
+            .into(),
         StartMenuChange::Problem(problem) => {
-            format!("  Start Menu: not updated ({problem}). `orcel app` opens the app\n")
+            format!("  Start Menu: not updated ({problem})\n")
         }
     }
 }

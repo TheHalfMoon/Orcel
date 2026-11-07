@@ -398,20 +398,28 @@ impl<'a> Installer<'a> {
         path_entry_added: bool,
     ) -> StartMenuChange {
         let cli = self.layout.bin_cli();
+        let app = version_dir.join(APP_FILE).is_file();
         let ours = match self.platform.has_start_menu_entry(&cli) {
             Ok(ours) => ours,
-            Err(error) => return StartMenuChange::Problem(error.message),
+            // Something by that name that can't be read as Orcel's. It only matters when an entry
+            // should be written there; it's never removed.
+            Err(error) if app && path_entry_added => {
+                return StartMenuChange::Problem(error.message)
+            }
+            Err(_) => return StartMenuChange::Unchanged,
         };
-        let app = version_dir.join(APP_FILE).is_file();
         let result = match (app, ours || path_entry_added) {
             (true, true) => self
                 .platform
                 .add_start_menu_entry(&cli)
                 .map(|()| StartMenuChange::Present),
-            (false, _) if ours => self
-                .platform
-                .remove_start_menu_entry(&cli)
-                .map(|_| StartMenuChange::Removed),
+            (false, _) if ours => self.platform.remove_start_menu_entry(&cli).map(|removed| {
+                if removed {
+                    StartMenuChange::Removed
+                } else {
+                    StartMenuChange::Unchanged
+                }
+            }),
             _ => Ok(StartMenuChange::Unchanged),
         };
         result.unwrap_or_else(|error| StartMenuChange::Problem(error.message))
