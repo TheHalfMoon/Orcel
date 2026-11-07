@@ -562,7 +562,7 @@ pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
             if interrupted {
                 human.push_str(
                     "A migration was interrupted. Run `orcel state migrate` to finish it; \
-                     keep-separate is refused until it does.\n",
+                     keep-separate is refused while it's unfinished.\n",
                 );
             } else if matches!(state, LegacyState::Undecided(_)) {
                 human.push_str(
