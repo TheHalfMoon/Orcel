@@ -24,6 +24,9 @@ pub struct InstallReport {
     pub cli: PathBuf,
     pub node_path: PathBuf,
     pub path_entry_added: bool,
+    /// Why there's no Start Menu entry, if `add_to_path` asked for one. Install doesn't fail for it.
+    pub start_menu_problem: Option<String>,
+    pub start_menu_added: bool,
     pub repaired_existing: bool,
     pub retained_data: Vec<PathBuf>,
 }
@@ -39,6 +42,7 @@ pub struct UninstallReport {
     pub retained: Vec<PathBuf>,
     pub purged: Vec<PathBuf>,
     pub path_entry_removed: bool,
+    pub start_menu_removed: bool,
     pub relocated_cli: Option<PathBuf>,
     pub residual: Vec<PathBuf>,
 }
@@ -145,6 +149,15 @@ impl<'a> Installer<'a> {
         } else {
             already_added
         };
+        // A convenience: `orcel app` works without it, so its failure doesn't fail the install.
+        let (start_menu_added, start_menu_problem) = if options.add_to_path {
+            match self.platform.add_start_menu_entry(&self.layout.bin_cli()) {
+                Ok(()) => (true, None),
+                Err(error) => (false, Some(error.message)),
+            }
+        } else {
+            (false, None)
+        };
         write_json_atomic(
             &self.layout.install_file(),
             &InstallRecord {
@@ -177,6 +190,8 @@ impl<'a> Installer<'a> {
             cli: self.layout.bin_cli(),
             node_path: node,
             path_entry_added,
+            start_menu_problem,
+            start_menu_added,
             repaired_existing,
             retained_data: self.layout.retained_data(),
         })
@@ -382,6 +397,11 @@ impl<'a> Installer<'a> {
             retained: Vec::new(),
             purged: Vec::new(),
             path_entry_removed: false,
+            // Before the CLI below moves. A failure here shouldn't stop an uninstall.
+            start_menu_removed: self
+                .platform
+                .remove_start_menu_entry(&self.layout.bin_cli())
+                .unwrap_or(false),
             relocated_cli: None,
             residual: Vec::new(),
         };
@@ -871,6 +891,55 @@ mod tests {
                 "{store} isn't reported as kept"
             );
         }
+    }
+
+    #[test]
+    fn the_start_menu_entry_follows_install_and_uninstall() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("start-menu").join("Orcel");
+        let layout = Layout::new(&root);
+        let installer = Installer::new(layout.clone(), &platform);
+        let report = installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        assert!(report.start_menu_added);
+        assert_eq!(*platform.start_menu.borrow(), Some(layout.bin_cli()));
+        let report = installer.uninstall(&UninstallOptions::default()).unwrap();
+        assert!(report.start_menu_removed);
+        assert_eq!(*platform.start_menu.borrow(), None);
+    }
+
+    #[test]
+    fn a_start_menu_failure_doesnt_fail_the_install() {
+        let platform = FakePlatform {
+            start_menu_fails: true,
+            ..FakePlatform::default()
+        };
+        let root = temp_dir("start-menu-fails").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        let report = installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        assert!(!report.start_menu_added);
+        assert!(report.start_menu_problem.is_some());
+    }
+
+    #[test]
+    fn no_path_leaves_the_start_menu_alone() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("start-menu-none").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        let report = installer
+            .install(
+                &release_dir("0.2.0"),
+                &InstallOptions {
+                    add_to_path: false,
+                    ..options()
+                },
+            )
+            .unwrap();
+        assert!(!report.start_menu_added);
+        assert_eq!(*platform.start_menu.borrow(), None);
     }
 
     #[test]
