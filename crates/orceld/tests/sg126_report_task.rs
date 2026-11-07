@@ -86,7 +86,7 @@ impl Orceld {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         if cfg!(windows) {
-            command.env("LOCALAPPDATA", state);
+            command.env("USERPROFILE", state);
         } else if cfg!(target_os = "linux") {
             command.env("XDG_STATE_HOME", state);
         }

@@ -1,5 +1,7 @@
 # Cross-platform architecture: Windows, macOS, Linux
 
+> **Windows state root, 2026-11-07:** it is now `%USERPROFILE%\.orcel`, not `%LOCALAPPDATA%\Orcel`, which this document may still name. Other software on an ordinary account can hold rights on `AppData` that Orcel rightly refuses. See `crates/orcel-platform/src/paths.rs` and `legacy.rs`.
+
 Status: FOUNDER-DIRECTED goal (2026-10-18: all three OSes are first-class); the design below is ADOPTED (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`). It grants no authority. Owning tasks: `backlog/tasks.json` XP-01..XP-20.
 
 ## 1. Rule

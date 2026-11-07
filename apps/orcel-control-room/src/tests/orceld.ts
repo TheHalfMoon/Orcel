@@ -106,7 +106,7 @@ export async function createSandbox(instance: string, options: SandboxOptions = 
   if (process.platform === "win32") {
     const local = path.join(root, "l");
     await mkdir(local, { recursive: true });
-    env.LOCALAPPDATA = local;
+    env.USERPROFILE = local;
   } else if (process.platform === "darwin") {
     const homeDir = path.join(root, home);
     await mkdir(homeDir, { recursive: true, mode: 0o700 });

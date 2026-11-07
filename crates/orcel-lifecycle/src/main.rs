@@ -10,7 +10,7 @@ Orcel - Computer Orchestration & Trusted Runtime Access
 
 Install and maintenance:
   orcel install [--source <release-dir>] [--node <node.exe>] [--no-path]
-      Install or repair the per-user install under %LOCALAPPDATA%\\Orcel. The release
+      Install or repair the per-user install under %USERPROFILE%\\.orcel. The release
       directory defaults to the directory containing this orcel.exe. Every payload
       file is verified against manifest.json before anything is copied. Administrator
       rights are not required; an elevated \"Run as administrator\" prompt is refused.
@@ -20,6 +20,11 @@ Install and maintenance:
       --purge-data --yes is given. Workspaces are never touched.
   orcel version
       Show this CLI version and the installed and previous versions.
+  orcel state status | migrate | keep-separate
+      Decide what happens to state an earlier build left at %LOCALAPPDATA%\\Orcel, which
+      orceld requires before it starts. migrate copies user data, only if nobody else could
+      have changed it; keep-separate records that it stays where it is, unused. Neither
+      deletes or changes it.
 
 Configuration:
   orcel workspace add <id> <directory>    Add a workspace the agent may use.
@@ -288,6 +293,7 @@ fn run(args: &mut Args) -> Result<Output, LifecycleError> {
         "stop" => commands::stop(args),
         "status" => commands::status(args),
         "doctor" => commands::doctor(args),
+        "state" => commands::state(args),
         "app" => commands::app(args),
         "approvals" => commands::approvals(args),
         "emergency-revoke" => commands::emergency_revoke(args),

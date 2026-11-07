@@ -994,6 +994,7 @@ dependencies = [
 name = "orcel-lifecycle"
 version = "0.2.0"
 dependencies = [
+ "fs4",
  "libc",
  "orcel-approval",
  "orcel-contracts",

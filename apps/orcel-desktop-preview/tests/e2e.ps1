@@ -1,6 +1,6 @@
 # Native Windows end-to-end test of the read-only desktop foundation, driven
 # through Windows UI Automation (no third-party framework). It launches the
-# real executable with an isolated LOCALAPPDATA for the app process only:
+# real executable with an isolated USERPROFILE for the app process only:
 # -RuntimeRoot points at a per-user runtime install made for testing; without
 # it an empty temporary folder is used, so the user's real install is never
 # queried. It checks what a person would see and performs no computer actions
@@ -59,8 +59,8 @@ function WaitForMessage($window, [string]$needle, [int]$timeoutMs) {
 
 $start = New-Object System.Diagnostics.ProcessStartInfo $app
 $start.UseShellExecute = $false
-$start.EnvironmentVariables["LOCALAPPDATA"] = $(if ($expectInstalled) { $RuntimeRoot } else { $emptyRoot })
-# SG-000127: the app API pipe is per user, not per LOCALAPPDATA. Unless the
+$start.EnvironmentVariables["USERPROFILE"] = $(if ($expectInstalled) { $RuntimeRoot } else { $emptyRoot })
+# SG-000127: the app API pipe is per user, not per USERPROFILE. Unless the
 # caller names an instance served by a test orceld, point the app at an
 # instance nothing serves, so the user's real runtime is never read.
 $appApiInstance = $(if ($env:ORCEL_E2E_APP_API_INSTANCE) { $env:ORCEL_E2E_APP_API_INSTANCE } else { "e2e-" + [guid]::NewGuid().ToString("N").Substring(0, 12) })

@@ -11,6 +11,7 @@ pub mod health;
 pub mod install;
 pub mod ipc;
 pub mod layout;
+pub mod legacy_state;
 pub mod lifecycle;
 pub mod linux;
 pub mod logs;

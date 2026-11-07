@@ -9,7 +9,7 @@
 //!
 //! - Windows: DPAPI (`CryptProtectData`, current-user scope, UI forbidden,
 //!   per-name entropy). The protected blob is a file in
-//!   `<state root>\secrets\`, which inherits the per-user `%LOCALAPPDATA%`
+//!   `<state root>\secrets\`, which inherits the protected DACL of the state root under `%USERPROFILE%`
 //!   ACL. DPAPI's own MAC refuses a tampered blob.
 //! - macOS: the user's default keychain through the `keyring` project's
 //!   `apple-native-keyring-store` (T-CUA-34: the crate family Cua's

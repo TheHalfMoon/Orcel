@@ -3,7 +3,7 @@
 //! not enable is refused, a missing key (or, off Windows, the missing native
 //! transport) is unavailable, `secret.get` never returns a search key, the
 //! doctor reports health without secrets, and a canary key stored through
-//! `secret.put` (Windows: DPAPI under a redirected `LOCALAPPDATA`) never
+//! `secret.put` (Windows: DPAPI under a redirected `USERPROFILE`) never
 //! reaches stdout, stderr or the audit log. Nothing here reaches approval or
 //! the network; the adapters' provider contracts are covered by the
 //! loopback contract server tests in `src/search/tests.rs`.
@@ -74,7 +74,7 @@ fn run_orceld_env(
         command.env(name, value);
     }
     if cfg!(windows) {
-        command.env("LOCALAPPDATA", state);
+        command.env("USERPROFILE", state);
     } else if cfg!(target_os = "linux") {
         command.env("XDG_STATE_HOME", state);
     }

@@ -65,7 +65,7 @@ fn sandbox(label: &str) -> PathBuf {
 /// The per-user variable the running OS's layout reads, pointed at `base`.
 fn user_root_env(base: &Path) -> Vec<(&'static str, OsString)> {
     #[cfg(windows)]
-    let name = "LOCALAPPDATA";
+    let name = "USERPROFILE";
     #[cfg(not(windows))]
     let name = "HOME";
     vec![(name, base.as_os_str().to_owned())]
@@ -126,16 +126,16 @@ fn missing_state_root_is_an_error_never_temp() {
 
 #[cfg(windows)]
 #[test]
-fn windows_paths_are_byte_identical_to_the_previous_defaults() {
+fn windows_paths_are_under_the_profile_state_root() {
     // A real local app data directory: resolving now creates the private
     // directories with an owner-only DACL (#358 item 2), as on Unix.
     let local = sandbox("windows-bytes");
-    let lookup = lookup(vec![("LOCALAPPDATA", local.clone().into_os_string())]);
+    let lookup = lookup(vec![("USERPROFILE", local.clone().into_os_string())]);
     let local = local.display().to_string();
     let expected = [
-        format!(r"{local}\Orcel\state\authority"),
-        format!(r"{local}\Orcel\executable_registry.json"),
-        format!(r"{local}\Orcel\remote_leases.json"),
+        format!(r"{local}\.orcel\state\authority"),
+        format!(r"{local}\.orcel\executable_registry.json"),
+        format!(r"{local}\.orcel\remote_leases.json"),
     ];
     for (store, expected) in STORES.iter().zip(expected) {
         let path = (store.resolve)(&lookup).expect(store.name);

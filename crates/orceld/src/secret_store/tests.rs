@@ -500,7 +500,7 @@ fn xp19_malformed_or_linked_legacy_records_are_refused() {
 fn xp19_legacy_record_comes_only_from_the_private_state_root() {
     let root = unique_dir("root");
     let lookup = |name: &str| match name {
-        "LOCALAPPDATA" | "HOME" | "XDG_STATE_HOME" => Some(root.clone().into_os_string()),
+        "USERPROFILE" | "HOME" | "XDG_STATE_HOME" => Some(root.clone().into_os_string()),
         _ => None,
     };
     let path = legacy_device_key_path(&lookup).expect("path");

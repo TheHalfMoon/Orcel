@@ -1,6 +1,9 @@
 //! XP-01 per-user Orcel state root.
 //!
-//! - Windows: `%LOCALAPPDATA%\Orcel` (unchanged from the earlier defaults).
+//! - Windows: `%USERPROFILE%\.orcel`. Not `%LOCALAPPDATA%`: other software on an ordinary
+//!   account can hold rights there that let it rename the folder (a sandbox's group holding
+//!   Modify on `AppData`, say), and [`ensure_private_dir`] rightly refuses such an ancestor.
+//!   Windows gives the profile's root to the user, SYSTEM and Administrators; others hold traverse at most.
 //! - macOS: `$HOME/Library/Application Support/Orcel`.
 //! - Linux and other Unix: `$XDG_STATE_HOME/orcel`, else
 //!   `$HOME/.local/state/orcel`.
@@ -187,21 +190,21 @@ pub fn state_root_from(
 
 /// The Orcel state root `layout` derives from `lookup`. Values that are not
 /// absolute are never used: a relative `XDG_STATE_HOME` is ignored as the
-/// XDG specification requires, and a relative `HOME` or `LOCALAPPDATA` is an
+/// XDG specification requires, and a relative `HOME` or `USERPROFILE` is an
 /// error.
 pub fn state_root_for(
     layout: StateLayout,
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, PlatformError> {
     match layout {
-        StateLayout::Windows => Ok(absolute_var(layout, lookup, "LOCALAPPDATA")
-            .ok_or_else(|| unavailable("LOCALAPPDATA"))?
-            .join("Orcel")),
+        StateLayout::Windows => Ok(absolute_var(layout, lookup, "USERPROFILE")
+            .ok_or_else(|| unavailable("USERPROFILE"))?
+            .join(".orcel")),
         StateLayout::MacOs => Ok(absolute_var(layout, lookup, "HOME")
             .ok_or_else(|| unavailable("HOME"))?
             .join("Library")
             .join("Application Support")
-            .join("Orcel")),
+            .join(".orcel")),
         StateLayout::Xdg => {
             if let Some(state_home) = absolute_var(layout, lookup, "XDG_STATE_HOME") {
                 return Ok(state_home.join("orcel"));
@@ -248,6 +251,18 @@ pub fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
         return Err(PlatformError::NotAbsolute(path.to_path_buf()));
     }
     imp::ensure_private_dir(path)
+}
+
+/// Whether an existing folder passes [`ensure_private_dir`]'s rules, changing nothing: never
+/// creates it or an ancestor.
+pub fn check_existing_private_dir(path: &Path) -> Result<(), String> {
+    std::fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if path.ancestors().skip(1).any(|ancestor| {
+        !ancestor.as_os_str().is_empty() && std::fs::symlink_metadata(ancestor).is_err()
+    }) {
+        return Err(format!("{} has a missing ancestor", path.display()));
+    }
+    ensure_private_dir(path).map_err(|error| error.to_string())
 }
 
 /// XP-13b: an executable Orcel registers, hashes and runs must not be
@@ -788,7 +803,7 @@ mod tests {
             Ok(PathBuf::from("/Users/u")
                 .join("Library")
                 .join("Application Support")
-                .join("Orcel"))
+                .join(".orcel"))
         );
     }
 
@@ -803,7 +818,7 @@ mod tests {
             Ok(PathBuf::from("/Users/u")
                 .join("Library")
                 .join("Application Support")
-                .join("Orcel"))
+                .join(".orcel"))
         );
     }
 
@@ -829,7 +844,7 @@ mod tests {
                 "{layout:?} gave {root:?}"
             );
         }
-        // The Windows layout reads only LOCALAPPDATA.
+        // The Windows layout reads only USERPROFILE.
         let root = state_root_for(
             StateLayout::Windows,
             &lookup(&[("HOME", "/home/u"), ("XDG_STATE_HOME", "/xdg")]),
@@ -851,19 +866,15 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_root_is_byte_identical_to_the_previous_default() {
-        let local_app_data = r"C:\Users\u\AppData\Local";
+    fn windows_root_is_under_the_profile_and_only_userprofile_decides_it() {
+        let local_app_data = r"C:\Users\u";
         let root = state_root_for(
             StateLayout::Windows,
-            &lookup(&[("LOCALAPPDATA", local_app_data), ("HOME", "/home/u")]),
+            &lookup(&[("USERPROFILE", local_app_data), ("HOME", "/home/u")]),
         )
         .expect("root");
-        // The expression the earlier defaults used.
-        assert_eq!(root, PathBuf::from(local_app_data).join("Orcel"));
-        assert_eq!(
-            root.as_os_str().as_encoded_bytes(),
-            br"C:\Users\u\AppData\Local\Orcel"
-        );
+        assert_eq!(root, PathBuf::from(local_app_data).join(".orcel"));
+        assert_eq!(root.as_os_str().as_encoded_bytes(), br"C:\Users\u\.orcel");
     }
 
     #[cfg(windows)]
@@ -875,8 +886,8 @@ mod tests {
             r"\AppData\Local",
             r"C:\Users\..\Local",
         ] {
-            let root = state_root_for(StateLayout::Windows, &lookup(&[("LOCALAPPDATA", value)]));
-            assert!(root.is_err(), "LOCALAPPDATA={value:?} gave {root:?}");
+            let root = state_root_for(StateLayout::Windows, &lookup(&[("USERPROFILE", value)]));
+            assert!(root.is_err(), "USERPROFILE={value:?} gave {root:?}");
         }
     }
 
@@ -944,7 +955,7 @@ mod tests {
             let base = sandbox("win-create");
             // Everyone may read the parent, and that entry is inheritable.
             grant(&base, "(OI)(CI)(RX)");
-            let root = base.join("missing").join("Orcel");
+            let root = base.join("missing").join(".orcel");
             assert_eq!(ensure_private_dir(&root), Ok(()));
             for created in [base.join("missing"), root.clone()] {
                 assert!(created.is_dir());
@@ -972,7 +983,7 @@ mod tests {
         fn an_ancestor_others_can_delete_from_is_refused_and_nothing_is_created() {
             let base = sandbox("win-ancestor");
             grant(&base, "(DC)");
-            let root = base.join("Orcel");
+            let root = base.join(".orcel");
             insecure(ensure_private_dir(&root), &base);
             assert!(!root.exists());
             let _ = std::fs::remove_dir_all(base);
@@ -983,7 +994,7 @@ mod tests {
         fn an_ancestor_others_can_only_add_to_is_accepted() {
             let base = sandbox("win-add");
             grant(&base, "(AD,WD)");
-            assert_eq!(ensure_private_dir(&base.join("Orcel")), Ok(()));
+            assert_eq!(ensure_private_dir(&base.join(".orcel")), Ok(()));
             let _ = std::fs::remove_dir_all(base);
         }
 
@@ -1012,10 +1023,10 @@ mod tests {
                 Err(PlatformError::Symlink(junction.clone()))
             );
             assert_eq!(
-                ensure_private_dir(&junction.join("Orcel")),
+                ensure_private_dir(&junction.join(".orcel")),
                 Err(PlatformError::Symlink(junction.clone()))
             );
-            assert!(!target.join("Orcel").exists());
+            assert!(!target.join(".orcel").exists());
             let _ = std::fs::remove_dir(&junction);
             let _ = std::fs::remove_dir_all(base);
         }

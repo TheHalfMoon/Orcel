@@ -1,5 +1,7 @@
 # Orcel Threat Model
 
+> **Windows state root, 2026-11-07:** it is now `%USERPROFILE%\.orcel`, not `%LOCALAPPDATA%\Orcel`, which this document may still name. Other software on an ordinary account can hold rights on `AppData` that Orcel rightly refuses. See `crates/orcel-platform/src/paths.rs` and `legacy.rs`.
+
 Status: INITIAL CANONICAL SECURITY MODEL
 Date: 2026-09-23
 

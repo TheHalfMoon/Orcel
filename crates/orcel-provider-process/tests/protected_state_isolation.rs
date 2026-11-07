@@ -16,6 +16,7 @@ fn required_env(name: &str) -> String {
 fn qualification_env(workspace: &std::path::Path) -> BTreeMap<String, String> {
     let mut env = BTreeMap::from([
         ("LOCALAPPDATA".to_owned(), required_env("LOCALAPPDATA")),
+        ("USERPROFILE".to_owned(), required_env("USERPROFILE")),
         ("SystemRoot".to_owned(), required_env("SystemRoot")),
         ("TEMP".to_owned(), required_env("TEMP")),
         ("TMP".to_owned(), workspace.to_string_lossy().into_owned()),
@@ -40,13 +41,13 @@ fn qualification_env(workspace: &std::path::Path) -> BTreeMap<String, String> {
 }
 
 fn sentinel_path() -> PathBuf {
-    let local_app_data = PathBuf::from(required_env("LOCALAPPDATA"));
+    let user_profile = PathBuf::from(required_env("USERPROFILE"));
     let tmp = PathBuf::from(required_env("TMP"));
     let instance = tmp
         .file_name()
         .expect("qualification TMP has a final component");
-    local_app_data
-        .join("Orcel")
+    user_profile
+        .join(".orcel")
         .join(SENTINEL_DIR)
         .join(instance)
         .join(SENTINEL_FILE)
@@ -101,12 +102,12 @@ fn windows_restricted_child_cannot_read_orcel_protected_state() {
     ));
     std::fs::create_dir_all(&workspace).expect("create qualification workspace");
 
-    let local_app_data = PathBuf::from(required_env("LOCALAPPDATA"));
+    let user_profile = PathBuf::from(required_env("USERPROFILE"));
     let instance = workspace
         .file_name()
         .expect("workspace has a final component");
-    let protected_dir = local_app_data
-        .join("Orcel")
+    let protected_dir = user_profile
+        .join(".orcel")
         .join(SENTINEL_DIR)
         .join(instance);
     std::fs::create_dir_all(&protected_dir).expect("create Orcel-owned qualification state");
