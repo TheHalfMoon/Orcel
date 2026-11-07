@@ -6,7 +6,7 @@
 // count as evidence. Run after `npm --prefix apps/orcel-browser-worker test`
 // (which builds dist/).
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -34,14 +34,16 @@ if (!existsSync(main)) {
 }
 // EXPERIMENT for #438, not to be merged: browser tasks in a loop for 11 minutes, through the
 // window in the job when Windows Update and Defender signature work starts. Nothing else runs.
+// The intervention, on this throwaway runner only: with the Storage Service stopped, does the
+// slow round during the Defender update go away?
+const stopped = spawnSync(
+  "powershell.exe",
+  ["-NoProfile", "-Command", "Set-Service StorSvc -StartupType Disabled; Stop-Service StorSvc -Force; (Get-Service StorSvc).Status"],
+  { encoding: "utf8" }
+);
+process.stderr.write(`LOOP-STORSVC status ${(stopped.stdout ?? "").trim()} exit ${stopped.status} ${(stopped.stderr ?? "").slice(0, 200)}\n`);
 const loopStart = Date.now();
 for (let round = 1; Date.now() - loopStart < 660000; round += 1) {
-  // The intervention: ask for the Defender signature update at the start of round 3, on this
-  // runner only, and see whether the slow round moves with it.
-  if (round === 3) {
-    process.stderr.write(`LOOP-TRIGGER Update-MpSignature at ${new Date().toISOString()}\n`);
-    spawn("powershell.exe", ["-NoProfile", "-Command", "Update-MpSignature"], { stdio: "ignore", detached: true }).unref();
-  }
   const began = Date.now();
   const loop = spawnSync(
     "cargo",
