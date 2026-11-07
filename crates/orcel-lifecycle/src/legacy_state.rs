@@ -51,6 +51,13 @@ const LOCKS: [&str; 3] = [
     "mutations.jsonl.lock",
 ];
 pub(crate) const STAGING_PREFIX: &str = "legacy-import-";
+/// Whether `name` is a staging folder migration made: its prefix and a process id, and nothing
+/// else, so a person's own file with a similar name is never taken for one.
+pub(crate) fn is_staging_name(name: &str) -> bool {
+    name.strip_prefix(STAGING_PREFIX)
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
 /// Only this tells an interrupted migration's copies from state in normal use.
 const IN_PROGRESS: &str = legacy::MIGRATION_IN_PROGRESS;
 

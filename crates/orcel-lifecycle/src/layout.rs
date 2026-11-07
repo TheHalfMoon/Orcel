@@ -10,6 +10,14 @@ use std::path::{Path, PathBuf};
 pub const CURRENT_SCHEMA: &str = "orcel-current-v1";
 pub const INSTALL_SCHEMA: &str = "orcel-install-v1";
 
+/// What a crash in the middle of an atomic write leaves at the root.
+const CRASH_LEFTOVERS: [&str; 4] = [
+    ".remote_leases.json.tmp-",
+    ".executable_registry.json.tmp-",
+    ".current.json.tmp-",
+    ".install.json.tmp-",
+];
+
 /// Paths of the per-user install rooted at the XP-01 state root
 /// (`%USERPROFILE%\.orcel` on Windows).
 ///
@@ -150,7 +158,10 @@ impl Layout {
                             name.starts_with("approval-history.jsonl.quarantine-")
                                 || name.starts_with("approval-history.jsonl.recovering-")
                                 // What an interrupted migration staged, which can hold keys.
-                                || name.starts_with(crate::legacy_state::STAGING_PREFIX)
+                                || crate::legacy_state::is_staging_name(name)
+                                // Crash leftovers of a store's atomic write hold its contents,
+                                // and of a record's.
+                                || CRASH_LEFTOVERS.iter().any(|prefix| name.starts_with(prefix))
                         })
                 })
                 .collect();
