@@ -39,11 +39,12 @@
 //! peer has exited or whose pid now names another process is closed
 //! unanswered.
 //!
-//! The API is read-only. Its methods (`status.get`, `capabilities.get`,
-//! `events.subscribe`, and SG-000126's `task.list` and `task.get`) read
-//! daemon facts, the event log and the report task registry; nothing reaches
-//! the request dispatcher, the policy engine or the approval broker, so no
-//! client can submit work or mint an approval through it. Frames are JSON
+//! The API is read-only except `task.stop`. Its other methods (`status.get`,
+//! `capabilities.get`, `events.subscribe`, and SG-000126's `task.list` and
+//! `task.get`) read daemon facts, the event log and the report task registry.
+//! `task.stop` can only move one task of this run to a final state. Nothing
+//! reaches the request dispatcher, the policy engine or the approval broker,
+//! so no client can submit work or mint an approval through it. Frames are JSON
 //! lines of at most [`MAX_FRAME_BYTES`]; concurrent clients, the event ring
 //! and the per-client event rate are bounded, and writes time out, so a
 //! slow client never blocks orceld's request loop: [`EventLog::publish`]
@@ -97,13 +98,15 @@ const REBIND_INTERVAL: Duration = Duration::from_secs(5);
 /// How often a streaming subscription reads its peer's instance again.
 const PEER_RECHECK: Duration = Duration::from_secs(1);
 
-/// The methods this revision serves. All of them only read.
+/// The methods this revision serves. All of them only read, except `task.stop`,
+/// which can only remove the ability to write (F4 slice 5).
 pub(crate) const METHODS: &[&str] = &[
     "status.get",
     "capabilities.get",
     "events.subscribe",
     "task.list",
     "task.get",
+    "task.stop",
 ];
 /// Read-only methods the protocol reserves; this revision answers
 /// `METHOD_UNAVAILABLE` for them.
@@ -727,6 +730,7 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
             None => Reply::Frame(ok_frame(&id, shared.tasks.list())),
         },
         "task.get" => Reply::Frame(task_get(shared, &id, &params)),
+        "task.stop" => Reply::Frame(task_stop(shared, &id, &params)),
         method if RESERVED_METHODS.contains(&method) => Reply::Frame(error_frame(
             &id,
             "METHOD_UNAVAILABLE",
@@ -735,7 +739,7 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
         method => Reply::Frame(error_frame(
             &id,
             "UNKNOWN_METHOD",
-            format!("{method} is not a method of {PROTOCOL}; the API is read-only"),
+            format!("{method} is not a method of {PROTOCOL}"),
         )),
     }
 }
@@ -760,6 +764,31 @@ fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>
             "UNKNOWN_TASK",
             "orceld has no such task (this run, or the earlier runs its journal kept)",
         ),
+    }
+}
+
+/// F4 slice 5: ends one task of this run. It never approves, writes or resumes.
+fn task_stop(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
+    if let Some(key) = params.keys().find(|key| key.as_str() != "task_id") {
+        return error_frame(
+            id,
+            "INVALID_REQUEST",
+            format!("task.stop has no parameter {key}"),
+        );
+    }
+    let Some(task_id) = params.get("task_id").and_then(Value::as_str) else {
+        return error_frame(id, "INVALID_REQUEST", "task.stop requires a string task_id");
+    };
+    match shared.tasks.stop_in_this_run(task_id) {
+        Ok(stopped) => ok_frame(id, stopped),
+        Err(failure) => {
+            let code = if failure.code == orcel_approval::FailureCode::TargetStale {
+                "TARGET_STALE"
+            } else {
+                "INVALID_REQUEST"
+            };
+            error_frame(id, code, failure.message)
+        }
     }
 }
 
