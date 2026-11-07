@@ -110,6 +110,9 @@ fn windows_restricted_child_cannot_read_orcel_protected_state() {
         .join(".orcel")
         .join(SENTINEL_DIR)
         .join(instance);
+    // Private as the real root is: a root left with the profile's ACL would stop orceld.
+    orcel_platform::paths::ensure_private_dir(&user_profile.join(".orcel"))
+        .expect("create the private state root");
     std::fs::create_dir_all(&protected_dir).expect("create Orcel-owned qualification state");
     let sentinel = protected_dir.join(SENTINEL_FILE);
     std::fs::write(&sentinel, b"ORCEL-SG-000012-PROTECTED-STATE")

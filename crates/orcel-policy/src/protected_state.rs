@@ -196,18 +196,23 @@ mod tests {
                 OsString::from("/m/mutations.jsonl"),
             ),
         ]);
+        // Windows always protects the earlier root, which it finds from the known folder here.
+        let earlier = orcel_platform::legacy::legacy_root_from(&lookup(values.clone()));
         let roots = protected_state_roots_from(&lookup(values));
         assert_eq!(
             roots,
-            vec![
-                state_root,
-                PathBuf::from("/a/audit.jsonl"),
-                PathBuf::from("/t/trust.jsonl"),
-                PathBuf::from("/h/history.jsonl"),
-                PathBuf::from("/b"),
-                PathBuf::from("/j/report-tasks.jsonl"),
-                PathBuf::from("/m/mutations.jsonl"),
-            ]
+            [state_root]
+                .into_iter()
+                .chain(earlier)
+                .chain([
+                    PathBuf::from("/a/audit.jsonl"),
+                    PathBuf::from("/t/trust.jsonl"),
+                    PathBuf::from("/h/history.jsonl"),
+                    PathBuf::from("/b"),
+                    PathBuf::from("/j/report-tasks.jsonl"),
+                    PathBuf::from("/m/mutations.jsonl"),
+                ])
+                .collect::<Vec<_>>()
         );
     }
 
@@ -216,13 +221,22 @@ mod tests {
     /// overrides remain.
     #[test]
     fn xp01b_temp_orcel_is_no_longer_a_protected_root() {
+        // Windows always protects the earlier root, which it finds from the known folder here.
+        let earlier: Vec<PathBuf> =
+            orcel_platform::legacy::legacy_root_from(&lookup(BTreeMap::new()))
+                .into_iter()
+                .collect();
         let roots = protected_state_roots_from(&lookup(BTreeMap::new()));
-        assert!(roots.is_empty(), "{roots:?}");
+        assert_eq!(roots, earlier);
         let roots = protected_state_roots_from(&lookup(BTreeMap::from([(
             "ORCEL_TRUST_PATH",
             OsString::from("/t/trust.jsonl"),
         )])));
-        assert_eq!(roots, vec![PathBuf::from("/t/trust.jsonl")]);
+        assert!(
+            roots.contains(&PathBuf::from("/t/trust.jsonl")),
+            "{roots:?}"
+        );
+        assert_eq!(roots.len(), earlier.len() + 1, "{roots:?}");
         let roots = protected_state_roots_from(&lookup(state_root_values()));
         let legacy = std::env::temp_dir().join("orcel");
         assert!(!roots.contains(&legacy), "{roots:?}");

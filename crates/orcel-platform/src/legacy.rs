@@ -49,9 +49,35 @@ pub fn legacy_root_for(
     }
 }
 
-/// The earlier root of the running OS's layout.
+/// The earlier root of the running OS's layout. On Windows a hidden or unusable `LOCALAPPDATA`
+/// falls back to the known folder: a parent that doesn't pass the variable must not make state
+/// there invisible.
 pub fn legacy_root_from(lookup: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    legacy_root_for(StateLayout::current()?, lookup)
+    let layout = StateLayout::current()?;
+    legacy_root_for(layout, lookup).or_else(|| match layout {
+        StateLayout::Windows => known_local_app_data().map(|local| local.join("Orcel")),
+        StateLayout::MacOs | StateLayout::Xdg => None,
+    })
+}
+
+#[cfg(windows)]
+fn known_local_app_data() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+    // SAFETY: the folder id is a valid constant, and no token means the current user. On success
+    // the result is a NUL-terminated string this function frees, once, after copying it.
+    unsafe {
+        let text = SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, None).ok()?;
+        let path = PathBuf::from(OsString::from_wide(text.as_wide()));
+        CoTaskMemFree(Some(text.0.cast()));
+        Some(path)
+    }
+}
+
+#[cfg(not(windows))]
+fn known_local_app_data() -> Option<PathBuf> {
+    None
 }
 
 /// Where the decision is recorded, in the private current root.
@@ -95,21 +121,19 @@ fn first_file(dir: &Path, top: bool) -> Result<Option<PathBuf>, (PathBuf, String
     Ok(None)
 }
 
-/// What `legacy` holds, given the decision recorded under `state_root`.
+/// What `legacy` holds, given the decision recorded under `state_root`. A decision comes first,
+/// so a person who has decided is never held up by what can't be read there.
 pub fn examine(legacy: &Path, state_root: &Path) -> LegacyState {
+    if let Some(decision) = read_decision(state_root) {
+        return LegacyState::Decided(decision);
+    }
     match std::fs::symlink_metadata(legacy) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return LegacyState::None,
         Err(error) => return LegacyState::Unreadable(legacy.to_owned(), error.to_string()),
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            return read_decision(state_root).map_or_else(
-                || LegacyState::Undecided(legacy.to_owned()),
-                LegacyState::Decided,
-            );
+            return LegacyState::Undecided(legacy.to_owned());
         }
         Ok(_) => {}
-    }
-    if let Some(decision) = read_decision(state_root) {
-        return LegacyState::Decided(decision);
     }
     match first_file(legacy, true) {
         Ok(None) => LegacyState::None,
@@ -120,8 +144,15 @@ pub fn examine(legacy: &Path, state_root: &Path) -> LegacyState {
 
 /// `Ok` when starting abandons nothing. `state_root` is the current root.
 pub fn gate(lookup: &dyn Fn(&str) -> Option<OsString>, state_root: &Path) -> Result<(), String> {
-    let Some(legacy) = legacy_root_from(lookup) else {
+    if StateLayout::current() != Some(StateLayout::Windows) {
         return Ok(());
+    }
+    let Some(legacy) = legacy_root_from(lookup) else {
+        return Err(
+            "the earlier Orcel state location can't be found, so nothing there can be shown to be \
+             decided. Nothing was changed"
+                .into(),
+        );
     };
     match examine(&legacy, state_root) {
         LegacyState::None | LegacyState::Decided(_) => Ok(()),

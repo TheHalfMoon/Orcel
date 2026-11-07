@@ -1,10 +1,12 @@
 //! `orcel state`: what happens to state left at the earlier Windows root.
 //!
-//! Migration copies user data only, and only from a root that passes the same check as the
-//! current one: another account that could have changed those files could have forged approvals,
-//! trust or keys, and copying them would launder that. It never deletes or changes the source,
-//! and never overwrites. It stages everything first and verifies it, so a crash leaves nothing
-//! half-trusted, and running it again finishes the job. Payload is reinstalled, not copied.
+//! Migration copies user data only, and only from a root and files that pass the same rules as
+//! the current ones: another account that could have changed them could have forged approvals,
+//! trust or keys, and copying them would launder that. That's what their permissions show now:
+//! it can't show what they allowed before. It never deletes or changes the source, and never
+//! overwrites. It stages everything first and verifies it, so a crash leaves nothing half-trusted,
+//! and running it again finishes the job. Live authority isn't copied: full-control authority and
+//! remote leases are granted again. Payload is reinstalled, not copied.
 
 use crate::LifecycleError;
 use orcel_platform::legacy::{self, DECISION_KEPT_SEPARATE, DECISION_MIGRATED, DECISION_SCHEMA};
@@ -14,12 +16,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Single files of user data at the root.
-const DATA_FILES: [&str; 8] = [
+const DATA_FILES: [&str; 7] = [
     "audit.jsonl",
     "approval-history.jsonl",
     "trust.jsonl",
     "executable_registry.json",
-    "remote_leases.json",
     "report-tasks.jsonl",
     "report-tasks.key",
     "mutations.jsonl",
@@ -28,6 +29,9 @@ const DATA_FILES: [&str; 8] = [
 const DATA_DIRS: [&str; 2] = ["state", "secrets"];
 /// Under `state`, with the payload it describes: not user data.
 const SKIPPED_IN_STATE: [&str; 1] = ["update.json"];
+/// Under `state`, live authority: a copy would stay valid beside the original, and a revocation
+/// would reach only one of them.
+const AUTHORITY_IN_STATE: &str = "authority";
 const QUARANTINE_PREFIX: &str = "approval-history.jsonl.quarantine-";
 /// Left by a crash or a live writer: the data isn't at rest.
 const UNCLEAN_SUFFIXES: [&str; 1] = [".rewrite"];
@@ -116,6 +120,16 @@ pub fn inventory(legacy: &Path) -> Result<Inventory, LifecycleError> {
             found.left.push(name);
         }
     }
+    if found
+        .data
+        .iter()
+        .any(|path| path.starts_with(Path::new("state").join(AUTHORITY_IN_STATE)))
+    {
+        found.left.push(format!("state/{AUTHORITY_IN_STATE}"));
+    }
+    found
+        .data
+        .retain(|path| !path.starts_with(Path::new("state").join(AUTHORITY_IN_STATE)));
     found.data.retain(|path| {
         !(path.starts_with("state")
             && SKIPPED_IN_STATE
@@ -197,6 +211,7 @@ pub fn migrate(
     legacy: &Path,
     root: &Path,
     check_source: &dyn Fn(&Path) -> Result<(), String>,
+    check_entry: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<MigrateReport, LifecycleError> {
     refuse_if_decided(root)?;
     check_source(legacy).map_err(|reason| {
@@ -215,6 +230,23 @@ pub fn migrate(
             legacy.display()
         )));
     }
+    // Every file, and every folder between it and the root: each could carry a grant of its own.
+    let mut checked = std::collections::BTreeSet::new();
+    for relative in &found.data {
+        for entry in relative
+            .ancestors()
+            .filter(|entry| !entry.as_os_str().is_empty())
+        {
+            if checked.insert(entry.to_owned()) {
+                check_entry(&legacy.join(entry)).map_err(|reason| {
+                    refuse(format!(
+                        "{reason}. It can't be trusted, so nothing was copied. It stays where it \
+                         is; `orcel state keep-separate` records that"
+                    ))
+                })?;
+            }
+        }
+    }
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
 
     // Clear what an earlier attempt staged; it only ever holds copies.
@@ -225,7 +257,17 @@ pub fn migrate(
             .to_string_lossy()
             .starts_with(STAGING_PREFIX)
         {
-            fs::remove_dir_all(entry.path()).map_err(|error| io(&entry.path(), error))?;
+            let planted = entry.path();
+            let metadata =
+                fs::symlink_metadata(&planted).map_err(|error| read_err(&planted, error))?;
+            let removed = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                fs::remove_dir_all(&planted)
+            } else if metadata.is_dir() {
+                fs::remove_dir(&planted)
+            } else {
+                fs::remove_file(&planted)
+            };
+            removed.map_err(|error| io(&planted, error))?;
         }
     }
     let staging = root.join(format!("{STAGING_PREFIX}{}", std::process::id()));
@@ -238,6 +280,13 @@ pub fn migrate(
         let target = root.join(relative);
         let before = digest(&source)?;
         match fs::symlink_metadata(&target) {
+            Ok(metadata) if !metadata.is_file() => {
+                fs::remove_dir_all(&staging).ok();
+                return Err(refuse(format!(
+                    "{} is already there and isn't a regular file. Nothing was overwritten",
+                    target.display()
+                )));
+            }
             Ok(_) => {
                 // A rerun after a crash finds its own earlier copies. Anything else isn't ours.
                 if digest(&target)? != before {
@@ -271,7 +320,17 @@ pub fn migrate(
         let target = root.join(relative);
         let parent = target.parent().expect("a target has a folder");
         paths::ensure_private_dir(parent).map_err(|error| io(parent, error))?;
-        fs::rename(staging.join(relative), &target).map_err(|error| io(&target, error))?;
+        // A new name, which fails if anything took it since the check: a rename would replace it.
+        fs::hard_link(staging.join(relative), &target).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                refuse(format!(
+                    "{} appeared during migration. Nothing was overwritten",
+                    target.display()
+                ))
+            } else {
+                io(&target, error)
+            }
+        })?;
     }
     fs::remove_dir_all(&staging).map_err(|error| io(&staging, error))?;
     record(root, DECISION_MIGRATED)?;
@@ -283,9 +342,22 @@ pub fn migrate(
     })
 }
 
-/// Records that the earlier state stays where it is, unused. Deletes nothing.
-pub fn keep_separate(root: &Path) -> Result<(), LifecycleError> {
+/// Records that the earlier state stays where it is, unused. Deletes nothing. Refused while an
+/// interrupted migration's copies are in place: a decision would start Orcel on half of them.
+pub fn keep_separate(legacy: &Path, root: &Path) -> Result<(), LifecycleError> {
     refuse_if_decided(root)?;
+    if let Ok(found) = inventory(legacy) {
+        for relative in &found.data {
+            let target = root.join(relative);
+            if target.is_file() && digest(&target)? == digest(&legacy.join(relative))? {
+                return Err(refuse(format!(
+                    "{} is a copy from an interrupted migration. Run `orcel state migrate` to \
+                     finish it, or remove what it copied",
+                    target.display()
+                )));
+            }
+        }
+    }
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
     record(root, DECISION_KEPT_SEPARATE)
 }
@@ -297,6 +369,10 @@ mod tests {
 
     fn trusted(_: &Path) -> Result<(), String> {
         Ok(())
+    }
+
+    fn run(legacy: &Path, root: &Path) -> Result<MigrateReport, LifecycleError> {
+        migrate(legacy, root, &trusted, &trusted)
     }
 
     fn scratch(label: &str) -> (PathBuf, PathBuf, PathBuf) {
@@ -371,7 +447,7 @@ mod tests {
         let (base, legacy, root) = scratch("copy");
         let before = tree(&legacy);
         assert!(matches!(examine(&legacy, &root), LegacyState::Undecided(_)));
-        let report = migrate(&legacy, &root, &trusted).unwrap();
+        let report = run(&legacy, &root).unwrap();
         assert_eq!(report.copied, 6);
         assert_eq!(report.already_there, 0);
         assert!(report.payload);
@@ -388,7 +464,7 @@ mod tests {
             examine(&legacy, &root),
             LegacyState::Decided(DECISION_MIGRATED.into())
         );
-        assert!(migrate(&legacy, &root, &trusted).is_err());
+        assert!(run(&legacy, &root).is_err());
         assert_eq!(tree(&legacy), before);
         fs::remove_dir_all(&base).unwrap();
     }
@@ -397,9 +473,14 @@ mod tests {
     fn an_untrusted_source_copies_nothing_and_stays_undecided() {
         let (base, legacy, root) = scratch("untrusted");
         let before = tree(&legacy);
-        let error = migrate(&legacy, &root, &|_| Err("grants S-1-5-21-9 access".into()))
-            .unwrap_err()
-            .message;
+        let error = migrate(
+            &legacy,
+            &root,
+            &|_| Err("grants S-1-5-21-9 access".into()),
+            &trusted,
+        )
+        .unwrap_err()
+        .message;
         assert!(error.contains("grants S-1-5-21-9 access"), "{error}");
         assert!(error.contains("keep-separate"), "{error}");
         assert!(!root.exists());
@@ -413,7 +494,7 @@ mod tests {
         let (base, legacy, root) = scratch("overwrite");
         paths::ensure_private_dir(&root).unwrap();
         fs::write(root.join("trust.jsonl"), "newer").unwrap();
-        let error = migrate(&legacy, &root, &trusted).unwrap_err().message;
+        let error = run(&legacy, &root).unwrap_err().message;
         assert!(error.contains("differs"), "{error}");
         assert_eq!(fs::read(root.join("trust.jsonl")).unwrap(), b"newer");
         assert!(!root.join("approval-history.jsonl").exists());
@@ -429,7 +510,7 @@ mod tests {
         fs::create_dir_all(root.join(format!("{STAGING_PREFIX}1").as_str())).unwrap();
         fs::write(root.join(format!("{STAGING_PREFIX}1")).join("half"), "half").unwrap();
         fs::write(root.join("trust.jsonl"), "trust").unwrap();
-        let report = migrate(&legacy, &root, &trusted).unwrap();
+        let report = run(&legacy, &root).unwrap();
         assert_eq!(report.already_there, 1);
         assert_eq!(report.copied, 5);
         assert!(!root.join(format!("{STAGING_PREFIX}1")).exists());
@@ -448,14 +529,14 @@ mod tests {
         ] {
             let (base, legacy, root) = scratch(label);
             fs::write(legacy.join(prepare), "x").unwrap();
-            assert!(migrate(&legacy, &root, &trusted).is_err(), "{label}");
+            assert!(run(&legacy, &root).is_err(), "{label}");
             assert!(!root.exists(), "{label}");
             fs::remove_dir_all(&base).unwrap();
         }
         let (base, legacy, root) = scratch("supervisor");
         fs::create_dir_all(legacy.join("run")).unwrap();
         fs::write(legacy.join("run").join("supervisor.json"), "{}").unwrap();
-        assert!(migrate(&legacy, &root, &trusted).is_err());
+        assert!(run(&legacy, &root).is_err());
         assert!(!root.exists());
         fs::remove_dir_all(&base).unwrap();
     }
@@ -465,8 +546,67 @@ mod tests {
     fn a_link_is_refused_before_anything_is_copied() {
         let (base, legacy, root) = scratch("symlink");
         std::os::unix::fs::symlink(&base, legacy.join("state").join("elsewhere")).unwrap();
-        assert!(migrate(&legacy, &root, &trusted).is_err());
+        assert!(run(&legacy, &root).is_err());
         assert!(!root.exists());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_file_or_folder_that_fails_its_own_check_copies_nothing() {
+        for bad in ["trust.jsonl", "state", "secrets/a.dpapi"] {
+            let (base, legacy, root) = scratch("entry");
+            let refused = legacy.join(bad);
+            let error = migrate(&legacy, &root, &trusted, &|path| {
+                if path == refused {
+                    Err(format!("{} grants someone access", path.display()))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err()
+            .message;
+            assert!(error.contains("grants someone access"), "{error}");
+            assert!(!root.exists(), "{bad}");
+            assert!(matches!(examine(&legacy, &root), LegacyState::Undecided(_)));
+            fs::remove_dir_all(&base).unwrap();
+        }
+    }
+
+    #[test]
+    fn live_authority_is_not_copied() {
+        let (base, legacy, root) = scratch("authority");
+        let authority = legacy.join("state").join("authority");
+        fs::create_dir_all(&authority).unwrap();
+        fs::write(authority.join("authority.key"), "key").unwrap();
+        fs::write(legacy.join("remote_leases.json"), "{}").unwrap();
+        let report = run(&legacy, &root).unwrap();
+        assert!(!root.join("state").join("authority").exists());
+        assert!(!root.join("remote_leases.json").exists());
+        assert!(report.left.contains(&"remote_leases.json".to_owned()));
+        assert!(report.left.contains(&"state/authority".to_owned()));
+        assert!(authority.join("authority.key").exists());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn keep_separate_is_refused_on_an_interrupted_migrations_copies() {
+        let (base, legacy, root) = scratch("half");
+        paths::ensure_private_dir(&root).unwrap();
+        fs::write(root.join("trust.jsonl"), "trust").unwrap();
+        let error = keep_separate(&legacy, &root).unwrap_err().message;
+        assert!(error.contains("interrupted"), "{error}");
+        assert!(matches!(examine(&legacy, &root), LegacyState::Undecided(_)));
+        run(&legacy, &root).unwrap();
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_planted_staging_file_doesnt_stop_it() {
+        let (base, legacy, root) = scratch("planted");
+        paths::ensure_private_dir(&root).unwrap();
+        fs::write(root.join(format!("{STAGING_PREFIX}file")), "x").unwrap();
+        run(&legacy, &root).unwrap();
+        assert!(!root.join(format!("{STAGING_PREFIX}file")).exists());
         fs::remove_dir_all(&base).unwrap();
     }
 
@@ -474,14 +614,14 @@ mod tests {
     fn keep_separate_deletes_nothing_and_opens_the_gate() {
         let (base, legacy, root) = scratch("separate");
         let before = tree(&legacy);
-        keep_separate(&root).unwrap();
+        keep_separate(&legacy, &root).unwrap();
         assert_eq!(tree(&legacy), before);
         assert_eq!(
             examine(&legacy, &root),
             LegacyState::Decided(DECISION_KEPT_SEPARATE.into())
         );
-        assert!(keep_separate(&root).is_err());
-        assert!(migrate(&legacy, &root, &trusted).is_err());
+        assert!(keep_separate(&legacy, &root).is_err());
+        assert!(run(&legacy, &root).is_err());
         fs::remove_dir_all(&base).unwrap();
     }
 }

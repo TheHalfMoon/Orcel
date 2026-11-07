@@ -268,6 +268,15 @@ fn run(args: &mut Args) -> Result<Output, LifecycleError> {
             | "tunnel"
             | "full-control"
     );
+    // Nothing writes to the current root over undecided earlier state, which is what orceld
+    // refuses too. Stopping and uninstalling stay possible, and `state` is how to decide.
+    if mutating && !matches!(args.command.as_str(), "stop" | "uninstall") {
+        orcel_platform::legacy::gate(
+            &|name| std::env::var_os(name),
+            &Layout::for_current_user()?.root,
+        )
+        .map_err(LifecycleError::conflict)?;
+    }
     let _lock = if mutating {
         Some(orcel_lifecycle::lifecycle::lock(
             &Layout::for_current_user()?,

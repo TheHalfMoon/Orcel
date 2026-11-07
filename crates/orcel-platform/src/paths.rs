@@ -204,7 +204,7 @@ pub fn state_root_for(
             .ok_or_else(|| unavailable("HOME"))?
             .join("Library")
             .join("Application Support")
-            .join(".orcel")),
+            .join("Orcel")),
         StateLayout::Xdg => {
             if let Some(state_home) = absolute_var(layout, lookup, "XDG_STATE_HOME") {
                 return Ok(state_home.join("orcel"));
@@ -282,6 +282,13 @@ pub fn check_existing_private_dir(path: &Path) -> Result<(), String> {
 /// and symbolic links on the path are refused.
 pub fn check_owned_executable_location(path: &Path) -> Result<(), String> {
     imp::check_owned_executable_location(path)
+}
+
+/// Whether one file or folder inside an earlier state root can be trusted as this user's, by
+/// what its permissions show now: not a link, nobody else can write it, and a file has no other
+/// hard link. It says nothing about what they allowed in the past.
+pub fn check_migration_entry(path: &Path) -> Result<(), String> {
+    imp::check_migration_entry(path)
 }
 
 /// A file location from an `ORCEL_*_PATH` override. Empty and relative
@@ -602,6 +609,24 @@ mod imp {
         Ok(())
     }
 
+    pub(super) fn check_migration_entry(path: &Path) -> Result<(), String> {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("{} cannot be inspected: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!("{} is a link", path.display()));
+        }
+        if metadata.uid() != current_uid() || metadata.mode() & 0o022 != 0 {
+            return Err(format!(
+                "{} is owned or writable by someone else",
+                path.display()
+            ));
+        }
+        if metadata.is_file() && metadata.nlink() != 1 {
+            return Err(format!("{} has another hard link", path.display()));
+        }
+        Ok(())
+    }
+
     pub(super) fn current_uid() -> u32 {
         extern "C" {
             fn geteuid() -> u32;
@@ -682,6 +707,25 @@ mod imp {
         std::fs::symlink_metadata(path).map_err(|error| io_error(path, error))
     }
 
+    pub(super) fn check_migration_entry(path: &Path) -> Result<(), String> {
+        let user = acl::current_user_sid()?;
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("{} cannot be inspected: {error}", path.display()))?;
+        if is_reparse_point(&metadata) {
+            return Err(format!("{} is a link", path.display()));
+        }
+        let role = if metadata.is_dir() {
+            Role::Ancestor
+        } else {
+            Role::File
+        };
+        judge(path, &user, role).map_err(|reason| format!("{} {reason}", path.display()))?;
+        if metadata.is_file() && acl::hard_link_count(path)? != 1 {
+            return Err(format!("{} has another hard link", path.display()));
+        }
+        Ok(())
+    }
+
     pub(super) fn check_owned_executable_location(path: &Path) -> Result<(), String> {
         let user = acl::current_user_sid()?;
         let file = std::fs::symlink_metadata(path)
@@ -711,6 +755,10 @@ mod imp {
 
 #[cfg(not(any(unix, windows)))]
 mod imp {
+    pub(super) fn check_migration_entry(_path: &std::path::Path) -> Result<(), String> {
+        Err("no earlier state location on this platform".into())
+    }
+
     use super::PlatformError;
     use std::path::Path;
 
@@ -803,7 +851,7 @@ mod tests {
             Ok(PathBuf::from("/Users/u")
                 .join("Library")
                 .join("Application Support")
-                .join(".orcel"))
+                .join("Orcel"))
         );
     }
 
@@ -818,7 +866,7 @@ mod tests {
             Ok(PathBuf::from("/Users/u")
                 .join("Library")
                 .join("Application Support")
-                .join(".orcel"))
+                .join("Orcel"))
         );
     }
 
@@ -955,7 +1003,7 @@ mod tests {
             let base = sandbox("win-create");
             // Everyone may read the parent, and that entry is inheritable.
             grant(&base, "(OI)(CI)(RX)");
-            let root = base.join("missing").join(".orcel");
+            let root = base.join("missing").join("Orcel");
             assert_eq!(ensure_private_dir(&root), Ok(()));
             for created in [base.join("missing"), root.clone()] {
                 assert!(created.is_dir());
@@ -983,7 +1031,7 @@ mod tests {
         fn an_ancestor_others_can_delete_from_is_refused_and_nothing_is_created() {
             let base = sandbox("win-ancestor");
             grant(&base, "(DC)");
-            let root = base.join(".orcel");
+            let root = base.join("Orcel");
             insecure(ensure_private_dir(&root), &base);
             assert!(!root.exists());
             let _ = std::fs::remove_dir_all(base);
@@ -994,7 +1042,7 @@ mod tests {
         fn an_ancestor_others_can_only_add_to_is_accepted() {
             let base = sandbox("win-add");
             grant(&base, "(AD,WD)");
-            assert_eq!(ensure_private_dir(&base.join(".orcel")), Ok(()));
+            assert_eq!(ensure_private_dir(&base.join("Orcel")), Ok(()));
             let _ = std::fs::remove_dir_all(base);
         }
 
@@ -1023,10 +1071,10 @@ mod tests {
                 Err(PlatformError::Symlink(junction.clone()))
             );
             assert_eq!(
-                ensure_private_dir(&junction.join(".orcel")),
+                ensure_private_dir(&junction.join("Orcel")),
                 Err(PlatformError::Symlink(junction.clone()))
             );
-            assert!(!target.join(".orcel").exists());
+            assert!(!target.join("Orcel").exists());
             let _ = std::fs::remove_dir(&junction);
             let _ = std::fs::remove_dir_all(base);
         }

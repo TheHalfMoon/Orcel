@@ -547,7 +547,8 @@ pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
             if let Some(reason) = &source {
                 human.push_str(&format!(
                     "Migration is refused: {reason}. Another account could have changed these \
-                     files. Use `orcel state keep-separate`.\n"
+                     files. Use `orcel state keep-separate`, or leave it if there's nothing to \
+                     decide.\n"
                 ));
             }
             Ok(Output {
@@ -574,15 +575,22 @@ pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
                     legacy.display()
                 )));
             }
-            let report = legacy_state::migrate(&legacy, &layout.root, &|path| {
-                orcel_platform::paths::check_existing_private_dir(path)
-            })?;
+            let _lock = lifecycle::lock(&layout)?;
+            let report = legacy_state::migrate(
+                &legacy,
+                &layout.root,
+                &orcel_platform::paths::check_existing_private_dir,
+                &orcel_platform::paths::check_migration_entry,
+            )?;
             let mut human = format!(
                 "Copied {} file(s), {} already there, to {}. {} is unchanged.\n",
                 report.copied,
                 report.already_there,
                 layout.root.display(),
                 legacy.display()
+            );
+            human.push_str(
+                "Full-control authority and remote leases aren't copied: grant them again.\n",
             );
             if report.payload {
                 human.push_str("Reinstall Orcel, and remove the earlier install with its own `orcel uninstall`.\n");
@@ -600,7 +608,8 @@ pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
             })
         }
         "keep-separate" => {
-            legacy_state::keep_separate(&layout.root)?;
+            let _lock = lifecycle::lock(&layout)?;
+            legacy_state::keep_separate(&legacy, &layout.root)?;
             Ok(Output {
                 exit_code: 0,
                 human: format!(

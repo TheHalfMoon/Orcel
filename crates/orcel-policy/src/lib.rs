@@ -735,7 +735,8 @@ mod tests {
             ),
             _ => None,
         });
-        assert_eq!(roots.len(), 7);
+        // Windows also protects the earlier root.
+        assert_eq!(roots.len(), 7 + usize::from(cfg!(windows)));
         for dir in [
             "lad",
             "audit",

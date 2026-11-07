@@ -59,7 +59,6 @@ fn jsonl_parses(path: &Path) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Verifies the approval ledger's whole hash chain, not just its JSON syntax.
 /// Whether earlier state is waiting on a person's decision, which stops `orceld` from starting.
 fn legacy_state(layout: &Layout) -> Check {
     use orcel_platform::legacy::{examine, legacy_root_from, LegacyState};
@@ -91,6 +90,7 @@ fn legacy_state(layout: &Layout) -> Check {
     }
 }
 
+/// Verifies the approval ledger's whole hash chain, not just its JSON syntax.
 fn approval_history(path: &Path) -> Check {
     use orcel_approval::ApprovalLedgerStatus;
     let inspection = orcel_approval::inspect_approval_ledger(path);
