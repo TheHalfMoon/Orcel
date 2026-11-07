@@ -32,6 +32,8 @@ pub trait Platform {
     /// Removes the Start Menu entry if it points at `cli`; returns whether it did. One under the
     /// same name that points elsewhere isn't Orcel's, and stays.
     fn remove_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError>;
+    /// Whether Orcel's own Start Menu entry, the one that opens the app through `cli`, is there.
+    fn has_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError>;
     /// Runs `node --version` and returns the parsed version.
     fn node_version(&self, node: &Path) -> Result<crate::version::Version, LifecycleError>;
 }
@@ -601,6 +603,10 @@ mod windows {
 
         fn remove_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
             crate::start_menu::remove_entry(&self.start_menu_entry()?, cli)
+        }
+
+        fn has_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
+            crate::start_menu::is_ours(&self.start_menu_entry()?, cli)
         }
 
         fn node_version(&self, node: &Path) -> Result<crate::version::Version, LifecycleError> {

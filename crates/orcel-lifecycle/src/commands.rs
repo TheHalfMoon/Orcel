@@ -947,7 +947,7 @@ pub fn update(args: &mut Args) -> Result<Output, LifecycleError> {
     let platform = host_platform();
     let report = orcel_lifecycle::update::Updater::new(layout, platform.as_ref())
         .update(&source, &options)?;
-    let human = match report.outcome {
+    let mut human = match report.outcome {
         orcel_lifecycle::update::UpdateOutcome::Checked => format!(
             "Installed {}; candidate {} ({}). Compatible with the current configuration. Nothing was changed.\n",
             report.from, report.to, report.direction
@@ -964,6 +964,9 @@ pub fn update(args: &mut Args) -> Result<Output, LifecycleError> {
             if report.restarted { " and restarted" } else { "" }
         ),
     };
+    if let Some(change) = &report.start_menu {
+        human.push_str(&start_menu_line(change));
+    }
     Ok(Output {
         exit_code: 0,
         human,
@@ -976,20 +979,39 @@ pub fn rollback(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let platform = host_platform();
     let report = orcel_lifecycle::update::Updater::new(layout, platform.as_ref()).rollback()?;
+    let mut human = format!(
+        "Rolled back from {} to {}{}.\n",
+        report.from,
+        report.to,
+        if report.restarted {
+            " and restarted"
+        } else {
+            "; the ChatGPT tunnel is not running, start it with `orcel start` if you use it"
+        }
+    );
+    human.push_str(&start_menu_line(&report.start_menu));
     Ok(Output {
         exit_code: 0,
-        human: format!(
-            "Rolled back from {} to {}{}.\n",
-            report.from,
-            report.to,
-            if report.restarted {
-                " and restarted"
-            } else {
-                "; the ChatGPT tunnel is not running, start it with `orcel start` if you use it"
-            }
-        ),
+        human,
         json: json!({"ok": true, "rollback": report}),
     })
+}
+
+/// What an update or rollback did to the Start Menu entry, when it did anything worth saying.
+fn start_menu_line(change: &orcel_lifecycle::install::StartMenuChange) -> String {
+    use orcel_lifecycle::install::StartMenuChange;
+    match change {
+        StartMenuChange::Present | StartMenuChange::Unchanged => String::new(),
+        // A version without the app may predate this, so its own `orcel update` won't put the
+        // entry back; a repair from the newer version does.
+        StartMenuChange::Removed => "  Start Menu: entry removed, since this version has no Orcel \
+             app. After moving to a version with it, run that release's `orcel install` to add \
+             it again\n"
+            .into(),
+        StartMenuChange::Problem(problem) => {
+            format!("  Start Menu: not updated ({problem})\n")
+        }
+    }
 }
 
 /// Local MCP entrypoint (`orcel mcp stdio`, `orcel mcp serve`). This takes
