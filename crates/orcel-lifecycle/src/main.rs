@@ -329,7 +329,8 @@ fn install(args: &mut Args) -> Result<Output, LifecycleError> {
     let add_to_path = !args.flag("--no-path");
     args.finish()?;
     let platform = host_platform();
-    let installer = Installer::new(Layout::for_current_user()?, platform.as_ref());
+    let layout = Layout::for_current_user()?;
+    let installer = Installer::new(layout.clone(), platform.as_ref());
     let report = installer.install(&source, &InstallOptions { node, add_to_path })?;
     let mut human = format!(
         "Orcel {} {} at {}\n  lifecycle CLI: {}\n  Node.js: {}\n",
@@ -357,15 +358,56 @@ fn install(args: &mut Args) -> Result<Output, LifecycleError> {
             "  Start Menu: no entry ({problem}). `orcel app` opens the app\n"
         ));
     }
-    human.push_str("  User data kept across updates and uninstall:\n");
-    for path in &report.retained_data {
-        human.push_str(&format!("    {}\n", path.display()));
+    if let Some(other) = earlier_on_path(&layout.bin_dir()) {
+        human.push_str(&format!(
+            "  Note: {} comes first on this terminal's PATH, so `orcel` runs that copy. Remove \
+             it, or run {} directly\n",
+            other.display(),
+            layout.bin_cli().display()
+        ));
     }
+    // Only what exists yet; the rest is created when first used, and kept the same way.
+    let kept: Vec<_> = report
+        .retained_data
+        .iter()
+        .filter(|path| path.exists())
+        .collect();
+    if !kept.is_empty() {
+        human.push_str("  User data kept across updates and uninstall:\n");
+        for path in kept {
+            human.push_str(&format!("    {}\n", path.display()));
+        }
+    }
+    let workspaces = orcel_lifecycle::config::Config::load(&layout)
+        .map(|config| config.workspaces.len())
+        .unwrap_or(0);
+    human.push_str(if workspaces == 0 {
+        "Next: add the folder Orcel may work in with `orcel workspace add <id> <folder>`, then \
+         connect your MCP client as the README describes\n"
+    } else {
+        "Next: run `orcel doctor` to check everything answers\n"
+    });
     Ok(Output {
         exit_code: 0,
         human,
         json: json!({"ok": true, "install": report}),
     })
+}
+
+/// The first `orcel.exe` on this process's PATH, when it isn't the installed one in `bin`.
+fn earlier_on_path(bin: &std::path::Path) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let first = std::env::split_paths(&path)
+        .find(|dir| !dir.as_os_str().is_empty() && dir.join("orcel.exe").is_file())?;
+    let same = |a: &std::path::Path, b: &std::path::Path| {
+        let normal = |p: &std::path::Path| {
+            p.to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_lowercase()
+        };
+        normal(a) == normal(b)
+    };
+    (!same(&first, bin)).then(|| first.join("orcel.exe"))
 }
 
 fn default_release_dir() -> Result<PathBuf, LifecycleError> {

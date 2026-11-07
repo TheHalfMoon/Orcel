@@ -94,9 +94,10 @@ pub fn read_marker(layout: &Layout) -> Result<Option<UpdateMarker>, LifecycleErr
             || Version::parse(&marker.from).is_err()
             || Version::parse(&marker.to).is_err()
         {
-            return Err(LifecycleError::state(
-                "state\\update.json is malformed; inspect and delete it, then run `orcel doctor` (or reinstall)",
-            ));
+            return Err(LifecycleError::state(format!(
+                "{} is malformed; inspect and delete it, then run `orcel doctor` (or reinstall)",
+                update_marker_path(layout).display()
+            )));
         }
     }
     Ok(marker)
@@ -343,7 +344,9 @@ impl<'a> Updater<'a> {
                     if restarted { " and restarted" } else { "" }
                 )),
                 Err(restore) => LifecycleError::state(format!(
-                    "the update to {to} failed ({reason}) and restoring {from} also failed: {}; run `orcel doctor`",
+                    "the update to {to} failed ({reason}) and restoring {from} also failed: {}; \
+                     run `orcel doctor`, then repair with `orcel install --source <release-dir>` \
+                     using the extracted release of {from}",
                     restore.message
                 )),
             });
@@ -578,7 +581,9 @@ impl<'a> Updater<'a> {
                     error.message
                 )),
                 Err(restore) => LifecycleError::state(format!(
-                    "rollback to {previous} failed ({}) and restoring {from} also failed: {}; run `orcel doctor`",
+                    "rollback to {previous} failed ({}) and restoring {from} also failed: {}; \
+                     run `orcel doctor`, then repair with `orcel install --source <release-dir>` \
+                     using the extracted release of {from}",
                     error.message, restore.message
                 )),
             });

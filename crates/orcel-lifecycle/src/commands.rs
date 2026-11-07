@@ -364,13 +364,15 @@ fn wait_seconds(args: &mut Args, default: u64) -> Result<Duration, LifecycleErro
     }
 }
 
+/// The background runtime `orcel start` supervises carries only the ChatGPT tunnel. Local MCP
+/// clients start Orcel themselves, so this never says Orcel as a whole is down.
 fn describe(status: &lifecycle::RuntimeStatus) -> String {
     let state = match status.state {
         RunState::Running => "running",
         RunState::Degraded => "degraded",
         RunState::NotRunning => "not running",
     };
-    let mut text = format!("Orcel is {state}: {}\n", status.detail);
+    let mut text = format!("ChatGPT tunnel: {state} ({})\n", status.detail);
     if let Some(pid) = status.supervisor_pid {
         text.push_str(&format!("  supervisor pid: {pid}\n"));
     }
@@ -408,10 +410,19 @@ pub fn stop(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let report = lifecycle::stop(&layout, wait)?;
     let human = match report.outcome {
-        StopOutcome::NotRunning => "Orcel is not running.\n".to_string(),
-        StopOutcome::StaleRecordRemoved => format!("Orcel was not running; {}.\n", report.detail),
-        StopOutcome::StoppedVerified => format!("Orcel stopped (verified): {}.\n", report.detail),
-        StopOutcome::SupervisorTerminated => format!("Orcel stopped: {}.\n", report.detail),
+        StopOutcome::NotRunning => "The ChatGPT tunnel is not running.\n".to_string(),
+        StopOutcome::StaleRecordRemoved => {
+            format!("The ChatGPT tunnel was not running; {}.\n", report.detail)
+        }
+        StopOutcome::StoppedVerified => {
+            format!(
+                "The ChatGPT tunnel stopped (verified): {}.\n",
+                report.detail
+            )
+        }
+        StopOutcome::SupervisorTerminated => {
+            format!("The ChatGPT tunnel stopped: {}.\n", report.detail)
+        }
     };
     Ok(Output {
         exit_code: 0,
@@ -479,7 +490,18 @@ pub fn status(args: &mut Args) -> Result<Output, LifecycleError> {
         )),
         Err(error) => human.push_str(&format!("configured: error: {}\n", error.message)),
     }
-    human.push_str(&describe(&runtime));
+    let tunnel_unset = matches!(&config, Ok(config) if config.tunnel.is_none());
+    if tunnel_unset && runtime.state == RunState::NotRunning && runtime.supervisor_pid.is_none() {
+        human.push_str("ChatGPT tunnel: not configured (optional)\n");
+    } else {
+        human.push_str(&describe(&runtime));
+    }
+    if installed.is_some() {
+        human.push_str(
+            "Local MCP clients start Orcel with `orcel mcp stdio` when they need it. \
+             `orcel doctor` checks that it answers.\n",
+        );
+    }
     Ok(Output {
         exit_code: 0,
         human,
@@ -534,6 +556,16 @@ pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
                 legacy.display(),
                 layout.root.display()
             );
+            if matches!(state, LegacyState::Undecided(_)) {
+                human.push_str(
+                    "Decide once, then orceld starts:\n  \
+                     `orcel state migrate` copies your history, trust and settings here. \
+                     Full-control grants, remote leases and this device's pairing are granted \
+                     again instead.\n  \
+                     `orcel state keep-separate` starts fresh here, and Orcel won't use the \
+                     earlier folder.\n  Neither changes or deletes the earlier folder.\n",
+                );
+            }
             if let Some(found) = &found {
                 human.push_str(&format!(
                     "User data files migration would copy: {}\nLeft where they are: {}\n",

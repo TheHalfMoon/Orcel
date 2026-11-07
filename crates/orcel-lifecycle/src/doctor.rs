@@ -13,6 +13,10 @@ use serde::Serialize;
 use std::path::Path;
 use std::time::Duration;
 
+/// Repairing the install records a Node.js runtime again.
+const NODE_FIX: &str = "point Orcel at a current one with `orcel install --source <release-dir> \
+                        --node <node.exe>`, using the extracted release of the installed version";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckStatus {
@@ -179,10 +183,16 @@ pub fn run_with_approval_history(
             Some(state.active.version.clone())
         }
         Err(error) => {
+            let next = if error.kind == crate::ErrorKind::NotInstalled {
+                "install it with `orcel install` from the extracted release"
+            } else {
+                "repair it with `orcel install --source <release-dir>` using the extracted \
+                 release of the installed version"
+            };
             checks.push(check(
                 "install_integrity",
                 CheckStatus::Fail,
-                error.message.clone(),
+                format!("{}; {next}", error.message),
             ));
             None
         }
@@ -213,9 +223,16 @@ pub fn run_with_approval_history(
             Ok(version) => check(
                 "node_runtime",
                 CheckStatus::Fail,
-                format!("Node.js {version} is older than {MIN_NODE_MAJOR}"),
+                format!(
+                    "Node.js {version} at {} is older than {MIN_NODE_MAJOR}; {NODE_FIX}",
+                    record.node_path
+                ),
             ),
-            Err(error) => check("node_runtime", CheckStatus::Fail, error.message),
+            Err(error) => check(
+                "node_runtime",
+                CheckStatus::Fail,
+                format!("{} ({}); {NODE_FIX}", error.message, record.node_path),
+            ),
         },
         None => check("node_runtime", CheckStatus::Unknown, "no install record"),
     });
@@ -249,7 +266,16 @@ pub fn run_with_approval_history(
         }
     };
 
+    // The tunnel only carries ChatGPT; local MCP clients start Orcel themselves, so an
+    // unconfigured tunnel is a choice, not a fault.
+    let tunnel_unset = matches!(&config, Ok(config) if config.tunnel.is_none());
     checks.push(match (&config, &active_version) {
+        (Ok(_), _) if tunnel_unset => check(
+            "tunnel_configuration",
+            CheckStatus::Warn,
+            "not configured. It's optional: only ChatGPT over the tunnel needs it \
+             (`orcel tunnel setup`); local MCP clients don't",
+        ),
         (Ok(config), Some(version)) => match config::tunnel_config(layout, config, version) {
             Ok(tunnel) => check(
                 "tunnel_configuration",
@@ -271,18 +297,35 @@ pub fn run_with_approval_history(
 
     match crate::lifecycle::status(layout) {
         Ok(status) => {
+            let idle = tunnel_unset
+                && status.state == crate::lifecycle::RunState::NotRunning
+                && status.supervisor_pid.is_none();
             let (process, health) = match status.state {
                 crate::lifecycle::RunState::Running => (CheckStatus::Pass, CheckStatus::Pass),
                 crate::lifecycle::RunState::Degraded => (CheckStatus::Warn, CheckStatus::Warn),
+                _ if idle => (CheckStatus::Pass, CheckStatus::Unknown),
                 crate::lifecycle::RunState::NotRunning => (CheckStatus::Warn, CheckStatus::Unknown),
             };
-            checks.push(check("process_health", process, status.detail.clone()));
+            checks.push(check(
+                "process_health",
+                process,
+                if idle {
+                    format!(
+                        "the ChatGPT tunnel isn't running and isn't configured, so nothing \
+                         should be ({})",
+                        status.detail
+                    )
+                } else {
+                    status.detail.clone()
+                },
+            ));
             checks.push(check(
                 "tunnel_health",
                 health,
                 match (&status.health_url, status.health_status) {
                     (Some(url), Some(code)) => format!("{url} answered {code}"),
                     (Some(url), None) => format!("{url} did not answer"),
+                    _ if idle => "no tunnel to check".into(),
                     _ => "no health URL published".into(),
                 },
             ));
@@ -615,6 +658,31 @@ mod tests {
             .checks
             .iter()
             .any(|check| check.name == "ipc" && check.status == CheckStatus::Pass));
+    }
+
+    #[test]
+    fn an_unconfigured_tunnel_is_optional_and_failures_name_a_fix() {
+        let layout = Layout::new(temp_dir("doctor-local-only").join("Orcel"));
+        let report = run(&layout, &FakePlatform::default());
+        let named = |name: &str| {
+            report
+                .checks
+                .iter()
+                .find(|check| check.name == name)
+                .unwrap()
+                .clone()
+        };
+        // Local MCP needs no tunnel, so its absence alone never fails doctor.
+        let tunnel = named("tunnel_configuration");
+        assert_eq!(tunnel.status, CheckStatus::Warn);
+        assert!(tunnel.detail.contains("optional"), "{}", tunnel.detail);
+        let integrity = named("install_integrity");
+        assert_eq!(integrity.status, CheckStatus::Fail);
+        assert!(
+            integrity.detail.contains("`orcel install`"),
+            "{}",
+            integrity.detail
+        );
     }
 
     #[test]

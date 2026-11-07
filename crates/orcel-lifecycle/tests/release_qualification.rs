@@ -113,6 +113,13 @@ impl Drop for Cleanup {
             let _ = Command::new(&cli)
                 .args(["stop", "--json"])
                 .env("USERPROFILE", &self.local)
+                // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+                .env(
+                    "LOCALAPPDATA",
+                    std::path::Path::new(&self.local)
+                        .join("AppData")
+                        .join("Local"),
+                )
                 .output();
         }
         for dir in self
@@ -168,6 +175,11 @@ fn orcel(exe: &Path, local: &Path, args: &[&str]) -> Output {
     let output = Command::new(exe)
         .args(args)
         .env("USERPROFILE", local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(local).join("AppData").join("Local"),
+        )
         .output()
         .unwrap();
     let all = format!(
@@ -603,6 +615,11 @@ fn installed_release_fits_the_400_mb_budget() {
     let opening = Command::new(root.join("bin").join("orcel.exe"))
         .args(["app", "--json"])
         .env("USERPROFILE", &local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(&local).join("AppData").join("Local"),
+        )
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -674,6 +691,11 @@ impl McpStdio {
         let mut child = Command::new(cli)
             .args(args)
             .env("USERPROFILE", local)
+            // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+            .env(
+                "LOCALAPPDATA",
+                std::path::Path::new(local).join("AppData").join("Local"),
+            )
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(fs::File::create(&stderr).unwrap())
@@ -1245,6 +1267,11 @@ fn installed_release_serves_every_client_example() {
         Command::new(&cli)
             .args(["mcp", "serve", "--port", &port.to_string()])
             .env("USERPROFILE", &local)
+            // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+            .env(
+                "LOCALAPPDATA",
+                std::path::Path::new(&local).join("AppData").join("Local"),
+            )
             .env("ORCEL_LOOPBACK_TOKEN", token)
             .stdin(std::process::Stdio::null())
             .stdout(fs::File::create(project.join("serve-stdout.log")).unwrap())
