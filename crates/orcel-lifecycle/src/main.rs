@@ -426,7 +426,11 @@ fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
     if !report.residual.is_empty() {
         return Err(LifecycleError::new(
             ErrorKind::Io,
-            format!("{human}Some items could not be removed; close programs using them and rerun"),
+            format!(
+                "{human}Some items were not removed. Close any program using them and rerun. \
+                 Anything there that isn't Orcel's is left on purpose: move it first if you \
+                 want the folder gone"
+            ),
         ));
     }
     Ok(Output {

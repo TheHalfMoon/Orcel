@@ -11,7 +11,8 @@ pub const CURRENT_SCHEMA: &str = "orcel-current-v1";
 pub const INSTALL_SCHEMA: &str = "orcel-install-v1";
 
 /// What a crash in the middle of an atomic write leaves at the root.
-const CRASH_LEFTOVERS: [&str; 4] = [
+const CRASH_LEFTOVERS: [&str; 5] = [
+    ".report-tasks.key.tmp-",
     ".remote_leases.json.tmp-",
     ".executable_registry.json.tmp-",
     ".current.json.tmp-",

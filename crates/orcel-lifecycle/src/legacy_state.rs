@@ -220,11 +220,7 @@ fn clear_staging(root: &Path) -> Result<(), LifecycleError> {
     };
     for entry in entries {
         let entry = entry.map_err(|error| read_err(root, error))?;
-        if !entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(STAGING_PREFIX)
-        {
+        if !is_staging_name(&entry.file_name().to_string_lossy()) {
             continue;
         }
         let planted = entry.path();
@@ -765,9 +761,15 @@ mod tests {
     fn a_planted_staging_file_doesnt_stop_it() {
         let (base, legacy, root) = scratch("planted");
         paths::ensure_private_dir(&root).unwrap();
-        fs::write(root.join(format!("{STAGING_PREFIX}file")), "x").unwrap();
+        // A file under a real staging name goes; a person's file under a similar name stays.
+        fs::write(root.join(format!("{STAGING_PREFIX}7")), "x").unwrap();
+        fs::write(root.join(format!("{STAGING_PREFIX}my-notes.txt")), "keep").unwrap();
         run(&legacy, &root).unwrap();
-        assert!(!root.join(format!("{STAGING_PREFIX}file")).exists());
+        assert!(!root.join(format!("{STAGING_PREFIX}7")).exists());
+        assert_eq!(
+            fs::read(root.join(format!("{STAGING_PREFIX}my-notes.txt"))).unwrap(),
+            b"keep"
+        );
         fs::remove_dir_all(&base).unwrap();
     }
 

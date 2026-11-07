@@ -702,6 +702,7 @@ mod tests {
             "sg-000012-qualification/old/sentinel",
             "legacy-migration-in-progress",
             "legacy-import-1/state/secrets/key",
+            ".report-tasks.key.tmp-1-2",
             ".remote_leases.json.tmp-1-2",
             ".executable_registry.json.tmp-1-2",
             ".current.json.tmp-1-2",
