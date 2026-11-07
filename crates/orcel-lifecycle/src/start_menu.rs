@@ -13,7 +13,7 @@ use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, STGM_READ,
 };
 use windows::Win32::UI::Shell::{
-    FOLDERID_Programs, IShellLinkW, SHGetKnownFolderPath, ShellLink, KF_FLAG_DEFAULT,
+    FOLDERID_Programs, IShellLinkW, SHGetKnownFolderPath, ShellLink, KF_FLAG_DEFAULT, SLGP_RAWPATH,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE;
 
@@ -60,8 +60,18 @@ pub fn programs_folder() -> Result<PathBuf, LifecycleError> {
     }
 }
 
-/// Writes the entry at `path`, replacing one that's there.
+/// Writes the entry at `path`. One already there is replaced only if it's Orcel's: a shortcut or
+/// file of someone else's under that name stays, and this says so.
 pub fn write_entry(path: &Path, cli: &Path) -> Result<(), LifecycleError> {
+    if std::fs::symlink_metadata(path).is_ok() {
+        let (target, arguments) = read_entry(path)?;
+        if !same_path(&target, cli) || arguments != ARGUMENTS {
+            return Err(LifecycleError::platform(format!(
+                "{} is already there and isn't Orcel's",
+                path.display()
+            )));
+        }
+    }
     let _com = Com::start();
     let target = wide(cli.as_os_str());
     let arguments = wide(ARGUMENTS.as_ref());
@@ -80,10 +90,16 @@ pub fn write_entry(path: &Path, cli: &Path) -> Result<(), LifecycleError> {
             .map_err(|error| failure("describe the shortcut", error))?;
         link.SetShowCmd(SW_SHOWMINNOACTIVE)
             .map_err(|error| failure("set how the shortcut opens", error))?;
-        link.cast::<IPersistFile>()
-            .map_err(|error| failure("save the shortcut", error))?
+        let persist = link
+            .cast::<IPersistFile>()
+            .map_err(|error| failure("save the shortcut", error))?;
+        persist
             .Save(PCWSTR(file.as_ptr()), true)
-            .map_err(|error| failure("save the shortcut", error))
+            .map_err(|error| failure("save the shortcut", error))?;
+        // Released here, while COM is still up: a tail expression's temporary would outlive `_com`.
+        drop(persist);
+        drop(link);
+        Ok(())
     }
 }
 
@@ -96,12 +112,16 @@ pub fn read_entry(path: &Path) -> Result<(PathBuf, String), LifecycleError> {
     unsafe {
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)
             .map_err(|error| failure("create a shortcut", error))?;
-        link.cast::<IPersistFile>()
-            .map_err(|error| failure("read the shortcut", error))?
+        let persist = link
+            .cast::<IPersistFile>()
+            .map_err(|error| failure("read the shortcut", error))?;
+        persist
             .Load(PCWSTR(file.as_ptr()), STGM_READ)
             .map_err(|error| failure("read the shortcut", error))?;
+        drop(persist);
         let mut target = vec![0_u16; 32_768];
-        link.GetPath(&mut target, std::ptr::null_mut(), 0)
+        // As stored, not resolved to the form on disk, which could differ from what was written.
+        link.GetPath(&mut target, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
             .map_err(|error| failure("read the shortcut's target", error))?;
         let mut arguments = vec![0_u16; 1_024];
         link.GetArguments(&mut arguments)
@@ -113,11 +133,19 @@ pub fn read_entry(path: &Path) -> Result<(PathBuf, String), LifecycleError> {
                 .unwrap_or(buffer.len());
             std::ffi::OsString::from_wide(&buffer[..end])
         };
-        Ok((
+        let read = (
             PathBuf::from(text(&target)),
             text(&arguments).to_string_lossy().into_owned(),
-        ))
+        );
+        drop(link);
+        Ok(read)
     }
+}
+
+/// Whether two Windows paths name the same place as written: case and separators aside.
+fn same_path(left: &Path, right: &Path) -> bool {
+    let normal = |path: &Path| path.to_string_lossy().replace('/', "\\").to_lowercase();
+    normal(left) == normal(right)
 }
 
 /// Removes the entry at `path` if it opens the app through `cli`. A missing one is fine, and one
@@ -127,7 +155,7 @@ pub fn remove_entry(path: &Path, cli: &Path) -> Result<bool, LifecycleError> {
         return Ok(false);
     }
     let (target, arguments) = read_entry(path)?;
-    if !target.as_os_str().eq_ignore_ascii_case(cli.as_os_str()) || arguments != ARGUMENTS {
+    if !same_path(&target, cli) || arguments != ARGUMENTS {
         return Ok(false);
     }
     std::fs::remove_file(path).map_err(|error| failure("remove the shortcut", error))?;

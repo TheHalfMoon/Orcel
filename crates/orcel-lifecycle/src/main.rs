@@ -428,6 +428,9 @@ fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
     if report.start_menu_removed {
         human.push_str("  Start Menu: the Orcel entry was removed\n");
     }
+    if let Some(problem) = &report.start_menu_problem {
+        human.push_str(&format!("  Start Menu: left as it is ({problem})\n"));
+    }
     if let Some(relocated) = &report.relocated_cli {
         human.push_str(&format!(
             "  The running orcel.exe was moved to {} for OS temp cleanup\n",

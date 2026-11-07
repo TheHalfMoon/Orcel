@@ -80,16 +80,24 @@ fn the_start_menu_entry_is_a_real_shortcut_and_only_ours_is_removed() {
     // Again, as a repair does: replaced, not refused.
     platform.add_start_menu_entry(cli).unwrap();
 
-    // Someone else's shortcut under that name stays.
+    // Someone else's shortcut under that name stays, on uninstall and on install.
     assert!(!platform.remove_start_menu_entry(other).unwrap());
     assert!(entry.is_file());
-    assert!(platform.remove_start_menu_entry(cli).unwrap());
+    assert!(platform.add_start_menu_entry(other).is_err());
+    assert_eq!(
+        orcel_lifecycle::start_menu::read_entry(&entry).unwrap().0,
+        cli
+    );
+    // Other spellings of the same path are still ours.
+    let spelled = Path::new(r"c:/users/EXAMPLE/.orcel/bin/orcel.exe");
+    assert!(platform.remove_start_menu_entry(spelled).unwrap());
     assert!(!entry.exists());
 
     // So does something that isn't a shortcut at all.
     fs::write(&entry, b"not a shortcut").unwrap();
     assert!(platform.remove_start_menu_entry(cli).is_err());
-    assert!(entry.is_file());
+    assert!(platform.add_start_menu_entry(cli).is_err());
+    assert_eq!(fs::read(&entry).unwrap(), b"not a shortcut");
     let _ = fs::remove_dir_all(&dir);
 }
 

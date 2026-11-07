@@ -43,6 +43,8 @@ pub struct UninstallReport {
     pub purged: Vec<PathBuf>,
     pub path_entry_removed: bool,
     pub start_menu_removed: bool,
+    /// Why the Start Menu entry couldn't be checked or removed. It doesn't stop an uninstall.
+    pub start_menu_problem: Option<String>,
     pub relocated_cli: Option<PathBuf>,
     pub residual: Vec<PathBuf>,
 }
@@ -392,16 +394,17 @@ impl<'a> Installer<'a> {
         if !options.purge_data {
             crate::logs::transcript(&self.layout, "uninstall started; user data retained");
         }
+        // Before the CLI below moves.
+        let start_menu = self
+            .platform
+            .remove_start_menu_entry(&self.layout.bin_cli());
         let mut report = UninstallReport {
             removed: Vec::new(),
             retained: Vec::new(),
             purged: Vec::new(),
             path_entry_removed: false,
-            // Before the CLI below moves. A failure here shouldn't stop an uninstall.
-            start_menu_removed: self
-                .platform
-                .remove_start_menu_entry(&self.layout.bin_cli())
-                .unwrap_or(false),
+            start_menu_removed: *start_menu.as_ref().unwrap_or(&false),
+            start_menu_problem: start_menu.err().map(|error| error.message),
             relocated_cli: None,
             residual: Vec::new(),
         };
