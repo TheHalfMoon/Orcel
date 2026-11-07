@@ -434,6 +434,19 @@ pub fn stop(args: &mut Args) -> Result<Output, LifecycleError> {
 /// Opens the Windows app from the active, verified install, and doesn't wait for it.
 /// The path comes only from the install, never from an argument or PATH.
 pub fn app(args: &mut Args) -> Result<Output, LifecycleError> {
+    let result = open_app(args);
+    // Started from the Start Menu, its minimized console closes with the message in it.
+    #[cfg(windows)]
+    if let Err(error) = &result {
+        orcel_lifecycle::start_menu::show_if_no_terminal(&format!(
+            "Orcel couldn't open the app: {}",
+            error.message
+        ));
+    }
+    result
+}
+
+fn open_app(args: &mut Args) -> Result<Output, LifecycleError> {
     args.finish()?;
     if !cfg!(windows) {
         return Err(LifecycleError::usage(
@@ -442,7 +455,9 @@ pub fn app(args: &mut Args) -> Result<Output, LifecycleError> {
     }
     let layout = Layout::for_current_user()?;
     let version = active_version(&layout)?;
-    let path = layout.version_dir(&version).join("Orcel.Desktop.exe");
+    let path = layout
+        .version_dir(&version)
+        .join(orcel_lifecycle::install::APP_FILE);
     // A release can come without it, since it isn't a required file.
     if !path.is_file() {
         return Err(LifecycleError::usage(format!(

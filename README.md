@@ -118,6 +118,17 @@ Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, 
 2. Extract the archive and run, from the extracted folder:
    `.\orcel.exe install`
    For a qualified Orcel build, the installer checks files against `manifest.json` before copying them. The current source uses `%USERPROFILE%\.orcel` and adds `%USERPROFILE%\.orcel\bin` to your user PATH (`--no-path` to skip). Follow the exact published release notes and open a new terminal afterwards.
+3. If the release includes the Windows app, install also adds an **Orcel** entry to the Start Menu that opens it. `orcel app` opens the app from a terminal too. If the app can't open, the Start Menu entry shows why in a dialog. `--no-path` leaves the Start Menu alone, as it does PATH.
+4. If install prints a `Note:` that another `orcel` comes first on PATH, that copy is what `orcel` runs. An earlier Orcel install is uninstalled with its own `orcel uninstall`; anything else, take its folder off PATH.
+
+### State from an earlier build
+
+Earlier builds kept their state in `%LOCALAPPDATA%\Orcel`. If that folder exists, `orceld` won't start until you decide what happens to it, so starting fresh never silently abandons it. `orcel state status` shows what's there and the two choices:
+
+- `orcel state migrate` copies your history, trust and settings to `%USERPROFILE%\.orcel`, and only if no other account could have changed them. Full-control grants, remote leases and this device's pairing aren't copied: grant them again.
+- `orcel state keep-separate` records that Orcel won't use the earlier folder, and keeps what's already in `%USERPROFILE%\.orcel`.
+
+Neither changes or deletes the earlier folder. Once a decision is recorded, it can't be changed with these commands.
 
 ## Configure
 

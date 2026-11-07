@@ -16,6 +16,9 @@ pub struct InstallOptions {
     pub add_to_path: bool,
 }
 
+/// The Windows app in a release. It isn't a required file, so a release can come without it.
+pub const APP_FILE: &str = "Orcel.Desktop.exe";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallReport {
     pub version: String,
@@ -27,6 +30,8 @@ pub struct InstallReport {
     /// Why there's no Start Menu entry, if `add_to_path` asked for one. Install doesn't fail for it.
     pub start_menu_problem: Option<String>,
     pub start_menu_added: bool,
+    /// Whether this release has the app. Without it there's no Start Menu entry to open it.
+    pub app_included: bool,
     pub repaired_existing: bool,
     pub retained_data: Vec<PathBuf>,
 }
@@ -152,7 +157,8 @@ impl<'a> Installer<'a> {
             already_added
         };
         // A convenience: `orcel app` works without it, so its failure doesn't fail the install.
-        let (start_menu_added, start_menu_problem) = if options.add_to_path {
+        let app_included = version_dir.join(APP_FILE).is_file();
+        let (start_menu_added, start_menu_problem) = if options.add_to_path && app_included {
             match self.platform.add_start_menu_entry(&self.layout.bin_cli()) {
                 Ok(()) => (true, None),
                 Err(error) => (false, Some(error.message)),
@@ -194,6 +200,7 @@ impl<'a> Installer<'a> {
             path_entry_added,
             start_menu_problem,
             start_menu_added,
+            app_included,
             repaired_existing,
             retained_data: self.layout.retained_data(),
         })
@@ -530,7 +537,7 @@ fn remove_path(layout: &Layout, path: &Path) -> Result<(), LifecycleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{release_dir, temp_dir, FakePlatform};
+    use crate::test_support::{release_dir, release_dir_with_app, temp_dir, FakePlatform};
 
     fn options() -> InstallOptions {
         InstallOptions {
@@ -897,8 +904,9 @@ mod tests {
         let layout = Layout::new(&root);
         let installer = Installer::new(layout.clone(), &platform);
         let report = installer
-            .install(&release_dir("0.2.0"), &options())
+            .install(&release_dir_with_app("0.2.0"), &options())
             .unwrap();
+        assert!(report.app_included);
         assert!(report.start_menu_added);
         assert_eq!(*platform.start_menu.borrow(), Some(layout.bin_cli()));
         let report = installer.uninstall(&UninstallOptions::default()).unwrap();
@@ -915,10 +923,25 @@ mod tests {
         let root = temp_dir("start-menu-fails").join("Orcel");
         let installer = Installer::new(Layout::new(&root), &platform);
         let report = installer
-            .install(&release_dir("0.2.0"), &options())
+            .install(&release_dir_with_app("0.2.0"), &options())
             .unwrap();
         assert!(!report.start_menu_added);
         assert!(report.start_menu_problem.is_some());
+    }
+
+    #[test]
+    fn a_release_without_the_app_gets_no_start_menu_entry() {
+        // Its click would only say there's no app.
+        let platform = FakePlatform::default();
+        let root = temp_dir("start-menu-no-app").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        let report = installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        assert!(!report.app_included);
+        assert!(!report.start_menu_added);
+        assert!(report.start_menu_problem.is_none());
+        assert_eq!(*platform.start_menu.borrow(), None);
     }
 
     #[test]

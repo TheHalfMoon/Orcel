@@ -353,6 +353,8 @@ fn install(args: &mut Args) -> Result<Output, LifecycleError> {
     }
     if report.start_menu_added {
         human.push_str("  Start Menu: Orcel opens the app\n");
+    } else if !report.app_included {
+        human.push_str("  Start Menu: no entry, since this release has no Orcel app\n");
     } else if let Some(problem) = &report.start_menu_problem {
         human.push_str(&format!(
             "  Start Menu: no entry ({problem}). `orcel app` opens the app\n"
