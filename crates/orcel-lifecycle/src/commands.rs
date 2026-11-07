@@ -493,6 +493,144 @@ pub fn status(args: &mut Args) -> Result<Output, LifecycleError> {
     })
 }
 
+pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
+    use orcel_lifecycle::legacy_state;
+    use orcel_platform::legacy::{examine, legacy_root_from, LegacyState};
+    let action = args.positional("state action (status, migrate, keep-separate)")?;
+    args.finish()?;
+    let layout = Layout::for_current_user()?;
+    let lookup = |name: &str| std::env::var_os(name);
+    let Some(legacy) = legacy_root_from(&lookup) else {
+        if cfg!(windows) {
+            return Err(LifecycleError::state(
+                "the earlier state location can't be found: LOCALAPPDATA is unusable and Windows \
+                 didn't name the folder",
+            ));
+        }
+        let human = "This platform has no earlier state location.\n".to_owned();
+        return Ok(Output {
+            exit_code: 0,
+            human,
+            json: json!({"ok": true, "state": "none"}),
+        });
+    };
+    match action.as_str() {
+        "status" => {
+            let state = examine(&legacy, &layout.root);
+            let (label, gate) = match &state {
+                LegacyState::None => ("none".to_owned(), "orceld can start"),
+                LegacyState::Decided(decision) => (decision.clone(), "orceld can start"),
+                LegacyState::Undecided(_) => ("undecided".to_owned(), "orceld refuses to start"),
+                LegacyState::Unreadable(..) => ("unreadable".to_owned(), "orceld refuses to start"),
+            };
+            let found = if legacy.is_dir() {
+                legacy_state::inventory(&legacy).ok()
+            } else {
+                None
+            };
+            let source = orcel_platform::paths::check_existing_private_dir(&legacy).err();
+            let mut human = format!(
+                "Earlier state location: {}\nCurrent location: {}\nState: {label} ({gate})\n",
+                legacy.display(),
+                layout.root.display()
+            );
+            if let Some(found) = &found {
+                human.push_str(&format!(
+                    "User data files migration would copy: {}\nLeft where they are: {}\n",
+                    found.data.len(),
+                    found.left.join(", ")
+                ));
+                for reason in &found.unclean {
+                    human.push_str(&format!("Not at rest: {reason}\n"));
+                }
+                if found.payload {
+                    human.push_str(
+                        "An earlier install is there. Migration doesn't move it: reinstall, and \
+                         remove the earlier one with its own `orcel uninstall`.\n",
+                    );
+                }
+            }
+            if let Some(reason) = &source {
+                human.push_str(&format!(
+                    "Migration is refused: {reason}. Another account could have changed these \
+                     files. Use `orcel state keep-separate`, or leave it if there's nothing to \
+                     decide.\n"
+                ));
+            }
+            Ok(Output {
+                exit_code: 0,
+                human,
+                json: json!({
+                    "ok": true,
+                    "legacy": legacy,
+                    "root": layout.root,
+                    "state": label,
+                    "orceld_starts": matches!(state, LegacyState::None | LegacyState::Decided(_)),
+                    "data_files": found.as_ref().map(|found| found.data.len()),
+                    "left": found.as_ref().map(|found| found.left.clone()),
+                    "payload": found.as_ref().map(|found| found.payload),
+                    "unclean": found.as_ref().map(|found| found.unclean.clone()),
+                    "source_refused": source,
+                }),
+            })
+        }
+        "migrate" => {
+            if !legacy.is_dir() {
+                return Err(LifecycleError::state(format!(
+                    "there is nothing at {}",
+                    legacy.display()
+                )));
+            }
+            let _lock = lifecycle::lock(&layout)?;
+            let report = legacy_state::migrate(
+                &legacy,
+                &layout.root,
+                &orcel_platform::paths::check_existing_private_dir,
+                &orcel_platform::paths::check_migration_entry,
+            )?;
+            let mut human = format!(
+                "Copied {} file(s), {} already there, to {}. {} is unchanged.\n",
+                report.copied,
+                report.already_there,
+                layout.root.display(),
+                legacy.display()
+            );
+            human.push_str(
+                "Full-control authority, remote leases and this device's key and pairing aren't copied: grant them again.\n",
+            );
+            if report.payload {
+                human.push_str("Reinstall Orcel, and remove the earlier install with its own `orcel uninstall`.\n");
+            }
+            Ok(Output {
+                exit_code: 0,
+                human,
+                json: json!({
+                    "ok": true,
+                    "copied": report.copied,
+                    "already_there": report.already_there,
+                    "left": report.left,
+                    "payload": report.payload,
+                }),
+            })
+        }
+        "keep-separate" => {
+            let _lock = lifecycle::lock(&layout)?;
+            legacy_state::keep_separate(&legacy, &layout.root)?;
+            Ok(Output {
+                exit_code: 0,
+                human: format!(
+                    "Recorded. {} stays as it is and Orcel won't use it. Nothing was deleted.\n",
+                    legacy.display()
+                ),
+                json: json!({"ok": true, "decision": "kept-separate"}),
+            })
+        }
+        other => Err(LifecycleError::usage(format!(
+            "unknown state action {other}; use status, migrate or keep-separate"
+        ))),
+    }
+}
+
 pub fn doctor(args: &mut Args) -> Result<Output, LifecycleError> {
     args.finish()?;
     let layout = Layout::for_current_user()?;

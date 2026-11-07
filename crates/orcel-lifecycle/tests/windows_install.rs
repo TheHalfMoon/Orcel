@@ -1,6 +1,6 @@
 //! Windows-native install qualification: real ACLs, a real registry PATH value
 //! under an isolated test key, and the real `orcel` binary installing from a
-//! synthetic release into an isolated LOCALAPPDATA.
+//! synthetic release into an isolated USERPROFILE.
 #![cfg(windows)]
 
 use orcel_lifecycle::manifest::{
@@ -85,7 +85,7 @@ fn junction_inside_install_root_is_refused_before_acl_reset() {
     let node = find_node_on_path().expect("Node.js is required on PATH for this qualification");
     let release = release_with_real_cli();
     let local = temp_dir("junction");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let outside = temp_dir("junction-target");
     fs::create_dir_all(root.join("state")).unwrap();
     let link = root.join("state").join("escape");
@@ -155,7 +155,7 @@ fn release_with_real_cli() -> PathBuf {
 fn orcel(exe: &Path, local_app_data: &Path, args: &[&str]) -> Output {
     Command::new(exe)
         .args(args)
-        .env("LOCALAPPDATA", local_app_data)
+        .env("USERPROFILE", local_app_data)
         .output()
         .unwrap()
 }
@@ -176,7 +176,7 @@ fn real_cli_installs_verifies_and_uninstalls_from_a_release() {
     let release = release_with_real_cli();
     let exe = release.join("orcel.exe");
     let local = temp_dir("localappdata");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let node_arg = node.to_str().unwrap();
 
     // Tampered release is refused before anything is written.

@@ -65,7 +65,9 @@ With a Rust toolchain (MSVC Build Tools included), you can instead check out the
 orcel-rc/release/orcel.exe install --node "$(where node | head -1)"
 ```
 
-Install puts `orcel` on PATH; open a new terminal if it isn't found, and go back to the folder holding `orcel-rc` and `orcel-kit`. **If Orcel is already installed** at another version, install refuses. Use `orcel update --source orcel-rc/release` instead, and `orcel rollback` in step 6. At the same version, install replaces what's there, and you can't roll back to the build it replaces.
+If install says earlier Orcel state is waiting on a decision, run `orcel-rc/release/orcel.exe state status`, then `state migrate` or `state keep-separate`. Neither deletes it. Then install again.
+
+Install puts `orcel` on PATH; open a new terminal if it isn't found, and go back to the folder holding `orcel-rc` and `orcel-kit`. **If Orcel is already installed under `%USERPROFILE%\.orcel`** at another version, install refuses. Use `orcel update --source orcel-rc/release` instead, and `orcel rollback` in step 6. An install from before the move, under `AppData\Local\Orcel`, can't update across: install this one, and remove that one with its own `orcel uninstall`. At the same version, install replaces what's there, and you can't roll back to the build it replaces.
 
 **The scratch folder must be the only workspace.** Orcel uses the first configured workspace as the default, and an existing id is refused. So first run `orcel workspace list`, write down what's there, and `orcel workspace remove <id>` each one. You restore them in step 6. Removing a workspace from configuration never touches its files.
 
@@ -85,11 +87,7 @@ orcel-kit/f4_journey.exe ready C:/orcel-f4-journey --release-candidate orcel-rc
 
 Every check should say `PASS`. It also checks that the release candidate was built from the same commit as the kit, using its provenance file, and that its zip is the file that provenance hashed. `orcel-rc` is the folder you downloaded the artifact to, and not the extracted `release` folder.
 
-**If orceld won't start.** `orceld` refuses a state folder that someone else can delete from, and that includes rights inherited from `AppData`, which some sandboxing tools add for their own group. `orcel doctor` names what it found. Don't weaken the check. The options, simplest first:
-
-- Run the whole journey from a clean Windows user.
-- Remove that grant from `AppData`, if you're sure what added it and that nothing still needs it. That's your decision, and it can affect that tool.
-- Set `LOCALAPPDATA` to a folder of your own that passes, before installing, in **every** terminal of this journey, the client's included. This should work, and hasn't been tried.
+**If orceld won't start.** Orcel keeps its state in `%USERPROFILE%\.orcel`, private to you. `orceld` refuses that folder if anyone else could delete from it, or rename it or a folder above it, and `ready` and `orcel doctor` name what they found. That check must not be weakened. Windows gives a profile's root only to you, SYSTEM and Administrators, so this should only happen if something has changed the permissions on your profile folder. Find out what did and decide from there. You don't need another Windows account.
 
 ### 2. Start the client and record what it is
 
@@ -199,7 +197,7 @@ In Claude Code, run `/export` and save to `orcel-f4-journey-transcript.txt` in y
 orcel-kit/f4_journey.exe evidence C:/orcel-f4-journey --client "Claude Code <version>" --transcript "$USERPROFILE/orcel-f4-journey-transcript.txt"
 ```
 
-It reads orceld's own journal (`%LOCALAPPDATA%\Orcel\report-tasks.jsonl`), which records steps and outcomes but never file contents, and the workspace. It prints `PASS` or `FAIL` for each path and writes:
+It reads orceld's own journal (`%USERPROFILE%\.orcel\report-tasks.jsonl`), which records steps and outcomes but never file contents, and the workspace. It prints `PASS` or `FAIL` for each path and writes:
 
 - `evidence/summary.json`: the client, tasks, states and checks;
 - `evidence/history.json`: each task's steps and outcomes, without file text;

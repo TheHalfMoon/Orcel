@@ -88,6 +88,11 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
+    // Before anything creates state: starting fresh would abandon what's at the earlier root.
+    let lookup = |name: &str| std::env::var_os(name);
+    let state_root = orcel_platform::paths::state_root_from(&lookup)
+        .map_err(|error| format!("resolve state root: {error}"))?;
+    orcel_platform::legacy::gate(&lookup, &state_root)?;
     let policy = legacy::load_policy_bridge()?;
     let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
     let audit =

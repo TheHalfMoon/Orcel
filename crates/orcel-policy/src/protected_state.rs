@@ -45,13 +45,17 @@ pub fn protected_state_roots() -> Vec<PathBuf> {
 /// authority) resolves under the per-OS root since XP-01B, so the old
 /// shared-temp `orcel` root is no longer listed: nothing defaults there, and
 /// state left there by earlier builds is never read. On Windows the per-OS
-/// root is `%LOCALAPPDATA%\Orcel`, the same root as before. When no per-OS
-/// root can be established every default store fails closed, so only the
-/// overrides remain to protect.
+/// root is `%USERPROFILE%\.orcel`, and the earlier `%LOCALAPPDATA%\Orcel` stays
+/// protected, since state may still be there. When no per-OS root can be
+/// established every default store fails closed, so only the overrides remain
+/// to protect.
 pub fn protected_state_roots_from(lookup: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Ok(state_root) = orcel_platform::paths::state_root_from(lookup) {
         roots.push(state_root);
+    }
+    if let Some(legacy) = orcel_platform::legacy::legacy_root_from(lookup) {
+        roots.push(legacy);
     }
     for name in PROTECTED_STATE_OVERRIDES {
         if let Some(value) = lookup(name) {
@@ -164,7 +168,7 @@ mod tests {
     /// A per-OS state root for the running OS's layout.
     fn state_root_values() -> BTreeMap<&'static str, OsString> {
         if cfg!(windows) {
-            BTreeMap::from([("LOCALAPPDATA", OsString::from(r"C:\Users\u\AppData\Local"))])
+            BTreeMap::from([("USERPROFILE", OsString::from(r"C:\Users\u"))])
         } else {
             BTreeMap::from([("HOME", OsString::from("/home/u"))])
         }
@@ -192,18 +196,23 @@ mod tests {
                 OsString::from("/m/mutations.jsonl"),
             ),
         ]);
+        // Windows always protects the earlier root, which it finds from the known folder here.
+        let earlier = orcel_platform::legacy::legacy_root_from(&lookup(values.clone()));
         let roots = protected_state_roots_from(&lookup(values));
         assert_eq!(
             roots,
-            vec![
-                state_root,
-                PathBuf::from("/a/audit.jsonl"),
-                PathBuf::from("/t/trust.jsonl"),
-                PathBuf::from("/h/history.jsonl"),
-                PathBuf::from("/b"),
-                PathBuf::from("/j/report-tasks.jsonl"),
-                PathBuf::from("/m/mutations.jsonl"),
-            ]
+            [state_root]
+                .into_iter()
+                .chain(earlier)
+                .chain([
+                    PathBuf::from("/a/audit.jsonl"),
+                    PathBuf::from("/t/trust.jsonl"),
+                    PathBuf::from("/h/history.jsonl"),
+                    PathBuf::from("/b"),
+                    PathBuf::from("/j/report-tasks.jsonl"),
+                    PathBuf::from("/m/mutations.jsonl"),
+                ])
+                .collect::<Vec<_>>()
         );
     }
 
@@ -212,13 +221,22 @@ mod tests {
     /// overrides remain.
     #[test]
     fn xp01b_temp_orcel_is_no_longer_a_protected_root() {
+        // Windows always protects the earlier root, which it finds from the known folder here.
+        let earlier: Vec<PathBuf> =
+            orcel_platform::legacy::legacy_root_from(&lookup(BTreeMap::new()))
+                .into_iter()
+                .collect();
         let roots = protected_state_roots_from(&lookup(BTreeMap::new()));
-        assert!(roots.is_empty(), "{roots:?}");
+        assert_eq!(roots, earlier);
         let roots = protected_state_roots_from(&lookup(BTreeMap::from([(
             "ORCEL_TRUST_PATH",
             OsString::from("/t/trust.jsonl"),
         )])));
-        assert_eq!(roots, vec![PathBuf::from("/t/trust.jsonl")]);
+        assert!(
+            roots.contains(&PathBuf::from("/t/trust.jsonl")),
+            "{roots:?}"
+        );
+        assert_eq!(roots.len(), earlier.len() + 1, "{roots:?}");
         let roots = protected_state_roots_from(&lookup(state_root_values()));
         let legacy = std::env::temp_dir().join("orcel");
         assert!(!roots.contains(&legacy), "{roots:?}");
@@ -226,14 +244,18 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn xp01_windows_roots_are_unchanged() {
+    fn windows_roots_are_the_current_and_the_earlier_location() {
         let roots = protected_state_roots_from(&lookup(BTreeMap::from([
+            ("USERPROFILE", OsString::from(r"C:\Users\u")),
             ("LOCALAPPDATA", OsString::from(r"C:\Users\u\AppData\Local")),
             ("HOME", OsString::from(r"C:\Users\u")),
         ])));
         assert_eq!(
             roots,
-            vec![PathBuf::from(r"C:\Users\u\AppData\Local").join("Orcel")]
+            vec![
+                PathBuf::from(r"C:\Users\u").join(".orcel"),
+                PathBuf::from(r"C:\Users\u\AppData\Local").join("Orcel"),
+            ]
         );
     }
 
@@ -262,11 +284,11 @@ mod tests {
     #[test]
     fn windows_overlap_is_case_insensitive() {
         assert!(paths_overlap(
-            Path::new(r"C:\Users\u\AppData\Local\Orcel"),
-            Path::new(r"c:\users\U\appdata\local\orcel\state")
+            Path::new(r"C:\Users\u\.orcel"),
+            Path::new(r"c:\users\U\.ORCEL\state")
         ));
         assert!(paths_overlap(
-            Path::new(r"C:\Users\u\AppData\Local\Orcel"),
+            Path::new(r"C:\Users\u\.orcel"),
             Path::new(r"C:\USERS\U")
         ));
     }
