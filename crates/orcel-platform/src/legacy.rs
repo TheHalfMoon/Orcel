@@ -166,6 +166,12 @@ pub fn gate(lookup: &dyn Fn(&str) -> Option<OsString>, state_root: &Path) -> Res
     };
     match examine(&legacy, state_root) {
         LegacyState::None | LegacyState::Decided(_) => Ok(()),
+        LegacyState::Undecided(file) if file.ends_with(MIGRATION_IN_PROGRESS) => Err(format!(
+            "a migration of earlier Orcel state was interrupted, so {} holds only part of it. \
+             Nothing was changed. Run `orcel state migrate` to finish it, or `orcel state \
+             keep-separate`, which says what to remove if that can't be done",
+            state_root.display()
+        )),
         LegacyState::Undecided(file) => Err(format!(
             "earlier Orcel state is at {} (for example {}), and nobody has decided what happens \
              to it. Nothing was changed. Run `orcel state status`, then `orcel state migrate` or \

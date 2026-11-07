@@ -336,16 +336,24 @@ pub fn migrate(
         to_place.push(relative.clone());
     }
     let in_progress = root.join(IN_PROGRESS);
-    match fs::remove_file(&in_progress) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(io(&in_progress, error)),
+    // A real marker stays, so a crash here never leaves copies without one. Anything else under
+    // that name, such as a link, is removed and never followed.
+    let marked = match fs::symlink_metadata(&in_progress) {
+        Ok(metadata) if metadata.is_file() => true,
+        Ok(_) => {
+            fs::remove_file(&in_progress).map_err(|error| io(&in_progress, error))?;
+            false
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(read_err(&in_progress, error)),
+    };
+    if !marked {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&in_progress)
+            .map_err(|error| io(&in_progress, error))?;
     }
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&in_progress)
-        .map_err(|error| io(&in_progress, error))?;
     for relative in &to_place {
         let target = root.join(relative);
         let parent = target.parent().expect("a target has a folder");
@@ -387,12 +395,19 @@ pub fn keep_separate(legacy: &Path, root: &Path) -> Result<(), LifecycleError> {
             .filter(|target| fs::symlink_metadata(target).is_ok())
             .map(|target| target.display().to_string())
             .collect();
+        let listed = if copied.is_empty() {
+            format!(
+                "The earlier state can't be read, so what it copied can't be listed: look in {}",
+                root.display()
+            )
+        } else {
+            format!("Those it may have copied: {}", copied.join(", "))
+        };
         return Err(refuse(format!(
             "a migration was interrupted, so a decision would start Orcel on part of what it \
-             copied. Run `orcel state migrate` to finish it. If that's refused, remove {} and \
-             what it copied, and try again. Those it may have copied: {}",
-            in_progress.display(),
-            copied.join(", ")
+             copied. Run `orcel state migrate` to finish it. If that's refused, remove what it \
+             copied, then {}, and try again. {listed}",
+            in_progress.display()
         )));
     }
     paths::ensure_private_dir(root).map_err(|error| io(root, error))?;
@@ -697,6 +712,19 @@ mod tests {
             examine(&legacy, &root),
             LegacyState::Decided(DECISION_KEPT_SEPARATE.into())
         );
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn a_rerun_keeps_the_marker_it_finds() {
+        let (base, legacy, root) = scratch("marker-kept");
+        paths::ensure_private_dir(&root).unwrap();
+        fs::write(root.join(IN_PROGRESS), b"").unwrap();
+        // Differing, so the rerun stops after the marker's turn would have come: it stays.
+        fs::write(root.join("trust.jsonl"), "newer").unwrap();
+        assert!(run(&legacy, &root).is_err());
+        assert!(root.join(IN_PROGRESS).is_file());
+        assert!(keep_separate(&legacy, &root).is_err());
         fs::remove_dir_all(&base).unwrap();
     }
 
