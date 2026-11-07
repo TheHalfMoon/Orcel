@@ -145,13 +145,26 @@ pub fn read_entry(path: &Path) -> Result<(PathBuf, String), LifecycleError> {
 }
 
 /// Shows `message` in a dialog when no terminal will show it: when this process is the only one
-/// attached to its console, as when the Start Menu entry started it. From a terminal, the shell
-/// shares the console, so nothing is shown and the message goes to standard error as usual.
-pub fn show_if_no_terminal(message: &str) {
-    use windows_sys::Win32::System::Console::GetConsoleProcessList;
+/// attached to its console and its standard error is that console, as when the Start Menu entry
+/// started it. From a terminal, the shell shares the console, so nothing is shown and the message
+/// goes to standard error as usual. A caller that redirects standard error, or asked for JSON,
+/// reads the error itself, so a dialog that nobody may be there to close never blocks it.
+pub fn show_if_no_terminal(message: &str, json: bool) {
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetConsoleProcessList, GetStdHandle, STD_ERROR_HANDLE,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND,
     };
+    if json {
+        return;
+    }
+    let mut mode = 0_u32;
+    // SAFETY: GetStdHandle has no preconditions, and GetConsoleMode only writes `mode`; it fails
+    // for a handle that isn't a console, such as a pipe, a file or none.
+    if unsafe { GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &mut mode) } == 0 {
+        return;
+    }
     let mut processes = [0_u32; 2];
     // SAFETY: the buffer holds two ids and its length says so; the call writes at most that many.
     let attached = unsafe { GetConsoleProcessList(processes.as_mut_ptr(), 2) };

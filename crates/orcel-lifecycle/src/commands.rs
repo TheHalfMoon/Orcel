@@ -433,16 +433,18 @@ pub fn stop(args: &mut Args) -> Result<Output, LifecycleError> {
 
 /// Opens the Windows app from the active, verified install, and doesn't wait for it.
 /// The path comes only from the install, never from an argument or PATH.
-pub fn app(args: &mut Args) -> Result<Output, LifecycleError> {
+pub fn app(args: &mut Args, json: bool) -> Result<Output, LifecycleError> {
     let result = open_app(args);
     // Started from the Start Menu, its minimized console closes with the message in it.
     #[cfg(windows)]
     if let Err(error) = &result {
-        orcel_lifecycle::start_menu::show_if_no_terminal(&format!(
-            "Orcel couldn't open the app: {}",
-            error.message
-        ));
+        orcel_lifecycle::start_menu::show_if_no_terminal(
+            &format!("Orcel couldn't open the app: {}", error.message),
+            json,
+        );
     }
+    #[cfg(not(windows))]
+    let _ = json;
     result
 }
 

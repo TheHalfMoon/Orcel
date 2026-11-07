@@ -218,7 +218,7 @@ fn main() {
         std::process::exit(code);
     }
     let json_output = args.flag("--json");
-    match run(&mut args) {
+    match run(&mut args, json_output) {
         Ok(output) => {
             if json_output {
                 println!(
@@ -254,7 +254,7 @@ pub(crate) struct Output {
     pub(crate) json: serde_json::Value,
 }
 
-fn run(args: &mut Args) -> Result<Output, LifecycleError> {
+fn run(args: &mut Args, json_output: bool) -> Result<Output, LifecycleError> {
     // State-changing commands hold the per-install lifecycle lock for their
     // whole duration so they never interleave across processes.
     let mutating = matches!(
@@ -304,7 +304,7 @@ fn run(args: &mut Args) -> Result<Output, LifecycleError> {
         "status" => commands::status(args),
         "doctor" => commands::doctor(args),
         "state" => commands::state(args),
-        "app" => commands::app(args),
+        "app" => commands::app(args, json_output),
         "approvals" => commands::approvals(args),
         "emergency-revoke" => commands::emergency_revoke(args),
         "full-control" => commands::full_control(args),
@@ -353,7 +353,7 @@ fn install(args: &mut Args) -> Result<Output, LifecycleError> {
     }
     if report.start_menu_added {
         human.push_str("  Start Menu: Orcel opens the app\n");
-    } else if !report.app_included {
+    } else if add_to_path && !report.app_included {
         human.push_str("  Start Menu: no entry, since this release has no Orcel app\n");
     } else if let Some(problem) = &report.start_menu_problem {
         human.push_str(&format!(

@@ -123,12 +123,12 @@ Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, 
 
 ### State from an earlier build
 
-Earlier builds kept their state in `%LOCALAPPDATA%\Orcel`. If that folder exists, `orceld` won't start until you decide what happens to it, so starting fresh never silently abandons it. `orcel state status` shows what's there and the two choices:
+Earlier builds kept their state in `%LOCALAPPDATA%\Orcel`. If that folder holds anything, `orceld` won't start until you decide what happens to it, so starting fresh never silently abandons it. `orcel state status` shows what's there and the two choices:
 
 - `orcel state migrate` copies your history, trust and settings to `%USERPROFILE%\.orcel`, and only if no other account could have changed them. Full-control grants, remote leases and this device's pairing aren't copied: grant them again.
 - `orcel state keep-separate` records that Orcel won't use the earlier folder, and keeps what's already in `%USERPROFILE%\.orcel`.
 
-Neither changes or deletes the earlier folder. Once a decision is recorded, it can't be changed with these commands.
+Neither changes nor deletes the earlier folder. Once a decision is recorded, it can't be changed with these commands.
 
 ## Configure
 
