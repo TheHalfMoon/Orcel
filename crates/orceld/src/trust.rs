@@ -211,10 +211,16 @@ impl TrustStore {
             ))
         })
         .map_err(|error| {
-            ProviderError::new(
-                FailureCode::ApprovalUnavailable,
-                format!("trust can't be changed now: {error}; try again"),
-            )
+            let message = match error {
+                orcel_journal::JournalError::Busy => {
+                    "another Orcel session is changing trust; try again".to_owned()
+                }
+                error => format!(
+                    "the trust store's lock beside {} can't be taken: {error}",
+                    path.display()
+                ),
+            };
+            ProviderError::new(FailureCode::ApprovalUnavailable, message)
         })?
     }
 
@@ -226,8 +232,14 @@ impl TrustStore {
         provenance_method: &str,
         now_ms: u64,
     ) -> Result<TrustStatus, ProviderError> {
+        // A last record without its newline (as a crash between the record and its newline
+        // under earlier builds left it) is valid, and the next record must not fuse with it.
+        let mut unterminated = false;
         let on_disk = match std::fs::read_to_string(&self.path) {
-            Ok(text) => Chain::parse(&text),
+            Ok(text) => {
+                unterminated = !text.is_empty() && !text.ends_with('\n');
+                Chain::parse(&text)
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Chain {
                 records: Vec::new(),
                 damaged: false,
@@ -293,7 +305,7 @@ impl TrustStore {
             checksum: String::new(),
         };
         record.checksum = record_checksum(&record);
-        self.append_to_file(&record)?;
+        self.append_to_file(&record, unterminated)?;
         self.tip = record.checksum.clone();
         self.records.insert(workspace_id.to_owned(), record.clone());
         self.history.push(record.clone());
@@ -307,9 +319,13 @@ impl TrustStore {
         })
     }
 
-    /// Appends `record` as one write, and returns only once it's on disk: a change isn't
-    /// reported until it would survive a crash.
-    fn append_to_file(&self, record: &StoredTrust) -> Result<(), ProviderError> {
+    /// Appends `record` as one write, after a newline when the file's last line lacks one, and
+    /// returns only once it's on disk: a change isn't reported until it would survive a crash.
+    fn append_to_file(
+        &self,
+        record: &StoredTrust,
+        unterminated: bool,
+    ) -> Result<(), ProviderError> {
         use std::io::Write as _;
         let persist = |error: std::io::Error| {
             ProviderError::new(
@@ -317,12 +333,17 @@ impl TrustStore {
                 format!("persist trust record: {error}"),
             )
         };
-        let mut line = serde_json::to_vec(record).map_err(|error| {
+        let record = serde_json::to_vec(record).map_err(|error| {
             ProviderError::new(
                 FailureCode::ApprovalUnavailable,
                 format!("serialize trust record: {error}"),
             )
         })?;
+        let mut line = Vec::with_capacity(record.len() + 2);
+        if unterminated {
+            line.push(b'\n');
+        }
+        line.extend_from_slice(&record);
         line.push(b'\n');
         let mut file = files::open_private_append(&self.path).map_err(|error| {
             ProviderError::new(
@@ -486,6 +507,36 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    fn remove_with_lock(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let mut lock = path.as_os_str().to_owned();
+        lock.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(lock));
+    }
+
+    #[test]
+    fn a_last_record_without_its_newline_isnt_fused_with_the_next() {
+        let path = temp_path("unterminated");
+        let mut store = TrustStore::load_or_create(path.clone());
+        store
+            .grant("ws", "sg-000020-v1", "test-hello", 1_000)
+            .expect("grant");
+        store
+            .revoke_workspace("ws", "sg-000020-v1", "test-hello", 2_000)
+            .expect("revoke");
+        let text = std::fs::read_to_string(&path).expect("read");
+        std::fs::write(&path, text.trim_end_matches('\n')).expect("strip newline");
+        TrustStore::load_or_create(path.clone())
+            .grant("other", "sg-000020-v1", "test-hello", 3_000)
+            .expect("grant other");
+        let reloaded = TrustStore::load_or_create(path.clone());
+        assert!(!reloaded.get("ws").trusted, "the revoke must not be lost");
+        assert_eq!(reloaded.get("ws").revision, 2);
+        assert!(reloaded.get("other").trusted);
+        assert_eq!(reloaded.history.len(), 3);
+        remove_with_lock(&path);
+    }
+
     #[test]
     fn sessions_keep_each_others_changes_to_other_workspaces() {
         // Two orcelds load the store, then each changes a different workspace, as when one
@@ -508,7 +559,7 @@ mod tests {
         assert_eq!(reloaded.get("ws").revision, 2);
         assert!(reloaded.get("other").trusted);
         assert_eq!(reloaded.history.len(), 3);
-        let _ = std::fs::remove_file(&path);
+        remove_with_lock(&path);
     }
 
     #[test]
@@ -530,7 +581,7 @@ mod tests {
         let reloaded = TrustStore::load_or_create(path.clone());
         assert!(!reloaded.get("ws").trusted);
         assert_eq!(reloaded.get("ws").revision, 2);
-        let _ = std::fs::remove_file(&path);
+        remove_with_lock(&path);
     }
 
     #[test]
@@ -554,7 +605,7 @@ mod tests {
         assert_eq!(error.code, FailureCode::ApprovalUnavailable);
         assert!(error.message.contains("damaged"), "{}", error.message);
         assert_eq!(std::fs::read(&path).expect("read"), torn);
-        let _ = std::fs::remove_file(&path);
+        remove_with_lock(&path);
     }
 
     #[test]
