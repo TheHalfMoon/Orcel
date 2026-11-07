@@ -850,7 +850,11 @@ namespace Orcel.DesktopPreview
             // The CLI's own error, such as a corrupt record: shown, never treated as healthy.
             if (json != null && result.ExitCode != 0 && json.ContainsKey("ok") && false.Equals(json["ok"])
                 && json.TryGetValue("error", out error) && !string.IsNullOrEmpty(Text(error as Dictionary<string, object>, "message")))
-                return new RuntimeStatus { Availability = RuntimeAvailability.Failed, Detail = Plain(Text((Dictionary<string, object>)error, "message")) };
+            {
+                string message = Plain(Text((Dictionary<string, object>)error, "message"));
+                // A message that cleans to nothing says nothing, so it's an answer this app doesn't understand.
+                if (message != ".") return new RuntimeStatus { Availability = RuntimeAvailability.Failed, Detail = message };
+            }
             if (json == null || result.ExitCode != 0 || !(json.ContainsKey("ok") && true.Equals(json["ok"]))
                 || !json.TryGetValue("runtime", out runtime) || !(runtime is Dictionary<string, object>))
                 return new RuntimeStatus { Availability = RuntimeAvailability.Incompatible };
@@ -895,7 +899,7 @@ namespace Orcel.DesktopPreview
                     + "Next: in a terminal in the extracted release folder, run `.\\orcel.exe install`, then Refresh status.";
             if (status.Availability == RuntimeAvailability.Unresponsive)
                 return "The Orcel runtime did not answer a read-only status query in time. No action was performed. "
-                    + "Next: Refresh status. If it keeps failing, repair the install with `.\\orcel.exe install` from the extracted release folder.";
+                    + "Next: Refresh status. If it keeps failing, repair the install with `.\\orcel.exe install` from the extracted release folder of the same version.";
             if (status.Availability == RuntimeAvailability.Incompatible)
                 return "The installed Orcel runtime returned a response this preview does not understand. No action was performed. "
                     + "Next: use this app from the same release as the installed runtime; `version` shows the installed release.";
@@ -1472,6 +1476,7 @@ namespace Orcel.DesktopPreview
                 "{\"ok\":false,\"error\":{\"kind\":\"state\",\"message\":\"C:\\\\x\\\\supervisor.json is corrupt\"}}" });
             expect(failed.Availability == RuntimeAvailability.Failed && Interpret.StatusMessage(failed).Contains("supervisor.json is corrupt. No action"), "the runtime's own error is shown as a sentence");
             expect(Interpret.Plain("a\nb\u202Ec") == "a b c.", "runtime text can't start a line or reorder the display");
+            expect(Interpret.Status(new CliResult { ExitCode = 7, Stdout = "{\"ok\":false,\"error\":{\"message\":\"\\n \"}}" }).Availability == RuntimeAvailability.Incompatible, "an empty error isn't shown as one");
             RuntimeStatus staleUnset = Interpret.Status(new CliResult { ExitCode = 0, Stdout =
                 "{\"installed\":\"0.2.0\",\"ok\":true,\"runtime\":{\"detail\":\"stale supervisor record\",\"state\":\"not_running\"},\"tunnel_configured\":false,\"workspaces\":1}" });
             expect(Interpret.StatusMessage(staleUnset).Contains("ChatGPT tunnel not running (stale supervisor record)."), "a stale record isn't hidden as unconfigured");
