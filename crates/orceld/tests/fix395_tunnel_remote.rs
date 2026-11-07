@@ -47,7 +47,7 @@ fn run_orceld(state: &Path, workspace: &Path, requests: &[Value]) -> Vec<Value> 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if cfg!(windows) {
-        command.env("LOCALAPPDATA", state);
+        command.env("USERPROFILE", state);
     } else if cfg!(target_os = "linux") {
         command.env("XDG_STATE_HOME", state);
     }

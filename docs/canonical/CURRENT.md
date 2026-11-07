@@ -1,5 +1,7 @@
 # Orcel Current Identity Notice
 
+> **Windows state root, 2026-11-07:** it is now `%USERPROFILE%\.orcel`, not `%LOCALAPPDATA%\Orcel`, which this document may still name. Other software on an ordinary account can hold rights on `AppData` that Orcel rightly refuses. See `crates/orcel-platform/src/paths.rs` and `legacy.rs`.
+
 Status: ACTIVE PRODUCT IDENTITY
 Updated: 2026-10-16
 Canonical identity effective: 2026-10-15

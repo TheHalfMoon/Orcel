@@ -11,7 +11,7 @@ pub const CURRENT_SCHEMA: &str = "orcel-current-v1";
 pub const INSTALL_SCHEMA: &str = "orcel-install-v1";
 
 /// Paths of the per-user install rooted at the XP-01 state root
-/// (`%LOCALAPPDATA%\Orcel` on Windows).
+/// (`%USERPROFILE%\.orcel` on Windows).
 ///
 /// On Linux and macOS the same root is the XDG or Application Support state
 /// root, and only the state paths apply there (`state_dir`, `config_file`,
@@ -319,16 +319,15 @@ mod tests {
         assert!(Layout::from_lookup(&|_| None).is_err());
     }
 
-    /// Valid Windows input resolves exactly as the earlier
-    /// `LOCALAPPDATA` + `Orcel` resolver did.
+    /// Valid Windows input resolves under the profile's root.
     #[cfg(windows)]
     #[test]
-    fn current_user_root_on_windows_is_localappdata_orcel() {
-        let local = r"C:\Users\someone\AppData\Local";
-        let lookup = |name: &str| (name == "LOCALAPPDATA").then(|| OsString::from(local));
+    fn current_user_root_on_windows_is_userprofile_dot_orcel() {
+        let local = r"C:\Users\someone";
+        let lookup = |name: &str| (name == "USERPROFILE").then(|| OsString::from(local));
         assert_eq!(
             Layout::from_lookup(&lookup).unwrap().root,
-            Path::new(local).join("Orcel")
+            Path::new(local).join(".orcel")
         );
     }
 

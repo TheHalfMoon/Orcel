@@ -132,7 +132,7 @@ pub(crate) fn judge(
 }
 
 #[cfg(windows)]
-pub(crate) use reader::{create_private_dir, current_user_sid, security_of};
+pub(crate) use reader::{create_private_dir, current_user_sid, hard_link_count, security_of};
 
 #[cfg(windows)]
 mod reader {
@@ -277,6 +277,22 @@ mod reader {
             });
         }
         Ok((owner, Some(entries)))
+    }
+
+    /// How many names the file at `path` has.
+    pub(crate) fn hard_link_count(path: &Path) -> Result<u32, String> {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let file = std::fs::File::open(path)
+            .map_err(|error| format!("{} cannot be opened: {error}", path.display()))?;
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: the handle is open for the call, as `file` outlives it; `info` is a valid out
+        // pointer.
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
+            .map_err(|error| format!("GetFileInformationByHandle: {error}"))?;
+        Ok(info.nNumberOfLinks)
     }
 
     /// The string SID of the user this process runs as.

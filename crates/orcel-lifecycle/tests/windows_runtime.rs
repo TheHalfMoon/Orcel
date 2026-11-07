@@ -91,11 +91,11 @@ struct Cleanup {
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        let cli = self.local.join("Orcel").join("bin").join("orcel.exe");
+        let cli = self.local.join(".orcel").join("bin").join("orcel.exe");
         if cli.is_file() {
             let _ = Command::new(&cli)
                 .args(["stop", "--json"])
-                .env("LOCALAPPDATA", &self.local)
+                .env("USERPROFILE", &self.local)
                 .output();
         }
         for dir in self.dirs.iter().chain(std::iter::once(&self.local)) {
@@ -148,7 +148,7 @@ fn release() -> PathBuf {
 fn orcel(exe: &Path, local: &Path, args: &[&str]) -> Output {
     Command::new(exe)
         .args(args)
-        .env("LOCALAPPDATA", local)
+        .env("USERPROFILE", local)
         .output()
         .unwrap()
 }
@@ -186,7 +186,7 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
     let fake_tunnel = built("fake_tunnel_client.exe");
     let release = release();
     let local = temp_dir("local");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let project = temp_dir("project");
     let key_dir = temp_dir("key");
     let key_file = key_dir.join("runtime.key");

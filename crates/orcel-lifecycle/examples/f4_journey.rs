@@ -390,8 +390,12 @@ fn redacted(transcript: &str) -> String {
 }
 
 fn default_journal() -> Option<PathBuf> {
-    let root = std::env::var_os("LOCALAPPDATA")?;
-    Some(PathBuf::from(root).join("Orcel").join("report-tasks.jsonl"))
+    let root = std::env::var_os("USERPROFILE")?;
+    Some(
+        PathBuf::from(root)
+            .join(".orcel")
+            .join("report-tasks.jsonl"),
+    )
 }
 
 /// Whether the task's folder is inside this journey's scratch workspace.

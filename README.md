@@ -117,7 +117,7 @@ Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, 
    Optionally verify provenance: `gh attestation verify .\orcel-<version>-windows-x64.zip --repo TheHalfMoon/Orcel`.
 2. Extract the archive and run, from the extracted folder:
    `.\orcel.exe install`
-   For a qualified Orcel build, the installer checks files against `manifest.json` before copying them. The current source uses `%LOCALAPPDATA%\Orcel` and adds `%LOCALAPPDATA%\Orcel\bin` to your user PATH (`--no-path` to skip). Follow the exact published release notes and open a new terminal afterwards.
+   For a qualified Orcel build, the installer checks files against `manifest.json` before copying them. The current source uses `%USERPROFILE%\.orcel` and adds `%USERPROFILE%\.orcel\bin` to your user PATH (`--no-path` to skip). Follow the exact published release notes and open a new terminal afterwards.
 
 ## Configure
 
@@ -163,7 +163,7 @@ Codex and other command-based clients use the same command and arguments:
 
 Mistral Vibe Code accepts a stdio entry in its MCP server list with command `orcel` and arguments `["mcp", "stdio"]`. Generic MCP clients and the MCP Inspector connect with transport `stdio`, command `orcel`, and arguments `["mcp", "stdio"]`.
 
-`orcel` here is the retained compatibility command at `%LOCALAPPDATA%\Orcel\bin\orcel.exe` on your user PATH after install. It resolves the active verified release on every launch, refuses tampered or inactive payloads, and fails closed when no workspace is configured. Tested per-client files live in [`examples/mcp-clients`](examples/mcp-clients) (Claude Desktop JSON and Desktop Extension manifest, Codex TOML, Vibe Code TOML, generic shapes, and the Inspector qualification script).
+`orcel` here is the retained compatibility command at `%USERPROFILE%\.orcel\bin\orcel.exe` on your user PATH after install. It resolves the active verified release on every launch, refuses tampered or inactive payloads, and fails closed when no workspace is configured. Tested per-client files live in [`examples/mcp-clients`](examples/mcp-clients) (Claude Desktop JSON and Desktop Extension manifest, Codex TOML, Vibe Code TOML, generic shapes, and the Inspector qualification script).
 
 ## Connect over loopback HTTP (no tunnel required)
 
@@ -192,7 +192,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 
 ## Diagnose problems
 
-Run `orcel doctor`. Each check reports `PASS`, `WARN`, `FAIL`, or `????` (could not be checked) with one line of evidence — Orcel never reports health it did not observe. Logs are currently stored in the compatibility path `%LOCALAPPDATA%\Orcel\logs` (`tunnel.log`, `supervisor.log`, `lifecycle.log`); tunnel output is redacted before it is written.
+Run `orcel doctor`. Each check reports `PASS`, `WARN`, `FAIL`, or `????` (could not be checked) with one line of evidence — Orcel never reports health it did not observe. Logs are currently stored in the compatibility path `%USERPROFILE%\.orcel\logs` (`tunnel.log`, `supervisor.log`, `lifecycle.log`); tunnel output is redacted before it is written.
 
 ## Update
 

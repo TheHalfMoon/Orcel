@@ -6481,7 +6481,7 @@ mod tests {
 
         fn user_root_env(base: &Path) -> Vec<(&'static str, OsString)> {
             #[cfg(windows)]
-            let name = "LOCALAPPDATA";
+            let name = "USERPROFILE";
             #[cfg(not(windows))]
             let name = "HOME";
             vec![(name, base.as_os_str().to_owned())]
@@ -6525,18 +6525,18 @@ mod tests {
 
         #[cfg(windows)]
         #[test]
-        fn windows_path_is_byte_identical_to_the_previous_default() {
+        fn windows_path_is_under_the_profile_state_root() {
             // A real directory: resolving creates the private state root
             // with an owner-only DACL (#358 item 2).
             let local = sandbox("windows-bytes");
             let path = resolve(&lookup(vec![(
-                "LOCALAPPDATA",
+                "USERPROFILE",
                 local.clone().into_os_string(),
             )]))
             .expect("default");
             assert_eq!(
                 path.as_os_str(),
-                format!(r"{}\Orcel\browser-profile", local.display()).as_str()
+                format!(r"{}\.orcel\browser-profile", local.display()).as_str()
             );
             let _ = std::fs::remove_dir_all(local);
         }

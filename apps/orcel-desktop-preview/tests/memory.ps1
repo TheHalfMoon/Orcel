@@ -2,7 +2,7 @@
 # window built the same way, on the same machine. Report only: it sets no
 # budget. It opens windows and types into the app's own command box, so it
 # runs only on a disposable CI runner (GITHUB_ACTIONS) unless -AllowLocal is
-# given. Each app gets an isolated, empty LOCALAPPDATA and an app API
+# given. Each app gets an isolated, empty USERPROFILE and an app API
 # instance nothing serves, as tests\e2e.ps1 does.
 #
 # For each app (orcel, baseline) and rendering mode (hardware, software):
@@ -99,7 +99,7 @@ function Start-App([string]$name) {
     $info.UseShellExecute = $false
     $empty = Join-Path $env:TEMP ("orcel-mem-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $empty | Out-Null
-    $info.EnvironmentVariables["LOCALAPPDATA"] = $empty
+    $info.EnvironmentVariables["USERPROFILE"] = $empty
     $info.EnvironmentVariables["ORCEL_APP_API_INSTANCE"] = "mem-" + [guid]::NewGuid().ToString("N").Substring(0, 12)
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $process = [System.Diagnostics.Process]::Start($info)

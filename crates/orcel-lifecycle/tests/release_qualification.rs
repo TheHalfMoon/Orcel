@@ -99,7 +99,7 @@ impl Drop for Cleanup {
             // Surface the runtime's own logs before they are removed, so a
             // failure on a CI runner can be diagnosed.
             for log in ["tunnel.log", "supervisor.log", "lifecycle.log"] {
-                let path = self.local.join("Orcel").join("logs").join(log);
+                let path = self.local.join(".orcel").join("logs").join(log);
                 let text = fs::read_to_string(&path).unwrap_or_default();
                 let tail = text.lines().rev().take(40).collect::<Vec<_>>();
                 eprintln!("---- {log} (last {} lines) ----", tail.len());
@@ -108,11 +108,11 @@ impl Drop for Cleanup {
                 }
             }
         }
-        let cli = self.local.join("Orcel").join("bin").join("orcel.exe");
+        let cli = self.local.join(".orcel").join("bin").join("orcel.exe");
         if cli.is_file() {
             let _ = Command::new(&cli)
                 .args(["stop", "--json"])
-                .env("LOCALAPPDATA", &self.local)
+                .env("USERPROFILE", &self.local)
                 .output();
         }
         for dir in self
@@ -167,7 +167,7 @@ fn derived_release(source: &Path, version: &str, replace: Option<(&str, &[u8])>)
 fn orcel(exe: &Path, local: &Path, args: &[&str]) -> Output {
     let output = Command::new(exe)
         .args(args)
-        .env("LOCALAPPDATA", local)
+        .env("USERPROFILE", local)
         .output()
         .unwrap();
     let all = format!(
@@ -247,7 +247,7 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     let node = find_node_on_path().expect("Node.js is required on PATH");
     let tunnel = fake_tunnel();
     let local = temp_dir("local");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let project = temp_dir("project");
     fs::write(project.join("hello.txt"), b"hello from the workspace").unwrap();
     let key_dir = temp_dir("key");
@@ -503,7 +503,7 @@ fn installed_release_fits_the_400_mb_budget() {
         serde_json::from_slice(&fs::read(release.join(MANIFEST_FILE)).unwrap()).unwrap();
     let node = find_node_on_path().expect("Node.js is required on PATH");
     let local = temp_dir("size");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let _cleanup = Cleanup {
         local: local.clone(),
         dirs: std::cell::RefCell::new(Vec::new()),
@@ -602,7 +602,7 @@ fn installed_release_fits_the_400_mb_budget() {
     // make anyone reading it wait until the app closes, so this has a limit of its own.
     let opening = Command::new(root.join("bin").join("orcel.exe"))
         .args(["app", "--json"])
-        .env("LOCALAPPDATA", &local)
+        .env("USERPROFILE", &local)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -673,7 +673,7 @@ impl McpStdio {
     fn start_with(cli: &Path, args: &[&str], local: &Path, stderr: PathBuf) -> Self {
         let mut child = Command::new(cli)
             .args(args)
-            .env("LOCALAPPDATA", local)
+            .env("USERPROFILE", local)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(fs::File::create(&stderr).unwrap())
@@ -802,7 +802,7 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
     );
     let node = find_node_on_path().expect("Node.js is required on PATH");
     let local = temp_dir("journey");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let project = temp_dir("journey-project");
     let _cleanup = Cleanup {
         local: local.clone(),
@@ -1152,7 +1152,7 @@ fn installed_release_serves_every_client_example() {
             "--json",
         ],
     ));
-    let cli = local.join("Orcel").join("bin").join("orcel.exe");
+    let cli = local.join(".orcel").join("bin").join("orcel.exe");
     json_ok(&orcel(
         &cli,
         &local,
@@ -1244,7 +1244,7 @@ fn installed_release_serves_every_client_example() {
     let _server = KillOnDrop(
         Command::new(&cli)
             .args(["mcp", "serve", "--port", &port.to_string()])
-            .env("LOCALAPPDATA", &local)
+            .env("USERPROFILE", &local)
             .env("ORCEL_LOOPBACK_TOKEN", token)
             .stdin(std::process::Stdio::null())
             .stdout(fs::File::create(project.join("serve-stdout.log")).unwrap())

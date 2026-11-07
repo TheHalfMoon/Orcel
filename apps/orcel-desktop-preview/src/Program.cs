@@ -77,7 +77,7 @@ namespace Orcel.DesktopPreview
         /// Processes the child starts before it joins the job (a few
         /// milliseconds after start) are not covered; if no job can be created,
         /// only the direct child is killed on timeout.
-        internal static CliResult Run(string fileName, string[] arguments, int timeoutMs, string localAppData)
+        internal static CliResult Run(string fileName, string[] arguments, int timeoutMs, string userProfile)
         {
             CliResult result = new CliResult();
             using (Process process = new Process())
@@ -92,7 +92,7 @@ namespace Orcel.DesktopPreview
                     RedirectStandardInput = true,
                     WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
                 };
-                if (localAppData != null) process.StartInfo.EnvironmentVariables["LOCALAPPDATA"] = localAppData;
+                if (userProfile != null) process.StartInfo.EnvironmentVariables["USERPROFILE"] = userProfile;
                 try { process.Start(); }
                 catch (Exception) { result.FailedToStart = true; return result; }
                 // The child and everything it starts after this point are killed
@@ -261,13 +261,14 @@ namespace Orcel.DesktopPreview
 
     internal static class LocalHost
     {
-        /// Same resolution as the runtime itself: %LOCALAPPDATA%, then the
-        /// known folder. Never PATH, never a model- or user-provided path.
-        internal static string LocalAppData()
+        /// %USERPROFILE%, as the runtime uses, then the known folder, which the
+        /// runtime lacks: this app passes what it finds to its child, so they agree.
+        /// Never PATH, never a model- or user-provided path.
+        internal static string UserProfile()
         {
-            string fromEnvironment = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+            string fromEnvironment = Environment.GetEnvironmentVariable("USERPROFILE");
             if (IsDriveQualified(fromEnvironment)) return fromEnvironment;
-            return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         }
 
         /// `C:\...` only: no UNC share (`\\host\share`), no drive-relative path.
@@ -279,7 +280,7 @@ namespace Orcel.DesktopPreview
 
         internal static string PathToCompatCli()
         {
-            return Path.Combine(LocalAppData(), "Orcel", "bin", "orcel.exe");
+            return Path.Combine(UserProfile(), ".orcel", "bin", "orcel.exe");
         }
 
         internal static bool IsInstalled()
@@ -291,7 +292,7 @@ namespace Orcel.DesktopPreview
         {
             string[] arguments = CommandRouter.CliArguments(command);
             if (arguments == null) throw new ArgumentException("not a read-only runtime query");
-            return BoundedProcess.Run(PathToCompatCli(), arguments, timeoutMs, LocalAppData());
+            return BoundedProcess.Run(PathToCompatCli(), arguments, timeoutMs, UserProfile());
         }
 
         internal static RuntimeStatus ReadStatus(int timeoutMs)

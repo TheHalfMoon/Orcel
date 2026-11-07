@@ -59,6 +59,37 @@ fn jsonl_parses(path: &Path) -> Result<usize, String> {
     Ok(count)
 }
 
+/// Whether earlier state is waiting on a person's decision, which stops `orceld` from starting.
+fn legacy_state(layout: &Layout) -> Check {
+    use orcel_platform::legacy::{examine, legacy_root_from, LegacyState};
+    let Some(legacy) = legacy_root_from(&|name| std::env::var_os(name)) else {
+        return check(
+            "legacy_state",
+            CheckStatus::Pass,
+            "no earlier state location",
+        );
+    };
+    match examine(&legacy, &layout.root) {
+        LegacyState::None => check("legacy_state", CheckStatus::Pass, "no earlier state to decide on"),
+        LegacyState::Decided(decision) => {
+            check("legacy_state", CheckStatus::Pass, format!("decided: {decision}"))
+        }
+        LegacyState::Undecided(_) => check(
+            "legacy_state",
+            CheckStatus::Fail,
+            format!(
+                "earlier state is at {}, undecided, so orceld won't start; run `orcel state status`",
+                legacy.display()
+            ),
+        ),
+        LegacyState::Unreadable(path, error) => check(
+            "legacy_state",
+            CheckStatus::Fail,
+            format!("{} can't be read: {error}; run `orcel state status`", path.display()),
+        ),
+    }
+}
+
 /// Verifies the approval ledger's whole hash chain, not just its JSON syntax.
 fn approval_history(path: &Path) -> Check {
     use orcel_approval::ApprovalLedgerStatus;
@@ -323,6 +354,7 @@ pub fn run_with_approval_history(
         )
     });
 
+    checks.push(legacy_state(layout));
     checks.push(approval_history(approval_path));
     for (name, file) in [("trust_state", "trust.jsonl"), ("audit_log", "audit.jsonl")] {
         let path = layout.root.join(file);
