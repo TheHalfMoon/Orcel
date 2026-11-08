@@ -763,3 +763,18 @@ fn content_its_app_marked_private_is_concealed() {
     ));
     assert_eq!(concealed().code, FailureCode::CapabilityDenied);
 }
+
+#[test]
+fn the_history_marker_value_is_read_and_unreadable_counts_as_private() {
+    assert_eq!(history_allowed_from(Some(&1u32.to_le_bytes())), 1);
+    assert_eq!(history_allowed_from(Some(&2u32.to_le_bytes())), 2);
+    assert_eq!(history_allowed_from(Some(&0u32.to_le_bytes())), 0);
+    // Present but unreadable, or shorter than a DWORD: private.
+    assert_eq!(history_allowed_from(None), 0);
+    assert_eq!(history_allowed_from(Some(&[1, 0])), 0);
+    assert!(is_concealed(
+        |_: &str| false,
+        Some(history_allowed_from(None))
+    ));
+    assert!(!is_concealed(|_: &str| false, Some(2)));
+}
