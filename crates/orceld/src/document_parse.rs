@@ -432,7 +432,8 @@ impl Stage {
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
-        // Unique per parse (process, sequence, per-process random salt, digest), so two
+        // Unique per parse (process, sequence, a random 64-bit salt from std's OS-seeded
+        // hasher keys, new on each call, and the digest), so two
         // parses never share a stage. A name already taken, by a leftover or anything else,
         // is skipped and never removed: only a directory this parse created is its own.
         static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

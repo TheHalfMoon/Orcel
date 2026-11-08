@@ -422,6 +422,23 @@ fn a_stage_name_already_taken_is_skipped_and_left_alone() {
         .status()
         .unwrap()
         .success());
+    // A dangling junction too: creating at its name must not create its missing target.
+    #[cfg(windows)]
+    {
+        assert!(std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(runs.join("dangling"))
+            .arg(base.join("missing"))
+            .status()
+            .unwrap()
+            .success());
+        assert!(claim_dir(&runs, ["dangling".to_owned()].into_iter()).is_err());
+        assert!(
+            !base.join("missing").exists(),
+            "a dangling link's target is never created"
+        );
+        std::fs::remove_dir(runs.join("dangling")).unwrap();
+    }
     let names = ["taken", "file", "link", "fresh"].map(String::from);
     let claimed = claim_dir(&runs, names.into_iter()).unwrap();
     assert_eq!(claimed, runs.join("fresh"));
