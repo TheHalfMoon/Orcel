@@ -787,6 +787,91 @@ mod win {
         index_low: u32,
     }
 
+    const DELETE: u32 = 0x0001_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_RENAME_INFO_CLASS: u32 = 3;
+
+    /// `FILE_RENAME_INFO`; the name follows `length` in the same allocation.
+    #[repr(C)]
+    struct FileRenameInfo {
+        flags: u32,
+        root: Handle,
+        length: u32,
+        name: [u16; 1],
+    }
+
+    /// One entry opened for renaming. The rename, the check of where it really went and any
+    /// move back all act on this handle, so they can only ever move this entry, whatever a
+    /// path has been swapped to in between.
+    pub(crate) struct RenameHandle(OwnedHandle);
+
+    /// Opens the entry at `path` itself (a link is opened, not followed) for renaming.
+    pub(crate) fn open_for_rename(path: &Path) -> io::Result<RenameHandle> {
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: `wide` is a NUL-terminated path that outlives the call; no security
+        // attributes or template are passed.
+        let raw = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                DELETE | FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            )
+        };
+        if raw == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(RenameHandle(OwnedHandle(raw)))
+    }
+
+    impl RenameHandle {
+        /// Where the entry is now.
+        pub(crate) fn final_path(&self) -> io::Result<PathBuf> {
+            final_path_from_handle(self.0 .0 as RawHandle)
+        }
+
+        /// Renames the entry to the absolute path `to`, never replacing an existing entry.
+        pub(crate) fn rename_no_replace(&self, to: &Path) -> io::Result<()> {
+            let name: Vec<u16> = to.as_os_str().encode_wide().collect();
+            let offset = std::mem::offset_of!(FileRenameInfo, name);
+            let total = offset + (name.len() + 1) * 2;
+            // u64 storage keeps the struct's 8-byte alignment.
+            let mut storage = vec![0u64; total.div_ceil(8)];
+            let base = storage.as_mut_ptr().cast::<u8>();
+            // SAFETY: `storage` is zeroed, aligned for FileRenameInfo and at least `total`
+            // bytes: the header up to `name`, then the name and a NUL. Only those bytes are
+            // written, and the buffer outlives the call that reads it.
+            unsafe {
+                let info = base.cast::<FileRenameInfo>();
+                std::ptr::addr_of_mut!((*info).flags).write(0); // never replace
+                std::ptr::addr_of_mut!((*info).root).write(std::ptr::null_mut());
+                std::ptr::addr_of_mut!((*info).length).write((name.len() * 2) as u32);
+                std::ptr::copy_nonoverlapping(
+                    name.as_ptr().cast::<u8>(),
+                    base.add(offset),
+                    name.len() * 2,
+                );
+                if SetFileInformationByHandle(
+                    self.0 .0,
+                    FILE_RENAME_INFO_CLASS,
+                    base.cast::<c_void>(),
+                    total as u32,
+                ) == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        }
+    }
+
     /// The number of names the open file has.
     pub(super) fn link_count(handle: RawHandle) -> io::Result<u64> {
         let mut info = ByHandleFileInformation::default();
@@ -819,6 +904,12 @@ mod win {
         ) -> Handle;
         fn GetFinalPathNameByHandleW(file: Handle, path: *mut u16, size: u32, flags: u32) -> u32;
         fn GetFileInformationByHandle(file: Handle, info: *mut ByHandleFileInformation) -> i32;
+        fn SetFileInformationByHandle(
+            file: Handle,
+            class: u32,
+            info: *const c_void,
+            size: u32,
+        ) -> i32;
         fn CloseHandle(handle: Handle) -> i32;
     }
 
@@ -863,19 +954,37 @@ mod win {
             return Err(io::Error::last_os_error());
         }
 
-        let mut buffer = vec![0u16; required as usize + 1];
-        let written = unsafe {
-            GetFinalPathNameByHandleW(
-                handle,
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                VOLUME_NAME_DOS,
-            )
-        };
-        if written == 0 {
-            return Err(io::Error::last_os_error());
+        // The path can grow between the size query and the read (a folder renamed meanwhile);
+        // then the call returns the size it needs and fills nothing, so ask again.
+        let mut size = required as usize + 1;
+        let mut buffer;
+        let mut attempts = 0;
+        loop {
+            buffer = vec![0u16; size];
+            let written = unsafe {
+                GetFinalPathNameByHandleW(
+                    handle,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    VOLUME_NAME_DOS,
+                )
+            };
+            if written == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if (written as usize) < buffer.len() {
+                buffer.truncate(written as usize);
+                break;
+            }
+            attempts += 1;
+            if attempts > 8 {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "the path kept changing while it was read",
+                ));
+            }
+            size = written as usize + 1;
         }
-        buffer.truncate(written as usize);
         let value = String::from_utf16(&buffer)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-16 path"))?;
         let normalized = value

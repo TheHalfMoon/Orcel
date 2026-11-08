@@ -342,7 +342,8 @@ impl FsProvider {
                 .within(&resolved)
                 .and_then(|()| self.ensure_not_git(&resolved))
             {
-                let _ = fs::remove_dir(&next);
+                // The directory this call just created, wherever it really is.
+                let _ = fs::remove_dir(&resolved);
                 return Err(error);
             }
             created.push(
@@ -402,14 +403,7 @@ impl FsProvider {
         }
         self.ensure_not_git(&parent)?;
         let target = parent.join(&name);
-        move_no_replace(&source.resolved, &target)
-            .map_err(|error| ProviderError::io("move entry", error))?;
-        let moved = resolve_final_path(&target)
-            .map_err(|error| ProviderError::io("verify moved entry", error))?;
-        if let Err(error) = self.ensure_not_git(&moved) {
-            let _ = move_no_replace(&moved, &source.resolved);
-            return Err(error);
-        }
+        let moved = self.move_checked(&source.resolved, &target)?;
         if fs::symlink_metadata(&source.resolved).is_ok() || self.within(&moved).is_err() {
             return Err(ProviderError::new(
                 FailureCode::PostconditionFailed,
@@ -427,6 +421,60 @@ impl FsProvider {
             }
         }
         Ok(json!({ "from": from, "to": to, "kind": source.kind }))
+    }
+
+    /// Moves the entry at `from` to `to` and returns where it really went. On Windows the
+    /// move, that check and any move back act on one handle to the entry, so a link swapped
+    /// into the destination can neither keep it in Git data nor make the move back take
+    /// another entry.
+    #[cfg(windows)]
+    fn move_checked(&self, from: &Path, to: &Path) -> Result<PathBuf, ProviderError> {
+        let entry = crate::win::open_for_rename(from)
+            .map_err(|error| ProviderError::io("open entry to move", error))?;
+        let opened = entry
+            .final_path()
+            .map_err(|error| ProviderError::io("resolve entry to move", error))?;
+        if opened != from {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "target changed since approval",
+            ));
+        }
+        entry
+            .rename_no_replace(to)
+            .map_err(|error| ProviderError::io("move entry", error))?;
+        let moved = entry
+            .final_path()
+            .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        if let Err(error) = self.ensure_not_git(&moved) {
+            return Err(match entry.rename_no_replace(from) {
+                Ok(()) => error,
+                Err(back) => ProviderError::new(
+                    FailureCode::PostconditionFailed,
+                    format!(
+                        "the moved entry reached Git data at {} and could not be moved back: {back}",
+                        moved.display()
+                    ),
+                ),
+            });
+        }
+        Ok(moved)
+    }
+
+    /// Unix: the move is by path. A move that turns out to have reached Git data is reported
+    /// with where it went, and not moved back by path, which could take another entry.
+    #[cfg(not(windows))]
+    fn move_checked(&self, from: &Path, to: &Path) -> Result<PathBuf, ProviderError> {
+        move_no_replace(from, to).map_err(|error| ProviderError::io("move entry", error))?;
+        let moved = resolve_final_path(to)
+            .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        if self.ensure_not_git(&moved).is_err() {
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!("the moved entry reached Git data at {}", moved.display()),
+            ));
+        }
+        Ok(moved)
     }
 
     /// Remove one regular file or one empty directory bound to its identity.
@@ -551,27 +599,6 @@ impl FsProvider {
             "sha256": preview.new_sha256
         }))
     }
-}
-
-#[cfg(windows)]
-fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
-    }
-    let wide = |path: &Path| -> Vec<u16> {
-        path.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
-    };
-    let (source, target) = (wide(from), wide(to));
-    // Flags 0: never replace an existing destination and never copy across volumes.
-    if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), 0) } == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 #[cfg(not(windows))]
