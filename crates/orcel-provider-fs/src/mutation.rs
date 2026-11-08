@@ -247,6 +247,7 @@ impl FsProvider {
 
     /// Identity of an existing file or directory that is not a link.
     pub fn entry_identity(&self, relative: &str) -> Result<EntryIdentity, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let candidate = self.root.join(relative);
         let metadata = fs::symlink_metadata(&candidate)
             .map_err(|error| ProviderError::io("inspect target", error))?;
@@ -300,6 +301,7 @@ impl FsProvider {
 
     /// Create one directory, or its missing parents when `parents` is true.
     pub fn mkdir(&self, relative: &str, parents: bool) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let candidate = self.root.join(relative);
         if fs::symlink_metadata(&candidate).is_ok() {
             return Err(invalid("directory target already exists"));
@@ -366,6 +368,8 @@ impl FsProvider {
         to: &str,
         expected: &EntryIdentity,
     ) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(from)?;
+        self.reject_git_mutation(to)?;
         let source = self.require_identity(from, expected)?;
         let destination = self.root.join(to);
         if fs::symlink_metadata(&destination).is_ok() {
@@ -422,6 +426,7 @@ impl FsProvider {
         relative: &str,
         expected: &EntryIdentity,
     ) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let current = self.require_identity(relative, expected)?;
         if current.kind == "directory" {
             if current.size != 0 {
@@ -453,6 +458,7 @@ impl FsProvider {
         expected_sha256: &str,
         expected_replacements: usize,
     ) -> Result<EditPreview, ProviderError> {
+        self.reject_git_mutation(relative)?;
         if old.is_empty() || old.len() > MAX_EDIT_NEEDLE_BYTES || new.len() > MAX_EDIT_NEEDLE_BYTES
         {
             return Err(invalid(

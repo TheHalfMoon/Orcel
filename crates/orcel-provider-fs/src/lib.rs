@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub mod mutation;
 
@@ -95,6 +95,90 @@ impl FsProvider {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Filesystem mutations must never create or change Git control data.
+    /// Resolve each existing prefix, not only the submitted spelling: a link,
+    /// junction, or Windows short-name alias can reach .git without naming it.
+    /// This is a deny-only guard; typed git operations use their own provider.
+    pub(crate) fn reject_git_mutation(&self, relative: &str) -> Result<(), ProviderError> {
+        if self.root.components().any(|part| {
+            matches!(part, Component::Normal(name)
+                if name.to_string_lossy().eq_ignore_ascii_case(".git"))
+        }) {
+            return Err(ProviderError::new(
+                FailureCode::CapabilityDenied,
+                "filesystem tools cannot mutate a Git metadata workspace",
+            ));
+        }
+        let mut candidate = self.root.clone();
+        let mut has_name = false;
+        let mut missing_prefix = false;
+        for component in Path::new(relative).components() {
+            let name = match component {
+                Component::CurDir => continue,
+                Component::Normal(name) => name,
+                _ => {
+                    return Err(ProviderError::new(
+                        FailureCode::PathEscape,
+                        "filesystem mutation requires a workspace-relative path",
+                    ))
+                }
+            };
+            has_name = true;
+            let spelling = name.to_string_lossy();
+            if spelling.eq_ignore_ascii_case(".git") {
+                return Err(ProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "filesystem tools cannot mutate Git control paths",
+                ));
+            }
+            #[cfg(windows)]
+            if spelling.contains(':') || spelling.ends_with('.') || spelling.ends_with(' ') {
+                return Err(ProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "Windows alternate streams and path aliases are not mutable",
+                ));
+            }
+
+            candidate.push(name);
+            if missing_prefix {
+                // Still inspect every later spelling: newdir/.git/config is
+                // prohibited even if newdir does not exist yet.
+                continue;
+            }
+            match resolve_final_path(&candidate) {
+                Ok(resolved) => {
+                    self.ensure_within(&resolved)?;
+                    let inside = resolved.strip_prefix(&self.root).map_err(|_| {
+                        ProviderError::new(
+                            FailureCode::PathEscape,
+                            "resolved mutation path escaped the trusted workspace",
+                        )
+                    })?;
+                    if inside.components().any(|part| {
+                        matches!(part, Component::Normal(segment)
+                            if segment.to_string_lossy().eq_ignore_ascii_case(".git"))
+                    }) {
+                        return Err(ProviderError::new(
+                            FailureCode::CapabilityDenied,
+                            "filesystem tools cannot mutate Git control paths",
+                        ));
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    missing_prefix = true;
+                }
+                Err(error) => return Err(ProviderError::io("resolve mutation path", error)),
+            }
+        }
+        if !has_name {
+            return Err(ProviderError::new(
+                FailureCode::PathEscape,
+                "workspace root cannot be a filesystem mutation target",
+            ));
+        }
+        Ok(())
     }
 
     pub fn stat(&self, relative: &str) -> Result<Value, ProviderError> {
@@ -199,6 +283,7 @@ impl FsProvider {
         relative: &str,
         content: &str,
     ) -> Result<WritePreview, ProviderError> {
+        self.reject_git_mutation(relative)?;
         if content.len() > MAX_WRITE_BYTES {
             return Err(ProviderError::new(
                 FailureCode::OutputLimit,
@@ -255,6 +340,7 @@ impl FsProvider {
         expected_current_sha256: Option<&str>,
         create_if_missing: bool,
     ) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         if content.len() > MAX_WRITE_BYTES {
             return Err(ProviderError::new(
                 FailureCode::OutputLimit,
@@ -339,6 +425,7 @@ impl FsProvider {
     }
 
     fn create_text_verified(&self, relative: &str, content: &str) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let candidate = self.root.join(relative);
         let parent = candidate.parent().ok_or_else(|| {
             ProviderError::new(FailureCode::InvalidRequest, "create target has no parent")
