@@ -432,7 +432,9 @@ fn a_stage_name_already_taken_is_skipped_and_left_alone() {
             .status()
             .unwrap()
             .success());
-        assert!(claim_dir(&runs, ["dangling".to_owned()].into_iter()).is_err());
+        assert!(
+            contained_tier::claim_dir(&runs, ["dangling".to_owned()].into_iter(), "test").is_err()
+        );
         assert!(
             !base.join("missing").exists(),
             "a dangling link's target is never created"
@@ -440,7 +442,7 @@ fn a_stage_name_already_taken_is_skipped_and_left_alone() {
         std::fs::remove_dir(runs.join("dangling")).unwrap();
     }
     let names = ["taken", "file", "link", "fresh"].map(String::from);
-    let claimed = claim_dir(&runs, names.into_iter()).unwrap();
+    let claimed = contained_tier::claim_dir(&runs, names.into_iter(), "test").unwrap();
     assert_eq!(claimed, runs.join("fresh"));
     assert_eq!(
         std::fs::read(runs.join("taken").join("sentinel")).unwrap(),
@@ -453,7 +455,7 @@ fn a_stage_name_already_taken_is_skipped_and_left_alone() {
         "the link itself stays"
     );
     // When every name is taken, it fails closed instead of reusing one.
-    assert!(claim_dir(&runs, ["taken".to_owned()].into_iter()).is_err());
+    assert!(contained_tier::claim_dir(&runs, ["taken".to_owned()].into_iter(), "test").is_err());
     #[cfg(windows)]
     std::fs::remove_dir(runs.join("link")).unwrap();
     #[cfg(unix)]

@@ -159,15 +159,14 @@ impl Scratch {
             .map_err(|error| unavailable(format!("contained scratch root: {error}")))?;
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("contained scratch root: {error}")))?;
-        let dir = runs.join(format!("{}-{request_digest}", std::process::id()));
-        // A leftover from a crashed run with the same name is not reused.
-        let _ = std::fs::remove_dir_all(&dir);
-        private_dir_builder(false)
-            .create(&dir)
+        // A name already taken, by a leftover or anything else, is skipped, never removed.
+        let label = request_digest.get(..16).unwrap_or(request_digest);
+        let dir = claim_dir(&runs, fresh_names(label), "contained scratch directory")?;
+        // Owned from here, so a failure below still removes the directory this run created.
+        let mut scratch = Self(dir);
+        scratch.0 = std::fs::canonicalize(&scratch.0)
             .map_err(|error| unavailable(format!("contained scratch directory: {error}")))?;
-        let canonical = std::fs::canonicalize(&dir)
-            .map_err(|error| unavailable(format!("contained scratch directory: {error}")))?;
-        Ok(Self(canonical))
+        Ok(scratch)
     }
 }
 
@@ -179,6 +178,43 @@ pub(crate) fn private_dir_builder(recursive: bool) -> std::fs::DirBuilder {
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
     builder
+}
+
+/// Names for one new run directory: process, a sequence, a random 64-bit salt (from std's
+/// OS-seeded hasher keys, new on each call) and `label`. Eight are tried at most.
+pub(crate) fn fresh_names(label: &str) -> impl Iterator<Item = String> + '_ {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    std::iter::repeat_with(move || {
+        use std::hash::{BuildHasher as _, Hasher as _};
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut salt = std::collections::hash_map::RandomState::new().build_hasher();
+        salt.write_u64(sequence);
+        format!(
+            "{}-{sequence}-{:016x}-{label}",
+            std::process::id(),
+            salt.finish()
+        )
+    })
+    .take(8)
+}
+
+/// Creates the first of `names` under `runs` that doesn't exist yet, exclusively, and returns
+/// it. An existing entry under a name, whether a directory, a file or a link, is left as it is;
+/// only a directory this call created is ever the caller's to remove.
+pub(crate) fn claim_dir(
+    runs: &Path,
+    names: impl Iterator<Item = String>,
+    what: &str,
+) -> Result<PathBuf, ProviderError> {
+    for name in names {
+        let candidate = runs.join(name);
+        match private_dir_builder(false).create(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(unavailable(format!("{what}: {error}"))),
+        }
+    }
+    Err(unavailable(format!("{what}: no unused name was found")))
 }
 
 impl Drop for Scratch {
