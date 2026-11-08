@@ -1251,38 +1251,44 @@ fn the_store_guard_catches_the_shapes_it_claims() {
 }
 
 /// The release workflow keeps building and publishing apart: jobs that run repository and
-/// dependency code hold only `contents: read`, so nothing they run can mint an attestation or
-/// change a release. The publish job runs no repository code, waits for the `release`
-/// environment's approval, and attests every asset. The tag name never goes straight into a
-/// script.
+/// dependency code hold only `contents: read`, so nothing they run holds release write access
+/// or an OIDC token. The publish job runs no repository code and waits for the `release`
+/// environment's approval. No workflow expression is written into a script.
 #[test]
 fn the_release_workflow_separates_building_from_publishing() {
-    let text = std::fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
+    // A Windows checkout may have CRLF line endings.
+    let text = std::fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
+        .unwrap()
+        .replace("\r\n", "\n");
     let jobs = text.split_once("\njobs:\n").expect("a jobs section").1;
-    let mut sections: Vec<(&str, &str)> = Vec::new();
-    for (index, line) in jobs.lines().enumerate() {
-        let is_job = line.starts_with("  ")
+    let lines: Vec<&str> = jobs.lines().collect();
+    let is_job = |line: &str| {
+        line.starts_with("  ")
             && !line.starts_with("   ")
-            && line.trim_end().ends_with(':')
-            && !line.trim_start().starts_with('#');
-        if is_job {
-            let start = jobs
-                .lines()
-                .take(index)
-                .map(|line| line.len() + 1)
-                .sum::<usize>();
-            sections.push((line.trim().trim_end_matches(':'), &jobs[start..]));
+            && line
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .trim_end()
+                .ends_with(':')
+            && !line.trim_start().starts_with('#')
+    };
+    let mut sections: Vec<(String, String)> = Vec::new();
+    for line in &lines {
+        if is_job(line) {
+            let name = line.split('#').next().unwrap().trim().trim_end_matches(':');
+            sections.push((name.to_owned(), String::new()));
+        } else if let Some((_, body)) = sections.last_mut() {
+            // Comments say what a job doesn't do; only its keys count.
+            if !line.trim_start().starts_with('#') {
+                body.push_str(line);
+                body.push('\n');
+            }
         }
     }
-    let body = |name: &str| -> &str {
-        let at = sections.iter().position(|(job, _)| *job == name).unwrap();
-        let section = sections[at].1;
-        match sections.get(at + 1) {
-            Some((_, next)) => &section[..section.len() - next.len()],
-            None => section,
-        }
-    };
-    let names: Vec<&str> = sections.iter().map(|(name, _)| *name).collect();
+    let body =
+        |name: &str| -> &str { &sections.iter().find(|(job, _)| job == name).expect(name).1 };
+    let names: Vec<&str> = sections.iter().map(|(name, _)| name.as_str()).collect();
     assert_eq!(
         names,
         ["build-windows", "build-linux", "publish"],
@@ -1310,6 +1316,10 @@ fn the_release_workflow_separates_building_from_publishing() {
         "publish runs no repository code"
     );
     assert!(
+        !publish.contains("uses: ./"),
+        "publish runs no local action"
+    );
+    assert!(
         !publish.contains("cargo ") && !publish.contains("npm "),
         "publish builds nothing"
     );
@@ -1317,21 +1327,28 @@ fn the_release_workflow_separates_building_from_publishing() {
         publish.contains("attest-build-provenance"),
         "publish attests the assets"
     );
-    assert!(
-        !text
-            .lines()
-            .any(|line| line.contains("run:") && line.contains("${{")),
-        "workflow expressions reach scripts only through env"
-    );
-    for line in text
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-    {
-        if line.contains("${{ github.ref_name }}") {
+    // No `${{ }}` inside any `run:` script, on its first line or below it: a script block runs
+    // until a line indented no deeper than its `run:` key.
+    let mut script: Option<usize> = None;
+    for line in text.lines() {
+        let indent = line.len() - line.trim_start().len();
+        if let Some(depth) = script {
+            if line.trim().is_empty() || indent > depth {
+                assert!(
+                    !line.contains("${{"),
+                    "an expression reaches a script: {line}"
+                );
+                continue;
+            }
+            script = None;
+        }
+        let trimmed = line.trim_start().trim_start_matches("- ");
+        if let Some(rest) = trimmed.strip_prefix("run:") {
             assert!(
-                line.trim_start().starts_with("TAG:"),
-                "the tag is passed through env: {line}"
+                !rest.contains("${{"),
+                "an expression reaches a script: {line}"
             );
+            script = Some(indent);
         }
     }
 }

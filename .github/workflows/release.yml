@@ -7,8 +7,9 @@ name: Release
 # build-provenance attestations, verifiable with `gh attestation verify`.
 #
 # The build jobs run repository and dependency code (cargo build scripts, proc-macros, npm
-# devDependencies) and so hold only `contents: read`: nothing they run can mint an attestation
-# or change a release. The publish job runs no repository code at all. It downloads the built
+# devDependencies) and so hold only `contents: read`: nothing they run holds release write
+# access or an OIDC token. The attestation proves this workflow built and published the assets,
+# not that the build was clean: whatever a build job produces is what gets attested. The publish job runs no repository code at all. It downloads the built
 # assets, attests every one of them, and creates or refreshes the draft release, and it runs
 # only in the `release` environment, which must require the founder's approval before it starts.
 
@@ -69,12 +70,12 @@ jobs:
           $sums = Get-ChildItem $out -File | Where-Object Name -ne "SHA256SUMS.txt" | Sort-Object Name | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
           [System.IO.File]::WriteAllText((Join-Path $out "SHA256SUMS.txt"), (($sums -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
           Get-Content (Join-Path $out "SHA256SUMS.txt")
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-windows
           path: ${{ runner.temp }}/dist/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   # XP-17: Linux deb, rpm and per-user tarball. Its assets carry their own SHA256SUMS-linux.txt;
   # the Windows SHA256SUMS.txt is left untouched.
@@ -122,7 +123,7 @@ jobs:
         run: |
           bash distribution/linux/package.sh "$VERSION" target/release/orceld apps/orcel-contain/target/release/orcel-contain \
             apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux "$RUNNER_TEMP/linux-dist"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-linux
           path: |
@@ -131,7 +132,7 @@ jobs:
             ${{ runner.temp }}/linux-dist/*.tar.gz
             ${{ runner.temp }}/linux-dist/SHA256SUMS-linux.txt
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   # Runs no repository code: no checkout, no build. It needs both builds, waits for the
   # `release` environment's required approval, attests every asset (not only the archives),
