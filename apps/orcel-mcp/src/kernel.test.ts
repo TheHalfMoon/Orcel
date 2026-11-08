@@ -1,6 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDaemonEnv, buildRequest } from "./kernel.js";
+import { KernelClient, buildDaemonEnv, buildRequest, type RemoteDispatchContext } from "./kernel.js";
+
+test("an isolated kernel keeps the session's remote context, profile, command and arguments", () => {
+  const remote = { principal: "p", scopes: ["orcel.execute"] } as unknown as RemoteDispatchContext;
+  // A daemon that exits at once: only what the copy was built with matters here.
+  const session = new KernelClient(process.execPath, remote, "core", ["-e", ""]);
+  const copy = session.isolated();
+  try {
+    assert.notEqual(copy, session);
+    assert.deepEqual(copy.remote, session.remote);
+    assert.equal(copy.profile, "core");
+    const internals = (client: KernelClient) => client as unknown as { command: string; args: string[] };
+    assert.equal(internals(copy).command, process.execPath);
+    assert.deepEqual(internals(copy).args, ["-e", ""]);
+  } finally {
+    copy.close();
+    session.close();
+  }
+});
 
 test("daemon environment drops generic and Orcel secret variables", () => {
   const env = buildDaemonEnv({

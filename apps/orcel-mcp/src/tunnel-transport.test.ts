@@ -6,6 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import type { JSONRPCMessage, Transport } from "@modelcontextprotocol/server";
 import { createMcpFrameDispatcher, type ConnectionBinding } from "./device_uplink.js";
 import { KernelClient, type KernelRequest, type RemoteDispatchContext } from "./kernel.js";
@@ -92,6 +93,7 @@ function recordingKernel(config: StdioSessionConfig, wire: KernelRequest[]): Ker
     pending: new Map(),
     remote: config.remote,
     profile: config.profile,
+    isolated: () => recordingKernel(config, wire),
     child: {
       stdin: {
         write(payload: string, _encoding: string, callback: (error?: Error) => void) {
@@ -205,6 +207,40 @@ test("requests through the tunnel carry the remote context into orceld", async (
   assert.equal(remote.toolSurfaceProfile, "core");
   assert.deepEqual(remote.scopes, ROUTE.scopeCeiling);
   assert.match(remote.connectionId, /^tunnel-[0-9a-f]{32}$/);
+});
+
+test("a process spawn through the tunnel keeps the remote context, so orceld requires the lease", async () => {
+  const { config, wire, transport } = await tunnelSession();
+  const response = await transport.request(4, "tools/call", {
+    name: "process_spawn",
+    arguments: { workspace_id: "default", executable: "C:\\Windows\\System32\\whoami.exe" }
+  });
+  assert.ok(JSON.stringify(response).includes("REMOTE_SESSION_INACTIVE"), JSON.stringify(response));
+  assert.equal(wire.length, 1);
+  const request = wire[0] as KernelRequest;
+  assert.equal(request.capability, "process.spawn");
+  assert.deepEqual(request.remote, config.remote);
+});
+
+test("no module builds a kernel that could drop a session's remote context", () => {
+  // Each place that may construct one, and why it's safe; anything else uses the session
+  // kernel or its isolated().
+  const allowed: Record<string, number> = {
+    "kernel.ts": 1, // isolated(), which copies the remote context
+    "transports/stdio.ts": 1, // the session kernel, with the transport's remote context
+    "device_uplink.ts": 1, // the relay session kernel, with the binding's remote context
+    "transports/loopback_http.ts": 1, // a local transport: no remote context exists
+    "secret_store.ts": 1 // the device key at relay start, before any remote input
+  };
+  const src = new URL("../src/", import.meta.url);
+  const files = readdirSync(src, { recursive: true, encoding: "utf8" })
+    .map((file) => file.replaceAll("\\", "/"))
+    .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"));
+  assert.ok(files.includes("server.ts"), files.join(", "));
+  for (const file of files) {
+    const found = readFileSync(new URL(file, src), "utf8").match(/new KernelClient\(/g)?.length ?? 0;
+    assert.equal(found, allowed[file] ?? 0, `${file} constructs a KernelClient`);
+  }
 });
 
 test("local stdio clients keep their configured profile and no remote context", () => {
