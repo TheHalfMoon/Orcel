@@ -247,6 +247,7 @@ impl FsProvider {
 
     /// Identity of an existing file or directory that is not a link.
     pub fn entry_identity(&self, relative: &str) -> Result<EntryIdentity, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let candidate = self.root.join(relative);
         let metadata = fs::symlink_metadata(&candidate)
             .map_err(|error| ProviderError::io("inspect target", error))?;
@@ -259,6 +260,7 @@ impl FsProvider {
         let resolved = resolve_final_path(&candidate)
             .map_err(|error| ProviderError::io("resolve target", error))?;
         self.within(&resolved)?;
+        self.ensure_not_git(&resolved)?;
         if metadata.is_file() {
             let file =
                 File::open(&resolved).map_err(|error| ProviderError::io("open target", error))?;
@@ -300,6 +302,7 @@ impl FsProvider {
 
     /// Create one directory, or its missing parents when `parents` is true.
     pub fn mkdir(&self, relative: &str, parents: bool) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let candidate = self.root.join(relative);
         if fs::symlink_metadata(&candidate).is_ok() {
             return Err(invalid("directory target already exists"));
@@ -335,8 +338,12 @@ impl FsProvider {
             fs::create_dir(&next).map_err(|error| ProviderError::io("create directory", error))?;
             let resolved = resolve_final_path(&next)
                 .map_err(|error| ProviderError::io("resolve created directory", error))?;
-            if let Err(error) = self.within(&resolved) {
-                let _ = fs::remove_dir(&next);
+            if let Err(error) = self
+                .within(&resolved)
+                .and_then(|()| self.ensure_not_git(&resolved))
+            {
+                // The directory this call just created, wherever it really is.
+                let _ = fs::remove_dir(&resolved);
                 return Err(error);
             }
             created.push(
@@ -366,6 +373,8 @@ impl FsProvider {
         to: &str,
         expected: &EntryIdentity,
     ) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(from)?;
+        self.reject_git_mutation(to)?;
         let source = self.require_identity(from, expected)?;
         let destination = self.root.join(to);
         if fs::symlink_metadata(&destination).is_ok() {
@@ -392,11 +401,9 @@ impl FsProvider {
         {
             return Err(invalid("a directory cannot be moved into itself"));
         }
+        self.ensure_not_git(&parent)?;
         let target = parent.join(&name);
-        move_no_replace(&source.resolved, &target)
-            .map_err(|error| ProviderError::io("move entry", error))?;
-        let moved = resolve_final_path(&target)
-            .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        let moved = self.move_checked(&source.resolved, &target)?;
         if fs::symlink_metadata(&source.resolved).is_ok() || self.within(&moved).is_err() {
             return Err(ProviderError::new(
                 FailureCode::PostconditionFailed,
@@ -416,12 +423,94 @@ impl FsProvider {
         Ok(json!({ "from": from, "to": to, "kind": source.kind }))
     }
 
+    /// Moves the entry at `from` to `to` and returns where it really went. On Windows the
+    /// move, that check and any move back act on one handle to the entry, so a link swapped
+    /// into the destination can neither keep it in Git data nor make the move back take
+    /// another entry.
+    #[cfg(windows)]
+    fn move_checked(&self, from: &Path, to: &Path) -> Result<PathBuf, ProviderError> {
+        let entry = crate::win::open_for_rename(from)
+            .map_err(|error| ProviderError::io("open entry to move", error))?;
+        let opened = entry
+            .final_path()
+            .map_err(|error| ProviderError::io("resolve entry to move", error))?;
+        // A link swapped in under the approved name is never moved.
+        let link = entry
+            .is_reparse_point()
+            .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+        if opened != from || link {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "target changed since approval",
+            ));
+        }
+        entry
+            .rename_no_replace(to)
+            .map_err(|error| ProviderError::io("move entry", error))?;
+        let moved = entry
+            .final_path()
+            .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        if let Err(error) = self.ensure_not_git(&moved) {
+            // Moved back through the same handle, then checked again: the source's own folder
+            // could have been swapped too.
+            let back = entry
+                .rename_no_replace(from)
+                .and_then(|()| entry.final_path());
+            return Err(match back {
+                Ok(returned) if self.ensure_not_git(&returned).is_ok() => error,
+                Ok(returned) => ProviderError::new(
+                    FailureCode::PostconditionFailed,
+                    format!(
+                        "the moved entry reached Git data and, moved back, is at {}",
+                        returned.display()
+                    ),
+                ),
+                Err(back) => ProviderError::new(
+                    FailureCode::PostconditionFailed,
+                    format!(
+                        "the moved entry reached Git data at {} and could not be moved back: {back}",
+                        moved.display()
+                    ),
+                ),
+            });
+        }
+        // Under a race Windows can place the entry under another name; that isn't the move
+        // that was approved.
+        if moved != to {
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!(
+                    "the moved entry is at {}, not where it was asked to go",
+                    moved.display()
+                ),
+            ));
+        }
+        Ok(moved)
+    }
+
+    /// Unix: the move is by path. A move that turns out to have reached Git data is reported
+    /// with where it went, and not moved back by path, which could take another entry.
+    #[cfg(not(windows))]
+    fn move_checked(&self, from: &Path, to: &Path) -> Result<PathBuf, ProviderError> {
+        move_no_replace(from, to).map_err(|error| ProviderError::io("move entry", error))?;
+        let moved = resolve_final_path(to)
+            .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        if self.ensure_not_git(&moved).is_err() {
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!("the moved entry reached Git data at {}", moved.display()),
+            ));
+        }
+        Ok(moved)
+    }
+
     /// Remove one regular file or one empty directory bound to its identity.
     pub fn remove_entry(
         &self,
         relative: &str,
         expected: &EntryIdentity,
     ) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let current = self.require_identity(relative, expected)?;
         if current.kind == "directory" {
             if current.size != 0 {
@@ -453,6 +542,7 @@ impl FsProvider {
         expected_sha256: &str,
         expected_replacements: usize,
     ) -> Result<EditPreview, ProviderError> {
+        self.reject_git_mutation(relative)?;
         if old.is_empty() || old.len() > MAX_EDIT_NEEDLE_BYTES || new.len() > MAX_EDIT_NEEDLE_BYTES
         {
             return Err(invalid(
@@ -469,7 +559,8 @@ impl FsProvider {
             File::open(&candidate).map_err(|error| ProviderError::io("open edit target", error))?;
         let resolved = final_path_from_open_file(&file, &candidate)
             .map_err(|error| ProviderError::io("resolve edit target", error))?;
-        self.ensure_within(&resolved)?;
+        // The Git rule too, so an edit that apply would refuse is never offered for approval.
+        self.ensure_not_git(&resolved)?;
         let metadata = file
             .metadata()
             .map_err(|error| ProviderError::io("inspect edit target", error))?;
@@ -536,27 +627,6 @@ impl FsProvider {
             "sha256": preview.new_sha256
         }))
     }
-}
-
-#[cfg(windows)]
-fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
-    }
-    let wide = |path: &Path| -> Vec<u16> {
-        path.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
-    };
-    let (source, target) = (wide(from), wide(to));
-    // Flags 0: never replace an existing destination and never copy across volumes.
-    if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), 0) } == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 #[cfg(not(windows))]

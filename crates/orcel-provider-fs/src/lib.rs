@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub mod mutation;
 
@@ -95,6 +95,115 @@ impl FsProvider {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Filesystem mutations must never create or change Git control data.
+    /// Resolve each existing prefix, not only the submitted spelling: a link,
+    /// junction, or Windows short-name alias can reach .git without naming it.
+    /// This is a deny-only guard; typed git operations use their own provider.
+    pub(crate) fn reject_git_mutation(&self, relative: &str) -> Result<(), ProviderError> {
+        if self.root.components().any(|part| {
+            matches!(part, Component::Normal(name)
+                if name.to_string_lossy().eq_ignore_ascii_case(".git"))
+        }) || is_git_dir(&self.root)
+        {
+            return Err(ProviderError::new(
+                FailureCode::CapabilityDenied,
+                "filesystem tools cannot mutate a Git metadata workspace",
+            ));
+        }
+        let mut candidate = self.root.clone();
+        let mut has_name = false;
+        let mut missing_prefix = false;
+        let parts = Path::new(relative).components().count();
+        for (index, component) in Path::new(relative).components().enumerate() {
+            let last = index + 1 == parts;
+            let name = match component {
+                Component::CurDir => continue,
+                Component::Normal(name) => name,
+                _ => {
+                    return Err(ProviderError::new(
+                        FailureCode::PathEscape,
+                        "filesystem mutation requires a workspace-relative path",
+                    ))
+                }
+            };
+            has_name = true;
+            let spelling = name.to_string_lossy();
+            if spelling.eq_ignore_ascii_case(".git") {
+                return Err(ProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "filesystem tools cannot mutate Git control paths",
+                ));
+            }
+            #[cfg(windows)]
+            if spelling.contains(':') || spelling.ends_with('.') || spelling.ends_with(' ') {
+                return Err(ProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "Windows alternate streams and path aliases are not mutable",
+                ));
+            }
+
+            candidate.push(name);
+            if missing_prefix {
+                // Still inspect every later spelling: newdir/.git/config is
+                // prohibited even if newdir does not exist yet.
+                continue;
+            }
+            // A link at the final name isn't followed here: create refuses any entry there,
+            // and every other mutation checks the real path it opened before acting.
+            if last
+                && fs::symlink_metadata(&candidate)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                continue;
+            }
+            match resolve_final_path(&candidate) {
+                Ok(resolved) => self.ensure_not_git(&resolved)?,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    missing_prefix = true;
+                }
+                Err(error) => return Err(ProviderError::io("resolve mutation path", error)),
+            }
+        }
+        if !has_name {
+            return Err(ProviderError::new(
+                FailureCode::PathEscape,
+                "workspace root cannot be a filesystem mutation target",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Refuses a resolved path that is Git control data: one with a part named `.git` inside
+    /// the workspace, or one inside a directory Git itself takes for a Git directory (it holds
+    /// `HEAD`, `objects` and `refs`), as a `--separate-git-dir` or bare repository is under any
+    /// name. Mutations call it on each resolved prefix before acting, and again on the path an
+    /// opened handle or new directory really has, so a link swapped in between is caught.
+    pub(crate) fn ensure_not_git(&self, resolved: &Path) -> Result<(), ProviderError> {
+        self.ensure_within(resolved)?;
+        let inside = resolved.strip_prefix(&self.root).map_err(|_| {
+            ProviderError::new(
+                FailureCode::PathEscape,
+                "resolved mutation path escaped the trusted workspace",
+            )
+        })?;
+        let named = inside.components().any(|part| {
+            matches!(part, Component::Normal(segment)
+                if segment.to_string_lossy().eq_ignore_ascii_case(".git"))
+        });
+        if named
+            || resolved
+                .ancestors()
+                .take(inside.components().count() + 1)
+                .any(is_git_dir)
+        {
+            return Err(ProviderError::new(
+                FailureCode::CapabilityDenied,
+                "filesystem tools cannot mutate Git control paths",
+            ));
+        }
+        Ok(())
     }
 
     pub fn stat(&self, relative: &str) -> Result<Value, ProviderError> {
@@ -199,6 +308,7 @@ impl FsProvider {
         relative: &str,
         content: &str,
     ) -> Result<WritePreview, ProviderError> {
+        self.reject_git_mutation(relative)?;
         if content.len() > MAX_WRITE_BYTES {
             return Err(ProviderError::new(
                 FailureCode::OutputLimit,
@@ -210,7 +320,8 @@ impl FsProvider {
             Ok(file) => {
                 let resolved = final_path_from_open_file(&file, &candidate)
                     .map_err(|error| ProviderError::io("resolve write target", error))?;
-                self.ensure_within(&resolved)?;
+                self.ensure_not_git(&resolved)?;
+                refuse_linked(&file)?;
                 let metadata = file
                     .metadata()
                     .map_err(|error| ProviderError::io("read write target metadata", error))?;
@@ -255,6 +366,7 @@ impl FsProvider {
         expected_current_sha256: Option<&str>,
         create_if_missing: bool,
     ) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         if content.len() > MAX_WRITE_BYTES {
             return Err(ProviderError::new(
                 FailureCode::OutputLimit,
@@ -267,7 +379,8 @@ impl FsProvider {
             Ok(mut file) => {
                 let resolved = final_path_from_open_file(&file, &candidate)
                     .map_err(|error| ProviderError::io("resolve write target", error))?;
-                self.ensure_within(&resolved)?;
+                self.ensure_not_git(&resolved)?;
+                refuse_linked(&file)?;
                 if !file
                     .metadata()
                     .map_err(|error| ProviderError::io("read write metadata", error))?
@@ -339,6 +452,7 @@ impl FsProvider {
     }
 
     fn create_text_verified(&self, relative: &str, content: &str) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let candidate = self.root.join(relative);
         let parent = candidate.parent().ok_or_else(|| {
             ProviderError::new(FailureCode::InvalidRequest, "create target has no parent")
@@ -362,7 +476,7 @@ impl FsProvider {
 
         let resolved = final_path_from_open_file(&file, &candidate)
             .map_err(|error| ProviderError::io("resolve created target", error))?;
-        if let Err(error) = self.ensure_within(&resolved) {
+        if let Err(error) = self.ensure_not_git(&resolved) {
             let _ = file.set_len(0);
             drop(file);
             let _ = fs::remove_file(&resolved);
@@ -595,6 +709,41 @@ fn final_path_from_open_file(_file: &File, _path: &Path) -> io::Result<PathBuf> 
     }
 }
 
+/// Whether Git would take `dir` for a Git directory, by the same test Git uses.
+fn is_git_dir(dir: &Path) -> bool {
+    dir.join("HEAD").is_file() && dir.join("objects").is_dir() && dir.join("refs").is_dir()
+}
+
+/// Refuses a file with more than one name: a write would also change the other names, which
+/// could be Git control data or anything outside the workspace.
+fn refuse_linked(file: &File) -> Result<(), ProviderError> {
+    let links = link_count(file).map_err(|error| ProviderError::io("read link count", error))?;
+    if links > 1 {
+        return Err(ProviderError::new(
+            FailureCode::CapabilityDenied,
+            "a file with more than one hard link is not written",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn link_count(file: &File) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    Ok(file.metadata()?.nlink())
+}
+
+#[cfg(windows)]
+fn link_count(file: &File) -> io::Result<u64> {
+    use std::os::windows::io::AsRawHandle as _;
+    win::link_count(file.as_raw_handle())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn link_count(_file: &File) -> io::Result<u64> {
+    Ok(1)
+}
+
 fn resolve_final_path(path: &Path) -> io::Result<PathBuf> {
     #[cfg(windows)]
     {
@@ -632,6 +781,129 @@ mod win {
     use std::os::windows::io::RawHandle;
 
     type Handle = *mut c_void;
+
+    #[repr(C)]
+    #[derive(Default)]
+    pub(super) struct ByHandleFileInformation {
+        attributes: u32,
+        creation: [u32; 2],
+        access: [u32; 2],
+        write: [u32; 2],
+        volume_serial: u32,
+        size_high: u32,
+        size_low: u32,
+        links: u32,
+        index_high: u32,
+        index_low: u32,
+    }
+
+    const DELETE: u32 = 0x0001_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_RENAME_INFO_CLASS: u32 = 3;
+
+    /// `FILE_RENAME_INFO`; the name follows `length` in the same allocation.
+    #[repr(C)]
+    struct FileRenameInfo {
+        flags: u32,
+        root: Handle,
+        length: u32,
+        name: [u16; 1],
+    }
+
+    /// One entry opened for renaming. The rename, the check of where it really went and any
+    /// move back all act on this handle, so they can only ever move this entry, whatever a
+    /// path has been swapped to in between.
+    pub(crate) struct RenameHandle(OwnedHandle);
+
+    /// Opens the entry at `path` itself (a link is opened, not followed) for renaming.
+    pub(crate) fn open_for_rename(path: &Path) -> io::Result<RenameHandle> {
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: `wide` is a NUL-terminated path that outlives the call; no security
+        // attributes or template are passed.
+        let raw = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                DELETE | FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            )
+        };
+        if raw == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(RenameHandle(OwnedHandle(raw)))
+    }
+
+    impl RenameHandle {
+        /// Whether the opened entry is itself a link, junction or other reparse point.
+        pub(crate) fn is_reparse_point(&self) -> io::Result<bool> {
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+            let mut info = ByHandleFileInformation::default();
+            // SAFETY: the handle is open for this call, and `info` is a properly sized,
+            // writable BY_HANDLE_FILE_INFORMATION.
+            if unsafe { GetFileInformationByHandle(self.0 .0, &mut info) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(info.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        }
+
+        /// Where the entry is now.
+        pub(crate) fn final_path(&self) -> io::Result<PathBuf> {
+            final_path_from_handle(self.0 .0 as RawHandle)
+        }
+
+        /// Renames the entry to the absolute path `to`, never replacing an existing entry.
+        pub(crate) fn rename_no_replace(&self, to: &Path) -> io::Result<()> {
+            let name: Vec<u16> = to.as_os_str().encode_wide().collect();
+            let offset = std::mem::offset_of!(FileRenameInfo, name);
+            let total = offset + (name.len() + 1) * 2;
+            // u64 storage keeps the struct's 8-byte alignment.
+            let mut storage = vec![0u64; total.div_ceil(8)];
+            let base = storage.as_mut_ptr().cast::<u8>();
+            // SAFETY: `storage` is zeroed, aligned for FileRenameInfo and at least `total`
+            // bytes: the header up to `name`, then the name and a NUL. Only those bytes are
+            // written, and the buffer outlives the call that reads it.
+            unsafe {
+                let info = base.cast::<FileRenameInfo>();
+                std::ptr::addr_of_mut!((*info).flags).write(0); // never replace
+                std::ptr::addr_of_mut!((*info).root).write(std::ptr::null_mut());
+                std::ptr::addr_of_mut!((*info).length).write((name.len() * 2) as u32);
+                std::ptr::copy_nonoverlapping(
+                    name.as_ptr().cast::<u8>(),
+                    base.add(offset),
+                    name.len() * 2,
+                );
+                if SetFileInformationByHandle(
+                    self.0 .0,
+                    FILE_RENAME_INFO_CLASS,
+                    base.cast::<c_void>(),
+                    total as u32,
+                ) == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// The number of names the open file has.
+    pub(super) fn link_count(handle: RawHandle) -> io::Result<u64> {
+        let mut info = ByHandleFileInformation::default();
+        // SAFETY: `handle` is an open file handle owned by the caller for this call, and
+        // `info` is a properly sized, writable BY_HANDLE_FILE_INFORMATION.
+        if unsafe { GetFileInformationByHandle(handle as Handle, &mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(u64::from(info.links))
+    }
     const FILE_READ_ATTRIBUTES: u32 = 0x0080;
     const FILE_SHARE_READ: u32 = 0x00000001;
     const FILE_SHARE_WRITE: u32 = 0x00000002;
@@ -653,6 +925,13 @@ mod win {
             template: Handle,
         ) -> Handle;
         fn GetFinalPathNameByHandleW(file: Handle, path: *mut u16, size: u32, flags: u32) -> u32;
+        fn GetFileInformationByHandle(file: Handle, info: *mut ByHandleFileInformation) -> i32;
+        fn SetFileInformationByHandle(
+            file: Handle,
+            class: u32,
+            info: *const c_void,
+            size: u32,
+        ) -> i32;
         fn CloseHandle(handle: Handle) -> i32;
     }
 
@@ -697,19 +976,37 @@ mod win {
             return Err(io::Error::last_os_error());
         }
 
-        let mut buffer = vec![0u16; required as usize + 1];
-        let written = unsafe {
-            GetFinalPathNameByHandleW(
-                handle,
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                VOLUME_NAME_DOS,
-            )
-        };
-        if written == 0 {
-            return Err(io::Error::last_os_error());
+        // The path can grow between the size query and the read (a folder renamed meanwhile);
+        // then the call returns the size it needs and fills nothing, so ask again.
+        let mut size = required as usize + 1;
+        let mut buffer;
+        let mut attempts = 0;
+        loop {
+            buffer = vec![0u16; size];
+            let written = unsafe {
+                GetFinalPathNameByHandleW(
+                    handle,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    VOLUME_NAME_DOS,
+                )
+            };
+            if written == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if (written as usize) < buffer.len() {
+                buffer.truncate(written as usize);
+                break;
+            }
+            attempts += 1;
+            if attempts > 8 {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "the path kept changing while it was read",
+                ));
+            }
+            size = written as usize + 1;
         }
-        buffer.truncate(written as usize);
         let value = String::from_utf16(&buffer)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-16 path"))?;
         let normalized = value
