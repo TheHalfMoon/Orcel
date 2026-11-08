@@ -559,7 +559,8 @@ impl FsProvider {
             File::open(&candidate).map_err(|error| ProviderError::io("open edit target", error))?;
         let resolved = final_path_from_open_file(&file, &candidate)
             .map_err(|error| ProviderError::io("resolve edit target", error))?;
-        self.ensure_within(&resolved)?;
+        // The Git rule too, so an edit that apply would refuse is never offered for approval.
+        self.ensure_not_git(&resolved)?;
         let metadata = file
             .metadata()
             .map_err(|error| ProviderError::io("inspect edit target", error))?;
