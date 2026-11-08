@@ -512,11 +512,45 @@ fn native_sequence_number() -> Result<u64, ClipboardError> {
     ))
 }
 
+/// The clipboard formats an app places beside its content to keep it out of clipboard
+/// monitors and history: password managers such as KeePass and Bitwarden set them when they
+/// copy a password. Content carrying one is not read.
+#[cfg_attr(not(windows), allow(dead_code))]
+const CONCEALED_FORMATS: [&str; 2] = [
+    "ExcludeClipboardContentFromMonitorProcessing",
+    "Clipboard Viewer Ignore",
+];
+
+/// Whether the copying app marked the clipboard content private: one of
+/// [`CONCEALED_FORMATS`] is present, or `CanIncludeInClipboardHistory` is present and 0.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_concealed(present: impl Fn(&str) -> bool, history_allowed: Option<u32>) -> bool {
+    CONCEALED_FORMATS.iter().any(|format| present(format)) || history_allowed == Some(0)
+}
+
+/// The `CanIncludeInClipboardHistory` value from its clipboard data: a DWORD. A marker that is
+/// present but can't be read is taken as 0, keeping the content private: reads fail closed.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn history_allowed_from(data: Option<&[u8]>) -> u32 {
+    data.and_then(|bytes| bytes.get(..4))
+        .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        .unwrap_or(0)
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn concealed() -> ClipboardError {
+    ClipboardError::new(
+        FailureCode::CapabilityDenied,
+        "the app that copied this content marked it private (as password managers do), so it is not read",
+    )
+}
+
 #[cfg(windows)]
 fn native_read_unicode_text() -> Result<String, ClipboardError> {
     use windows::Win32::Foundation::{HGLOBAL, HWND};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+        RegisterClipboardFormatW,
     };
     use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 
@@ -542,6 +576,38 @@ fn native_read_unicode_text() -> Result<String, ClipboardError> {
             )
         })?;
         let _guard = ClipboardGuard;
+        // Checked before the text is touched: content its app marked private is never read.
+        let registered = |name: &str| -> u32 {
+            let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+            RegisterClipboardFormatW(windows::core::PCWSTR(wide.as_ptr()))
+        };
+        let present = |name: &str| {
+            let format = registered(name);
+            format != 0 && IsClipboardFormatAvailable(format).is_ok()
+        };
+        let history = registered("CanIncludeInClipboardHistory");
+        let history_allowed =
+            (history != 0 && IsClipboardFormatAvailable(history).is_ok()).then(|| {
+                let data = GetClipboardData(history).ok().and_then(|handle| {
+                    let global = HGLOBAL(handle.0);
+                    if GlobalSize(global) < 4 {
+                        return None;
+                    }
+                    let locked = GlobalLock(global);
+                    if locked.is_null() {
+                        return None;
+                    }
+                    // SAFETY: the object is locked and at least 4 bytes long (checked above);
+                    // the copy is made before it is unlocked.
+                    let bytes = std::slice::from_raw_parts(locked as *const u8, 4).to_vec();
+                    let _ = GlobalUnlock(global);
+                    Some(bytes)
+                });
+                history_allowed_from(data.as_deref())
+            });
+        if is_concealed(present, history_allowed) {
+            return Err(concealed());
+        }
         IsClipboardFormatAvailable(CF_UNICODETEXT).map_err(|_| {
             ClipboardError::new(
                 FailureCode::CapabilityDenied,
