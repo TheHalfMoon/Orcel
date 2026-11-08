@@ -220,9 +220,9 @@ pub(crate) fn claim_dir(
 
 /// Removes run directories under `runs` that a crashed process left behind. An entry goes only
 /// when it is a real directory (not a link or junction) named `<pid>-...` by `fresh_names`, the
-/// pid isn't this process, and that process is known to have exited (see `run_pid`). A live, reused or unreadable
-/// pid keeps its entry, as does anything else under `runs`. `remove_dir_all` doesn't follow links
-/// inside the directory. Returns how many entries were removed.
+/// pid isn't this process, and that process is known to have exited (see `run_pid`). A live,
+/// reused or unreadable pid keeps its entry, as does anything else under `runs`. `remove_dir_all`
+/// doesn't follow links inside the directory. Returns how many entries were removed.
 pub(crate) fn sweep_leftovers(runs: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(runs) else {
         return 0;
