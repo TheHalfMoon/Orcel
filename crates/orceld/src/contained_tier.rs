@@ -160,14 +160,13 @@ impl Scratch {
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("contained scratch root: {error}")))?;
         // A name already taken, by a leftover or anything else, is skipped, never removed.
-        let dir = claim_dir(
-            &runs,
-            fresh_names(&request_digest[..16]),
-            "contained scratch directory",
-        )?;
-        let canonical = std::fs::canonicalize(&dir)
+        let label = request_digest.get(..16).unwrap_or(request_digest);
+        let dir = claim_dir(&runs, fresh_names(label), "contained scratch directory")?;
+        // Owned from here, so a failure below still removes the directory this run created.
+        let mut scratch = Self(dir);
+        scratch.0 = std::fs::canonicalize(&scratch.0)
             .map_err(|error| unavailable(format!("contained scratch directory: {error}")))?;
-        Ok(Self(canonical))
+        Ok(scratch)
     }
 }
 
