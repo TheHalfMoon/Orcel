@@ -11,32 +11,44 @@ const Arrow = () => (
   </svg>
 );
 
-const Shield = () => (
-  <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
-    <path d="M12 3 20 6v5.5c0 4.7-3.1 7.8-8 9.5-4.9-1.7-8-4.8-8-9.5V6l8-3Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
-    <path d="m8.4 12.1 2.2 2.2 5-5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+const Cross = () => (
+  <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
+    <path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 );
 
-const Lock = () => (
-  <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
-    <rect x="5" y="10" width="14" height="10" rx="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+const Fingerprint = () => (
+  <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+    <path d="M12 11v3M8.5 6.5A6 6 0 0 1 18 11v2M6 11a6 6 0 0 0 .5 2.5M9 11a3 3 0 0 1 6 0v3a6 6 0 0 1-1 3.3M9 15a9 9 0 0 0 1.2 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
   </svg>
 );
 
-const Layers = () => (
-  <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
-    <path d="m12 3 9 5-9 5-9-5 9-5Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-    <path d="m4 12 8 4.5 8-4.5M4 16l8 4.5 8-4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>
-);
-
-const Eye = () => (
-  <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
-    <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
-    <circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-  </svg>
+const ApprovalPreview = () => (
+  <figure className="approval" aria-label="Example Orcel approval dialog for a single file write">
+    <div className="approval-head">
+      <span className="approval-title"><span className="brand-mark brand-mark-white" aria-hidden="true" /> Approval required</span>
+      <span className="approval-meta"><span className="pill pill-soft">SOFT</span><span className="mono">0:42</span></span>
+    </div>
+    <div className="approval-body">
+      <p className="approval-who">ChatGPT wants to</p>
+      <p className="approval-what">Write 1 file in myproject</p>
+      <dl className="approval-facts">
+        <dt>tool</dt><dd>fs_write</dd>
+        <dt>path</dt><dd>src/routes/session.ts</dd>
+        <dt>sha256</dt><dd>9f2c…a71e → 41bd…07c3</dd>
+      </dl>
+      <pre className="approval-diff" aria-label="Proposed change"><code><span className="diff-ctx">  export async function refresh(req) {"{"}</span>
+<span className="diff-del">− const token = req.cookies.t;</span>
+<span className="diff-add">+ const token = readSessionToken(req);</span>
+<span className="diff-add">+ if (!token) return deny(401);</span>
+<span className="diff-ctx">  {"}"}</span></code></pre>
+      <div className="approval-actions" aria-hidden="true">
+        <span className="fake-button fake-button-ghost">Deny</span>
+        <span className="fake-button fake-button-primary">Approve once</span>
+      </div>
+    </div>
+    <figcaption>Bound to this exact content and file hash. Used once, then it expires.</figcaption>
+  </figure>
 );
 
 const CodePanel = () => (
@@ -84,153 +96,129 @@ export default function Home() {
       <a className="skip-link" href="#content">Skip to content</a>
 
       <header className="site-header">
-        <a className="brand" href="#" aria-label="Orcel home">
-          <img className="brand-wordmark" src={brandWordmarkUrl} width="130" height="37" alt="Orcel" />
-        </a>
-        <nav className="desktop-nav" aria-label="Primary navigation">
-          <a href="#product">Product</a>
-          <a href="#security">Security</a>
-          <a href="#developers">Developers</a>
-          <a href={brandUrl}>Brand</a>
-          <a href={releases}>Releases</a>
-          <a href={github}>GitHub</a>
-        </nav>
-        <MobileNav />
-        <a className="header-cta" href={releases}>
-          View releases <Arrow />
-        </a>
+        <div className="header-inner">
+          <a className="brand" href="#" aria-label="Orcel home">
+            <img className="brand-wordmark" src={brandWordmarkUrl} width="138" height="32" alt="Orcel" />
+          </a>
+          <nav className="desktop-nav" aria-label="Primary navigation">
+            <a href="#product">Product</a>
+            <a href="#security">Security</a>
+            <a href="#developers">Developers</a>
+            <a href={brandUrl}>Brand</a>
+            <a href={releases}>Releases</a>
+            <a href={github}>GitHub</a>
+          </nav>
+          <MobileNav />
+          <a className="header-cta" href={releases}>
+            View releases <Arrow />
+          </a>
+        </div>
       </header>
 
       <div id="content" tabIndex={-1}>
         <section className="hero section-shell">
-          <div className="hero-aura" aria-hidden="true" />
-          <div className="eyebrow"><span className="status-dot" /> Local-first computer access for AI agents</div>
-          <h1>Your computer.<br />Your terms.</h1>
-          <p className="hero-copy">
-            Orcel gives MCP-compatible agents a governed path to your own computer.
-            Work stays bounded by local trust, approvals, policy, and audit.
-          </p>
-          <div className="hero-actions">
-            <a className="button button-primary" href={github}>View on GitHub <Arrow /></a>
-            <a className="button button-secondary" href={security}>Read the security model</a>
+          <div className="hero-copy-col">
+            <div className="eyebrow"><span className="status-dot" /> Local-first computer access for AI agents</div>
+            <h1>Your computer.<br /><span className="muted-line">Your terms.</span></h1>
+            <p className="hero-copy">
+              Orcel gives MCP-compatible agents a governed path to your own computer.
+              Reads stay inside folders you trust. Every change waits for your yes.
+            </p>
+            <div className="hero-actions">
+              <a className="button button-primary" href={github}>View on GitHub <Arrow /></a>
+              <a className="button button-secondary" href={security}>Read the security model</a>
+            </div>
+            <p className="hero-footnote">Open source · Apache-2.0 · Windows 10/11 · No mandatory Orcel cloud</p>
           </div>
-          <p className="hero-footnote">Open source · Apache-2.0 · No mandatory Orcel cloud</p>
-
-          <div className="hero-console" aria-label="Orcel authority boundary illustration">
-            <div className="console-topbar">
-              <div className="console-brand">
-                <span className="brand-mark brand-mark-color" aria-hidden="true" />
-                <img className="brand-wordmark brand-wordmark-console" src={brandWordmarkUrl} width="98" height="28" alt="Orcel" />
-              </div>
-              <div className="console-status"><span className="status-dot" /> Local boundary active</div>
-            </div>
-            <div className="console-grid">
-              <article className="flow-card">
-                <span className="flow-kicker">01 · AGENT</span>
-                <h3>Request</h3>
-                <p>An MCP client proposes a bounded action.</p>
-                <div className="agent-row">
-                  <span>ChatGPT</span><span>Claude</span><span>Codex</span><span>MCP</span>
-                </div>
-              </article>
-              <div className="flow-arrow" aria-hidden="true">→</div>
-              <article className="flow-card boundary-card">
-                <span className="flow-kicker">02 · ORCEL</span>
-                <h3>Decide locally</h3>
-                <p>Trust, policy, approval, leases, and target identity stay authoritative.</p>
-                <div className="boundary-list">
-                  <span><i /> Trust checked</span>
-                  <span><i /> Policy bounded</span>
-                  <span><i /> Approval local</span>
-                </div>
-              </article>
-              <div className="flow-arrow" aria-hidden="true">→</div>
-              <article className="flow-card">
-                <span className="flow-kicker">03 · COMPUTER</span>
-                <h3>Act, then record</h3>
-                <p>Qualified local providers perform only the permitted operation.</p>
-                <div className="capability-row">
-                  <span>Files</span><span>Git</span><span>Browser</span><span>Desktop</span>
-                </div>
-              </article>
-            </div>
+          <div className="hero-visual">
+            <ApprovalPreview />
           </div>
         </section>
 
-        <section className="proof-strip" aria-label="Product principles">
-          <span>LOCAL-FIRST</span><i />
-          <span>STANDARD MCP</span><i />
-          <span>EXPLICIT APPROVALS</span><i />
-          <span>BOUNDED AUTHORITY</span><i />
-          <span>AUDITABLE ACTIONS</span>
+        <section className="stats" aria-label="Orcel at a glance">
+          <div className="section-shell stats-inner">
+            <div><strong>31</strong><span>tools for local MCP clients</span></div>
+            <div><strong>26</strong><span>in the smaller remote core profile</span></div>
+            <div><strong>0</strong><span>inbound ports for the ChatGPT tunnel</span></div>
+            <div><strong className="accent">1:1</strong><span>one approval, one exact action</span></div>
+          </div>
         </section>
 
-        <section className="section-shell feature-section" id="product">
+        <section className="section-shell" id="product">
           <div className="section-heading">
-            <span className="section-index">01 / PRODUCT</span>
-            <h2>One boundary.<br />Every agent.</h2>
+            <span className="section-index">01 / Product</span>
+            <h2>The assistant asks.<br /><span className="muted-line">You decide.</span></h2>
             <p>Use the AI client you prefer without handing it an unrestricted shell, filesystem, or desktop.</p>
           </div>
-          <div className="feature-grid">
-            <article className="feature-card feature-card-wide">
-              <span className="feature-number">01</span>
+          <div className="card-row">
+            <article className="card">
+              <span className="card-index">01</span>
               <h3>Standard MCP interface</h3>
-              <p>Connect through the Model Context Protocol instead of a private agent runtime.</p>
-              <div className="protocol-line">
-                <span>CLIENT</span><i /> <span>MCP</span><i /> <strong>ORCEL</strong><i /> <span>LOCAL PROVIDER</span>
-              </div>
+              <p>Connect ChatGPT through the Secure MCP Tunnel, or Claude Desktop and any local client over stdio.</p>
+              <code className="card-code">orcel mcp stdio</code>
             </article>
-            <article className="feature-card">
-              <span className="feature-number">02</span>
+            <article className="card">
+              <span className="card-index">02</span>
               <h3>Local-first authority</h3>
-              <p>Local policy remains decisive even when optional remote transport is in use.</p>
+              <p>Add the folders an assistant may use. Local policy stays decisive, even over optional remote transport.</p>
+              <code className="card-code">orcel workspace add myproject C:\code\app</code>
             </article>
-            <article className="feature-card">
-              <span className="feature-number">03</span>
+            <article className="card card-accent">
+              <span className="card-index">03</span>
               <h3>Fail closed</h3>
-              <p>Missing trust, stale identity, expired authority, or unsupported capability returns a bounded failure.</p>
+              <p>Missing trust, stale identity, expired authority, or an unsupported capability returns a bounded failure.</p>
             </article>
           </div>
         </section>
 
-        <section className="section-shell security-section" id="security">
-          <div className="section-heading compact">
-            <span className="section-index">02 / SECURITY FIRST</span>
-            <h2>Permission lives here.</h2>
-            <p>The computer stays authoritative. The agent can request; it cannot silently promote itself.</p>
+        <section className="section-shell" id="security">
+          <div className="section-heading">
+            <span className="section-index">02 / Security first</span>
+            <h2>Two kinds of yes.</h2>
+            <p>The computer stays authoritative. The agent can request; it cannot approve itself or silently promote itself.</p>
           </div>
-          <div className="security-grid">
-            <article><span className="icon-box"><Shield /></span><h3>Approvals stay local</h3><p>Approval flows are decided on the computer that owns the authority.</p></article>
-            <article><span className="icon-box"><Lock /></span><h3>No silent elevation</h3><p>Agent input cannot mint trust, approval, leases, or privileged authority.</p></article>
-            <article><span className="icon-box"><Layers /></span><h3>Bounded capabilities</h3><p>Files, Git, browser, desktop, and registered tools stay behind explicit contracts.</p></article>
-            <article><span className="icon-box"><Eye /></span><h3>Auditable actions</h3><p>Security decisions and qualified execution paths produce inspectable evidence.</p></article>
+          <div className="yes-row">
+            <article className="yes-card">
+              <div className="yes-top"><span className="pill pill-soft">SOFT</span><span>Writes · commits · clipboard · fetch</span></div>
+              <h3>A dialog that shows exactly what will happen.</h3>
+              <p>The file, the content hash, the workspace. Each approval is used once, expires quickly, and is bound to that action and policy.</p>
+            </article>
+            <article className="yes-card">
+              <div className="yes-top"><span className="pill pill-strong">STRONG</span><span>Trust changes · deletes · revoke</span></div>
+              <h3>Windows Hello for the moves that matter.</h3>
+              <p>PIN, fingerprint or face. <code>orcel emergency-revoke</code> invalidates every pending approval at once.</p>
+              <span className="hello"><Fingerprint /> Confirm with Windows Hello</span>
+            </article>
           </div>
+          <ul className="not-list" aria-label="What Orcel is not">
+            <li><Cross /> Not an unrestricted remote shell</li>
+            <li><Cross /> Not a general-purpose remote desktop</li>
+            <li><Cross /> No UI actuation over MCP</li>
+          </ul>
         </section>
 
-        <section className="boundary-section">
-          <div className="section-shell boundary-inner">
-            <div>
-              <span className="section-index">03 / COMPUTER USE</span>
-              <h2>Powerful capabilities.<br />Clear boundaries.</h2>
-              <p>Computer use is not a shortcut around policy. Observation, proposals, approvals, execution, and postconditions remain separate steps.</p>
-              <a className="text-link" href={security}>Explore the threat model <Arrow /></a>
-            </div>
-            <ol className="step-list">
-              <li><span>01</span><div><strong>Observe</strong><p>Read only through qualified, bounded surfaces.</p></div></li>
-              <li><span>02</span><div><strong>Propose</strong><p>Agent output is untrusted proposal data, not authority.</p></div></li>
-              <li><span>03</span><div><strong>Validate</strong><p>Targets, policy, trust, freshness, and risk are checked locally.</p></div></li>
-              <li><span>04</span><div><strong>Approve & act</strong><p>Mutations run only through the governed local path.</p></div></li>
-              <li><span>05</span><div><strong>Record</strong><p>Outcomes are reported without inventing success or rollback.</p></div></li>
-            </ol>
+        <section className="section-shell boundary-section">
+          <div className="boundary-copy">
+            <span className="section-index">03 / Computer use</span>
+            <h2>Powerful capabilities.<br /><span className="muted-line">Clear boundaries.</span></h2>
+            <p>Computer use is not a shortcut around policy. Observation, proposals, approvals, execution, and postconditions remain separate steps.</p>
+            <a className="text-link" href={security}>Explore the threat model <Arrow /></a>
           </div>
+          <ol className="step-list">
+            <li><span>01</span><div><strong>Observe</strong><p>Read only through qualified, bounded surfaces.</p></div></li>
+            <li><span>02</span><div><strong>Propose</strong><p>Agent output is untrusted proposal data, not authority.</p></div></li>
+            <li><span>03</span><div><strong>Validate</strong><p>Targets, policy, trust, freshness, and risk are checked locally.</p></div></li>
+            <li><span>04</span><div><strong>Approve &amp; act</strong><p>Mutations run only through the governed local path.</p></div></li>
+            <li><span>05</span><div><strong>Record</strong><p>Outcomes are reported without inventing success or rollback.</p></div></li>
+          </ol>
         </section>
 
         <section className="section-shell developer-section" id="developers">
           <div className="developer-copy">
-            <span className="section-index">04 / FOR DEVELOPERS</span>
-            <h2>Integrate once.<br />Keep the boundary.</h2>
+            <span className="section-index">04 / For developers</span>
+            <h2>Integrate once.<br /><span className="muted-line">Keep the boundary.</span></h2>
             <p>Orcel exposes the qualified local surface through MCP, so clients can change without changing who owns authority.</p>
-            <div className="developer-actions">
+            <div className="hero-actions">
               <a className="button button-primary" href={docs}>Read the docs <Arrow /></a>
               <a className="button button-secondary" href={github}>Browse the repository</a>
             </div>
@@ -238,34 +226,39 @@ export default function Home() {
           <CodePanel />
         </section>
 
-        <section className="section-shell final-cta">
-          <span className="brand-mark brand-mark-color final-logo" aria-hidden="true" />
-          <span className="section-index">ORCEL</span>
-          <h2>A more capable agent.<br />On your computer.</h2>
-          <p>Open source, local-first, and built around explicit authority.</p>
-          <div className="hero-actions final-actions">
-            <a className="button button-primary" href={releases}>View verified releases <Arrow /></a>
-            <a className="button button-secondary" href={github}>Browse the source</a>
+        <section className="section-shell">
+          <div className="final-cta">
+            <span className="brand-mark final-mark" aria-hidden="true" />
+            <div className="final-copy">
+              <h2>Keep the keys.</h2>
+              <p>Open source, local-first, and built around explicit authority.</p>
+            </div>
+            <div className="hero-actions final-actions">
+              <a className="button button-dark" href={releases}>View verified releases <Arrow /></a>
+              <a className="button button-outline-dark" href={github}>Browse the source</a>
+            </div>
+            <p className="release-note">Published artifacts stay on the canonical GitHub Releases surface. Verify checksums and provenance before install.</p>
           </div>
-          <p className="release-note">Published artifacts stay on the canonical GitHub Releases surface. Verify checksums and provenance before install.</p>
         </section>
       </div>
 
       <footer className="site-footer">
-        <div className="footer-brand">
-          <span className="brand"><img className="brand-wordmark" src={brandWordmarkUrl} width="130" height="37" alt="Orcel" /></span>
-          <p>Your computer, on your terms.</p>
+        <div className="section-shell footer-inner">
+          <div className="footer-brand">
+            <span className="brand"><img className="brand-wordmark" src={brandWordmarkUrl} width="138" height="32" alt="Orcel" /></span>
+            <p>Your computer, on your terms.</p>
+          </div>
+          <div className="footer-links">
+            <a href="#product">Product</a>
+            <a href="#security">Security</a>
+            <a href="#developers">Developers</a>
+            <a href={docs}>Docs</a>
+            <a href={brandUrl}>Brand identity</a>
+            <a href={releases}>Releases</a>
+            <a href={github}>GitHub</a>
+          </div>
+          <p className="footer-meta">Apache-2.0 · Local-first by design</p>
         </div>
-        <div className="footer-links">
-          <a href="#product">Product</a>
-          <a href="#security">Security</a>
-          <a href="#developers">Developers</a>
-          <a href={docs}>Docs</a>
-          <a href={brandUrl}>Brand identity</a>
-          <a href={releases}>Releases</a>
-          <a href={github}>GitHub</a>
-        </div>
-        <p className="footer-meta">Apache-2.0 · Local-first by design</p>
       </footer>
     </main>
   );
