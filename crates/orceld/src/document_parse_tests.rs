@@ -554,3 +554,30 @@ fn only_leftovers_of_exited_processes_are_swept() {
     std::fs::remove_file(&link).unwrap();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn only_names_orcel_writes_carry_a_run_pid() {
+    let salt = "0123456789abcdef";
+    let digest = "ab".repeat(32);
+    assert_eq!(
+        contained_tier::run_pid(&format!("123-0-{salt}-label")),
+        Some(123)
+    );
+    assert_eq!(contained_tier::run_pid(&format!("123-{digest}")), Some(123));
+    for name in [
+        format!("+123-0-{salt}-label"),
+        format!("0123-0-{salt}-label"),
+        format!("0-0-{salt}-label"),
+        format!("4294967295-0-{salt}-label"),
+        format!("123-0-{salt}-"),
+        format!("123-00-{salt}-label"),
+        format!("123-0-0123456789ABCDEF-label"),
+        format!("123-0-{}-label", &salt[..15]),
+        format!("123-{}", &digest[..63]),
+        "123-x".to_owned(),
+        "123".to_owned(),
+        "not-a-run".to_owned(),
+    ] {
+        assert_eq!(contained_tier::run_pid(&name), None, "{name}");
+    }
+}
