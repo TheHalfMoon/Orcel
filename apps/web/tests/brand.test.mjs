@@ -9,21 +9,22 @@ const file=(path)=>readFileSync(join(root,path));
 const str=(path)=>file(path).toString("utf8");
 const hash=(path)=>createHash("sha256").update(file(path)).digest("hex");
 
-test("Founder-approved Orcel Signal o slit and curved icon are canonical",()=>{
+test("Founder-selected Orca Eye mark and outlined wordmark are canonical",()=>{
  const mark=str("assets/brand/orcel-o-white.svg");
  const logo=str("assets/brand/orcel-wordmark-white.svg");
- assert.match(mark,/Orcel Signal white mark/);
- assert.match(mark,/fill="#FF813E"/);
+ assert.match(mark,/Orcel Orca Eye white mark/);
+ assert.ok(mark.includes("M128 24 A104 104 0 1 1 127.9 24 Z M60 136 C80 92 150 70 206 82 C178 114 120 140 60 136 Z"));
+ assert.match(mark,/fill-rule="evenodd" [^>]*fill="#FFFFFF"/);
  assert.equal(str("apps/web/public/brand/orcel-o-white.svg"),mark);
  assert.match(str("assets/brand/orcel-o-black.svg"),/fill="#080808"/);
- for(const path of ["M67.1 161.6 A71 71 0 1 1 80.5 177.8","M557 52 L531 88","x=\"793\" y=\"5\" width=\"47\" height=\"218\""])
-   assert.ok(logo.includes(path),path);
- assert.equal((logo.match(/fill-rule="evenodd"/g)||[]).length,1);
- assert.match(logo,/stroke-width="48" stroke-linecap="butt"/);
- assert.match(mark,/M148 105 C161 65 193 41/);
- assert.match(mark,/M187 119 C184 132/);
- assert.match(logo,/fill="#FF813E"/);
- assert.doesNotMatch(logo,/<text\\b|<image\\b|<circle|linearGradient/i);
+ assert.match(logo,/class="orcel-wordmark" transform="translate\(24 222\) scale\(\.25\)"/);
+ assert.ok(logo.includes("M2707 -770H2892V0H2707Z"),"l stem outline");
+ for(const path of ["assets/brand/orcel-o-white.svg","assets/brand/orcel-wordmark-white.svg","assets/brand/orcel-lockup-white.svg"]){
+  const svg=str(path);
+  assert.doesNotMatch(svg,/#FF813E|#D4FF3F/i,"the mark and wordmark stay mono: "+path);
+  assert.doesNotMatch(svg,/<text\b|<image\b|<circle|linearGradient/i,path);
+ }
+ assert.match(str("assets/brand/orcel-accent-icon.svg"),/fill="#D4FF3F"/);
 });
 
 test("OpenAI/Codex app icons and Next favicon are byte-identical",()=>{
@@ -56,22 +57,22 @@ test("Identity delivers full mono and editorial system without distributing font
   const svg=str("assets/brand/"+name);
   assert.doesNotMatch(svg,/<text\b|<image\b|@font-face/i,"no font or image dependencies");
  }
- assert.match(str("assets/brand/orcel-wordmark-white.svg"),/fill="#FF813E"/);
  assert.equal(str("apps/web/public/brand/orcel-wordmark-white.svg"),str("assets/brand/orcel-wordmark-white.svg"));
  assert.equal(str("apps/web/public/brand/orcel-wordmark-black.svg"),str("assets/brand/orcel-wordmark-black.svg"));
  const readme=str("README.md");
  assert.match(readme,/orcel-readme-lockup\.svg/);
  const hero=str("assets/brand/orcel-readme-lockup.svg");
  assert.match(hero,/fill="#080808"/);
- assert.match(hero,/fill="#FF813E"/);
+ assert.match(hero,/orcel-orca-eye/);
  const page=str("apps/web/app/brand/page.tsx");
- assert.match(page,/A clear signal/);
- assert.match(page,/Deliberate o opening and continuous c/);
+ assert.match(page,/The Orca Eye\./);
+ assert.match(page,/One circle and one eye patch/);
  assert.match(page,/orcel-lockup-white\.svg/);
  assert.match(page,/Download kit/);
  const css=str("apps/web/app/globals.css");
- assert.match(css,/--accent-a:\s*#FF813E/);
- assert.match(css,/--accent-b:\s*#FF9D67/);
+ assert.match(css,/--accent-a:\s*#D4FF3F/);
+ assert.match(css,/--accent-b:\s*#E2FF7A/);
+ assert.doesNotMatch(css,/#FF813E|255,\s*129,\s*62/i);
  assert.doesNotMatch(css,/#78c8ff|#8278ff|#d4a6ff|rgba\(\s*96,\s*104,\s*255/i);
  assert.match(str("apps/web/app/page.tsx"),/\/brand\.html/);
  assert.ok(statSync(join(root,"apps/web/app/brand/brand.css")).size>2000);
@@ -80,8 +81,8 @@ test("Identity delivers full mono and editorial system without distributing font
 test("Every raster export is validated and delivered via deterministic ZIP",()=>{
  const manifest=JSON.parse(str("assets/brand/ASSET_MANIFEST.json"));
  assert.equal(manifest.name,"Orcel");
- assert.equal(manifest.brand_version,"2.0");
- assert.equal(manifest.source,"Orcel Signal Identity 2026");
+ assert.equal(manifest.brand_version,"3.0");
+ assert.equal(manifest.source,"Orcel Orca Eye Identity 2026");
  assert.ok(manifest.assets.length>=50);
  for (const item of manifest.assets) {
   assert.equal(hash(item.path),item.sha256,item.path);
@@ -93,7 +94,7 @@ test("Every raster export is validated and delivered via deterministic ZIP",()=>
   assert.equal(png.readUInt32BE(16),n);
   assert.equal(png.readUInt32BE(20),n);
  }
- const zip=file("assets/brand/downloads/Orcel-Identity-Kit-v2.zip");
+ const zip=file("assets/brand/downloads/Orcel-Identity-Kit-v3.zip");
  assert.equal(zip.subarray(0,4).toString("hex"),"504b0304");
  assert.ok(zip.length>25000&&zip.length<3000000);
 });
