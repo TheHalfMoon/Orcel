@@ -260,6 +260,7 @@ impl FsProvider {
         let resolved = resolve_final_path(&candidate)
             .map_err(|error| ProviderError::io("resolve target", error))?;
         self.within(&resolved)?;
+        self.ensure_not_git(&resolved)?;
         if metadata.is_file() {
             let file =
                 File::open(&resolved).map_err(|error| ProviderError::io("open target", error))?;
@@ -337,7 +338,10 @@ impl FsProvider {
             fs::create_dir(&next).map_err(|error| ProviderError::io("create directory", error))?;
             let resolved = resolve_final_path(&next)
                 .map_err(|error| ProviderError::io("resolve created directory", error))?;
-            if let Err(error) = self.within(&resolved) {
+            if let Err(error) = self
+                .within(&resolved)
+                .and_then(|()| self.ensure_not_git(&resolved))
+            {
                 let _ = fs::remove_dir(&next);
                 return Err(error);
             }
@@ -396,11 +400,16 @@ impl FsProvider {
         {
             return Err(invalid("a directory cannot be moved into itself"));
         }
+        self.ensure_not_git(&parent)?;
         let target = parent.join(&name);
         move_no_replace(&source.resolved, &target)
             .map_err(|error| ProviderError::io("move entry", error))?;
         let moved = resolve_final_path(&target)
             .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        if let Err(error) = self.ensure_not_git(&moved) {
+            let _ = move_no_replace(&moved, &source.resolved);
+            return Err(error);
+        }
         if fs::symlink_metadata(&source.resolved).is_ok() || self.within(&moved).is_err() {
             return Err(ProviderError::new(
                 FailureCode::PostconditionFailed,

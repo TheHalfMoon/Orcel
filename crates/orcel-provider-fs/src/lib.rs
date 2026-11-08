@@ -105,7 +105,8 @@ impl FsProvider {
         if self.root.components().any(|part| {
             matches!(part, Component::Normal(name)
                 if name.to_string_lossy().eq_ignore_ascii_case(".git"))
-        }) {
+        }) || is_git_dir(&self.root)
+        {
             return Err(ProviderError::new(
                 FailureCode::CapabilityDenied,
                 "filesystem tools cannot mutate a Git metadata workspace",
@@ -148,24 +149,7 @@ impl FsProvider {
                 continue;
             }
             match resolve_final_path(&candidate) {
-                Ok(resolved) => {
-                    self.ensure_within(&resolved)?;
-                    let inside = resolved.strip_prefix(&self.root).map_err(|_| {
-                        ProviderError::new(
-                            FailureCode::PathEscape,
-                            "resolved mutation path escaped the trusted workspace",
-                        )
-                    })?;
-                    if inside.components().any(|part| {
-                        matches!(part, Component::Normal(segment)
-                            if segment.to_string_lossy().eq_ignore_ascii_case(".git"))
-                    }) {
-                        return Err(ProviderError::new(
-                            FailureCode::CapabilityDenied,
-                            "filesystem tools cannot mutate Git control paths",
-                        ));
-                    }
-                }
+                Ok(resolved) => self.ensure_not_git(&resolved)?,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     missing_prefix = true;
                 }
@@ -176,6 +160,37 @@ impl FsProvider {
             return Err(ProviderError::new(
                 FailureCode::PathEscape,
                 "workspace root cannot be a filesystem mutation target",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Refuses a resolved path that is Git control data: one with a part named `.git` inside
+    /// the workspace, or one inside a directory Git itself takes for a Git directory (it holds
+    /// `HEAD`, `objects` and `refs`), as a `--separate-git-dir` or bare repository is under any
+    /// name. Mutations call it on each resolved prefix before acting, and again on the path an
+    /// opened handle or new directory really has, so a link swapped in between is caught.
+    pub(crate) fn ensure_not_git(&self, resolved: &Path) -> Result<(), ProviderError> {
+        self.ensure_within(resolved)?;
+        let inside = resolved.strip_prefix(&self.root).map_err(|_| {
+            ProviderError::new(
+                FailureCode::PathEscape,
+                "resolved mutation path escaped the trusted workspace",
+            )
+        })?;
+        let named = inside.components().any(|part| {
+            matches!(part, Component::Normal(segment)
+                if segment.to_string_lossy().eq_ignore_ascii_case(".git"))
+        });
+        if named
+            || resolved
+                .ancestors()
+                .take(inside.components().count() + 1)
+                .any(is_git_dir)
+        {
+            return Err(ProviderError::new(
+                FailureCode::CapabilityDenied,
+                "filesystem tools cannot mutate Git control paths",
             ));
         }
         Ok(())
@@ -295,7 +310,8 @@ impl FsProvider {
             Ok(file) => {
                 let resolved = final_path_from_open_file(&file, &candidate)
                     .map_err(|error| ProviderError::io("resolve write target", error))?;
-                self.ensure_within(&resolved)?;
+                self.ensure_not_git(&resolved)?;
+                refuse_linked(&file)?;
                 let metadata = file
                     .metadata()
                     .map_err(|error| ProviderError::io("read write target metadata", error))?;
@@ -353,7 +369,8 @@ impl FsProvider {
             Ok(mut file) => {
                 let resolved = final_path_from_open_file(&file, &candidate)
                     .map_err(|error| ProviderError::io("resolve write target", error))?;
-                self.ensure_within(&resolved)?;
+                self.ensure_not_git(&resolved)?;
+                refuse_linked(&file)?;
                 if !file
                     .metadata()
                     .map_err(|error| ProviderError::io("read write metadata", error))?
@@ -449,7 +466,7 @@ impl FsProvider {
 
         let resolved = final_path_from_open_file(&file, &candidate)
             .map_err(|error| ProviderError::io("resolve created target", error))?;
-        if let Err(error) = self.ensure_within(&resolved) {
+        if let Err(error) = self.ensure_not_git(&resolved) {
             let _ = file.set_len(0);
             drop(file);
             let _ = fs::remove_file(&resolved);
@@ -682,6 +699,41 @@ fn final_path_from_open_file(_file: &File, _path: &Path) -> io::Result<PathBuf> 
     }
 }
 
+/// Whether Git would take `dir` for a Git directory, by the same test Git uses.
+fn is_git_dir(dir: &Path) -> bool {
+    dir.join("HEAD").is_file() && dir.join("objects").is_dir() && dir.join("refs").is_dir()
+}
+
+/// Refuses a file with more than one name: a write would also change the other names, which
+/// could be Git control data or anything outside the workspace.
+fn refuse_linked(file: &File) -> Result<(), ProviderError> {
+    let links = link_count(file).map_err(|error| ProviderError::io("read link count", error))?;
+    if links > 1 {
+        return Err(ProviderError::new(
+            FailureCode::CapabilityDenied,
+            "a file with more than one hard link is not written",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn link_count(file: &File) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    Ok(file.metadata()?.nlink())
+}
+
+#[cfg(windows)]
+fn link_count(file: &File) -> io::Result<u64> {
+    use std::os::windows::io::AsRawHandle as _;
+    win::link_count(file.as_raw_handle())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn link_count(_file: &File) -> io::Result<u64> {
+    Ok(1)
+}
+
 fn resolve_final_path(path: &Path) -> io::Result<PathBuf> {
     #[cfg(windows)]
     {
@@ -719,6 +771,32 @@ mod win {
     use std::os::windows::io::RawHandle;
 
     type Handle = *mut c_void;
+
+    #[repr(C)]
+    #[derive(Default)]
+    pub(super) struct ByHandleFileInformation {
+        attributes: u32,
+        creation: [u32; 2],
+        access: [u32; 2],
+        write: [u32; 2],
+        volume_serial: u32,
+        size_high: u32,
+        size_low: u32,
+        links: u32,
+        index_high: u32,
+        index_low: u32,
+    }
+
+    /// The number of names the open file has.
+    pub(super) fn link_count(handle: RawHandle) -> io::Result<u64> {
+        let mut info = ByHandleFileInformation::default();
+        // SAFETY: `handle` is an open file handle owned by the caller for this call, and
+        // `info` is a properly sized, writable BY_HANDLE_FILE_INFORMATION.
+        if unsafe { GetFileInformationByHandle(handle as Handle, &mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(u64::from(info.links))
+    }
     const FILE_READ_ATTRIBUTES: u32 = 0x0080;
     const FILE_SHARE_READ: u32 = 0x00000001;
     const FILE_SHARE_WRITE: u32 = 0x00000002;
@@ -740,6 +818,7 @@ mod win {
             template: Handle,
         ) -> Handle;
         fn GetFinalPathNameByHandleW(file: Handle, path: *mut u16, size: u32, flags: u32) -> u32;
+        fn GetFileInformationByHandle(file: Handle, info: *mut ByHandleFileInformation) -> i32;
         fn CloseHandle(handle: Handle) -> i32;
     }
 
