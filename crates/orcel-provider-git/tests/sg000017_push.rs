@@ -626,7 +626,7 @@ fn push_fails_closed_when_remote_advanced_after_preview() {
 fn push_rejects_unsafe_config_set_outside_the_local_file() {
     // Each case sets the key where `config --local --list` doesn't look, or a TLS key the
     // earlier list missed.
-    let cases: [&[&[&str]]; 4] = [
+    let cases: [&[&[&str]]; 6] = [
         &[
             &["config", "extensions.worktreeConfig", "true"],
             &[
@@ -642,6 +642,18 @@ fn push_rejects_unsafe_config_set_outside_the_local_file() {
         ],
         &[&["config", "--local", "include.path", "../harmless.cfg"]],
         &[&["config", "--local", "http.sslCAInfo", "/attacker/ca.pem"]],
+        &[&[
+            "config",
+            "--local",
+            "remote.https://example.com/repo.git.pushurl",
+            "https://evil.invalid/",
+        ]],
+        &[&[
+            "config",
+            "--local",
+            "remote.https://example.com/repo.git.url",
+            "https://evil.invalid/",
+        ]],
     ];
     for setup in cases {
         let (work, remote) = work_repository_with_remote();

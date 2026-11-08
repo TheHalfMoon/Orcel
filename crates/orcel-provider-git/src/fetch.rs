@@ -737,6 +737,20 @@ impl GitProvider {
                     "repository-local credential configuration is denied for anonymous fetch",
                 ));
             }
+            // Given a URL, Git first looks for a remote named exactly that URL and uses its
+            // url or pushurl instead. A nickname has no '/' or ':'.
+            if let Some(name) = key
+                .strip_prefix("remote.")
+                .and_then(|rest| rest.rsplit_once('.'))
+                .map(|(name, _)| name)
+            {
+                if name.contains(['/', ':']) {
+                    return Err(GitProviderError::new(
+                        FailureCode::CapabilityDenied,
+                        "a repository remote is named like a URL and would replace the approved destination; fetch is denied",
+                    ));
+                }
+            }
             // A promisor remote can make Git fetch missing objects from elsewhere mid-fetch.
             if key == "extensions.partialclone"
                 || (key.starts_with("remote.")
@@ -872,6 +886,7 @@ impl GitProvider {
             .env("GIT_EDITOR", null_fetch_device())
             .env("GIT_SEQUENCE_EDITOR", null_fetch_device())
             .env("GIT_ALLOW_PROTOCOL", "https")
+            .env("GIT_NO_LAZY_FETCH", "1")
             .env("GCM_INTERACTIVE", "Never")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("GIT_SSH_COMMAND", null_fetch_device())

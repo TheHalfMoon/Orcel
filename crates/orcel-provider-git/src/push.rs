@@ -1048,6 +1048,7 @@ fn run_push_raw(
         .env("GIT_EDITOR", null_push_device())
         .env("GIT_SEQUENCE_EDITOR", null_push_device())
         .env("GIT_ALLOW_PROTOCOL", "https")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .env("GCM_INTERACTIVE", "Never")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_SSH_COMMAND", null_push_device())
@@ -1526,6 +1527,20 @@ impl GitProvider {
                     FailureCode::CapabilityDenied,
                     "repository-local credential configuration is denied outside the protected credential-reference path",
                 ));
+            }
+            // Given a URL, Git first looks for a remote named exactly that URL and uses its
+            // url or pushurl instead. A nickname has no '/' or ':'.
+            if let Some(name) = key
+                .strip_prefix("remote.")
+                .and_then(|rest| rest.rsplit_once('.'))
+                .map(|(name, _)| name)
+            {
+                if name.contains(['/', ':']) {
+                    return Err(GitProviderError::new(
+                        FailureCode::CapabilityDenied,
+                        "a repository remote is named like a URL and would replace the approved destination; push is denied",
+                    ));
+                }
             }
             // A promisor remote can make Git fetch missing objects from elsewhere mid-push.
             if key == "extensions.partialclone"

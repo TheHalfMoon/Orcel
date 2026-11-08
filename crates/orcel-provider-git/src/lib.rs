@@ -186,6 +186,7 @@ impl GitProvider {
             ],
         )?;
         let mut seen = 0;
+        let mut common = None;
         for dir in dirs.stdout.lines().filter(|line| !line.trim().is_empty()) {
             let dir = std::fs::canonicalize(dir.trim()).map_err(|error| {
                 GitProviderError::new(
@@ -200,11 +201,25 @@ impl GitProvider {
                 ));
             }
             seen += 1;
+            common = Some(dir);
         }
         if seen != 2 {
             return Err(GitProviderError::new(
                 FailureCode::InvalidRequest,
                 "Git did not report the repository's Git directories",
+            ));
+        }
+        // Alternates make Git read objects from another store, anywhere.
+        if common.is_some_and(|common| {
+            common
+                .join("objects")
+                .join("info")
+                .join("alternates")
+                .exists()
+        }) {
+            return Err(GitProviderError::new(
+                FailureCode::PathEscape,
+                "the repository borrows objects from another store (objects/info/alternates)",
             ));
         }
         Ok(repo)
@@ -384,6 +399,7 @@ fn run_plain(cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderErro
         .env("GIT_EDITOR", null_device())
         .env("GIT_SEQUENCE_EDITOR", null_device())
         .env("GIT_ALLOW_PROTOCOL", "")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .env("GCM_INTERACTIVE", "Never")
         .env("GIT_OPTIONAL_LOCKS", "0");
 
