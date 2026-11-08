@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import type { JSONRPCMessage, Transport } from "@modelcontextprotocol/server";
 import { createMcpFrameDispatcher, type ConnectionBinding } from "./device_uplink.js";
 import { KernelClient, type KernelRequest, type RemoteDispatchContext } from "./kernel.js";
@@ -222,9 +222,25 @@ test("a process spawn through the tunnel keeps the remote context, so orceld req
   assert.deepEqual(request.remote, config.remote);
 });
 
-test("the server never builds a kernel of its own that could drop a session's remote context", () => {
-  const source = readFileSync(new URL("../src/server.ts", import.meta.url), "utf8");
-  assert.equal(source.match(/new KernelClient\(/g), null, "use the session kernel, or its isolated()");
+test("no module builds a kernel that could drop a session's remote context", () => {
+  // Each place that may construct one, and why it's safe; anything else uses the session
+  // kernel or its isolated().
+  const allowed: Record<string, number> = {
+    "kernel.ts": 1, // isolated(), which copies the remote context
+    "transports/stdio.ts": 1, // the session kernel, with the transport's remote context
+    "device_uplink.ts": 1, // the relay session kernel, with the binding's remote context
+    "transports/loopback_http.ts": 1, // a local transport: no remote context exists
+    "secret_store.ts": 1 // the device key at relay start, before any remote input
+  };
+  const src = new URL("../src/", import.meta.url);
+  const files = readdirSync(src, { recursive: true, encoding: "utf8" })
+    .map((file) => file.replaceAll("\\", "/"))
+    .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"));
+  assert.ok(files.includes("server.ts"), files.join(", "));
+  for (const file of files) {
+    const found = readFileSync(new URL(file, src), "utf8").match(/new KernelClient\(/g)?.length ?? 0;
+    assert.equal(found, allowed[file] ?? 0, `${file} constructs a KernelClient`);
+  }
 });
 
 test("local stdio clients keep their configured profile and no remote context", () => {
