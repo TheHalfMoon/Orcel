@@ -6,6 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import type { JSONRPCMessage, Transport } from "@modelcontextprotocol/server";
 import { createMcpFrameDispatcher, type ConnectionBinding } from "./device_uplink.js";
 import { KernelClient, type KernelRequest, type RemoteDispatchContext } from "./kernel.js";
@@ -92,6 +93,7 @@ function recordingKernel(config: StdioSessionConfig, wire: KernelRequest[]): Ker
     pending: new Map(),
     remote: config.remote,
     profile: config.profile,
+    isolated: () => recordingKernel(config, wire),
     child: {
       stdin: {
         write(payload: string, _encoding: string, callback: (error?: Error) => void) {
@@ -205,6 +207,24 @@ test("requests through the tunnel carry the remote context into orceld", async (
   assert.equal(remote.toolSurfaceProfile, "core");
   assert.deepEqual(remote.scopes, ROUTE.scopeCeiling);
   assert.match(remote.connectionId, /^tunnel-[0-9a-f]{32}$/);
+});
+
+test("a process spawn through the tunnel keeps the remote context, so orceld requires the lease", async () => {
+  const { config, wire, transport } = await tunnelSession();
+  const response = await transport.request(4, "tools/call", {
+    name: "process_spawn",
+    arguments: { workspace_id: "default", executable: "C:\\Windows\\System32\\whoami.exe" }
+  });
+  assert.ok(JSON.stringify(response).includes("REMOTE_SESSION_INACTIVE"), JSON.stringify(response));
+  assert.equal(wire.length, 1);
+  const request = wire[0] as KernelRequest;
+  assert.equal(request.capability, "process.spawn");
+  assert.deepEqual(request.remote, config.remote);
+});
+
+test("the server never builds a kernel of its own that could drop a session's remote context", () => {
+  const source = readFileSync(new URL("../src/server.ts", import.meta.url), "utf8");
+  assert.equal(source.match(/new KernelClient\(/g), null, "use the session kernel, or its isolated()");
 });
 
 test("local stdio clients keep their configured profile and no remote context", () => {

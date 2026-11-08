@@ -427,7 +427,9 @@ export function registerOrcelTools(
       stdin_policy,
       network_class
     }) => {
-      const processKernel = new KernelClient(undefined, null, kernel.profile);
+      // Its own orceld, but the same session: a remote session's spawn keeps its remote
+      // context, so orceld still requires its lease.
+      const processKernel = kernel.isolated();
       trackKernel(processKernel);
       try {
         return projectKernelResult(

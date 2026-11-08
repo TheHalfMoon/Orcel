@@ -191,6 +191,15 @@ export class KernelClient {
     this.child = this.spawnDaemon();
   }
 
+  /**
+   * A new client with its own orceld, carrying this one's remote context and profile. A
+   * request from a remote session must never reach orceld without its remote context:
+   * orceld would take it as local and skip the remote-session lease.
+   */
+  isolated(): KernelClient {
+    return new KernelClient(this.command, this.remote, this.profile, this.args);
+  }
+
   private spawnDaemon(): ChildProcessWithoutNullStreams {
     const child = spawn(this.command, [...this.args], {
       stdio: ["pipe", "pipe", "pipe"],
