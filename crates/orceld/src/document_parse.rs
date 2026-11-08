@@ -432,23 +432,29 @@ impl Stage {
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
-        // Unique per parse (process, sequence, digest), so two parses of one
-        // download never share, or remove, each other's stage.
+        // Unique per parse (process, sequence, a random 64-bit salt from std's OS-seeded
+        // hasher keys, new on each call, and the digest), so two
+        // parses never share a stage. A name already taken, by a leftover or anything else,
+        // is skipped and never removed: only a directory this parse created is its own.
         static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = runs.join(format!(
-            "{}-{sequence}-{}",
-            std::process::id(),
-            &digest[..16]
-        ));
-        // A leftover from a crashed run with the same name is not reused.
-        let _ = std::fs::remove_dir_all(&dir);
+        let names = std::iter::repeat_with(|| {
+            use std::hash::{BuildHasher as _, Hasher as _};
+            let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut salt = std::collections::hash_map::RandomState::new().build_hasher();
+            salt.write_u64(sequence);
+            format!(
+                "{}-{sequence}-{:016x}-{}",
+                std::process::id(),
+                salt.finish(),
+                &digest[..16]
+            )
+        });
+        let dir = claim_dir(&runs, names.take(8))?;
         let made = |path: &Path| {
             contained_tier::private_dir_builder(false)
                 .create(path)
                 .map_err(|error| unavailable(format!("document parse directory: {error}")))
         };
-        made(&dir)?;
         // From here on, dropping the stage removes everything below `dir`.
         let mut stage = Self {
             input: dir.join("input"),
@@ -465,6 +471,25 @@ impl Stage {
         stage.work = canonical(&stage.work)?;
         Ok(stage)
     }
+}
+
+/// Creates the first of `names` under `runs` that doesn't exist yet, exclusively, and
+/// returns it. An existing entry under a name, whether a directory, a file or a link, is
+/// left as it is.
+fn claim_dir(runs: &Path, names: impl Iterator<Item = String>) -> Result<PathBuf, ProviderError> {
+    for name in names {
+        let candidate = runs.join(name);
+        match contained_tier::private_dir_builder(false).create(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(unavailable(format!("document parse directory: {error}")));
+            }
+        }
+    }
+    Err(unavailable(
+        "document parse directory: no unused stage name was found",
+    ))
 }
 
 impl Drop for Stage {

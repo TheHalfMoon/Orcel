@@ -396,3 +396,67 @@ fn wi05_each_parse_gets_its_own_stage() {
         b"first"
     );
 }
+
+#[test]
+fn a_stage_name_already_taken_is_skipped_and_left_alone() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("orcel-dp-claim-{}-{unique}", std::process::id()));
+    let runs = base.join("runs");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(runs.join("taken")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(runs.join("taken").join("sentinel"), b"keep").unwrap();
+    std::fs::write(runs.join("file"), b"keep").unwrap();
+    std::fs::write(outside.join("sentinel"), b"keep").unwrap();
+    // A link under a predicted name: a directory symlink, or a junction on Windows.
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, runs.join("link")).unwrap();
+    #[cfg(windows)]
+    assert!(std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(runs.join("link"))
+        .arg(&outside)
+        .status()
+        .unwrap()
+        .success());
+    // A dangling junction too: creating at its name must not create its missing target.
+    #[cfg(windows)]
+    {
+        assert!(std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(runs.join("dangling"))
+            .arg(base.join("missing"))
+            .status()
+            .unwrap()
+            .success());
+        assert!(claim_dir(&runs, ["dangling".to_owned()].into_iter()).is_err());
+        assert!(
+            !base.join("missing").exists(),
+            "a dangling link's target is never created"
+        );
+        std::fs::remove_dir(runs.join("dangling")).unwrap();
+    }
+    let names = ["taken", "file", "link", "fresh"].map(String::from);
+    let claimed = claim_dir(&runs, names.into_iter()).unwrap();
+    assert_eq!(claimed, runs.join("fresh"));
+    assert_eq!(
+        std::fs::read(runs.join("taken").join("sentinel")).unwrap(),
+        b"keep"
+    );
+    assert_eq!(std::fs::read(runs.join("file")).unwrap(), b"keep");
+    assert_eq!(std::fs::read(outside.join("sentinel")).unwrap(), b"keep");
+    assert!(
+        std::fs::symlink_metadata(runs.join("link")).is_ok(),
+        "the link itself stays"
+    );
+    // When every name is taken, it fails closed instead of reusing one.
+    assert!(claim_dir(&runs, ["taken".to_owned()].into_iter()).is_err());
+    #[cfg(windows)]
+    std::fs::remove_dir(runs.join("link")).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(runs.join("link")).unwrap();
+    let _ = std::fs::remove_dir_all(&base);
+}
