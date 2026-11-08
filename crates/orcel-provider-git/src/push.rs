@@ -588,7 +588,16 @@ pub fn build_push_argv(
         "core.askPass=".to_owned(),
         "-c".to_owned(),
         format!("http.curloptResolve={resolve_value}"),
+        // Exactly the one approved ref: no tags the repository asks to follow, no signed
+        // push that would run its gpg.program, and no push options it configures.
+        "-c".to_owned(),
+        "push.followTags=false".to_owned(),
+        "-c".to_owned(),
+        "push.gpgSign=false".to_owned(),
+        "-c".to_owned(),
+        "push.pushOption=".to_owned(),
         "push".to_owned(),
+        "--no-follow-tags".to_owned(),
         "--no-recurse-submodules".to_owned(),
         "--no-verify".to_owned(),
         url.to_owned(),
@@ -1885,6 +1894,9 @@ mod tests {
         let rendered = argv.join(" ");
         assert!(rendered.contains("protocol.https.allow=always"));
         assert!(rendered.contains("http.followRedirects=false"));
+        assert!(rendered.contains("push.followTags=false"));
+        assert!(rendered.contains("push.gpgSign=false"));
+        assert!(rendered.contains("--no-follow-tags"));
         assert!(rendered.contains("http.sslVerify=true"));
         assert!(rendered.contains("http.proxy="));
         assert!(rendered.contains("credential.helper="));
