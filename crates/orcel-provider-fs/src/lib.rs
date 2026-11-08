@@ -115,7 +115,9 @@ impl FsProvider {
         let mut candidate = self.root.clone();
         let mut has_name = false;
         let mut missing_prefix = false;
-        for component in Path::new(relative).components() {
+        let parts = Path::new(relative).components().count();
+        for (index, component) in Path::new(relative).components().enumerate() {
+            let last = index + 1 == parts;
             let name = match component {
                 Component::CurDir => continue,
                 Component::Normal(name) => name,
@@ -146,6 +148,14 @@ impl FsProvider {
             if missing_prefix {
                 // Still inspect every later spelling: newdir/.git/config is
                 // prohibited even if newdir does not exist yet.
+                continue;
+            }
+            // A link at the final name isn't followed here: create refuses any entry there,
+            // and every other mutation checks the real path it opened before acting.
+            if last
+                && fs::symlink_metadata(&candidate)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
                 continue;
             }
             match resolve_final_path(&candidate) {
