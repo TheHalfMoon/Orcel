@@ -35,8 +35,143 @@ test("length bounds and non-JSON bodies are violations before buffering", () => 
   assert.throws(() => encodeFrame({ frame: "ping", nonce: "x".repeat(MAX_FRAME_BYTES) }), ProtocolViolation);
 });
 
+test("BR-02: form actions are closed, bounded and exact", () => {
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 3, action: "fill", ref: "e4", value: "" }), {
+    frame: "form_action",
+    form_id: 3,
+    ref: "e4",
+    act: { action: "fill", value: "" }
+  });
+  assert.deepEqual(
+    parseHostFrame({ frame: "form_action", form_id: 3, action: "select", ref: "e4", values: ["Lisbon"], role: "combobox", name: "City" }),
+    { frame: "form_action", form_id: 3, ref: "e4", act: { action: "select", values: ["Lisbon"] }, target: { role: "combobox", name: "City" } }
+  );
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 3, action: "check", ref: "e4", checked: false }), {
+    frame: "form_action",
+    form_id: 3,
+    ref: "e4",
+    act: { action: "check", checked: false }
+  });
+  for (const bad of [
+    { frame: "form_action", form_id: 3, action: "type", ref: "e4", value: "x" },
+    { frame: "form_action", form_id: 3, action: "fill", ref: "e4" },
+    { frame: "form_action", form_id: 3, action: "fill", ref: "e4", value: "x", checked: true },
+    { frame: "form_action", form_id: 3, action: "fill", ref: "f1e4", value: "x" },
+    { frame: "form_action", form_id: 3, action: "fill", ref: "css=#a", value: "x" },
+    { frame: "form_action", form_id: 3, action: "fill", ref: "e4", value: "a\nb" },
+    { frame: "form_action", form_id: 3, action: "fill", ref: "e4", value: "x".repeat(1025) },
+    { frame: "form_action", form_id: 3, action: "fill", ref: "e4", value: 5 },
+    { frame: "form_action", form_id: 3, action: "select", ref: "e4", values: [] },
+    { frame: "form_action", form_id: 3, action: "select", ref: "e4", values: [""] },
+    { frame: "form_action", form_id: 3, action: "select", ref: "e4", values: Array.from({ length: 17 }, () => "a") },
+    { frame: "form_action", form_id: 3, action: "check", ref: "e4", checked: "true" },
+    { frame: "form_action", form_id: 3, action: "check", ref: "e4", checked: true, role: "checkbox" },
+    { frame: "form_action", form_id: 0, action: "check", ref: "e4", checked: true }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
+test("BR-02: press keys come from a closed list; hover has no input; waits are bounded", () => {
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "Enter" }), {
+    frame: "form_action",
+    form_id: 5,
+    ref: "e2",
+    act: { action: "press", key: "Enter" }
+  });
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 7, action: "press", ref: "e2", key: "Enter", accept_confirm: "Delete this item?" }), {
+    frame: "form_action",
+    form_id: 7,
+    ref: "e2",
+    act: { action: "press", key: "Enter" },
+    accept_confirm: "Delete this item?"
+  });
+  for (const bad of ["", "a\nb", "a\u0085b", "x".repeat(1025), 5]) {
+    assert.throws(() => parseHostFrame({ frame: "form_action", form_id: 7, action: "press", ref: "e2", key: "Enter", accept_confirm: bad }), ProtocolViolation);
+  }
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 6, action: "hover", ref: "e3" }), {
+    frame: "form_action",
+    form_id: 6,
+    ref: "e3",
+    act: { action: "hover" }
+  });
+  assert.deepEqual(parseHostFrame({ frame: "wait_for", wait_id: 1, text: "Saved", appear: false, timeout_ms: 8000 }), {
+    frame: "wait_for",
+    wait_id: 1,
+    text: "Saved",
+    appear: false,
+    timeout_ms: 8000
+  });
+  for (const bad of [
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "a" },
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "Control+A" },
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "Backspace" },
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2" },
+    { frame: "form_action", form_id: 5, action: "hover", ref: "e2", key: "Enter" },
+    { frame: "form_action", form_id: 5, action: "toString", ref: "e2" },
+    { frame: "wait_for", wait_id: 1, text: "Saved", appear: true, timeout_ms: 8001 },
+    { frame: "wait_for", wait_id: 1, text: "Saved", appear: true, timeout_ms: 0 },
+    { frame: "wait_for", wait_id: 1, text: "", appear: true, timeout_ms: 100 },
+    { frame: "wait_for", wait_id: 1, text: "Saved", appear: "yes", timeout_ms: 100 },
+    { frame: "wait_for", wait_id: 1, text: "Saved", appear: true, timeout_ms: 100, ms: 1 }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
+test("BR-05: the dialog-report frame is exact", () => {
+  assert.deepEqual(parseHostFrame({ frame: "dialogs", dlg_id: 1 }), { frame: "dialogs", dlg_id: 1 });
+  for (const bad of [{ frame: "dialogs" }, { frame: "dialogs", dlg_id: 0 }, { frame: "dialogs", dlg_id: 1, accept: true }]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad));
+  }
+});
+
+test("BR-03: uploads carry an absolute host path and a main-frame ref only", () => {
+  assert.deepEqual(parseHostFrame({ frame: "upload", up_id: 1, ref: "e3", path: "C:\\s\\up-1\\a.txt" }), {
+    frame: "upload",
+    up_id: 1,
+    ref: "e3",
+    path: "C:\\s\\up-1\\a.txt"
+  });
+  for (const bad of [
+    { frame: "upload", up_id: 1, ref: "e3", path: "a.txt" },
+    { frame: "upload", up_id: 1, ref: "f1e3", path: "C:\\s\\a.txt" },
+    { frame: "upload", up_id: 1, ref: "e3" },
+    { frame: "upload", up_id: 1, ref: "e3", path: "C:\\s\\a.txt", url: "https://x" },
+    { frame: "upload", up_id: 0, ref: "e3", path: "C:\\s\\a.txt" }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
+test("BR-07: verify probes are closed, bounded and exact", () => {
+  const probes = [
+    { probe: "visible_role", role: "button", name: "Pay now" },
+    { probe: "visible_text", text: "Order confirmed" },
+    { probe: "value", ref: "e12" },
+    { probe: "checked", ref: "f1e3" }
+  ];
+  assert.deepEqual(parseHostFrame({ frame: "verify", ver_id: 7, probes }), { frame: "verify", ver_id: 7, probes });
+  for (const bad of [
+    { frame: "verify", ver_id: 7, probes: [] },
+    { frame: "verify", ver_id: 7, probes: Array.from({ length: 17 }, () => probes[1]) },
+    { frame: "verify", ver_id: 0, probes },
+    { frame: "verify", ver_id: 7, probes, extra: 1 },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "evaluate", script: "1" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_text", text: "" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_text", text: "x".repeat(1025) }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_text", text: "a\nb" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_role", role: "Button", name: "x" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_role", role: "button" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "value", ref: "css=#a" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "checked", ref: "e1", value: "x" }] }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 9 }), { frame: "hello", generation: 9 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 15 }), { frame: "hello", generation: 15 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -44,11 +179,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 9 },
+    { generation: 15 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 9, extra: true },
+    { frame: "hello", generation: 15, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },
@@ -292,6 +427,35 @@ test("execute frames carry a valid tool name and bounded typed fields", () => {
     { ...ok, fields: Array.from({ length: 33 }, (_, i) => ({ name: `f${i}`, control: "text", values: [] })) },
     { ...ok, fields: [{ name: "q", control: "text", values: ["x".repeat(1025)] }] },
     { ...ok, extra: true }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
+test("BR-01 activate and download frames may carry the approved role and name, both or neither", () => {
+  const path = "C:\\stage\\dl-2.part";
+  assert.deepEqual(parseHostFrame({ frame: "activate", act_id: 1, ref: "e5" }), { frame: "activate", act_id: 1, ref: "e5" });
+  assert.deepEqual(parseHostFrame({ frame: "activate", act_id: 1, ref: "e5", role: "link", name: "Annual review" }), {
+    frame: "activate",
+    act_id: 1,
+    ref: "e5",
+    target: { role: "link", name: "Annual review" }
+  });
+  assert.deepEqual(parseHostFrame({ frame: "download", dl_id: 2, ref: "e7", path, role: "link", name: "Q3.pdf" }), {
+    frame: "download",
+    dl_id: 2,
+    ref: "e7",
+    path,
+    target: { role: "link", name: "Q3.pdf" }
+  });
+  for (const bad of [
+    { frame: "activate", act_id: 1, ref: "e5", role: "link" },
+    { frame: "activate", act_id: 1, ref: "e5", name: "x" },
+    { frame: "activate", act_id: 1, ref: "e5", role: "Link", name: "x" },
+    { frame: "activate", act_id: 1, ref: "e5", role: "link", name: "" },
+    { frame: "activate", act_id: 1, ref: "e5", role: "link", name: "a\u0000b" },
+    { frame: "activate", act_id: 1, ref: "e5", role: "link", name: "x".repeat(1025) },
+    { frame: "download", dl_id: 2, ref: "e7", path, role: "link" }
   ]) {
     assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
   }

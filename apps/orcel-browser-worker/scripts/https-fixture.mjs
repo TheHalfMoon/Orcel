@@ -6,6 +6,9 @@
 // certificate (Git for Windows' OpenSSL). Protocol on stdout, one line each:
 //   READY <base64 SPKI SHA-256>
 //   HIT <host> <path>
+//   DONE <host> <path> <ms>   (the response was fully handed to the socket)
+//   ABORT <host> <path> <ms>  (the connection closed before it finished)
+// (#438: the last two tell a stalled response from a stalled page load.)
 // It exits when its stdin closes, so the test owns its lifetime.
 
 import { execFileSync } from "node:child_process";
@@ -172,6 +175,59 @@ const EXEC = `<!doctype html><meta charset="utf-8"><title>Exec</title>
 <form toolname="odd_button" tooldescription="An invalid button type submits." action="/search" toolautosubmit><input name="q"><button type="bogus" name="go" value="1">Go</button></form>`;
 // Slice 6: a long readable page with hidden text, page-injected syntax, a
 // link and an image. The paragraphs make the Markdown span several pieces.
+// BR-05: a button that asks for confirmation before acting.
+const DIALOG = `<!doctype html><meta charset="utf-8"><title>Items</title>
+<button onclick="document.getElementById('out').textContent = confirm('Delete this item?') ? 'deleted' : 'kept'">Delete</button>
+<p id="out"></p>`;
+// BR-05: a page that asks before it is left (beforeunload).
+const LEAVE = `<!doctype html><meta charset="utf-8"><title>Draft</title>
+<p><a href="/archive/2026-09-30">Annual review 2026-09-30</a></p>
+<script>addEventListener("beforeunload", (event) => { event.preventDefault(); event.returnValue = ""; });</script>`;
+// BR-03: a file input whose page reports the chosen file's name and bytes.
+const UPLOAD = `<!doctype html><meta charset="utf-8"><title>Upload</title>
+<label>Attachment <input type="file" name="doc" id="doc"></label>
+<label>Notes <input type="text" name="notes"></label>
+<p id="out"></p>
+<script>
+document.getElementById("doc").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  document.getElementById("out").textContent = "got " + file.name + " " + (await file.text());
+});
+</script>`;
+// BR-06: a page with a nested same-origin frame and a frame on an origin
+// the lifetime does not admit.
+const FRAMES = `<!doctype html><meta charset="utf-8"><title>Embedded</title>
+<h1>Embedded report</h1>
+<iframe src="/frame-outer"></iframe>
+<iframe src="https://other.test/frame-foreign"></iframe>`;
+const FRAME_OUTER = `<!doctype html><meta charset="utf-8"><p>Outer frame</p><iframe src="/frame-inner"></iframe>`;
+const FRAME_INNER = `<!doctype html><meta charset="utf-8"><a href="/archive/2026-09-30">Inner report</a>`;
+const FRAME_FOREIGN = `<!doctype html><meta charset="utf-8"><a href="/x">Foreign link</a>`;
+// BR-04: a link covered by a full-page overlay (a consent wall).
+const OCCLUDED = `<!doctype html><meta charset="utf-8"><title>Covered</title>
+<p><a href="/archive/2026-09-30">Annual review 2026-09-30</a></p>
+<div style="position:fixed;inset:0;background:white;z-index:10">Please accept our terms</div>`;
+// BR-02: a form to fill, select and check (no submission).
+const FORM = `<!doctype html><meta charset="utf-8"><title>Profile</title>
+<label>Full name <input type="text" name="full_name" value="Old Name"></label>
+<label>City <select name="city"><option>Lisbon</option><option>Porto</option></select></label>
+<label><input type="checkbox" name="terms"> Accept terms</label>
+<label>Password <input type="password" name="pw"></label>
+<label>Search <input type="search" name="q" onkeydown="if (event.key === 'Enter') document.getElementById('out').textContent = 'Searched'"></label>
+<p id="out"></p>
+<a href="/menu" onmouseover="document.getElementById('tip').textContent = 'Menu open'">Menu</a>
+<p id="tip"></p>`;
+// BR-07: a page to verify postconditions against.
+const VERIFY = `<!doctype html><meta charset="utf-8"><title>Order 42</title>
+<h1>Order confirmed</h1>
+<p>Thank you for your order.</p>
+<p style="display:none">Refund issued</p>
+<label>Email <input type="text" name="email" value="ada@example.test"></label>
+<label>Password <input type="password" name="pw" value="hunter2"></label>
+<label><input type="checkbox" name="news" checked> Subscribe</label>
+<p>Shipped to
+   Lisbon</p>
+<label>PIN <span role="textbox" aria-label="PIN entry">****</span> <input type="password" name="pin" value="1234"></label>`;
 const READ = `<!doctype html><meta charset="utf-8"><title>Reading</title>
 <h1>Reading room</h1>
 <p>Visible opening paragraph with <a href="/archive">the archive</a> and <img src="/img.png" alt="a chart">.</p>
@@ -231,6 +287,17 @@ const ARCHIVE_TRICKY = `<!doctype html><title>Tricky archive</title><ul>
 <li><a id=swap href="/archive/2026-06-30">Annual review 2026-06-30</a></li>
 <li><a id=blank href="/archive/2025-12-31?popup" target="_blank">Annual review 2025-12-31</a></li></ul>
 <script>setTimeout(() => { document.getElementById("swap").href = "/evil"; fetch("/signal/href-swapped?t=" + Math.floor(performance.timeOrigin)); }, 1500);</script>`;
+// BR-01: after observation the page re-renders its list. The same links
+// as new elements; the names swapped between the destinations; or two
+// links with the same name. The delay leaves the host time to observe the
+// original list first, which the test checks.
+const rerender = (name, list) => `<!doctype html><title>${name}</title><ul id=list>
+<li><a href="/archive/2026-06-30">Annual review 2026-06-30</a></li>
+<li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li></ul>
+<script>setTimeout(() => { document.getElementById("list").innerHTML = ${JSON.stringify(list)}; fetch("/signal/${name}?t=" + Math.floor(performance.timeOrigin)); }, 2500);</script>`;
+const ARCHIVE_RERENDER = rerender("rerendered", '<li><a href="/archive/2026-06-30">Annual review 2026-06-30</a></li><li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li>');
+const ARCHIVE_RERENDER_SWAP = rerender("rerendered-swap", '<li><a href="/archive/2026-09-30">Annual review 2026-06-30</a></li><li><a href="/archive/2026-06-30">Annual review 2026-09-30</a></li>');
+const ARCHIVE_RERENDER_TWINS = rerender("rerendered-twins", '<li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li><li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li>');
 const SECRET_NAME = `<!doctype html><title>Secret name</title>
 <input type=password id=pw value="HUNTER2PW"><button aria-labelledby=pw>x</button>`;
 const SELF_MOVE = `<!doctype html><title>moving</title><script>setTimeout(() => { location.href = "/landing"; }, 300);</script>`;
@@ -245,6 +312,12 @@ const server = createServer({ key, cert }, (request, response) => {
   const host = (request.headers.host ?? "").split(":")[0];
   const path = request.url ?? "/";
   process.stdout.write(`HIT ${host} ${path}\n`);
+  const started = process.hrtime.bigint();
+  const elapsed = () => Number((process.hrtime.bigint() - started) / 1000000n);
+  response.on("finish", () => process.stdout.write(`DONE ${host} ${path} ${elapsed()}\n`));
+  response.on("close", () => {
+    if (!response.writableFinished) process.stdout.write(`ABORT ${host} ${path} ${elapsed()}\n`);
+  });
   const redirect = (location) => {
     response.statusCode = 302;
     response.setHeader("location", location);
@@ -408,10 +481,17 @@ trailer << /Root 1 0 R >>
     response.setHeader("reporting-endpoints", 'csp="https://other.test/reports"');
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
-  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ };
+  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });
+// #438: connection-level events, so a navigation that never produced a
+// request can be told apart: no CONN (the engine never reached this
+// listener), CONN without TLSOK (the handshake failed or stalled), or TLSOK
+// with no HIT (no request after the handshake).
+server.on("connection", () => process.stdout.write("CONN\n"));
+server.on("secureConnection", () => process.stdout.write("TLSOK\n"));
+server.on("tlsClientError", (error) => process.stdout.write(`TLSERR ${error.code ?? "unknown"}\n`));
 server.listen({ port: 443, host: "127.0.0.1" }, () => process.stdout.write(`READY ${spki}\n`));
 process.stdin.resume();
 process.stdin.on("end", () => process.exit(0));

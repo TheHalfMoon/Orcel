@@ -2183,7 +2183,7 @@ pub fn default_approval_history_path_from(
     }
     let root = orcel_platform::paths::state_root_from(lookup)?;
     orcel_platform::paths::ensure_private_dir(&root)?;
-    Ok(root.join("approval-history.jsonl"))
+    Ok(orcel_platform::stores::APPROVAL_HISTORY.path(&root))
 }
 
 fn history_path_unavailable(error: PlatformError) -> ApprovalError {
@@ -2297,7 +2297,7 @@ mod state_root_tests {
     /// The per-user variable the running OS's layout reads, pointed at `base`.
     fn user_root_env(base: &Path) -> Vec<(&'static str, OsString)> {
         #[cfg(windows)]
-        let name = "LOCALAPPDATA";
+        let name = "USERPROFILE";
         #[cfg(not(windows))]
         let name = "HOME";
         vec![(name, base.as_os_str().to_owned())]
@@ -2438,16 +2438,15 @@ mod state_root_tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_ledger_path_is_byte_identical_to_the_previous_default() {
+    fn windows_ledger_path_is_under_the_profile_state_root() {
         let local_app_data = sandbox("windows");
         let lookup = lookup(vec![(
-            "LOCALAPPDATA",
+            "USERPROFILE",
             local_app_data.clone().into_os_string(),
         )]);
         let path = default_approval_history_path_from(&lookup).expect("history path");
-        // The expression the previous default used.
         let previous = PathBuf::from(local_app_data.clone().into_os_string())
-            .join("Orcel")
+            .join(".orcel")
             .join("approval-history.jsonl");
         assert_eq!(
             path.as_os_str().as_encoded_bytes(),
@@ -2455,7 +2454,7 @@ mod state_root_tests {
         );
         // Resolution creates the directory private, as on Unix (#358 item
         // 2), so it passes the private-directory check again.
-        let orcel = local_app_data.join("Orcel");
+        let orcel = local_app_data.join(".orcel");
         assert!(orcel.is_dir());
         assert_eq!(orcel_platform::paths::ensure_private_dir(&orcel), Ok(()));
         let _ = std::fs::remove_dir_all(local_app_data);

@@ -9,7 +9,9 @@ decision FD-03, so this package makes no UI framework choice.
 
 - **Reads only.** The client can send `status.get`, `capabilities.get` and
   `events.subscribe` and nothing else. `encodeRequest` refuses any other
-  method name before a byte is written. There is no approval, submit, cancel
+  method name before a byte is written. Although orceld serves SG-000126
+  `task.list` and `task.get`, neither is authorized for this client; tests
+  prove both are refused even when advertised. There is no approval, submit, cancel
   or stop path, no MCP server and no listener. `no-authority.test.ts` checks
   the shipped sources and build for each of these.
 - **Connects only to this user's endpoint.** On Windows that is the pipe

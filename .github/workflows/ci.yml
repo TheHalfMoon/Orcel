@@ -36,12 +36,109 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           components: rustfmt, clippy
+      # BM-02: the orceld benchmark test runs the Python task runner.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
+        env:
+          # The commit this job built (on a pull request, GITHUB_SHA is the
+          # merge commit, not the checked-out head).
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: cargo test --workspace
+      # SG-000115 A2b (inert, test-only): the macOS lineage sweep cases run
+      # alone, one thread (in the shared Test step they return at once).
+      # Their unattributable-orphan rule is system-wide, so an orphan from
+      # another test running at the same time would be a false positive. The
+      # step fails unless exactly those two tests ran and passed.
+      - name: SG-000115 A2b macOS lineage sweep (alone)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          ORCEL_SG115_LINEAGE_ALONE: "1"
+        run: |
+          set -euo pipefail
+          status=0
+          out=$(cargo test -p orcel-browser-host --lib unix_supervise::tests::macos_lineage_ -- --test-threads=1 --nocapture 2>&1) || status=$?
+          printf '%s\n' "$out"
+          [ "$status" -eq 0 ]
+          grep -q "test result: ok. 2 passed" <<<"$out"
+          grep -q "SG115-RESULT fast orphan rounds" <<<"$out"
+          grep -q "SG115-EVIDENCE launchd unique ids readable" <<<"$out"
+      # SG-000115 S-07: the real Chrome install tree's state, as evidence.
+      # libtest hides a passing test's output, so these two run again here
+      # with it shown; the step fails unless the evidence line is printed.
+      - name: SG-000115 S-07 real Chrome evidence (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          out=$(cargo test -p orcel-browser-host --lib -- --nocapture s07_the_installed_chrome_verdict_follows_its_install_tree xp14_linux_the_vendor_package_verifies_and_a_copy_does_not b7_what_a_real_chrome_chain_has_on_this_host 2>&1) || status=$?
+          printf '%s\n' "$out"
+          [ "$status" -eq 0 ]
+          grep -q "SG115-EVIDENCE real Chrome install tree" <<<"$out"
+          grep -q "SG115-EVIDENCE B7 real Chrome chain links" <<<"$out"
+      # SG-000115 B6b: PID-namespace containment on this runner, shown
+      # either way: the containment result, or the host's refusal of an
+      # unprivileged user namespace (evidence about the host, not a pass).
+      - name: SG-000115 B6b PID namespace evidence (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # B9b needs the runner user's own systemd manager (a desktop
+          # session has one; a CI runner gets one through lingering).
+          sudo loginctl enable-linger "$USER"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 1 40); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 0.25; done
+          loginctl show-user "$USER" --property=Linger --property=State || true
+          ls -l "$XDG_RUNTIME_DIR/bus"
+          status=0
+          out=$(cargo test -p orcel-browser-host --lib -- --exact --nocapture --test-threads=1 unix_supervise::tests::a_pid_namespace_init_takes_its_whole_family_with_it unix_rehearsal::tests::a_pid_namespace_takes_a_crashed_hosts_family_with_it unix_rehearsal::tests::an_engine_namespace_dies_with_its_crashed_host unix_supervise::tests::a_parent_death_signal_follows_the_spawning_thread unix_supervise::tests::a_user_service_cgroup_takes_a_crashed_hosts_family_with_it unix_supervise::tests::landlock_refuses_a_fresh_open_of_cgroup_procs_and_leaves_other_routes_out 2>&1) || status=$?
+          printf '%s\n' "$out"
+          [ "$status" -eq 0 ]
+          grep -qE "SG115-RESULT PID namespace|SG115-EVIDENCE unprivileged PID namespace refused" <<<"$out"
+          grep -qE "SG115-EVIDENCE B8 PID namespace|SG115-EVIDENCE B8 unprivileged PID namespace refused" <<<"$out"
+          grep -qE "SG115-EVIDENCE B8b engine namespace" <<<"$out"
+          grep -qE "SG115-EVIDENCE B9a spawning-thread exit killed the direct child=true, spawner child alive=true" <<<"$out"
+          # Here a user manager was enabled above, so only the result counts:
+          # a refusal line is evidence on a local host, never a pass in CI.
+          grep -qE "SG115-EVIDENCE B9b user service: helper gone=true, control helper survived=true" <<<"$out"
+          grep -qE "SG115-EVIDENCE B9c landlock: controls moved=true, fresh open refused=true;" <<<"$out"
+      # BM-02 evidence on this OS: both tiers again with their per-case lines
+      # in the log (the Test step captures them when they pass), and both
+      # reports checked against orcel-benchmark-report/1.
+      - name: BM-02 evidence
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/bm02"
+          mkdir -p "$out"
+          ORCEL_BM02_REPORT="$out/tier-a.report.json" cargo test -p orceld --test bm02_orcel_benchmark -- --nocapture 2>&1 | grep -E "BM02-|BM02 skipped|test result"
+          ORCEL_BM02_OS_VERSION=$(cd tests/benchmarks && python -c "from orcel_bench.runner import machine; print(machine()['os_version'])")
+          export ORCEL_BM02_OS_VERSION
+          ORCEL_BM02B_REPORT="$out/tier-b.report.json" cargo test -p orceld --bin orceld bm02_tier_b -- --nocapture 2>&1 | grep -E "BM02B-|test result"
+          node scripts/check-benchmark-report.mjs "$out"
+      # #288: the WPF preview's memory profile against a minimal WPF window
+      # built the same way, on this disposable runner (report only, no
+      # budget): startup, idle working set, private bytes, GC heap, loaded
+      # assemblies, hardware and software rendering, repeated queries.
+      - name: WPF preview memory profile (report only)
+        if: runner.os == 'Windows'
+        # Report only: a UI Automation hiccup on the hosted runner must not
+        # fail the job.
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/tests/memory.ps1 -OutPath "$env:RUNNER_TEMP/wpf-memory.json"
+          Get-Content "$env:RUNNER_TEMP/wpf-memory.json"
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
       # negotiation test against the freshly built Go host, not a script. The
       # native-host job does the same with orcel-native-host on macOS and
@@ -856,6 +953,62 @@ jobs:
       - name: License check of the helper graph
         run: cargo deny check licenses
 
+  # BM-02 Tier C C2a: the pinned GUI task's own Electron apps launched on
+  # this disposable runner and observed only through this job's orceld
+  # (read-only UIA shapes: nothing is clicked or typed, no approval is
+  # asked). Its own job, not a required check: it runs third-party install
+  # scripts and apps (npm ci, Electron), so it shares no VM with any
+  # qualification step and keeps no checkout credential.
+  tierc-gui:
+    name: BM-02 Tier C GUI / windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Build orceld
+        run: cargo build --locked -p orceld
+      - name: BM-02 Tier C C2a (launch and observe through orceld)
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          pack="$RUNNER_TEMP/tierc-pack"
+          (cd tests/benchmarks && python -m orcel_bench fetch-taskpack cua-driver-bench --into "$pack")
+          (cd tests/benchmarks && python -m orcel_bench tierc-observe --pack "$pack" --orceld "$GITHUB_WORKSPACE/target/debug/orceld.exe" \
+            --task cdb-s02 --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/tierc-observe.report.json")
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/tierc-observe.report.json"
+      # BM-02 Tier C C2b slice 3a (SG-000128): a deterministic scripted plan
+      # (it encodes the task's known answer) reaches every element of the chat
+      # app's blocker form through orceld's scoped subtree read in its test
+      # build; the first action must be refused by the DesktopInput gate, and
+      # nothing is written. Labelled scripted-plan / reach-only in the report;
+      # not agent performance. Acting (slice 3b) needs a founder-present Full
+      # User grant and never runs here.
+      - name: BM-02 Tier C C2b slice 3a (scripted plan reaches the form; DesktopInput gate holds)
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          act_test=$(cargo test --locked -p orceld --bin orceld --no-run --message-format=json \
+            | python -c "import json,sys; print([m['executable'] for m in map(json.loads, sys.stdin) if m.get('reason')=='compiler-artifact' and m.get('executable') and m['target']['name']=='orceld' and m['profile']['test']][-1])")
+          pack="$RUNNER_TEMP/tierc-pack"
+          (cd tests/benchmarks && python -m orcel_bench tierc-act --pack "$pack" --orceld "$GITHUB_WORKSPACE/target/debug/orceld.exe" \
+            --act-test "$act_test" --plan orcel-tasks/tierc/cdb-s02-blocker.plan.json --reach-only \
+            --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/tierc-act.report.json")
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/tierc-act.report.json"
+
   node:
     name: Node / ${{ matrix.os }}
     strategy:
@@ -867,6 +1020,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # #438: so a navigation timeout can be set against what the machine was doing.
+      - name: Start the machine sampler
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: Start-Process pwsh -WindowStyle Hidden -ArgumentList @("-NoProfile", "-File", "scripts/ci-machine-sampler.ps1", "-Log", (Join-Path $env:RUNNER_TEMP "machine-sampler.log"))
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.19.0"
@@ -875,7 +1034,41 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - name: Test
+        env:
+          # M-BR-01 and M-BR-02: a scripted plan on the controlled site, Windows only.
+          ORCEL_BM_BROWSER_REPORT: ${{ runner.temp }}/browser-tasks.report.json
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: npm test
+      - name: Print the machine sampler
+        if: always() && runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "machine-sampler.log"
+          if (Test-Path $log) { Get-Content $log | ForEach-Object { "MACHINE $_" } }
+          $since = (Get-Date).AddHours(-2)
+          foreach ($filter in @(
+            @{ LogName = "Application"; ProviderName = "VSS"; StartTime = $since },
+            @{ LogName = "System"; ProviderName = "Microsoft-Windows-WindowsUpdateClient"; StartTime = $since },
+            @{ LogName = "Microsoft-Windows-Windows Defender/Operational"; Id = 1152, 2000; StartTime = $since }
+          )) {
+            Get-WinEvent -FilterHashtable $filter -MaxEvents 20 -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object {
+              "MACHINE-EVENT $($_.TimeCreated.ToUniversalTime().ToString('HH:mm:ss')) $($_.ProviderName) $($_.Id)"
+            }
+          }
+          exit 0
+      - name: Check and keep the browser task report
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/browser-tasks.report.json"
+          cat "$RUNNER_TEMP/browser-tasks.report.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: browser-tasks-report
+          path: ${{ runner.temp }}/browser-tasks.report.json
+          if-no-files-found: ignore
 
   # CR-02: the headless Control Room client against the real orceld app API
   # (CR-01) on each OS. ORCEL_REQUIRE_LIVE_ORCELD makes the contract and
@@ -940,6 +1133,171 @@ jobs:
       - name: Production build
         run: npm run web:build
 
+  # Orcel Agent M1 (docs/orcel/implementation-readiness/prep/
+  # DEERFLOW_ORCEL_AGENT_MASTER_PLAN.md) and SG-000129 (prep/SG-000129.md):
+  # the agent's unit tests, its locked dependencies and their checks, then
+  # BM-02 Tier A through the agent, the built MCP edge and a test orceld on
+  # each OS. Rows are the tasks' deterministic plans (labelled
+  # orcel-agent-scripted), not a model. The agent is not packaged; this job
+  # is not required.
+  orcel-agent:
+    name: Orcel Agent M1 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      # The action installs stable, but the repository pins another toolchain, which
+      # would otherwise be installed by the first `cargo`, on top of whatever the image
+      # left: "recovering from a partially installed toolchain", then a clippy conflict.
+      - name: Install the pinned toolchain from clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          test -n "$pin"
+          rustup toolchain uninstall "$pin" || true
+          rustup toolchain install "$pin" --profile minimal --component rustfmt --component clippy --no-self-update
+          cargo --version
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Agent unit tests
+        shell: bash
+        run: (cd apps/orcel-agent && python -I -B -m unittest discover -s tests -v)
+      # SG-000129 slice 1: the admitted dependency set, hash-locked and wheels
+      # only, in its own environment; the auditor in another. Nothing in
+      # orceld, the edge or any shipped artifact uses either.
+      - name: Install the agent's locked dependencies (hashes, wheels only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/agent-env"
+          python -m venv "$RUNNER_TEMP/audit-env"
+          if [ "$RUNNER_OS" = "Windows" ]; then bin=Scripts; else bin=bin; fi
+          echo "AGENT_PY=$RUNNER_TEMP/agent-env/$bin/python" >> "$GITHUB_ENV"
+          echo "AUDIT_BIN=$RUNNER_TEMP/audit-env/$bin" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/agent-env/$bin/python" -m pip install --require-hashes --only-binary :all: --no-deps -r apps/orcel-agent/requirements.lock
+          "$RUNNER_TEMP/audit-env/$bin/python" -m pip install --require-hashes --only-binary :all: --no-deps -r apps/orcel-agent/audit/requirements.lock
+      - name: Advisory audit of the agent's lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$AUDIT_BIN/pip-audit" -r apps/orcel-agent/requirements.lock --require-hashes --disable-pip --progress-spinner off
+      - name: Agent tests in the locked environment (licenses, egress, tracing)
+        shell: bash
+        env:
+          ORCEL_AGENT_DEPS: "1"
+        run: (cd apps/orcel-agent && "$AGENT_PY" -I -B -m unittest discover -s tests -v)
+      - name: Agent tests in a network namespace without a route (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/orcel-agent
+          # Root only creates the namespace; setpriv drops back to the runner
+          # before any test runs, and the tests assert they are not root.
+          sudo unshare -n setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups -- \
+            env -i PATH="$PATH" HOME="$HOME" ORCEL_AGENT_DEPS=1 ORCEL_AGENT_NETNS=1 \
+            "$AGENT_PY" -I -B -m unittest discover -s tests -v
+      - name: Build orceld and the MCP edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked -p orceld
+          npm ci --ignore-scripts
+          npm run build --workspace apps/orcel-mcp
+      - name: BM-02 Tier A through the Orcel Agent and the MCP edge
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          orceld="$GITHUB_WORKSPACE/target/debug/orceld"
+          if [ "$RUNNER_OS" = "Windows" ]; then orceld="$orceld.exe"; fi
+          (cd tests/benchmarks && python -B -m orcel_bench agent --orceld "$orceld" \
+            --edge "$GITHUB_WORKSPACE/apps/orcel-mcp/dist/index.js" \
+            --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/agent-tier-a.report.json")
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/agent-tier-a.report.json"
+      # SG-000129 slice 2: the same plans, each call first emitted by a
+      # scripted in-process chat model and parsed back by the LangChain
+      # planner adapter before the gate dispatches it (labelled
+      # orcel-agent-langchain-scripted; not a model).
+      - name: BM-02 Tier A through the LangChain planner adapter (scripted chat model)
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          orceld="$GITHUB_WORKSPACE/target/debug/orceld"
+          if [ "$RUNNER_OS" = "Windows" ]; then orceld="$orceld.exe"; fi
+          (cd tests/benchmarks && "$AGENT_PY" -B -m orcel_bench agent --planner chat --orceld "$orceld" \
+            --edge "$GITHUB_WORKSPACE/apps/orcel-mcp/dist/index.js" \
+            --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/agent-chat-tier-a.report.json")
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/agent-chat-tier-a.report.json"
+          # Parity with M1: the same cases, outcomes, observations and steps;
+          # only latency and the planner label may differ.
+          python -I -B tests/benchmarks/compare_agent_reports.py \
+            "$RUNNER_TEMP/agent-tier-a.report.json" "$RUNNER_TEMP/agent-chat-tier-a.report.json"
+      # SG-000129 slice 6: the labelled evaluation. Tier A again through the
+      # M2 configuration (todos and compaction off) and the M3 one (every
+      # feature and the planner checkpoint), each in parity with M1, then the
+      # synthetic tasks (loop trap, long context, oversized output, injected
+      # instructions, kill and resume) through M1, M2 and M3 against a fresh
+      # test orceld per episode with no lease (asserted). Scripted plans and a
+      # scripted policy model: every row is labelled deterministic-scripted.
+      - name: SG-000129 slice 6 evaluation (M1 vs M2 vs M3, deterministic-scripted)
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          orceld="$GITHUB_WORKSPACE/target/debug/orceld"
+          if [ "$RUNNER_OS" = "Windows" ]; then orceld="$orceld.exe"; fi
+          edge="$GITHUB_WORKSPACE/apps/orcel-mcp/dist/index.js"
+          for mode in m2 m3; do
+            (cd tests/benchmarks && "$AGENT_PY" -B -m orcel_bench agent --planner "$mode" --orceld "$orceld" \
+              --edge "$edge" --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/agent-$mode-tier-a.report.json")
+            node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/agent-$mode-tier-a.report.json"
+            python -I -B tests/benchmarks/compare_agent_reports.py \
+              "$RUNNER_TEMP/agent-tier-a.report.json" "$RUNNER_TEMP/agent-$mode-tier-a.report.json"
+          done
+          mkdir -p "$RUNNER_TEMP/agent-eval"
+          cp "$RUNNER_TEMP/agent-tier-a.report.json" "$RUNNER_TEMP/agent-m2-tier-a.report.json" \
+            "$RUNNER_TEMP/agent-m3-tier-a.report.json" "$RUNNER_TEMP/agent-eval/"
+          (cd tests/benchmarks && "$AGENT_PY" -B -m orcel_bench agent-eval --orceld "$orceld" --edge "$edge" \
+            --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/agent-eval/agent-eval.${{ runner.os }}.json" \
+            --tier-a "$RUNNER_TEMP/agent-tier-a.report.json" "$RUNNER_TEMP/agent-m2-tier-a.report.json" \
+            "$RUNNER_TEMP/agent-m3-tier-a.report.json")
+      # M4a: the model runner's wiring through the real agent, edge and orceld,
+      # against a fixed stub. No model runs; rows are labelled stub-no-model.
+      - name: M4a model runner wiring (stub-no-model)
+        shell: bash
+        run: |
+          set -euo pipefail
+          orceld="$GITHUB_WORKSPACE/target/debug/orceld"
+          if [ "$RUNNER_OS" = "Windows" ]; then orceld="$orceld.exe"; fi
+          (cd tests/benchmarks && "$AGENT_PY" -B -m orcel_bench model-selfcheck --orceld "$orceld" \
+            --edge "$GITHUB_WORKSPACE/apps/orcel-mcp/dist/index.js" \
+            --out "$RUNNER_TEMP/agent-eval/model-selfcheck.${{ runner.os }}.json")
+      - name: Keep the slice 6 evaluation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-eval-${{ runner.os }}
+          path: ${{ runner.temp }}/agent-eval/
+          if-no-files-found: ignore
+
   release-qualification:
     name: Release qualification / windows-latest
     runs-on: windows-latest
@@ -978,12 +1336,35 @@ jobs:
           $sums = Get-ChildItem $out -File | Where-Object Name -ne "SHA256SUMS.txt" | Sort-Object Name | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
           [System.IO.File]::WriteAllText((Join-Path $out "SHA256SUMS.txt"), (($sums -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
           Get-Content (Join-Path $out "SHA256SUMS.txt")
+      # The F4 runbook's kit, so a person needs no Rust toolchain. It knows this commit,
+      # and refuses a release candidate built from another.
+      - name: Build the F4 journey kit
+        shell: pwsh
+        env:
+          ORCEL_F4_KIT_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          cargo build --locked --release -p orcel-lifecycle --example f4_journey
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $scratch = Join-Path $env:RUNNER_TEMP "f4-kit-check"
+          target/release/examples/f4_journey.exe prepare $scratch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $scratch "data/q3.csv"))) { throw "the kit prepared nothing" }
+      # Built and checked on every run, and kept only when someone asks: artifacts of a
+      # public repository can be downloaded, and Orcel isn't published.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: orcel-release-candidate-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/dist/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 3
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: orcel-f4-kit-${{ github.event.pull_request.head.sha || github.sha }}
+          path: target/release/examples/f4_journey.exe
+          if-no-files-found: error
+          retention-days: 3
 
   relay-container:
     name: Relay container / ubuntu-latest
@@ -1059,6 +1440,18 @@ jobs:
           bash distribution/linux/package.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain \
             apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux "$DIST"
           ls -l "$DIST"
+      - name: Build the unsigned development tarball, and a local client through its MCP server
+        run: |
+          npm ci --ignore-scripts
+          npm run build --workspace apps/orcel-mcp
+          bash distribution/linux/package-dev.sh "$VERSION" target/release/orceld apps/orcel-contain/target/release/orcel-contain \
+            apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux "$RUNNER_TEMP/linux-dev"
+          (cd "$RUNNER_TEMP/linux-dev" && sha256sum -c SHA256SUMS-linux-dev.txt)
+          case "$(ls "$RUNNER_TEMP"/linux-dev/*.tar.gz)" in *-unsigned-dev.tar.gz) ;; *) echo "the name must say unsigned-dev" >&2; exit 1 ;; esac
+          mkdir "$RUNNER_TEMP/orcel-dev"
+          tar -xzf "$RUNNER_TEMP"/linux-dev/*.tar.gz --strip-components=1 -C "$RUNNER_TEMP/orcel-dev"
+          if find "$RUNNER_TEMP/orcel-dev" -perm -1000 -o -perm -2000 -o -perm -4000 | grep .; then exit 1; fi
+          python3 scripts/dev-build-mcp-check.py "$RUNNER_TEMP/orcel-dev"
       - name: Package file list and modes (dpkg -c), no maintainer scripts
         run: |
           deb="$DIST/orcel_${VERSION}-1_amd64.deb"
@@ -1231,6 +1624,119 @@ jobs:
               test ! -e /usr/share/doc/orcel
             '
 
+  # The unsigned macOS development tarball: not a release (XP-16 and FD-05
+  # gate signing). It unpacks, holds exactly the expected files with a
+  # matching helper pin, fails its checksum when tampered with, and orceld
+  # answers system.status from it.
+  # F4 slice 5a: the Windows app against a real orceld, under UI Automation on a
+  # hosted runner only, never on anyone's desktop. Nothing reaches the approval
+  # broker. It shows a task, and a second task's update with nothing typed.
+  windows-app-tasks:
+    name: Windows app task timeline / windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Build orceld
+        run: cargo build --locked -p orceld
+      - name: The app's self-test
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/build.ps1 -OutputDirectory "$env:RUNNER_TEMP/app"
+          & "$env:RUNNER_TEMP/app/Orcel.Smoke.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # The state stays under the user profile, the script's default: orceld
+      # refuses a state root under the hosted runner's D:\, which isn't this user's.
+      - name: A live orceld's tasks in the app
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/tests/e2e-tasks.ps1 -Orceld "$env:GITHUB_WORKSPACE/target/debug/orceld.exe" -BuildDirectory "$env:RUNNER_TEMP/app"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  macos-dev-package:
+    name: macOS dev package / macos-latest
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      DIST: ${{ github.workspace }}/macos-dist
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Build orceld (release, locked)
+        run: cargo build --release --locked -p orceld
+      - name: Build the orcel-contain helper (release, locked, its own workspace)
+        run: cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
+      - name: Build the MCP edge
+        run: |
+          npm ci --ignore-scripts
+          npm run build --workspace apps/orcel-mcp
+      - name: Build the tarball
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          bash distribution/macos/package-dev.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain "$DIST"
+          ls -l "$DIST"
+      - name: Contents, modes, pin, and that orceld answers
+        shell: bash
+        run: |
+          (cd "$DIST" && shasum -a 256 -c SHA256SUMS-macos.txt)
+          tarball=$(ls "$DIST"/*.tar.gz)
+          case "$tarball" in *-unsigned-dev.tar.gz) ;; *) echo "the name must say unsigned-dev" >&2; exit 1 ;; esac
+          home="$RUNNER_TEMP/orcel-dev"
+          mkdir -p "$home"
+          tar -xzf "$tarball" --strip-components=1 -C "$home"
+          actual=$(cd "$home" && find . -type f -not -path './app/*' | sort)
+          expected=$(sort <<'LIST'
+          ./bin/orcel-contain
+          ./bin/orcel-contain.sha256
+          ./bin/orcel-mcp
+          ./bin/orceld
+          ./doc/LICENSE
+          ./doc/README.md
+          ./doc/THIRD_PARTY_NOTICES.txt
+          LIST
+          )
+          expected=$(echo "$expected" | sed 's/^ *//' | sort)
+          diff <(echo "$expected") <(echo "$actual")
+          test -x "$home/bin/orceld"
+          test -x "$home/bin/orcel-contain"
+          test "$(cat "$home/bin/orcel-contain.sha256")" = "$(shasum -a 256 "$home/bin/orcel-contain" | cut -d ' ' -f 1)"
+          # No setuid, setgid or sticky bit.
+          if find "$home" -perm -1000 -o -perm -2000 -o -perm -4000 | grep .; then exit 1; fi
+          mkdir -p "$RUNNER_TEMP/ws"
+          ORCEL_WORKSPACES_JSON="[{\"id\":\"ci\",\"root\":\"$RUNNER_TEMP/ws\"}]" python3 scripts/linux-orceld-probe.py exec "$home/bin/orceld" ci
+      - name: A local client through the tarball's MCP server (a test client; no approval is given)
+        shell: bash
+        run: |
+          test -f "$RUNNER_TEMP/orcel-dev/app/orcel-mcp/dist/index.js"
+          if find "$RUNNER_TEMP/orcel-dev/app" -name '*.test.js' | grep .; then exit 1; fi
+          python3 scripts/dev-build-mcp-check.py "$RUNNER_TEMP/orcel-dev"
+      - name: A tampered download fails its checksum
+        shell: bash
+        run: |
+          mkdir "$RUNNER_TEMP/tampered" && cp "$DIST"/* "$RUNNER_TEMP/tampered/"
+          tarball=$(ls "$RUNNER_TEMP"/tampered/*.tar.gz)
+          python3 -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); b[100] ^= 0xFF; open(p, "wb").write(b)' "$tarball"
+          if (cd "$RUNNER_TEMP/tampered" && shasum -a 256 -c SHA256SUMS-macos.txt); then
+            echo "a tampered tarball passed its checksum" >&2
+            exit 1
+          fi
+      # As with the release candidate: kept only when someone asks.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: orcel-macos-unsigned-dev-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ env.DIST }}/
+          retention-days: 3
+
   supply-chain:
     name: Supply chain audit
     runs-on: ubuntu-latest
@@ -1296,6 +1802,8 @@ jobs:
         run: |
           node --test scripts/check-lopdf-advisories.test.mjs
           node scripts/check-lopdf-advisories.mjs
+      - name: Provenance requires the .NET SDK version
+        run: node --test scripts/provenance.test.mjs
       - name: Validate SpecGrain JSON and canonical evidence
         shell: python
         run: |
@@ -1348,3 +1856,17 @@ jobs:
           assert "chore/sg-000009a-closeout" not in current, "stale closeout branch remains in CURRENT"
 
           print(f"validated {len(specs)} SpecGrain files and {len(evidence)} CLOSED evidence records")
+      # BM-02 runs last: the pinned taskpack's own tests are third-party code
+      # (fixed by commit and verified blob by blob before they run), so the
+      # checkout's token is removed first and every governance check above
+      # has already run.
+      - name: Drop the checkout token before third-party test code runs
+        run: |
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          # Fail loudly if the checkout ever stores its token another way.
+          if git config --local --get-regexp 'extraheader|credential' >/dev/null; then
+            echo "a checkout credential is still configured" >&2
+            exit 1
+          fi
+      - name: BM-02 benchmark runner (oracle dry run, report checked) and the pinned taskpack's own checks
+        run: python3 -m unittest discover -s tests/benchmarks/tests -t tests/benchmarks -v

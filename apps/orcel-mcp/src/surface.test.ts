@@ -52,7 +52,11 @@ const CANONICAL_TOOLS = [
   "git_status",
   "git_unstage",
   "process_spawn",
+  "report_commit",
+  "report_preview",
+  "report_start",
   "system_status",
+  "task_resume_summary",
   "web_fetch",
   "web_search",
   "workspace_get"

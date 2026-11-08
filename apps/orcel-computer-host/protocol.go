@@ -21,6 +21,12 @@ const (
 	maxWindows = 64
 	maxTreeNodes = 256
 	maxTreeDepth = 8
+	// SG-000128: the bounded search that finds one exact runtime id inside a
+	// bound window (a subtree root, or a semantic action's target). It only
+	// locates; what is returned or acted on keeps the caps above.
+	maxRootSearchNodes = 4096
+	maxRootSearchDepth = 64
+	maxRuntimeIDBytes  = 512
 	maxCaptureBytes = 8 * 1024 * 1024
 	maxCaptureWidth = 7680
 	maxCaptureHeight = 4320
@@ -343,6 +349,14 @@ func validateRequest(req hostRequest) *hostError {
 	if len(req.Key) > maxKeyBytes {
 		return &hostError{Code: "invalid_request", Message: "key input exceeds the bounded limit"}
 	}
+	if len(req.ElementRuntimeID) > maxRuntimeIDBytes {
+		return &hostError{Code: "invalid_request", Message: "element runtime id exceeds the bounded limit"}
+	}
+	// SG-000128: an element runtime id names a semantic action's target or
+	// an observe_window subtree root, and nothing else.
+	if req.ElementRuntimeID != "" && req.Op != "semantic_action" && req.Op != "observe_window" {
+		return &hostError{Code: "invalid_request", Message: "element runtime id is accepted only by semantic_action and observe_window"}
+	}
 	if isMutationOperation(req.Op) && req.Op != "semantic_action" && req.ExpectedLastInputTick == nil {
 		return &hostError{Code: "invalid_request", Message: "raw input requires a fresh human-input tick binding"}
 	}
@@ -359,7 +373,7 @@ func validateRequest(req hostRequest) *hostError {
 		default:
 			return &hostError{Code: "invalid_request", Message: "unknown semantic action"}
 		}
-		if req.ElementRuntimeID == "" || len(req.ElementRuntimeID) > 512 {
+		if req.ElementRuntimeID == "" {
 			return &hostError{Code: "invalid_request", Message: "exact element runtime id is required"}
 		}
 		if req.SemanticAction == "scroll" && (req.ScrollX < -maxScrollTicks || req.ScrollX > maxScrollTicks || req.ScrollY < -maxScrollTicks || req.ScrollY > maxScrollTicks) {

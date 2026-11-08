@@ -145,6 +145,21 @@ impl FsProvider {
     }
 
     pub fn read_text(&self, relative: &str) -> Result<Value, ProviderError> {
+        let bytes = self.read_bytes(relative, self.max_read_bytes)?;
+        let size = bytes.len();
+        let text = String::from_utf8(bytes).map_err(|_| {
+            ProviderError::new(
+                FailureCode::InvalidRequest,
+                "fs.read supports UTF-8 text files only",
+            )
+        })?;
+
+        Ok(json!({"path": relative, "text": text, "bytes": size}))
+    }
+
+    /// A regular file's bytes, through the verified open that keeps a read inside
+    /// the workspace, at most `limit` of them.
+    pub fn read_bytes(&self, relative: &str, limit: usize) -> Result<Vec<u8>, ProviderError> {
         let candidate = self.root.join(relative);
         let (file, resolved) = open_verified_file(&candidate)
             .map_err(|error| ProviderError::io("open file", error))?;
@@ -159,31 +174,24 @@ impl FsProvider {
                 "read target is not a regular file",
             ));
         }
-        if metadata.len() > self.max_read_bytes as u64 {
+        if metadata.len() > limit as u64 {
             return Err(ProviderError::new(
                 FailureCode::OutputLimit,
-                format!("file exceeds {} byte read limit", self.max_read_bytes),
+                format!("file exceeds {limit} byte read limit"),
             ));
         }
 
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
-        file.take((self.max_read_bytes + 1) as u64)
+        file.take((limit + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|error| ProviderError::io("read file", error))?;
-        if bytes.len() > self.max_read_bytes {
+        if bytes.len() > limit {
             return Err(ProviderError::new(
                 FailureCode::OutputLimit,
                 "file exceeded read limit while reading",
             ));
         }
-        let text = String::from_utf8(bytes).map_err(|_| {
-            ProviderError::new(
-                FailureCode::InvalidRequest,
-                "fs.read supports UTF-8 text files only",
-            )
-        })?;
-
-        Ok(json!({"path": relative, "text": text, "bytes": metadata.len()}))
+        Ok(bytes)
     }
 
     pub fn preview_write(
@@ -317,6 +325,19 @@ impl FsProvider {
         }
     }
 
+    /// Create-only write (SG-000126): creates `relative` with `content` and
+    /// never opens an existing file. An existing entry at the name, a link
+    /// included, is refused as `TargetStale` without being opened.
+    pub fn create_text(&self, relative: &str, content: &str) -> Result<Value, ProviderError> {
+        if content.len() > MAX_WRITE_BYTES {
+            return Err(ProviderError::new(
+                FailureCode::OutputLimit,
+                "write content exceeds 2 MiB limit",
+            ));
+        }
+        self.create_text_verified(relative, content)
+    }
+
     fn create_text_verified(&self, relative: &str, content: &str) -> Result<Value, ProviderError> {
         let candidate = self.root.join(relative);
         let parent = candidate.parent().ok_or_else(|| {
@@ -331,7 +352,13 @@ impl FsProvider {
             .write(true)
             .create_new(true)
             .open(&candidate)
-            .map_err(|error| ProviderError::io("create target", error))?;
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::AlreadyExists {
+                    ProviderError::new(FailureCode::TargetStale, "target already exists")
+                } else {
+                    ProviderError::io("create target", error)
+                }
+            })?;
 
         let resolved = final_path_from_open_file(&file, &candidate)
             .map_err(|error| ProviderError::io("resolve created target", error))?;
@@ -716,6 +743,45 @@ mod tests {
         let root = std::env::temp_dir().join(format!("orcel-fs-{name}-{suffix}"));
         fs::create_dir_all(&root).expect("create temp root");
         root
+    }
+
+    #[test]
+    fn sg126_create_text_never_opens_an_existing_entry() {
+        let root = temp_root("create-only");
+        let outside = temp_root("create-only-outside");
+        fs::create_dir_all(root.join("reports")).unwrap();
+        let provider = FsProvider::new(&root).unwrap();
+        let created = provider.create_text("reports/new.md", "fresh").unwrap();
+        assert_eq!(created["created"], true);
+        assert_eq!(fs::read(root.join("reports/new.md")).unwrap(), b"fresh");
+        // An existing file is refused without being opened or changed.
+        let refused = provider.create_text("reports/new.md", "other").unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale);
+        assert_eq!(fs::read(root.join("reports/new.md")).unwrap(), b"fresh");
+        // A link at the name is refused too, even a dangling one, and its
+        // target is never created or written.
+        #[cfg(unix)]
+        {
+            fs::write(outside.join("theirs"), "theirs").unwrap();
+            std::os::unix::fs::symlink(outside.join("theirs"), root.join("reports/l.md")).unwrap();
+            std::os::unix::fs::symlink(outside.join("absent"), root.join("reports/d.md")).unwrap();
+            for name in ["reports/l.md", "reports/d.md"] {
+                let refused = provider.create_text(name, "x").unwrap_err();
+                assert_eq!(refused.code, FailureCode::TargetStale, "{name}");
+            }
+            assert_eq!(fs::read(outside.join("theirs")).unwrap(), b"theirs");
+            assert!(!outside.join("absent").exists());
+        }
+        let big = "x".repeat(MAX_WRITE_BYTES + 1);
+        assert_eq!(
+            provider
+                .create_text("reports/big.md", &big)
+                .unwrap_err()
+                .code,
+            FailureCode::OutputLimit
+        );
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[test]

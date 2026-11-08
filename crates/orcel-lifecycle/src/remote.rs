@@ -29,15 +29,15 @@ pub const MAX_LEASE_MINUTES: u64 = 15;
 pub const DEVICE_KEY_SECRET: &str = "device.key";
 
 pub fn uplink_config_path(layout: &Layout) -> PathBuf {
-    layout.state_dir().join("remote").join("uplink.json")
+    orcel_platform::stores::UPLINK.path(&layout.root)
 }
 
 pub fn device_key_path(layout: &Layout) -> PathBuf {
-    layout.state_dir().join("device").join("device_key.json")
+    orcel_platform::stores::DEVICE_KEY_RECORD.path(&layout.root)
 }
 
 pub fn device_revocations_path(layout: &Layout) -> PathBuf {
-    layout.state_dir().join("device").join("revocations.json")
+    orcel_platform::stores::DEVICE_REVOCATIONS.path(&layout.root)
 }
 
 fn read_json(path: &Path, what: &str) -> Result<Value, LifecycleError> {
@@ -373,6 +373,15 @@ pub fn run_enrollment(
 mod tests {
     use super::*;
     use crate::test_support::temp_dir;
+
+    #[test]
+    fn the_device_key_name_is_the_registered_store() {
+        // orceld stores this secret as `<name>.dpapi`, and migration leaves that file behind.
+        assert_eq!(
+            format!("secrets/{DEVICE_KEY_SECRET}.dpapi"),
+            orcel_platform::stores::DEVICE_KEY.relative
+        );
+    }
 
     fn paired() -> Value {
         json!({

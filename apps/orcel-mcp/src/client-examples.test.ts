@@ -143,3 +143,23 @@ test("SG-000069: Mistral directory and account states are never promoted by soft
     }
   }
 });
+
+// #448: the README's local tool table and the Inspector script's expected
+// list drifted from the real profile twice. Both must equal the default
+// local profile, desktop_structured, exactly.
+test("the README tool table and inspector.sh match the default local profile", () => {
+  const expected = [...profileTools("desktop_structured")].sort();
+  const readme = readFileSync(join(here, "..", "..", "..", "README.md"), "utf8");
+  const start = readme.indexOf("## What ChatGPT can do through Orcel");
+  const section = readme.slice(start, readme.indexOf("\n## ", start + 1));
+  const rows = section.split("\n").filter((line) => line.startsWith("| ") && !line.startsWith("| Area") && !line.startsWith("|---"));
+  const listed = rows.flatMap((row) => [...(row.split("|")[2] ?? "").matchAll(/`([a-z_]+)`/g)].map((match) => match[1] ?? "")).sort();
+  assert.deepEqual(listed, expected, "README table lists exactly desktop_structured");
+  assert.ok(section.includes(`exactly the ${expected.length} tools`), "README states the real count");
+
+  const script = example("inspector.sh");
+  const line = /^EXPECTED="([^"]*)"$/m.exec(script);
+  assert.ok(line, "inspector.sh has an EXPECTED list");
+  assert.deepEqual((line[1] ?? "").split(" "), expected, "inspector.sh expects exactly desktop_structured, sorted");
+  assert.ok(script.includes(`PASS $label (${expected.length} tools)`), "inspector.sh reports the real count");
+});

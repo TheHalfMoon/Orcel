@@ -10,7 +10,8 @@ Orcel - Computer Orchestration & Trusted Runtime Access
 
 Install and maintenance:
   orcel install [--source <release-dir>] [--node <node.exe>] [--no-path]
-      Install or repair the per-user install under %LOCALAPPDATA%\\Orcel. The release
+      Install or repair the per-user install under %USERPROFILE%\\.orcel, adding it to your
+      PATH and the Start Menu, neither of which --no-path touches. The release
       directory defaults to the directory containing this orcel.exe. Every payload
       file is verified against manifest.json before anything is copied. Administrator
       rights are not required; an elevated \"Run as administrator\" prompt is refused.
@@ -20,6 +21,11 @@ Install and maintenance:
       --purge-data --yes is given. Workspaces are never touched.
   orcel version
       Show this CLI version and the installed and previous versions.
+  orcel state status | migrate | keep-separate
+      Decide what happens to state an earlier build left at %LOCALAPPDATA%\\Orcel, which
+      orceld requires before it starts. migrate copies user data, only if nobody else could
+      have changed it; keep-separate records that it stays where it is, unused. Neither
+      deletes or changes it.
 
 Configuration:
   orcel workspace add <id> <directory>    Add a workspace the agent may use.
@@ -50,6 +56,7 @@ Runtime:
   orcel stop [--wait <seconds>]           Stop it and verify termination.
   orcel status                            Show install, configuration, and runtime state.
   orcel doctor                            Run diagnostics; exits non-zero on failures.
+  orcel app                               Open the Windows app from the verified install.
 
 Local MCP (no tunnel required):
   orcel mcp stdio                         Run the authoritative MCP server over stdio
@@ -211,7 +218,7 @@ fn main() {
         std::process::exit(code);
     }
     let json_output = args.flag("--json");
-    match run(&mut args) {
+    match run(&mut args, json_output) {
         Ok(output) => {
             if json_output {
                 println!(
@@ -247,7 +254,7 @@ pub(crate) struct Output {
     pub(crate) json: serde_json::Value,
 }
 
-fn run(args: &mut Args) -> Result<Output, LifecycleError> {
+fn run(args: &mut Args, json_output: bool) -> Result<Output, LifecycleError> {
     // State-changing commands hold the per-install lifecycle lock for their
     // whole duration so they never interleave across processes.
     let mutating = matches!(
@@ -262,6 +269,15 @@ fn run(args: &mut Args) -> Result<Output, LifecycleError> {
             | "tunnel"
             | "full-control"
     );
+    // Nothing writes to the current root over undecided earlier state, which is what orceld
+    // refuses too. Stopping and uninstalling stay possible, and `state` is how to decide.
+    if mutating && !matches!(args.command.as_str(), "stop" | "uninstall") {
+        orcel_platform::legacy::gate(
+            &|name| std::env::var_os(name),
+            &Layout::for_current_user()?.root,
+        )
+        .map_err(LifecycleError::conflict)?;
+    }
     let _lock = if mutating {
         Some(orcel_lifecycle::lifecycle::lock(
             &Layout::for_current_user()?,
@@ -287,6 +303,8 @@ fn run(args: &mut Args) -> Result<Output, LifecycleError> {
         "stop" => commands::stop(args),
         "status" => commands::status(args),
         "doctor" => commands::doctor(args),
+        "state" => commands::state(args),
+        "app" => commands::app(args, json_output),
         "approvals" => commands::approvals(args),
         "emergency-revoke" => commands::emergency_revoke(args),
         "full-control" => commands::full_control(args),
@@ -311,7 +329,8 @@ fn install(args: &mut Args) -> Result<Output, LifecycleError> {
     let add_to_path = !args.flag("--no-path");
     args.finish()?;
     let platform = host_platform();
-    let installer = Installer::new(Layout::for_current_user()?, platform.as_ref());
+    let layout = Layout::for_current_user()?;
+    let installer = Installer::new(layout.clone(), platform.as_ref());
     let report = installer.install(&source, &InstallOptions { node, add_to_path })?;
     let mut human = format!(
         "Orcel {} {} at {}\n  lifecycle CLI: {}\n  Node.js: {}\n",
@@ -332,15 +351,81 @@ fn install(args: &mut Args) -> Result<Output, LifecycleError> {
     } else {
         human.push_str("  PATH: not modified\n");
     }
-    human.push_str("  User data kept across updates and uninstall:\n");
-    for path in &report.retained_data {
-        human.push_str(&format!("    {}\n", path.display()));
+    if report.start_menu_added {
+        human.push_str("  Start Menu: Orcel opens the app\n");
+    } else if add_to_path && !report.app_included {
+        human.push_str("  Start Menu: no entry, since this release has no Orcel app\n");
+    } else if let Some(problem) = &report.start_menu_problem {
+        human.push_str(&format!(
+            "  Start Menu: no entry ({problem}). `orcel app` opens the app\n"
+        ));
     }
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    let other = std::env::var_os("PATH")
+        .and_then(|path| earlier_on_path(&layout.bin_dir(), &path, &pathext));
+    if let Some(other) = other {
+        human.push_str(&format!(
+            "  Note: {} comes first on this terminal's PATH, so `orcel` runs that copy. If it's an \
+             earlier Orcel, uninstall it with its own `orcel uninstall`; otherwise take its folder \
+             off PATH. Until then, run {} directly\n",
+            other.display(),
+            layout.bin_cli().display()
+        ));
+    }
+    // Only what exists yet; the rest is created when first used, and kept the same way.
+    let kept: Vec<_> = report
+        .retained_data
+        .iter()
+        .filter(|path| path.exists())
+        .collect();
+    if !kept.is_empty() {
+        human.push_str("  User data kept across updates and uninstall:\n");
+        for path in kept {
+            human.push_str(&format!("    {}\n", path.display()));
+        }
+    }
+    let workspaces = orcel_lifecycle::config::Config::load(&layout)
+        .map(|config| config.workspaces.len())
+        .ok();
+    human.push_str(if workspaces == Some(0) {
+        "Next: add the folder Orcel may work in with `orcel workspace add <id> <folder>`, then \
+         connect your MCP client as the README describes\n"
+    } else {
+        "Next: run `orcel doctor` to check everything\n"
+    });
     Ok(Output {
         exit_code: 0,
         human,
         json: json!({"ok": true, "install": report}),
     })
+}
+
+/// The first `orcel` command on this process's PATH, when it isn't the installed one in `bin`.
+/// Folders are compared as the file system resolves them, so another spelling of `bin` (a short
+/// name, `..`, a junction) isn't mistaken for a different copy.
+fn earlier_on_path(
+    bin: &std::path::Path,
+    path: &std::ffi::OsStr,
+    pathext: &str,
+) -> Option<PathBuf> {
+    // PowerShell also runs scripts by name.
+    let names: Vec<String> = pathext
+        .split(';')
+        .filter(|ext| !ext.is_empty())
+        .chain([".ps1"])
+        .map(|ext| format!("orcel{}", ext.to_ascii_lowercase()))
+        .collect();
+    let bin = std::fs::canonicalize(bin).ok()?;
+    std::env::split_paths(path)
+        .filter(|dir| dir.is_absolute())
+        .find_map(|dir| {
+            let found = names
+                .iter()
+                .map(|name| dir.join(name))
+                .find(|candidate| candidate.is_file())?;
+            Some((std::fs::canonicalize(&dir).ok()? != bin).then_some(found))
+        })
+        .flatten()
 }
 
 fn default_release_dir() -> Result<PathBuf, LifecycleError> {
@@ -400,6 +485,12 @@ fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
     if report.path_entry_removed {
         human.push_str("  PATH: the Orcel bin directory was removed from your user PATH\n");
     }
+    if report.start_menu_removed {
+        human.push_str("  Start Menu: the Orcel entry was removed\n");
+    }
+    if let Some(problem) = &report.start_menu_problem {
+        human.push_str(&format!("  Start Menu: left as it is ({problem})\n"));
+    }
     if let Some(relocated) = &report.relocated_cli {
         human.push_str(&format!(
             "  The running orcel.exe was moved to {} for OS temp cleanup\n",
@@ -409,7 +500,11 @@ fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
     if !report.residual.is_empty() {
         return Err(LifecycleError::new(
             ErrorKind::Io,
-            format!("{human}Some items could not be removed; close programs using them and rerun"),
+            format!(
+                "{human}Some items were not removed. Close any program using them and rerun. \
+                 Anything there that isn't Orcel's is left on purpose: move it first if you \
+                 want the folder gone"
+            ),
         ));
     }
     Ok(Output {
@@ -439,4 +534,40 @@ fn version(args: &mut Args) -> Result<Output, LifecycleError> {
         human,
         json: json!({"ok": true, "cli": cli, "installed": installed, "previous": previous}),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::earlier_on_path;
+    use std::fs;
+
+    #[test]
+    fn only_another_copy_earlier_on_path_is_reported() {
+        let base =
+            std::env::temp_dir().join(format!("orcel-earlier-on-path-{}", std::process::id()));
+        let bin = base.join("bin");
+        let other = base.join("other");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        fs::write(bin.join("orcel.exe"), b"").unwrap();
+        let path = |dirs: &[&std::path::Path]| std::env::join_paths(dirs).unwrap();
+        let ext = ".COM;.EXE;.BAT;.CMD";
+        // The installed copy, however its folder is spelled, isn't another one.
+        assert_eq!(earlier_on_path(&bin, &path(&[&bin]), ext), None);
+        let spelled = base.join("other").join("..").join("bin");
+        assert_eq!(earlier_on_path(&bin, &path(&[&spelled]), ext), None);
+        // A relative entry is skipped, as Node.js lookup skips it.
+        assert_eq!(
+            earlier_on_path(&bin, &path(&[std::path::Path::new("x"), &bin]), ext),
+            None
+        );
+        // A script earlier on PATH is.
+        fs::write(other.join("orcel.cmd"), b"").unwrap();
+        assert_eq!(
+            earlier_on_path(&bin, &path(&[&other, &bin]), ext),
+            Some(other.join("orcel.cmd"))
+        );
+        assert_eq!(earlier_on_path(&bin, &path(&[&bin, &other]), ext), None);
+        let _ = fs::remove_dir_all(&base);
+    }
 }

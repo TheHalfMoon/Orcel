@@ -1,0 +1,206 @@
+"""BM-02: ``python -m orcel_bench oracle`` runs every task with the oracle.
+
+Usage (from tests/benchmarks):
+
+    python3 -m orcel_bench oracle --commit <40-hex> --out <file.report.json> [--repeat N] [TASK_DIR ...]
+    python3 -m orcel_bench fetch-taskpack <name> --into <new dir> [--from <git URL or local clone>]
+    python3 -m orcel_bench tierc-noop --pack <verified taskpack> --commit <40-hex> --out <file.report.json>
+    python3 -m orcel_bench agent --orceld <orceld binary> --edge <apps/orcel-mcp/dist/index.js> --commit <40-hex> --out <file.report.json> [TASK_DIR ...]
+    python3 -m orcel_bench orcel --orceld <orceld binary> --commit <40-hex> --out <file.report.json> [--trace <file.jsonl>] [--repeat N] [--temp-root DIR] [TASK_DIR ...]
+
+`orcel` solves the Orcel tasks under orcel-tasks/<group>/ through the real
+orceld (ORCEL_EXECUTION_PLAN.md, Tier A).
+
+With no task directories, every directory under tasks/<group>/ that has a
+main.py runs. The report is checked by scripts/check-benchmark-report.mjs.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from .orcel_runner import PLANNER as ORCEL_PLANNER
+from .orcel_runner import run_orcel
+from .runner import report, run_oracle
+from .taskpack import TaskpackError, fetch, load_lock
+
+HERE = Path(__file__).resolve().parent.parent
+
+
+def all_tasks() -> list[Path]:
+    return sorted(path.parent for path in (HERE / "tasks").glob("*/*/main.py"))
+
+
+def all_orcel_tasks() -> list[Path]:
+    return sorted(path.parent for path in (HERE / "orcel-tasks").glob("*/*/main.py"))
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="orcel_bench")
+    sub = parser.add_subparsers(dest="command", required=True)
+    oracle = sub.add_parser("oracle", help="run tasks with the oracle (a dry run of the benchmark)")
+    oracle.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
+    oracle.add_argument("--out", required=True, type=Path, help="where to write the report")
+    oracle.add_argument("--repeat", type=int, default=1, help="episodes per variant (latency)")
+    oracle.add_argument("tasks", nargs="*", type=Path)
+    pack = sub.add_parser("fetch-taskpack", help="check out a pinned taskpack and verify every file")
+    pack.add_argument("name")
+    pack.add_argument("--into", required=True, type=Path, help="a directory that does not exist yet")
+    pack.add_argument("--from", dest="source", help="the donor repository (default: the lock's URL)")
+    orcel = sub.add_parser("orcel", help="solve the Orcel tasks through the real orceld")
+    orcel.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
+    orcel.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
+    orcel.add_argument("--out", required=True, type=Path, help="where to write the report")
+    orcel.add_argument("--trace", type=Path, help="where to write the per-episode trace (JSON lines)")
+    orcel.add_argument("--repeat", type=int, default=1, help="episodes per variant (latency)")
+    orcel.add_argument(
+        "--temp-root",
+        type=Path,
+        help="where episode workspaces and orceld state go (default: the system temp); "
+        "orceld refuses state any other account can reach, so it must be private",
+    )
+    orcel.add_argument("tasks", nargs="*", type=Path)
+    agent = sub.add_parser("agent", help="solve the Orcel tasks through the Orcel Agent and the MCP edge (M1)")
+    agent.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
+    agent.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
+    agent.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
+    agent.add_argument("--planner", choices=("scripted", "chat", "m2", "m3"), default="scripted",
+                       help="chat, m2, m3: route each planned call through the LangChain chat-model planner "
+                            "(SG-000129; m2 without todos and compaction, m3 with every feature and a checkpoint)")
+    agent.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
+    agent.add_argument("--out", required=True, type=Path, help="where to write the report")
+    agent.add_argument("tasks", nargs="*", type=Path)
+    evaluation = sub.add_parser("agent-eval", help="SG-000129 slice 6: M1 vs M2 vs M3 on the synthetic tasks (labelled)")
+    evaluation.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
+    evaluation.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
+    evaluation.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
+    evaluation.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
+    evaluation.add_argument("--out", required=True, type=Path, help="where to write the evaluation report")
+    evaluation.add_argument("--tier-a", nargs="*", type=Path, help="BM-02 Tier A reports to summarize (m1, m2, m3)")
+    selfcheck = sub.add_parser("model-selfcheck", help="M4a: the model runner's wiring against a fixed stub; no model")
+    selfcheck.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
+    selfcheck.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
+    selfcheck.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
+    selfcheck.add_argument("--out", required=True, type=Path, help="where to write the rows")
+    tierc = sub.add_parser("tierc-noop", help="Tier C C1: the no-op baseline over a verified taskpack")
+    tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched by fetch-taskpack (verified again before it runs)")
+    tierc.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
+    tierc.add_argument("--out", required=True, type=Path, help="where to write the report")
+    observe = sub.add_parser("tierc-observe", help="Tier C C2a: launch a task's apps and observe them through orceld (CI only)")
+    observe.add_argument("--pack", required=True, type=Path)
+    observe.add_argument("--orceld", required=True, type=Path)
+    observe.add_argument("--task", required=True)
+    observe.add_argument("--commit", required=True)
+    observe.add_argument("--out", required=True, type=Path)
+    act = sub.add_parser("tierc-act", help="Tier C C2b: a scripted plan acting through orceld's test build (CI only)")
+    act.add_argument("--pack", required=True, type=Path)
+    act.add_argument("--orceld", required=True, type=Path)
+    act.add_argument("--act-test", required=True, type=Path, help="orceld's test binary (cargo test --no-run)")
+    act.add_argument("--plan", required=True, type=Path)
+    act.add_argument("--commit", required=True)
+    act.add_argument("--out", required=True, type=Path)
+    act.add_argument("--reach-only", action="store_true",
+                     help="SG-000128 slice 3a: reach every target, expect the first action gated by Full User (CI)")
+    args = parser.parse_args(argv)
+    if args.command == "tierc-act":
+        from .tierc import TierCError
+        from .tierc_gui import run_act_episode
+
+        try:
+            rows = run_act_episode(args.pack.resolve(), load_lock("cua-driver-bench"), args.plan.resolve(),
+                                   args.orceld.resolve(), args.act_test.resolve(), args.reach_only)
+        except TierCError as error:
+            print(f"orcel_bench: {error}", file=sys.stderr)
+            return 1
+        planner = {"kind": "deterministic", "name": "tierc-scripted-plan",
+                   "version": "1-reach-only" if args.reach_only else "1-scripted-consent"}
+        args.out.write_text(json.dumps(report(args.commit, rows, planner), indent=2) + "\n", encoding="utf-8")
+        for row in rows:
+            print(f"TIERC-ACT-EVIDENCE {row['case']} {row['status']} {row['observed']} steps={row['steps']} {row['latency_ms']['p50']}ms")
+        return 0 if all(row["status"] == "pass" for row in rows) else 1
+    if args.command == "tierc-observe":
+        from .tierc import TierCError
+        from .tierc_gui import PLANNER as OBSERVE_PLANNER
+        from .tierc_gui import run_observe_episode
+
+        try:
+            rows = run_observe_episode(args.pack.resolve(), load_lock("cua-driver-bench"), args.task, args.orceld.resolve())
+        except TierCError as error:
+            print(f"orcel_bench: {error}", file=sys.stderr)
+            return 1
+        args.out.write_text(json.dumps(report(args.commit, rows, OBSERVE_PLANNER), indent=2) + "\n", encoding="utf-8")
+        for row in rows:
+            print(f"TIERC-GUI-EVIDENCE {row['case']} {row['status']} {row['observed']} steps={row['steps']} {row['latency_ms']['p50']}ms")
+        return 0 if all(row["status"] == "pass" for row in rows) else 1
+    if args.command == "tierc-noop":
+        from .tierc import PLANNER as TIERC_PLANNER
+        from .tierc import TierCError, run_noop
+
+        try:
+            rows = run_noop(args.pack.resolve(), load_lock("cua-driver-bench"))
+        except TierCError as error:
+            print(f"orcel_bench: {error}", file=sys.stderr)
+            return 1
+        args.out.write_text(json.dumps(report(args.commit, rows, TIERC_PLANNER), indent=2) + "\n", encoding="utf-8")
+        failed = [row["case"] for row in rows if row["status"] != "pass"]
+        print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} Tier C no-op baselines rejected -> {args.out}")
+        return 1 if failed else 0
+    if args.command == "agent-eval":
+        from .agent_eval import main as agent_eval
+
+        return agent_eval(args)
+    if args.command == "model-selfcheck":
+        from .model_run import main as model_selfcheck
+
+        return model_selfcheck(args)
+    if args.command == "agent":
+        from .agent_client import LABELS, AgentOrcel
+
+        orceld, edge = args.orceld.resolve(), args.edge.resolve()
+        tasks = [path.resolve() for path in args.tasks] or all_orcel_tasks()
+        rows = run_orcel(tasks, orceld, client_factory=lambda root: AgentOrcel(orceld, edge, root, node=args.node,
+                                                                                planner=args.planner))
+        label = LABELS[args.planner]
+        args.out.write_text(json.dumps(report(args.commit, rows, label), indent=2) + "\n", encoding="utf-8")
+        failed = [row["case"] for row in rows if row["status"] != "pass"]
+        print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} variants solved through the Orcel Agent and the MCP edge -> {args.out}")
+        for case in failed:
+            print(f"orcel_bench: not solved: {case}", file=sys.stderr)
+        return 1 if failed else 0
+    if args.command == "orcel":
+        if args.temp_root is not None:
+            import tempfile
+
+            args.temp_root.mkdir(parents=True, exist_ok=True)
+            tempfile.tempdir = str(args.temp_root.resolve())
+        tasks = [path.resolve() for path in args.tasks] or all_orcel_tasks()
+        rows = run_orcel(tasks, args.orceld.resolve(), repeat=args.repeat, trace=args.trace)
+        args.out.write_text(json.dumps(report(args.commit, rows, ORCEL_PLANNER), indent=2) + "\n", encoding="utf-8")
+        failed = [row["case"] for row in rows if row["status"] != "pass"]
+        print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} variants solved through orceld -> {args.out}")
+        for case in failed:
+            print(f"orcel_bench: not solved: {case}", file=sys.stderr)
+        return 1 if failed else 0
+    if args.command == "fetch-taskpack":
+        try:
+            root = fetch(args.name, args.into.resolve(), args.source)
+        except TaskpackError as error:
+            print(f"orcel_bench: {error}", file=sys.stderr)
+            return 1
+        print(f"orcel_bench: {args.name} verified at {root}")
+        return 0
+    tasks = [path.resolve() for path in args.tasks] or all_tasks()
+    if not tasks:
+        parser.error("no tasks found")
+    rows = run_oracle(tasks, repeat=args.repeat)
+    args.out.write_text(json.dumps(report(args.commit, rows), indent=2) + "\n", encoding="utf-8")
+    failed = [row["case"] for row in rows if row["status"] != "pass"]
+    print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} variants solved by the oracle -> {args.out}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

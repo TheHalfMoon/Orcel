@@ -14,9 +14,15 @@ use std::path::Path;
 use std::path::PathBuf;
 
 mod app_api;
+#[cfg(test)]
+mod bm02_tier_b_tests;
+#[cfg(all(test, windows))]
+mod bm02_tier_c_act_tests;
 mod browser;
 mod clipboard;
 mod contained_tier;
+#[cfg(test)]
+mod sg000128_dispatch_tests;
 // WI-05: reached through the live browser's committed downloads
 // (`LiveBrowser::parse_download`), which only the Windows `live-browser-test`
 // and `live-browser-dev` builds compile; the module's unit and end-to-end
@@ -34,14 +40,22 @@ mod fs_mutation;
 mod git_fetch;
 mod git_mutation;
 mod git_push;
+mod journal_owner;
 #[cfg(all(
     windows,
     any(feature = "live-browser-test", feature = "live-browser-dev")
 ))]
 mod live_browser;
 mod live_dispatch;
+mod mutation_journal;
 mod profile_gate;
 mod remote_lease;
+mod report_check;
+mod report_task;
+// F5 Journey 2: inert until founder decision 7 (prep/F5_SPREADSHEET_JOURNEY.md).
+#[cfg(test)]
+mod report_workbook;
+mod resume_key;
 mod search;
 mod secret_store;
 mod trust;
@@ -74,6 +88,11 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
+    // Before anything creates state: starting fresh would abandon what's at the earlier root.
+    let lookup = |name: &str| std::env::var_os(name);
+    let state_root = orcel_platform::paths::state_root_from(&lookup)
+        .map_err(|error| format!("resolve state root: {error}"))?;
+    orcel_platform::legacy::gate(&lookup, &state_root)?;
     let policy = legacy::load_policy_bridge()?;
     let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
     let audit =
@@ -81,6 +100,30 @@ fn run() -> Result<(), String> {
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;
     let workspace_set = remote_lease::WorkspaceSet::from_environment();
+    // SG-000120 RJ-02: approved file mutations are journaled; what an
+    // exited orceld left open is reconciled now.
+    mutation_journal::start(
+        mutation_journal::default_path(),
+        &format!(
+            "{}|{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ),
+    );
+    // SG-000126: report tasks, served read-only by the app API; SG-000120
+    // RJ-02: durable across runs through the report task journal.
+    let tasks = std::sync::Arc::new(match report_task::default_journal_path() {
+        Ok(path) => report_task::TaskRegistry::with_journal(path),
+        Err(failure) => {
+            eprintln!(
+                "orceld report journal: no private location ({failure}); report commits are refused"
+            );
+            report_task::TaskRegistry::faulted()
+        }
+    });
 
     eprintln!(
         "orceld ready: protocol={} audit={} mode=SG-000039_CLIPBOARD_WRITE",
@@ -89,12 +132,15 @@ fn run() -> Result<(), String> {
     );
     // CR-01: the read-only app API. It reads daemon facts and the events
     // published below; it never reaches dispatch or the approval broker.
-    let app_api = app_api::start(app_api::DaemonFacts {
-        mode: "SG-000039_CLIPBOARD_WRITE",
-        policy_revision: POLICY_REVISION.to_owned(),
-        internal_protocol_version: INTERNAL_PROTOCOL_VERSION.to_string(),
-        capabilities: app_api_capabilities(approval.presence_available()),
-    });
+    let app_api = app_api::start(
+        app_api::DaemonFacts {
+            mode: "SG-000039_CLIPBOARD_WRITE",
+            policy_revision: POLICY_REVISION.to_owned(),
+            internal_protocol_version: INTERNAL_PROTOCOL_VERSION.to_string(),
+            capabilities: app_api_capabilities(approval.presence_available()),
+        },
+        std::sync::Arc::clone(&tasks),
+    );
 
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
@@ -117,10 +163,13 @@ fn run() -> Result<(), String> {
                     envelope.request.capability.clone(),
                     envelope.request.operation.clone(),
                 );
-                (
-                    handle_envelope(&policy, &audit, &approval, &workspace_set, envelope),
-                    Some(shape),
-                )
+                // SG-000126: report tasks have their own local-only entry.
+                let response = if report_task::is_report_request(&envelope.request) {
+                    report_task::handle_envelope(&policy, &audit, &approval, &tasks, envelope)
+                } else {
+                    handle_envelope(&policy, &audit, &approval, &workspace_set, envelope)
+                };
+                (response, Some(shape))
             }
             Err(error) => (
                 ResponseEnvelope::failure(
@@ -184,6 +233,7 @@ fn app_api_capabilities(approval_available: bool) -> Vec<Value> {
         json!({ "id": "fs", "state": "available", "reason": null }),
         json!({ "id": "git", "state": "available", "reason": null }),
         json!({ "id": "clipboard", "state": "available", "reason": null }),
+        json!({ "id": "report.task", "state": "available", "reason": null }),
         windows_only("process.contained", "contained process execution"),
         windows_only("desktop.uia", "the UI Automation desktop provider"),
         if approval_available {
@@ -590,6 +640,20 @@ fn dispatch_with(
     request: &RequestEnvelope,
     browser_resolver: &impl orcel_provider_browser::DnsResolver,
 ) -> Result<Value, ProviderError> {
+    // SG-000120 RJ-02: an approval prompt for a target whose latest step has
+    // an unknown outcome says so.
+    let approval = &mutation_journal::UnknownNotice {
+        approval,
+        sink: mutation_journal::global(),
+    };
+    // SG-000126: report tasks have their own entry in the request loop
+    // (`report_task::handle_envelope`); they never run on this path.
+    if report_task::is_report_request(request) {
+        return Err(ProviderError::new(
+            FailureCode::CapabilityDenied,
+            "report requests are handled only by the SG-000126 report task entry",
+        ));
+    }
     if let Some(result) = fs_mutation::dispatch_fs_mutation(workspace, approval, request)? {
         return Ok(result);
     }

@@ -1,0 +1,1001 @@
+{
+  "schema": "orcel-taskpack-lock/1",
+  "donor": {
+    "repository": "trycua/cua",
+    "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+    "path": "benchmarks/cua-driver-bench/taskpack",
+    "license": "FSL-1.1-MIT",
+    "license_file": "LICENSE",
+    "authorization": "FD-04 (docs/orcel/grants/2026-10-18-founder-attestation.md)",
+    "url": "https://github.com/trycua/cua.git",
+    "license_path": "benchmarks/cua-driver-bench/LICENSE",
+    "tree": "72a1d950e96081faa877003265d018224553ff44"
+  },
+  "method": "PINNED (fetched at test time from the donor commit and verified file by file; nothing is copied into Orcel)",
+  "files": [
+    {
+      "path": "LICENSE",
+      "donor_path": "benchmarks/cua-driver-bench/LICENSE",
+      "git_blob": "79293ae602ed46efa4d7d5d79a22b57ef2c037ec",
+      "sha256": "394023b2176ae770796fee3b43f0eda61c23d0effbe4f6a0cfcae050a72cb70c",
+      "bytes": 4212,
+      "mode": "100644"
+    },
+    {
+      "path": "README.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/README.md",
+      "git_blob": "fd4ebe86baf16c4b3be8f8f18a5f25ae671e8157",
+      "sha256": "44638d27597228a0ceee1a1e061968748381e8c85d7ca4080fafe917c3ea95a5",
+      "bytes": 4043,
+      "mode": "100644"
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/THIRD_PARTY_NOTICES.md",
+      "git_blob": "f0a40f3228347bbed4b67c4d33bd94b13df72c85",
+      "sha256": "e5364e2306a19cab00aae8757cc922c25dbbfe3b2c1f4e382fc2608de908e39b",
+      "bytes": 1221,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/.gitignore",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/.gitignore",
+      "git_blob": "8f9d35716f77876c4954821bd3d0bdd39dd7e03c",
+      "sha256": "bc3453e5a9b1e3a6e7bd3a22b46ce861f4cbf8e13db44859bb21c165ec39cd79",
+      "bytes": 43,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/PROVENANCE.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/PROVENANCE.md",
+      "git_blob": "0cfc180b515bcc7b46bb902160a3248e46569ca5",
+      "sha256": "63f33a381b331c525e7f45b342001182e00b0a3abf08c6bd141dc8bfa6cef1b8",
+      "bytes": 3048,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/README.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/README.md",
+      "git_blob": "daf6f87b37d0f21e5bf8f5601bfc6a2aba55a4b1",
+      "sha256": "5fbe823e2c8963a45fce0a1a4db3f869fae9a5157350c07d207be2a1a750c8b4",
+      "bytes": 1805,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/main.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/main.js",
+      "git_blob": "594fe04d396b06ed8b7abd19377c874d87fdc064",
+      "sha256": "9b1ba33cafde8114cdadf20306e8542839d47beaa1f2c137980049cdc69127cb",
+      "bytes": 3259,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/package-lock.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/package-lock.json",
+      "git_blob": "e641a2ddea76d6cadf5c0143a8d52b964284ae76",
+      "sha256": "7f6041f96bff7c2ce118da24d42594ee36b02aa74b064740cd3092d48ab27ccb",
+      "bytes": 5841,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/package.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/package.json",
+      "git_blob": "34587db0f35d54c10782b32d8cf10bdeb1d28ba4",
+      "sha256": "e9e03a634c21412e6e8182ef383f178a60b6a998c7434f6759bbe485ad5afb82",
+      "bytes": 525,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/preload.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/preload.js",
+      "git_blob": "4ef18c68132dc47f5c468724ad28c4678f2d9baa",
+      "sha256": "98c0a85add1ed084ad510c6941306c2199db6c4b883c90332153056b051879a4",
+      "bytes": 1064,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/app.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/app.js",
+      "git_blob": "bbe0e2b630a34959afee72569976cccd419812c3",
+      "sha256": "d5ff9e69e6ae75ca1c68948506b7e6a8f30df46ce6215f582c9776996ac2e77c",
+      "bytes": 10173,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/index.html",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/index.html",
+      "git_blob": "d44a6241b05d9ebdf30fe4e33330cc197d41f475",
+      "sha256": "a84ab1bdfd10a158a1f5a9c98a16afcc35519cb457c1c7a6719a6ed0f587e170",
+      "bytes": 502,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/styles.css",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/renderer/styles.css",
+      "git_blob": "68ea5cd6a46a24616173cb15d59299d2eb8bd141",
+      "sha256": "eaefcf9e541f1817d5d356d1a0a8ab558182b0ae57bb6286921628c71343027c",
+      "bytes": 2169,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/store.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/store.js",
+      "git_blob": "d6067e0487e41c78ecdf831fa1a5cec1d870cab1",
+      "sha256": "3169cda9658652c536ad2de789d75313f278c8132f75313f9d0aa80564d87794",
+      "bytes": 13109,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/apps/lighthouse-desk/tests/store.test.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/apps/lighthouse-desk/tests/store.test.js",
+      "git_blob": "c74276d238493cc11b5065fa896e4261607070dd",
+      "sha256": "57f4159c958a91ee7a0670d99f88c58a92e1bc38d0bafb09443d3248d465aab7",
+      "bytes": 7545,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/brief.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/brief.md",
+      "git_blob": "36d138042dc038ab4241877d21649e3e777a0769",
+      "sha256": "0b4c4694b1ff1eaa8473ca1e0f2aaedeb1ec21b220883b5be7a948206ffe3998",
+      "bytes": 831,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/evaluator/evaluate.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/evaluator/evaluate.py",
+      "git_blob": "c59effd5c8a478312f2916f8aefabbb2a7fdc798",
+      "sha256": "4b66001d1c7051d565959fe2d1e5c3f078bc2a3e430ab81c2db7e0890bf62de9",
+      "bytes": 13956,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/evaluator/ods.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/evaluator/ods.py",
+      "git_blob": "35216cc2dd10fe36347d6c25a0cd55c9a92ce0e8",
+      "sha256": "27f8cd5c532493f59e0f515c6e24bcd286c70bc57bd1f43a58df69e384454a37",
+      "bytes": 4325,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/evaluator/oracle.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/evaluator/oracle.json",
+      "git_blob": "c40b1d6d46ac56243ee7754f3afd69fcae24d5e3",
+      "sha256": "828cfebc9d919bac11811d045dabb03d3975aa4a67d9e6a36450d967a679655e",
+      "bytes": 1519,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/fixture/calendar/events.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/calendar/events.json",
+      "git_blob": "13657c7bf10a524851e288b292c890b2ec94f006",
+      "sha256": "9bffa18e42aa77d1c35c685c0bf321cbb5a4543b3855620740e1866bd94d0878",
+      "bytes": 1891,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/fixture/chat/audit.ndjson",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/chat/audit.ndjson",
+      "git_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/fixture/chat/blockers.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/chat/blockers.json",
+      "git_blob": "52fb1edf43dd7bf0c1c7dcefb5994764ffe88f55",
+      "sha256": "0b433ce2b65a3936d1f4783cd04cbab9afe51b62f5aebbb92833eb5f7fc39e3b",
+      "bytes": 21,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/fixture/chat/messages.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/chat/messages.json",
+      "git_blob": "375b1ae11147b779a5d9621d32147e024f73acea",
+      "sha256": "9019a563fcd4d54368a1ddbac137e057fdac2ab3046ad0020fa994da1ac3f277",
+      "bytes": 1022,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/fixture/mail/messages.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/mail/messages.json",
+      "git_blob": "e7386adc4c79fdfa5e9747c32d3d0c3080db747d",
+      "sha256": "371b2eb4e409a793138f86edd9dcb038cf81d6de3b560fef47f06006b7ee189e",
+      "bytes": 977,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/fixture/planning/lighthouse-replan.ods",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/fixture/planning/lighthouse-replan.ods",
+      "git_blob": "ba53909ab0af1532098e317961d11145f8c64c21",
+      "sha256": "e233cae7c58a9f32dc9e05530437e6d30a0ef363ee67d7d5dd883eefe3760c85",
+      "bytes": 1658,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/platform/README.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/platform/README.md",
+      "git_blob": "3b9f872f898b3d8ac44c267171d3577acbf5336e",
+      "sha256": "9805dcec9944680f08a9cdf5a52170c6b568550e1441f8956ec530eb2e892709",
+      "bytes": 982,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/platform/launch.linux.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/platform/launch.linux.json",
+      "git_blob": "cc9cbfdcdbf15ae92d94f8e1b89cf0b5abe250e7",
+      "sha256": "a2680fd62410e3b6cf66fc0e9e4d4bf814189931438e429a26c55acbbd672b71",
+      "bytes": 4565,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/platform/launch.macos.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/platform/launch.macos.json",
+      "git_blob": "e82f9581811bfd11970a70a1518d0d73e75c7763",
+      "sha256": "027bad2bf67f9ebde17da53f652b527d574fdbff057aab284c9e0337844677db",
+      "bytes": 4647,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/platform/launch.windows.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/platform/launch.windows.json",
+      "git_blob": "9081470c55a0809ee8edc5a5fc92cec22c672b5e",
+      "sha256": "1b2d1d0aff33782ec541deeecffca25689b9f0a2027acaa6c91ef374f962669a",
+      "bytes": 4668,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/reset/failure-fixtures/stale-blocker.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/reset/failure-fixtures/stale-blocker.json",
+      "git_blob": "4b419b852b20605fc9b6259f818972d1933c1d54",
+      "sha256": "c8ff858e755cff698a6cef4cb6ca607d3c8030a76d467abb8f077ebb3dad6645",
+      "bytes": 273,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/reset/failure-fixtures/stale-calendar.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/reset/failure-fixtures/stale-calendar.json",
+      "git_blob": "647002313651004a9c4e13e7069b4c60a42a9885",
+      "sha256": "f7e320681a0b6a80d84afd836ebfeb50195f950c6adab8b173ef0cc1747c5a30",
+      "bytes": 265,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/reset/setup.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/reset/setup.py",
+      "git_blob": "08734e37fef68884fb2fd26bed9797fe192647d1",
+      "sha256": "fedc30ea50375862737461e1c30840657c50510e71dac2a95c34bb606c536de9",
+      "bytes": 2479,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/reset/verify.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/reset/verify.py",
+      "git_blob": "f20e9e785bc569ed9d28781ca757cabcc1026bba",
+      "sha256": "7ea95408a12e13bc46f246e8752acb153fe1a28ce0ffd6e1e93762c77483d1db",
+      "bytes": 2103,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/task.cuabench.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/task.cuabench.json",
+      "git_blob": "4ba23d9fad75c06e9633e7cdd3702a3b2f41d363",
+      "sha256": "35d354ce49600252d8d7f817a449889d4aba1dcb9f3e75f96e4e628b8cbee5e9",
+      "bytes": 9164,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/tests/test_cdb_s02.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/tests/test_cdb_s02.py",
+      "git_blob": "001647e38c0182aff6b248300085c3974db265b1",
+      "sha256": "2d12be480cb63feff45e134b6b429551ce8e40688ca775820b5cff69439c08c4",
+      "bytes": 29621,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/tools/build_fixture_ods.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/tools/build_fixture_ods.py",
+      "git_blob": "3d20173b99997ff004fa1e21e289cf8b26393331",
+      "sha256": "cdb0fdccda21787207c74a87db0166b497c7537b0b3be12d272d93662cc50e27",
+      "bytes": 4856,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/tools/build_platform_descriptors.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/tools/build_platform_descriptors.py",
+      "git_blob": "1de20da6059d9bc9d084e684079f67421c9e0785",
+      "sha256": "fff64ba720b05dc5e96224a2e01ccd4a58c16d872dcd824a87617fbfdfb722d1",
+      "bytes": 5491,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s02/tools/refresh_manifest_digests.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s02/tools/refresh_manifest_digests.py",
+      "git_blob": "cb09f5ade388a8071fbcbc66da24dff28eb96c44",
+      "sha256": "2b20c1aefd78fbbb6e67e99c09bd222f366e7565c9f352d8e421cc39b2291192",
+      "bytes": 1571,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/.gitignore",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/.gitignore",
+      "git_blob": "dc89b12986f6c240cd292f057ecd7a87ff77fded",
+      "sha256": "167c67d2e7f5fc854427878a802a5830f43924a09fc3db306a9f8f97edc2e51e",
+      "bytes": 55,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/PROVENANCE.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/PROVENANCE.md",
+      "git_blob": "f9e7157865111aa6493c3f6e31ef17b53c245ea1",
+      "sha256": "c50e9103bb8e8e807aa178856fdce84caf9659ca304dad8967b9e2d606148044",
+      "bytes": 2873,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/README.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/README.md",
+      "git_blob": "54b9e7131762289d974d7da6f9394246a27ca1bb",
+      "sha256": "129adcdd4c2eeada30ccc1b76322308cc146daeaf132a1daab8df4106e0c7558",
+      "bytes": 1733,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/main.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/main.js",
+      "git_blob": "6b7e7e240a9ecdedc88ec7d496eb991391f23a55",
+      "sha256": "56165d308076cc4315f75b25acdf85ec1f5195b32cc3f626c645d06bd0c3c0a3",
+      "bytes": 1592,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/package-lock.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/package-lock.json",
+      "git_blob": "cc1bea30341f306abf715aba16d4a8cc163dcd8a",
+      "sha256": "f2238692f558cdcef175d01e107eddc73e852a3d7fe9cd9716ca5b475ae43b01",
+      "bytes": 5849,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/package.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/package.json",
+      "git_blob": "88a50761f9acb3bbc01b01c30a809c5256f02beb",
+      "sha256": "278704dd0704cf6cee7301af5ce7e7cb4a9f0e5a802dfc7b4ce420c0541d7af5",
+      "bytes": 532,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/preload.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/preload.js",
+      "git_blob": "0c2ff6caf404bb081bd8bf23510763882557c76f",
+      "sha256": "e27985e9b415e315e81e1754537f53895b5888cbaf3afb184c8190b2ad488099",
+      "bytes": 354,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/renderer/app.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/renderer/app.js",
+      "git_blob": "005f2f64982e69618570d29da690f0337309378f",
+      "sha256": "7a822fe98133f74ae3973d98beffd80b4f3ce8633ffc62d76e7e094b14ba81db",
+      "bytes": 5711,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/renderer/index.html",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/renderer/index.html",
+      "git_blob": "100542182314e7b8eda8ad02c298d384fe931ca0",
+      "sha256": "5e86eec18c707f027364f0848aca22502e7bf6b8eb06369d44d53ed04888c068",
+      "bytes": 1588,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/renderer/styles.css",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/renderer/styles.css",
+      "git_blob": "ed07b1c4a4be7c696f5c7a298f45d2fa0740d6e1",
+      "sha256": "7cf60352ae12094083832517b598e619d1a70ff6640e2401e9f03c3d396d4821",
+      "bytes": 5546,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/store.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/store.js",
+      "git_blob": "c6c21473b0cfc936af4dedea8c383b233d4693ce",
+      "sha256": "268e03c565792a1c1ae26c36e99c141e00ab79479a736b81095bcf1c35fb56c9",
+      "bytes": 4018,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/apps/ledger-lantern-mail/tests/store.test.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/apps/ledger-lantern-mail/tests/store.test.js",
+      "git_blob": "5fa3a947e38252d809a29e4a7ee799f2a6517b09",
+      "sha256": "327435ec6736f9dc26a57e77621d7eb0dd6b7ffb1645d9a231c462ec21fb08eb",
+      "bytes": 5767,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/brief.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/brief.md",
+      "git_blob": "76d472c83c81a5416f88376c0b92b7081e555faa",
+      "sha256": "8571796862e8b24fba1a3641ba4b885ec148d60dbc98fa511291bf417c76671b",
+      "bytes": 1660,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/evaluator/evaluate.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/evaluator/evaluate.py",
+      "git_blob": "8147b278795639621134b3d39fc314e26aa5f972",
+      "sha256": "e24a52be87ccff2d8aef0b2d284f180c7e486fba59ff8569a50bd0cfd8b8878b",
+      "bytes": 19799,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/evaluator/gnucash.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/evaluator/gnucash.py",
+      "git_blob": "c673088e548530439982b2a8c9ee046d8aaf8ab7",
+      "sha256": "d34e0de2a1e2966554393991916d37f638d0070025dc002f147bb976d6c47c72",
+      "bytes": 7850,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/evaluator/ods.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/evaluator/ods.py",
+      "git_blob": "112d080990516e753f51eed32a421be6d05cc689",
+      "sha256": "b979a545fefec8f1a977fc8b326df506fe45b1fd073c10cdc6403c95b7ca01c8",
+      "bytes": 5859,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/evaluator/oracle.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/evaluator/oracle.json",
+      "git_blob": "cda9df89b3ceab52698668859e9fc4bbd4245780",
+      "sha256": "cc8bf14d377698158ff967db6a8e92a14189ed2b8f03fcd482e75a242c39d466",
+      "bytes": 2206,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/book/kestrel-wharf.gnucash",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/book/kestrel-wharf.gnucash",
+      "git_blob": "d13ac6bdfed4c7c5f368b3bbbe9b2650acc5d7e6",
+      "sha256": "4b00c64d3a6acd84fba4f67ad2285bc341485f6b1aed2957645c341ed2594cad",
+      "bytes": 8642,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/mail/attachments/NAR-773.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/mail/attachments/NAR-773.txt",
+      "git_blob": "71a5054763297eb13d5db55bf6642ed866a30ac4",
+      "sha256": "f9e0fa484e987541859e74a07f75ba1c1f3f0d578c43d7cd24dd6a9b07cd037a",
+      "bytes": 490,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/mail/attachments/OCP-4821.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/mail/attachments/OCP-4821.txt",
+      "git_blob": "e6b59ba0a95802cd1087a003a6d660f771a4ba25",
+      "sha256": "b7d001fac2f68cacc32aeb40db79c77f39852b4cc24b5b54c1dfb425ea3f163a",
+      "bytes": 558,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/mail/attachments/OCP-4827.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/mail/attachments/OCP-4827.txt",
+      "git_blob": "4e2705231998c20e78e4624286caad29e80a0a99",
+      "sha256": "d762c979a453e1767685c6fef4516eaac94a288b9b2069a0a993d1fd60eba102",
+      "bytes": 497,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/mail/attachments/SVL-119.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/mail/attachments/SVL-119.txt",
+      "git_blob": "6e0d3716997f71178c1798de8d0dd03a71c91926",
+      "sha256": "7e0fcfecc10a5a7432253ae3cf34b07c37ebaacdd32743a7319debb142ea7d85",
+      "bytes": 499,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/mail/attachments/open-house-menu.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/mail/attachments/open-house-menu.txt",
+      "git_blob": "61686279a44f93b316993aa563037929017130f3",
+      "sha256": "522b33f445606ff24364052dfec0e3a709c3b50246655b058223124ef7928241",
+      "bytes": 249,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/mail/attachments/receiving-log-october.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/mail/attachments/receiving-log-october.txt",
+      "git_blob": "64e96863d6e6f0d5dc8306f1f610f812cf010390",
+      "sha256": "63bb2e90dd210a9f6a81431d551feacc0d58f613ab2e9d5fc112ae37d4ec4795",
+      "bytes": 445,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/mail/messages.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/mail/messages.json",
+      "git_blob": "3c03b0ca07ff35f4cfdc13786e9b4ebf8af02992",
+      "sha256": "2617f8ad065e159c877fe0c1435c0c3b0b24eba6a3a46e7b0fff9b4e1a7b6bef",
+      "bytes": 4381,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/fixture/planning/kestrel-wharf-reconciliation.ods",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/fixture/planning/kestrel-wharf-reconciliation.ods",
+      "git_blob": "b90abe2ee2e54d1bb2c32344dddb4f089433eb4f",
+      "sha256": "ef7c420e61c58bec3a7ca1ca80d647b0e289d561d9248bec573fe0bf1c8f3f9b",
+      "bytes": 2969,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/platform/README.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/platform/README.md",
+      "git_blob": "0d88ee96309dce6584f23677fab63999453fa4ed",
+      "sha256": "f1eee158e664b3984635f54ee0af8e7e666265dba4cea2f937b2c5e5320e114e",
+      "bytes": 595,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/platform/launch.linux.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/platform/launch.linux.json",
+      "git_blob": "4097a571e07b7383ccdfa462fffb06555c8c1c34",
+      "sha256": "c678ec18076928995cc2f5f1a621d2ceb9ebecc6da24648a476c240e154511ca",
+      "bytes": 4383,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/platform/launch.macos.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/platform/launch.macos.json",
+      "git_blob": "c30c0ad32fa3015215aeae607e06655248cdaddf",
+      "sha256": "7dc066a46ea5c4b88e19c6b01dbb41aa6fd73b16df9ebf0e6cf839f2c5684416",
+      "bytes": 4392,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/platform/launch.windows.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/platform/launch.windows.json",
+      "git_blob": "ae35efa527bfbdf379857a26c6690aab93d38c73",
+      "sha256": "1be6d14a12828c2261bc29ff4acf483dedf900d6b0af9a904a63fcf49e2aa8a9",
+      "bytes": 4406,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/reset/failure-fixtures/stale-book.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/reset/failure-fixtures/stale-book.txt",
+      "git_blob": "c8dd28184bf0985d3fb4e7d3801d128c317bc6b9",
+      "sha256": "bf78bdd30c6d214bb1490854ea80ecd72469e50139f83200413ecd169aeccc09",
+      "bytes": 76,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/reset/failure-fixtures/stale-workbook.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/reset/failure-fixtures/stale-workbook.txt",
+      "git_blob": "e14ad51488401e4fa8e9be7acdad815b35a3f35c",
+      "sha256": "71c96a6ec897d1a2d5e58b68ccb731b51138d548f5ddabb4a267c8fedd6a1f7a",
+      "bytes": 63,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/reset/setup.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/reset/setup.py",
+      "git_blob": "b9e243ce2ec0c561e77a8419133596e1b757732c",
+      "sha256": "99ac7b645d64b1d15cc4ea89e0775b64b7cd4d68f9b9518ef6180dfe187e3c06",
+      "bytes": 2514,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/reset/verify.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/reset/verify.py",
+      "git_blob": "289af14714bd7eddc9e3b2351b3edd7e5b9b8e50",
+      "sha256": "14963a1a57b969b64071ab319be0a95d0e64f997d8e5840088442612074da0e0",
+      "bytes": 2078,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/task.cuabench.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/task.cuabench.json",
+      "git_blob": "3a6a21afe2d44b11a64783f2f7c3824b522620ed",
+      "sha256": "f5f2c306ad448caa1aedc5184664f5599619b26f1447dadb45601b0459c15af7",
+      "bytes": 9625,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/tests/test_cdb_s03.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/tests/test_cdb_s03.py",
+      "git_blob": "5fbf7dd7104492efa5e02b689d0bddb8e366a843",
+      "sha256": "1e3b970dcbb2fee7e5f2ecf848ee30dd8e7b736f56d8e45a27fd6377e0b54223",
+      "bytes": 26616,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/tools/build_fixture_ods.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/tools/build_fixture_ods.py",
+      "git_blob": "5eaed582f24b73ee5ac234bdd0e23bba004c41a0",
+      "sha256": "ad62514656c4a3e02fad6b5724a1c0fed50419e09668da9379d7c51e69db0100",
+      "bytes": 10957,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/tools/build_platform_descriptors.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/tools/build_platform_descriptors.py",
+      "git_blob": "90011984e842b6286a71addf36f82620dc2989cf",
+      "sha256": "fd423527253c0d26dba995d4efc0ce719fe8e03ebdf6da1304c58c7c99666fb8",
+      "bytes": 6502,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s03/tools/refresh_manifest_digests.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s03/tools/refresh_manifest_digests.py",
+      "git_blob": "1c32602757df4411e2d05967077be8b4ad716781",
+      "sha256": "78ab5fbcf5a9c92b6593513d1aa256cbd54c21c7fc5e46ba4c60b38246e36e55",
+      "bytes": 1571,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/PROVENANCE.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/PROVENANCE.md",
+      "git_blob": "83ffe1bf8f88e20dde2635f49d4dac919da8ca57",
+      "sha256": "78179a746dd64f450aafb17a7eae33d9b02a9170fd41fe854d25f916c4dd2ccc",
+      "bytes": 2423,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/README.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/README.md",
+      "git_blob": "d253032745620e744a5f9eb67e9f29eda5fcc980",
+      "sha256": "83fa42ccf9d0745f80f194d9a97ec4510613fb7dcd408e38514146908c3f8f27",
+      "bytes": 1123,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/main.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/main.js",
+      "git_blob": "279a8034641eb07b20f6685b2bb4f523d75bfab3",
+      "sha256": "2a0b994f461bdee7f52056e3292b418411d364e4fc9537c1553a5c6e4b8e9298",
+      "bytes": 1246,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/package-lock.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/package-lock.json",
+      "git_blob": "ca54a2cb965a549ac08d3d218f89ccff831f5724",
+      "sha256": "b2e78f8517631d0de6188f7de5c66a49f28694b332f9f6e53d0d937409fc7ce0",
+      "bytes": 5853,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/package.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/package.json",
+      "git_blob": "a3eab03f431df03ddb8c2b022f874fa73c3d6f85",
+      "sha256": "aa638b1dea8563a1de8c8c15547510fce4aaf4b0de8db689e8834ce8bde79e18",
+      "bytes": 486,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/preload.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/preload.js",
+      "git_blob": "3f82540ab4a90d046bd3ac0f375780e63a949c5d",
+      "sha256": "c60ca730538fc290179627aab1c47f007b25c9fb40a3aa7f77917fd0fb8082e1",
+      "bytes": 330,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/renderer/app.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/renderer/app.js",
+      "git_blob": "6dcfbca5105189fb18caf70c334ad3287fd31c45",
+      "sha256": "1b8e2dc6ece3f852a9c06014d9d857a719440eb56adc75c3eca16dc14ae3011c",
+      "bytes": 1991,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/renderer/index.html",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/renderer/index.html",
+      "git_blob": "80132fcbd43378a84ea0976329b506245f5daad3",
+      "sha256": "dc28ba0e8f2261a307bd5b63995bf0ee90ae61470420d37fe4da54b0ce239583",
+      "bytes": 748,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/renderer/styles.css",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/renderer/styles.css",
+      "git_blob": "3c35da485919759a294b2db722b70816e07f3488",
+      "sha256": "aa40bbf59647f057ac4d271f6deb184dd2d6e5e6be50c804a600bd0a39086ec4",
+      "bytes": 1073,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/store.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/store.js",
+      "git_blob": "01daa52b9fe7389adc2f2b9a116ac4e12693bcd8",
+      "sha256": "1594f95e1fb7e35806f4de3b48ea6687bb326696eb48982db053f9e7ac76b964",
+      "bytes": 667,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/margin-lantern-manual/tests/store.test.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/margin-lantern-manual/tests/store.test.js",
+      "git_blob": "e1a71d6e2e8e9a404273aeb661c838f7bce1258c",
+      "sha256": "b57bda3b1981ad315addfd359eb6c7b767d4765568196a6a670d2cc1f828f2b4",
+      "bytes": 1085,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/main.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/main.js",
+      "git_blob": "02089a320b4e1061e1f8c7115218428952993fc4",
+      "sha256": "4a7d40d38e3d661b27d1583bbd2454e67b60b4f966ff606b9238e63741605076",
+      "bytes": 1369,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/package-lock.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/package-lock.json",
+      "git_blob": "44ec398d17ccf6b2604601dcf81223c0b1a7c3b1",
+      "sha256": "71168934a6a7b4f277fe3e9ce34ddc81c74e35a44eb94343e4efd2450e6180db",
+      "bytes": 5841,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/package.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/package.json",
+      "git_blob": "918762b414c77c1fc8e16b6908a034f9da1e55ae",
+      "sha256": "0cf18fc4dd112b413a0bda274ff80eed78c19610e9123b38b8a7f6b172397151",
+      "bytes": 490,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/preload.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/preload.js",
+      "git_blob": "a69793e8b0f7bf7abcd6c22508506aea2c6bb6ad",
+      "sha256": "1605b375d3416ff2377c029f58c8d9b126bc20c744f8e3eabfb4a3d076f119b1",
+      "bytes": 431,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/renderer/app.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/renderer/app.js",
+      "git_blob": "611edb17b570bf1c0fa306887a556234c305b765",
+      "sha256": "7c4e10f775a6fee883222d3cdc4ebd2bb1e59dc03f5c4e062184cc051b118b43",
+      "bytes": 3181,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/renderer/index.html",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/renderer/index.html",
+      "git_blob": "0ecae2e013b2f8727b7b7e072a06a30410c4d6cf",
+      "sha256": "32cc3958768958af4be2f192e4c53f0c554bef89f63793d1dfa49379fa3625ae",
+      "bytes": 1632,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/renderer/styles.css",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/renderer/styles.css",
+      "git_blob": "ed40dccb4ee335054091163bb3b915411675ab20",
+      "sha256": "7d1c9071d8f16c285d4eb2047b861d63a3eab9e2ee7251a9a4106db63736db20",
+      "bytes": 1456,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/store.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/store.js",
+      "git_blob": "2602e7efee4a8b0b4e71bf6c2549bba38a7d7fba",
+      "sha256": "74d6e6bf2e53c65adc66e61f9b41a230130706cc1864935f60f39cfbf3668199",
+      "bytes": 2471,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/apps/rillwatch-cases/tests/store.test.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/apps/rillwatch-cases/tests/store.test.js",
+      "git_blob": "2815a62af5acebbc44b618412127eb3921bb3643",
+      "sha256": "2cf1faecef62d68649c14069ea3ba09c57cd64a8bb3f18e91cc06b41b987cecd",
+      "bytes": 2165,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/brief.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/brief.md",
+      "git_blob": "30ee5faddeec3eb1df64a113627554c963938a77",
+      "sha256": "0d1e2393bd7bc5e2bde1d07e93e6659b77a9cd125ed29c9e4479bb6f0238d66f",
+      "bytes": 924,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/evaluator/evaluate.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/evaluator/evaluate.py",
+      "git_blob": "d2c0a1fd0745faf9e8fe05505bca97fa30847b1a",
+      "sha256": "b476b17ddd09d0be656b719d98ccaf65ef0d76e0ff0f842498cd20e37d2285e2",
+      "bytes": 20517,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/evaluator/oracle.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/evaluator/oracle.json",
+      "git_blob": "6c438d181271ee108aaa34b973a3da72bf5ba962",
+      "sha256": "430149bd80461daf90ff36254a36848e4b9cad2f6e5e8cecf029a179ced90330",
+      "bytes": 4428,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/archive-site/data/records.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/archive-site/data/records.json",
+      "git_blob": "1542789ed7e581f9acade4107a2b4f9268e25e49",
+      "sha256": "234fc0ea495a8a2da8cf9f2c03352bd8952c2c1d6aa2a2158a01ce61a4ff5030",
+      "bytes": 678,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/archive-site/package-lock.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/archive-site/package-lock.json",
+      "git_blob": "bbf80506152ec3d4aa5c6333ea1e862c217216c2",
+      "sha256": "b87ec74af811b4d536cc9e4811172cbe29d801357fab3d470e095cb75cdaec2a",
+      "bytes": 270,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/archive-site/package.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/archive-site/package.json",
+      "git_blob": "0e8f2c9a69eb7310c754dd11346fd729fe482c27",
+      "sha256": "82a76e1243f64ffc2dc2220031a035a77bf8c11ccbd7b8d9c4f50a3ddfc55562",
+      "bytes": 360,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/archive-site/public/app.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/archive-site/public/app.js",
+      "git_blob": "06786fb46e718064f093b05b0f0653ad0fe6714c",
+      "sha256": "c7e14bd87d27d6518fba930f47e359de687abdf959e51fdd97b6d6afa22d1a9c",
+      "bytes": 265,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/archive-site/public/styles.css",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/archive-site/public/styles.css",
+      "git_blob": "d02792ec0448983ac4bb99634436a5c32371e7ac",
+      "sha256": "f10aa07002f774b1ac2325ae31f1a594fd12dbc5a977638d2af5e2bf3759eab5",
+      "bytes": 641,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/archive-site/server.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/archive-site/server.js",
+      "git_blob": "d141c984aee2b4e1929a10d69d525ed05cebad8a",
+      "sha256": "baaef12b833c44ec5d6ef60b266b3c98c1441c526d8b512aa9028aaf2ee41fa1",
+      "bytes": 5260,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/archive-site/tests/server.test.js",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/archive-site/tests/server.test.js",
+      "git_blob": "12897eb5c738df54f7c44fc667721158a0c28882",
+      "sha256": "241308209cf8b7810d4da70419423f151ccab63e7e006c6d6dfc0c1a9ac01602",
+      "bytes": 1842,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/cases/cases.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/cases/cases.json",
+      "git_blob": "0743b21929559f787a5f3ee463734934cd91c5d4",
+      "sha256": "eb7d46828aefd90acae0bb6985c8e354079d941159bcc9ddc94748451595cd38",
+      "bytes": 2970,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/cdb-s04.workspace.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/cdb-s04.workspace.json",
+      "git_blob": "3c5ee2002c00501d2d7197fadb751852d9a77382",
+      "sha256": "ad608cc8bb8b016f588dc8a7e135ee8e84cb035cc91c8d70bc49abb18cb2425f",
+      "bytes": 229,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/logs/archive-access.log",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/logs/archive-access.log",
+      "git_blob": "6f2b72fa40393f80c4c37d28d499538114104ecf",
+      "sha256": "327fa081130d1271ae11ce0013eb0de82055794b492196acf0865eb898bcdfa4",
+      "bytes": 737,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/fixture/wiki/articles.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/fixture/wiki/articles.json",
+      "git_blob": "54edfba9e67515d532574731181109f2822d36f4",
+      "sha256": "f437a1ad19212573c27629233b23ba06240ad5e50c199ff15208275a856fbae9",
+      "bytes": 1864,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/platform/README.md",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/platform/README.md",
+      "git_blob": "e357cec1c8d105244dcba6d8305a5965367f7418",
+      "sha256": "40b8a755c9fd95679021de53204da55beb5d7ace5cac6246e808ecc62489dd77",
+      "bytes": 573,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/platform/launch.linux.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/platform/launch.linux.json",
+      "git_blob": "8024e4c4f5b4277210ee4a19879a10d6fc6a0ea2",
+      "sha256": "e8a98739aa0a0272153b8084dc46793b67caf6691cca2a15efaf09b1b249b671",
+      "bytes": 4819,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/platform/launch.macos.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/platform/launch.macos.json",
+      "git_blob": "8c72b332a6276dea328fb92effa17f22a5a796d8",
+      "sha256": "262eb742e42b4ba5af1c4322a8389fccea069c794293ba6c0dd0fa73ea3e378c",
+      "bytes": 4913,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/platform/launch.windows.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/platform/launch.windows.json",
+      "git_blob": "f4ba0778424be6b62d2f2803e48d567adb96dfc6",
+      "sha256": "0995428ce9601523b05291931c50e76d5248e6926f54ccc1cda89c56de758963",
+      "bytes": 4919,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/reset/failure-fixtures/stale-linked-case.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/reset/failure-fixtures/stale-linked-case.json",
+      "git_blob": "7bd217462358d890789aecf55efad117efce54ac",
+      "sha256": "a26b7a0aa8e367a6e1ea5ac2b0a6c66727193c0f726f457605a0490324c4bc6c",
+      "bytes": 65,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/reset/failure-fixtures/stale-site-file.txt",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/reset/failure-fixtures/stale-site-file.txt",
+      "git_blob": "97ae7230eab8109edf73b469436f03d427fecbee",
+      "sha256": "af91c786020876369b8a9509fc74cc3b1701c8c89146da2aeaf2221633202971",
+      "bytes": 46,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/reset/setup.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/reset/setup.py",
+      "git_blob": "5af0e4ea53075a3cbf08b018f8274dc1f9b6bad0",
+      "sha256": "527ae9fc02ea43f320611c2ce5662e5055a0a3f0e4715fd7949afd86f7928247",
+      "bytes": 2222,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/reset/verify.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/reset/verify.py",
+      "git_blob": "f79e8cc1d9e7a6f7363d88af2fcb1024191fbc5b",
+      "sha256": "90e4330ddedd78556a17581cf733bdf612bbcd2b89b7603eb00b28df00122ead",
+      "bytes": 2093,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/task.cuabench.json",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/task.cuabench.json",
+      "git_blob": "eae5185c7e2ea1ca9ebae4719a2e9303c33828f5",
+      "sha256": "c59079249f2e1f241d87d452bb084e9cd49964ff3eac621940f8816829d6795c",
+      "bytes": 11233,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/tests/test_cdb_s04.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/tests/test_cdb_s04.py",
+      "git_blob": "19fb37bc3b7f35e993d9964001425b3b737546b7",
+      "sha256": "dffbb609eca188b25d1e3759c427680fe867d3e5b72610e0a70da21f6c08d27c",
+      "bytes": 18376,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/tools/build_platform_descriptors.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/tools/build_platform_descriptors.py",
+      "git_blob": "7ebd8b3890c2e57749959d04c0e138292a31d43c",
+      "sha256": "8e81f7821061b26644a9945a531a44bc2a080ca650a70a2bf32477e12bb2c19b",
+      "bytes": 6060,
+      "mode": "100644"
+    },
+    {
+      "path": "tasks/shared/cdb-s04/tools/refresh_manifest_digests.py",
+      "donor_path": "benchmarks/cua-driver-bench/taskpack/tasks/shared/cdb-s04/tools/refresh_manifest_digests.py",
+      "git_blob": "903acc41ade94dff763d77c457e8ca04c3385cd5",
+      "sha256": "0d34074c785d7c5c2989bfe1e3a20f4472758f98f3e6cf1e3cc8891ba1248c56",
+      "bytes": 1571,
+      "mode": "100644"
+    }
+  ]
+}

@@ -149,3 +149,17 @@ STRONG approvals fail closed until an administrator runs
 Linux approvals are implemented but not release-qualified: the GNOME and KDE
 live check in SECURITY_INTEGRATION.md (including the socket-activated
 user-service case) has NOT RUN on a real desktop.
+
+## Connect a local MCP client from a development tarball
+
+`package-dev.sh` builds `orcel-<version>-linux-<arch>-unsigned-dev.tar.gz`, separate from the packages above and not a release. It holds `bin/orcel-mcp` and the MCP server, and it needs Node.js 24 on `PATH`. Unpack it, and point the client at the launcher by its full path, naming the folder Orcel may work in:
+
+```json
+{ "mcpServers": { "orcel": { "type": "stdio", "command": "/home/you/orcel-dev/bin/orcel-mcp", "env": { "ORCEL_WORKSPACE_ROOT": "/home/you/orcel-dev-ws" } } } }
+```
+
+The client sees the same tool list as on Windows, and `orceld` refuses what it can't do on this OS. `orceld` stays the sole authority, and asks you before it writes. Only a short list of variables reaches the server (see the launcher), so a client's other environment doesn't. CI checks this through the launcher with a test client, not with any real client, and no approval is given there: a report stops at the prompt.
+
+## Update and uninstall the development tarball
+
+This is about this development tarball only: the packages are under [Install](#install). It has no install flow. To update, replace the folder with a newer tarball: the state and the workspace stay as they are. To uninstall, remove the folder and, unlike a package uninstall, the state too if you want it gone: `orcel` under `$XDG_STATE_HOME`, or under `~/.local/state` if that's unset. `app-api.lock` under `$XDG_RUNTIME_DIR/orcel` stays by design, until that directory is cleared. Any secret you stored through Orcel, such as a search key, is in the Secret Service rather than in the state: remove it there. CI checks that a copy of the folder elsewhere writes to the same task journal. It doesn't check a replacement at the same path, or that nothing else is written, and a newer version reading older state isn't tested: CI uses the same version both times.

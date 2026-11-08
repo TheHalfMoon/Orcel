@@ -8,8 +8,9 @@
 //! is no listener, no tool, and no other input surface.
 
 use orcel_browser_host::{
-    adopt_profile, assert_argv_clean, build_argv, decode_frame, discover_engine, Engine, HostReply,
-    HostRequest, SearchConfig, SupervisedChild, PROTOCOL_GENERATION,
+    adopt_profile, assert_argv_clean, build_argv, decode_frame, discover_engine,
+    engine_launch_admitted, Engine, HostReply, HostRequest, SearchConfig, SupervisedChild,
+    PROTOCOL_GENERATION,
 };
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
@@ -54,6 +55,8 @@ fn run() -> Result<(), String> {
     if host_id.is_empty() || host_id.len() > 64 {
         return Err("invalid --host-id".to_string());
     }
+    // XP-14: nothing launches on macOS until SG-000115 admits it.
+    engine_launch_admitted().map_err(|err| format!("engine launch refused: {err}"))?;
     // Re-verify: the engine must still be a supported verified executable
     // and the profile must still be Orcel-owned for it.
     let verified: Engine = discover_engine(&SearchConfig::production())

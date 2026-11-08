@@ -897,6 +897,38 @@ fn diagnose_locked(profile: &Path) {
     let started = Instant::now();
     let locked = first_locked(profile);
     eprintln!("SG108-DIAG locked file: {locked:?}");
+    // #483: a handle opened without delete sharing blocks the removal yet
+    // allows the write test above, so look for that, folders included, and
+    // ask Restart Manager who holds the profile's files.
+    let entries = profile_entries(profile, 512);
+    let undeletable: Vec<&PathBuf> = entries
+        .iter()
+        .filter(|path| !openable_for_delete(path))
+        .take(8)
+        .collect();
+    eprintln!("SG108-DIAG not openable for delete: {undeletable:?}");
+    let files: Vec<PathBuf> = entries
+        .iter()
+        .filter(|path| path.is_file())
+        .cloned()
+        .collect();
+    let holders = file_holders(&files);
+    eprintln!("SG108-DIAG holders (Restart Manager): {holders:?}");
+    // #483: who each holder is: inside a job or not, its parent, its role
+    // and age (never its whole command line, which may be a user's own
+    // browser).
+    // The profile folder is created just before the launch: its creation
+    // time is the lifetime's start.
+    let lifetime_start = std::fs::metadata(profile)
+        .and_then(|metadata| metadata.created())
+        .ok()
+        .and_then(filetime_ticks);
+    for (pid, _) in holders.iter().flatten() {
+        eprintln!(
+            "SG108-DIAG holder {pid}: {}",
+            describe_holder(*pid, lifetime_start)
+        );
+    }
     while profile.exists() && started.elapsed() < Duration::from_secs(90) {
         let _ = std::fs::remove_dir_all(profile);
         std::thread::sleep(Duration::from_millis(250));
@@ -906,6 +938,303 @@ fn diagnose_locked(profile: &Path) {
         started.elapsed(),
         profile.exists()
     );
+}
+
+/// #483: the cleanup diagnostics see a handle without delete sharing, and
+/// Restart Manager names its holder (this process).
+#[test]
+fn cleanup_diagnostics_name_a_handle_that_blocks_deletion() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = std::env::temp_dir().join(format!("orcel-483-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let held = dir.join("sub").join("held.txt");
+    std::fs::write(&held, b"x").unwrap();
+    let free = dir.join("free.txt");
+    std::fs::write(&free, b"y").unwrap();
+    assert!(openable_for_delete(&held) && openable_for_delete(&dir));
+    // Read and write sharing, no delete sharing: writes still open.
+    let handle = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x1 | 0x2)
+        .open(&held)
+        .unwrap();
+    assert!(std::fs::OpenOptions::new().write(true).open(&held).is_ok());
+    assert!(!openable_for_delete(&held));
+    assert!(openable_for_delete(&free));
+    let entries = profile_entries(&dir, 512);
+    assert!(
+        entries.contains(&held) && entries.contains(&free) && entries.contains(&dir.join("sub"))
+    );
+    let holders = file_holders(&[held.clone(), free.clone()]).expect("Restart Manager");
+    assert!(
+        holders.iter().any(|(pid, _)| *pid == std::process::id()),
+        "{holders:?}"
+    );
+    // #483: the holder description is filled in. This process was created
+    // before the test folder, so its offset is negative; it has ancestors
+    // (cargo at least) and a job answer.
+    let start = std::fs::metadata(&dir)
+        .and_then(|metadata| metadata.created())
+        .ok()
+        .and_then(filetime_ticks);
+    assert!(start.is_some());
+    let described = describe_holder(std::process::id(), start);
+    assert!(
+        described.contains("created Some(\"-")
+            && described.contains("ancestors [\"")
+            && described.contains("in a job: Some("),
+        "{described}"
+    );
+    drop(handle);
+    assert!(openable_for_delete(&held));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// #483: a process's creation time in FILETIME ticks (100 ns since 1601).
+fn process_created(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    // SAFETY: plain open with query-only rights, closed by the guard.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let handle = crate::supervise::platform::OwnedHandle::new(handle)?;
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: valid handle and out-pointers.
+    let timed = unsafe {
+        GetProcessTimes(
+            handle.raw(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    } != 0;
+    timed.then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+/// #483: a `SystemTime` in FILETIME ticks.
+fn filetime_ticks(time: std::time::SystemTime) -> Option<u64> {
+    // Seconds from 1601-01-01 to 1970-01-01.
+    const EPOCH_GAP_SECS: u64 = 11_644_473_600;
+    let since = time.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((since.as_secs() + EPOCH_GAP_SECS) * 10_000_000 + u64::from(since.subsec_nanos()) / 100)
+}
+
+/// #483: who a holder process is, against the lifetime that owned the
+/// profile (`lifetime_start`, the profile folder's creation, in FILETIME
+/// ticks): when it was created relative to that start (before means it
+/// cannot be this lifetime's engine; after means this lifetime started it
+/// somewhere outside the job), its ancestors (image names; a parent counts
+/// only if it is older than its child, since pids are reused), whether it
+/// runs inside any job object, and its Chromium `--type=` role. Nothing else
+/// from its command line is shown.
+fn describe_holder(pid: u32, lifetime_start: Option<u64>) -> String {
+    use windows_sys::Win32::Foundation::BOOL;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+    let name_of = |entry: &PROCESSENTRY32W| {
+        let len = entry
+            .szExeFile
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(entry.szExeFile.len());
+        String::from_utf16_lossy(&entry.szExeFile[..len])
+    };
+    let mut entries: Vec<(u32, u32, String)> = Vec::new();
+    // SAFETY: a process snapshot with documented flags, closed by the guard.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if let Some(snapshot) = crate::supervise::platform::OwnedHandle::new(snapshot) {
+        // SAFETY: zeroed PROCESSENTRY32W with dwSize set is the documented input.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        // SAFETY: valid snapshot handle and entry out-pointer.
+        let mut more = unsafe { Process32FirstW(snapshot.raw(), &mut entry) } != 0;
+        while more {
+            entries.push((
+                entry.th32ProcessID,
+                entry.th32ParentProcessID,
+                name_of(&entry),
+            ));
+            // SAFETY: as above.
+            more = unsafe { Process32NextW(snapshot.raw(), &mut entry) } != 0;
+        }
+    }
+    let created = process_created(pid);
+    let offset = created.zip(lifetime_start).map(|(created, start)| {
+        let millis = (created as i128 - start as i128) / 10_000;
+        format!("{millis:+} ms")
+    });
+    // Ancestors, nearest first, up to six; a parent must predate its child.
+    let mut ancestors = Vec::new();
+    let (mut child, mut child_created) = (pid, created);
+    for _ in 0..6 {
+        let Some(&(_, parent, _)) = entries.iter().find(|(id, _, _)| *id == child) else {
+            break;
+        };
+        let Some((_, _, name)) = entries.iter().find(|(id, _, _)| *id == parent) else {
+            // An orphan (likely after a killed browser): the parent has
+            // exited, but its pid still says who started the holder.
+            ancestors.push(format!("<exited>({parent})"));
+            break;
+        };
+        let parent_created = process_created(parent);
+        if let (Some(parent_at), Some(child_at)) = (parent_created, child_created) {
+            if parent_at > child_at {
+                break;
+            }
+        }
+        ancestors.push(format!("{name}({parent})"));
+        child = parent;
+        child_created = parent_created;
+    }
+    let role = crate::worker_process::inspect(pid)
+        .ok()
+        .flatten()
+        .and_then(|process| {
+            process
+                .argv
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--type=").map(str::to_owned))
+        });
+    // SAFETY: plain open with query-only rights, closed by the guard.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let in_job = crate::supervise::platform::OwnedHandle::new(handle).and_then(|handle| {
+        let mut in_job: BOOL = 0;
+        // SAFETY: valid handle; a null job asks about any job.
+        (unsafe { IsProcessInJob(handle.raw(), 0, &mut in_job) } != 0).then_some(in_job != 0)
+    });
+    format!(
+        "created {offset:?} relative to the lifetime's start, ancestors {ancestors:?}, in a job: {in_job:?}, role: {role:?}"
+    )
+}
+
+/// #483: every file and folder under `root` (the folders first), at most
+/// `limit`.
+fn profile_entries(root: &Path, limit: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            if out.len() >= limit {
+                return out;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path.clone());
+            }
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// #483: whether `path` (a file or a folder) can be opened for deletion
+/// while sharing everything; another handle without delete sharing makes
+/// this fail. Nothing is deleted.
+fn openable_for_delete(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const DELETE: u32 = 0x0001_0000;
+    const SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    std::fs::OpenOptions::new()
+        .access_mode(DELETE)
+        .share_mode(SHARE_ALL)
+        .custom_flags(BACKUP_SEMANTICS)
+        .open(path)
+        .is_ok()
+}
+
+/// #483: the processes Restart Manager reports as holding any of `files`
+/// open, as (pid, application name).
+fn file_holders(files: &[PathBuf]) -> Result<Vec<(u32, String)>, u32> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::RestartManager::{
+        RmEndSession, RmGetList, RmRegisterResources, RmStartSession, CCH_RM_SESSION_KEY,
+        RM_PROCESS_INFO,
+    };
+    const ERROR_MORE_DATA: u32 = 234;
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut session = 0u32;
+    let mut key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
+    // SAFETY: valid out-pointers; the key buffer has room for the key and NUL.
+    let status = unsafe { RmStartSession(&mut session, 0, key.as_mut_ptr()) };
+    if status != 0 {
+        return Err(status);
+    }
+    let wide: Vec<Vec<u16>> = files
+        .iter()
+        .map(|path| path.as_os_str().encode_wide().chain(Some(0)).collect())
+        .collect();
+    let pointers: Vec<*const u16> = wide.iter().map(|name| name.as_ptr()).collect();
+    let result = (|| {
+        // SAFETY: `pointers` holds NUL-terminated names that outlive the call.
+        let status = unsafe {
+            RmRegisterResources(
+                session,
+                pointers.len() as u32,
+                pointers.as_ptr(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        if status != 0 {
+            return Err(status);
+        }
+        let mut infos: Vec<RM_PROCESS_INFO> = Vec::new();
+        loop {
+            let mut needed = 0u32;
+            let mut count = infos.len() as u32;
+            let mut reasons = 0u32;
+            // SAFETY: `infos` has room for `count` entries.
+            let status = unsafe {
+                RmGetList(
+                    session,
+                    &mut needed,
+                    &mut count,
+                    infos.as_mut_ptr(),
+                    &mut reasons,
+                )
+            };
+            if status == ERROR_MORE_DATA && needed as usize > infos.len() && needed <= 256 {
+                // SAFETY: RM_PROCESS_INFO is plain data; zeroed is a valid value.
+                infos = vec![unsafe { std::mem::zeroed() }; needed as usize];
+                continue;
+            }
+            if status != 0 {
+                return Err(status);
+            }
+            return Ok(infos[..count as usize]
+                .iter()
+                .map(|info| {
+                    let len = info
+                        .strAppName
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(info.strAppName.len());
+                    (
+                        info.Process.dwProcessId,
+                        String::from_utf16_lossy(&info.strAppName[..len]),
+                    )
+                })
+                .collect());
+        }
+    })();
+    // SAFETY: the session was started above.
+    unsafe { RmEndSession(session) };
+    result
 }
 
 /// Child half of the host-death test: launch, publish the job pids, wait to
@@ -1319,6 +1648,9 @@ struct HttpsFixture {
     child: std::process::Child,
     spki: String,
     hits: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// #438: every request's outcome line (`HIT`, then `DONE` or `ABORT`
+    /// with milliseconds), printed only when a test fails.
+    events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl HttpsFixture {
@@ -1340,6 +1672,8 @@ impl HttpsFixture {
         let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let (ready, spki) = mpsc::channel();
         let log = hits.clone();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let outcomes = events.clone();
         std::thread::spawn(move || {
             for line in std::io::BufReader::new(stdout)
                 .lines()
@@ -1349,13 +1683,26 @@ impl HttpsFixture {
                     let _ = ready.send(value.to_owned());
                 } else if let Some(hit) = line.strip_prefix("HIT ") {
                     log.lock().expect("hits").push(hit.to_owned());
+                    outcomes.lock().expect("events").push(line);
+                } else if line.starts_with("DONE ")
+                    || line.starts_with("ABORT ")
+                    || line == "CONN"
+                    || line == "TLSOK"
+                    || line.starts_with("TLSERR ")
+                {
+                    outcomes.lock().expect("events").push(line);
                 }
             }
         });
         let spki = spki
             .recv_timeout(Duration::from_secs(30))
             .expect("the HTTPS fixture did not start");
-        Self { child, spki, hits }
+        Self {
+            child,
+            spki,
+            hits,
+            events,
+        }
     }
 
     fn hits(&self) -> Vec<String> {
@@ -1365,6 +1712,63 @@ impl HttpsFixture {
 
 impl Drop for HttpsFixture {
     fn drop(&mut self) {
+        // #438: when a test fails, the requests the fixture actually received
+        // (host, path and query: fixture values only) tell a navigation that
+        // never reached it from one whose response never came back. Read
+        // without panicking, even from a poisoned lock, while unwinding.
+        if std::thread::panicking() {
+            let hits = self
+                .hits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let shown = &hits[hits.len().saturating_sub(50)..];
+            eprintln!(
+                "SG108-DIAG fixture requests at failure ({} in all, last {}):\n{}",
+                hits.len(),
+                shown.len(),
+                shown.join("\n")
+            );
+            // A HIT with no DONE means the fixture never finished its
+            // response; a DONE means the stall came after the fixture
+            // finished writing it (delivery or the engine's load).
+            let events = self
+                .events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let shown = &events[events.len().saturating_sub(200)..];
+            eprintln!(
+                "SG108-DIAG fixture response outcomes at failure (last {}):\n{}",
+                shown.len(),
+                shown.join("\n")
+            );
+            // #438: whether the engine reached this listener at all, and who
+            // else holds the fixture's port (another listener on 127.0.0.1:443
+            // would take the engine's connections).
+            let count = |name: &str| events.iter().filter(|line| line.starts_with(name)).count();
+            eprintln!(
+                "SG108-DIAG fixture connections at failure: accepted {}, TLS done {}, TLS errors {}",
+                count("CONN"),
+                count("TLSOK"),
+                count("TLSERR")
+            );
+            if let Ok(out) = std::process::Command::new("netstat")
+                .args(["-ano", "-p", "TCP"])
+                .output()
+            {
+                let listeners: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter(|line| line.contains(":443 ") && line.contains("LISTENING"))
+                    .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+                    .collect();
+                eprintln!(
+                    "SG108-DIAG listeners on port 443 at failure (fixture pid {}):\n{}",
+                    self.child.id(),
+                    listeners.join("\n")
+                );
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -1716,6 +2120,832 @@ fn approved_download(
     (target, approval)
 }
 
+/// BR-01: a link replaced by a re-render after observation is clicked
+/// through its approved role and name, but only when exactly one element
+/// matches; a swapped name still cannot leave the approved destination.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_clicked() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("rerender");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    let named = |worker: &BrowserWorker, live: &LiveObservation, name: &str| {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no node named {name}");
+    };
+
+    // The observation must see the original list: if the page had already
+    // re-rendered, its refs would still be valid and nothing here would
+    // exercise the fallback.
+    let observed_first = |fixture: &HttpsFixture, signal: &str| {
+        assert!(
+            !fixture
+                .hits()
+                .iter()
+                .any(|hit| hit.contains(&format!("/signal/{signal}?"))),
+            "the page re-rendered before the observation"
+        );
+    };
+
+    // The same link, re-rendered as a new element: the click follows it.
+    let loaded = epoch_ms();
+    worker
+        .navigate("https://fixture.test/archive-rerender")
+        .expect("rerender");
+    let live = worker.observe(&scope).expect("observe rerender");
+    observed_first(&fixture, "rerendered");
+    let node = named(&worker, &live, "Annual review 2026-09-30");
+    pump_until_signal(&mut worker, &fixture, "rerendered", loaded);
+    let (target, mut approval) = approved_click(&worker, &live, &node);
+    let opened = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect("a re-rendered link is still the approved link");
+    assert_eq!(opened.url, "https://fixture.test/archive/2026-09-30");
+
+    // The names swapped: the element with the approved name now points
+    // elsewhere, and the host refuses that destination.
+    let loaded = epoch_ms();
+    worker
+        .navigate("https://fixture.test/archive-rerender-swap")
+        .expect("swap");
+    let live = worker.observe(&scope).expect("observe swap");
+    observed_first(&fixture, "rerendered-swap");
+    let node = named(&worker, &live, "Annual review 2026-06-30");
+    pump_until_signal(&mut worker, &fixture, "rerendered-swap", loaded);
+    let served = fixture.hits().len();
+    let (target, mut approval) = approved_click(&worker, &live, &node);
+    let refused = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect_err("a swapped name left the approved destination");
+    // The fallback found the element now named as approved; the host's
+    // destination check refused the document it requested.
+    assert!(matches!(refused, HostError::Invalid(_)), "{refused:?}");
+    pump(&mut worker, Duration::from_millis(500));
+    assert!(
+        !fixture.hits()[served..]
+            .iter()
+            .any(|hit| hit.contains("/archive/2026-09-30")),
+        "the other destination was never served"
+    );
+
+    // Two elements now carry the approved name: stale, nothing clicked.
+    let loaded = epoch_ms();
+    worker
+        .navigate("https://fixture.test/archive-rerender-twins")
+        .expect("twins");
+    let live = worker.observe(&scope).expect("observe twins");
+    observed_first(&fixture, "rerendered-twins");
+    let node = named(&worker, &live, "Annual review 2026-09-30");
+    pump_until_signal(&mut worker, &fixture, "rerendered-twins", loaded);
+    let before = fixture.hits().len();
+    let (target, mut approval) = approved_click(&worker, &live, &node);
+    let refused = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect_err("two matches are stale");
+    assert!(
+        matches!(
+            refused,
+            HostError::Unavailable(UnavailableReason::TargetStale)
+        ),
+        "{refused:?}"
+    );
+    pump(&mut worker, Duration::from_millis(500));
+    assert!(
+        !fixture.hits()[before..]
+            .iter()
+            .any(|hit| hit.contains("/archive/2026-09-30")),
+        "nothing was clicked"
+    );
+}
+
+/// BR-05: a confirmation a page asks for is dismissed without approval (the
+/// action it guards does not happen), and the host reports it once.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br05_a_dialog_is_dismissed_and_reported() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("dialog");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/dialog-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut button = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "button" && h.name == "Delete")
+        {
+            button = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let button = button.expect("the Delete button is observed");
+    assert!(worker
+        .take_dismissed_dialogs()
+        .expect("dialogs")
+        .dialogs
+        .is_empty());
+    let input = crate::actuation::FormInput::Press {
+        key: "Enter".into(),
+    };
+    let (target, mut approval) = approved_form(&worker, &live, &button, "button", &input);
+    worker
+        .form_action(&target, &mut approval, &input, None, 1, "workspace")
+        .expect("press");
+    assert!(worker
+        .wait_for_text("kept", true, Duration::from_secs(3))
+        .expect("wait"));
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert_eq!(seen.dialogs[0].kind, DialogKind::Confirm);
+    assert_eq!(seen.dialogs[0].message.untrusted(), "Delete this item?");
+    assert_eq!(
+        seen.dialogs[0].url.untrusted(),
+        "https://fixture.test/dialog-page"
+    );
+    assert!(!seen.dialogs[0].accepted);
+    assert!(!seen.truncated);
+    assert!(
+        worker
+            .take_dismissed_dialogs()
+            .expect("dialogs")
+            .dialogs
+            .is_empty(),
+        "reported once"
+    );
+
+    // The confirm learned above, approved: the same press now answers yes.
+    let confirm = "Delete this item?";
+    let target = crate::actuation::ActuationTarget {
+        state: worker
+            .form_binding(&button, &input, Some(confirm))
+            .unwrap_or_default(),
+        ..target
+    };
+    let mut approval = crate::actuation::ApprovalToken {
+        approval_id: "approval-confirm".into(),
+        target_digest: crate::actuation::target_digest(&target),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+        consumed: false,
+    };
+    // An approval for one confirm text does not cover another.
+    let refused = worker.form_action(
+        &target,
+        &mut approval,
+        &input,
+        Some("Delete everything?"),
+        1,
+        "workspace",
+    );
+    assert!(matches!(refused, Err(HostError::Invalid(_))), "{refused:?}");
+    assert!(!approval.consumed);
+    worker
+        .form_action(
+            &target,
+            &mut approval,
+            &input,
+            Some(confirm),
+            1,
+            "workspace",
+        )
+        .expect("press with the approved confirm");
+    assert!(worker
+        .wait_for_text("deleted", true, Duration::from_secs(3))
+        .expect("wait"));
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert!(seen.dialogs[0].accepted);
+}
+
+/// BR-05: a page that asks before it is left (beforeunload) does not stop
+/// an approved link activation; the question is reported as accepted.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br05_beforeunload_does_not_cancel_an_approved_activation() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("leave");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/leave-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut link = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "link" && h.name == "Annual review 2026-09-30")
+        {
+            link = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let link = link.expect("the link is observed");
+    let (target, mut approval) = approved_click(&worker, &live, &link);
+    let opened = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect("the approved activation leaves the page");
+    assert_eq!(opened.url, "https://fixture.test/archive/2026-09-30");
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    // Exactly the one question the page asked, answered yes: the test fails
+    // if no beforeunload fired (it would then prove nothing).
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert_eq!(seen.dialogs[0].kind, DialogKind::BeforeUnload);
+    assert!(seen.dialogs[0].accepted);
+}
+
+/// BR-03: a file staged from an approved folder is set on the approved file
+/// input, byte for byte; an approval names the origin and the file, so it
+/// covers no other file, and a text field is not a file input.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br03_an_approved_upload_sets_exactly_the_staged_file() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("upload");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    let folder = temp_profile("upload-source");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("report.txt"), b"orcel-upload-bytes").unwrap();
+    std::fs::write(folder.join("other.txt"), b"other-bytes").unwrap();
+    worker
+        .navigate("https://fixture.test/upload-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let named = |role: &str, name: &str| {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.role == role && h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no {role} named {name}");
+    };
+    let input = named("button", "Attachment");
+    let notes = named("textbox", "Notes");
+    let bound = BrowserWorker::approved_folder_identity(&folder).expect("folder identity");
+    let staged = worker
+        .stage_upload(&folder, &bound, "report.txt")
+        .expect("stage");
+    let other = worker
+        .stage_upload(&folder, &bound, "other.txt")
+        .expect("stage");
+    // The held copy cannot be replaced while the lifetime lasts.
+    assert!(std::fs::write(&staged.path, b"swapped").is_err());
+    assert_eq!(staged.sha256, sha256_hex(b"orcel-upload-bytes"));
+    let approve = |worker: &BrowserWorker, node: &str, role: &str, staged_id: &str| {
+        let target = crate::actuation::ActuationTarget {
+            page_id: live.page.page_id.clone(),
+            origin: live.page.origin.clone(),
+            document_generation: live.document.document_generation,
+            node_id: node.to_owned(),
+            role: role.into(),
+            state: worker.upload_binding(node, staged_id).unwrap_or_default(),
+            action: crate::actuation::SupportedAction::Upload,
+            workspace: "workspace".into(),
+            policy_revision: 1,
+        };
+        let approval = crate::actuation::ApprovalToken {
+            approval_id: "approval-upload".into(),
+            target_digest: crate::actuation::target_digest(&target),
+            workspace: "workspace".into(),
+            policy_revision: 1,
+            consumed: false,
+        };
+        (target, approval)
+    };
+    // An approval for report.txt does not cover other.txt.
+    let (target, mut approval) = approve(&worker, &input, "button", &staged.staged_id);
+    let refused = worker.upload(&target, &mut approval, &other.staged_id, 1, "workspace");
+    assert!(matches!(refused, Err(HostError::Invalid(_))), "{refused:?}");
+    assert!(!approval.consumed);
+    // A text field is not a file input.
+    assert!(worker.upload_binding(&notes, &staged.staged_id).is_err());
+    // The approved file reaches the page byte for byte.
+    worker
+        .upload(&target, &mut approval, &staged.staged_id, 1, "workspace")
+        .expect("upload");
+    assert!(approval.consumed);
+    assert!(worker
+        .wait_for_text(
+            "got report.txt orcel-upload-bytes",
+            true,
+            Duration::from_secs(3)
+        )
+        .expect("wait"));
+    drop(worker);
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// BR-06: content inside same-origin frames, nested too, is observed with
+/// frame-scoped refs; a frame on an origin the lifetime does not admit is
+/// never loaded, so nothing from it is observed.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br06_admitted_frames_are_observed_and_foreign_frames_are_not() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("frames");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/frames")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut named = Vec::new();
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    while let Some(node) = stack.pop() {
+        if let Some(host) = worker.host_node(&node.node_id) {
+            named.push((host.role.clone(), host.name.clone(), host.reference.clone()));
+        }
+        stack.extend(node.children.iter());
+    }
+    let inner = named
+        .iter()
+        .find(|(role, name, _)| role == "link" && name == "Inner report")
+        .unwrap_or_else(|| panic!("the nested frame's link is observed: {named:?}"));
+    assert!(
+        inner.2.starts_with('f'),
+        "a frame element has a frame-scoped ref: {}",
+        inner.2
+    );
+    assert!(
+        !named.iter().any(|(_, name, _)| name == "Foreign link"),
+        "nothing from the foreign frame is observed"
+    );
+    assert!(
+        !fixture
+            .hits()
+            .iter()
+            .any(|hit| hit.contains("frame-foreign")),
+        "the foreign frame was never requested"
+    );
+}
+
+/// BR-04: a link covered by an overlay is not clicked; the refusal is typed
+/// (observe again) and the link's document is never requested.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br04_a_covered_link_is_not_clicked_and_the_refusal_is_typed() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("occluded");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/occluded")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut link = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "link" && h.name == "Annual review 2026-09-30")
+        {
+            link = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let link = link.expect("the covered link is observed");
+    let served = fixture.hits().len();
+    let (target, mut approval) = approved_click(&worker, &live, &link);
+    let refused = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect_err("a covered link is not clicked");
+    assert!(
+        matches!(
+            refused,
+            HostError::Unavailable(UnavailableReason::TargetOccluded)
+        ),
+        "{refused:?}"
+    );
+    pump(&mut worker, Duration::from_millis(500));
+    assert!(
+        !fixture.hits()[served..]
+            .iter()
+            .any(|hit| hit.contains("/archive/2026-09-30")),
+        "the covered link's document was never requested"
+    );
+}
+
+/// A form-action approval (BR-02): it names the node and the exact input.
+fn approved_form(
+    worker: &BrowserWorker,
+    live: &LiveObservation,
+    node_id: &str,
+    role: &str,
+    input: &crate::actuation::FormInput,
+) -> (
+    crate::actuation::ActuationTarget,
+    crate::actuation::ApprovalToken,
+) {
+    let target = crate::actuation::ActuationTarget {
+        page_id: live.page.page_id.clone(),
+        origin: live.page.origin.clone(),
+        document_generation: live.document.document_generation,
+        node_id: node_id.to_owned(),
+        role: role.into(),
+        state: worker
+            .form_binding(node_id, input, None)
+            .unwrap_or_default(),
+        action: input.action(),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+    };
+    let approval = crate::actuation::ApprovalToken {
+        approval_id: "approval-form".into(),
+        target_digest: crate::actuation::target_digest(&target),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+        consumed: false,
+    };
+    (target, approval)
+}
+
+/// BR-02: approved fill, select and check change exactly the approved
+/// controls to exactly the approved input, and BR-07 verifies it; a
+/// password is never filled, and an approval for another value is refused.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br02_approved_form_actions_change_only_what_was_approved() {
+    use crate::actuation::FormInput;
+    use crate::verify::Postcondition;
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("form");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/form-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let named = |role: &str, name: &str| {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.role == role && h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no {role} named {name}");
+    };
+    let full_name = named("textbox", "Full name");
+    let city = named("combobox", "City");
+    let terms = named("checkbox", "Accept terms");
+    let password = named("textbox", "Password");
+    let search = named("searchbox", "Search");
+    let menu = named("link", "Menu");
+
+    fn act(
+        worker: &mut BrowserWorker,
+        live: &LiveObservation,
+        node: &str,
+        role: &str,
+        input: FormInput,
+    ) -> Result<crate::worker_launch::FormOutcome, HostError> {
+        let (target, mut approval) = approved_form(worker, live, node, role, &input);
+        worker.form_action(&target, &mut approval, &input, None, 1, "workspace")
+    }
+    let filled = act(
+        &mut worker,
+        &live,
+        &full_name,
+        "textbox",
+        FormInput::Fill {
+            value: "Ada Lovelace".into(),
+        },
+    );
+    assert_eq!(filled.expect("fill").url, "https://fixture.test/form-page");
+    act(
+        &mut worker,
+        &live,
+        &city,
+        "combobox",
+        FormInput::Select {
+            labels: vec!["Porto".into()],
+        },
+    )
+    .expect("select");
+    act(
+        &mut worker,
+        &live,
+        &terms,
+        "checkbox",
+        FormInput::Check { checked: true },
+    )
+    .expect("check");
+
+    // A password is never filled, even when approved.
+    let refused = act(
+        &mut worker,
+        &live,
+        &password,
+        "textbox",
+        FormInput::Fill {
+            value: "hunter2".into(),
+        },
+    );
+    assert!(matches!(refused, Err(HostError::Invalid(_))), "{refused:?}");
+
+    // An approval for one value does not cover another.
+    let approved = FormInput::Fill {
+        value: "Ada".into(),
+    };
+    let (target, mut approval) = approved_form(&worker, &live, &full_name, "textbox", &approved);
+    let other = FormInput::Fill {
+        value: "Eve".into(),
+    };
+    let mismatch = worker.form_action(&target, &mut approval, &other, None, 1, "workspace");
+    assert!(
+        matches!(mismatch, Err(HostError::Invalid(_))),
+        "{mismatch:?}"
+    );
+    assert!(!approval.consumed, "a refused approval is not spent");
+
+    // The approved values are what the page now holds (BR-07).
+    let report = worker
+        .verify_postconditions(&[
+            Postcondition::ValueEquals {
+                node_id: full_name.clone(),
+                value: "Ada Lovelace".into(),
+            },
+            Postcondition::ValueEquals {
+                node_id: city,
+                value: "Porto".into(),
+            },
+            Postcondition::Checked {
+                node_id: terms,
+                checked: true,
+            },
+        ])
+        .expect("verify");
+    assert!(report.verified, "{report:?}");
+
+    // Press and hover act on the approved element; a bounded wait sees the
+    // page's response. Enter in the search box navigates nowhere.
+    assert!(!worker
+        .wait_for_text("Searched", true, Duration::from_millis(200))
+        .expect("wait"));
+    act(
+        &mut worker,
+        &live,
+        &search,
+        "searchbox",
+        FormInput::Press {
+            key: "Enter".into(),
+        },
+    )
+    .expect("press");
+    assert!(worker
+        .wait_for_text("Searched", true, Duration::from_secs(3))
+        .expect("wait"));
+    act(&mut worker, &live, &menu, "link", FormInput::Hover).expect("hover");
+    assert!(worker
+        .wait_for_text("Menu open", true, Duration::from_secs(3))
+        .expect("wait"));
+    // No key is typed into a secret field.
+    let typed = act(
+        &mut worker,
+        &live,
+        &password,
+        "textbox",
+        FormInput::Press {
+            key: "Space".into(),
+        },
+    );
+    assert!(matches!(typed, Err(HostError::Invalid(_))), "{typed:?}");
+}
+
+/// BR-07: postconditions are checked by the host from read-only probes of
+/// the committed page: visible elements and text pass, hidden text fails,
+/// a field's value is compared in the host, a password is never read, and
+/// URL and download checks use the host's own facts.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br07_postconditions_are_verified_with_evidence_and_hidden_text_fails() {
+    use crate::verify::Postcondition;
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("verify");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/verify-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let named = |role: &str, name: &str| {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.role == role && h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no {role} named {name}");
+    };
+    let heading = named("heading", "Order confirmed");
+    let email = named("textbox", "Email");
+    let password = named("textbox", "Password");
+    let subscribe = named("checkbox", "Subscribe");
+    // A non-field inside a label whose control is a password: Playwright's
+    // value read would follow the label, so the worker reads nothing.
+    let pin_entry = named("textbox", "PIN entry");
+    let served = fixture.hits().len();
+    let checks = [
+        Postcondition::ElementVisible { node_id: heading },
+        Postcondition::TextVisible {
+            text: "Thank you for your order".into(),
+        },
+        Postcondition::TextVisible {
+            text: "Refund issued".into(),
+        },
+        Postcondition::ValueEquals {
+            node_id: email.clone(),
+            value: "ada@example.test".into(),
+        },
+        Postcondition::ValueEquals {
+            node_id: email,
+            value: "someone-else@example.test".into(),
+        },
+        Postcondition::ValueEquals {
+            node_id: password,
+            value: "hunter2".into(),
+        },
+        Postcondition::Checked {
+            node_id: subscribe,
+            checked: true,
+        },
+        Postcondition::UrlIs {
+            url: "https://fixture.test/verify-page".into(),
+        },
+        Postcondition::TextVisible {
+            text: "Shipped to Lisbon".into(),
+        },
+        Postcondition::ValueEquals {
+            node_id: pin_entry,
+            value: "1234".into(),
+        },
+        Postcondition::DownloadSha256 {
+            sha256: "0".repeat(64),
+        },
+    ];
+    let report = worker.verify_postconditions(&checks).expect("verify");
+    let outcome: Vec<(bool, &str)> = report
+        .results
+        .iter()
+        .map(|r| (r.passed, r.evidence.as_str()))
+        .collect();
+    assert_eq!(
+        outcome,
+        [
+            (true, "visible matches: 1"),
+            (true, "visible matches: 1"),
+            (false, "visible matches: 0"),
+            (true, "value matches"),
+            (false, "value differs"),
+            (false, "unavailable: secret"),
+            (true, "checked: true"),
+            (true, "committed URL matches"),
+            (true, "visible matches: 1"),
+            (false, "unavailable: not_a_field"),
+            (false, "no download to check"),
+        ]
+    );
+    assert!(!report.verified, "one failed check fails the verification");
+    assert_eq!(report.url, "https://fixture.test/verify-page");
+    // No value reaches the report (the digest is hex, so only the evidence
+    // and the URL are text).
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(!json.contains("ada@example.test") && !json.contains("hunter2"));
+    assert!(report
+        .results
+        .iter()
+        .all(|r| !r.evidence.contains("1234") && !r.evidence.contains("example.test")));
+    // Only the passing checks: verified, with a digest to reference.
+    let passing: Vec<Postcondition> = [0, 1, 3, 6, 7, 8]
+        .iter()
+        .map(|&i| checks[i].clone())
+        .collect();
+    let report = worker
+        .verify_postconditions(&passing)
+        .expect("verify passing");
+    assert!(report.verified, "{report:?}");
+    assert_eq!(report.evidence_sha256.len(), 64);
+    // Probes are read-only: nothing was requested from the site.
+    pump(&mut worker, Duration::from_millis(300));
+    assert_eq!(
+        fixture.hits().len(),
+        served,
+        "verification requested nothing"
+    );
+}
+
 #[test]
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn an_approved_activation_follows_the_latest_dated_link_and_nothing_else() {
@@ -1914,6 +3144,8 @@ fn a_crawl_reads_only_its_scope_through_the_governed_navigation() {
         max_depth: 2,
         include_paths: Vec::new(),
         exclude_paths: vec!["/site/private".into()],
+        pattern_kind: Default::default(),
+        search: None,
         extract: Some(crate::extraction::ExtractOptions::default()),
         robots: true,
         sitemaps: true,
@@ -3538,4 +4770,456 @@ fn a_folder_the_user_owns_stays_changeable_when_it_denies_writes() {
     } else {
         println!("SG108-EVIDENCE node folder check: elevated token, System32 changeable; self-denied own folder changeable");
     }
+}
+
+/// One benchmark task's steps, or why it failed.
+type BrowserTask =
+    fn(&mut BrowserWorker, &crate::observation::ObservationScope) -> Result<u64, String>;
+
+fn bench_named(
+    worker: &BrowserWorker,
+    live: &LiveObservation,
+    role: &str,
+    name: &str,
+) -> Result<String, String> {
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == role && h.name == name)
+        {
+            return Ok(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    Err(format!("no {role} named {name}"))
+}
+
+fn bench_form_action(
+    worker: &mut BrowserWorker,
+    live: &LiveObservation,
+    node: &str,
+    role: &str,
+    input: crate::actuation::FormInput,
+) -> Result<(), String> {
+    let (target, mut approval) = approved_form(worker, live, node, role, &input);
+    worker
+        .form_action(&target, &mut approval, &input, None, 1, "workspace")
+        .map(|_| ())
+        .map_err(|error| format!("{error:?}"))
+}
+
+fn bench_observe(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+    url: &str,
+) -> Result<LiveObservation, String> {
+    worker
+        .navigate(url)
+        .map_err(|error| format!("navigate: {error:?}"))?;
+    worker
+        .observe(scope)
+        .map_err(|error| format!("observe: {error:?}"))
+}
+
+/// Fill, select and check, then the host's own postconditions over the page.
+fn bench_form(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    use crate::actuation::FormInput;
+    use crate::verify::Postcondition;
+    let live = bench_observe(worker, scope, "https://fixture.test/form-page")?;
+    let name = bench_named(worker, &live, "textbox", "Full name")?;
+    let city = bench_named(worker, &live, "combobox", "City")?;
+    let terms = bench_named(worker, &live, "checkbox", "Accept terms")?;
+    let value = "Ada Lovelace".to_owned();
+    let fill = FormInput::Fill {
+        value: value.clone(),
+    };
+    bench_form_action(worker, &live, &name, "textbox", fill)?;
+    let select = FormInput::Select {
+        labels: vec!["Porto".into()],
+    };
+    bench_form_action(worker, &live, &city, "combobox", select)?;
+    let check = FormInput::Check { checked: true };
+    bench_form_action(worker, &live, &terms, "checkbox", check)?;
+    let report = worker
+        .verify_postconditions(&[
+            Postcondition::ValueEquals {
+                node_id: name,
+                value,
+            },
+            Postcondition::ValueEquals {
+                node_id: city,
+                value: "Porto".into(),
+            },
+            Postcondition::Checked {
+                node_id: terms,
+                checked: true,
+            },
+        ])
+        .map_err(|error| format!("verify: {error:?}"))?;
+    if !report.verified {
+        return Err("the page doesn't hold the approved values".into());
+    }
+    Ok(5)
+}
+
+/// A confirm dialog is dismissed and reported, and the page keeps its item.
+fn bench_dialog(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    let live = bench_observe(worker, scope, "https://fixture.test/dialog-page")?;
+    let button = bench_named(worker, &live, "button", "Delete")?;
+    let press = crate::actuation::FormInput::Press {
+        key: "Enter".into(),
+    };
+    bench_form_action(worker, &live, &button, "button", press)?;
+    let kept = worker
+        .wait_for_text("kept", true, Duration::from_secs(10))
+        .map_err(|error| format!("wait: {error:?}"))?;
+    let seen = worker
+        .take_dismissed_dialogs()
+        .map_err(|error| format!("dialogs: {error:?}"))?;
+    if !kept || seen.dialogs.len() != 1 || seen.dialogs[0].accepted {
+        return Err("the dialog wasn't dismissed and reported".into());
+    }
+    Ok(3)
+}
+
+/// A staged file reaches the page byte for byte, as the page itself reports.
+fn bench_upload(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    let folder = temp_profile("bench-upload-source");
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    std::fs::write(folder.join("report.txt"), b"orcel-upload-bytes")
+        .map_err(|error| error.to_string())?;
+    let live = bench_observe(worker, scope, "https://fixture.test/upload-page")?;
+    let input = bench_named(worker, &live, "button", "Attachment")?;
+    let bound = BrowserWorker::approved_folder_identity(&folder)
+        .map_err(|error| format!("folder: {error:?}"))?;
+    let staged = worker
+        .stage_upload(&folder, &bound, "report.txt")
+        .map_err(|error| format!("stage: {error:?}"))?;
+    let target = crate::actuation::ActuationTarget {
+        page_id: live.page.page_id.clone(),
+        origin: live.page.origin.clone(),
+        document_generation: live.document.document_generation,
+        node_id: input.clone(),
+        role: "button".into(),
+        state: worker
+            .upload_binding(&input, &staged.staged_id)
+            .map_err(|error| format!("binding: {error:?}"))?,
+        action: crate::actuation::SupportedAction::Upload,
+        workspace: "workspace".into(),
+        policy_revision: 1,
+    };
+    let mut approval = crate::actuation::ApprovalToken {
+        approval_id: "approval-upload".into(),
+        target_digest: crate::actuation::target_digest(&target),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+        consumed: false,
+    };
+    worker
+        .upload(&target, &mut approval, &staged.staged_id, 1, "workspace")
+        .map_err(|error| format!("upload: {error:?}"))?;
+    let got = worker
+        .wait_for_text(
+            "got report.txt orcel-upload-bytes",
+            true,
+            Duration::from_secs(10),
+        )
+        .map_err(|error| format!("wait: {error:?}"))?;
+    if !got {
+        return Err("the page didn't receive the file".into());
+    }
+    Ok(4)
+}
+
+/// The latest report is downloaded create-only. The host hashes the committed file
+/// itself and checks the fixture's own marker in it.
+fn bench_download(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    let approved = temp_profile("bench-approved-folder");
+    let live = bench_observe(worker, scope, "https://fixture.test/reports")?;
+    let latest = worker
+        .select_latest_dated_link()
+        .map_err(|error| format!("select: {error:?}"))?;
+    let (target, mut approval) =
+        approved_download(worker, &live, &latest, &approved, "reports/latest.pdf");
+    let committed = worker
+        .download(
+            &target,
+            &mut approval,
+            1,
+            "workspace",
+            &approved,
+            "reports/latest.pdf",
+        )
+        .map_err(|error| format!("download: {error:?}"))?;
+    let on_disk = std::fs::read(&committed.path).map_err(|error| error.to_string())?;
+    let marked = on_disk
+        .windows(b"/reports/2026-09-30.pdf".len())
+        .any(|window| window == b"/reports/2026-09-30.pdf");
+    if !marked || sha256_hex(&on_disk) != committed.sha256 {
+        return Err("the committed file isn't the expected bytes".into());
+    }
+    Ok(3)
+}
+
+/// M-WI-01: the fixture site, its robots and sitemap honoured, as the crawl test sets
+/// out. The answer is the pages visited, of which [`BENCH_CRAWL_READ`] are read; the
+/// others fail or are refused by design. A timeout anywhere counts as this benchmark's
+/// timeouts do, and a wrong set of pages or a page with the wrong outcome fails the run.
+fn bench_crawl(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    use crate::crawl::CrawlSpec;
+    use std::sync::atomic::AtomicBool;
+    let crawl_spec = CrawlSpec {
+        start_url: "https://fixture.test/site/".into(),
+        max_pages: 20,
+        max_depth: 2,
+        include_paths: Vec::new(),
+        exclude_paths: vec!["/site/private".into()],
+        pattern_kind: Default::default(),
+        search: None,
+        extract: Some(crate::extraction::ExtractOptions::default()),
+        robots: true,
+        sitemaps: true,
+        deadline: Duration::from_secs(120),
+    };
+    let report = match worker.crawl_site(&crawl_spec, scope, &AtomicBool::new(false)) {
+        Ok(report) => report,
+        Err(HostError::Unavailable(UnavailableReason::TimedOut)) => {
+            return Err("TimedOut".into());
+        }
+        Err(error) => return Err(format!("{error:?}")),
+    };
+    // A timed-out page comes back in the report, not as an error from the crawl.
+    let timed_out = HostError::Unavailable(UnavailableReason::TimedOut).to_string();
+    if report.stopped == Some(crate::crawl::CrawlStop::Deadline)
+        || report
+            .pages
+            .iter()
+            .any(|page| page.failure.as_deref() == Some(timed_out.as_str()))
+    {
+        return Err("TimedOut".into());
+    }
+    let urls: Vec<&str> = report.pages.iter().map(|page| page.url.as_str()).collect();
+    if report.stopped.is_some() || urls != BENCH_CRAWL_PAGES {
+        return Err(format!("stopped {:?}, opened {urls:?}", report.stopped));
+    }
+    for page in &report.pages {
+        let read = BENCH_CRAWL_READ.contains(&page.url.as_str());
+        let outcome = (page.failure.is_none(), page.extraction.is_some());
+        let right = if read {
+            outcome == (true, true)
+        } else if page.url.ends_with("/missing") {
+            page.status == 404 && !outcome.1
+        } else {
+            !outcome.0 && !outcome.1
+        };
+        if !right {
+            return Err(format!(
+                "{}: status {}, failure {:?}, read {}",
+                page.url, page.status, page.failure, outcome.1
+            ));
+        }
+    }
+    Ok(urls.len() as u64)
+}
+
+/// Of those pages, the ones whose text is read.
+const BENCH_CRAWL_READ: [&str; 6] = [
+    "https://fixture.test/site/",
+    "https://fixture.test/site/only-in-sitemap",
+    "https://fixture.test/site/a",
+    "https://fixture.test/site/b",
+    "https://fixture.test/site/moved",
+    "https://fixture.test/site/deep/1",
+];
+
+/// What the fixture site's crawl visits, in order: the sitemap's page, but not the
+/// excluded or robots-disallowed ones.
+const BENCH_CRAWL_PAGES: [&str; 10] = [
+    "https://fixture.test/site/",
+    "https://fixture.test/site/only-in-sitemap",
+    "https://fixture.test/site/a",
+    "https://fixture.test/site/b",
+    "https://fixture.test/site/moved",
+    "https://fixture.test/site/away",
+    "https://fixture.test/site/missing",
+    "https://fixture.test/site/dl",
+    "https://fixture.test/site/c",
+    "https://fixture.test/site/deep/1",
+];
+
+/// An approval from before a navigation is refused, and it isn't spent (M-BR-02).
+fn bench_stale_target(
+    worker: &mut BrowserWorker,
+    scope: &crate::observation::ObservationScope,
+) -> Result<u64, String> {
+    use crate::actuation::FormInput;
+    let old = bench_observe(worker, scope, "https://fixture.test/form-page")?;
+    let name = bench_named(worker, &old, "textbox", "Full name")?;
+    let fill = FormInput::Fill {
+        value: "Ada".into(),
+    };
+    let (target, mut approval) = approved_form(worker, &old, &name, "textbox", &fill);
+    bench_observe(worker, scope, "https://fixture.test/form-page")?;
+    let refused = worker.form_action(&target, &mut approval, &fill, None, 1, "workspace");
+    if approval.consumed {
+        return Err("a stale approval was spent".into());
+    }
+    match refused {
+        Err(HostError::Unavailable(UnavailableReason::TargetStale)) => Ok(3),
+        Err(HostError::Invalid(message)) if message.contains("stale") => Ok(3),
+        Err(HostError::Unavailable(UnavailableReason::TimedOut)) => Err("TimedOut".into()),
+        other => Err(format!("not a stale refusal: {other:?}")),
+    }
+}
+
+/// M-BR-01, M-BR-02 and M-WI-01 on the controlled site, with a scripted plan through the real
+/// host, worker and engine, and host-side oracles: **a scripted plan, not a planner
+/// or a model.** A timeout in one run, including a failed launch, is recorded rather
+/// than ending the benchmark, since #438 is open and its rate is part of what's
+/// measured. Any other failure fails the test, and so does a case with no passing
+/// run, which a real hang would be. The report is written either way. Tabs aren't
+/// covered: they wait for SG-000122. M-BR-04: each row's `commit_mb_peak` is the most
+/// memory the worker's job had committed across its passing runs, which is the worker
+/// and the engine. The host isn't in it: here that's this test process, not `orceld`.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn bm_browser_tasks_on_the_controlled_site() {
+    const REPETITIONS: usize = 3;
+    let tasks: [(&str, BrowserTask); 6] = [
+        ("controlled-site/form/fill-select-check", bench_form),
+        ("controlled-site/dialog/dismissed", bench_dialog),
+        ("controlled-site/upload/staged-file", bench_upload),
+        ("controlled-site/download/create-only", bench_download),
+        ("controlled-site/stale/refused", bench_stale_target),
+        // M-WI-01: steps is pages visited and the latency is the whole crawl.
+        ("controlled-site/crawl/site", bench_crawl),
+    ];
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    let mut rows = Vec::new();
+    let mut other_failures = Vec::new();
+    for (case, task) in tasks {
+        let mut times = Vec::new();
+        let mut steps = 0;
+        let mut timeouts = 0;
+        let mut failed = 0;
+        let mut commit_peak = 0;
+        for repetition in 0..REPETITIONS {
+            // A new fixture and lifetime for each run, so no run inherits a page.
+            let fixture = HttpsFixture::start();
+            let profile = temp_profile("bench");
+            let mut launch = spec(&profile, true);
+            launch.destinations =
+                vec![
+                    AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                        .expect("fixture.test"),
+                ];
+            launch.test_trusted_spki = Some(fixture.spki.clone());
+            let mut worker = match launch_worker(&launch, &Policy(PolicyKeyState::Absent)) {
+                Ok(worker) => worker,
+                Err(error) => {
+                    timeouts += 1;
+                    println!("BM-BROWSER {case} run {repetition}: launch failed: {error:?}");
+                    continue;
+                }
+            };
+            let started = Instant::now();
+            match task(&mut worker, &scope) {
+                Ok(count) => {
+                    steps = count;
+                    times.push(started.elapsed().as_secs_f64() * 1000.0);
+                    match worker.process.peak_committed_bytes() {
+                        Ok(bytes) => commit_peak = commit_peak.max(bytes),
+                        Err(error) => {
+                            other_failures.push(format!("{case} run {repetition}: {error:?}"));
+                        }
+                    }
+                }
+                Err(reason) if reason.contains("TimedOut") => {
+                    timeouts += 1;
+                    println!("BM-BROWSER {case} run {repetition}: timeout");
+                }
+                Err(reason) => {
+                    failed += 1;
+                    other_failures.push(format!("{case} run {repetition}: {reason}"));
+                }
+            }
+        }
+        times.sort_by(f64::total_cmp);
+        let at = |share: f64| {
+            times
+                .get(((times.len().max(1) - 1) as f64 * share).ceil() as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
+        let passed = times.len() == REPETITIONS;
+        let observed = if passed {
+            "delivered"
+        } else if failed > 0 {
+            "failed"
+        } else {
+            "timeout"
+        };
+        println!(
+            "BM-BROWSER {case}: {}/{REPETITIONS} passed, {timeouts} timeouts, p50 {:.0} ms, p95 {:.0} ms (scripted plan, not a planner or a model)",
+            times.len(),
+            at(0.5),
+            at(0.95)
+        );
+        if times.is_empty() {
+            other_failures.push(format!("{case}: no run passed"));
+        }
+        let mut row = serde_json::json!({
+            "case": case,
+            "status": if passed { "pass" } else { "fail" },
+            "observed": observed,
+            "steps": steps,
+        });
+        if !times.is_empty() {
+            row["latency_ms"] = serde_json::json!({ "p50": at(0.5), "p95": at(0.95) });
+            // A run that worked with nothing committed means the reading is wrong.
+            if commit_peak == 0 {
+                other_failures.push(format!("{case}: the job's memory was never read"));
+            }
+            let commit_mb_peak = commit_peak as f64 / (1024.0 * 1024.0);
+            println!(
+                "BM-BROWSER {case}: worker and engine committed {commit_mb_peak:.0} MiB at peak"
+            );
+            row["commit_mb_peak"] = serde_json::json!(commit_mb_peak);
+        }
+        rows.push(row);
+    }
+    if let (Some(path), Ok(commit)) = (
+        std::env::var_os("ORCEL_BM_BROWSER_REPORT"),
+        std::env::var("ORCEL_BM02_COMMIT"),
+    ) {
+        let report = serde_json::json!({
+            "schema": "orcel-benchmark-report/1",
+            "orcel_commit": commit,
+            "suite": "browser-tasks",
+            "machine": { "os": "windows", "os_version": "hosted", "arch": "x86_64" },
+            "planner": { "kind": "deterministic", "name": "scripted-host-calls", "version": "1" },
+            "rows": rows,
+        });
+        std::fs::write(path, report.to_string() + "\n").expect("write the report");
+    }
+    assert!(other_failures.is_empty(), "{other_failures:#?}");
 }

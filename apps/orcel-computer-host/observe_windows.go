@@ -51,7 +51,7 @@ func nativeObserveWindow(req hostRequest) hostResponse {
 	if _, _, err := validateBoundWindow(req); err != nil {
 		return errorResponse(req.ID, err)
 	}
-	elements, err := observeWindowUIA(req.HWND, req.MaxNodes, req.MaxDepth)
+	elements, err := observeWindowUIA(req.HWND, req.MaxNodes, req.MaxDepth, req.ElementRuntimeID)
 	if err != nil {
 		return errorResponse(req.ID, err)
 	}

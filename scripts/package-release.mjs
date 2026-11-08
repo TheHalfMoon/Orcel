@@ -15,6 +15,7 @@
 // app's production dependencies, and writes a manifest whose paths satisfy
 // the same rules the installer enforces.
 
+import { stageMcpPayload } from "./mcp-payload.mjs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
@@ -111,71 +112,27 @@ if (!existsSync(containHelper)) {
 }
 copyFileSync(containHelper, join(out, "orcel-contain.exe"));
 writeFileSync(join(out, "orcel-contain.sha256"), `${sha256(join(out, "orcel-contain.exe"))}\n`);
+// SG-000127: the Windows app, built deterministically by build.ps1. It only starts
+// `orcel` from the install and reads the local app API.
+const appBuild = join(targetDir, "windows-app");
+execFileSync(
+  "powershell.exe",
+  [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    join(repo, "apps", "orcel-desktop-preview", "build.ps1"),
+    "-OutputDirectory",
+    appBuild,
+    "-Deterministic"
+  ],
+  { stdio: "inherit" }
+);
+copyFileSync(join(appBuild, "Orcel.Desktop.exe"), join(out, "Orcel.Desktop.exe"));
 copyFileSync(join(repo, "LICENSE"), join(out, "LICENSE"));
 
-const appSource = join(repo, "apps/orcel-mcp");
-const appOut = join(out, "app/orcel-mcp");
-mkdirSync(join(appOut, "dist"), { recursive: true });
-const pkg = JSON.parse(readFileSync(join(appSource, "package.json"), "utf8"));
-const runtimePackage = {
-  name: pkg.name,
-  version: pkg.version,
-  private: true,
-  type: pkg.type,
-  engines: pkg.engines,
-  dependencies: pkg.dependencies
-};
-writeFileSync(join(appOut, "package.json"), `${JSON.stringify(runtimePackage, null, 2)}\n`);
-const distSource = join(appSource, "dist");
-if (!existsSync(join(distSource, "index.js"))) fail("apps/orcel-mcp/dist/index.js missing; run npm run build first");
-function copyDistJs(fromDir, toDir) {
-  for (const name of readdirSync(fromDir).sort()) {
-    const source = join(fromDir, name);
-    const stat = lstatSync(source);
-    if (stat.isSymbolicLink()) fail(`MCP dist must not contain links: ${source}`);
-    if (stat.isDirectory()) {
-      copyDistJs(source, join(toDir, name));
-      continue;
-    }
-    if (!stat.isFile()) fail(`unsupported MCP dist entry: ${source}`);
-    if (!name.endsWith(".js") || name.endsWith(".test.js")) continue;
-    mkdirSync(toDir, { recursive: true });
-    copyFileSync(source, join(toDir, name));
-  }
-}
-copyDistJs(distSource, join(appOut, "dist"));
-
-// Copy exactly the locked production dependency closure from the repository's
-// node_modules (installed by `npm ci` from package-lock.json). Nothing is
-// resolved or downloaded at packaging time, so the payload matches the
-// versions and integrity hashes that CI tested.
-const lock = JSON.parse(readFileSync(join(repo, "package-lock.json"), "utf8"));
-const locked = Object.entries(lock.packages ?? {})
-  .filter(([key, entry]) => key.startsWith("node_modules/") && !entry.dev && !entry.link)
-  .map(([key, entry]) => ({ key, entry }))
-  .sort((a, b) => (a.key < b.key ? -1 : 1));
-if (locked.length === 0) fail("package-lock.json lists no production dependencies");
-function copyPackage(from, to) {
-  mkdirSync(to, { recursive: true });
-  for (const name of readdirSync(from)) {
-    if (name === "node_modules" || name === ".bin") continue;
-    const source = join(from, name);
-    const stat = lstatSync(source);
-    if (stat.isSymbolicLink()) fail(`dependency contains a link: ${source}`);
-    if (stat.isDirectory()) copyPackage(source, join(to, name));
-    else if (stat.isFile()) copyFileSync(source, join(to, name));
-  }
-}
-for (const { key, entry } of locked) {
-  const source = join(repo, ...key.split("/"));
-  const pkgPath = join(source, "package.json");
-  if (!existsSync(pkgPath)) fail(`${key} is not installed; run npm ci first`);
-  const installed = JSON.parse(readFileSync(pkgPath, "utf8"));
-  if (installed.version !== entry.version) {
-    fail(`${key} is ${installed.version} but package-lock.json pins ${entry.version}; run npm ci`);
-  }
-  copyPackage(source, join(appOut, ...key.split("/")));
-}
+stageMcpPayload(repo, out, fail);
 
 // Third-party notices are generated from the actual shipped dependency graph
 // and this payload's node_modules, and become part of the verified payload.

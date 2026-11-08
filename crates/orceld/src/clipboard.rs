@@ -120,6 +120,24 @@ fn write_with_approval(
     request: &RequestEnvelope,
     adapter: &impl ClipboardAdapter,
 ) -> Result<Value, ProviderError> {
+    write_with_approval_to(
+        crate::mutation_journal::global(),
+        workspace,
+        approval,
+        request,
+        adapter,
+    )
+}
+
+/// A clipboard placement, journaled to `sink` (SG-000120 RJ-02): never the
+/// text, only the approval digest that already binds its content digest.
+fn write_with_approval_to(
+    sink: crate::mutation_journal::Sink,
+    workspace: &Workspace,
+    approval: &impl ApprovalBroker,
+    request: &RequestEnvelope,
+    adapter: &impl ClipboardAdapter,
+) -> Result<Value, ProviderError> {
     if request.target.is_some() {
         return Err(ProviderError::new(
             FailureCode::InvalidRequest,
@@ -183,24 +201,36 @@ fn write_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    // Placement happens only after approval, and the provider revalidates
-    // bounds and secrets. Placement synthesizes no input of any kind:
-    // write != paste by construction of the adapter contract.
-    let outcome = write_bounded_text(adapter, text, &workspace.id, POLICY_REVISION)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    let mut stamped = outcome.evidence;
-    stamped["approval_record"] = Value::String(token.record_id);
-    Ok(stamped)
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, "clipboard");
+    crate::mutation_journal::journaled_with(
+        sink,
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            // Placement happens only after approval, and the provider revalidates
+            // bounds and secrets. Placement synthesizes no input of any kind:
+            // write != paste by construction of the adapter contract.
+            let outcome = write_bounded_text(adapter, text, &workspace.id, POLICY_REVISION)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            let mut stamped = outcome.evidence;
+            stamped["approval_record"] = Value::String(token.record_id);
+            Ok(stamped)
+        },
+    )
 }
 
 #[cfg(test)]
@@ -303,6 +333,35 @@ mod tests {
             request,
             adapter,
         )
+    }
+
+    #[test]
+    fn rj02_an_approved_write_is_journaled_without_its_text() {
+        let dir = std::env::temp_dir().join(format!(
+            "orceld-rj02-clipboard-{}-{}",
+            std::process::id(),
+            orcel_approval::now_ms()
+        ));
+        let path = dir.join("mutations.jsonl");
+        let journal: &'static _ = Box::leak(Box::new(
+            crate::mutation_journal::test_support::journal(path.clone(), "this"),
+        ));
+        let adapter = FakeClipboard::empty();
+        write_with_approval_to(
+            crate::mutation_journal::Sink::Journal(journal),
+            &workspace(),
+            &FixedApprovalBroker(ApprovalDecision::Approved),
+            &write_request("journal-me-not"),
+            &adapter,
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("journal-me-not"), "no clipboard text");
+        for event in ["\"pending\"", "\"dispatched\"", "\"settled\"", "\"opaque\""] {
+            assert!(text.contains(event), "{event}");
+        }
+        assert!(text.contains("\"outcome\":\"done\""));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn workspace() -> Workspace {

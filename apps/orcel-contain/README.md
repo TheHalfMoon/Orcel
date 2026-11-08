@@ -88,9 +88,9 @@ lookup and no environment override. It reads two files there:
 |---|---|---|
 | Windows | the release payload, beside `orceld.exe`; both files are in `manifest.json`, so the installer verifies them | `scripts/package-release.mjs` (`--contain-target-dir`) in `build-package-qualify`, and checked by `release_qualification` and the reproducibility check |
 | Linux | `/usr/lib/orcel/` from the deb or rpm (root-owned, 0755 and 0644), or `~/.local/share/orcel/bin/` from the tarball | `distribution/linux/package.sh <version> <orceld> <orcel-contain> <out>` and `nfpm.yaml` |
-| macOS | not packaged | see below |
+| macOS | no signed package; an unsigned development tarball holds both files, beside `orceld` | `distribution/macos/package-dev.sh`; see below |
 
-**macOS is not packaged yet.** XP-16, the signed app bundle and LaunchAgent,
+**macOS has no signed package yet.** CI builds an unsigned development tarball (`distribution/macos/`). XP-16, the signed app bundle and LaunchAgent,
 waits on the Apple Developer ID (FD-05). Until then:
 
 - a developer can place a `cargo build --release --locked --bin orcel-contain`
@@ -152,6 +152,11 @@ while the file's other name is outside every root.
   without write or delete sharing, but does not yet check the install
   directory's DACL.
 - macOS: `sandbox-exec` is deprecated by Apple (S-25).
+- macOS: the memory ceiling is sampled every 250 ms. A failed sample of a
+  process that is still alive is retried for up to 100 ms (#583: the sample
+  can fail while the process is between `exec`s), so the worst unobserved
+  window is about 350 ms. A sample that still fails refuses the launch, or
+  kills the running tree.
 
 ## Provenance
 

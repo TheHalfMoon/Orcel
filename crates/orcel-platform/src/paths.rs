@@ -1,6 +1,9 @@
 //! XP-01 per-user Orcel state root.
 //!
-//! - Windows: `%LOCALAPPDATA%\Orcel` (unchanged from the earlier defaults).
+//! - Windows: `%USERPROFILE%\.orcel`. Not `%LOCALAPPDATA%`: other software on an ordinary
+//!   account can hold rights there that let it rename the folder (a sandbox's group holding
+//!   Modify on `AppData`, say), and [`ensure_private_dir`] rightly refuses such an ancestor.
+//!   Windows gives the profile's root to the user, SYSTEM and Administrators; others hold traverse at most.
 //! - macOS: `$HOME/Library/Application Support/Orcel`.
 //! - Linux and other Unix: `$XDG_STATE_HOME/orcel`, else
 //!   `$HOME/.local/state/orcel`.
@@ -187,16 +190,16 @@ pub fn state_root_from(
 
 /// The Orcel state root `layout` derives from `lookup`. Values that are not
 /// absolute are never used: a relative `XDG_STATE_HOME` is ignored as the
-/// XDG specification requires, and a relative `HOME` or `LOCALAPPDATA` is an
+/// XDG specification requires, and a relative `HOME` or `USERPROFILE` is an
 /// error.
 pub fn state_root_for(
     layout: StateLayout,
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, PlatformError> {
     match layout {
-        StateLayout::Windows => Ok(absolute_var(layout, lookup, "LOCALAPPDATA")
-            .ok_or_else(|| unavailable("LOCALAPPDATA"))?
-            .join("Orcel")),
+        StateLayout::Windows => Ok(absolute_var(layout, lookup, "USERPROFILE")
+            .ok_or_else(|| unavailable("USERPROFILE"))?
+            .join(".orcel")),
         StateLayout::MacOs => Ok(absolute_var(layout, lookup, "HOME")
             .ok_or_else(|| unavailable("HOME"))?
             .join("Library")
@@ -250,6 +253,18 @@ pub fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
     imp::ensure_private_dir(path)
 }
 
+/// Whether an existing folder passes [`ensure_private_dir`]'s rules, changing nothing: never
+/// creates it or an ancestor.
+pub fn check_existing_private_dir(path: &Path) -> Result<(), String> {
+    std::fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if path.ancestors().skip(1).any(|ancestor| {
+        !ancestor.as_os_str().is_empty() && std::fs::symlink_metadata(ancestor).is_err()
+    }) {
+        return Err(format!("{} has a missing ancestor", path.display()));
+    }
+    ensure_private_dir(path).map_err(|error| error.to_string())
+}
+
 /// XP-13b: an executable Orcel registers, hashes and runs must not be
 /// replaceable by anyone but the user or root. The file is a regular file,
 /// not a link, and it and every ancestor directory are owned by the user or
@@ -267,6 +282,13 @@ pub fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
 /// and symbolic links on the path are refused.
 pub fn check_owned_executable_location(path: &Path) -> Result<(), String> {
     imp::check_owned_executable_location(path)
+}
+
+/// Whether one file or folder inside an earlier state root can be trusted as this user's, by
+/// what its permissions show now: not a link, nobody else can write it, and a file has no other
+/// hard link. It says nothing about what they allowed in the past.
+pub fn check_migration_entry(path: &Path) -> Result<(), String> {
+    imp::check_migration_entry(path)
 }
 
 /// A file location from an `ORCEL_*_PATH` override. Empty and relative
@@ -587,6 +609,24 @@ mod imp {
         Ok(())
     }
 
+    pub(super) fn check_migration_entry(path: &Path) -> Result<(), String> {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("{} cannot be inspected: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!("{} is a link", path.display()));
+        }
+        if metadata.uid() != current_uid() || metadata.mode() & 0o022 != 0 {
+            return Err(format!(
+                "{} is owned or writable by someone else",
+                path.display()
+            ));
+        }
+        if metadata.is_file() && metadata.nlink() != 1 {
+            return Err(format!("{} has another hard link", path.display()));
+        }
+        Ok(())
+    }
+
     pub(super) fn current_uid() -> u32 {
         extern "C" {
             fn geteuid() -> u32;
@@ -667,6 +707,25 @@ mod imp {
         std::fs::symlink_metadata(path).map_err(|error| io_error(path, error))
     }
 
+    pub(super) fn check_migration_entry(path: &Path) -> Result<(), String> {
+        let user = acl::current_user_sid()?;
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("{} cannot be inspected: {error}", path.display()))?;
+        if is_reparse_point(&metadata) {
+            return Err(format!("{} is a link", path.display()));
+        }
+        let role = if metadata.is_dir() {
+            Role::Ancestor
+        } else {
+            Role::File
+        };
+        judge(path, &user, role).map_err(|reason| format!("{} {reason}", path.display()))?;
+        if metadata.is_file() && acl::hard_link_count(path)? != 1 {
+            return Err(format!("{} has another hard link", path.display()));
+        }
+        Ok(())
+    }
+
     pub(super) fn check_owned_executable_location(path: &Path) -> Result<(), String> {
         let user = acl::current_user_sid()?;
         let file = std::fs::symlink_metadata(path)
@@ -696,6 +755,10 @@ mod imp {
 
 #[cfg(not(any(unix, windows)))]
 mod imp {
+    pub(super) fn check_migration_entry(_path: &std::path::Path) -> Result<(), String> {
+        Err("no earlier state location on this platform".into())
+    }
+
     use super::PlatformError;
     use std::path::Path;
 
@@ -829,7 +892,7 @@ mod tests {
                 "{layout:?} gave {root:?}"
             );
         }
-        // The Windows layout reads only LOCALAPPDATA.
+        // The Windows layout reads only USERPROFILE.
         let root = state_root_for(
             StateLayout::Windows,
             &lookup(&[("HOME", "/home/u"), ("XDG_STATE_HOME", "/xdg")]),
@@ -851,19 +914,15 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_root_is_byte_identical_to_the_previous_default() {
-        let local_app_data = r"C:\Users\u\AppData\Local";
+    fn windows_root_is_under_the_profile_and_only_userprofile_decides_it() {
+        let local_app_data = r"C:\Users\u";
         let root = state_root_for(
             StateLayout::Windows,
-            &lookup(&[("LOCALAPPDATA", local_app_data), ("HOME", "/home/u")]),
+            &lookup(&[("USERPROFILE", local_app_data), ("HOME", "/home/u")]),
         )
         .expect("root");
-        // The expression the earlier defaults used.
-        assert_eq!(root, PathBuf::from(local_app_data).join("Orcel"));
-        assert_eq!(
-            root.as_os_str().as_encoded_bytes(),
-            br"C:\Users\u\AppData\Local\Orcel"
-        );
+        assert_eq!(root, PathBuf::from(local_app_data).join(".orcel"));
+        assert_eq!(root.as_os_str().as_encoded_bytes(), br"C:\Users\u\.orcel");
     }
 
     #[cfg(windows)]
@@ -875,8 +934,8 @@ mod tests {
             r"\AppData\Local",
             r"C:\Users\..\Local",
         ] {
-            let root = state_root_for(StateLayout::Windows, &lookup(&[("LOCALAPPDATA", value)]));
-            assert!(root.is_err(), "LOCALAPPDATA={value:?} gave {root:?}");
+            let root = state_root_for(StateLayout::Windows, &lookup(&[("USERPROFILE", value)]));
+            assert!(root.is_err(), "USERPROFILE={value:?} gave {root:?}");
         }
     }
 

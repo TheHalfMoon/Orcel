@@ -1,5 +1,7 @@
 # COTRA-P12 Installer and Lifecycle Design
 
+> **Windows state root, 2026-11-07:** it is now `%USERPROFILE%\.orcel`, not `%LOCALAPPDATA%\Orcel`, which this document may still name. Other software on an ordinary account can hold rights on `AppData` that Orcel rightly refuses. See `crates/orcel-platform/src/paths.rs` and `legacy.rs`.
+
 Status: canonical design review for the COTRA-P12 program, authored after the COTRA-P11 exit (merge `b69c5ba7cf9b4a6c2009e301ccc1eda97f934353`, post-merge CI `36785474877`) and before any P12 implementation grain.
 
 Scope: `ARCHITECTURE_AND_DELIVERY_PLAN.md` section 23 (COTRA-P12), section 20 (Secure MCP Tunnel integration), section 21 (zero-cost architecture rule), the threat model (`docs/security/THREAT_MODEL.md`), and the closed `cotra-tunnel` supervisor.

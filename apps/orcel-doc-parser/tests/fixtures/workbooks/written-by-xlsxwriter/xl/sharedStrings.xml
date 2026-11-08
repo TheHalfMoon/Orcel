@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="8" uniqueCount="8"><si><t>Region</t></si><si><t>Revenue</t></si><si><t>North</t></si><si><t>South</t></si><si><t>Total</t></si><si><r><t xml:space="preserve">Bold </t></r><r><rPr><b/><sz val="11"/><color theme="1"/><rFont val="Calibri"/><family val="2"/><scheme val="minor"/></rPr><t>words</t></r></si><si><t>line one
+line two</t></si><si><t>Reviewed</t></si></sst>

@@ -1,0 +1,3 @@
+# SG-000129 slice 1: the advisory auditor, installed from its own hash-pinned
+# lock into a separate environment on CI. It never runs inside the agent.
+pip-audit==2.10.1

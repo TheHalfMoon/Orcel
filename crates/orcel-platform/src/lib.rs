@@ -13,12 +13,14 @@
 #[cfg(any(windows, test))]
 mod acl;
 pub mod files;
+pub mod legacy;
 #[cfg(target_os = "macos")]
 mod macos_acl;
 pub mod paths;
 pub mod peer;
 pub mod process;
 pub mod session;
+pub mod stores;
 
 pub use paths::PlatformError;
 pub use peer::PeerIdentity;

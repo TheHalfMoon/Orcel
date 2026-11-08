@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
-import { APP_API_PROTOCOL, MAX_FRAME_BYTES, READ_METHODS } from "../protocol/index.js";
+import { APP_API_PROTOCOL, MAX_FRAME_BYTES, READ_METHODS, ORCELD_METHODS } from "../protocol/index.js";
 import {
   MAX_UNIX_SOCKET_PATH,
   connectEndpoint,
@@ -93,7 +93,7 @@ test("status and capabilities round-trip, and orceld identifies this process", {
     assert.equal(peer.pid, process.pid);
     if (process.platform === "linux") assert.equal(peer.source, "linux-so-peerpidfd");
     const caps = await client.getCapabilities();
-    assert.deepEqual(caps.methods, [...READ_METHODS]);
+    assert.deepEqual(caps.methods, [...ORCELD_METHODS]);
   });
 });
 

@@ -57,7 +57,26 @@ Windows carries the full guarantee: suspended launch, job assignment
 before resume, kill-on-close chains, ActiveProcessLimit, and signature
 verification. Off Windows the supervisor launches with handle supervision
 and drop-kill, discovery covers well-known locations, and publisher
-verification reports unverified. The hard parent-death guarantee off
+verification on Linux (XP-14) reports verified only when the engine's
+path is its own real path (a link stays unverified), belongs to the
+vendor's own package (google-chrome-stable or microsoft-edge-stable),
+and the package's files in the engine's own install directory (for
+Chrome /opt/google/chrome) are unmodified against the package database
+(dpkg --verify, or rpm -V judged by its output). Changed conffiles and
+files outside that directory are not what the engine runs and are
+ignored: GitHub's Ubuntu image, for one, deletes Chrome's
+/etc/cron.daily repository job. A vendor package whose engine files fail
+the check is refused, and any other engine stays unverified. Linux discovery does not
+search Edge's install path, so in practice this covers Chrome. This is
+weaker than a code signature: the database records only file digests
+(md5 for dpkg) and is only as trustworthy as the root account that wrote
+it. On
+macOS (XP-14 slice 1),
+discovery finds the stable Chrome and Edge app bundles, reads the version
+from the bundle's Info.plist without running it, and refuses a bundle
+whose code signature does not satisfy the vendor's designated requirement
+(Apple anchor, the vendor's team, the bundle's identifier). The worker
+still launches only on Windows. The hard parent-death guarantee off
 Windows is a documented gap: supervised shutdown is deterministic, but a
 violently killed supervisor may orphan the engine there. Windows
 qualification is the normative path for this grain.

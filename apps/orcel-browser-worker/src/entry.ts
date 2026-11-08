@@ -7,20 +7,29 @@
 
 import { Console } from "node:console";
 import { existsSync, writeFileSync } from "node:fs";
-import { chromium, type Locator, type Page } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
-import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ExecField, type WorkerFrame } from "./protocol.js";
+import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
+import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
+import { traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
+import { runProbes } from "./verify.js";
 import { discoverDeclarativeTools, DISCOVERY_BUDGET_MS } from "./webmcp/declarative.js";
 import { CAPTURE_TIMEOUT_MS, DISCOVERY_TOTAL_MS, fitTools } from "./webmcp/fit.js";
 import { captureWithin } from "./webmcp/capture.js";
 import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structured.js";
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
+import { approvedElement, isOcclusion } from "./actions/targets.js";
+import { clickAndLoad } from "./actions/click-load.js";
+import { formAction } from "./actions/form.js";
+import { waitForText } from "./actions/wait.js";
+import { uploadFile } from "./actions/upload.js";
+import { DialogLog } from "./actions/dialogs.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -56,29 +65,57 @@ const playwrightLauncher: Launcher = {
       handleSIGINT: false,
       handleSIGTERM: false,
       handleSIGHUP: false,
-      timeout: 30_000
+      timeout: ENGINE_LAUNCH_TIMEOUT_MS
     });
     // Each host navigation runs in a fresh page: Chromium can commit an
     // earlier refused navigation's error page late (even more than once),
     // which would interrupt a navigation in the same page. The previous
     // page is closed once the new one has its redirect guard.
     let primary: Page = context.pages()[0] ?? (await context.newPage());
+    // BR-05: every dialog, on every page, is answered as it opens and logged.
+    const dialogs = new DialogLog();
+    dialogs.listen(context);
     const routes = await installRoutes(context, () => primary, policy);
     let closing = false;
     // Each host navigation runs in a fresh page (see above).
     const open = async (url: string) => {
+      traceStart();
       const previous = primary;
       const page = await context.newPage();
+      traceMark("page_created");
       await routes.guardReady(page);
+      traceMark("guard_ready");
       primary = page;
       await previous.close().catch(() => {});
+      traceMark("previous_closed");
+      page.on("request", () => traceMark("request"));
+      page.on("response", (response) => {
+        traceMark("response");
+        // #438: when the engine started the request, by the engine's clock.
+        // Playwright knows it only once a response exists.
+        const engineStart = response.request().timing().startTime;
+        if (engineStart > 0) traceMark("request_engine_start", engineStart);
+      });
+      page.on("requestfailed", () => traceMark("request_failed"));
+      page.on("domcontentloaded", () => traceMark("domcontentloaded"));
+      page.on("load", () => traceMark("load"));
+      page.on("crash", () => traceMark("page_crashed"));
+      const stopWatching = traceWatchEventLoop();
       try {
+        traceMark("goto");
         const response = await page.goto(url, { timeout: 30_000, waitUntil: "load" });
+        stopWatching();
         return { page, response };
       } catch (error) {
+        stopWatching();
         const message = String((error as Error).message);
         if (message.includes("ERR_BLOCKED_BY_CLIENT")) throw new NavigationError("denied");
-        if ((error as Error).name === "TimeoutError") throw new NavigationError("timeout");
+        if ((error as Error).name === "TimeoutError") {
+          // #438: where it stalled, for the host's failure diagnostics.
+          process.stderr.write(`orcel-browser-worker: ${traceLine()}
+`);
+          throw new NavigationError("timeout");
+        }
         throw new NavigationError("failed");
       }
     };
@@ -105,8 +142,8 @@ const playwrightLauncher: Launcher = {
         const kept = pieces[0]?.content ?? "";
         return { url: page.url(), status, media, text: kept, truncated: kept.length < text.length || body.length > 4 * MAX_FETCH_TEXT_BYTES };
       },
-      async activate(ref: string) {
-        return clickAndLoad(primary, primary.locator(`aria-ref=${ref}`));
+      async activate(ref: string, target?: ApprovedTarget) {
+        return clickAndLoad(primary, await approvedElement(primary, ref, target));
       },
       async execute(tool: string, fields: ExecField[]) {
         const page = primary;
@@ -170,7 +207,11 @@ const playwrightLauncher: Launcher = {
         // The form's default button: the first submit button in tree order.
         const submit = form.locator('button:not([type="button" i]):not([type="reset" i]), input[type="submit" i], input[type="image" i]').first();
         if ((await submit.count().catch(() => 0)) === 0) throw new NavigationError("failed");
-        const { url, status } = await clickAndLoad(page, submit);
+        // The fields are already filled: a covered submit button is a plain
+        // failure here, not "occluded" (which promises nothing was done).
+        const { url, status } = await clickAndLoad(page, submit).catch((error: unknown) => {
+          throw error instanceof NavigationError && error.reason === "occluded" ? new NavigationError("failed") : error;
+        });
         // The submission's result: the opened document's structured data.
         let structured: string[] = [];
         let structuredComplete = false;
@@ -195,9 +236,11 @@ const playwrightLauncher: Launcher = {
         }
         return { url, status, structured, structuredComplete };
       },
-      async download(ref: string, path: string) {
+      async download(ref: string, path: string, target?: ApprovedTarget) {
         if (existsSync(path)) throw new NavigationError("failed");
         const page = primary;
+        // Resolved before the capture is armed: a stale target clicks nothing.
+        const element = await approvedElement(page, ref, target);
         const guard = await routes.guardReady(page);
         // Arm before clicking: the click's navigation (each request and
         // redirect hop still decided by the host) ends in a document whose
@@ -210,14 +253,14 @@ const playwrightLauncher: Launcher = {
         // On any failure the page is closed: a document arriving after the
         // capture gave up would otherwise be rendered. The host requires a
         // fresh navigation (which opens a new page) before acting again.
-        const fail = async (reason: "failed" | "timeout" | "http_status" | "oversized"): Promise<never> => {
+        const fail = async (reason: "failed" | "timeout" | "http_status" | "oversized" | "occluded"): Promise<never> => {
           await page.close().catch(() => {});
           throw new NavigationError(reason);
         };
         try {
-          await page.locator(`aria-ref=${ref}`).click({ timeout: 5_000, noWaitAfter: true });
-        } catch {
-          return fail("failed");
+          await element.click({ timeout: 5_000, noWaitAfter: true });
+        } catch (error) {
+          return fail(isOcclusion(error) ? "occluded" : "failed");
         }
         let document;
         try {
@@ -238,6 +281,30 @@ const playwrightLauncher: Launcher = {
           media: document.media,
           bytes: document.body.length
         };
+      },
+      takeDialogs() {
+        return dialogs.take();
+      },
+      async upload(ref, path, target) {
+        await uploadFile(primary, ref, path, target);
+        return { url: primary.url() };
+      },
+      async waitForText(text, appear, timeoutMs) {
+        const met = await waitForText(primary, text, appear, timeoutMs);
+        return { url: primary.url(), met };
+      },
+      async formAction(ref, act, target, acceptConfirm) {
+        if (acceptConfirm !== undefined) dialogs.arm(acceptConfirm, primary);
+        try {
+          await formAction(primary, ref, act, target);
+        } finally {
+          dialogs.disarm();
+        }
+        return { url: primary.url() };
+      },
+      async verify(probes) {
+        const results = await runProbes(primary, probes);
+        return { url: primary.url(), results };
       },
       async observe() {
         const raw: unknown = await primary.ariaSnapshotJSON({ mode: "ai", depth: 16, timeout: 2_000 });
@@ -308,52 +375,6 @@ const FILL_BUDGET_MS = 10_000;
 
 /// Click `target` and wait for the main frame's resulting document to load;
 /// returns its URL and status. The host decides every request on the way.
-async function clickAndLoad(page: Page, target: Locator): Promise<{ url: string; status: number }> {
-  let status = 0;
-  const onResponse = (response: import("playwright-core").Response) => {
-    const request = response.request();
-    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) status = response.status();
-  };
-  page.on("response", onResponse);
-  // A click that opens a popup instead of navigating the page is not the
-  // approved activation: it fails at once (the popup is closed) rather than
-  // waiting out the navigation timeout.
-  let onPopup: ((popup: Page) => void) | undefined;
-  const popped = new Promise<never>((_, reject) => {
-    onPopup = (popup) => {
-      void popup.close().catch(() => {});
-      reject(new NavigationError("denied"));
-    };
-    page.on("popup", onPopup);
-  });
-  popped.catch(() => {});
-  try {
-    const navigated = page.waitForEvent("framenavigated", {
-      predicate: (frame) => frame === page.mainFrame(),
-      timeout: 30_000
-    });
-    try {
-      await target.click({ timeout: 5_000 });
-    } catch {
-      navigated.catch(() => {});
-      throw new NavigationError("failed");
-    }
-    await Promise.race([navigated, popped]);
-    navigated.catch(() => {});
-    await page.waitForLoadState("load", { timeout: 30_000 });
-  } catch (error) {
-    if (error instanceof NavigationError) throw error;
-    if ((error as Error).name === "TimeoutError") throw new NavigationError("timeout");
-    throw new NavigationError("failed");
-  } finally {
-    page.off("response", onResponse);
-    if (onPopup) page.off("popup", onPopup);
-  }
-  // A refused navigation lands on Chromium's error page.
-  if (page.url().startsWith("chrome-error:")) throw new NavigationError("denied");
-  return { url: page.url(), status };
-}
-
 /// The file name a download would get: the Content-Disposition filename when
 /// present, else the last URL path segment; never a path.
 function suggestedName(url: string, disposition: string): string {
@@ -380,7 +401,9 @@ function finish(exitCode: number): void {
   process.stdout.write(Buffer.alloc(0), () => process.exit(exitCode));
 }
 
-const worker = new Worker(playwrightLauncher, send, finish);
+const worker = new Worker(playwrightLauncher, send, finish, (line) => {
+  process.stderr.write(`${line}\n`);
+});
 const decoder = new FrameDecoder();
 
 // A broken pipe in either direction ends the worker; the engine is closed.

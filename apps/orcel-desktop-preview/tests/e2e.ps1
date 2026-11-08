@@ -1,6 +1,6 @@
 # Native Windows end-to-end test of the read-only desktop foundation, driven
 # through Windows UI Automation (no third-party framework). It launches the
-# real executable with an isolated LOCALAPPDATA for the app process only:
+# real executable with an isolated USERPROFILE for the app process only:
 # -RuntimeRoot points at a per-user runtime install made for testing; without
 # it an empty temporary folder is used, so the user's real install is never
 # queried. It checks what a person would see and performs no computer actions
@@ -59,14 +59,27 @@ function WaitForMessage($window, [string]$needle, [int]$timeoutMs) {
 
 $start = New-Object System.Diagnostics.ProcessStartInfo $app
 $start.UseShellExecute = $false
-$start.EnvironmentVariables["LOCALAPPDATA"] = $(if ($expectInstalled) { $RuntimeRoot } else { $emptyRoot })
+$start.EnvironmentVariables["USERPROFILE"] = $(if ($expectInstalled) { $RuntimeRoot } else { $emptyRoot })
+# SG-000127: the app API pipe is per user, not per USERPROFILE. Unless the
+# caller names an instance served by a test orceld, point the app at an
+# instance nothing serves, so the user's real runtime is never read.
+$appApiInstance = $(if ($env:ORCEL_E2E_APP_API_INSTANCE) { $env:ORCEL_E2E_APP_API_INSTANCE } else { "e2e-" + [guid]::NewGuid().ToString("N").Substring(0, 12) })
+$start.EnvironmentVariables["ORCEL_APP_API_INSTANCE"] = $appApiInstance
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $process = [System.Diagnostics.Process]::Start($start)
 try {
     $window = WaitFor { ById $root "OrcelMainWindow" } 15000
     $startupMs = $clock.ElapsedMilliseconds
     Check "window appears" ($null -ne $window) "startup ${startupMs} ms"
-    if ($null -eq $window) { throw "window not found" }
+    if ($null -eq $window) {
+        # Evidence for a stall seen on CI: slow, hung or gone. The check above has already failed.
+        $process.Refresh()
+        Write-Output "DIAG app process: exited $($process.HasExited), responding $(if (-not $process.HasExited) { $process.Responding }), main window handle $($process.MainWindowHandle), title $($process.MainWindowTitle)"
+        if ($process.HasExited) { Write-Output "DIAG app exit code: $($process.ExitCode)" }
+        $late = WaitFor { ById $root "OrcelMainWindow" } 30000
+        Write-Output "DIAG window $(if ($late) { "appeared late" } else { "still absent" }) at $($clock.ElapsedMilliseconds) ms"
+        throw "window not found"
+    }
     $windowProcess = $window.Current.ProcessId
     Check "window belongs to the launched process" ($windowProcess -eq $process.Id) "pid $windowProcess"
 
@@ -79,13 +92,33 @@ try {
     $runtime = WaitFor { $t = (ById $window "RuntimeState").Current.Name; if ($t -and $t -ne "Checking...") { $t } } 15000
     $readyMs = $clock.ElapsedMilliseconds
     if ($expectInstalled) {
-        Check "runtime panel reports the real install" ($runtime -like "Orcel runtime 0.*" -and $runtime -like "*not running*") "$runtime (after ${readyMs} ms)"
+        Check "runtime panel reports the real install" ($runtime -like "Orcel runtime 0.*" -and $runtime -like "*ChatGPT tunnel*") "$runtime (after ${readyMs} ms)"
     } else {
         Check "runtime panel reports not installed" ($runtime -eq "Not installed") "$runtime"
     }
 
+    $shell = (ById $window "ShellState").Current.Name
+    Check "shell and process sessions are labelled unavailable" ($shell -like "Unavailable:*not armed*") "$shell"
+
+    SendCommand $window "tasks"
+    if ($env:ORCEL_E2E_APP_API_INSTANCE) {
+        $tasks = WaitForMessage $window "Report tasks orceld knows of" 15000
+        Check "tasks shows the live orceld's report tasks" ($null -ne $tasks -and $tasks -like "*$($env:ORCEL_E2E_EXPECT_TASK_TITLE)*") "$(($tasks -split "`n") -join ' | ')"
+    } else {
+        $tasks = WaitForMessage $window "Task timeline unavailable" 15000
+        Check "tasks reports an absent app API instead of inventing tasks" ($null -ne $tasks) "$tasks"
+    }
+
+    if ($env:ORCEL_E2E_LIVE_SIGNAL) {
+        # Tell the driver the app is watching, then type nothing: orceld's next
+        # task update must appear by itself.
+        [IO.File]::WriteAllText($env:ORCEL_E2E_LIVE_SIGNAL, "ready")
+        $live = WaitForMessage $window $env:ORCEL_E2E_EXPECT_LIVE_UPDATE 30000
+        Check "a task update appears with nothing typed" ($null -ne $live) "$live"
+    }
+
     SendCommand $window "status"
-    $status = WaitForMessage $window $(if ($expectInstalled) { "is installed and not running" } else { "is not installed" }) 15000
+    $status = WaitForMessage $window $(if ($expectInstalled) { "is installed. ChatGPT tunnel" } else { "is not installed" }) 15000
     Check "status command shows the runtime's own state" ($null -ne $status) "$status"
 
 

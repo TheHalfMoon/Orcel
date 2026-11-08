@@ -480,61 +480,72 @@ fn full_user_input_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-
-    let cursor = host
-        .cursor_position()
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    require_full_user_desktop()?;
-    let rebound = {
-        let guard = locked_registry()?;
-        guard
-            .capture_binding(
-                &window_id,
-                expected_window_generation,
-                CAPTURE_SCOPE_TARGET_WINDOW,
-                &workspace.id,
-                POLICY_REVISION,
-            )
-            .map_err(|error| ProviderError::new(error.code, error.message))?
-    };
-    if rebound.process_id != binding.process_id
-        || rebound.process_generation != binding.process_generation
-        || rebound.window_id != binding.window_id
-        || rebound.window_generation != binding.window_generation
-        || rebound.hwnd != binding.hwnd
-    {
-        return Err(ProviderError::new(
-            FailureCode::TargetStale,
-            "desktop input target changed after approval",
-        ));
-    }
-    // XP-12: arm the approval just consumed for this exact input, and clear
-    // it whatever the adapter did, so none is left in the process-wide slot.
-    arm_input(host, rebound.hwnd, &action)?;
-    let outcome = host.execute_raw_input(rebound.hwnd, &action, cursor.last_input_tick);
-    host.disarm_input();
-    let outcome = outcome.map_err(|error| ProviderError::new(error.code, error.message))?;
-    Ok(json!({
-        "schema": "orcel-desktop-input/1",
-        "state": outcome.state,
-        "action": outcome.action,
-        "message": outcome.message,
-        "window_id": rebound.window_id,
-        "process_id": rebound.process_id,
-        "window_generation": rebound.window_generation,
-        "approval_record": token.record_id,
-        "policy_revision": POLICY_REVISION
-    }))
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &window_id);
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            let cursor = host
+                .cursor_position()
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            require_full_user_desktop()?;
+            let rebound = {
+                let guard = locked_registry()?;
+                guard
+                    .capture_binding(
+                        &window_id,
+                        expected_window_generation,
+                        CAPTURE_SCOPE_TARGET_WINDOW,
+                        &workspace.id,
+                        POLICY_REVISION,
+                    )
+                    .map_err(|error| ProviderError::new(error.code, error.message))?
+            };
+            if rebound.process_id != binding.process_id
+                || rebound.process_generation != binding.process_generation
+                || rebound.window_id != binding.window_id
+                || rebound.window_generation != binding.window_generation
+                || rebound.hwnd != binding.hwnd
+            {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "desktop input target changed after approval",
+                ));
+            }
+            // XP-12: arm the approval just consumed for this exact input, and clear
+            // it whatever the adapter did, so none is left in the process-wide slot.
+            arm_input(host, rebound.hwnd, &action)?;
+            let outcome = host.execute_raw_input(rebound.hwnd, &action, cursor.last_input_tick);
+            host.disarm_input();
+            let outcome = outcome.map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(json!({
+                "schema": "orcel-desktop-input/1",
+                "state": outcome.state,
+                "action": outcome.action,
+                "message": outcome.message,
+                "window_id": rebound.window_id,
+                "process_id": rebound.process_id,
+                "window_generation": rebound.window_generation,
+                "approval_record": token.record_id,
+                "policy_revision": POLICY_REVISION
+            }))
+        },
+    )
 }
 
 fn full_user_window_action_with_approval(
@@ -600,59 +611,124 @@ fn full_user_window_action_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &window_id);
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            let host = computer_host()?;
+            let cursor = host
+                .cursor_position()
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            require_full_user_desktop()?;
+            let rebound = {
+                let guard = locked_registry()?;
+                guard
+                    .capture_binding(
+                        &window_id,
+                        expected_window_generation,
+                        CAPTURE_SCOPE_TARGET_WINDOW,
+                        &workspace.id,
+                        POLICY_REVISION,
+                    )
+                    .map_err(|error| ProviderError::new(error.code, error.message))?
+            };
+            if rebound.process_id != binding.process_id
+                || rebound.process_generation != binding.process_generation
+                || rebound.window_id != binding.window_id
+                || rebound.window_generation != binding.window_generation
+                || rebound.hwnd != binding.hwnd
+            {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "desktop window target changed after approval",
+                ));
+            }
+            let outcome = host
+                .execute_window_action(rebound.hwnd, action, cursor.last_input_tick)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(json!({
+                "schema": "orcel-desktop-window-action/1",
+                "state": outcome.state,
+                "action": outcome.action,
+                "message": outcome.message,
+                "window_id": rebound.window_id,
+                "process_id": rebound.process_id,
+                "window_generation": rebound.window_generation,
+                "approval_record": token.record_id,
+                "policy_revision": POLICY_REVISION
+            }))
+        },
+    )
+}
 
-    let host = computer_host()?;
-    let cursor = host
-        .cursor_position()
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    require_full_user_desktop()?;
-    let rebound = {
-        let guard = locked_registry()?;
-        guard
-            .capture_binding(
-                &window_id,
+/// SG-000128: one tree observation, scoped or not, through either adapter.
+trait ObserveAdapter {
+    #[allow(clippy::too_many_arguments)]
+    fn observe(
+        &self,
+        registry: &mut UiaRegistry,
+        window_id: &str,
+        expected_window_generation: u64,
+        root: Option<(&str, u64)>,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+    ) -> Result<Value, ProviderError>;
+}
+
+struct HostObserver<'a, A: orcel_provider_uia::UiaAdapter>(&'a A);
+
+impl<A: orcel_provider_uia::UiaAdapter> ObserveAdapter for HostObserver<'_, A> {
+    fn observe(
+        &self,
+        registry: &mut UiaRegistry,
+        window_id: &str,
+        expected_window_generation: u64,
+        root: Option<(&str, u64)>,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+    ) -> Result<Value, ProviderError> {
+        match root {
+            None => registry.observe_tree(
+                self.0,
+                window_id,
                 expected_window_generation,
-                CAPTURE_SCOPE_TARGET_WINDOW,
-                &workspace.id,
+                max_depth,
+                max_nodes,
+                workspace_id,
                 POLICY_REVISION,
-            )
-            .map_err(|error| ProviderError::new(error.code, error.message))?
-    };
-    if rebound.process_id != binding.process_id
-        || rebound.process_generation != binding.process_generation
-        || rebound.window_id != binding.window_id
-        || rebound.window_generation != binding.window_generation
-        || rebound.hwnd != binding.hwnd
-    {
-        return Err(ProviderError::new(
-            FailureCode::TargetStale,
-            "desktop window target changed after approval",
-        ));
+            ),
+            Some((root_element_id, expected_tree_generation)) => registry.observe_subtree(
+                self.0,
+                window_id,
+                expected_window_generation,
+                root_element_id,
+                expected_tree_generation,
+                max_depth,
+                max_nodes,
+                workspace_id,
+                POLICY_REVISION,
+            ),
+        }
+        .map_err(|error| ProviderError::new(error.code, error.message))
     }
-    let outcome = host
-        .execute_window_action(rebound.hwnd, action, cursor.last_input_tick)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    Ok(json!({
-        "schema": "orcel-desktop-window-action/1",
-        "state": outcome.state,
-        "action": outcome.action,
-        "message": outcome.message,
-        "window_id": rebound.window_id,
-        "process_id": rebound.process_id,
-        "window_generation": rebound.window_generation,
-        "approval_record": token.record_id,
-        "policy_revision": POLICY_REVISION
-    }))
 }
 
 /// Dispatch the SG-000036 UIA shapes. Returns `Ok(None)` for non-UIA shapes
@@ -750,35 +826,42 @@ pub fn dispatch_uia(
             let expected = required_u64(request, "expected_window_generation")?;
             let max_depth = optional_u64(request, "max_depth")?;
             let max_nodes = optional_u64(request, "max_nodes")?;
+            // SG-000128: an optional scoped root (policy admits both or neither).
+            let root =
+                match (
+                    request
+                        .arguments
+                        .get("root_element_id")
+                        .and_then(Value::as_str),
+                    optional_u64(request, "expected_tree_generation")?,
+                ) {
+                    (None, None) => None,
+                    (Some(id), Some(generation)) => Some((id.to_owned(), generation)),
+                    _ => return Err(ProviderError::new(
+                        FailureCode::InvalidRequest,
+                        "uia.tree observe root_element_id and expected_tree_generation go together",
+                    )),
+                };
             let mut guard = locked_registry()?;
+            let observe = |guard: &mut UiaRegistry,
+                           adapter: &dyn ObserveAdapter|
+             -> Result<Value, ProviderError> {
+                adapter.observe(
+                    guard,
+                    &window_id,
+                    expected,
+                    root.as_ref().map(|(id, g)| (id.as_str(), *g)),
+                    max_depth,
+                    max_nodes,
+                    &workspace.id,
+                )
+            };
             if computer_host_selected() {
                 let adapter = computer_host()?;
-                guard
-                    .observe_tree(
-                        adapter,
-                        &window_id,
-                        expected,
-                        max_depth,
-                        max_nodes,
-                        &workspace.id,
-                        POLICY_REVISION,
-                    )
-                    .map(Some)
-                    .map_err(|error| ProviderError::new(error.code, error.message))
+                observe(&mut guard, &HostObserver(adapter)).map(Some)
             } else {
                 let adapter = NativeAdapter::new();
-                guard
-                    .observe_tree(
-                        &adapter,
-                        &window_id,
-                        expected,
-                        max_depth,
-                        max_nodes,
-                        &workspace.id,
-                        POLICY_REVISION,
-                    )
-                    .map(Some)
-                    .map_err(|error| ProviderError::new(error.code, error.message))
+                observe(&mut guard, &HostObserver(&adapter)).map(Some)
             }
         }
         ("uia.element", "observe") => {
@@ -862,36 +945,48 @@ fn invoke_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    require_full_user_desktop()?;
-    let adapter = computer_host()?;
-    arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "invoke", None)?;
-    let result = locked_registry().and_then(|mut guard| {
-        guard
-            .invoke_element(
-                adapter,
-                &element_id,
-                expected_tree_generation,
-                &expected_control_type,
-                &workspace.id,
-                POLICY_REVISION,
-            )
-            .map_err(|error| ProviderError::new(error.code, error.message))
-    });
-    disarm_semantic(adapter);
-    let evidence = result?;
-    let mut stamped = evidence;
-    stamped["approval_record"] = Value::String(token.record_id);
-    Ok(stamped)
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            require_full_user_desktop()?;
+            let adapter = computer_host()?;
+            arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "invoke", None)?;
+            let result = locked_registry().and_then(|mut guard| {
+                guard
+                    .invoke_element(
+                        adapter,
+                        &element_id,
+                        expected_tree_generation,
+                        &expected_control_type,
+                        &workspace.id,
+                        POLICY_REVISION,
+                    )
+                    .map_err(|error| ProviderError::new(error.code, error.message))
+            });
+            disarm_semantic(adapter);
+            let evidence = result?;
+            let mut stamped = evidence;
+            stamped["approval_record"] = Value::String(token.record_id);
+            Ok(stamped)
+        },
+    )
 }
 
 fn set_value_with_approval(
@@ -978,43 +1073,55 @@ fn set_value_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    require_full_user_desktop()?;
-    let adapter = computer_host()?;
-    arm_semantic(
-        adapter,
-        binding.hwnd,
-        &binding.runtime_id,
-        "set_value",
-        Some(&binding.value_digest),
-    )?;
-    let result = locked_registry().and_then(|mut guard| {
-        guard
-            .set_value_element(
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            require_full_user_desktop()?;
+            let adapter = computer_host()?;
+            arm_semantic(
                 adapter,
-                &element_id,
-                expected_tree_generation,
-                &expected_control_type,
-                &value,
-                &workspace.id,
-                POLICY_REVISION,
-            )
-            .map_err(|error| ProviderError::new(error.code, error.message))
-    });
-    disarm_semantic(adapter);
-    let evidence = result?;
-    let mut stamped = evidence;
-    stamped["approval_record"] = Value::String(token.record_id);
-    Ok(stamped)
+                binding.hwnd,
+                &binding.runtime_id,
+                "set_value",
+                Some(&binding.value_digest),
+            )?;
+            let result = locked_registry().and_then(|mut guard| {
+                guard
+                    .set_value_element(
+                        adapter,
+                        &element_id,
+                        expected_tree_generation,
+                        &expected_control_type,
+                        &value,
+                        &workspace.id,
+                        POLICY_REVISION,
+                    )
+                    .map_err(|error| ProviderError::new(error.code, error.message))
+            });
+            disarm_semantic(adapter);
+            let evidence = result?;
+            let mut stamped = evidence;
+            stamped["approval_record"] = Value::String(token.record_id);
+            Ok(stamped)
+        },
+    )
 }
 
 fn select_with_approval(
@@ -1093,38 +1200,50 @@ fn select_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    require_full_user_desktop()?;
-    let adapter = computer_host()?;
-    arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "select", None)?;
-    let result = locked_registry().and_then(|mut guard| {
-        guard
-            .select_element(
-                adapter,
-                &element_id,
-                expected_tree_generation,
-                &expected_control_type,
-                expected_selected,
-                selected,
-                &workspace.id,
-                POLICY_REVISION,
-            )
-            .map_err(|error| ProviderError::new(error.code, error.message))
-    });
-    disarm_semantic(adapter);
-    let evidence = result?;
-    let mut stamped = evidence;
-    stamped["approval_record"] = Value::String(token.record_id);
-    Ok(stamped)
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            require_full_user_desktop()?;
+            let adapter = computer_host()?;
+            arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "select", None)?;
+            let result = locked_registry().and_then(|mut guard| {
+                guard
+                    .select_element(
+                        adapter,
+                        &element_id,
+                        expected_tree_generation,
+                        &expected_control_type,
+                        expected_selected,
+                        selected,
+                        &workspace.id,
+                        POLICY_REVISION,
+                    )
+                    .map_err(|error| ProviderError::new(error.code, error.message))
+            });
+            disarm_semantic(adapter);
+            let evidence = result?;
+            let mut stamped = evidence;
+            stamped["approval_record"] = Value::String(token.record_id);
+            Ok(stamped)
+        },
+    )
 }
 
 fn execute_with_approval(
@@ -1189,30 +1308,42 @@ fn execute_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    let adapter = NativeAdapter::new();
-    let mut guard = locked_registry()?;
-    let evidence = guard
-        .execute_input(
-            &adapter,
-            &binding.lease_id,
-            &workspace.id,
-            POLICY_REVISION,
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    let mut stamped = evidence;
-    stamped["approval_record"] = Value::String(token.record_id);
-    Ok(stamped)
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &coord_id);
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            let adapter = NativeAdapter::new();
+            let mut guard = locked_registry()?;
+            let evidence = guard
+                .execute_input(
+                    &adapter,
+                    &binding.lease_id,
+                    &workspace.id,
+                    POLICY_REVISION,
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            let mut stamped = evidence;
+            stamped["approval_record"] = Value::String(token.record_id);
+            Ok(stamped)
+        },
+    )
 }
 
 fn derive_with_approval(
@@ -1583,36 +1714,48 @@ fn scroll_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    require_full_user_desktop()?;
-    let adapter = computer_host()?;
-    let mut guard = locked_registry()?;
-    let evidence = guard
-        .scroll_element(
-            adapter,
-            &element_id,
-            expected_tree_generation,
-            &expected_control_type,
-            expected_horizontal_percent,
-            expected_vertical_percent,
-            &direction,
-            amount,
-            &workspace.id,
-            POLICY_REVISION,
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    let mut stamped = evidence;
-    stamped["approval_record"] = Value::String(token.record_id);
-    Ok(stamped)
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            require_full_user_desktop()?;
+            let adapter = computer_host()?;
+            let mut guard = locked_registry()?;
+            let evidence = guard
+                .scroll_element(
+                    adapter,
+                    &element_id,
+                    expected_tree_generation,
+                    &expected_control_type,
+                    expected_horizontal_percent,
+                    expected_vertical_percent,
+                    &direction,
+                    amount,
+                    &workspace.id,
+                    POLICY_REVISION,
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            let mut stamped = evidence;
+            stamped["approval_record"] = Value::String(token.record_id);
+            Ok(stamped)
+        },
+    )
 }
 
 fn toggle_with_approval(
@@ -1691,48 +1834,60 @@ fn toggle_with_approval(
         ),
         digest.clone(),
     );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            orcel_approval::now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    require_full_user_desktop()?;
-    let adapter = computer_host()?;
-    arm_semantic(
-        adapter,
-        binding.hwnd,
-        &binding.runtime_id,
-        "toggle",
-        Some(&orcel_provider_uia::value_content_digest(if toggled {
-            "true"
-        } else {
-            "false"
-        })),
-    )?;
-    let result = locked_registry().and_then(|mut guard| {
-        guard
-            .toggle_element(
+    // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
+    // read back, so a crash after dispatch is recorded unknown.
+    let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = approval
+                .request_token(&prompt)
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    orcel_approval::now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            Ok(token)
+        },
+        |token| {
+            require_full_user_desktop()?;
+            let adapter = computer_host()?;
+            arm_semantic(
                 adapter,
-                &element_id,
-                expected_tree_generation,
-                &expected_control_type,
-                expected_toggled,
-                toggled,
-                &workspace.id,
-                POLICY_REVISION,
-            )
-            .map_err(|error| ProviderError::new(error.code, error.message))
-    });
-    disarm_semantic(adapter);
-    let evidence = result?;
-    let mut stamped = evidence;
-    stamped["approval_record"] = Value::String(token.record_id);
-    Ok(stamped)
+                binding.hwnd,
+                &binding.runtime_id,
+                "toggle",
+                Some(&orcel_provider_uia::value_content_digest(if toggled {
+                    "true"
+                } else {
+                    "false"
+                })),
+            )?;
+            let result = locked_registry().and_then(|mut guard| {
+                guard
+                    .toggle_element(
+                        adapter,
+                        &element_id,
+                        expected_tree_generation,
+                        &expected_control_type,
+                        expected_toggled,
+                        toggled,
+                        &workspace.id,
+                        POLICY_REVISION,
+                    )
+                    .map_err(|error| ProviderError::new(error.code, error.message))
+            });
+            disarm_semantic(adapter);
+            let evidence = result?;
+            let mut stamped = evidence;
+            stamped["approval_record"] = Value::String(token.record_id);
+            Ok(stamped)
+        },
+    )
 }
 
 fn required_string(request: &RequestEnvelope, name: &str) -> Result<String, ProviderError> {

@@ -6,13 +6,17 @@ Usage:
   linux-orceld-probe.py socket <socket-path> <workspace-id>
   linux-orceld-probe.py exec <orceld-binary> <workspace-id>
 
-Exits non-zero unless orceld answers ok with name "orceld" on Linux.
+Exits non-zero unless orceld answers ok with name "orceld" on this OS (Linux,
+or macOS for the unsigned development tarball).
 """
 
 import json
 import socket
 import subprocess
 import sys
+
+
+EXPECTED_OS = "macos" if sys.platform == "darwin" else "linux"
 
 
 def request(workspace_id):
@@ -57,7 +61,7 @@ def main():
     response = json.loads(raw.splitlines()[0])
     print(json.dumps(response, indent=1))
     result = response.get("result") or {}
-    if not (response.get("ok") and result.get("name") == "orceld" and result.get("os") == "linux"):
+    if not (response.get("ok") and result.get("name") == "orceld" and result.get("os") == EXPECTED_OS):
         sys.exit("orceld did not answer system.status")
 
 

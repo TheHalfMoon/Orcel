@@ -604,6 +604,9 @@ fn error_vocabulary_is_typed_and_secret_free() {
         orcel_browser_host::UnavailableReason::ActionFailed,
         orcel_browser_host::UnavailableReason::WorkerExited,
         orcel_browser_host::UnavailableReason::Cancelled,
+        orcel_browser_host::UnavailableReason::TargetStale,
+        orcel_browser_host::UnavailableReason::OutcomeUnknown,
+        orcel_browser_host::UnavailableReason::TargetOccluded,
     ] {
         let text = format!(
             "{:?} {}",
@@ -1218,15 +1221,97 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // Process spawning exists only where the supervised launch and the
     // read-only engine version probe live. The SG-000108 worker launch uses
     // CreateProcessW in worker_process.rs (no Command::new);
-    // worker_launch_tests.rs compiles only under cfg(test) and spawns test
-    // fixtures.
+    // worker_launch_tests.rs and discovery_macos_tests.rs compile only under
+    // cfg(test) and spawn test fixtures (XP-14: `cp -c` clones and
+    // `codesign` for the tamper tests; #438: `netstat -ano -p TCP`, run only
+    // while a failing native test unwinds, to list port-443 listeners).
+    // SG-000115 category A (recorded rule change, prep/SG-000115.md): the
+    // inert Unix fixture spawners A2 (unix_supervise.rs) and A5
+    // (unix_cleanup.rs), admitted only while lib.rs declares them under
+    // #[cfg(all(test, unix))]. A2 also re-executes the test binary itself as
+    // a dedicated supervisor (A2b, recorded the same way), and A5 re-runs
+    // one test of the test binary under macOS `/usr/bin/sandbox-exec` with
+    // process info denied (B3, recorded the same way). A2's tests also
+    // start one fixture in a new unprivileged user and PID namespace
+    // (`unshare` in `pre_exec`, Linux, B6b, recorded the same way). A6's
+    // B8 test runs its sink host as the init of a user, PID and mount
+    // namespace: A2's `python_fixture` shim unshares, forks, mounts a
+    // private `/` and a fresh `/proc` inside the new namespaces (through
+    // `ctypes`), and execs this test binary on the `sink_supervisor_entry`
+    // test (recorded the same way). Since B8b the fake engine itself (a
+    // fixed script run through `python_fixture`) can, under a test-only
+    // environment switch, set parent-death signals and unshare a user and
+    // PID namespace with no maps (recorded the same way). Since B9a A2's
+    // tests also start a fixture with a parent-death signal and a
+    // `getppid` check in `pre_exec`, from a dedicated test thread
+    // (recorded the same way). Since B9b they also start a fixture as a
+    // transient systemd user service (`systemd-run --user`, fixed
+    // arguments, no shell) and stop it with `systemctl --user stop`
+    // (recorded the same way). A6
+    // (unix_rehearsal.rs) spawns only through A2's `python_fixture`, pinned
+    // below under the same guard.
+    let lib = sources
+        .iter()
+        .find(|(file, _)| file == "lib.rs")
+        .map(|(_, text)| text.replace("\r\n", "\n"))
+        .expect("lib.rs is a crate source");
+    // Exactly one declaration, private, directly under the Unix test cfg:
+    // a second declaration (another cfg, or `pub mod`) defeats the guard.
+    let unix_test_only = |module: &str| {
+        lib.matches(&format!("mod {module};")).count() == 1
+            && !lib.contains(&format!("pub mod {module}"))
+            && lib.contains(&format!("#[cfg(all(test, unix))]\nmod {module};\n"))
+    };
+    let discovery = sources
+        .iter()
+        .find(|(file, _)| file == "discovery.rs")
+        .map(|(_, text)| text.replace("\r\n", "\n"))
+        .expect("discovery.rs is a crate source");
+    // ...and no other source may declare it through a #[path] of its own.
+    let named_elsewhere = sources
+        .iter()
+        .any(|(file, text)| file != "discovery.rs" && text.contains("discovery_linux_tests.rs"));
+    let linux_tests_only = !named_elsewhere
+        && discovery.matches("mod linux_tests;").count() == 1
+        && discovery.contains(
+            "#[cfg(all(test, not(windows), not(target_os = \"macos\")))]\n#[path = \"discovery_linux_tests.rs\"]\nmod linux_tests;\n",
+        );
     for (file, text) in &sources {
         if text.contains("Command::new") {
             assert!(
                 file == "supervise.rs"
                     || file == "discovery.rs"
-                    || file == "worker_launch_tests.rs",
+                    || file == "worker_launch_tests.rs"
+                    || file == "discovery_macos_tests.rs"
+                    // SG-000115 S-07 (recorded rule change, prep/SG-000115.md):
+                    // the Linux verifier's dpkg fixture tests, admitted only
+                    // while discovery.rs declares them under the test cfg;
+                    // since B7 they also run gpg (a throwaway fixture key)
+                    // and gpgv (the signature check), recorded the same way.
+                    || (file == "discovery_linux_tests.rs" && linux_tests_only)
+                    || (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
+                    || (file == "unix_cleanup.rs" && unix_test_only("unix_cleanup")),
                 "unexpected process spawn in {file}"
+            );
+        }
+        // A6 (unix_rehearsal.rs) spawns its fake engine through A2's fixture
+        // constructor, which evaluates a fixed Python string, and (A6b) its
+        // dedicated supervisor through A2's `spawn_test`, which re-runs only
+        // a fixed list of supervisor entries: both indirections are pinned to
+        // the same two test-only modules. A6's own reachability scan matches
+        // the unix_rehearsal line below exactly.
+        if text.contains("spawn_test(") {
+            assert!(
+                (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
+                    || (file == "unix_rehearsal.rs" && unix_test_only("unix_rehearsal")),
+                "unexpected test-binary spawn in {file}"
+            );
+        }
+        if text.contains("python_fixture(") {
+            assert!(
+                (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
+                    || (file == "unix_rehearsal.rs" && unix_test_only("unix_rehearsal")),
+                "unexpected fixture-script spawn in {file}"
             );
         }
         if text.contains("use_personal") {

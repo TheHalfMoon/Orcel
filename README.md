@@ -59,7 +59,7 @@ Orcel is an **open-source computer-access authority layer** for MCP-compatible A
 
 ## What ChatGPT can do through Orcel
 
-Exactly these 31 tools are exposed over local MCP:
+Local MCP clients get the default `desktop_structured` profile: exactly the 45 tools below (the generated contract with every tool's bounds is [`docs/p16/TOOL_CONTRACT.md`](docs/p16/TOOL_CONTRACT.md); a test keeps this table equal to the profile):
 
 | Area | Tools | Approval |
 |---|---|---|
@@ -67,16 +67,19 @@ Exactly these 31 tools are exposed over local MCP:
 | Files in a trusted workspace | `fs_stat`, `fs_list`, `fs_read`, `fs_read_range`, `fs_search`, `fs_find` | none (read-only, bounded) |
 | File writes | `fs_write_preview`, `fs_write`, `fs_edit`, `fs_mkdir`, `fs_move` | local approval for each write, bound to the exact content and current file hash |
 | File removal | `fs_remove` | Windows Hello (STRONG), single files or empty directories only |
-| Desktop observation | `desktop_window_list`, `desktop_window_tree` | none (read-only, bounded, local-only) |
+| Desktop observation | `desktop_window_list`, `desktop_window_tree`, `desktop_cursor_get` | none (read-only, bounded, local-only) |
+| Desktop capture | `desktop_window_capture` | local approval for each capture of one exact window; local-only |
+| Desktop control | `desktop_element_invoke`, `desktop_element_scroll`, `desktop_element_select`, `desktop_element_set_value`, `desktop_element_toggle`, `desktop_window_action`, `desktop_input_execute` | local approval for each bounded action on one exact element or window; local-only |
 | Clipboard | `clipboard_read`, `clipboard_write` | local approval for each use; secrets refused; local-only |
 | Network | `web_fetch` | local approval per destination; public HTTPS only; local-only |
 | Web search (optional) | `web_search` | off until you enable a provider (`ORCEL_SEARCH_PROVIDERS_JSON`: self-hosted SearXNG, or your own Brave, Tavily, Exa or Serper key stored with `orcel search set-key`); local approval per query; results are untrusted data; local-only; a self-hosted SearXNG must be served on a public HTTPS name (private, loopback and LAN addresses are refused); not available through the ChatGPT tunnel |
+| Report task | `report_start`, `report_preview`, `report_commit`, `task_resume_summary` | start and preview read only; commit needs local approval of the exact file, creates it only (never overwrites) and is verified independently; after a reconnect, `task_resume_summary` reads what the session's own task did and what is unknown (read only, keyed fingerprints, never file text); local-only; not available through the ChatGPT tunnel |
 | Git (local) | `git_status`, `git_diff`, `git_log` | none (read-only) |
 | Git (local changes) | `git_branch_create`, `git_stage`, `git_unstage`, `git_commit` | local approval, bound to the exact repository state |
 | Git (network) | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` | local approval; see limitations |
 | Processes | `process_spawn` | local approval; see limitations |
 
-Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: desktop observation, clipboard, and network fetch are local-only and cannot be reached remotely. Browser automation, screenshots, coordinate input, and UI actuation remain unreachable over MCP entirely.
+Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: every desktop, clipboard, network, search and report task tool is local-only and cannot be reached remotely. The six live browser tools are served only under the separate `browser_structured` profile of a development build; release builds serve no browser automation.
 
 ### Current limitations
 
@@ -114,7 +117,18 @@ Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, 
    Optionally verify provenance: `gh attestation verify .\orcel-<version>-windows-x64.zip --repo TheHalfMoon/Orcel`.
 2. Extract the archive and run, from the extracted folder:
    `.\orcel.exe install`
-   For a qualified Orcel build, the installer checks files against `manifest.json` before copying them. The current source uses `%LOCALAPPDATA%\Orcel` and adds `%LOCALAPPDATA%\Orcel\bin` to your user PATH (`--no-path` to skip). Follow the exact published release notes and open a new terminal afterwards.
+   For a qualified Orcel build, the installer checks files against `manifest.json` before copying them. The current source uses `%USERPROFILE%\.orcel` and adds `%USERPROFILE%\.orcel\bin` to your user PATH (`--no-path` to skip). Follow the exact published release notes and open a new terminal afterwards.
+3. If the release includes the Windows app, install also adds an **Orcel** entry to the Start Menu that opens it. `orcel app` opens the app from a terminal too. If the app can't open, the Start Menu entry shows why in a dialog. `--no-path` leaves the Start Menu alone, as it does PATH.
+4. If install prints a `Note:` that another `orcel` comes first on PATH, that copy is what `orcel` runs. An earlier Orcel install is uninstalled with its own `orcel uninstall`; anything else, take its folder off PATH.
+
+### State from an earlier build
+
+Earlier builds kept their state in `%LOCALAPPDATA%\Orcel`. If that folder holds anything, `orceld` won't start until you decide what happens to it, so starting fresh never silently abandons it. `orcel state status` shows what's there and the two choices:
+
+- `orcel state migrate` copies your history, trust and settings to `%USERPROFILE%\.orcel`, and only if no other account could have changed them. Full-control grants, remote leases and this device's pairing aren't copied: grant them again.
+- `orcel state keep-separate` records that Orcel won't use the earlier folder, and keeps what's already in `%USERPROFILE%\.orcel`.
+
+Neither changes nor deletes the earlier folder. Once a decision is recorded, it can't be changed with these commands.
 
 ## Configure
 
@@ -160,7 +174,7 @@ Codex and other command-based clients use the same command and arguments:
 
 Mistral Vibe Code accepts a stdio entry in its MCP server list with command `orcel` and arguments `["mcp", "stdio"]`. Generic MCP clients and the MCP Inspector connect with transport `stdio`, command `orcel`, and arguments `["mcp", "stdio"]`.
 
-`orcel` here is the retained compatibility command at `%LOCALAPPDATA%\Orcel\bin\orcel.exe` on your user PATH after install. It resolves the active verified release on every launch, refuses tampered or inactive payloads, and fails closed when no workspace is configured. Tested per-client files live in [`examples/mcp-clients`](examples/mcp-clients) (Claude Desktop JSON and Desktop Extension manifest, Codex TOML, Vibe Code TOML, generic shapes, and the Inspector qualification script).
+`orcel` here is the retained compatibility command at `%USERPROFILE%\.orcel\bin\orcel.exe` on your user PATH after install. It resolves the active verified release on every launch, refuses tampered or inactive payloads, and fails closed when no workspace is configured. Tested per-client files live in [`examples/mcp-clients`](examples/mcp-clients) (Claude Desktop JSON and Desktop Extension manifest, Codex TOML, Vibe Code TOML, generic shapes, and the Inspector qualification script).
 
 ## Connect over loopback HTTP (no tunnel required)
 
@@ -179,7 +193,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 
 | Command | Purpose |
 |---|---|
-| `orcel status` | Installed version, configuration, and whether the runtime is running |
+| `orcel status` | Installed version, configuration, and whether the optional ChatGPT tunnel is running |
 | `orcel doctor` | Full diagnostics; exits non-zero if any check fails (`--json` for details) |
 | `orcel stop` | Stops the tunnel client and everything it started, and confirms they exited |
 | `orcel workspace list` | Workspaces and their trust state |
@@ -189,7 +203,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 
 ## Diagnose problems
 
-Run `orcel doctor`. Each check reports `PASS`, `WARN`, `FAIL`, or `????` (could not be checked) with one line of evidence — Orcel never reports health it did not observe. Logs are currently stored in the compatibility path `%LOCALAPPDATA%\Orcel\logs` (`tunnel.log`, `supervisor.log`, `lifecycle.log`); tunnel output is redacted before it is written.
+Run `orcel doctor`. A ChatGPT tunnel that isn't configured is a `WARN`, not a failure: local MCP clients don't need one. Each check reports `PASS`, `WARN`, `FAIL`, or `????` (could not be checked) with one line of evidence — Orcel never reports health it did not observe. Logs are currently stored in the compatibility path `%USERPROFILE%\.orcel\logs` (`tunnel.log`, `supervisor.log`, `lifecycle.log`); tunnel output is redacted before it is written.
 
 ## Update
 
@@ -202,8 +216,8 @@ Orcel never checks for or downloads updates by itself.
 
 ## Uninstall
 
-- `orcel uninstall` stops Orcel and removes its programs and the PATH entry. Your configuration, tunnel key, logs, and audit/approval/trust history are **kept** and listed.
-- `orcel uninstall --purge-data --yes` also deletes that data.
+- `orcel uninstall` stops Orcel and removes its programs, the PATH entry and its Start Menu entry. Your configuration, tunnel key, logs, and audit/approval/trust history are **kept** and listed.
+- `orcel uninstall --purge-data --yes` also deletes that data, including stored secrets, the executable registry and leases. Anything under the folder that isn't Orcel's stays, and is named in the report.
 - Your workspaces are never touched.
 
 ## Security model and governance

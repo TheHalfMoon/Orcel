@@ -102,12 +102,96 @@ fn profile(label: &str) -> String {
     format!("Orcel.SG000013.{label}.{suffix}")
 }
 
+/// #292: the limit of the tests that need PowerShell to start. They qualify
+/// containment (AppContainer, job assignment before resume, quiescence, output
+/// limits), not start-up latency: Windows PowerShell 5.1 has taken 99 s to start
+/// inside the AppContainer on a hosted runner, while an uncontained start right
+/// after took 136 ms, so the stall is the container's and its cause is open.
+/// Production keeps `ExecutionLimits::default()` (30 s); the timeout path itself
+/// is qualified by the 3 s timeout test below.
+const COLD_START_ALLOWANCE: Duration = Duration::from_secs(120);
+
+/// How long an uncontained `powershell -Command exit` takes right now: on a
+/// failure this separates a slow runner from a containment-specific stall.
+fn uncontained_start_millis() -> Option<u128> {
+    let started = std::time::Instant::now();
+    let status = std::process::Command::new(powershell_executable())
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "exit 0",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+    status.success().then(|| started.elapsed().as_millis())
+}
+
+/// How long this contained run took, in the CI log whether it passes or not, and
+/// marked if a real user at the production limit would have hit the timeout.
+fn start_evidence(what: &str, elapsed: Duration) {
+    let uncontained = uncontained_start_millis();
+    evidence(&format!(
+        "SG013-EVIDENCE contained PowerShell {what} took {} ms; uncontained start {uncontained:?} ms",
+        elapsed.as_millis(),
+    ));
+    if elapsed > ExecutionLimits::default().timeout {
+        evidence(&format!(
+            "SG013-SLOW contained PowerShell {what} took {} ms, over the production {} s limit",
+            elapsed.as_millis(),
+            ExecutionLimits::default().timeout.as_secs()
+        ));
+    }
+}
+
 #[test]
 fn windows_private_powershell_success_is_bounded_and_quiescent() {
     let root = workspace("Success");
     let script = "$inputText=[Console]::In.ReadToEnd(); if($inputText.Length -ne 0){exit 23}; [Console]::Out.Write('ORCEL_POWERSHELL_OK')";
-    let plan = powershell_plan(&root, script, ExecutionLimits::default());
-    let result = execute_contained(plan, &profile("Success")).expect("contained PowerShell");
+    let limits = ExecutionLimits {
+        timeout: COLD_START_ALLOWANCE,
+        ..ExecutionLimits::default()
+    };
+    assert_eq!(
+        ExecutionLimits::default().timeout,
+        Duration::from_secs(30),
+        "the production default is not changed by this test"
+    );
+    let plan = powershell_plan(&root, script, limits);
+    let started = std::time::Instant::now();
+    let result = execute_contained(plan, &profile("Success"));
+    let elapsed = started.elapsed();
+    // Always in the log, with an uncontained start measured right after,
+    // so a slow start is visible (and comparable) even when it passes.
+    // Written to stderr directly: libtest captures `eprintln!` of a passing
+    // test, so the evidence never reached the CI log (#292).
+    let uncontained = uncontained_start_millis();
+    evidence(&format!(
+        "SG013-EVIDENCE contained PowerShell success took {} ms; uncontained start {:?} ms",
+        elapsed.as_millis(),
+        uncontained
+    ));
+    // Past the production limit: a real user would have hit the timeout
+    // (#292's open product question), so it is marked distinctly.
+    if elapsed > ExecutionLimits::default().timeout {
+        evidence(&format!(
+            "SG013-SLOW contained PowerShell took {} ms, over the production {} s limit",
+            elapsed.as_millis(),
+            ExecutionLimits::default().timeout.as_secs()
+        ));
+    }
+    let result = result.unwrap_or_else(|failure| {
+        panic!(
+            "contained PowerShell: {failure:?} after {} ms; uncontained start: {:?} ms; {} CPUs",
+            elapsed.as_millis(),
+            uncontained,
+            std::thread::available_parallelism().map_or(0, usize::from)
+        )
+    });
 
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout, b"ORCEL_POWERSHELL_OK");
@@ -136,21 +220,22 @@ fn windows_private_powershell_timeout_is_verified_and_typed() {
 fn windows_private_powershell_stdout_limit_is_verified_and_typed() {
     let root = workspace("StdoutLimit");
     let limits = ExecutionLimits {
-        // A cold, zero-capability AppContainer PowerShell can take well over
-        // ten seconds to start on a loaded runner. The generous timeout only
-        // gives it time to write; the script then sleeps far longer than the
-        // timeout, so the asserted OutputLimit can come only from the limit
-        // being enforced, not from a normal exit or the timeout.
-        timeout: Duration::from_secs(60),
+        // The generous timeout only gives it time to start and write (#292). The
+        // script then sleeps far longer than the timeout, so the asserted OutputLimit
+        // can come only from the limit being enforced, not from a normal exit or the
+        // timeout.
+        timeout: COLD_START_ALLOWANCE,
         stdout_bytes: 32,
         stderr_bytes: 1024,
     };
     let plan = powershell_plan(
         &root,
-        "[Console]::Out.Write(('x' * 4096)); [Threading.Thread]::Sleep(120000)",
+        "[Console]::Out.Write(('x' * 4096)); [Threading.Thread]::Sleep(300000)",
         limits,
     );
+    let started = std::time::Instant::now();
     let result = execute_contained(plan, &profile("StdoutLimit"));
+    start_evidence("stdout limit", started.elapsed());
     assert_eq!(
         result,
         Err(PrivateExecutionFailure::OutputLimit(OutputStream::Stdout))
@@ -162,24 +247,28 @@ fn windows_private_powershell_stdout_limit_is_verified_and_typed() {
 fn windows_private_powershell_stderr_limit_is_verified_and_typed() {
     let root = workspace("StderrLimit");
     let limits = ExecutionLimits {
-        // A cold, zero-capability AppContainer PowerShell can take well over
-        // ten seconds to start on a loaded runner. The generous timeout only
-        // gives it time to write; the script then sleeps far longer than the
-        // timeout, so the asserted OutputLimit can come only from the limit
-        // being enforced, not from a normal exit or the timeout.
-        timeout: Duration::from_secs(60),
+        // As in the stdout test: time to start and write, then the limit (#292).
+        timeout: COLD_START_ALLOWANCE,
         stdout_bytes: 1024,
         stderr_bytes: 32,
     };
     let plan = powershell_plan(
         &root,
-        "[Console]::Error.Write(('e' * 4096)); [Threading.Thread]::Sleep(120000)",
+        "[Console]::Error.Write(('e' * 4096)); [Threading.Thread]::Sleep(300000)",
         limits,
     );
+    let started = std::time::Instant::now();
     let result = execute_contained(plan, &profile("StderrLimit"));
+    start_evidence("stderr limit", started.elapsed());
     assert_eq!(
         result,
         Err(PrivateExecutionFailure::OutputLimit(OutputStream::Stderr))
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// One evidence line on the process's real stderr, past libtest's capture.
+fn evidence(line: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "{line}");
 }

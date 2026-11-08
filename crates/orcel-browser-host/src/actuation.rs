@@ -20,6 +20,19 @@ pub enum SupportedAction {
     /// Fill and submit a discovered WebMCP declarative tool form; the target
     /// state binds the tool record, its action and the exact arguments.
     Execute,
+    /// BR-02: choose options of a native select by their labels; the
+    /// target state binds the exact labels.
+    Select,
+    /// BR-02: set a checkbox or radio; the target state binds the state.
+    Check,
+    /// BR-02: press one key from `PRESS_KEYS` on the element; the target
+    /// state binds the key.
+    Press,
+    /// BR-02: move the pointer over the element.
+    Hover,
+    /// BR-03: set a file input to one host-staged file; the target state
+    /// binds the page's origin, the file's digest and its name.
+    Upload,
 }
 
 impl SupportedAction {
@@ -29,6 +42,11 @@ impl SupportedAction {
             Self::Fill => "fill",
             Self::Download => "download",
             Self::Execute => "execute",
+            Self::Select => "select",
+            Self::Check => "check",
+            Self::Press => "press",
+            Self::Hover => "hover",
+            Self::Upload => "upload",
         }
     }
 
@@ -38,6 +56,11 @@ impl SupportedAction {
             "fill" => Ok(Self::Fill),
             "download" => Ok(Self::Download),
             "execute" => Ok(Self::Execute),
+            "select" => Ok(Self::Select),
+            "check" => Ok(Self::Check),
+            "press" => Ok(Self::Press),
+            "hover" => Ok(Self::Hover),
+            "upload" => Ok(Self::Upload),
             _ => Err(HostError::Invalid("unsupported actuation action".into())),
         }
     }
@@ -47,6 +70,8 @@ impl SupportedAction {
 /// permitted for any action in this grain.
 pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), HostError> {
     let lower = role.to_ascii_lowercase();
+    // Substring matching on purpose: it fails closed (for example "pin"
+    // also denies "spinbutton", which no action allows anyway).
     for denied in ["password", "secret", "credential", "token", "pin"] {
         if lower.contains(denied) {
             return Err(HostError::Invalid("password-field filling denied".into()));
@@ -57,13 +82,204 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
         SupportedAction::Fill => &["textbox", "edit", "document", "combobox", "searchbox"],
         SupportedAction::Download => &["link", "hyperlink"],
         SupportedAction::Execute => &["webmcp-tool"],
+        SupportedAction::Select => &["combobox", "listbox"],
+        SupportedAction::Check => &["checkbox", "radio"],
+        // Focusable controls only: a key pressed on an element that cannot
+        // take focus would go to whatever had it.
+        SupportedAction::Press => &[
+            "textbox",
+            "searchbox",
+            "combobox",
+            "listbox",
+            "option",
+            "button",
+            "link",
+            "checkbox",
+            "radio",
+            "menuitem",
+            "tab",
+            "slider",
+        ],
+        SupportedAction::Hover => &["button", "link", "menuitem", "tab", "img", "image"],
+        // A file input is a button in the accessibility tree; the worker
+        // also requires the element itself to be <input type=file>.
+        SupportedAction::Upload => &["button"],
     };
-    if allowed.iter().any(|entry| lower.contains(entry)) {
+    // BR-02's actions match roles exactly (`tab` is not `table`); the
+    // earlier actions keep their substring rule.
+    let exact = matches!(
+        action,
+        SupportedAction::Select
+            | SupportedAction::Check
+            | SupportedAction::Press
+            | SupportedAction::Hover
+            | SupportedAction::Upload
+    );
+    if allowed.iter().any(|entry| {
+        if exact {
+            lower == *entry
+        } else {
+            lower.contains(entry)
+        }
+    }) {
         return Ok(());
     }
     Err(HostError::Invalid(
         "role does not support the action".into(),
     ))
+}
+
+/// BR-02: the longest value filled and the most options selected at once
+/// (mirrors the worker).
+pub const MAX_FORM_VALUE_BYTES: usize = 1024;
+pub const MAX_FORM_OPTIONS: usize = 16;
+/// BR-02: the keys an approved press may send (mirrors the worker):
+/// navigation and editing keys only, no characters (Space aside) and no
+/// modifiers.
+pub const PRESS_KEYS: [&str; 12] = [
+    "Enter",
+    "Tab",
+    "Escape",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Space",
+];
+
+/// Roles a Space may be pressed on: controls Space activates or toggles,
+/// never a text field (where it would type, which only an approved fill
+/// may do).
+const SPACE_ROLES: [&str; 6] = ["button", "checkbox", "radio", "option", "menuitem", "tab"];
+
+/// BR-02: one form action and its exact input. Its `state` is what the
+/// one-shot approval binds (through the target digest), so the approver
+/// sees, and approves, exactly the value entered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FormInput {
+    /// Type `value` into a text field, replacing its content (empty clears).
+    Fill { value: String },
+    /// Choose these options of a native select, by their visible labels.
+    Select { labels: Vec<String> },
+    /// Set a checkbox or radio.
+    Check { checked: bool },
+    /// Press one key from `PRESS_KEYS` on the element.
+    Press { key: String },
+    /// Move the pointer over the element.
+    Hover,
+}
+
+impl FormInput {
+    pub fn action(&self) -> SupportedAction {
+        match self {
+            Self::Fill { .. } => SupportedAction::Fill,
+            Self::Select { .. } => SupportedAction::Select,
+            Self::Check { .. } => SupportedAction::Check,
+            Self::Press { .. } => SupportedAction::Press,
+            Self::Hover => SupportedAction::Hover,
+        }
+    }
+
+    /// Refuses input the worker would refuse: oversized, control
+    /// characters (one line only), no, too many or repeated options.
+    pub fn check(&self) -> Result<(), HostError> {
+        let bounded =
+            |text: &str| text.len() <= MAX_FORM_VALUE_BYTES && !text.chars().any(char::is_control);
+        let fits = match self {
+            Self::Fill { value } => bounded(value),
+            Self::Select { labels } => {
+                let mut unique = labels.clone();
+                unique.sort();
+                unique.dedup();
+                !labels.is_empty()
+                    && labels.len() <= MAX_FORM_OPTIONS
+                    && unique.len() == labels.len()
+                    && labels
+                        .iter()
+                        .all(|label| !label.is_empty() && bounded(label))
+            }
+            Self::Check { .. } | Self::Hover => true,
+            Self::Press { key } => PRESS_KEYS.contains(&key.as_str()),
+        };
+        if fits {
+            Ok(())
+        } else {
+            Err(HostError::Invalid(
+                "the form input must be bounded, on one line, and select at least one option"
+                    .into(),
+            ))
+        }
+    }
+
+    /// The approval state for this input: the action and its exact input.
+    pub fn state(&self) -> String {
+        match self {
+            Self::Fill { value } => format!("fill\n{value}"),
+            Self::Select { labels } => format!("select\n{}", labels.join("\n")),
+            Self::Check { checked } => format!("check\n{checked}"),
+            Self::Press { key } => format!("press\n{key}"),
+            Self::Hover => "hover".to_owned(),
+        }
+    }
+}
+
+/// BR-02: whether a field's accessible name suggests a secret (a password,
+/// PIN, one-time code, card or security code). Such a field is never
+/// filled, whatever its attributes say.
+pub fn name_looks_secret(name: &str) -> bool {
+    let words: Vec<String> = name
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let has = |word: &str| words.iter().any(|w| w == word);
+    // Prefixes catch run-together forms ("Pincode", "Passcode", "CVV2").
+    let starts = |prefix: &str| words.iter().any(|w| w.starts_with(prefix));
+    let pair = |a: &str, b: &str| words.windows(2).any(|w| w[0] == a && w[1] == b);
+    [
+        "password",
+        "passcode",
+        "passphrase",
+        "pin",
+        "otp",
+        "cvc",
+        "cvv",
+        "csc",
+        "secret",
+        "token",
+        "passwort",
+        "contrase\u{f1}a",
+    ]
+    .iter()
+    .any(|word| has(word))
+        || ["pin", "cvv", "cvc", "passw", "passc"]
+            .iter()
+            .any(|prefix| starts(prefix))
+        || pair("card", "number")
+        || pair("card", "no")
+        || pair("security", "code")
+        || pair("one", "time")
+        || pair("verification", "code")
+}
+
+impl FormInput {
+    /// Refuses an input the target's role cannot take (a Space on a text
+    /// field), beyond `role_supports_action`.
+    pub fn check_for_role(&self, role: &str) -> Result<(), HostError> {
+        if let Self::Press { key } = self {
+            if key == "Space" && !SPACE_ROLES.contains(&role.to_ascii_lowercase().as_str()) {
+                return Err(HostError::Invalid(
+                    "Space is pressed only on buttons, checkboxes, radios, options, menu items and tabs"
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Exact pre-dispatch target binding.
@@ -219,6 +435,153 @@ pub fn coordinate_fallback() -> Result<(), HostError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BR-02: form inputs are bounded and their approval state names the
+    /// exact input; each action has its own roles; secrets stay denied.
+    #[test]
+    fn br02_form_inputs_bind_their_exact_value() {
+        let fill = FormInput::Fill {
+            value: "Ada Lovelace".into(),
+        };
+        assert_eq!(fill.state(), "fill\nAda Lovelace");
+        assert_eq!(fill.action(), SupportedAction::Fill);
+        assert_eq!(
+            FormInput::Select {
+                labels: vec!["Lisbon".into(), "Porto".into()]
+            }
+            .state(),
+            "select\nLisbon\nPorto"
+        );
+        assert_eq!(FormInput::Check { checked: false }.state(), "check\nfalse");
+        assert!(
+            FormInput::Fill {
+                value: String::new()
+            }
+            .check()
+            .is_ok(),
+            "clearing a field"
+        );
+        for bad in [
+            FormInput::Fill {
+                value: "a\nb".into(),
+            },
+            FormInput::Fill {
+                value: "x".repeat(MAX_FORM_VALUE_BYTES + 1),
+            },
+            FormInput::Select { labels: vec![] },
+            FormInput::Select {
+                labels: vec![String::new()],
+            },
+            FormInput::Select {
+                labels: vec!["a".into(); MAX_FORM_OPTIONS + 1],
+            },
+        ] {
+            assert!(bad.check().is_err(), "{bad:?}");
+        }
+        // Different values are different approvals.
+        let target = |state: String| ActuationTarget {
+            page_id: "p1".into(),
+            origin: "https://fixture.test".into(),
+            document_generation: 1,
+            node_id: "n1".into(),
+            role: "textbox".into(),
+            state,
+            action: SupportedAction::Fill,
+            workspace: "w".into(),
+            policy_revision: 1,
+        };
+        assert_ne!(
+            target_digest(&target(fill.state())),
+            target_digest(&target(
+                FormInput::Fill {
+                    value: "Ada Byron".into()
+                }
+                .state()
+            ))
+        );
+        assert!(role_supports_action("combobox", SupportedAction::Select).is_ok());
+        assert!(role_supports_action("textbox", SupportedAction::Select).is_err());
+        assert!(role_supports_action("checkbox", SupportedAction::Check).is_ok());
+        assert!(role_supports_action("button", SupportedAction::Check).is_err());
+        assert!(role_supports_action("password", SupportedAction::Fill).is_err());
+        assert_eq!(
+            SupportedAction::parse("select").unwrap(),
+            SupportedAction::Select
+        );
+        assert_eq!(SupportedAction::parse("check").unwrap().name(), "check");
+        assert_eq!(
+            SupportedAction::parse("upload").unwrap(),
+            SupportedAction::Upload
+        );
+        assert!(role_supports_action("button", SupportedAction::Upload).is_ok());
+        assert!(role_supports_action("textbox", SupportedAction::Upload).is_err());
+        let press = FormInput::Press {
+            key: "Enter".into(),
+        };
+        assert_eq!(
+            (press.state(), press.action()),
+            (
+                "press
+Enter"
+                    .to_owned(),
+                SupportedAction::Press
+            )
+        );
+        assert!(press.check().is_ok());
+        assert!(press.check_for_role("textbox").is_ok());
+        let space = FormInput::Press {
+            key: "Space".into(),
+        };
+        assert!(space.check_for_role("checkbox").is_ok());
+        assert!(space.check_for_role("textbox").is_err(), "Space would type");
+        assert!(
+            role_supports_action("table", SupportedAction::Hover).is_err(),
+            "exact roles"
+        );
+        assert!(role_supports_action("dialog", SupportedAction::Press).is_err());
+        for key in ["a", "Control+A", "enter", "", "Backspace", "Delete"] {
+            assert!(
+                FormInput::Press { key: key.into() }.check().is_err(),
+                "{key}"
+            );
+        }
+        assert_eq!(FormInput::Hover.state(), "hover");
+        assert!(role_supports_action("link", SupportedAction::Hover).is_ok());
+        assert!(role_supports_action("textbox", SupportedAction::Hover).is_err());
+        assert!(role_supports_action("searchbox", SupportedAction::Press).is_ok());
+        assert!(role_supports_action("heading", SupportedAction::Press).is_err());
+        assert!(
+            FormInput::Select {
+                labels: vec!["a".into(), "a".into()]
+            }
+            .check()
+            .is_err(),
+            "repeated options"
+        );
+        for secret in [
+            "Password",
+            "PIN",
+            "Card number",
+            "Security code",
+            "One-time code",
+            "CVV",
+            "Pincode",
+            "Passcode:",
+            "Card no.",
+            "CVV2",
+        ] {
+            assert!(name_looks_secret(secret), "{secret}");
+        }
+        for plain in [
+            "Full name",
+            "City",
+            "Shipping address",
+            "Spinning class",
+            "Email",
+        ] {
+            assert!(!name_looks_secret(plain), "{plain}");
+        }
+    }
 
     fn target() -> ActuationTarget {
         ActuationTarget {

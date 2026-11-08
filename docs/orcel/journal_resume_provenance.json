@@ -1,0 +1,22 @@
+{
+  "schema": "orcel-adapted-source-provenance/1",
+  "task": "RJ-03",
+  "grain": "SG-000120",
+  "donor": {
+    "id": "agent-native",
+    "repo": "BuilderIO/agent-native",
+    "commit": "9c277b79cb87eb27da538e572dd710986e2fa06d",
+    "license": "MIT (packages/core/package.json)",
+    "notice": "docs/orcel/notices/agent-native-MIT.txt",
+    "authorization": "docs/orcel/grants/2026-10-18-founder-attestation.md"
+  },
+  "method": "PORT",
+  "files": [
+    {
+      "path": "crates/orcel-journal/src/resume.rs",
+      "donor_path": "packages/core/src/agent/tool-call-journal.ts",
+      "donor_blob": "be77f428f557b2e777665bfacd0d6dd51a58ff1d",
+      "row": "RJ-03"
+    }
+  ]
+}

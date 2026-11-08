@@ -1111,15 +1111,17 @@ mod tests {
         let mut idle = request(PermissionMode::Standard);
         idle.public_session = "public-idle".to_owned();
         idle.transport_session = "transport-idle".to_owned();
-        idle.ttl = Duration::from_secs(1);
-        idle.idle_ttl = Duration::from_millis(1);
+        // Orcel P-14 (#573): idle headroom for shared runners; a 1 ms idle
+        // TTL could lapse between bind and resolve.
+        idle.ttl = Duration::from_secs(5);
+        idle.idle_ttl = Duration::from_millis(200);
         registry
             .bind_delegated_session(&host, &idle_connection, idle)
             .unwrap();
         let context = registry
             .resolve_delegated(&idle_connection, "public-idle", "transport-idle")
             .unwrap();
-        std::thread::sleep(Duration::from_millis(3));
+        std::thread::sleep(Duration::from_millis(300));
         assert!(context.is_expired());
         assert!(context.authorize_dispatch().is_err());
         assert_eq!(

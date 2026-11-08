@@ -7,8 +7,9 @@
 //! Orcel-native: Firecrawl's documented crawl behaviour (a path-prefix
 //! scope, a depth bound, internal links only, fragments dropped, non-page
 //! files and non-web schemes skipped, include and exclude paths) is the
-//! reference; no Firecrawl code is copied. Include and exclude are path
-//! prefixes, not regular expressions. robots.txt (RFC 9309) and sitemaps
+//! reference. Include and exclude are path prefixes by default, or
+//! regular expressions with Firecrawl's semantics (WI-01, `crawl_scope`,
+//! the only adapted Firecrawl code here). robots.txt (RFC 9309) and sitemaps
 //! are read through governed navigations too (#317).
 
 use crate::error::HostError;
@@ -55,10 +56,16 @@ pub struct CrawlSpec {
     pub start_url: String,
     pub max_pages: u32,
     pub max_depth: u32,
-    /// Path prefixes a page must start with (none: every in-scope path).
+    /// Patterns a page must match (none: every in-scope path).
     pub include_paths: Vec<String>,
-    /// Path prefixes a page must not start with.
+    /// Patterns a page must not match.
     pub exclude_paths: Vec<String>,
+    /// WI-01: whether the patterns are path prefixes (the default) or
+    /// regular expressions over the path.
+    pub pattern_kind: crate::crawl_scope::PatternKind,
+    /// WI-02: order the map (`discovered`) by relevance to this term, at
+    /// most `map_rank::MAX_SEARCH_BYTES` (none or no word: discovery order).
+    pub search: Option<String>,
     /// Extract every opened page (slice 6); `None` maps links only.
     pub extract: Option<ExtractOptions>,
     /// Read `/robots.txt` first and honour it for Orcel's product token
@@ -184,7 +191,7 @@ pub trait CrawlDriver {
 }
 
 /// The crawl's origin and scope, from its start URL.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct Scope {
     /// `https://host` (port 443 implied).
     base: String,
@@ -193,8 +200,7 @@ struct Scope {
     /// A start path without a trailing slash that is not a document is in
     /// scope itself, besides everything below it.
     exact: Option<String>,
-    include: Vec<String>,
-    exclude: Vec<String>,
+    patterns: crate::crawl_scope::Patterns,
 }
 
 fn invalid(message: &str) -> HostError {
@@ -258,23 +264,6 @@ fn scope_of(path: &str) -> (String, Option<String>) {
     }
 }
 
-fn checked_patterns(patterns: &[String]) -> Result<Vec<String>, HostError> {
-    if patterns.len() > MAX_PATH_PATTERNS {
-        return Err(invalid("too many crawl path patterns"));
-    }
-    for pattern in patterns {
-        if !pattern.starts_with('/')
-            || pattern.len() > MAX_PATH_PATTERN_BYTES
-            || pattern.chars().any(|ch| ch.is_control() || ch == '#')
-        {
-            return Err(invalid(
-                "a crawl path pattern must be a bounded absolute path",
-            ));
-        }
-    }
-    Ok(patterns.to_vec())
-}
-
 impl Scope {
     fn of(spec: &CrawlSpec) -> Result<(Self, String), HostError> {
         let target = crate::navigation::parse_navigation_url(&spec.start_url)?;
@@ -290,8 +279,11 @@ impl Scope {
             base: base.clone(),
             prefix,
             exact,
-            include: checked_patterns(&spec.include_paths)?,
-            exclude: checked_patterns(&spec.exclude_paths)?,
+            patterns: crate::crawl_scope::Patterns::compile(
+                spec.pattern_kind,
+                &spec.include_paths,
+                &spec.exclude_paths,
+            )?,
         };
         Ok((scope, format!("{base}{path}")))
     }
@@ -314,9 +306,7 @@ impl Scope {
         if not_a_page(&path) {
             return Err(SkipReason::NotAPage);
         }
-        let included =
-            self.include.is_empty() || self.include.iter().any(|p| path.starts_with(p.as_str()));
-        if !included || self.exclude.iter().any(|p| path.starts_with(p.as_str())) {
+        if !self.patterns.admits(&path) {
             return Err(SkipReason::Filtered);
         }
         Ok(format!("{}{path}", self.base))
@@ -333,6 +323,13 @@ fn check_spec(spec: &CrawlSpec) -> Result<(), HostError> {
     if spec.deadline.is_zero() || spec.deadline > MAX_CRAWL_DURATION {
         return Err(invalid(
             "the crawl deadline must be within MAX_CRAWL_DURATION",
+        ));
+    }
+    if spec.search.as_deref().is_some_and(|search| {
+        search.len() > crate::map_rank::MAX_SEARCH_BYTES || search.chars().any(char::is_control)
+    }) {
+        return Err(invalid(
+            "the map search term must be bounded and without control characters",
         ));
     }
     Ok(())
@@ -440,7 +437,9 @@ impl Frontier {
             Ok(admitted) => admitted,
             Err(reason) => return skip(report, link, reason),
         };
-        if self.seen.contains(&admitted) {
+        // `/docs` and `/docs/` are one page (WI-01).
+        let key = crate::crawl_scope::canonical(&admitted);
+        if self.seen.contains(&key) {
             return;
         }
         if !robots.allowed(&admitted[scope.base.len()..]) {
@@ -458,7 +457,7 @@ impl Frontier {
         if self.seen.len() >= MAX_CRAWL_URLS {
             return skip(report, admitted, SkipReason::TooMany);
         }
-        self.seen.insert(admitted.clone());
+        self.seen.insert(key);
         report.discovered.push(admitted.clone());
         self.queue.push_back((admitted, depth));
     }
@@ -501,8 +500,21 @@ fn read_robots(
 
 /// Run a crawl. A refused spec is an error; everything after the start is
 /// in the report. `cancelled` is checked before anything is fetched (robots
-/// included) and, with the deadline, between pages.
+/// included) and, with the deadline, between pages. With a search term the
+/// map is ordered by relevance to it (WI-02); the pages are not.
 pub fn crawl(
+    driver: &mut dyn CrawlDriver,
+    spec: &CrawlSpec,
+    cancelled: &AtomicBool,
+) -> Result<CrawlReport, HostError> {
+    let mut report = crawl_in_order(driver, spec, cancelled)?;
+    if let Some(search) = spec.search.as_deref() {
+        crate::map_rank::rank(&mut report.discovered, search);
+    }
+    Ok(report)
+}
+
+fn crawl_in_order(
     driver: &mut dyn CrawlDriver,
     spec: &CrawlSpec,
     cancelled: &AtomicBool,
@@ -608,7 +620,7 @@ pub fn crawl(
                     Some("redirected onto a page robots.txt disallows".to_owned())
                 }
                 // Keyed by the normalized URL (no fragment), as the queue is.
-                Ok(normalized) if !read.insert(normalized.clone()) => {
+                Ok(normalized) if !read.insert(crate::crawl_scope::canonical(&normalized)) => {
                     Some("redirected onto a page already read".to_owned())
                 }
                 Ok(_) => None,
@@ -784,6 +796,8 @@ mod tests {
             max_depth: 3,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
+            pattern_kind: Default::default(),
+            search: None,
             extract: Some(ExtractOptions::default()),
             robots: false,
             sitemaps: false,
@@ -857,6 +871,116 @@ mod tests {
             .iter()
             .map(|s| (s.url.as_str(), s.reason))
             .collect()
+    }
+
+    /// WI-01: regex include and exclude through a whole crawl; a link on
+    /// another origin that matches stays refused; `/docs/x` and `/docs/x/`
+    /// are one page.
+    #[test]
+    fn wi01_regex_patterns_and_canonical_urls_through_a_crawl() {
+        let mut driver = Site::new(&[
+            (
+                "https://site.test/docs/",
+                "https://site.test/docs/",
+                200,
+                &[
+                    "/docs/guide/intro",
+                    "/docs/guide/intro/",
+                    "/docs/api/v1",
+                    "/docs/guide/old/setup",
+                    "https://other.test/docs/guide/x",
+                ],
+            ),
+            (
+                "https://site.test/docs/guide/intro",
+                "https://site.test/docs/guide/intro",
+                200,
+                &[],
+            ),
+            (
+                "https://site.test/docs/guide/intro/",
+                "https://site.test/docs/guide/intro/",
+                200,
+                &[],
+            ),
+            (
+                "https://site.test/docs/api/v1",
+                "https://site.test/docs/api/v1",
+                200,
+                &[],
+            ),
+            (
+                "https://site.test/docs/guide/old/setup",
+                "https://site.test/docs/guide/old/setup",
+                200,
+                &[],
+            ),
+        ]);
+        let mut wanted = spec("https://site.test/docs/");
+        wanted.pattern_kind = crate::crawl_scope::PatternKind::Regex;
+        wanted.include_paths = vec!["^/docs/(guide|$)".into()];
+        wanted.exclude_paths = vec!["/old/".into()];
+        let report = crawl(&mut driver, &wanted, &AtomicBool::new(false)).unwrap();
+        assert_eq!(
+            driver.opened,
+            [
+                "https://site.test/docs/",
+                "https://site.test/docs/guide/intro"
+            ],
+            "regex include and exclude, and one visit for /intro and /intro/"
+        );
+        let reasons = reasons(&report);
+        assert!(reasons.contains(&("/docs/api/v1", SkipReason::Filtered)));
+        assert!(reasons.contains(&("/docs/guide/old/setup", SkipReason::Filtered)));
+        assert!(reasons.contains(&("https://other.test/docs/guide/x", SkipReason::OtherOrigin)));
+        // An oversized regex refuses the crawl before anything is opened.
+        let mut refused = spec("https://site.test/docs/");
+        refused.pattern_kind = crate::crawl_scope::PatternKind::Regex;
+        refused.include_paths = vec!["a{5}{5}{5}{5}{5}{5}".into()];
+        let mut untouched = site();
+        assert!(crawl(&mut untouched, &refused, &AtomicBool::new(false)).is_err());
+        assert!(untouched.opened.is_empty());
+    }
+
+    /// WI-02: a search term orders the map by relevance; the pages keep
+    /// their crawl order; a bad term refuses the crawl before anything opens.
+    #[test]
+    fn wi02_a_search_term_orders_the_map_only() {
+        let mut plain = site();
+        let unranked = crawl(
+            &mut plain,
+            &spec("https://site.test/docs/"),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let mut driver = site();
+        let mut wanted = spec("https://site.test/docs/");
+        wanted.search = Some("docs c".into());
+        let report = crawl(&mut driver, &wanted, &AtomicBool::new(false)).unwrap();
+        assert_eq!(driver.opened, plain.opened, "the crawl itself is unchanged");
+        let mut sorted = report.discovered.clone();
+        sorted.sort();
+        let mut expected = unranked.discovered.clone();
+        expected.sort();
+        assert_eq!(sorted, expected, "the same URLs, reordered");
+        assert_ne!(
+            report.discovered, unranked.discovered,
+            "the map was reordered"
+        );
+        assert_eq!(
+            report.discovered[0], "https://site.test/docs/c",
+            "both words lead"
+        );
+        for bad in [
+            "x".repeat(crate::map_rank::MAX_SEARCH_BYTES + 1),
+            "a\u{0007}b".to_owned(),
+        ] {
+            let mut refused = spec("https://site.test/docs/");
+            refused.search = Some(bad);
+            let mut untouched = site();
+            assert!(crawl(&mut untouched, &refused, &AtomicBool::new(false)).is_err());
+            assert!(untouched.opened.is_empty());
+        }
     }
 
     #[test]

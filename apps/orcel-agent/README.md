@@ -1,0 +1,268 @@
+# Orcel Agent (M1 and M2; SG-000129 M3 in progress)
+
+A planner package that is an **MCP client of the Orcel edge only**. It proposes
+calls, and orceld authorizes, executes, audits and verifies them. Design,
+decisions and roadmap:
+`docs/orcel/implementation-readiness/prep/DEERFLOW_ORCEL_AGENT_MASTER_PLAN.md`.
+
+**M1 status:**
+- Python 3.12, standard library only: no donor code and no third-party
+  dependency.
+- **Not packaged** and not referenced by orceld.
+- M2 and M3 run under SpecGrain SG-000129 (`prep/SG-000129.md`). Slice 1
+  admits a hash-locked dependency set, which the agent's code does not import
+  yet:
+  - LangChain 1.3 and LangGraph 1.2, at the DeerFlow pin's versions;
+  - wheels only;
+  - a license table and an advisory audit;
+  - tracing forced off.
+
+## Evaluation (SG-000129 M3 slice 6)
+
+`python -m orcel_bench agent-eval` (`tests/benchmarks/orcel_bench/agent_eval.py`)
+runs six synthetic tasks through M1, M2 and M3 against the real edge and a
+fresh test orceld, with no lease (asserted):
+
+- loop trap;
+- long context;
+- oversized output;
+- injected instructions;
+- a refused read;
+- kill and resume.
+
+BM-02 Tier A also runs through `--planner m2` and `--planner m3`, in parity
+with M1. Every row is labelled **deterministic-scripted**: scripted plans and
+a scripted policy model, not a model. A run with a `stop_reason` is never
+clean. Results and limits:
+`docs/orcel/implementation-readiness/prep/SG-000129-slice6-evaluation.md`.
+
+## Durable planner state (SG-000129 M3 slice 5a)
+
+`orcel_agent/checkpoint.py` saves the planner's memory after every proposal,
+and a planner built on the same store restores it. That memory is the todos,
+the loop history, the compaction summary and the stop reason.
+
+- **Storage.** It is kept in `planner.sqlite` in the run's private store,
+  using the standard library's `sqlite3` and JSON only, never pickle.
+- **SQLite rules:**
+  - a rollback journal in the same directory;
+  - `temp_store=MEMORY`;
+  - `secure_delete`, which zeroes freed pages inside the database only;
+  - `trusted_schema=OFF`, with the schema checked;
+  - no symlinks;
+  - the size cap enforced inside SQLite and checked before each save;
+  - `0600` on Unix.
+- **Windows.** The store directories have orceld's protected owner-only
+  DACL (slice 5b, `winacl.py`), which the checkpoint inherits. Since slice
+  5c they are checked by handle and held open while a run uses them, so
+  they and the directories above them cannot be swapped. Every directory
+  above the root must follow orceld's ancestor rule. Expiry claims a run by
+  renaming it first, so a store in use is never half-deleted.
+- **Authority.** The dispatch journal is still the authority on dispatched
+  calls, so a checkpoint can never cause a re-dispatch.
+- **Failure.** A tampered checkpoint stops the run, and the store is kept.
+  `PlannerCheckpoint.discard()` forgets the planner's memory; the journal
+  stays.
+
+## Context compaction (SG-000129 M3 slice 4c)
+
+Once the tool results pass 60,000 characters, all but the 6 most recent steps
+are compacted.
+
+- **Successes.** The call stays, and the result becomes a fixed notice.
+- **Refusals and unknown outcomes.** They keep their exact text.
+- **Summary.** The dropped successes are summarized by the same model, using
+  LangChain's summary prompt copied verbatim, with no tools bound.
+  - An Orcel system message gives the summarizer the goal and says the
+    results are untrusted data.
+  - There is at most one summarizer call per step, over at most 8 results.
+  - After 2 failures, summarizing stops for the run.
+  - The summary is capped at 4,000 characters and labelled untrusted. It sits
+    on the last compacted result.
+- **Bounded size.** The conversation stays bounded. Nothing is stored or sent.
+
+## Todos and clarification (SG-000129 M3 slice 4b)
+
+`write_todos` and `ask_clarification` are planner-internal tools. They are
+never sent to the edge or journalled.
+
+- **Todos.** They are bounded (20 items, 300 characters each, with no
+  control characters or angle brackets). Each later step replays the list in
+  the tool channel as the model's own untrusted notes, which authorize
+  nothing.
+- **Finishing early.** Finishing with open todos gets a labelled completion
+  reminder, at most twice per run. After that the finish is marked
+  `todos_incomplete`.
+- **Clarification.** A clarification question ends the run with
+  `stop_reason` "needs_clarification". It is never consent.
+- **Bound.** A proposal makes at most 4 model calls.
+- **Provenance.** LangChain's `write_todos` text is copied verbatim (MIT,
+  under `third_party/langchain/`) rather than imported, and parts of
+  DeerFlow's todo middleware are copied. Details are in `orcel_agent/todos.py`
+  and `third_party/PROVENANCE.json`.
+
+## Failures and unknown outcomes (SG-000129 M3 slice 4a2)
+
+- **Refusals.** A refused or failed call reaches the model as an
+  error-status tool message carrying orceld's typed code and static Orcel
+  guidance (`orcel_agent/failures.py`). The error message never reaches it.
+- **Unexpected edge errors.** Any exception from the edge mid-call leaves the
+  outcome unknown. It is journalled as `OUTCOME_UNKNOWN`, kept in the run's
+  steps, and the run stops. An unknown mutation is never replayed.
+- **Model errors.** An exception from the model stops the run as
+  `planner-error`, with nothing dispatched.
+- **Pairing.** `ensure_paired` keeps every tool call paired with its result.
+  A call with no result gets a synthetic `OUTCOME_UNKNOWN` result.
+- **Provenance.** DeerFlow's error-handling and dangling-call middlewares are
+  the design reference; no code is copied.
+
+## Bounded tool-output previews (SG-000129 M3 slice 4a1)
+
+`orcel_agent/output_budget.py` is an Orcel reimplementation. DeerFlow's
+tool-output budget is the design reference, and no code is copied.
+
+- **Oversized results.** A successful result over the limit is shown to the
+  model as counts plus a deterministic head and tail.
+- **The limit.** 16,000 Unicode code points per tool message, metadata
+  included. It counts code points, not model tokens. The conversation as a
+  whole is bounded by compaction, in slice 4c.
+- **Forgery.** Orcel's own preview lines start with a marker that tool output
+  cannot reproduce exactly: any copy of it is quoted. Look-alike markers are
+  not caught, and the preview stays untrusted data. A real value containing
+  the marker reaches the model quoted.
+- **No storage.** Nothing is written or sent, and the in-process step keeps
+  the full result.
+- **Unchanged messages.** Refusals, resumed calls and `OUTCOME_UNKNOWN` keep
+  their existing messages.
+- **Untrusted.** The preview is data, never an execution receipt.
+
+## Loop detection (SG-000129 slice 3)
+
+`orcel_agent/loop_detection.py` is adapted from DeerFlow's loop-detection
+middleware. The detection core is unchanged in logic and uses Orcel tool
+names; the ledger is in `third_party/PROVENANCE.json`.
+
+Loop detection is on by default (`detect_loops=False` turns it off). The
+planner then:
+- tracks every proposed call;
+- appends a warning to the next model call, after the tool messages;
+- turns a hard stop into a finish (`stop_reason` "loop_capped", carried into
+  `RunResult`), so the looping call is never dispatched;
+- emits each decision to the event log.
+
+The thresholds:
+- identical calls: a warning at 3 and a stop at 5, within a window of 20
+  (DeerFlow's);
+- per tool: a warning at 12 calls and a stop at 20, scaled to the 32-step
+  budget (DeerFlow's 30 and 50 could never fire within it).
+
+## LangChain planner adapter (SG-000129 slice 2)
+
+`orcel_agent/chat_planner.py` puts a LangChain chat model behind the M1
+`Planner` protocol. Its conversation has four parts:
+- a static Orcel system prompt;
+- the goal;
+- the edge's tool schemas, converted here (no MCP library);
+- each step, as a tool call and its result as a tool message, which is
+  untrusted data.
+
+**What a reply becomes:**
+- exactly one tool call becomes a proposal;
+- no tool call becomes a finish claim;
+- anything else becomes malformed, and the run stops.
+
+**Every proposal still passes the M1 gate:**
+- the allowlist;
+- the tool's schema, including JSON types and closed properties;
+- the approval and step budgets;
+- refusal-is-final;
+- the resume invariant.
+
+Build agents for a chat model with `orcel_agent.entry.chat_agent`. It refuses
+any allowlist wider than the read-only set. The model runs with LangSmith
+tracing disabled for each call.
+
+The tests use a scripted in-process chat model (no inference). BM-02 Tier A
+runs through the adapter as `orcel_bench agent --planner chat`, labelled
+`orcel-agent-langchain-scripted`.
+
+## Dependencies (SG-000129 slice 1)
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install --require-hashes --only-binary :all: --no-deps -r requirements.lock
+ORCEL_AGENT_DEPS=1 .venv/bin/python -I -B -m unittest discover -s tests -v
+.venv/bin/python -I tools/licenses.py --check
+```
+
+- **Lock records.** `requirements-notes.md` records how the lock is made and
+  every version move.
+- **Licenses.** `THIRD_PARTY_LICENSES.md` is the generated license table.
+- **DeerFlow provenance.** `third_party/deer-flow/LICENSE` is DeerFlow's MIT
+  notice, and `third_party/PROVENANCE.json` is the ledger for copied code
+  (empty until slice 3).
+- **Egress test.** It runs a scripted LangGraph graph with an SQLite
+  checkpoint while Python's audit hooks refuse connections, name lookups,
+  binds and SQLite extension loads.
+- **Native egress (Linux).** The same run again under a seccomp filter that
+  kills the process if any code, native libraries included, asks the kernel
+  for a socket of any family but Unix and netlink, or for an io_uring, in
+  any thread. Controls show the filter fires on the runner's kernel (a
+  native `socket(AF_INET)`, and AF_PACKET, VSOCK, SMC and XDP sockets, die
+  with `SIGSYS`, also from a thread started before the filter) and allows
+  Unix sockets. Windows and macOS have no equivalent
+  here: there only the audit hooks apply.
+
+## Rules the agent enforces (client side; orceld remains the authority)
+
+- **One tool source.** It spawns exactly one child, the edge
+  (`node apps/orcel-mcp/dist/index.js`). It runs no shell and opens no socket.
+- **Allowlist.** In M1 only the read-only tools (`fs_read`, `fs_read_range`,
+  `fs_list`, `fs_stat`, `fs_find`, `fs_search`, `workspace_get`,
+  `system_status`) are offered to a planner or dispatched. The edge cannot
+  serve the `core` profile to a local client, so this list lives in the
+  agent.
+- **Fail-closed classes.** Every tool outside the read-only set is treated
+  as mutating and approval-bearing.
+- **Refusal is final.** A call orceld refused is never dispatched again,
+  even after a resume.
+- **Approval budget.** orceld never answers "approval required"; its broker
+  prompts the person. So approval-bearing calls are counted *before*
+  dispatch: at most 3 per run. The run stops at the first denial and never
+  re-asks, even after a resume.
+- **Step budget.** Counted across a resume.
+- **Resume invariant.** A call dispatched but not recorded (a crash, or a
+  broken edge mid-call) is surfaced once as `OUTCOME_UNKNOWN`. That exact
+  mutation is never dispatched again, and any other mutation needs a fresh
+  observation first.
+- **Private store.**
+  - A per-run directory, size-capped and expiring 24 h after its last write.
+  - Deleted when the run ends; a crash keeps it for resume.
+  - Owner-only: mode 0700 on Unix. On Windows it inherits its root's ACL;
+    the tests check that no broad principal can reach it, and a protected
+    DACL of its own is recorded for the owning grain.
+  - It holds tool names, argument digests and error codes only, never
+    results or file content.
+
+## Precondition: no Full User or Admin lease
+
+Under a Full User lease, routine operations need no fresh approval, so a
+planner fed injected content could act unattended. No MCP tool reports lease
+state yet. **Until a read-only lease signal exists (under the owning grain),
+run the agent only against a test orceld or an orceld in Safe mode.**
+
+## Tests
+
+```bash
+cd apps/orcel-agent && python -B -m unittest discover -s tests -v
+```
+
+BM-02 Tier A through the agent, the built edge and a test orceld:
+
+```bash
+cd tests/benchmarks && python -B -m orcel_bench agent --orceld <orceld> --edge ../../apps/orcel-mcp/dist/index.js --commit <40-hex> --out <report.json>
+```
+
+Rows are labelled `deterministic` / `orcel-agent-scripted`. They are the
+tasks' scripted plans, not a model. Only the agent's dispatch rules are
+exercised there; its planner loop is covered by the unit tests.

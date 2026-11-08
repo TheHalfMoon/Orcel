@@ -24,6 +24,7 @@ import {
   ProtocolViolation,
   WORKER_IDENTITY,
   WORKER_PROTOCOL_GENERATION,
+  type ApprovedTarget,
   type ErrorCode,
   type ExecField,
   type HostFrame,
@@ -32,6 +33,9 @@ import {
 } from "./protocol.js";
 import type { RouteQuery } from "./routing.js";
 import type { BoundedSnapshot } from "./snapshot.js";
+import type { VerifyProbe, VerifyResult } from "./verify.js";
+import type { FormAction } from "./actions/form.js";
+import type { DismissedDialog } from "./actions/dialogs.js";
 
 export type LaunchSpec = Extract<HostFrame, { frame: "launch" }>;
 
@@ -69,12 +73,30 @@ export interface EngineSession {
   /// default submit button and wait for the resulting document; returns it
   /// with its structured data. Rejects with NavigationError.
   execute(tool: string, fields: ExecField[]): Promise<{ url: string; status: number; structured: string[]; structuredComplete: boolean }>;
-  /// Click the element with this snapshot ref and wait for the resulting
-  /// navigation to load; rejects with NavigationError.
-  activate(ref: string): Promise<{ url: string; status: number }>;
-  /// Click the element with this snapshot ref, expect a download, and save
-  /// it to `path` (which must not exist); rejects with NavigationError.
-  download(ref: string, path: string): Promise<{ url: string; name: string; media: string; bytes: number }>;
+  /// Click the element with this snapshot ref (or, when the ref went
+  /// stale, the one element matching the approved target) and wait for the
+  /// resulting navigation to load; rejects with NavigationError.
+  activate(ref: string, target?: ApprovedTarget): Promise<{ url: string; status: number }>;
+  /// Click the element with this snapshot ref (or the one matching the
+  /// approved target), expect a download, and save it to `path` (which must
+  /// not exist); rejects with NavigationError.
+  download(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string; name: string; media: string; bytes: number }>;
+  /// BR-02: one approved form action on the element with this snapshot ref
+  /// (or the one matching the approved target); resolves with the page's
+  /// URL afterwards; rejects with NavigationError.
+  /// With `acceptConfirm`, a confirm with exactly that message is accepted
+  /// (once) while the action runs; every other dialog is dismissed.
+  formAction(ref: string, act: FormAction, target?: ApprovedTarget, acceptConfirm?: string): Promise<{ url: string }>;
+  /// BR-05: the dialogs dismissed since the last call (clears the log).
+  takeDialogs(): { dialogs: DismissedDialog[]; truncated: boolean };
+  /// BR-03: set the approved file input to the host-staged file at `path`;
+  /// resolves with the page's URL; rejects with NavigationError.
+  upload(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string }>;
+  /// BR-02: whether text became visible (or stopped being visible) on the
+  /// primary page within the bound; read-only.
+  waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ url: string; met: boolean }>;
+  /// BR-07: read-only probes of the primary page, one result per probe.
+  verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }>;
   /// Called once if the engine goes away without `close`.
   onUnexpectedExit(listener: () => void): void;
 }
@@ -93,6 +115,8 @@ export class Worker {
   private launchedOnce = false;
   private queue: Promise<void> = Promise.resolve();
   private navigating = false;
+  /// BR-02: a bounded wait is running (one at a time).
+  private waiting = false;
   private nextRequestId = 0;
   private readonly pending = new Map<number, { resolve: (allow: boolean) => void; timer: NodeJS.Timeout }>();
   private readonly policy: RoutePolicy = { decide: (query) => this.ask(query) };
@@ -100,7 +124,11 @@ export class Worker {
   constructor(
     private readonly launcher: Launcher,
     private readonly send: (frame: WorkerFrame) => void,
-    private readonly finish: (exitCode: number) => void
+    private readonly finish: (exitCode: number) => void,
+    /// #438: one bounded diagnostic line when the engine launch fails (the
+    /// worker's stderr: a host test build keeps it, a product host discards
+    /// it). Never a frame and never page content.
+    private readonly diagnose: (line: string) => void = () => {}
   ) {}
 
   /// Frames are handled strictly in arrival order. An unexpected error in
@@ -198,7 +226,7 @@ export class Worker {
           return;
         }
         this.navigating = true;
-        void this.runDownload(this.session, frame.dl_id, frame.ref, frame.path);
+        void this.runDownload(this.session, frame.dl_id, frame.ref, frame.path, frame.target);
         return;
       }
       case "activate": {
@@ -208,7 +236,7 @@ export class Worker {
           return;
         }
         this.navigating = true;
-        void this.runActivation(this.session, frame.act_id, frame.ref);
+        void this.runActivation(this.session, frame.act_id, frame.ref, frame.target);
         return;
       }
       case "execute": {
@@ -270,6 +298,61 @@ export class Worker {
         });
         return;
       }
+      case "form_action": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        if (this.navigating) {
+          this.send({ frame: "form_failed", form_id: frame.form_id, reason: "busy" });
+          return;
+        }
+        // Outside the queue: the action's requests need host decisions.
+        this.navigating = true;
+        void this.runFormAction(this.session, frame.form_id, frame.ref, frame.act, frame.target, frame.accept_confirm);
+        return;
+      }
+      case "dialogs": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        const { dialogs, truncated } = this.session.takeDialogs();
+        this.send({ frame: "dialogs_seen", dlg_id: frame.dlg_id, dialogs, truncated });
+        return;
+      }
+      case "upload": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        if (this.navigating) {
+          this.send({ frame: "upload_failed", up_id: frame.up_id, reason: "busy" });
+          return;
+        }
+        this.navigating = true;
+        void this.runUpload(this.session, frame.up_id, frame.ref, frame.path, frame.target);
+        return;
+      }
+      case "wait_for": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        // One at a time, and never while the document is being replaced.
+        if (this.waiting || this.navigating) {
+          this.send({ frame: "wait_failed", wait_id: frame.wait_id });
+          return;
+        }
+        // Outside the queue: ping and shutdown stay responsive.
+        this.waiting = true;
+        void this.runWait(this.session, frame.wait_id, frame.text, frame.appear, frame.timeout_ms);
+        return;
+      }
+      case "verify": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        // A document being replaced cannot be verified.
+        if (this.navigating) {
+          this.send({ frame: "verification_failed", ver_id: frame.ver_id });
+          return;
+        }
+        try {
+          const { url, results } = await this.session.verify(frame.probes);
+          if (results.length !== frame.probes.length) throw new Error("one result per probe");
+          this.send({ frame: "verified", ver_id: frame.ver_id, url, results });
+        } catch {
+          this.send({ frame: "verification_failed", ver_id: frame.ver_id });
+        }
+        return;
+      }
       case "observe": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         try {
@@ -312,7 +395,8 @@ export class Worker {
         let session: EngineSession;
         try {
           session = await this.launcher.launch(frame, this.policy);
-        } catch {
+        } catch (error) {
+          this.diagnose(`orcel-browser-worker: launch failed: ${describeLaunchError(error)}`);
           return this.fail("launch_failed");
         }
         // A shutdown or violation may not interleave (frames are queued),
@@ -357,10 +441,10 @@ export class Worker {
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "fetch_failed", fetch_id: fetchId, reason: "failed" });
   }
 
-  private async runDownload(session: EngineSession, dlId: number, ref: string, path: string): Promise<void> {
+  private async runDownload(session: EngineSession, dlId: number, ref: string, path: string, target?: ApprovedTarget): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const result = await session.download(ref, path);
+      const result = await session.download(ref, path, target);
       outcome = { frame: "downloaded", dl_id: dlId, ...result };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
@@ -370,10 +454,10 @@ export class Worker {
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "download_failed", dl_id: dlId, reason: "failed" });
   }
 
-  private async runActivation(session: EngineSession, actId: number, ref: string): Promise<void> {
+  private async runActivation(session: EngineSession, actId: number, ref: string, target?: ApprovedTarget): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const result = await session.activate(ref);
+      const result = await session.activate(ref, target);
       outcome = { frame: "activated", act_id: actId, url: result.url, status: result.status };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
@@ -381,6 +465,51 @@ export class Worker {
     }
     this.navigating = false;
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "activation_failed", act_id: actId, reason: "failed" });
+  }
+
+  private async runUpload(session: EngineSession, upId: number, ref: string, path: string, target?: ApprovedTarget): Promise<void> {
+    let outcome: WorkerFrame;
+    try {
+      const { url } = await session.upload(ref, path, target);
+      outcome = { frame: "uploaded", up_id: upId, url };
+    } catch (error) {
+      const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
+      outcome = { frame: "upload_failed", up_id: upId, reason };
+    }
+    this.navigating = false;
+    if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "upload_failed", up_id: upId, reason: "failed" });
+  }
+
+  private async runWait(session: EngineSession, waitId: number, text: string, appear: boolean, timeoutMs: number): Promise<void> {
+    let outcome: WorkerFrame;
+    try {
+      const { url, met } = await session.waitForText(text, appear, timeoutMs);
+      outcome = { frame: "waited", wait_id: waitId, url, met };
+    } catch {
+      outcome = { frame: "wait_failed", wait_id: waitId };
+    }
+    this.waiting = false;
+    if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "wait_failed", wait_id: waitId });
+  }
+
+  private async runFormAction(
+    session: EngineSession,
+    formId: number,
+    ref: string,
+    act: FormAction,
+    target?: ApprovedTarget,
+    acceptConfirm?: string
+  ): Promise<void> {
+    let outcome: WorkerFrame;
+    try {
+      const { url } = await session.formAction(ref, act, target, acceptConfirm);
+      outcome = { frame: "form_done", form_id: formId, url };
+    } catch (error) {
+      const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
+      outcome = { frame: "form_failed", form_id: formId, reason };
+    }
+    this.navigating = false;
+    if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "form_failed", form_id: formId, reason: "failed" });
   }
 
   private async runExecution(session: EngineSession, execId: number, tool: string, fields: ExecField[]): Promise<void> {
@@ -447,4 +576,21 @@ export class Worker {
       this.finish(exitCode);
     }
   }
+}
+
+/// #438: the launch exception's name and the first line of its message, on
+/// one line, without control, line-separator or bidi characters, at most
+/// 1024 code points. Never throws, whatever was thrown.
+export function describeLaunchError(error: unknown): string {
+  let text: string;
+  try {
+    const name = error instanceof Error ? error.name : typeof error;
+    const message = error instanceof Error ? error.message : String(error);
+    text = `${name}: ${message.split(/\r?\n/, 1)[0] ?? ""}`;
+  } catch {
+    text = "unprintable";
+  }
+  const clean = text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, " ");
+  const points = Array.from(clean);
+  return points.length > 1024 ? `${points.slice(0, 1024).join("")}…` : clean;
 }

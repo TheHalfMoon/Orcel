@@ -284,7 +284,7 @@ pub fn resume_process(pid: u32) -> Result<(), LifecycleError> {
     }
     if resumed == 0 {
         return Err(LifecycleError::platform(
-            "the suspended tunnel client could not be resumed",
+            "the suspended child process could not be resumed",
         ));
     }
     Ok(())

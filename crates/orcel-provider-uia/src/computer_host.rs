@@ -1524,6 +1524,41 @@ mod platform {
             Ok(response.elements.into_iter().map(convert_element).collect())
         }
 
+        /// SG-000128: the subtree below one element of the bound window, found
+        /// by its runtime id, with the same node and depth caps. Only the
+        /// Windows computer host serves it; the reply must start at exactly
+        /// that element, so a host that ignored the root (and answered with
+        /// the whole window) is refused, never trusted.
+        fn read_subtree(
+            &self,
+            hwnd: u64,
+            runtime_id: &str,
+        ) -> Result<Vec<NativeElement>, UiaError> {
+            if self.is_native()? {
+                return Err(UiaError::new(
+                    FailureCode::CapabilityDenied,
+                    "subtree observation is served only by the Windows computer host",
+                ));
+            }
+            let binding = self.exact_binding(hwnd)?;
+            let mut request = HostRequest::new("observe_window");
+            request.bind_window(hwnd, binding);
+            request.element_runtime_id = Some(runtime_id);
+            request.max_nodes = Some(crate::MAX_TREE_NODES);
+            request.max_depth = Some(crate::MAX_TREE_DEPTH);
+            let response = self.checked_host(request)?;
+            match response.elements.as_slice() {
+                [root] if root.runtime_id == runtime_id => {}
+                _ => {
+                    return Err(UiaError::new(
+                        FailureCode::ProviderUnavailable,
+                        "computer host did not answer with the requested subtree root",
+                    ))
+                }
+            }
+            Ok(response.elements.into_iter().map(convert_element).collect())
+        }
+
         fn invoke_element(&self, hwnd: u64, runtime_id: &str) -> Result<(), UiaError> {
             self.semantic_action(hwnd, runtime_id, "invoke", None, 0, 0)
         }
@@ -3017,6 +3052,145 @@ mod tests {
         let sent = semantic_ops(&frames);
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0]["window"]["kind"], "hwnd");
+    }
+
+    /// SG-000128 slice 1b: a Windows host scripted for subtree reads.
+    fn sg000128_windows_host(
+        answer_root: &'static str,
+    ) -> (Result<ComputerHostAdapter, UiaError>, Frames) {
+        let reply = |frame: &Value, body: Value| {
+            let mut reply = json!({
+                "id": frame["id"],
+                "ok": true,
+                "protocol": "orcel-computer-host/2",
+                "host": "orcel-windows-computer-host",
+            });
+            if let (Some(reply), Some(body)) = (reply.as_object_mut(), body.as_object()) {
+                reply.extend(body.clone());
+            }
+            reply.to_string()
+        };
+        scripted("windows", move |frame| match frame["op"].as_str() {
+            Some("hello") => Some(reply(
+                frame,
+                json!({
+                    "platform": "windows",
+                    "backend": "uia",
+                    "capabilities": {
+                        "list_windows": {"support": "delivered"},
+                        "observe_window": {"support": "delivered"}
+                    }
+                }),
+            )),
+            Some("list_windows") => Some(reply(
+                frame,
+                json!({"windows": [window_fact(11, "Editor")]}),
+            )),
+            Some("observe_window") if frame.get("element_runtime_id").is_none() => Some(reply(
+                frame,
+                json!({"elements": [element("42.11", "Window", "Editor", None, false, Vec::new())]}),
+            )),
+            Some("observe_window") if answer_root == "stale" => Some(
+                json!({
+                    "id": frame["id"], "ok": false, "protocol": "orcel-computer-host/2",
+                    "host": "orcel-windows-computer-host",
+                    "error": {"code": "target_stale", "message": "subtree root is stale or gone"}
+                })
+                .to_string(),
+            ),
+            Some("observe_window") => Some(reply(
+                frame,
+                json!({"elements": [element(answer_root, "Document", "Page", None, false, vec![
+                    element("7.1.2.1", "Edit", "Conflict ID", Some(""), false, Vec::new()),
+                    element("7.1.2.2", "Edit", "Sign in", Some(SECRET), true, Vec::new()),
+                ])]}),
+            )),
+            _ => Some(reply(frame, json!({}))),
+        })
+    }
+
+    #[test]
+    fn sg000128_a_subtree_read_names_its_root_exactly_and_keeps_the_caps() {
+        let (adapter, frames) = sg000128_windows_host("7.1.2");
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        let elements = adapter.read_subtree(11, "7.1.2").unwrap();
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0].runtime_id, "7.1.2");
+        let frames = frames.lock().unwrap();
+        let observe = frames
+            .iter()
+            .find(|frame| frame["op"] == "observe_window")
+            .unwrap();
+        assert_eq!(
+            observe
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            [
+                "element_runtime_id",
+                "id",
+                "max_depth",
+                "max_nodes",
+                "op",
+                "protocol",
+                "window"
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+        );
+        assert_eq!(observe["element_runtime_id"], "7.1.2");
+        assert_eq!(observe["max_nodes"], crate::MAX_TREE_NODES);
+        assert_eq!(observe["max_depth"], crate::MAX_TREE_DEPTH);
+        assert_eq!(observe["window"]["kind"], "hwnd");
+        assert_eq!(observe["window"]["id"], 11);
+        assert!(observe["window"]["expected_window_nonce"].is_u64());
+    }
+
+    #[test]
+    fn sg000128_a_reply_that_does_not_start_at_the_root_is_refused() {
+        // A host that ignored the root and answered with the whole window.
+        let (adapter, _) = sg000128_windows_host("42.11");
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        let error = adapter.read_subtree(11, "7.1.2").unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable, "{error:?}");
+        assert!(
+            error.message.contains("requested subtree root"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn sg000128_an_unresolved_root_fails_closed_as_stale() {
+        let (adapter, _) = sg000128_windows_host("stale");
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        assert_eq!(
+            adapter.read_subtree(11, "7.1.2").unwrap_err().code,
+            FailureCode::TargetStale
+        );
+    }
+
+    #[test]
+    fn sg000128_a_native_host_never_receives_a_subtree_request() {
+        let (adapter, frames) = scripted("linux", linux_desktop);
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        let error = adapter.read_subtree(11, "1:1").unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied, "{error:?}");
+        assert!(!ops(&frames).contains(&"observe_window".to_owned()));
+    }
+
+    #[test]
+    fn sg000128_an_unbound_window_is_stale_without_a_frame() {
+        let (adapter, frames) = sg000128_windows_host("7.1.2");
+        let adapter = adapter.unwrap();
+        assert!(adapter.read_subtree(11, "7.1.2").is_err());
+        assert!(!ops(&frames).contains(&"observe_window".to_owned()));
     }
 
     /// A toggle names the state it asks for, the approval covers exactly

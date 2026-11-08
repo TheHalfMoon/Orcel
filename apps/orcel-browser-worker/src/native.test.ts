@@ -25,6 +25,7 @@ import { splitWindowsCommandLine } from "./cmdline.js";
 import { installRoutes } from "./routes.js";
 import { originOf, type RouteQuery } from "./routing.js";
 import { denyServiceWorkerScripts } from "./service-workers.js";
+import { clickAndLoad } from "./actions/click-load.js";
 import { encodeFrame, FrameDecoder, launchRefusal, type HostFrame, type WorkerFrame } from "./protocol.js";
 
 const EDGE_CANDIDATES = [
@@ -300,8 +301,8 @@ async function launchDirect(
 nativeTest("the worker drives the installed engine with exactly the host argv and leaves nothing behind", async (t) => {
   const profile = profileFor(t, "native");
   const worker = new WorkerProcess(t);
-  worker.send({ frame: "hello", generation: 9 });
-  assert.deepEqual(await worker.reply(1), { frame: "hello", generation: 9, worker: "orcel-browser-worker" });
+  worker.send({ frame: "hello", generation: 15 });
+  assert.deepEqual(await worker.reply(1), { frame: "hello", generation: 15, worker: "orcel-browser-worker" });
   const launch = launchFrame(profile, FIXTURE);
   worker.send(launch);
   assert.deepEqual(await worker.reply(2), { frame: "launched" });
@@ -326,7 +327,7 @@ nativeTest("the worker drives the installed engine with exactly the host argv an
 nativeTest("killing the worker takes the engine down with its pipe", async (t) => {
   const profile = profileFor(t, "native-kill");
   const worker = new WorkerProcess(t);
-  worker.send({ frame: "hello", generation: 9 });
+  worker.send({ frame: "hello", generation: 15 });
   await worker.reply(1);
   worker.send(launchFrame(profile, FIXTURE));
   assert.deepEqual(await worker.reply(2), { frame: "launched" });
@@ -336,6 +337,34 @@ nativeTest("killing the worker takes the engine down with its pipe", async (t) =
   // The host's kill-on-close Job Object (slice 2b-ii) is the guarantee;
   // this proves the engine also exits on its own when the pipe closes.
   assert.ok(engineExited(profile), "engine survived the worker");
+});
+
+// #438 (run 41709022637): an approved activation whose page answers after
+// the 5 s click budget still succeeds. The click itself is quick; before the
+// fix Playwright waited for the navigation to commit inside the click's own
+// budget and the activation was reported "failed" although the fixture had
+// served the target.
+nativeTest("an activation whose navigation commits after the click budget still opens the page", async (t) => {
+  const served: string[] = [];
+  const fixture = createHttpServer((request, response) => {
+    served.push(request.url ?? "");
+    response.setHeader("content-type", "text/html");
+    if (request.url === "/slow") {
+      setTimeout(() => response.end("<title>slow</title><p>slow</p>"), 7_000);
+      return;
+    }
+    response.end('<a href="/slow">the slow page</a>');
+  });
+  await listen(t, fixture, FIXTURE_PORT, "127.0.0.1");
+  const profile = profileFor(t, "native-slow-commit");
+  const context = await launchDirect(t, profile, confinedArgv(profile, FIXTURE));
+  const page = await context.newPage();
+  await page.goto("http://fixture.test/", { timeout: EVENT_DEADLINE_MS, waitUntil: "load" });
+  const started = Date.now();
+  const opened = await clickAndLoad(page, page.locator("a"));
+  assert.deepEqual(opened, { url: "http://fixture.test/slow", status: 200 });
+  assert.ok(Date.now() - started >= 6_000, "the target really answered after the click budget");
+  assert.deepEqual(served.filter((path) => path !== "/favicon.ico"), ["/", "/slow"]);
 });
 
 nativeTest("resolver pinning and the no-route proxy confine traffic without any policy route", async (t) => {
@@ -357,10 +386,15 @@ nativeTest("resolver pinning and the no-route proxy confine traffic without any 
   }
   const profile = profileFor(t, "native-net");
   const context = await launchDirect(t, profile, confinedArgv(profile, FIXTURE));
-  const open = async (url: string): Promise<string> => {
+  // A refused destination fails fast (ERR_PROXY_CONNECTION_FAILED), so the
+  // negative probes keep a short budget; a positive control waits for its
+  // commit up to the event deadline, like every other navigation here (#374):
+  // the first load after a cold launch on a loaded runner can outlast 10 s
+  // (#438, run 41659893527), and a commit that never comes still fails.
+  const open = async (url: string, timeout = 10_000): Promise<string> => {
     const page = await context.newPage();
     try {
-      const response = await page.goto(url, { timeout: 10_000, waitUntil: "commit" });
+      const response = await page.goto(url, { timeout, waitUntil: "commit" });
       return `ok ${response?.status() ?? 0}`;
     } catch (error) {
       return `fail ${String((error as Error).message).split("\n")[0]}`;
@@ -368,9 +402,9 @@ nativeTest("resolver pinning and the no-route proxy confine traffic without any 
       await page.close();
     }
   };
-  assert.match(await open("http://fixture.test/admitted"), /^ok 200/);
+  assert.match(await open("http://fixture.test/admitted", EVENT_DEADLINE_MS), /^ok 200/);
   // Another port of the admitted name lands on the pinned port.
-  assert.match(await open("http://fixture.test:8080/other-port"), /^ok 200/);
+  assert.match(await open("http://fixture.test:8080/other-port", EVENT_DEADLINE_MS), /^ok 200/);
   // Every other destination is refused by the no-route proxy (layer 2), and
   // nothing reaches the fixture or a port-9 listener.
   for (const url of [
@@ -477,7 +511,7 @@ nativeTest("a same-user process cannot activate the worker's inspector when it r
   const attempt = async (flags: string[]) => {
     const worker = new WorkerProcess(t, flags);
     // The worker is fully started once it answers hello.
-    worker.send({ frame: "hello", generation: 9 });
+    worker.send({ frame: "hello", generation: 15 });
     await worker.reply(1);
     const before = await listening(9229);
     let threw = false;

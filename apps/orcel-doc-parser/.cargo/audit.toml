@@ -11,17 +11,43 @@
 # maintained font parser (for example skrifa or read-fonts).
 [advisories]
 ignore = [
-  # zip 8.6.0, three advisories, all in archive *extraction* to disk:
+  # zip 8.6.0, four advisories, all in archive *extraction*:
   # - RUSTSEC-2026-0367: `extract` preserves SUID/SGID bits;
   # - RUSTSEC-2026-0368: `extract` creates links whose targets leave the
   #   destination;
-  # - RUSTSEC-2026-0369: `extract` applies permissions through links.
+  # - RUSTSEC-2026-0369: `extract` applies permissions through links;
+  # - RUSTSEC-2026-0429 (added 2026-11-02, the same rule applied): `extract`
+  #   aborts the process on a symlink entry with a large declared size.
+  # Reachability, checked on 2026-11-02 against anydoc 0.2.2's published
+  # source (the pinned version): every source file was searched for
+  # `zip::`, `ZipArchive` and `extract`, and the hits were read:
+  # - anydoc builds exactly one `ZipArchive`, in `Package::open`
+  #   (src/package/archive.rs), and reads entries only with `by_name`, under
+  #   a per-entry and whole-archive decompression cap. Every format module
+  #   (docx, pptx, sheet/xlsx and xlsb, odf, epub, detect) reaches the
+  #   archive only through `Package`.
+  # - No anydoc source calls `extract` or `extract_unwrapped_root_dir`; its
+  #   other `zip::` uses are `ZipWriter` calls, all inside `#[cfg(test)]`.
+  # - The parser's own zip use (document.rs, workbook.rs) is `ZipArchive::new`,
+  #   `by_index_raw`, `by_index` and `by_name` over in-memory bytes, and it
+  #   admits only ZIP inputs that anydoc detects as DOCX, PPTX or Excel.
+  # - Only anydoc and the parser depend on zip in Cargo.lock.
+  # Uncertainty, recorded: this is a source reading of one pinned version,
+  # not a proof about zip's internals; a future anydoc or parser change that
+  # calls `extract` would make these advisories reachable, so any version
+  # move re-checks this list.
   # Fixed in zip 9.0.0, but anydoc (every release up to 0.2.4) requires ^8.6. Not reachable here: the parser and
   # anydoc only read entries into memory (`by_index`, `by_name`) and never
-  # call `extract`, and the parser runs with no writable root at all (the
+  # call `extract` (checked again on 2026-11-02: neither the parser's
+  # sources nor anydoc 0.2.2's call it; anydoc only builds a ZipArchive over
+  # in-memory bytes), and the parser runs with no writable root at all (the
   # contained tier's spec, document_parser.rs). Drop these when anydoc
-  # accepts zip >= 9.
+  # accepts zip >= 9 (the parser's own `zip = "=8.6.0"` pin moves with it);
+  # tracked in docs/orcel/RELEASE_READINESS.md, class 2. If any of them is
+  # found reachable, stop relying on this list and remediate (patch or
+  # replace the zip use) under review.
   "RUSTSEC-2026-0367",
   "RUSTSEC-2026-0368",
   "RUSTSEC-2026-0369",
+  "RUSTSEC-2026-0429",
 ]

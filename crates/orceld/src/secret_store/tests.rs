@@ -500,7 +500,7 @@ fn xp19_malformed_or_linked_legacy_records_are_refused() {
 fn xp19_legacy_record_comes_only_from_the_private_state_root() {
     let root = unique_dir("root");
     let lookup = |name: &str| match name {
-        "LOCALAPPDATA" | "HOME" | "XDG_STATE_HOME" => Some(root.clone().into_os_string()),
+        "USERPROFILE" | "HOME" | "XDG_STATE_HOME" => Some(root.clone().into_os_string()),
         _ => None,
     };
     let path = legacy_device_key_path(&lookup).expect("path");
@@ -1112,4 +1112,16 @@ fn xp19_orphan_migration_temp_files_are_removed() {
     assert!(unrelated.exists());
     assert!(nested.is_dir());
     let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
+}
+
+#[test]
+fn the_device_key_blob_is_the_registered_store() {
+    // Migration leaves this device's key behind by its registered name, so the two must agree.
+    let root = std::path::Path::new("root");
+    assert_eq!(
+        orcel_platform::stores::SECRETS
+            .path(root)
+            .join(format!("{}.dpapi", SecretName::DeviceKey.as_str())),
+        orcel_platform::stores::DEVICE_KEY.path(root)
+    );
 }

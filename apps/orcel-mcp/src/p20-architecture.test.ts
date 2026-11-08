@@ -187,9 +187,178 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
       open.push(spec.id);
     }
   }
-  // SG-000108 (ORCEL-F3) ran in parallel by founder decision (issue #290),
-  // outside DESKAL-P20, and is now closed; no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096"]);
+  // SG-000108 (ORCEL-F3) ran in parallel by founder decision (issue #290)
+  // and SG-000126 (ORCEL-F2) followed it by founder sequencing (issue #435);
+  // both are outside DESKAL-P20 and closed. SG-000120 (ORCEL-RJ) ran beside
+  // them by founder sequencing (issue #455) and is closed. SG-000127
+  // (ORCEL-F4) follows them by founder sequencing (issue #446). SG-000128
+  // (ORCEL-UIA, scoped UIA subtree observation) runs beside them by founder
+  // decision (issue #515). SG-000129 (ORCEL-AGENT, the Orcel Agent planner
+  // client) ran beside them by founder decision (issue #536) and is closed;
+  // no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127", "SG-000128"]);
+  const sg120 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    implementation_pr: number;
+    qualified_head: string;
+    qualified_tree: string;
+    implementation_merge: string;
+    authority_delta: {
+      activation: string;
+      network: string;
+      process: string;
+      privileged: string;
+      mcp: string;
+      filesystem: string;
+      approval: string;
+    };
+  }>(".specgrain/specs/SG-000120.json");
+  assert.equal(sg120.program, "ORCEL-RJ");
+  assert.equal(sg120.state, "CLOSED");
+  assert.equal(sg120.planning_issue, 455);
+  assert.equal(sg120.base, "f9d21e3af84f27c97fa460e236122bcf2a05377f");
+  assert.equal(sg120.implementation_pr, 464);
+  assert.equal(sg120.qualified_head, "5c93c68ab802f8d93a93cf583df3e4e3e9f83256");
+  assert.equal(sg120.qualified_tree, "de38f906019aa727c8e6a19dfbc12fb1d117c20a");
+  assert.equal(sg120.implementation_merge, "10ce2789d3b0f432d3a4829938f501cdf41ddbde");
+  for (const key of ["activation", "network", "process", "privileged"] as const) {
+    assert.ok(sg120.authority_delta[key].startsWith("None."), key);
+  }
+  for (const key of ["mcp", "filesystem"] as const) {
+    assert.ok(sg120.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg120.authority_delta.approval.startsWith("Unchanged rules"));
+  // An added key (a grant, say) must not go unnoticed.
+  assert.deepEqual(
+    Object.keys(sg120.authority_delta).sort(),
+    ["activation", "approval", "filesystem", "mcp", "network", "privileged", "process"]
+  );
+  const sg127 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    authority_delta: {
+      activation: string;
+      network: string;
+      process: string;
+      privileged: string;
+      filesystem: string;
+      mcp: string;
+      app_api: string;
+      packaging: string;
+      approval: string;
+    };
+  }>(".specgrain/specs/SG-000127.json");
+  assert.equal(sg127.program, "ORCEL-F4");
+  assert.equal(sg127.state, "GRAIN");
+  assert.equal(sg127.planning_issue, 446);
+  assert.equal(sg127.base, "b22b2593ffb6be6afd81b02c6f2cee9a566c7f83");
+  for (const key of ["activation", "network", "process", "privileged"] as const) {
+    assert.ok(sg127.authority_delta[key].startsWith("None."), key);
+  }
+  assert.equal(sg127.authority_delta.filesystem, "None beyond SG-000126.");
+  // The activation proposes, it does not grant: each widening stays a proposal
+  // until its slice is qualified.
+  for (const key of ["mcp", "app_api", "packaging"] as const) {
+    assert.ok(sg127.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg127.authority_delta.approval.startsWith("Unchanged rules"));
+  const sg128 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    dependencies: string[];
+    authority_delta: {
+      activation: string;
+      observation: string;
+      mcp: string;
+      approval: string;
+      native_host: string;
+      network: string;
+      process: string;
+      privileged: string;
+    };
+  }>(".specgrain/specs/SG-000128.json");
+  assert.equal(sg128.program, "ORCEL-UIA");
+  assert.equal(sg128.state, "GRAIN");
+  assert.equal(sg128.planning_issue, 515);
+  assert.equal(sg128.base, "c3c7c41c62bd158c6cc9384c0434634328e12810");
+  assert.deepEqual(sg128.dependencies, ["SG-000027", "SG-000063", "SG-000094"]);
+  // The activation grants nothing; each widening stays a proposal until its
+  // slice is qualified, and an added key must not go unnoticed.
+  assert.deepEqual(
+    Object.keys(sg128.authority_delta).sort(),
+    ["activation", "approval", "mcp", "native_host", "network", "observation", "privileged", "process"]
+  );
+  for (const key of ["activation", "network", "process", "privileged"] as const) {
+    assert.ok(sg128.authority_delta[key].startsWith("None."), key);
+  }
+  for (const key of ["observation", "mcp", "native_host"] as const) {
+    assert.ok(sg128.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg128.authority_delta.approval.startsWith("Unchanged rules"));
+  const sg129 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    dependencies: string[];
+    authority_delta: {
+      activation: string;
+      orceld: string;
+      mcp: string;
+      approval: string;
+      dependencies: string;
+      donor_code: string;
+      agent_state: string;
+      network: string;
+      process: string;
+      privileged: string;
+    };
+  }>(".specgrain/specs/SG-000129.json");
+  assert.equal(sg129.program, "ORCEL-AGENT");
+  assert.equal(sg129.state, "CLOSED");
+  assert.equal(sg129.planning_issue, 536);
+  assert.equal(sg129.base, "1dba94658dd5e2a0be86b9b9f89b7a157e07368e");
+  assert.deepEqual(sg129.dependencies, ["SG-000092", "SG-000120"]);
+  // The agent is a client: nothing in orceld, the edge, approvals, the
+  // network or processes changes, and an added key must not go unnoticed.
+  assert.deepEqual(
+    Object.keys(sg129.authority_delta).sort(),
+    ["activation", "agent_state", "approval", "dependencies", "donor_code", "mcp", "network", "orceld", "privileged", "process"]
+  );
+  for (const key of ["activation", "orceld", "mcp", "network", "process", "privileged"] as const) {
+    assert.ok(sg129.authority_delta[key].startsWith("None."), key);
+  }
+  for (const key of ["dependencies", "donor_code", "agent_state"] as const) {
+    assert.ok(sg129.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg129.authority_delta.approval.startsWith("Unchanged rules"));
+  const sg126 = readJson<{
+    program: string;
+    state: string;
+    planning_issue: number;
+    implementation_pr: number;
+    qualified_head: string;
+    qualified_tree: string;
+    implementation_merge: string;
+    authority_delta: { activation: string; network: string; process: string; privileged: string };
+  }>(".specgrain/specs/SG-000126.json");
+  assert.equal(sg126.program, "ORCEL-F2");
+  assert.equal(sg126.state, "CLOSED");
+  assert.equal(sg126.planning_issue, 435);
+  assert.equal(sg126.implementation_pr, 437);
+  assert.equal(sg126.qualified_head, "80ea357437d7d3bb1c61de85d1e509e2e17d8a46");
+  assert.equal(sg126.qualified_tree, "db4f96a8d88d4ffbc3f4b0a1838cf9968e8be6de");
+  assert.equal(sg126.implementation_merge, "41fcb6e8fc2d5edfc1ce1a4f65b32f4c0ef2d994");
+  for (const key of ["activation", "network", "process", "privileged"] as const) {
+    assert.ok(sg126.authority_delta[key].startsWith("None."), key);
+  }
   const sg108 = readJson<{
     program: string;
     state: string;

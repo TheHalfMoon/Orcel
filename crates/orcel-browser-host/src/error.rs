@@ -18,6 +18,10 @@ pub enum UnavailableReason {
     LaunchFailed,
     /// The host channel carried malformed or unexpected frames.
     ProtocolViolation,
+    /// #503: the engine's publisher verification (a package-database check
+    /// on Linux) did not finish within its deadline. The engine is not
+    /// trusted and not launched; this is not a verdict that it is untrusted.
+    VerificationTimedOut,
     /// The worker runtime is missing, too old, or refused to start (it
     /// requires Node.js 22.14+ run with exactly --disable-sigusr1).
     UnsupportedRuntime,
@@ -37,6 +41,18 @@ pub enum UnavailableReason {
     /// The caller cancelled the lifetime (`CancelHandle::cancel`); nothing
     /// in flight was committed.
     Cancelled,
+    /// BR-01: the approved element is gone (a re-render replaced it) and no
+    /// single element with its approved role and accessible name took its
+    /// place; nothing was clicked.
+    TargetStale,
+    /// BR-02: an approved action was dispatched and its outcome is unknown
+    /// (it failed or timed out after the page may have changed). Observe
+    /// again before anything else; it is never repeated automatically.
+    OutcomeUnknown,
+    /// BR-04: another element covers the approved one (an overlay, a
+    /// banner), so the engine never performed the pointer action; observe
+    /// again (after a download attempt, navigate again: its page is closed).
+    TargetOccluded,
 }
 
 impl fmt::Display for UnavailableReason {
@@ -44,6 +60,9 @@ impl fmt::Display for UnavailableReason {
         match self {
             Self::NoEngine => write!(f, "no supported browser engine is installed"),
             Self::UnsupportedEngine => write!(f, "browser engine is unsupported or untrusted"),
+            Self::VerificationTimedOut => {
+                write!(f, "browser engine verification did not finish in time")
+            }
             Self::LaunchFailed => write!(f, "browser host launch failed"),
             Self::ProtocolViolation => write!(f, "browser host protocol violation"),
             Self::UnsupportedRuntime => {
@@ -54,6 +73,12 @@ impl fmt::Display for UnavailableReason {
             Self::ActionFailed => write!(f, "the browser action failed"),
             Self::WorkerExited => write!(f, "the browser worker exited"),
             Self::Cancelled => write!(f, "the browser operation was cancelled"),
+            Self::TargetStale => write!(f, "the approved element is no longer on the page"),
+            Self::TargetOccluded => write!(f, "another element covers the approved element"),
+            Self::OutcomeUnknown => write!(
+                f,
+                "the approved action was dispatched and its outcome is unknown"
+            ),
         }
     }
 }
@@ -127,6 +152,7 @@ mod tests {
             UnavailableReason::UnsupportedEngine,
             UnavailableReason::LaunchFailed,
             UnavailableReason::ProtocolViolation,
+            UnavailableReason::VerificationTimedOut,
         ] {
             let text = HostError::Unavailable(reason).to_string();
             assert!(text.starts_with("browser unavailable: "));

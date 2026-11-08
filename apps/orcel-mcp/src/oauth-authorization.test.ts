@@ -937,6 +937,10 @@ test("scope to tool matrix covers exactly the canonical catalog with default den
     "desktop_window_capture",
     "desktop_window_list",
     "desktop_window_tree",
+    "report_commit",
+    "report_preview",
+    "report_start",
+    "task_resume_summary",
     "web_fetch",
     "web_search"
   ]);

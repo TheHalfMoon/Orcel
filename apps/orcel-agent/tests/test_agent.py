@@ -1,0 +1,1091 @@
+"""Orcel Agent M1: the client-side rules, the resume invariant (including a
+real process kill), the private store, the stdio edge client, and the source
+boundary."""
+
+from __future__ import annotations
+
+import ast
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from typing import Any, Optional
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from orcel_agent.agent import READ_ONLY_TOOLS, Agent, AgentStop  # noqa: E402
+from orcel_agent.edge import MAX_FRAME_BYTES, Edge, EdgeError, ToolOutcome, ToolSpec, parse_tool_result  # noqa: E402
+from orcel_agent.events import EventLog  # noqa: E402
+from orcel_agent.journal import OUTCOME_UNKNOWN, DispatchJournal  # noqa: E402
+from orcel_agent.planner import ScriptedPlanner, ToolCall  # noqa: E402
+from orcel_agent.store import StoreError, new_run_id, open_store  # noqa: E402
+
+SCHEMA = {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}
+RUN = "0" * 32
+BOTH = frozenset({"fs_read", "fs_write"})
+
+
+class FakeEdge:
+    """Lists tools and answers calls from a script; records what it was asked."""
+
+    def __init__(self, tools: list[str], answers: Optional[dict[str, ToolOutcome]] = None, fail_on: Optional[str] = None):
+        self.tools = tools
+        self.answers = answers or {}
+        self.fail_on = fail_on
+        self.called: list[tuple[str, dict[str, Any]]] = []
+
+    def list_tools(self) -> list[ToolSpec]:
+        return [ToolSpec(name, SCHEMA) for name in self.tools]
+
+    def call_tool(self, name: str, arguments: dict[str, Any], timeout_s: Optional[float] = None) -> ToolOutcome:
+        self.called.append((name, arguments))
+        if name == self.fail_on:
+            raise EdgeError("the edge exited")
+        return self.answers.get(name, ToolOutcome(ok=True, result={"text": "ok"}))
+
+
+class Scratch(unittest.TestCase):
+    def setUp(self) -> None:
+        self._dir = tempfile.TemporaryDirectory()
+        self.root = Path(self._dir.name) / "agent"
+
+    def tearDown(self) -> None:
+        self._dir.cleanup()
+
+    def agent(self, edge: FakeEdge, run_id: str = RUN, **kwargs: Any) -> Agent:
+        store = open_store(self.root, run_id)
+        kwargs.setdefault("keep_store", True)
+        return Agent(edge, DispatchJournal(store.journal_path, store.check_capacity), EventLog(run_id), store=store, **kwargs)
+
+
+class ClientRules(Scratch):
+    def test_only_allowlisted_tools_reach_the_planner_or_the_edge(self) -> None:
+        edge = FakeEdge(["fs_read", "fs_write", "process_spawn", "desktop_input_execute"])
+        agent = self.agent(edge)
+        self.assertEqual(sorted(spec.name for spec in agent.prepare()), ["fs_read"])
+        result = agent.run("goal", ScriptedPlanner([ToolCall("fs_write", {"path": "a"})]))
+        self.assertEqual(result.outcome, "proposal-outside-allowlist")
+        self.assertEqual(edge.called, [], "a disallowed proposal never reaches the edge")
+
+    def test_the_m1_allowlist_is_read_only_and_everything_else_is_mutating(self) -> None:
+        self.assertEqual(
+            sorted(READ_ONLY_TOOLS),
+            ["fs_find", "fs_list", "fs_read", "fs_read_range", "fs_search", "fs_stat", "system_status", "workspace_get"],
+        )
+        agent = self.agent(FakeEdge([]))
+        for tool in ("fs_write", "process_spawn", "git_push", "anything_new"):
+            self.assertTrue(agent.is_mutating(tool), tool)
+
+    def test_a_refused_call_is_never_dispatched_again(self) -> None:
+        edge = FakeEdge(["fs_read"], {"fs_read": ToolOutcome(ok=False, error_code="PATH_ESCAPE")})
+        plan = ScriptedPlanner([ToolCall("fs_read", {"path": "../x"}), ToolCall("fs_read", {"path": "../x"})])
+        self.assertEqual(self.agent(edge).run("goal", plan).outcome, "repeat-refused")
+        self.assertEqual(len(edge.called), 1)
+
+    def test_a_refusal_is_visible_and_the_run_may_finish(self) -> None:
+        edge = FakeEdge(["fs_read"], {"fs_read": ToolOutcome(ok=False, error_code="PATH_ESCAPE")})
+        result = self.agent(edge).run("goal", ScriptedPlanner([ToolCall("fs_read", {"path": "../x"})], answer="refused"))
+        self.assertEqual((result.outcome, result.answer), ("finished", "refused"))
+        self.assertEqual(result.steps[0].error_code, "PATH_ESCAPE")
+
+    def test_the_approval_budget_is_counted_before_dispatch(self) -> None:
+        # orceld answers an approved prompt with plain success.
+        edge = FakeEdge(["fs_write"])
+        calls = [ToolCall("fs_write", {"path": f"f{i}"}) for i in range(5)]
+        result = self.agent(edge, allowlist=frozenset({"fs_write"}), max_approval_requests=3).run("goal", ScriptedPlanner(calls))
+        self.assertEqual(result.outcome, "approval-budget")
+        self.assertEqual((result.approval_requests, len(edge.called)), (3, 3), "a fourth request never reaches orceld")
+
+    def test_a_denial_stops_the_run_and_is_never_asked_again(self) -> None:
+        denied = FakeEdge(["fs_write"], {"fs_write": ToolOutcome(ok=False, error_code="APPROVAL_DENIED")})
+        calls = [ToolCall("fs_write", {"path": f"f{i}"}) for i in range(3)]
+        self.assertEqual(self.agent(denied, allowlist=frozenset({"fs_write"})).run("goal", ScriptedPlanner(calls)).outcome, "approval-denied")
+        self.assertEqual(len(denied.called), 1)
+
+    def test_the_step_budget_and_malformed_proposals(self) -> None:
+        plan = ScriptedPlanner([ToolCall("fs_read", {"path": str(i)}) for i in range(10)])
+        self.assertEqual(self.agent(FakeEdge(["fs_read"]), max_steps=3).run("goal", plan).outcome, "step-budget")
+        missing = ScriptedPlanner([ToolCall("fs_read", {})])
+        self.assertEqual(self.agent(FakeEdge(["fs_read"]), "1" * 32).run("goal", missing).outcome, "proposal-malformed")
+
+    def test_an_edge_failure_mid_call_is_unknown_and_stops_the_run(self) -> None:
+        edge = FakeEdge(["fs_read"], fail_on="fs_read")
+        agent = self.agent(edge)
+        self.assertEqual(agent.run("goal", ScriptedPlanner([ToolCall("fs_read", {"path": "a"})])).outcome, "edge-failure")
+        entries = agent.journal.entries()
+        self.assertEqual([(e.answered, e.error_code) for e in entries], [(True, OUTCOME_UNKNOWN)])
+
+    def test_finish_is_a_claim_and_the_store_is_deleted_when_the_run_ends(self) -> None:
+        agent = self.agent(FakeEdge(["fs_read"]), keep_store=False)
+        result = agent.run("goal", ScriptedPlanner([ToolCall("fs_read", {"path": "a"})], answer=42))
+        self.assertEqual((result.outcome, result.answer), ("finished", 42))
+        self.assertTrue(agent.events.events[-1]["data"]["claimed"])
+        self.assertFalse((self.root / RUN).exists(), "deleted on completion")
+        stopped = self.agent(FakeEdge(["fs_read"]), "2" * 32, keep_store=False)
+        stopped.run("goal", ScriptedPlanner([ToolCall("fs_write", {"path": "a"})]))
+        self.assertFalse((self.root / ("2" * 32)).exists(), "deleted when the run stops")
+
+
+class ResumeInvariant(Scratch):
+    def crash_during(self, tool: str, path: str = "report.md") -> None:
+        """A dispatched call whose answer was never recorded (the process
+        died after the journal write)."""
+        agent = self.agent(FakeEdge([tool]), allowlist=frozenset({tool}))
+        agent.prepare()
+        agent.journal.dispatched(tool, {"path": path})
+
+    def test_an_unknown_call_is_surfaced_once_and_its_replay_is_refused(self) -> None:
+        self.crash_during("fs_write")
+        edge = FakeEdge(["fs_read", "fs_write"])
+        resumed = self.agent(edge, allowlist=BOTH)
+        resumed.prepare()
+        self.assertEqual([(s.call.tool, s.error_code) for s in resumed.steps], [("fs_write", OUTCOME_UNKNOWN)])
+        self.assertEqual(edge.called, [])
+        # Re-observing is allowed, the same mutation never is.
+        plan = ScriptedPlanner([ToolCall("fs_read", {"path": "report.md"}), ToolCall("fs_write", {"path": "report.md"})])
+        self.assertEqual(resumed.run("goal", plan).outcome, "unknown-outcome-replay")
+        self.assertEqual([name for name, _ in edge.called], ["fs_read"])
+        again = self.agent(FakeEdge(["fs_read"]), allowlist=BOTH)
+        again.prepare()
+        surfaced = [e for e in again.events.events if e["kind"] == "step.outcome_unknown"]
+        self.assertEqual(surfaced, [], "surfaced once, not on every start")
+
+    def test_a_different_mutation_needs_a_fresh_observation(self) -> None:
+        self.crash_during("fs_write", "a.md")
+        edge = FakeEdge(["fs_read", "fs_write"])
+        blocked = self.agent(edge, allowlist=BOTH)
+        self.assertEqual(blocked.run("goal", ScriptedPlanner([ToolCall("fs_write", {"path": "b.md"})])).outcome,
+                         "reobserve-before-mutation")
+        self.crash_during("fs_write", "c.md")
+        edge = FakeEdge(["fs_read", "fs_write"])
+        plan = ScriptedPlanner([ToolCall("fs_read", {"path": "c.md"}), ToolCall("fs_write", {"path": "d.md"})], answer="done")
+        self.assertEqual(self.agent(edge, allowlist=BOTH).run("goal", plan).outcome, "finished")
+
+    def test_refusals_budgets_and_denials_survive_a_resume(self) -> None:
+        first = self.agent(FakeEdge(["fs_read"], {"fs_read": ToolOutcome(ok=False, error_code="PATH_ESCAPE")}))
+        first.run("goal", ScriptedPlanner([ToolCall("fs_read", {"path": "../x"})]))
+        resumed = self.agent(FakeEdge(["fs_read"]))
+        resumed.prepare()
+        with self.assertRaises(AgentStop) as stopped:
+            resumed.dispatch(ToolCall("fs_read", {"path": "../x"}))
+        self.assertEqual(stopped.exception.outcome, "repeat-refused")
+
+        run = "3" * 32
+        approved = self.agent(FakeEdge(["fs_write"]), run, allowlist=frozenset({"fs_write"}))
+        approved.run("goal", ScriptedPlanner([ToolCall("fs_write", {"path": f"f{i}"}) for i in range(2)]))
+        edge = FakeEdge(["fs_write"])
+        resumed = self.agent(edge, run, allowlist=frozenset({"fs_write"}))
+        outcome = resumed.run("goal", ScriptedPlanner([ToolCall("fs_write", {"path": f"g{i}"}) for i in range(5)])).outcome
+        self.assertEqual((outcome, len(edge.called)), ("approval-budget", 1), "the budget counts across a resume")
+
+        run = "4" * 32
+        denied = self.agent(FakeEdge(["fs_write"], {"fs_write": ToolOutcome(ok=False, error_code="APPROVAL_DENIED")}),
+                            run, allowlist=frozenset({"fs_write"}))
+        denied.run("goal", ScriptedPlanner([ToolCall("fs_write", {"path": "a"})]))
+        edge = FakeEdge(["fs_write"])
+        outcome = self.agent(edge, run, allowlist=frozenset({"fs_write"})).run(
+            "goal", ScriptedPlanner([ToolCall("fs_write", {"path": "b"})])).outcome
+        self.assertEqual((outcome, edge.called), ("approval-denied", []), "never re-asks after a resume")
+
+    def test_completed_mutations_are_history_and_never_replayed(self) -> None:
+        # [read x, write A, write C]: the process dies during write C.
+        edge = FakeEdge(["fs_read", "fs_write"])
+        first = self.agent(edge, allowlist=BOTH)
+        first.prepare()
+        first.dispatch(ToolCall("fs_read", {"path": "x"}))
+        first.dispatch(ToolCall("fs_write", {"path": "A"}))
+        first.journal.dispatched("fs_write", {"path": "C"})
+        edge = FakeEdge(["fs_read", "fs_write"])
+        resumed = self.agent(edge, allowlist=BOTH)
+        resumed.prepare()
+        self.assertEqual([(s.call.tool, s.ok, s.error_code) for s in resumed.steps],
+                         [("fs_read", True, None), ("fs_write", True, None), ("fs_write", False, OUTCOME_UNKNOWN)])
+        plan = ScriptedPlanner([ToolCall("fs_read", {"path": "x"}), ToolCall("fs_write", {"path": "A"}),
+                                ToolCall("fs_write", {"path": "C"})])
+        # The script resumes after its two completed calls and reaches the
+        # unknown write, which is refused; write A is never sent again.
+        self.assertEqual(resumed.run("goal", plan).outcome, "unknown-outcome-replay")
+        self.assertEqual(edge.called, [])
+        with self.assertRaises(AgentStop) as stopped:
+            resumed.dispatch(ToolCall("fs_write", {"path": "A"}))
+        self.assertEqual(stopped.exception.outcome, "completed-mutation-replay")
+
+    def test_reobservation_is_owed_across_a_second_resume(self) -> None:
+        self.crash_during("fs_write", "a.md")
+        once = self.agent(FakeEdge(["fs_read", "fs_write"]), allowlist=BOTH)
+        once.prepare()  # surfaced; then the process dies again
+        twice = self.agent(FakeEdge(["fs_read", "fs_write"]), allowlist=BOTH)
+        twice.prepare()
+        with self.assertRaises(AgentStop) as stopped:
+            twice.dispatch(ToolCall("fs_write", {"path": "b.md"}))
+        self.assertEqual(stopped.exception.outcome, "reobserve-before-mutation")
+
+    def test_a_torn_final_line_is_repaired(self) -> None:
+        store = open_store(self.root, RUN)
+        journal = DispatchJournal(store.journal_path)
+        journal.dispatched("fs_write", {"path": "a"})
+        with store.journal_path.open("ab") as handle:
+            handle.write(b'{"seq": 2, "state": "dispa')
+        repaired = DispatchJournal(store.journal_path)
+        self.assertEqual([e.seq for e in repaired.unanswered()], [1])
+        repaired.resolve_unknown(1)
+        self.assertEqual(DispatchJournal(store.journal_path).unanswered(), [], "the resolution is readable")
+
+    def test_the_journal_holds_digests_not_content(self) -> None:
+        agent = self.agent(FakeEdge(["fs_read"], {"fs_read": ToolOutcome(ok=True, result={"text": "SECRET-CONTENT"})}))
+        agent.run("goal", ScriptedPlanner([ToolCall("fs_read", {"path": "private/notes.txt"})]))
+        text = (self.root / RUN / "dispatch.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn("SECRET-CONTENT", text)
+        self.assertNotIn("private/notes.txt", text)
+
+
+SLOW_SERVER = r'''
+import json, sys, time
+for line in sys.stdin:
+    message = json.loads(line)
+    if "id" not in message:
+        continue
+    if message["method"] == "initialize":
+        result = {"protocolVersion": "2025-06-18", "capabilities": {}}
+    elif message["method"] == "tools/list":
+        result = {"tools": [{"name": "fs_write", "inputSchema": {"type": "object", "required": ["path"]}}]}
+    else:
+        time.sleep(30)
+        continue
+    print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+'''
+
+AGENT_CHILD = r'''
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from orcel_agent.agent import Agent
+from orcel_agent.edge import Edge
+from orcel_agent.events import EventLog
+from orcel_agent.journal import DispatchJournal
+from orcel_agent.planner import ToolCall
+from orcel_agent.store import open_store
+store = open_store(Path(sys.argv[2]), sys.argv[3])
+edge = Edge([sys.executable, "-c", sys.argv[4]], {}, timeout_s=60)
+edge.start()
+agent = Agent(edge, DispatchJournal(store.journal_path), EventLog("child"), allowlist=frozenset({"fs_write"}))
+agent.prepare()
+agent.dispatch(ToolCall("fs_write", {"path": "report.md"}))
+'''
+
+
+class ProcessKill(Scratch):
+    def test_killing_the_agent_mid_call_leaves_an_unknown_outcome_that_is_never_replayed(self) -> None:
+        child = subprocess.Popen([sys.executable, "-c", AGENT_CHILD, str(ROOT), str(self.root), RUN, SLOW_SERVER])
+        journal_path = self.root / RUN / "dispatch.jsonl"
+        try:
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and not (journal_path.is_file() and "dispatched" in journal_path.read_text(encoding="utf-8")):
+                time.sleep(0.1)
+            self.assertTrue(journal_path.is_file(), "the child dispatched")
+            time.sleep(0.5)
+        finally:
+            child.kill()
+            child.wait()
+        edge = FakeEdge(["fs_read", "fs_write"])
+        resumed = self.agent(edge, allowlist=BOTH)
+        resumed.prepare()
+        self.assertEqual([(s.call.tool, s.error_code) for s in resumed.steps], [("fs_write", OUTCOME_UNKNOWN)])
+        plan = ScriptedPlanner([ToolCall("fs_read", {"path": "report.md"}), ToolCall("fs_write", {"path": "report.md"})])
+        self.assertEqual(resumed.run("goal", plan).outcome, "unknown-outcome-replay")
+        self.assertNotIn(("fs_write", {"path": "report.md"}), edge.called)
+
+
+class PrivateStore(Scratch):
+    def test_the_store_is_owner_only(self) -> None:
+        store = open_store(self.root, RUN)
+        if os.name != "nt":
+            for path in (self.root, store.directory):
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode) & 0o077, 0, path)
+            return
+        # Windows (slice 5b): the root and the run directory have a protected
+        # DACL of their own (D:P, nothing inherited), and every allow entry
+        # names this user, SYSTEM or Administrators, compared by SID
+        # (locale-proof). Read with icacls, independently of winacl.py.
+        user_sid = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
+                                  check=True).stdout.strip().split(",")[-1].strip('"')
+        store.journal_path.write_text("{}\n", encoding="utf-8")
+        allowed = {user_sid, "SY", "BA", "S-1-5-18", "S-1-5-32-544"}
+        # SDDL names the built-in Administrator and Guest by alias (a CI
+        # runner may be the built-in Administrator).
+        aliases = {"500": "LA", "501": "LG"}
+        user_forms = {user_sid} | ({aliases[user_sid.rsplit("-", 1)[1]]}
+                                   if user_sid.rsplit("-", 1)[1] in aliases else set())
+        allowed |= user_forms
+        for path, inherited in ((self.root, False), (store.directory, False), (store.journal_path, True)):
+            saved = Path(self._dir.name) / "acl.txt"
+            saved.unlink(missing_ok=True)
+            subprocess.run(["icacls", str(path), "/save", str(saved), "/q"], capture_output=True, check=True)
+            sddl = saved.read_bytes().decode("utf-16")
+            if not inherited:
+                self.assertIn("D:P", sddl, f"{path}: a protected DACL")
+            aces = re.findall(r"\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)", sddl)
+            self.assertTrue(aces, sddl)
+            for kind, flags, sid in aces:
+                self.assertEqual(kind, "A", sddl)
+                if not inherited:
+                    self.assertNotIn("ID", flags, f"{path}: nothing inherited: {sddl}")
+                # A file's entries may be inherited (ID) or written out
+                # explicitly by its creator; either way only these principals.
+                self.assertIn(sid, allowed, sddl)
+            self.assertTrue(user_forms & {sid for _, _, sid in aces}, f"{path}: {sddl}")
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_an_existing_directory_that_is_not_private_is_refused(self) -> None:
+        # Made the ordinary way, the root inherits the temp directory's ACL.
+        self.root.mkdir(parents=True)
+        with self.assertRaisesRegex(StoreError, r"not private \(the DACL is not protected\); remove it"):
+            open_store(self.root, RUN)
+        # A junction to a private directory is refused too.
+        import _winapi
+
+        target = Path(self._dir.name) / "private"
+        open_store(target, RUN)
+        junction = Path(self._dir.name) / "junction"
+        _winapi.CreateJunction(str(target), str(junction))
+        with self.assertRaisesRegex(StoreError, "a link, a junction"):
+            open_store(junction, RUN)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_the_private_check_refuses_every_non_private_shape(self) -> None:
+        from orcel_agent.winacl import private_problem
+
+        me = "S-1-5-21-1-2-3-1001"
+        good = f"O:{me}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{me})"
+        self.assertIsNone(private_problem(good, me))
+        self.assertIsNone(private_problem(good.replace("D:P", "D:PAI"), me))
+        # An account SDDL prints as an alias (here the built-in Administrator).
+        aliased = "O:LAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)"
+        self.assertIsNotNone(private_problem(aliased, me))
+        self.assertIsNone(private_problem(aliased, me, "LA"))
+        for bad in (
+            good.replace("D:P", "D:AI"),  # not protected
+            good.replace(f"O:{me}", "O:S-1-5-21-9-9-9-1002"),  # someone else's
+            good + "(A;OICI;FR;;;WD)",  # Everyone
+            good + "(A;OICI;FR;;;BU)",  # Users
+            good + "(A;OICI;FR;;;AU)",  # Authenticated Users
+            good + "(A;OICI;FR;;;S-1-5-21-9-9-9-1002)",  # another account
+            good + "(D;OICI;FA;;;WD)",  # a deny entry is not understood here
+            good.replace(f"(A;OICI;FA;;;{me})", f"(A;OICIID;FA;;;{me})"),  # inherited
+            good.replace(f"(A;OICI;FA;;;{me})", ""),  # no entry for the user
+            f"O:{me}D:P",  # empty DACL
+            f"O:{me}D:NO_ACCESS_CONTROL",  # a null DACL
+            "garbage",
+        ):
+            self.assertIsNotNone(private_problem(bad, me), bad)
+
+    def test_the_size_cap_fails_closed(self) -> None:
+        store = open_store(self.root, RUN, max_bytes=200)
+        journal = DispatchJournal(store.journal_path, store.check_capacity)
+        with self.assertRaises(StoreError):
+            for index in range(20):
+                journal.dispatched("fs_read", {"path": str(index)})
+
+    def test_run_ids_are_validated(self) -> None:
+        for bad in ("../x", "abc", "A" * 32, "0" * 31):
+            with self.assertRaises(StoreError):
+                open_store(self.root, bad)
+        self.assertRegex(new_run_id(), r"^[0-9a-f]{32}$")
+
+    def test_expiry_follows_the_newest_file_and_spares_live_runs(self) -> None:
+        old = open_store(self.root, "a" * 32)
+        old.journal_path.write_text("{}\n", encoding="utf-8")
+        os.utime(old.journal_path, (0, 0))
+        os.utime(old.directory, (0, 0))
+        busy = open_store(self.root, "b" * 32)
+        busy.journal_path.write_text("{}\n", encoding="utf-8")
+        os.utime(busy.directory, (0, 0))  # an old directory, a fresh journal
+        # Runs left by an earlier process: nothing holds them any more.
+        old.close()
+        busy.close()
+        open_store(self.root, "c" * 32, ttl_s=3600).close()
+        self.assertFalse(old.directory.exists(), "an expired run is removed")
+        self.assertTrue(busy.directory.exists(), "a run with a fresh journal is kept")
+
+    @unittest.skipIf(os.name == "nt", "Unix only")
+    def test_a_unix_store_under_an_unsafe_ancestor_is_refused_and_nothing_is_made(self) -> None:
+        # #596: orceld's ancestor rule. A directory others may write to (not
+        # a root-owned sticky one) is refused, and nothing is created in it.
+        unsafe = Path(self._dir.name) / "unsafe"
+        unsafe.mkdir()
+        os.chmod(unsafe, 0o777)
+        with self.assertRaisesRegex(StoreError, "ancestor .*writable by group or others"):
+            open_store(unsafe / "a" / "agent", RUN)
+        self.assertEqual(list(unsafe.iterdir()), [], "nothing was made beneath it")
+        # An existing root below it is refused too.
+        os.chmod(unsafe, 0o700)
+        (unsafe / "agent").mkdir(mode=0o700)
+        os.chmod(unsafe, 0o770)
+        with self.assertRaisesRegex(StoreError, "ancestor"):
+            open_store(unsafe / "agent", RUN)
+        # Read access for others is fine.
+        os.chmod(unsafe, 0o755)
+        open_store(unsafe / "agent", RUN).close()
+
+    @unittest.skipIf(os.name == "nt", "Unix only")
+    def test_a_unix_store_behind_a_link_is_checked_where_it_resolves(self) -> None:
+        # #596: a link among the ancestors is allowed, but the directories it
+        # resolves to face the same rule; the root itself may not be a link.
+        target = Path(self._dir.name) / "target"
+        target.mkdir()
+        os.chmod(target, 0o777)
+        link = Path(self._dir.name) / "link"
+        link.symlink_to(target)
+        with self.assertRaisesRegex(StoreError, "ancestor .*target"):
+            open_store(link / "agent", RUN)
+        os.chmod(target, 0o700)
+        open_store(link / "agent", RUN).close()
+        real_root = Path(self._dir.name) / "real-root"
+        real_root.mkdir(mode=0o700)
+        linked_root = Path(self._dir.name) / "linked-root"
+        linked_root.symlink_to(real_root)
+        with self.assertRaisesRegex(StoreError, "plain directory"):
+            open_store(linked_root, RUN)
+        self.assertEqual(list(real_root.iterdir()), [], "nothing was made through the link")
+
+    @unittest.skipIf(os.name == "nt", "Unix only")
+    def test_a_unix_store_checks_where_every_link_on_its_path_resolves(self) -> None:
+        # #596, review round 1: orceld checks the resolved chain of every
+        # link on the path, not only of the whole path. Here the first link
+        # resolves into an unsafe directory that the whole path's final
+        # resolution (through a second link) never passes through.
+        base = Path(self._dir.name)
+        unsafe = base / "b"
+        (unsafe / "c" / "d").mkdir(parents=True)
+        os.chmod(unsafe, 0o777)
+        elsewhere = base / "e"
+        elsewhere.mkdir()
+        (base / "a").mkdir()
+        (base / "a" / "l1").symlink_to(unsafe / "c")
+        (unsafe / "c" / "d" / "l2").symlink_to(elsewhere)
+        # Named as it really is (macOS: /var is /private/var).
+        with self.assertRaisesRegex(StoreError, f"ancestor {re.escape(os.path.realpath(unsafe))} .*writable"):
+            open_store(base / "a" / "l1" / "d" / "l2" / "agent", RUN)
+        self.assertEqual(list(elsewhere.iterdir()), [], "nothing was made")
+
+    @unittest.skipIf(os.name == "nt", "Unix only")
+    def test_a_unix_store_makes_missing_directories_private_and_holds_its_own(self) -> None:
+        # #596: missing directories are made 0700 whatever the umask, an
+        # existing root is tightened through its descriptor, and the root and
+        # run directory are held while the store is open.
+        old_umask = os.umask(0o002)
+        try:
+            deep = Path(self._dir.name) / "x" / "y" / "agent"
+            store = open_store(deep, RUN)
+        finally:
+            os.umask(old_umask)
+        for path in (deep.parent.parent, deep.parent, deep, store.directory):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700, path)
+        self.assertEqual(len(store._held), 2)
+        held = list(store._held)
+        for directory in held:
+            os.fstat(directory.fd)
+        store.close()
+        self.assertTrue(all(directory.fd is None for directory in held), "released on close")
+        loose = Path(self._dir.name) / "loose"
+        loose.mkdir()
+        os.chmod(loose, 0o755)
+        open_store(loose, RUN).close()
+        self.assertEqual(stat.S_IMODE(loose.stat().st_mode), 0o700)
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS only")
+    def test_a_macos_acl_grant_on_the_store_or_an_ancestor_is_refused(self) -> None:
+        # #601: orceld's rule. chmod +a entries are invisible to the mode bits.
+        def acl(path: Path, entry: str) -> None:
+            subprocess.run(["chmod", "+a", entry, str(path)], check=True, capture_output=True)
+
+        def clear(path: Path) -> None:
+            subprocess.run(["chmod", "-N", str(path)], check=True, capture_output=True)
+
+        base = Path(self._dir.name)
+        store_root = base / "granted"
+        open_store(store_root, RUN).close()
+        acl(store_root, "everyone allow list")
+        with self.assertRaisesRegex(StoreError, "ACL entry that grants access"):
+            open_store(store_root, RUN)
+        clear(store_root)
+        open_store(store_root, RUN).close()
+        # An ancestor: a write-granting allow entry is refused, a read one is
+        # not, and a deny entry is ignored.
+        parent = base / "parent"
+        parent.mkdir(mode=0o700)
+        acl(parent, "everyone allow add_file")
+        with self.assertRaisesRegex(StoreError, "ancestor .*grants write_data/add_file"):
+            open_store(parent / "agent", RUN)
+        self.assertEqual(list(parent.iterdir()), [], "nothing was made beneath it")
+        clear(parent)
+        acl(parent, "everyone allow list,search")
+        acl(parent, "everyone deny delete_child")
+        open_store(parent / "agent", RUN).close()
+        clear(parent)  # the deny entry binds the owner too: lift it before cleanup
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_held_store_is_never_expired_and_its_tree_cannot_be_swapped(self) -> None:
+        # Slice 5c: while a store is in use its directories are held open, so
+        # another opener's expiry cannot remove it, and neither the run
+        # directory nor the root can be renamed away and replaced.
+        held = open_store(self.root, "d" * 32)
+        held.journal_path.write_text("{}\n", encoding="utf-8")
+        os.utime(held.journal_path, (0, 0))
+        os.utime(held.directory, (0, 0))
+        open_store(self.root, "e" * 32, ttl_s=1).close()
+        self.assertTrue(held.directory.exists(), "a held run is not expired")
+        for path in (held.directory, self.root):
+            with self.assertRaises(OSError, msg=str(path)):
+                os.rename(path, str(path) + "-swapped")
+        self.assertTrue(held.journal_path.exists(), "nothing inside it was deleted either")
+        held.close()
+        os.rename(self.root, str(self.root) + "-moved")
+        os.rename(str(self.root) + "-moved", self.root)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_store_under_an_unsafe_ancestor_is_refused(self) -> None:
+        # Slice 5c: a directory above the store that lets Everyone delete or
+        # rename entries is refused, though the store itself would be
+        # private. (The grant is on this test's own scratch directory.)
+        unsafe = Path(self._dir.name) / "unsafe"
+        unsafe.mkdir()
+        subprocess.run(["icacls", str(unsafe), "/grant", "*S-1-1-0:(OI)(CI)F"], check=True, capture_output=True)
+        with self.assertRaisesRegex(StoreError, "ancestor"):
+            open_store(unsafe / "agent", RUN)
+        # Read-only access for Everyone is fine.
+        readable = Path(self._dir.name) / "readable"
+        readable.mkdir()
+        subprocess.run(["icacls", str(readable), "/grant", "*S-1-1-0:(OI)(CI)RX"], check=True, capture_output=True)
+        open_store(readable / "agent", RUN).close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_store_reached_through_a_junction_is_refused(self) -> None:
+        # Round 1: the lexical parents checked by the ancestor rule must be
+        # the directories the store really sits in. Behind a junction they are
+        # not: here the real target grants Everyone full control, while the
+        # junction's own parent is the safe scratch directory.
+        target = Path(self._dir.name) / "target"
+        target.mkdir()
+        subprocess.run(["icacls", str(target), "/grant", "*S-1-1-0:(OI)(CI)F"], check=True, capture_output=True)
+        link = Path(self._dir.name) / "link"
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+        try:
+            with self.assertRaisesRegex(StoreError, "possible mapped or subst drive, junction, link or mount point"):
+                open_store(link / "agent", RUN)
+        finally:
+            os.rmdir(link)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_store_on_a_subst_drive_is_refused(self) -> None:
+        # A subst (or mapped) drive resolves to another final path, so the
+        # store is refused, and the message does not call it a junction.
+        # CI only: a subst drive letter is visible to the whole logon session.
+        if os.environ.get("CI") != "true":
+            self.skipTest("maps a drive letter; runs on CI runners only")
+        import string
+
+        used = {f"{d}:" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")}
+        letter = next((f"{d}:" for d in reversed(string.ascii_uppercase[12:]) if f"{d}:" not in used), None)
+        if letter is None:
+            self.skipTest("no free drive letter")
+        target = Path(self._dir.name) / "subst-target"
+        target.mkdir()
+        subprocess.run(["subst", letter, str(target)], check=True, capture_output=True)
+        try:
+            with self.assertRaisesRegex(StoreError, "possible mapped or subst drive"):
+                open_store(Path(letter + "\\") / "agent", RUN)
+        finally:
+            subprocess.run(["subst", letter, "/d"], capture_output=True)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_store_under_a_short_name_is_accepted(self) -> None:
+        # Round 2: a path spelled with 8.3 short names (GitHub's Windows
+        # runners set TEMP that way) is the same directory, not a junction.
+        long_dir = Path(self._dir.name) / "a long directory name"
+        long_dir.mkdir()
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        self.assertGreater(ctypes.windll.kernel32.GetShortPathNameW(str(long_dir), buffer, len(buffer)), 0)
+        short = buffer.value
+        if os.path.normcase(short) == os.path.normcase(str(long_dir)):
+            self.skipTest("8.3 names are not generated on this volume")
+        open_store(Path(short) / "agent", RUN).close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_closed_store_refuses_writes(self) -> None:
+        # Round 1: once closed (unheld), a store refuses its journal path and
+        # its capacity check, so nothing writes to it; opening it again works.
+        store = open_store(self.root, RUN)
+        store.close()
+        with self.assertRaisesRegex(StoreError, "closed"):
+            store.journal_path
+        with self.assertRaisesRegex(StoreError, "closed"):
+            store.check_capacity(1)
+        open_store(self.root, RUN).close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_the_ancestor_rule_is_orcelds(self) -> None:
+        from orcel_agent.winacl import ancestor_problem, rights_mask
+
+        me = "S-1-5-21-1-2-3-1001"
+        base = f"O:{me}D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{me})"
+        # Adding entries is allowed (C:\'s Authenticated Users), reading too.
+        for fine in (base, base + "(A;CI;LC;;;AU)(A;CIIO;DC;;;AU)", base + "(A;OICI;0x1200a9;;;BU)",
+                     base + "(A;OICI;FR;;;WD)", base + "(D;OICI;FA;;;WD)", base + "(A;OICIIO;GA;;;CO)",
+                     base + "(A;;FA;;;OW)",
+                     "O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464D:PAI(A;;FA;;;SY)",
+                     "O:SYD:PAI(A;;FA;;;SY)"):
+            self.assertIsNone(ancestor_problem(fine, me), fine)
+        for bad in (
+            base + "(A;OICI;FA;;;WD)",  # Everyone: full control
+            base + "(A;OICI;0x1301bf;;;AU)",  # Modify includes DELETE
+            base + "(A;OICI;SD;;;BU)",  # DELETE
+            base + "(A;OICI;0x40;;;BU)",  # FILE_DELETE_CHILD
+            base + "(A;OICI;WD;;;BU)",  # WRITE_DAC
+            base + "(A;OICI;WO;;;BU)",  # WRITE_OWNER
+            base + "(A;OICI;GA;;;BU)",  # GENERIC_ALL
+            # The app-container entry orceld refuses on this kind of host.
+            base + "(A;OICI;0xd0040;;;S-1-15-3-1)",
+            base + "(OA;;FA;;;BU)",  # an entry type that cannot be judged
+            base + "(A;;ZZ;;;BU)",  # rights that cannot be parsed
+            f"O:S-1-5-21-9-9-9-1002D:PAI(A;;FA;;;SY)",  # another account's
+            f"O:{me}D:NO_ACCESS_CONTROL",  # a NULL DACL
+            "garbage",
+        ):
+            self.assertIsNotNone(ancestor_problem(bad, me), bad)
+        # "CIOI" holds no inherit-only token, even though it spells "IO".
+        self.assertIsNotNone(ancestor_problem(base + "(A;CIOI;FA;;;WD)", me))
+        self.assertEqual(rights_mask("FA"), 0x1F01FF)
+        self.assertEqual(rights_mask("LCDC"), 0x6)
+        self.assertIsNone(rights_mask("F"))
+
+
+FAKE_SERVER = r'''
+import json, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    if "id" not in message:
+        continue
+    method = message["method"]
+    if method == "initialize":
+        result = {"protocolVersion": "2025-06-18", "capabilities": {}, "serverInfo": {"name": "fake", "version": "0"}}
+    elif method == "tools/list":
+        result = {"tools": [{"name": "fs_read", "inputSchema": {"type": "object", "required": ["path"]}}]}
+    elif method == "tools/call":
+        path = message["params"]["arguments"].get("path")
+        if path == "../escape":
+            result = {"content": [{"type": "text", "text": json.dumps({"error": {"code": "PATH_ESCAPE", "message": "outside"}})}], "isError": True}
+        elif path == "big":
+            print("x" * (int(sys.argv[1]) + 10), flush=True)
+            continue
+        else:
+            result = {"content": [{"type": "text", "text": json.dumps({"result": {"text": "hello"}, "evidence": {"bytes": 5}})}]}
+        # A server request reusing our id is not our response.
+        print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "method": "ping"}), flush=True)
+    else:
+        continue
+    print("not json, ignored", flush=True)
+    print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+'''
+
+
+class StdioEdge(unittest.TestCase):
+    def env(self) -> dict[str, str]:
+        return {key: value for key, value in os.environ.items() if key in ("PATH", "SYSTEMROOT", "SystemRoot")}
+
+    def test_the_edge_client_speaks_mcp_over_stdio(self) -> None:
+        with Edge([sys.executable, "-c", FAKE_SERVER, str(MAX_FRAME_BYTES)], self.env(), timeout_s=20) as edge:
+            self.assertEqual([tool.name for tool in edge.list_tools()], ["fs_read"])
+            ok = edge.call_tool("fs_read", {"path": "a.txt"})
+            self.assertEqual((ok.ok, ok.result, ok.evidence), (True, {"text": "hello"}, {"bytes": 5}))
+            refused = edge.call_tool("fs_read", {"path": "../escape"})
+            self.assertEqual((refused.ok, refused.error_code), (False, "PATH_ESCAPE"))
+            with self.assertRaises(EdgeError):
+                edge.call_tool("fs_read", {"path": "big"})
+
+    def test_results_in_other_forms(self) -> None:
+        for text in ("Input validation error: path", "MCP error -32602: Input validation error", "Tool fs_nope not found"):
+            plain = parse_tool_result({"isError": True, "content": [{"type": "text", "text": text}]})
+            self.assertEqual((plain.ok, plain.error_code), (False, "INVALID_REQUEST"), text)
+        # The edge's own failures may follow a call orceld ran: unknown, not refused.
+        for text in ("orceld request timed out after 30000ms", "orceld exited while requests were pending (code=1)"):
+            with self.assertRaises(EdgeError):
+                parse_tool_result({"isError": True, "content": [{"type": "text", "text": text}]})
+        with self.assertRaises(EdgeError):
+            parse_tool_result({"content": []})
+        with self.assertRaises(EdgeError):
+            parse_tool_result({"content": [{"type": "text", "text": "not json"}]})
+
+    def test_a_failed_start_leaves_no_process(self) -> None:
+        started: list[subprocess.Popen[bytes]] = []
+        real = subprocess.Popen
+
+        def recording(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+            process = real(*args, **kwargs)
+            started.append(process)
+            return process
+
+        subprocess.Popen = recording  # type: ignore[misc]
+        try:
+            with self.assertRaises(EdgeError):
+                Edge([sys.executable, "-c", "import time; time.sleep(30)"], self.env(), timeout_s=1).start()
+            with self.assertRaises(EdgeError):
+                Edge([sys.executable, "-c", "pass"], self.env(), timeout_s=10).start()
+        finally:
+            subprocess.Popen = real  # type: ignore[misc]
+        self.assertEqual(len(started), 2)
+        for process in started:
+            self.assertIsNotNone(process.poll(), "the child was stopped")
+
+
+class SourceBoundary(unittest.TestCase):
+    """The agent spawns one child (the edge, in edge.py), runs no shell,
+    opens no socket, loads no code dynamically, and writes files only in
+    journal.py. Checked on the syntax tree of every module, recursively."""
+
+    ALLOWED_IMPORTS = {
+        "__future__", "dataclasses", "hashlib", "json", "os", "pathlib", "queue", "re", "shutil", "stat",
+        "subprocess", "sys", "threading", "time", "typing", "uuid",
+    }  # sys: SG-000129 slice 1, quiet.py checks sys.modules
+    # SG-000129: third-party imports are admitted by name, each in one named
+    # module only (the recorded decision on the source scan).
+    MODULE_IMPORTS = {
+        "chat_planner.py": {"langchain_core", "langsmith", "copy"},  # slice 2; copy: slice 5 atomic restore
+        "loop_detection.py": {"collections"},  # slice 3 (standard library)
+        "checkpoint.py": {"sqlite3"},  # slice 5 (standard library)
+        "todos.py": {"langchain_core", "unicodedata"},  # slice 4b (LangChain's todo text is copied, not imported)
+        "winacl.py": {"ctypes"},  # slice 5b: the Windows store DACL, native surface pinned below
+        "macacl.py": {"ctypes"},  # #601: macOS extended ACLs on the store, native surface pinned below
+    }
+    #: winacl.py's whole native surface (slice 5b).
+    WINACL_FUNCTIONS = {
+        "advapi32": ("OpenProcessToken", "GetTokenInformation", "ConvertSidToStringSidW",
+                     "ConvertStringSecurityDescriptorToSecurityDescriptorW", "GetNamedSecurityInfoW",
+                     "ConvertSecurityDescriptorToStringSecurityDescriptorW", "GetSecurityInfo"),
+        "kernel32": ("GetCurrentProcess", "CloseHandle", "CreateDirectoryW", "LocalFree", "CreateFileW",
+                     "GetFileInformationByHandle", "GetFinalPathNameByHandleW", "GetLongPathNameW"),
+    }
+    # SG-000129: never imported by the agent, whatever a later slice admits
+    # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
+    # its name or any submodule.
+    DENIED_MODULES = (
+        "mcp", "langchain_mcp_adapters", "langchain_community", "langchain_openai", "langchain_anthropic",
+        "langchain_ollama", "langchain_google_genai", "langchain_aws", "openai", "anthropic", "ollama",
+        "tiktoken", "transformers", "huggingface_hub", "langgraph.store", "sqlite_vec", "socket", "_socket",
+        "ssl", "_ssl", "socketserver", "smtplib", "ftplib", "poplib", "imaplib", "telnetlib", "xmlrpc",
+        "webbrowser", "urllib", "http", "httpx", "httpcore", "requests", "aiohttp", "websockets",
+        "asyncio.subprocess", "multiprocessing", "importlib",
+    )
+    # ctypes stays outside ALLOWED_IMPORTS; SG-000129 slice 5 may admit it in
+    # one named Windows-ACL module only, so it is not on the denylist.
+    DENIED_NAMES = {
+        "ClientSession", "stdio_client", "enable_load_extension", "load_extension", "create_connection",
+        "create_server", "start_server", "create_datagram_endpoint", "open_unix_connection", "start_unix_server",
+    }
+    # The never-narrowed floor is read from SG-000129's recorded decision
+    # "Rule change: the agent source scan grows by named imports only"
+    # itself, so narrowing the lists here fails until a new decision is
+    # recorded. "subprocess outside edge.py" is enforced by the spawn test.
+    FORBIDDEN_CALLS = {"__import__", "eval", "exec", "compile", "open"}
+    FORBIDDEN_OS = {"system", "popen", "fork", "forkpty", "posix_spawn", "posix_spawnp", "startfile", "kill"}
+
+    def modules(self) -> list[Path]:
+        found = sorted((ROOT / "orcel_agent").rglob("*.py"))
+        self.assertGreaterEqual(len(found), 7)
+        return found
+
+    def test_imports_are_standard_and_minimal(self) -> None:
+        for path in self.modules():
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                names: list[str] = []
+                if isinstance(node, ast.Import):
+                    names = [alias.name.split(".")[0] for alias in node.names]
+                    for alias in node.names:
+                        # `import subprocess as sp` would hide calls from the scan.
+                        if alias.name in ("os", "subprocess"):
+                            self.assertIsNone(alias.asname, f"{path.name}: aliased {alias.name}")
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    names = [(node.module or "").split(".")[0]]
+                    # `from os import system` would hide calls from the scan.
+                    self.assertNotIn(names[0], ("os", "subprocess"), f"{path.name}: from {names[0]} import")
+                for name in names:
+                    inside = path.relative_to(ROOT / "orcel_agent").as_posix()
+                    allowed = self.ALLOWED_IMPORTS | self.MODULE_IMPORTS.get(inside, set())
+                    self.assertIn(name, allowed, f"{path.name}: import {name}")
+
+    #: macacl.py's whole native surface (#601).
+    MACACL_LIBRARY = "/usr/lib/libSystem.B.dylib"
+    MACACL_FUNCTIONS = ("acl_get_fd_np", "acl_get_link_np", "acl_get_entry", "acl_get_tag_type",
+                        "acl_get_permset", "acl_get_perm_np", "acl_free")
+
+    def test_macacl_loads_only_its_named_functions(self) -> None:
+        tree = ast.parse((ROOT / "orcel_agent" / "macacl.py").read_text(encoding="utf-8"))
+        assigned = {t.id: node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                    for t in node.targets if isinstance(t, ast.Name)}
+        self.assertEqual(ast.literal_eval(assigned["LIBRARY"]), self.MACACL_LIBRARY)
+        self.assertEqual(ast.literal_eval(assigned["FUNCTIONS"]), self.MACACL_FUNCTIONS)
+        loaders = {"cdll", "windll", "oledll", "OleDLL", "PyDLL", "pydll", "pythonapi", "LibraryLoader",
+                   "LoadLibrary", "dlopen", "find_library", "memmove", "memset", "CFUNCTYPE", "WINFUNCTYPE", "WinDLL"}
+        calls = [ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Call)]
+        self.assertEqual([c for c in calls if "CDLL" in c], ["ctypes.CDLL(LIBRARY, use_errno=True)"])
+        self.assertEqual([c for c in calls if c.startswith("getattr(")], ["getattr(dll, name)"])
+        loop = [n for n in ast.walk(tree) if isinstance(n, ast.For) and ast.unparse(n.iter) == "FUNCTIONS"]
+        self.assertEqual(len(loop), 1, "the one lookup loop runs over FUNCTIONS")
+        self.assertTrue(any(ast.unparse(n) == "getattr(dll, name)" for n in ast.walk(loop[0])))
+        ctypes_allowed = {"c_void_p", "c_int", "c_char_p", "POINTER", "byref", "get_errno", "CDLL"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                self.assertNotIn(node.attr, loaders, f"macacl.py: .{node.attr}")
+                self.assertFalse(node.attr.startswith("_"), f"macacl.py: .{node.attr}")
+                if isinstance(node.value, ast.Name) and node.value.id == "ctypes":
+                    self.assertIn(node.attr, ctypes_allowed, f"macacl.py: ctypes.{node.attr}")
+                if isinstance(node.value, ast.Name) and node.value.id == "dll":
+                    self.fail(f"macacl.py: dll.{node.attr}")
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, loaders | {"vars", "globals", "locals", "eval", "exec", "__builtins__"},
+                                 f"macacl.py: {node.id}")
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = [a.name for a in node.names]
+                self.assertNotEqual(getattr(node, "module", None), "ctypes", "macacl.py: from ctypes import")
+                if "ctypes" in names:
+                    self.assertEqual([(a.name, a.asname) for a in node.names], [("ctypes", None)])
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id in ("LIBRARY", "FUNCTIONS", "dll", "name"):
+                        self.assertIn(ast.unparse(node), {
+                            "LIBRARY = " + repr(self.MACACL_LIBRARY),
+                            "FUNCTIONS = " + ast.unparse(assigned["FUNCTIONS"]),
+                            "dll = ctypes.CDLL(LIBRARY, use_errno=True)"}, f"macacl.py: {ast.unparse(node)}")
+
+    def test_winacl_loads_only_its_named_functions(self) -> None:
+        path = ROOT / "orcel_agent" / "winacl.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        table = next(node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id == "FUNCTIONS" for t in node.targets))
+        self.assertEqual(ast.literal_eval(table), self.WINACL_FUNCTIONS)
+        loaders = {"CDLL", "cdll", "windll", "oledll", "OleDLL", "PyDLL", "pydll", "pythonapi", "LibraryLoader",
+                   "LoadLibrary", "dlopen", "find_library", "memmove", "memset", "CFUNCTYPE", "WINFUNCTYPE"}
+        win_dll = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                self.assertNotIn(node.attr, loaders, f"winacl.py: .{node.attr}")
+                if node.attr == "WinDLL":
+                    win_dll.append(node)
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, loaders, f"winacl.py: {node.id}")
+            if isinstance(node, ast.alias):
+                self.assertNotIn(node.name, loaders | {"WinDLL"}, f"winacl.py: import {node.name}")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+                # Only the loop over FUNCTIONS looks a native function up.
+                self.assertEqual(ast.unparse(node), "getattr(dll, name)")
+        self.assertEqual(len(win_dll), 1, "one WinDLL call, over FUNCTIONS' libraries")
+        # The one WinDLL call loads FUNCTIONS' libraries and nothing else, and
+        # the one getattr looks up FUNCTIONS' names: both inside the loops
+        # over FUNCTIONS, whose loop variables are never reassigned.
+        loops = [node for node in ast.walk(tree) if isinstance(node, ast.For)
+                 and ast.unparse(node.iter) == "FUNCTIONS.items()"]
+        self.assertEqual(len(loops), 1)
+        self.assertEqual(ast.unparse(loops[0].target), "(library, names)")
+        inner = [node for node in loops[0].body if isinstance(node, ast.For)]
+        self.assertEqual([(ast.unparse(n.target), ast.unparse(n.iter)) for n in inner], [("name", "names")])
+        self.assertTrue(any(isinstance(n, ast.Call) and ast.unparse(n) == "ctypes.WinDLL(library, use_last_error=True)"
+                            for n in ast.walk(loops[0])))
+        self.assertTrue(any(isinstance(n, ast.Call) and ast.unparse(n) == "getattr(dll, name)"
+                            for n in ast.walk(inner[0])))
+        pinned = {"dll = ctypes.WinDLL(library, use_last_error=True)", "function = getattr(dll, name)",
+                  "FUNCTIONS = " + ast.unparse(table)}
+        loop_targets = [ast.unparse(loops[0].target), ast.unparse(inner[0].target)]
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr, ast.For, ast.comprehension)):
+                targets = [node.target]
+            for target in targets:
+                # Rebinding a name (setting an attribute on it is not).
+                parts = target.elts if isinstance(target, (ast.Tuple, ast.List)) else [target]
+                names = {part.id for part in parts if isinstance(part, ast.Name)}
+                if names & {"FUNCTIONS", "library", "names", "name", "dll", "function"}:
+                    text = ast.unparse(target) if isinstance(node, (ast.For, ast.comprehension)) else ast.unparse(node)
+                    self.assertIn(text, pinned | set(loop_targets), f"winacl.py: {text}")
+                    if text in loop_targets:
+                        loop_targets.remove(text)
+        # ctypes is used through a named set of attributes only: no private
+        # names, no raw memory, no other loader, no attribute on a library.
+        ctypes_allowed = {"Structure", "POINTER", "c_void_p", "c_int", "byref", "sizeof", "wstring_at",
+                          "create_unicode_buffer",
+                          "get_last_error", "FormatError", "WinDLL"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                self.assertFalse(node.attr.startswith("_"), f"winacl.py: .{node.attr}")
+                self.assertNotIn(node.attr, {"from_address", "from_buffer", "from_buffer_copy", "in_dll",
+                                             "string_at", "addressof", "cast", "pointer", "resize"},
+                                 f"winacl.py: .{node.attr}")
+                if isinstance(node.value, ast.Name) and node.value.id == "ctypes":
+                    self.assertIn(node.attr, ctypes_allowed, f"winacl.py: ctypes.{node.attr}")
+                if isinstance(node.value, ast.Name) and node.value.id == "dll":
+                    self.fail(f"winacl.py: dll.{node.attr}")
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, {"vars", "globals", "locals", "eval", "exec", "__builtins__"},
+                                 f"winacl.py: {node.id}")
+            if isinstance(node, ast.ImportFrom) and node.module == "ctypes":
+                self.assertEqual([a.name for a in node.names], ["wintypes"])
+                self.assertIsNone(node.names[0].asname)
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] == "ctypes":
+                        self.assertEqual((alias.name, alias.asname), ("ctypes", None), "winacl.py: import ctypes only")
+            if isinstance(node, ast.Attribute):
+                self.assertNotEqual(node.attr, "ctypes", "winacl.py: wintypes.ctypes")
+                if isinstance(node.value, ast.Name) and node.value.id == "wintypes":
+                    self.assertIn(node.attr, {"BOOL", "DWORD", "HANDLE", "LPCWSTR", "LPVOID", "ULONG", "FILETIME", "LPWSTR"},
+                                  f"winacl.py: wintypes.{node.attr}")
+                if node.attr in ("restype", "argtypes") and isinstance(node.ctx, ast.Store):
+                    self.assertTrue(any(ast.unparse(n) == "function.restype, function.argtypes = _PROTOTYPES[name]"
+                                        for n in ast.walk(inner[0]) if isinstance(n, ast.Assign)
+                                        and any(t is node for e in n.targets for t in ast.walk(e))),
+                                    "winacl.py: a prototype set outside the pinned loop")
+            if isinstance(node, ast.Name):
+                self.assertNotEqual(node.id, "type", "winacl.py: type()")
+        # Every call is from an exact list, so any new call (a loader, a raw
+        # memory helper, a lookup) fails here until this list is changed in a
+        # reviewed edit. It is a lint against drift by the repository's own
+        # authors, not a sandbox. Native functions are called only as
+        # api["<a name in FUNCTIONS>"].
+        native = {name for names in self.WINACL_FUNCTIONS.values() for name in names}
+        calls = {
+            "FUNCTIONS.items", "OSError", "PRIVATE_SDDL.format", "_SECURITY.fullmatch", "_SecurityAttributes", "_fail",
+            "_functions", "_take_string", "ctypes.FormatError", "ctypes.FormatError(code).strip",
+            "ctypes.FormatError(status).strip", "ctypes.POINTER", "ctypes.WinDLL", "ctypes.byref", "ctypes.c_void_p",
+            "ctypes.c_void_p * (needed.value // pointer_size + 1)", "ctypes.get_last_error", "ctypes.sizeof",
+            "ctypes.wstring_at", "entry.split", "frozenset", "getattr", "len", "match.groups", "os.path.abspath",
+            "owner.startswith", "re.compile", "re.findall", "seen.add", "set", "wintypes.DWORD", "wintypes.HANDLE",
+            # Slice 5c: the held directory and the ancestor judge.
+            "_FileInformation", "_RIGHTS.get", "bool", "int", "range", "rights.lower", "rights.lower().startswith",
+            "rights_mask", "self.close", "ctypes.create_unicode_buffer", "text.startswith",
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Subscript):
+                self.assertEqual(ast.unparse(node.func.value), "api", ast.unparse(node))
+                key = node.func.slice
+                self.assertTrue(isinstance(key, ast.Constant) and key.value in native, ast.unparse(node))
+            else:
+                self.assertIn(ast.unparse(node.func), calls, f"winacl.py: a call to {ast.unparse(node.func)}")
+        # No other module touches ctypes (macacl.py, #601, is pinned by its
+        # own test).
+        for other in self.modules():
+            if other.name not in ("winacl.py", "macacl.py"):
+                self.assertNotIn("ctypes", other.read_text(encoding="utf-8"), other.name)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_winacl_loads_exactly_its_named_functions_at_run_time(self) -> None:
+        from orcel_agent import winacl
+
+        loaded = winacl._functions()
+        self.assertEqual(set(loaded), {name for names in self.WINACL_FUNCTIONS.values() for name in names})
+
+    def test_the_denylist_is_never_narrowed_below_the_recorded_floor(self) -> None:
+        spec = json.loads((ROOT.parents[1] / ".specgrain" / "specs" / "SG-000129.json").read_text(encoding="utf-8"))
+        decision = next(d["decision"] for d in spec["decisions"]
+                        if d["question"] == "Rule change: the agent source scan grows by named imports only")
+        floor = decision.split("A denylist is added and never narrowed:", 1)[1].split(". Every addition", 1)[0]
+        words = set(re.findall(r"(?<![.\w])[A-Za-z_][A-Za-z0-9_.]*", floor))
+        prose = {"and", "any", "provider", "SDK", "similar", "subprocess", "outside", "edge.py"}
+        items = sorted(words - prose)
+        self.assertGreaterEqual(len(items), 12, items)
+        for item in items:
+            denied = item in self.DENIED_NAMES or any(
+                item == module or item.startswith(module + ".") for module in self.DENIED_MODULES)
+            self.assertTrue(denied, f"{item}: in the recorded floor but not denied")
+
+    def test_denied_modules_and_names_never_appear(self) -> None:
+        for path in self.modules():
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                modules: list[str] = []
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    modules = [node.module or ""]
+                    modules += [f"{node.module}.{alias.name}" for alias in node.names]
+                for module in modules:
+                    for denied in self.DENIED_MODULES:
+                        self.assertFalse(module == denied or module.startswith(denied + "."), f"{path.name}: {module}")
+                if isinstance(node, ast.Name):
+                    self.assertNotIn(node.id, self.DENIED_NAMES, f"{path.name}: {node.id}")
+                if isinstance(node, ast.Attribute):
+                    self.assertNotIn(node.attr, self.DENIED_NAMES, f"{path.name}: .{node.attr}")
+                if isinstance(node, ast.alias):
+                    self.assertNotIn(node.name.split(".")[-1], self.DENIED_NAMES, f"{path.name}: {node.name}")
+                # getattr(x, "enable_load_extension") and importlib-free
+                # string lookups: a denied name or module in any string.
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    for word in re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", node.value):
+                        self.assertNotIn(word, self.DENIED_NAMES, f"{path.name}: string {word!r}")
+                        self.assertFalse(any(word == m or word.startswith(m + ".") for m in self.DENIED_MODULES
+                                             if "_" in m or "." in m), f"{path.name}: string {word!r}")
+
+    def test_no_execution_network_or_dynamic_code(self) -> None:
+        subprocess_calls: list[str] = []
+        store_opens = 0
+        for path in self.modules():
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                if isinstance(func, ast.Name):
+                    if func.id == "open":
+                        self.fail(f"{path.name}: builtin open")
+                    self.assertNotIn(func.id, self.FORBIDDEN_CALLS, f"{path.name}: {func.id}()")
+                    if func.id == "Popen":
+                        subprocess_calls.append(f"{path.name}:Popen(bare)")
+                    if func.id == "getattr" and node.args and isinstance(node.args[0], ast.Name):
+                        self.assertNotIn(node.args[0].id, ("os", "subprocess"), f"{path.name}: getattr on {node.args[0].id}")
+                if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                    owner, attr = func.value.id, func.attr
+                    if owner == "os":
+                        self.assertNotIn(attr, self.FORBIDDEN_OS, f"{path.name}: os.{attr}")
+                        self.assertFalse(attr.startswith(("exec", "spawn")), f"{path.name}: os.{attr}")
+                        if attr == "open":
+                            # #596: the store opens its directories (read-only,
+                            # no link followed) to check them by descriptor.
+                            self.assertIn(path.name, ("journal.py", "store.py"),
+                                          "only the journal opens files, and the store its directories")
+                            if path.name == "store.py":
+                                store_opens += 1
+                    if owner == "subprocess":
+                        subprocess_calls.append(f"{path.name}:{attr}")
+                    self.assertNotEqual(owner, "importlib", f"{path.name}: importlib")
+                if isinstance(func, ast.Attribute) and func.attr in ("open", "write_text", "write_bytes"):
+                    store_dir_open = (path.name == "store.py" and func.attr == "open"
+                                      and isinstance(func.value, ast.Name) and func.value.id == "os")
+                    if not store_dir_open:
+                        self.assertEqual(path.name, "journal.py", f"{path.name}: .{func.attr}()")
+                if isinstance(func, ast.Attribute) and func.attr in ("create_subprocess_exec", "create_subprocess_shell", "open_connection"):
+                    self.fail(f"{path.name}: {func.attr}")
+                for keyword in node.keywords:
+                    if keyword.arg == "shell":
+                        self.assertTrue(isinstance(keyword.value, ast.Constant) and keyword.value.value is False,
+                                        f"{path.name}: shell must be False")
+        self.assertEqual(subprocess_calls, ["edge.py:Popen"], "exactly one spawn: the edge")
+        self.assertEqual(store_opens, 1, "store.py opens directories in one place")
+        store_source = (Path(__file__).resolve().parent.parent / "orcel_agent" / "store.py").read_text(encoding="utf-8")
+        for flag in ("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW"):
+            self.assertIn(f"os.{flag}", store_source, f"store.py: {flag}")
+        for flag in ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"):
+            self.assertNotIn(flag, store_source, f"store.py: {flag}")
+
+
+if __name__ == "__main__":
+    unittest.main()

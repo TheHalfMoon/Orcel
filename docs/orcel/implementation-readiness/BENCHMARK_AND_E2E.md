@@ -42,9 +42,9 @@ As built (XP-08):
 | M-BR-01 | Task success rate | controlled-site task set (forms, multi-step, tabs, dialogs, downloads, uploads) with host-side oracles |
 | M-BR-02 | Step error rate and TargetStale rate | same set, before and after BR-01 |
 | M-BR-03 | Wall time per task P50/P95; agent steps; model calls; input/output tokens | same planner (pinned client and model id), 5 repetitions |
-| M-BR-04 | Memory of host + worker + engine | sampled |
-| M-WI-01 | Crawl throughput pages/min and robots/sitemap correctness | local fixture site with known graph |
-| M-WI-02 | Extraction tokens with and without relevance filtering, and answer accuracy on fixture questions | fixture pages |
+| M-BR-04 | Memory of host + worker + engine | sampled; so far the worker's and engine's peak committed memory on Windows, from their Job Object (`commit_mb_peak`), without the host |
+| M-WI-01 | Crawl throughput pages/min and robots/sitemap correctness | local fixture site with known graph; on Windows, the `browser-tasks` row `controlled-site/crawl/site`, with the 10 pages visited as `steps`, 6 of them read, and the crawl as `latency_ms` |
+| M-WI-02 | Extraction tokens with and without relevance filtering, and answer accuracy on fixture questions | fixture pages; so far characters and a labelled token estimate on five real pages in `apps/orcel-browser-worker/fixtures/m-wi-02`, and whether each answer's text survives (`extract.test.ts`). Those aren't model tokens. Answer accuracy needs a model. The filter isn't reachable from the host yet |
 
 Comparison baselines (same planner, same tasks): Orcel before the change; Playwright-MCP package used directly (reference only, in a disposable profile, never shipped). Browser Use's agent may be run as an external reference in a disposable environment; its Python runtime is never part of Orcel.
 
@@ -68,7 +68,7 @@ The five journeys in `IMPLEMENTATION_ROADMAP.md` run on Windows first, then macO
   "rows": [
     {"case": "shared-web/click/ax/background", "status": "pass", "observed": "delivered",
      "latency_ms": {"p50": 0, "p95": 0}, "steps": 0, "model_calls": 0, "tokens_in": 0, "tokens_out": 0,
-     "rss_mb_peak": 0, "evidence": "path or run id"}
+     "rss_mb_peak": 0, "commit_mb_peak": 0, "evidence": "path or run id"}
   ]
 }
 ```

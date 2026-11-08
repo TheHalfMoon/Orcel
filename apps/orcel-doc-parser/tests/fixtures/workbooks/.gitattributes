@@ -1,0 +1,3 @@
+# These are other software's bytes. Never change them on checkout, and allow the
+# carriage returns its XML ends lines with. The whitespace check stays on elsewhere.
+* -text whitespace=cr-at-eol

@@ -1,0 +1,14 @@
+# SG-000129 slice 1: the Orcel Agent's admitted dependencies, at the versions
+# the DeerFlow pin 81e1ab8 resolves (backend/uv.lock). A version moves only to
+# fix a recorded advisory or a test failure; record every move in
+# requirements-notes.md. mcp and langchain-mcp-adapters are not admitted.
+langchain==1.3.14
+langchain-core==1.4.9
+langgraph==1.2.9
+langgraph-checkpoint==4.3.0
+langgraph-checkpoint-sqlite==3.1.2
+langgraph-prebuilt==1.1.0
+pydantic==2.13.3
+# Recorded move (requirements-notes.md): the pin resolves langgraph-sdk 0.4.4,
+# affected by GHSA-3fx2-cqw9-xr3c (CVE-2026-118667); 0.4.6 is the fix.
+langgraph-sdk==0.4.6

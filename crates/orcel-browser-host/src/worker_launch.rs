@@ -39,7 +39,7 @@ pub struct JobProcess {
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 9;
+pub const WORKER_PROTOCOL_GENERATION: u32 = 15;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -92,6 +92,111 @@ pub struct HostNode {
     pub role: String,
     pub name: String,
     pub url: Option<String>,
+}
+
+/// BR-05: dialogs remembered between two reads, and the longest message
+/// (mirror the worker).
+pub const MAX_DIALOGS: usize = 8;
+pub const MAX_DIALOG_MESSAGE_BYTES: usize = 1024;
+pub const MAX_DIALOG_URL_BYTES: usize = 2048;
+
+/// BR-05: a JavaScript dialog's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogKind {
+    Alert,
+    Confirm,
+    Prompt,
+    BeforeUnload,
+}
+
+/// BR-05: one dialog the engine answered (its URL and message are page
+/// text): dismissed, or `accepted` when it was a beforeunload (leaving was
+/// what the approved step did) or the confirm an approved action named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DismissedDialog {
+    pub kind: DialogKind,
+    /// The URL of the page that opened it (empty when unknown).
+    pub url: crate::webmcp::PageText,
+    pub message: crate::webmcp::PageText,
+    pub accepted: bool,
+}
+
+/// BR-05: an approved confirm message is bounded, one line, not empty.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn check_confirm(message: Option<&str>) -> Result<(), HostError> {
+    match message {
+        Some(text)
+            if text.is_empty()
+                || text.len() > MAX_DIALOG_MESSAGE_BYTES
+                || text
+                    .chars()
+                    .any(|ch| ch.is_control() || crate::webmcp::is_bidi_or_format(ch)) =>
+        {
+            Err(HostError::Invalid(
+                "an approved confirm message must be bounded and on one line".into(),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The approval state of a form action, with the confirm it may accept.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn form_state(input: &crate::actuation::FormInput, accept_confirm: Option<&str>) -> String {
+    match accept_confirm {
+        Some(message) => format!("{}\naccept-confirm\n{message}", input.state()),
+        None => input.state(),
+    }
+}
+
+/// BR-05: the dialogs dismissed since the last read; `truncated` when more
+/// than `MAX_DIALOGS` were.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DismissedDialogs {
+    pub dialogs: Vec<DismissedDialog>,
+    pub truncated: bool,
+}
+
+/// BR-05: a dismissed dialog on the wire.
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WireDialog {
+    kind: String,
+    url: String,
+    message: String,
+    accepted: bool,
+}
+
+/// BR-03: one file staged for upload: a host-held copy in this lifetime's
+/// staging directory, removed with the lifetime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedUpload {
+    pub staged_id: String,
+    /// Where it came from: the approved folder's bound path and the
+    /// relative path inside it.
+    pub source: String,
+    pub name: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub path: PathBuf,
+}
+
+/// BR-03: a staged copy and the handle that keeps it unchanged.
+#[cfg(windows)]
+#[derive(Debug)]
+struct HeldUpload {
+    staged: StagedUpload,
+    _hold: std::fs::File,
+}
+
+/// BR-02: the longest bounded wait for text (mirrors the worker).
+pub const MAX_WAIT_MS: u64 = 8_000;
+
+/// BR-02: the document after an approved form action (the same document).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormOutcome {
+    pub url: String,
 }
 
 /// A live observation: SG-000076 identities and the redacted, digested
@@ -247,17 +352,78 @@ pub(crate) enum WorkerRequest<'a> {
         act_id: u64,
         #[serde(rename = "ref")]
         reference: &'a str,
+        /// BR-01: the approved node's role and raw accessible name, which
+        /// the worker uses only if the ref went stale (both or neither).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
     },
     Download {
         dl_id: u64,
         #[serde(rename = "ref")]
         reference: &'a str,
         path: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
     },
     Execute {
         exec_id: u64,
         tool: &'a str,
         fields: &'a [crate::webmcp::ExecField],
+    },
+    /// BR-02: one approved form action (exactly one of `value`, `values`
+    /// and `checked`, by `action`).
+    FormAction {
+        form_id: u64,
+        action: &'a str,
+        #[serde(rename = "ref")]
+        reference: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        values: Option<&'a [String]>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        checked: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        key: Option<&'a str>,
+        /// BR-05: during this action only, accept (once) a confirm whose
+        /// message is exactly this one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        accept_confirm: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
+    },
+    /// BR-05: report (and clear) the dialogs dismissed since the last read.
+    Dialogs {
+        dlg_id: u64,
+    },
+    /// BR-03: set the approved file input to one host-staged file.
+    Upload {
+        up_id: u64,
+        #[serde(rename = "ref")]
+        reference: &'a str,
+        path: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
+    },
+    /// BR-02: a bounded, read-only wait for text.
+    WaitFor {
+        wait_id: u64,
+        text: &'a str,
+        appear: bool,
+        timeout_ms: u64,
+    },
+    /// BR-07: read-only probes for the postcondition verifier.
+    Verify {
+        ver_id: u64,
+        probes: &'a [crate::verify::Probe],
     },
     Shutdown,
 }
@@ -368,6 +534,43 @@ pub(crate) enum WorkerReply {
     ExecutionFailed {
         exec_id: u64,
         reason: String,
+    },
+    Verified {
+        ver_id: u64,
+        url: String,
+        results: Vec<crate::verify::ProbeResult>,
+    },
+    FormDone {
+        form_id: u64,
+        url: String,
+    },
+    Waited {
+        wait_id: u64,
+        url: String,
+        met: bool,
+    },
+    Uploaded {
+        up_id: u64,
+        url: String,
+    },
+    DialogsSeen {
+        dlg_id: u64,
+        dialogs: Vec<WireDialog>,
+        truncated: bool,
+    },
+    UploadFailed {
+        up_id: u64,
+        reason: String,
+    },
+    WaitFailed {
+        wait_id: u64,
+    },
+    FormFailed {
+        form_id: u64,
+        reason: String,
+    },
+    VerificationFailed {
+        ver_id: u64,
     },
     Error {
         code: String,
@@ -776,6 +979,8 @@ pub(crate) fn download_failure(reason: &str) -> HostError {
         "timeout" => HostError::Download(DownloadFailure::TimedOut),
         "failed" => HostError::Download(DownloadFailure::EngineFailed),
         "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+        "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+        "occluded" => HostError::Unavailable(UnavailableReason::TargetOccluded),
         _ => HostError::Unavailable(UnavailableReason::ProtocolViolation),
     }
 }
@@ -787,6 +992,8 @@ pub(crate) fn navigation_failure(reason: &str) -> HostError {
         "denied" => HostError::Invalid("navigation denied by the browser policy".into()),
         "timeout" => HostError::Unavailable(UnavailableReason::TimedOut),
         "failed" | "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+        "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+        "occluded" => HostError::Unavailable(UnavailableReason::TargetOccluded),
         _ => HostError::Unavailable(UnavailableReason::ProtocolViolation),
     }
 }
@@ -1156,6 +1363,9 @@ mod platform {
         cancelled: Arc<AtomicBool>,
         /// The handshake completed; failures after it end the lifetime.
         handshaken: bool,
+        /// #438 (test builds only): where the worker's stderr is kept.
+        #[cfg(test)]
+        stderr_log: Option<PathBuf>,
         /// The reason the lifetime ended early; every later call returns it.
         failed: Option<UnavailableReason>,
         node: PathBuf,
@@ -1169,6 +1379,24 @@ mod platform {
         next_nav: u64,
         last_request: u64,
         next_obs: u64,
+        next_ver: u64,
+        next_form: u64,
+        next_wait: u64,
+        next_staged: u64,
+        next_dialogs: u64,
+        /// BR-05: confirm messages approved actions armed and the worker has
+        /// not yet reported accepting (each may be accepted once).
+        approved_confirms: Vec<String>,
+        next_upload_request: u64,
+        /// BR-03: files staged for upload in this lifetime, by staged id,
+        /// each held open so it cannot be changed or replaced.
+        uploads: std::collections::HashMap<String, HeldUpload>,
+        /// BR-07: distinct values each field (page, role, name) was checked
+        /// against in this lifetime.
+        value_budget: crate::verify::GuessBudget,
+        /// BR-07: the digest of the last download committed in this
+        /// lifetime, for download postconditions.
+        last_download_sha256: Option<String>,
         next_disc: u64,
         next_ext: u64,
         next_act: u64,
@@ -1236,7 +1464,19 @@ mod platform {
         seed_profile_preferences(&spec.profile_dir)?;
         let env = worker_environment(&spec.temp_dir);
         let worker_args = worker_node_args(&spec.worker_main);
-        let (process, pipes) = spawn(&spec.node, &worker_args, &env)?;
+        // #438: test builds keep the worker's stderr; product builds send it
+        // to NUL.
+        #[cfg(test)]
+        let stderr_log = Some(spec.temp_dir.join(format!(
+            "orcel-worker-stderr-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos())
+        )));
+        #[cfg(not(test))]
+        let stderr_log: Option<PathBuf> = None;
+        let (process, pipes) = spawn(&spec.node, &worker_args, &env, stderr_log.as_deref())?;
         let (sender, replies) = mpsc::channel();
         let stdout = pipes.stdout;
         std::thread::spawn(move || {
@@ -1262,6 +1502,8 @@ mod platform {
             replies,
             cancelled: Arc::new(AtomicBool::new(false)),
             handshaken: false,
+            #[cfg(test)]
+            stderr_log: stderr_log.clone(),
             failed: None,
             node: spec.node.clone(),
             worker_args,
@@ -1272,6 +1514,16 @@ mod platform {
             finished: false,
             policy: NavigationPolicy::new(&spec.destinations),
             next_obs: 0,
+            next_ver: 0,
+            next_form: 0,
+            next_wait: 0,
+            next_staged: 0,
+            next_dialogs: 0,
+            approved_confirms: Vec::new(),
+            next_upload_request: 0,
+            uploads: std::collections::HashMap::new(),
+            value_budget: crate::verify::GuessBudget::default(),
+            last_download_sha256: None,
             next_disc: 0,
             next_ext: 0,
             next_act: 0,
@@ -1420,6 +1672,12 @@ mod platform {
             }
             match self.replies.recv_timeout(timeout) {
                 Ok(ReaderEvent::Frame(WorkerReply::Error { code })) => {
+                    // #438: which failure a typed LaunchFailed came from.
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG worker error frame {code:?} (handshaken: {})",
+                        self.handshaken
+                    );
                     let error = reply_error(&code);
                     Err(match error {
                         HostError::Unavailable(reason) if self.handshaken => {
@@ -1435,7 +1693,13 @@ mod platform {
                     Err(self.fail_closed(UnavailableReason::ProtocolViolation))
                 }
                 Ok(ReaderEvent::Eof) | Err(RecvTimeoutError::Disconnected) => {
-                    let reason = match self.process.wait_exit(Duration::from_secs(2)) {
+                    let exit = self.process.wait_exit(Duration::from_secs(2));
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG worker output ended (exit {exit:?}, handshaken: {})",
+                        self.handshaken
+                    );
+                    let reason = match exit {
                         // Exit code 2 is the runtime refusal, before the
                         // handshake completes.
                         Some(2) if !self.handshaken => UnavailableReason::UnsupportedRuntime,
@@ -1446,15 +1710,97 @@ mod platform {
                     };
                     Err(self.fail_closed(reason))
                 }
-                Err(RecvTimeoutError::Timeout) => Err(self.deadline_passed()),
+                Err(RecvTimeoutError::Timeout) => {
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG host deadline of {timeout:?} passed (handshaken: {})",
+                        self.handshaken
+                    );
+                    Err(self.deadline_passed())
+                }
             }
         }
 
+        /// #438: which of the engine's processes are alive, by type only (a missing
+        /// network service would say what it's waiting for). No other argument is
+        /// printed, because they hold the profile path and test values.
+        #[cfg(test)]
+        fn engine_processes(&self) -> String {
+            match self.process.snapshot() {
+                Ok(processes) => {
+                    let mut kinds: Vec<&str> = processes
+                        .iter()
+                        .flat_map(|process| {
+                            process.argv.iter().filter_map(|arg| {
+                                arg.strip_prefix("--utility-sub-type=")
+                                    .or_else(|| arg.strip_prefix("--type="))
+                            })
+                        })
+                        .collect();
+                    kinds.sort_unstable();
+                    format!("{} processes, types {kinds:?}", processes.len())
+                }
+                Err(error) => format!("{error:?}"),
+            }
+        }
+
+        /// #438: the same list after the first navigation that passes in this test
+        /// run, to compare with the list at a timeout.
+        #[cfg(test)]
+        fn print_passing_baseline(&self) {
+            static PRINTED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !PRINTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                eprintln!(
+                    "SG108-DIAG engine after a passing navigation: {}",
+                    self.engine_processes()
+                );
+            }
+        }
+
+        /// #438 (test builds only): the last 2 KiB of the worker's stderr,
+        /// control characters other than newlines removed.
+        #[cfg(test)]
+        fn print_stderr_tail(&self) {
+            // One file per lifetime (process id and a nanosecond stamp), so
+            // concurrent tests never read each other's output.
+            let Some(path) = &self.stderr_log else {
+                return;
+            };
+            let bytes = std::fs::read(path).unwrap_or_default();
+            let tail = &bytes[bytes.len().saturating_sub(2048)..];
+            let text: String = String::from_utf8_lossy(tail)
+                .chars()
+                .map(|ch| {
+                    if ch.is_control() && ch != '\n' {
+                        ' '
+                    } else {
+                        ch
+                    }
+                })
+                .collect();
+            eprintln!(
+                "SG108-DIAG worker stderr (last {} bytes):\n{text}",
+                tail.len()
+            );
+        }
+
         fn handshake(&mut self, spec: &WorkerLaunch) -> Result<(), HostError> {
+            #[cfg(test)]
+            let started = Instant::now();
             self.send(&WorkerRequest::Hello {
                 generation: WORKER_PROTOCOL_GENERATION,
             })?;
-            match self.reply(WORKER_HANDSHAKE_TIMEOUT)? {
+            let hello = self.reply(WORKER_HANDSHAKE_TIMEOUT);
+            #[cfg(test)]
+            if let Err(error) = &hello {
+                eprintln!(
+                    "SG108-DIAG hello failed after {:?}: {error:?}",
+                    started.elapsed()
+                );
+                self.print_stderr_tail();
+            }
+            match hello? {
                 WorkerReply::Hello { generation, worker }
                     if generation == WORKER_PROTOCOL_GENERATION && worker == WORKER_IDENTITY => {}
                 _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
@@ -1477,7 +1823,19 @@ mod platform {
                 argv: &argv,
                 env,
             })?;
-            match self.reply(WORKER_LAUNCH_TIMEOUT)? {
+            #[cfg(test)]
+            let launching = Instant::now();
+            let launched = self.reply(WORKER_LAUNCH_TIMEOUT);
+            #[cfg(test)]
+            if let Err(error) = &launched {
+                eprintln!(
+                    "SG108-DIAG engine launch failed after {:?} ({:?} since hello): {error:?}",
+                    launching.elapsed(),
+                    started.elapsed()
+                );
+                self.print_stderr_tail();
+            }
+            match launched? {
                 WorkerReply::Launched {} => {}
                 _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
             }
@@ -1613,7 +1971,17 @@ mod platform {
                     reason,
                 } if !text && done == id => {
                     #[cfg(test)]
-                    eprintln!("SG108-DIAG navigation {url} failed: {reason}");
+                    {
+                        eprintln!("SG108-DIAG navigation {url} failed: {reason}");
+                        // #438: the worker's stage timeline of a timeout.
+                        if reason == "timeout" {
+                            self.print_stderr_tail();
+                            eprintln!(
+                                "SG108-DIAG engine at the timeout: {}",
+                                self.engine_processes()
+                            );
+                        }
+                    }
                     return Err(navigation_failure(&reason));
                 }
                 WorkerReply::FetchFailed {
@@ -1632,6 +2000,10 @@ mod platform {
                 }
             };
             self.policy.commit(&committed)?;
+            #[cfg(test)]
+            if !text {
+                self.print_passing_baseline();
+            }
             // A new document: earlier node identities are stale. The
             // document generation advances only on a commit.
             let next = self
@@ -1724,6 +2096,649 @@ mod platform {
                 document,
                 observation,
             })
+        }
+
+        /// BR-02: the state a form-action approval must name: the action and
+        /// its exact input, for an observed node whose role supports it.
+        /// BR-05: with `accept_confirm`, the approval also names the exact
+        /// confirm message the action may answer "yes" to (learned from
+        /// `take_dismissed_dialogs` after a first, dismissed attempt).
+        pub fn form_binding(
+            &self,
+            node_id: &str,
+            input: &crate::actuation::FormInput,
+            accept_confirm: Option<&str>,
+        ) -> Result<String, HostError> {
+            input.check()?;
+            check_confirm(accept_confirm)?;
+            let node = self
+                .host_nodes
+                .get(node_id)
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            crate::actuation::role_supports_action(&node.role, input.action())?;
+            input.check_for_role(&node.role)?;
+            if matches!(
+                input,
+                crate::actuation::FormInput::Fill { .. }
+                    | crate::actuation::FormInput::Press { .. }
+            ) && crate::actuation::name_looks_secret(&node.name)
+            {
+                return Err(HostError::Invalid("password-field filling denied".into()));
+            }
+            Ok(form_state(input, accept_confirm))
+        }
+
+        /// BR-02: perform one approved form action (fill a text field,
+        /// select options of a native select, set a checkbox or radio) on
+        /// the committed document. `dispatch` verifies the target, whose
+        /// state must be `form_binding` for this exact input, and consumes
+        /// the one-shot approval. While the action runs the page may open
+        /// no document at all; the worker acts only on the approved element
+        /// itself (BR-01 role and name fallback), only when it is the right
+        /// kind of control, and never fills a field that looks secret. The
+        /// document stays the same generation, so its node identities stay
+        /// valid for verification (BR-07); a page whose URL changed is
+        /// unverified.
+        pub fn form_action(
+            &mut self,
+            target: &crate::actuation::ActuationTarget,
+            approval: &mut crate::actuation::ApprovalToken,
+            input: &crate::actuation::FormInput,
+            accept_confirm: Option<&str>,
+            policy_revision: u64,
+            workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
+            // An ended lifetime refuses before any approval is spent.
+            self.ensure_alive()?;
+            check_confirm(accept_confirm)?;
+            if target.action != input.action() {
+                return Err(HostError::Invalid(
+                    "the approval is for another action".into(),
+                ));
+            }
+            input.check()?;
+            let (url, generation) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
+            let (reference, approved_name) = self
+                .host_nodes
+                .get(&target.node_id)
+                .filter(|node| node.role == target.role)
+                .map(|node| (node.reference.clone(), node.name.clone()))
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            if !reference.starts_with('e') {
+                return Err(HostError::Invalid(
+                    "form actions inside frames are not supported".into(),
+                ));
+            }
+            input.check_for_role(&target.role)?;
+            // A field named like a secret is never filled or typed into,
+            // whatever its attributes (checked before the approval is spent).
+            if matches!(
+                input,
+                crate::actuation::FormInput::Fill { .. }
+                    | crate::actuation::FormInput::Press { .. }
+            ) && crate::actuation::name_looks_secret(&approved_name)
+            {
+                return Err(HostError::Invalid("password-field filling denied".into()));
+            }
+            self.policy.expect_no_document();
+            if let Err(error) = crate::actuation::dispatch(
+                target,
+                approval,
+                generation,
+                &form_state(input, accept_confirm),
+                policy_revision,
+                workspace,
+            ) {
+                self.policy.finish_activation();
+                return Err(error);
+            }
+            self.next_form += 1;
+            let form_id = self.next_form;
+            let (value, values, checked, key) = match input {
+                crate::actuation::FormInput::Fill { value } => {
+                    (Some(value.as_str()), None, None, None)
+                }
+                crate::actuation::FormInput::Select { labels } => {
+                    (None, Some(labels.as_slice()), None, None)
+                }
+                crate::actuation::FormInput::Check { checked } => {
+                    (None, None, Some(*checked), None)
+                }
+                crate::actuation::FormInput::Press { key } => {
+                    (None, None, None, Some(key.as_str()))
+                }
+                crate::actuation::FormInput::Hover => (None, None, None, None),
+            };
+            let named = !approved_name.is_empty();
+            let sent = self.send(&WorkerRequest::FormAction {
+                form_id,
+                action: input.action().name(),
+                reference: &reference,
+                value,
+                values,
+                checked,
+                key,
+                accept_confirm,
+                role: named.then_some(target.role.as_str()),
+                name: named.then_some(approved_name.as_str()),
+            });
+            if let Err(error) = sent {
+                self.policy.finish_activation();
+                return Err(error);
+            }
+            // The worker may now accept this confirm, once.
+            if let Some(message) = accept_confirm {
+                self.approved_confirms.push(message.to_owned());
+            }
+            let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
+            self.policy.finish_activation();
+            match reply? {
+                WorkerReply::FormDone {
+                    form_id: done,
+                    url: after,
+                } if done == form_id => {
+                    if after != url {
+                        // Applied, but the page moved itself (no document
+                        // was allowed, so a history change): the outcome is
+                        // unverified and nothing observed holds.
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
+                    }
+                    Ok(FormOutcome { url: after })
+                }
+                WorkerReply::FormFailed {
+                    form_id: done,
+                    reason,
+                } if done == form_id => Err(match reason.as_str() {
+                    // Refused before anything changed.
+                    "denied" => HostError::Invalid(
+                        "form action refused: not the right kind of control, or a secret field"
+                            .into(),
+                    ),
+                    "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+                    // Covered by another element: nothing was done.
+                    "occluded" => HostError::Unavailable(UnavailableReason::TargetOccluded),
+                    // The worker never acted, but the approval is spent: a
+                    // new action needs a fresh approval, never a retry.
+                    "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+                    "failed" | "timeout" => {
+                        // The control may already have changed: nothing
+                        // observed is trusted until the page is observed
+                        // again, and the outcome is unknown.
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        HostError::Unavailable(UnavailableReason::OutcomeUnknown)
+                    }
+                    _ => self.fail_closed(UnavailableReason::ProtocolViolation),
+                }),
+                // A reply for another request, or of another kind: the
+                // worker may still be acting, so the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// BR-05: the JavaScript dialogs (alert, confirm, prompt,
+        /// beforeunload) the engine dismissed since the last call. Every
+        /// dialog is dismissed as it opens, without approval; this only
+        /// reports them, so the caller can tell the user a page asked and
+        /// was answered "no". Messages are untrusted page text.
+        pub fn take_dismissed_dialogs(&mut self) -> Result<DismissedDialogs, HostError> {
+            self.ensure_alive()?;
+            self.next_dialogs += 1;
+            let dlg_id = self.next_dialogs;
+            self.send(&WorkerRequest::Dialogs { dlg_id })?;
+            match self.reply(WORKER_REPLY_TIMEOUT)? {
+                WorkerReply::DialogsSeen {
+                    dlg_id: done,
+                    dialogs,
+                    truncated,
+                } if done == dlg_id => {
+                    if dialogs.len() > MAX_DIALOGS {
+                        return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                    }
+                    let mut out = Vec::with_capacity(dialogs.len());
+                    for dialog in dialogs {
+                        let kind = match dialog.kind.as_str() {
+                            "alert" => DialogKind::Alert,
+                            "confirm" => DialogKind::Confirm,
+                            "prompt" => DialogKind::Prompt,
+                            "beforeunload" => DialogKind::BeforeUnload,
+                            _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+                        };
+                        // Page text, held to the bar every other page text
+                        // meets: bounded, no control, bidi or format
+                        // characters (the worker already removed them).
+                        let unsafe_text = |text: &str, max: usize| {
+                            text.len() > max
+                                || text.chars().any(|ch| {
+                                    ch.is_control() || crate::webmcp::is_bidi_or_format(ch)
+                                })
+                        };
+                        if unsafe_text(&dialog.message, MAX_DIALOG_MESSAGE_BYTES)
+                            || unsafe_text(&dialog.url, MAX_DIALOG_URL_BYTES)
+                        {
+                            return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                        }
+                        // An accepted dialog must be one the host allowed: a
+                        // beforeunload, or a confirm an approved action
+                        // armed with exactly this message (once).
+                        if dialog.accepted {
+                            let allowed = match kind {
+                                DialogKind::BeforeUnload => true,
+                                DialogKind::Confirm => match self
+                                    .approved_confirms
+                                    .iter()
+                                    .position(|message| *message == dialog.message)
+                                {
+                                    Some(at) => {
+                                        self.approved_confirms.remove(at);
+                                        true
+                                    }
+                                    None => false,
+                                },
+                                DialogKind::Alert | DialogKind::Prompt => false,
+                            };
+                            if !allowed {
+                                return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                            }
+                        }
+                        out.push(DismissedDialog {
+                            kind,
+                            url: crate::webmcp::PageText::from_page(dialog.url),
+                            message: crate::webmcp::PageText::from_page(dialog.message),
+                            accepted: dialog.accepted,
+                        });
+                    }
+                    // Every approved action has finished before this read,
+                    // so any confirm it was approved for has been reported
+                    // by now: an approval not used is dropped, never kept
+                    // for a later report.
+                    self.approved_confirms.clear();
+                    Ok(DismissedDialogs {
+                        dialogs: out,
+                        truncated,
+                    })
+                }
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// BR-03: copy one file from an approved folder into this lifetime's
+        /// staging directory, so the engine only ever sees a host-held copy.
+        /// `bound_root` is the folder's real path as its approval named it
+        /// (`approved_folder_identity` at approval time): a folder that no
+        /// longer resolves to it is refused. The read never follows a
+        /// reparse point, refuses a file with more than one hard link, and is
+        /// bounded to `MAX_TRANSFER_BYTES`. The copy is held open (no writer,
+        /// no deleter) for the rest of the lifetime. Staging grants nothing:
+        /// setting it on a page needs an upload approval that names the
+        /// page's origin, the source and this file's digest.
+        pub fn stage_upload(
+            &mut self,
+            approved_root: &Path,
+            bound_root: &str,
+            relative: &str,
+        ) -> Result<StagedUpload, HostError> {
+            self.ensure_alive()?;
+            let normalized = crate::transfers::validate_relative_destination(relative)?;
+            let content = crate::approved_folder::read(
+                approved_root,
+                bound_root,
+                &normalized,
+                crate::transfers::MAX_TRANSFER_BYTES,
+            )?;
+            let name = normalized
+                .rsplit(['/', '\\'])
+                .next()
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| HostError::Invalid("the source has no file name".into()))?
+                .to_owned();
+            self.next_staged += 1;
+            let staged_id = format!("up-{}", self.next_staged);
+            let folder = self.staging.join(&staged_id);
+            std::fs::create_dir_all(&folder)
+                .map_err(|err| HostError::Platform(format!("upload staging: {err}")))?;
+            let path = folder.join(&name);
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .and_then(|mut file| {
+                    use std::io::Write;
+                    file.write_all(&content)?;
+                    file.sync_all()
+                })
+                .map_err(|err| HostError::Platform(format!("upload staging: {err}")))?;
+            // Held for the lifetime: readers (the engine) may share it, no
+            // writer or deleter may.
+            let hold = {
+                use std::os::windows::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ)
+                    .open(&path)
+                    .map_err(|err| HostError::Platform(format!("upload staging: {err}")))?
+            };
+            let staged = StagedUpload {
+                staged_id: staged_id.clone(),
+                // What the approver reads: no verbatim prefix, one separator.
+                source: format!(
+                    "{}\\{}",
+                    bound_root.strip_prefix(r"\\?\").unwrap_or(bound_root),
+                    normalized.replace('/', "\\")
+                ),
+                name,
+                bytes: content.len() as u64,
+                sha256: sha256_hex(&content),
+                path,
+            };
+            self.uploads.insert(
+                staged_id,
+                HeldUpload {
+                    staged: staged.clone(),
+                    _hold: hold,
+                },
+            );
+            Ok(staged)
+        }
+
+        /// BR-03: the identity an approved folder's approval names: its real
+        /// path now. `stage_upload` refuses a folder that no longer resolves
+        /// to it.
+        pub fn approved_folder_identity(root: &Path) -> Result<String, HostError> {
+            let root = std::fs::canonicalize(root)
+                .ok()
+                .filter(|root| root.is_dir())
+                .ok_or_else(|| HostError::Invalid("the approved folder does not exist".into()))?;
+            path_text(&root, "approved folder")
+        }
+
+        /// BR-03: the state an upload approval must name: the committed
+        /// page's origin, where the file came from, its size, digest and the
+        /// name the page will see, for an observed node whose role supports
+        /// an upload.
+        pub fn upload_binding(&self, node_id: &str, staged_id: &str) -> Result<String, HostError> {
+            let node = self
+                .host_nodes
+                .get(node_id)
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            crate::actuation::role_supports_action(
+                &node.role,
+                crate::actuation::SupportedAction::Upload,
+            )?;
+            let staged = self
+                .uploads
+                .get(staged_id)
+                .map(|held| &held.staged)
+                .ok_or_else(|| HostError::Invalid("no such staged upload".into()))?;
+            let origin = self
+                .policy
+                .committed_origin()
+                .ok_or_else(|| HostError::Invalid("no committed origin".into()))?;
+            Ok(format!(
+                "upload\n{origin}\n{}\n{}\n{}\n{}",
+                staged.source, staged.bytes, staged.sha256, staged.name
+            ))
+        }
+
+        /// BR-03: set the approved file input to one staged file. `dispatch`
+        /// verifies the target, whose state must be `upload_binding` (so the
+        /// approval names this origin and this file), and consumes the
+        /// one-shot approval. The worker acts only on the approved element
+        /// itself when it is an <input type=file>, with only the staged
+        /// copy; no document opens while it runs. Setting the file sends
+        /// nothing by itself; a later submission is its own approval.
+        pub fn upload(
+            &mut self,
+            target: &crate::actuation::ActuationTarget,
+            approval: &mut crate::actuation::ApprovalToken,
+            staged_id: &str,
+            policy_revision: u64,
+            workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
+            self.ensure_alive()?;
+            if target.action != crate::actuation::SupportedAction::Upload {
+                return Err(HostError::Invalid(
+                    "the approval is for another action".into(),
+                ));
+            }
+            let (url, generation) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
+            let (reference, approved_name) = self
+                .host_nodes
+                .get(&target.node_id)
+                .filter(|node| node.role == target.role)
+                .map(|node| (node.reference.clone(), node.name.clone()))
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            if !reference.starts_with('e') {
+                return Err(HostError::Invalid(
+                    "uploads inside frames are not supported".into(),
+                ));
+            }
+            let binding = self.upload_binding(&target.node_id, staged_id)?;
+            let (path, sha256) = self
+                .uploads
+                .get(staged_id)
+                .map(|held| (held.staged.path.clone(), held.staged.sha256.clone()))
+                .ok_or_else(|| HostError::Invalid("no such staged upload".into()))?;
+            // The held copy is still the approved bytes (checked before the
+            // approval is spent).
+            let current = std::fs::read(&path)
+                .map_err(|err| HostError::Platform(format!("staged upload: {err}")))?;
+            if sha256_hex(&current) != sha256 {
+                return Err(HostError::Invalid("the staged file changed".into()));
+            }
+            let path = path_text(&path, "staged upload")?;
+            self.policy.expect_no_document();
+            if let Err(error) = crate::actuation::dispatch(
+                target,
+                approval,
+                generation,
+                &binding,
+                policy_revision,
+                workspace,
+            ) {
+                self.policy.finish_activation();
+                return Err(error);
+            }
+            self.next_upload_request += 1;
+            let up_id = self.next_upload_request;
+            let named = !approved_name.is_empty();
+            let sent = self.send(&WorkerRequest::Upload {
+                up_id,
+                reference: &reference,
+                path: &path,
+                role: named.then_some(target.role.as_str()),
+                name: named.then_some(approved_name.as_str()),
+            });
+            if let Err(error) = sent {
+                self.policy.finish_activation();
+                return Err(error);
+            }
+            let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
+            self.policy.finish_activation();
+            match reply? {
+                WorkerReply::Uploaded {
+                    up_id: done,
+                    url: after,
+                } if done == up_id => {
+                    if after != url {
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
+                    }
+                    Ok(FormOutcome { url: after })
+                }
+                WorkerReply::UploadFailed {
+                    up_id: done,
+                    reason,
+                } if done == up_id => Err(match reason.as_str() {
+                    // Refused before anything was set.
+                    "denied" => HostError::Invalid(
+                        "upload refused: the approved element is not a file input".into(),
+                    ),
+                    "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+                    // Covered by another element: nothing was set.
+                    "occluded" => HostError::Unavailable(UnavailableReason::TargetOccluded),
+                    "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+                    "failed" | "timeout" => {
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        HostError::Unavailable(UnavailableReason::OutcomeUnknown)
+                    }
+                    _ => self.fail_closed(UnavailableReason::ProtocolViolation),
+                }),
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// BR-02: wait (read-only, no approval) until `text` is visible on
+        /// the committed document (`appear`) or no longer is, for at most
+        /// `MAX_WAIT_MS`; true when it happened. The page must still be the
+        /// committed document.
+        pub fn wait_for_text(
+            &mut self,
+            text: &str,
+            appear: bool,
+            timeout: Duration,
+        ) -> Result<bool, HostError> {
+            self.ensure_alive()?;
+            if text.is_empty()
+                || text.len() > crate::verify::MAX_VERIFY_TEXT_BYTES
+                || text.chars().any(char::is_control)
+            {
+                return Err(HostError::Invalid(
+                    "the awaited text must be bounded and on one line".into(),
+                ));
+            }
+            let timeout_ms = timeout.as_millis().clamp(1, MAX_WAIT_MS as u128) as u64;
+            let (url, _) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
+            self.next_wait += 1;
+            let wait_id = self.next_wait;
+            self.send(&WorkerRequest::WaitFor {
+                wait_id,
+                text,
+                appear,
+                timeout_ms,
+            })?;
+            match self.reply(Duration::from_millis(timeout_ms) + WORKER_REPLY_TIMEOUT)? {
+                WorkerReply::Waited {
+                    wait_id: done,
+                    url: seen,
+                    met,
+                } if done == wait_id => {
+                    if seen != url {
+                        return Err(HostError::Invalid(
+                            "stale page: the document changed".into(),
+                        ));
+                    }
+                    Ok(met)
+                }
+                WorkerReply::WaitFailed { wait_id: done } if done == wait_id => {
+                    Err(HostError::Unavailable(UnavailableReason::ActionFailed))
+                }
+                // Out of step with the worker: the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// BR-07: check postconditions after a step. Element, text, value
+        /// and checked-state checks are observed by read-only worker probes
+        /// of exactly the committed document; URL and download checks use
+        /// the host's own record (the committed URL; the last download
+        /// committed in this lifetime). The host decides each check; values
+        /// never leave it, and each field's value can be checked against
+        /// only a few values per document. A stale page, or a worker reply
+        /// outside the bounds, fails the whole verification.
+        pub fn verify_postconditions(
+            &mut self,
+            checks: &[crate::verify::Postcondition],
+        ) -> Result<crate::verify::Verification, HostError> {
+            self.ensure_alive()?;
+            crate::verify::check_postconditions(checks)?;
+            let (url, generation) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document to verify".into()))?;
+            let mut needs: Vec<crate::verify::Need> = checks
+                .iter()
+                .map(|check| {
+                    crate::verify::need(check, |id| {
+                        self.host_nodes.get(id).map(|node| {
+                            (
+                                node.reference.as_str(),
+                                node.role.as_str(),
+                                node.name.as_str(),
+                            )
+                        })
+                    })
+                })
+                .collect();
+            let host_nodes = &self.host_nodes;
+            crate::verify::apply_budget(checks, &mut needs, &mut self.value_budget, |id| {
+                host_nodes
+                    .get(id)
+                    .map(|node| crate::verify::field_key(&url, &node.role, &node.name))
+            });
+            let probes: Vec<crate::verify::Probe> = needs
+                .iter()
+                .filter_map(|need| match need {
+                    crate::verify::Need::Probe(probe) => Some(probe.clone()),
+                    _ => None,
+                })
+                .collect();
+            let mut observed = Vec::new();
+            if !probes.is_empty() {
+                self.next_ver += 1;
+                let ver_id = self.next_ver;
+                self.send(&WorkerRequest::Verify {
+                    ver_id,
+                    probes: &probes,
+                })?;
+                match self.reply(WORKER_OBSERVATION_TIMEOUT)? {
+                    WorkerReply::Verified {
+                        ver_id: done,
+                        url: seen,
+                        results,
+                    } if done == ver_id => {
+                        if seen != url {
+                            return Err(HostError::Invalid(
+                                "stale page: the document changed".into(),
+                            ));
+                        }
+                        if results.len() != probes.len() {
+                            return Err(HostError::Unavailable(
+                                UnavailableReason::ProtocolViolation,
+                            ));
+                        }
+                        for (probe, result) in probes.iter().zip(&results) {
+                            crate::verify::check_probe_result(probe, result)?;
+                        }
+                        observed = results;
+                    }
+                    WorkerReply::VerificationFailed { ver_id: done } if done == ver_id => {
+                        return Err(HostError::Unavailable(UnavailableReason::LaunchFailed))
+                    }
+                    // Out of step with the worker: the lifetime ends.
+                    _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+                }
+            }
+            let facts = crate::verify::HostFacts {
+                committed_url: &url,
+                download_sha256: self.last_download_sha256.as_deref(),
+            };
+            Ok(crate::verify::verify_with(
+                checks, &needs, &observed, &facts, generation,
+            ))
         }
 
         /// Discover the committed document's WebMCP declarative tools
@@ -1981,7 +2996,9 @@ mod platform {
                     exec_id: done,
                     reason,
                 } if done == exec_id => return Err(navigation_failure(&reason)),
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             if !opened_expected {
                 return Err(HostError::Invalid(
@@ -2090,11 +3107,11 @@ mod platform {
                 .committed
                 .clone()
                 .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
-            let reference = self
+            let (reference, approved_name) = self
                 .host_nodes
                 .get(&target.node_id)
                 .filter(|node| node.role == target.role)
-                .map(|node| node.reference.clone())
+                .map(|node| (node.reference.clone(), node.name.clone()))
                 .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
             let destination = self.link_destination(&target.node_id)?;
             // Checked before the approval is consumed: a destination off the
@@ -2116,6 +3133,8 @@ mod platform {
             self.send(&WorkerRequest::Activate {
                 act_id,
                 reference: &reference,
+                role: (!approved_name.is_empty()).then_some(target.role.as_str()),
+                name: (!approved_name.is_empty()).then_some(approved_name.as_str()),
             })?;
             let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
             let opened_expected = self.policy.finish_activation();
@@ -2134,7 +3153,9 @@ mod platform {
                     self.host_tools.clear();
                     return Err(navigation_failure(&reason));
                 }
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             self.host_nodes.clear();
             self.host_tools.clear();
@@ -2192,11 +3213,11 @@ mod platform {
                 .committed
                 .clone()
                 .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
-            let reference = self
+            let (reference, approved_name) = self
                 .host_nodes
                 .get(&target.node_id)
                 .filter(|node| node.role == target.role)
-                .map(|node| node.reference.clone())
+                .map(|node| (node.reference.clone(), node.name.clone()))
                 .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
             // As for activation: the approval names the link's destination,
             // checked against the page's origin before it is consumed, and
@@ -2229,6 +3250,8 @@ mod platform {
             let result = self.download_staged(
                 dl_id,
                 &reference,
+                (!approved_name.is_empty())
+                    .then_some((target.role.as_str(), approved_name.as_str())),
                 &staged,
                 &link,
                 (destination_root, &bound_root, &normalized),
@@ -2267,6 +3290,7 @@ mod platform {
             &mut self,
             dl_id: u64,
             reference: &str,
+            approved: Option<(&str, &str)>,
             staged: &Path,
             link: &str,
             (destination_root, bound_root, relative): (&Path, &str, &str),
@@ -2277,6 +3301,8 @@ mod platform {
                 dl_id,
                 reference,
                 path: &staged_text,
+                role: approved.map(|(role, _)| role),
+                name: approved.map(|(_, name)| name),
             })?;
             // The worker's suggested name is advisory and never decides the
             // type check; the approved destination's own name does.
@@ -2292,7 +3318,9 @@ mod platform {
                     dl_id: done,
                     reason,
                 } if done == dl_id => return Err(download_failure(&reason)),
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             // Exactly the approved document: redirects are not followed.
             if url != link {
@@ -2352,6 +3380,7 @@ mod platform {
             }
             let path =
                 crate::approved_folder::commit(destination_root, bound_root, relative, &content)?;
+            self.last_download_sha256 = Some(sha256.clone());
             Ok(CommittedDownload {
                 path,
                 sha256,
@@ -2402,8 +3431,14 @@ mod platform {
 
         fn finish(&mut self, graceful: bool) -> ShutdownReport {
             self.finished = true;
+            // Release the held upload copies, then remove them with the rest.
+            self.uploads.clear();
             let _ = std::fs::remove_dir_all(&self.staging);
             let job_empty = self.process.terminate_and_confirm(WORKER_SHUTDOWN_TIMEOUT);
+            #[cfg(test)]
+            if let Some(path) = self.stderr_log.take() {
+                let _ = std::fs::remove_file(path);
+            }
             let profile_removed = match self.profile.take() {
                 Some(profile) => job_empty && remove_profile(&profile),
                 None => true,
@@ -2473,6 +3508,106 @@ mod fallback {
             &mut self,
             _scope: &crate::observation::ObservationScope,
         ) -> Result<LiveObservation, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn take_dismissed_dialogs(&mut self) -> Result<DismissedDialogs, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn approved_folder_identity(_root: &Path) -> Result<String, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn stage_upload(
+            &mut self,
+            _approved_root: &Path,
+            _bound_root: &str,
+            _relative: &str,
+        ) -> Result<StagedUpload, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn upload_binding(
+            &self,
+            _node_id: &str,
+            _staged_id: &str,
+        ) -> Result<String, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn upload(
+            &mut self,
+            _target: &crate::actuation::ActuationTarget,
+            _approval: &mut crate::actuation::ApprovalToken,
+            _staged_id: &str,
+            _policy_revision: u64,
+            _workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn wait_for_text(
+            &mut self,
+            _text: &str,
+            _appear: bool,
+            _timeout: Duration,
+        ) -> Result<bool, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn form_binding(
+            &self,
+            _node_id: &str,
+            _input: &crate::actuation::FormInput,
+            _accept_confirm: Option<&str>,
+        ) -> Result<String, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn form_action(
+            &mut self,
+            _target: &crate::actuation::ActuationTarget,
+            _approval: &mut crate::actuation::ApprovalToken,
+            _input: &crate::actuation::FormInput,
+            _accept_confirm: Option<&str>,
+            _policy_revision: u64,
+            _workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn verify_postconditions(
+            &mut self,
+            _checks: &[crate::verify::Postcondition],
+        ) -> Result<crate::verify::Verification, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))
@@ -2611,6 +3746,38 @@ mod fallback {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #438: the host waits for the engine launch longer than the worker's
+    /// own Playwright launch timeout (with margin), so a slow cold start is
+    /// reported by the worker, typed, rather than cut off by the host.
+    #[test]
+    fn the_host_launch_deadline_outlasts_the_worker_launch_timeout() {
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/orcel-browser-worker/src/timeouts.ts"),
+        )
+        .expect("timeouts.ts");
+        let worker_ms: u64 = source
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("export const ENGINE_LAUNCH_TIMEOUT_MS = ")
+            })
+            .and_then(|value| value.trim_end_matches(';').replace('_', "").parse().ok())
+            .expect("ENGINE_LAUNCH_TIMEOUT_MS");
+        assert!(worker_ms >= 30_000, "{worker_ms}");
+        // ...and the worker's launch really uses it (no literal creeps back).
+        let entry = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/orcel-browser-worker/src/entry.ts"),
+        )
+        .expect("entry.ts");
+        assert!(entry.contains("timeout: ENGINE_LAUNCH_TIMEOUT_MS"));
+        assert!(
+            WORKER_LAUNCH_TIMEOUT >= Duration::from_millis(worker_ms) + Duration::from_secs(5),
+            "host {WORKER_LAUNCH_TIMEOUT:?} vs worker {worker_ms} ms"
+        );
+    }
 
     fn process(pid: u32, image: &str, argv: &[&str]) -> JobProcess {
         JobProcess {
@@ -2879,7 +4046,9 @@ mod tests {
             json(&WorkerRequest::Download {
                 dl_id: 1,
                 reference: "e5",
-                path: "C:\\s\\dl-1.part"
+                path: "C:\\s\\dl-1.part",
+                role: None,
+                name: None,
             }),
             r#"{"frame":"download","dl_id":1,"ref":"e5","path":"C:\\s\\dl-1.part"}"#
         );
@@ -2968,10 +4137,31 @@ mod tests {
         assert_eq!(
             json(&WorkerRequest::Activate {
                 act_id: 2,
-                reference: "e5"
+                reference: "e5",
+                role: None,
+                name: None,
             }),
             r#"{"frame":"activate","act_id":2,"ref":"e5"}"#
         );
+        // BR-01: the approved role and name travel together, for the stale
+        // fallback only.
+        assert_eq!(
+            json(&WorkerRequest::Activate {
+                act_id: 3,
+                reference: "e6",
+                role: Some("link"),
+                name: Some("Annual review"),
+            }),
+            r#"{"frame":"activate","act_id":3,"ref":"e6","role":"link","name":"Annual review"}"#
+        );
+        assert!(matches!(
+            navigation_failure("stale"),
+            HostError::Unavailable(UnavailableReason::TargetStale)
+        ));
+        assert!(matches!(
+            download_failure("stale"),
+            HostError::Unavailable(UnavailableReason::TargetStale)
+        ));
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(reply(
             r#"{"frame":"activated","act_id":2,"url":"https://fixture.test/x","status":200}"#
@@ -3052,6 +4242,19 @@ mod tests {
             r#"{"frame":"executed","exec_id":3,"url":"u","status":200,"structured":[],"structured_complete":true,"extra":1}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn br04_occlusion_is_typed_everywhere() {
+        for error in [navigation_failure("occluded"), download_failure("occluded")] {
+            assert!(
+                matches!(
+                    error,
+                    HostError::Unavailable(UnavailableReason::TargetOccluded)
+                ),
+                "{error:?}"
+            );
+        }
     }
 
     #[test]
@@ -3165,6 +4368,209 @@ mod tests {
             r#"{"frame":"discovered","disc_id":2,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
         )
         .is_err());
+    }
+
+    /// BR-05: the dialog-report frames, as both sides write them.
+    #[test]
+    fn br05_dialog_frames_are_exact() {
+        assert_eq!(
+            serde_json::to_string(&WorkerRequest::Dialogs { dlg_id: 2 }).unwrap(),
+            r#"{"frame":"dialogs","dlg_id":2}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","url":"https://fixture.test/","message":"Delete?","accepted":true}],"truncated":false}"#).unwrap(),
+            WorkerReply::DialogsSeen {
+                dlg_id: 2,
+                dialogs: vec![WireDialog {
+                    kind: "confirm".into(),
+                    url: "https://fixture.test/".into(),
+                    message: "Delete?".into(),
+                    accepted: true
+                }],
+                truncated: false
+            }
+        );
+        assert!(reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","url":"","message":"x","accepted":true,"text":"y"}],"truncated":false}"#).is_err());
+        assert_eq!(
+            form_state(
+                &crate::actuation::FormInput::Hover,
+                Some("Delete this item?")
+            ),
+            "hover\naccept-confirm\nDelete this item?"
+        );
+        assert!(check_confirm(Some("")).is_err());
+        assert!(check_confirm(Some("a\nb")).is_err());
+        assert!(check_confirm(Some(&"x".repeat(MAX_DIALOG_MESSAGE_BYTES + 1))).is_err());
+        assert!(check_confirm(Some("Delete this item?")).is_ok());
+    }
+
+    /// BR-03: the upload frames, as both sides write them.
+    #[test]
+    fn br03_upload_frames_are_exact() {
+        assert_eq!(
+            serde_json::to_string(&WorkerRequest::Upload {
+                up_id: 3,
+                reference: "e4",
+                path: "C:\\s\\up-1\\report.txt",
+                role: Some("button"),
+                name: Some("Attachment"),
+            })
+            .unwrap(),
+            r#"{"frame":"upload","up_id":3,"ref":"e4","path":"C:\\s\\up-1\\report.txt","role":"button","name":"Attachment"}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"uploaded","up_id":3,"url":"https://fixture.test/upload"}"#).unwrap(),
+            WorkerReply::Uploaded {
+                up_id: 3,
+                url: "https://fixture.test/upload".into()
+            }
+        );
+        assert!(reply(r#"{"frame":"upload_failed","up_id":3,"reason":"denied"}"#).is_ok());
+        assert!(reply(r#"{"frame":"uploaded","up_id":3,"url":"u","path":"x"}"#).is_err());
+    }
+
+    /// BR-02: the form-action frames, as both sides write them.
+    #[test]
+    fn br02_form_action_frames_are_exact() {
+        let json = |request: &WorkerRequest<'_>| serde_json::to_string(request).unwrap();
+        assert_eq!(
+            json(&WorkerRequest::FormAction {
+                form_id: 2,
+                action: "fill",
+                reference: "e4",
+                value: Some("Ada"),
+                values: None,
+                checked: None,
+                key: None,
+                accept_confirm: None,
+                role: Some("textbox"),
+                name: Some("Name"),
+            }),
+            r#"{"frame":"form_action","form_id":2,"action":"fill","ref":"e4","value":"Ada","role":"textbox","name":"Name"}"#
+        );
+        let labels = vec!["Lisbon".to_owned()];
+        assert_eq!(
+            json(&WorkerRequest::FormAction {
+                form_id: 3,
+                action: "select",
+                reference: "e5",
+                value: None,
+                values: Some(&labels),
+                checked: None,
+                key: None,
+                accept_confirm: None,
+                role: None,
+                name: None,
+            }),
+            r#"{"frame":"form_action","form_id":3,"action":"select","ref":"e5","values":["Lisbon"]}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::FormAction {
+                form_id: 4,
+                action: "check",
+                reference: "e6",
+                value: None,
+                values: None,
+                checked: Some(true),
+                key: None,
+                accept_confirm: None,
+                role: None,
+                name: None,
+            }),
+            r#"{"frame":"form_action","form_id":4,"action":"check","ref":"e6","checked":true}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"form_done","form_id":2,"url":"https://fixture.test/form"}"#)
+                .unwrap(),
+            WorkerReply::FormDone {
+                form_id: 2,
+                url: "https://fixture.test/form".into()
+            }
+        );
+        assert!(reply(r#"{"frame":"form_failed","form_id":2,"reason":"denied"}"#).is_ok());
+        assert_eq!(
+            json(&WorkerRequest::FormAction {
+                form_id: 5,
+                action: "press",
+                reference: "e2",
+                value: None,
+                values: None,
+                checked: None,
+                key: Some("Enter"),
+                accept_confirm: None,
+                role: None,
+                name: None,
+            }),
+            r#"{"frame":"form_action","form_id":5,"action":"press","ref":"e2","key":"Enter"}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::WaitFor {
+                wait_id: 1,
+                text: "Saved",
+                appear: true,
+                timeout_ms: 2000,
+            }),
+            r#"{"frame":"wait_for","wait_id":1,"text":"Saved","appear":true,"timeout_ms":2000}"#
+        );
+        assert_eq!(
+            reply(r#"{"frame":"waited","wait_id":1,"url":"u","met":false}"#).unwrap(),
+            WorkerReply::Waited {
+                wait_id: 1,
+                url: "u".into(),
+                met: false
+            }
+        );
+        assert!(reply(r#"{"frame":"wait_failed","wait_id":1,"text":"x"}"#).is_err());
+        assert!(reply(r#"{"frame":"form_done","form_id":2,"url":"u","value":"Ada"}"#).is_err());
+    }
+
+    /// BR-07: the verify frames, as both sides write them.
+    #[test]
+    fn br07_verify_frames_are_exact() {
+        let probes = [
+            crate::verify::Probe::VisibleRole {
+                role: "heading".into(),
+                name: "Order confirmed".into(),
+            },
+            crate::verify::Probe::VisibleText {
+                text: "Thank you".into(),
+            },
+            crate::verify::Probe::Value {
+                reference: "e2".into(),
+            },
+            crate::verify::Probe::Checked {
+                reference: "f1e3".into(),
+            },
+        ];
+        assert_eq!(
+            serde_json::to_string(&WorkerRequest::Verify {
+                ver_id: 5,
+                probes: &probes
+            })
+            .unwrap(),
+            r#"{"frame":"verify","ver_id":5,"probes":[{"probe":"visible_role","role":"heading","name":"Order confirmed"},{"probe":"visible_text","text":"Thank you"},{"probe":"value","ref":"e2"},{"probe":"checked","ref":"f1e3"}]}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"verified","ver_id":5,"url":"https://fixture.test/","results":[{"result":"visible","count":1},{"result":"visible","count":0},{"result":"unavailable","reason":"secret"},{"result":"checked","checked":true}]}"#).unwrap(),
+            WorkerReply::Verified {
+                ver_id: 5,
+                url: "https://fixture.test/".into(),
+                results: vec![
+                    crate::verify::ProbeResult::Visible { count: 1 },
+                    crate::verify::ProbeResult::Visible { count: 0 },
+                    crate::verify::ProbeResult::Unavailable { reason: "secret".into() },
+                    crate::verify::ProbeResult::Checked { checked: true },
+                ],
+            }
+        );
+        assert!(reply(r#"{"frame":"verification_failed","ver_id":5}"#).is_ok());
+        assert!(reply(r#"{"frame":"verification_failed","ver_id":5,"x":1}"#).is_err());
+        assert!(reply(r#"{"frame":"verified","ver_id":5,"url":"u","results":[{"result":"visible","count":1,"text":"leak"}]}"#).is_err());
+        assert!(reply(r#"{"frame":"verified","ver_id":5,"url":"u","results":[{"result":"verdict","passed":true}]}"#).is_err());
     }
 
     #[test]
@@ -3449,8 +4855,8 @@ mod tests {
         use crate::discovery::EngineKind::{Chromium, Edge};
         for (name, kind, version) in [
             ("msedge.exe", Edge, "154.0.1.2"),
-            ("msedge.exe", Edge, "156.0.1.2"),
-            ("chrome.exe", Chromium, "156.0.4283.45"),
+            ("msedge.exe", Edge, "157.0.1.2"),
+            ("chrome.exe", Chromium, "157.0.4283.45"),
             ("chrome.exe", Chromium, "153.0.1.2"),
         ] {
             let engine = Engine::for_tests_at(base.join(name), kind, version);

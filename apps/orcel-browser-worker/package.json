@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/runtime-manifest.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/*.test.js dist/webmcp/*.test.js dist/extract/*.test.js scripts/dev-pin.test.mjs"
+    "test": "npm run build && node --test dist/*.test.js dist/actions/*.test.js dist/webmcp/*.test.js dist/extract/*.test.js scripts/dev-pin.test.mjs"
   },
   "dependencies": {
     "playwright-core": "1.63.0"

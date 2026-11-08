@@ -10,6 +10,10 @@
 import { isIPv4, isIPv6 } from "node:net";
 import type { SnapshotNode } from "./snapshot.js";
 import type { ControlKind, DeclaredTool } from "./webmcp/declarative.js";
+import { MAX_VERIFY_PROBES, MAX_VERIFY_TEXT_BYTES, type VerifyProbe, type VerifyResult } from "./verify.js";
+import { PRESS_KEYS, type FormAction, type PressKey } from "./actions/form.js";
+import { MAX_WAIT_MS } from "./actions/wait.js";
+import type { DismissedDialog } from "./actions/dialogs.js";
 
 /// One form field to enter when executing a tool (host-validated).
 export interface ExecField {
@@ -28,8 +32,16 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads, generation 6 slice-4 WebMCP discovery, generation 7 slice-5
 /// WebMCP execution, generation 8 slice-6 page extraction, generation 9
-/// text documents for robots.txt and sitemaps (#317).
-export const WORKER_PROTOCOL_GENERATION = 9;
+/// text documents for robots.txt and sitemaps (#317), generation 10 BR-07
+/// postcondition probes, generation 11 BR-02 form actions, generation 12
+/// BR-02 press, hover and bounded waits, generation 13 BR-03 uploads,
+/// generation 14 BR-05 dismissed-dialog reports, generation 15 BR-05 approved
+/// confirm answers.
+export const WORKER_PROTOCOL_GENERATION = 15;
+/// BR-02: the longest value filled, and the most options selected at once
+/// (mirrors the host).
+export const MAX_FORM_VALUE_BYTES = 1024;
+export const MAX_FORM_OPTIONS = 16;
 export const WORKER_IDENTITY = "orcel-browser-worker";
 export const MAX_FRAME_BYTES = 64 * 1024;
 /// One extraction piece's content on the wire (JSON-escaped UTF-8 bytes),
@@ -95,13 +107,75 @@ export type HostFrame =
   | { frame: "extract"; ext_id: number; links: boolean; images: boolean }
   | { frame: "extract_more"; ext_id: number; piece: number }
   | { frame: "execute"; exec_id: number; tool: string; fields: ExecField[] }
-  | { frame: "activate"; act_id: number; ref: string }
-  | { frame: "download"; dl_id: number; ref: string; path: string }
+  | { frame: "activate"; act_id: number; ref: string; target?: ApprovedTarget }
+  | { frame: "download"; dl_id: number; ref: string; path: string; target?: ApprovedTarget }
+  | { frame: "verify"; ver_id: number; probes: VerifyProbe[] }
+  | { frame: "form_action"; form_id: number; ref: string; act: FormAction; target?: ApprovedTarget; accept_confirm?: string }
+  | { frame: "wait_for"; wait_id: number; text: string; appear: boolean; timeout_ms: number }
+  | { frame: "upload"; up_id: number; ref: string; path: string; target?: ApprovedTarget }
+  | { frame: "dialogs"; dlg_id: number }
   | { frame: "shutdown" };
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
 
-export type NavigationFailure = "denied" | "timeout" | "failed" | "busy" | "http_status" | "oversized";
+export type NavigationFailure = "denied" | "timeout" | "failed" | "busy" | "http_status" | "oversized" | "stale" | "occluded";
+
+/// BR-01: the approved element's role and accessible name, as the host
+/// observed them. Used only when the element's snapshot ref went stale:
+/// the worker then acts on the one element with exactly this role and
+/// name in the main frame, or on none.
+export interface ApprovedTarget {
+  role: string;
+  name: string;
+}
+
+/// The longest accessible name the host sends back (the snapshot bound).
+export const MAX_TARGET_NAME_BYTES = 1024;
+
+function approvedTarget(raw: Record<string, unknown>): ApprovedTarget | undefined {
+  if (!("role" in raw) && !("name" in raw)) return undefined;
+  if (typeof raw.role !== "string" || !/^[a-z][a-z-]{0,39}$/.test(raw.role)) {
+    throw new ProtocolViolation("approved role is malformed");
+  }
+  return { role: raw.role, name: boundedString(raw.name, MAX_TARGET_NAME_BYTES, "approved name") };
+}
+
+/// BR-02: a value to fill; empty clears the field.
+function formValue(value: unknown): string {
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > MAX_FORM_VALUE_BYTES) {
+    throw new ProtocolViolation("fill value is not a bounded string");
+  }
+  if (/[\u0000-\u001f\u007f]/.test(value)) throw new ProtocolViolation("fill value carries control characters");
+  return value;
+}
+
+/// BR-07: one read-only probe, as the host sends it.
+function verifyProbe(raw: unknown): VerifyProbe {
+  if (!isPlainObject(raw) || typeof raw.probe !== "string") throw new ProtocolViolation("verify probe is not a tagged object");
+  switch (raw.probe) {
+    case "visible_role": {
+      exactKeys(raw, ["probe", "role", "name"]);
+      if (typeof raw.role !== "string" || !/^[a-z][a-z-]{0,39}$/.test(raw.role)) {
+        throw new ProtocolViolation("verify role is malformed");
+      }
+      return { probe: "visible_role", role: raw.role, name: boundedString(raw.name, MAX_VERIFY_TEXT_BYTES, "verify name") };
+    }
+    case "visible_text": {
+      exactKeys(raw, ["probe", "text"]);
+      return { probe: "visible_text", text: boundedString(raw.text, MAX_VERIFY_TEXT_BYTES, "verify text") };
+    }
+    case "value":
+    case "checked": {
+      exactKeys(raw, ["probe", "ref"]);
+      if (typeof raw.ref !== "string" || !/^(?:f\d{1,4})?e\d{1,6}$/.test(raw.ref)) {
+        throw new ProtocolViolation("verify ref is malformed");
+      }
+      return { probe: raw.probe, ref: raw.ref };
+    }
+    default:
+      throw new ProtocolViolation("verify probe is unknown");
+  }
+}
 
 export type ErrorCode = "protocol_violation" | "launch_refused" | "launch_failed" | "engine_exited" | "not_ready";
 
@@ -137,6 +211,15 @@ export type WorkerFrame =
   | { frame: "activation_failed"; act_id: number; reason: NavigationFailure }
   | { frame: "downloaded"; dl_id: number; url: string; name: string; media: string; bytes: number }
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
+  | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
+  | { frame: "form_done"; form_id: number; url: string }
+  | { frame: "waited"; wait_id: number; url: string; met: boolean }
+  | { frame: "uploaded"; up_id: number; url: string }
+  | { frame: "dialogs_seen"; dlg_id: number; dialogs: DismissedDialog[]; truncated: boolean }
+  | { frame: "upload_failed"; up_id: number; reason: NavigationFailure }
+  | { frame: "wait_failed"; wait_id: number }
+  | { frame: "form_failed"; form_id: number; reason: NavigationFailure }
+  | { frame: "verification_failed"; ver_id: number }
   | { frame: "error"; code: ErrorCode };
 
 export class ProtocolViolation extends Error {}
@@ -255,7 +338,7 @@ export function parseHostFrame(raw: unknown): HostFrame {
       return { frame: "fetch_text", fetch_id: fetchId, url };
     }
     case "download": {
-      exactKeys(raw, ["frame", "dl_id", "ref", "path"]);
+      exactKeys(raw, "role" in raw || "name" in raw ? ["frame", "dl_id", "ref", "path", "role", "name"] : ["frame", "dl_id", "ref", "path"]);
       const dlId = positiveId(raw.dl_id, "dl_id");
       if (typeof raw.ref !== "string" || !/^(?:f\d{1,4})?e\d{1,6}$/.test(raw.ref)) {
         throw new ProtocolViolation("download ref is malformed");
@@ -264,15 +347,91 @@ export function parseHostFrame(raw: unknown): HostFrame {
       if (!isAbsoluteWindowsPath(path) || !path.toLowerCase().endsWith(".part")) {
         throw new ProtocolViolation("download path is not an absolute .part path");
       }
-      return { frame: "download", dl_id: dlId, ref: raw.ref, path };
+      const target = approvedTarget(raw);
+      return target ? { frame: "download", dl_id: dlId, ref: raw.ref, path, target } : { frame: "download", dl_id: dlId, ref: raw.ref, path };
     }
     case "activate": {
-      exactKeys(raw, ["frame", "act_id", "ref"]);
+      exactKeys(raw, "role" in raw || "name" in raw ? ["frame", "act_id", "ref", "role", "name"] : ["frame", "act_id", "ref"]);
       const actId = positiveId(raw.act_id, "act_id");
       if (typeof raw.ref !== "string" || !/^(?:f\d{1,4})?e\d{1,6}$/.test(raw.ref)) {
         throw new ProtocolViolation("activation ref is malformed");
       }
-      return { frame: "activate", act_id: actId, ref: raw.ref };
+      const target = approvedTarget(raw);
+      return target ? { frame: "activate", act_id: actId, ref: raw.ref, target } : { frame: "activate", act_id: actId, ref: raw.ref };
+    }
+    case "form_action": {
+      const targeted = "role" in raw || "name" in raw ? ["role", "name"] : [];
+      const own: Record<string, string[]> = { fill: ["value"], select: ["values"], check: ["checked"], press: ["key"], hover: [] };
+      const fields = typeof raw.action === "string" && Object.hasOwn(own, raw.action) ? own[raw.action] : undefined;
+      if (!fields) throw new ProtocolViolation("form action is unknown");
+      const confirming = "accept_confirm" in raw ? ["accept_confirm"] : [];
+      exactKeys(raw, ["frame", "form_id", "action", "ref", ...fields, ...targeted, ...confirming]);
+      const formId = positiveId(raw.form_id, "form_id");
+      if (typeof raw.ref !== "string" || !/^e\d{1,6}$/.test(raw.ref)) {
+        throw new ProtocolViolation("form action ref is malformed");
+      }
+      let act: FormAction;
+      if (raw.action === "fill") {
+        act = { action: "fill", value: formValue(raw.value) };
+      } else if (raw.action === "select") {
+        if (!Array.isArray(raw.values) || raw.values.length === 0 || raw.values.length > MAX_FORM_OPTIONS) {
+          throw new ProtocolViolation("select options are malformed");
+        }
+        const values = raw.values.map((label: unknown) => boundedString(label, MAX_FORM_VALUE_BYTES, "select option"));
+        if (new Set(values).size !== values.length) throw new ProtocolViolation("select options repeat");
+        act = { action: "select", values };
+      } else if (raw.action === "check") {
+        if (typeof raw.checked !== "boolean") throw new ProtocolViolation("check state is not a boolean");
+        act = { action: "check", checked: raw.checked };
+      } else if (raw.action === "press") {
+        if (typeof raw.key !== "string" || !(PRESS_KEYS as readonly string[]).includes(raw.key)) {
+          throw new ProtocolViolation("press key is not allowed");
+        }
+        act = { action: "press", key: raw.key as PressKey };
+      } else {
+        act = { action: "hover" };
+      }
+      const target = approvedTarget(raw);
+      const frame: Extract<HostFrame, { frame: "form_action" }> = target
+        ? { frame: "form_action", form_id: formId, ref: raw.ref, act, target }
+        : { frame: "form_action", form_id: formId, ref: raw.ref, act };
+      if ("accept_confirm" in raw) {
+        const message = boundedString(raw.accept_confirm, MAX_FORM_VALUE_BYTES, "confirm message");
+        if (/[\u0080-\u009f]/.test(message)) throw new ProtocolViolation("confirm message carries control characters");
+        frame.accept_confirm = message;
+      }
+      return frame;
+    }
+    case "dialogs": {
+      exactKeys(raw, ["frame", "dlg_id"]);
+      return { frame: "dialogs", dlg_id: positiveId(raw.dlg_id, "dlg_id") };
+    }
+    case "upload": {
+      exactKeys(raw, "role" in raw || "name" in raw ? ["frame", "up_id", "ref", "path", "role", "name"] : ["frame", "up_id", "ref", "path"]);
+      const upId = positiveId(raw.up_id, "up_id");
+      if (typeof raw.ref !== "string" || !/^e\d{1,6}$/.test(raw.ref)) throw new ProtocolViolation("upload ref is malformed");
+      const path = boundedString(raw.path, MAX_PATH_BYTES, "upload path");
+      if (!isAbsoluteWindowsPath(path)) throw new ProtocolViolation("upload path is not absolute");
+      const target = approvedTarget(raw);
+      return target ? { frame: "upload", up_id: upId, ref: raw.ref, path, target } : { frame: "upload", up_id: upId, ref: raw.ref, path };
+    }
+    case "wait_for": {
+      exactKeys(raw, ["frame", "wait_id", "text", "appear", "timeout_ms"]);
+      const waitId = positiveId(raw.wait_id, "wait_id");
+      if (typeof raw.appear !== "boolean") throw new ProtocolViolation("wait appear is not a boolean");
+      if (!Number.isSafeInteger(raw.timeout_ms) || (raw.timeout_ms as number) < 1 || (raw.timeout_ms as number) > MAX_WAIT_MS) {
+        throw new ProtocolViolation("wait timeout is out of range");
+      }
+      const text = boundedString(raw.text, MAX_VERIFY_TEXT_BYTES, "wait text");
+      return { frame: "wait_for", wait_id: waitId, text, appear: raw.appear, timeout_ms: raw.timeout_ms as number };
+    }
+    case "verify": {
+      exactKeys(raw, ["frame", "ver_id", "probes"]);
+      const verId = positiveId(raw.ver_id, "ver_id");
+      if (!Array.isArray(raw.probes) || raw.probes.length === 0 || raw.probes.length > MAX_VERIFY_PROBES) {
+        throw new ProtocolViolation("verify probes are malformed");
+      }
+      return { frame: "verify", ver_id: verId, probes: raw.probes.map(verifyProbe) };
     }
     case "observe": {
       exactKeys(raw, ["frame", "obs_id"]);

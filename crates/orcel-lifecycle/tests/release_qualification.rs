@@ -99,7 +99,7 @@ impl Drop for Cleanup {
             // Surface the runtime's own logs before they are removed, so a
             // failure on a CI runner can be diagnosed.
             for log in ["tunnel.log", "supervisor.log", "lifecycle.log"] {
-                let path = self.local.join("Orcel").join("logs").join(log);
+                let path = self.local.join(".orcel").join("logs").join(log);
                 let text = fs::read_to_string(&path).unwrap_or_default();
                 let tail = text.lines().rev().take(40).collect::<Vec<_>>();
                 eprintln!("---- {log} (last {} lines) ----", tail.len());
@@ -108,11 +108,18 @@ impl Drop for Cleanup {
                 }
             }
         }
-        let cli = self.local.join("Orcel").join("bin").join("orcel.exe");
+        let cli = self.local.join(".orcel").join("bin").join("orcel.exe");
         if cli.is_file() {
             let _ = Command::new(&cli)
                 .args(["stop", "--json"])
-                .env("LOCALAPPDATA", &self.local)
+                .env("USERPROFILE", &self.local)
+                // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+                .env(
+                    "LOCALAPPDATA",
+                    std::path::Path::new(&self.local)
+                        .join("AppData")
+                        .join("Local"),
+                )
                 .output();
         }
         for dir in self
@@ -167,7 +174,12 @@ fn derived_release(source: &Path, version: &str, replace: Option<(&str, &[u8])>)
 fn orcel(exe: &Path, local: &Path, args: &[&str]) -> Output {
     let output = Command::new(exe)
         .args(args)
-        .env("LOCALAPPDATA", local)
+        .env("USERPROFILE", local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(local).join("AppData").join("Local"),
+        )
         .output()
         .unwrap();
     let all = format!(
@@ -247,7 +259,7 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     let node = find_node_on_path().expect("Node.js is required on PATH");
     let tunnel = fake_tunnel();
     let local = temp_dir("local");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let project = temp_dir("project");
     fs::write(project.join("hello.txt"), b"hello from the workspace").unwrap();
     let key_dir = temp_dir("key");
@@ -417,9 +429,19 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
     assert_eq!(status["runtime"]["state"], "running", "{status}");
     let doctor = orcel(&cli, &local, &["doctor", "--json"]);
-    let doctor_text = String::from_utf8_lossy(&doctor.stdout);
-    assert!(doctor_text.contains("update_state"), "{doctor_text}");
-    assert!(doctor_text.contains("was restored"), "{doctor_text}");
+    let doctor_json: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    let update_state = doctor_json["doctor"]["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "update_state"))
+        .unwrap_or_else(|| panic!("no update_state check: {doctor_json}"));
+    // It reports the failure; the integrity check says what is active.
+    assert_eq!(update_state["status"], "warn", "{update_state}");
+    assert!(
+        update_state["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("failed")),
+        "{update_state}"
+    );
 
     // Stop and uninstall; user data is retained until purged.
     let stopped = json_ok(&orcel(&cli, &local, &["stop", "--json"]));
@@ -445,4 +467,874 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
         &["uninstall", "--purge-data", "--yes", "--json"],
     ));
     assert!(!root.exists());
+}
+
+// SG-000127 slice 2: the full installed app stays inside the founder's
+// 400 MB budget (UI_UX_AND_APP_SIZE_BUDGET.md). Decimal megabytes, the
+// stricter reading. Prerequisites that are not shipped are listed beside the
+// total with their own size, never counted as zero and never folded in.
+const INSTALLED_BUDGET_BYTES: u64 = 400_000_000;
+// Allocated disk is estimated per file at this cluster size (the NTFS
+// default); the apparent bytes are exact.
+const CLUSTER_BYTES: u64 = 4096;
+
+/// Apparent and allocated bytes of every regular file under `dir`, keyed by
+/// the first two path components below `root` (for example `bin/orcel.exe`
+/// or `versions/<version>`). Links and other non-regular entries are not
+/// followed; they are collected in `skipped` so none can hide bytes.
+fn inventory(
+    root: &Path,
+    dir: &Path,
+    components: &mut std::collections::BTreeMap<String, (u64, u64, u64)>,
+    skipped: &mut Vec<String>,
+) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let kind = entry.file_type().unwrap();
+        let path = entry.path();
+        if kind.is_dir() {
+            inventory(root, &path, components, skipped);
+        } else if kind.is_file() {
+            let bytes = entry.metadata().unwrap().len();
+            let key = path
+                .strip_prefix(root)
+                .unwrap()
+                .components()
+                .take(2)
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            let slot = components.entry(key).or_default();
+            slot.0 += bytes;
+            slot.1 += bytes.div_ceil(CLUSTER_BYTES) * CLUSTER_BYTES;
+            slot.2 += 1;
+        } else {
+            skipped.push(path.display().to_string());
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires ORCEL_RELEASE_DIR; run by the release-qualification CI job"]
+fn installed_release_fits_the_400_mb_budget() {
+    let release = PathBuf::from(
+        std::env::var_os("ORCEL_RELEASE_DIR")
+            .expect("ORCEL_RELEASE_DIR must name a packaged release"),
+    );
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(release.join(MANIFEST_FILE)).unwrap()).unwrap();
+    let node = find_node_on_path().expect("Node.js is required on PATH");
+    let local = temp_dir("size");
+    let root = local.join(".orcel");
+    let _cleanup = Cleanup {
+        local: local.clone(),
+        dirs: std::cell::RefCell::new(Vec::new()),
+    };
+
+    // A fresh per-user install of exactly this candidate: no previous
+    // version, no rollback copy, no runtime state yet.
+    let installed = json_ok(&orcel(
+        &release.join("orcel.exe"),
+        &local,
+        &[
+            "install",
+            "--no-path",
+            "--node",
+            node.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(installed["install"]["version"], manifest["version"]);
+
+    let mut components = std::collections::BTreeMap::new();
+    let mut skipped = Vec::new();
+    inventory(&root, &root, &mut components, &mut skipped);
+    // The installer creates only regular files and directories; a link or
+    // reparse point would escape the inventory.
+    assert!(
+        skipped.is_empty(),
+        "non-regular entries in the install root: {skipped:?}"
+    );
+    let (bytes, allocated, files) = components.values().fold((0, 0, 0), |sum, part| {
+        (sum.0 + part.0, sum.1 + part.1, sum.2 + part.2)
+    });
+    assert!(
+        files > 0,
+        "the install root {} holds no files",
+        root.display()
+    );
+
+    let node_version = Command::new(&node).arg("--version").output().unwrap();
+    assert!(node_version.status.success());
+    let report = serde_json::json!({
+        "schema": "orcel-installed-size/1",
+        "version": manifest["version"],
+        "budget_bytes": INSTALLED_BUDGET_BYTES,
+        "installed": {
+            "bytes": bytes,
+            "allocated_estimate_bytes": allocated,
+            "cluster_bytes": CLUSTER_BYTES,
+            "files": files,
+        },
+        "components": components
+            .iter()
+            .map(|(name, part)| serde_json::json!({
+                "path": name,
+                "bytes": part.0,
+                "allocated_estimate_bytes": part.1,
+                "files": part.2,
+            }))
+            .collect::<Vec<_>>(),
+        // Not shipped and not counted in `installed`; listed so the budget
+        // never hides what a user must also have.
+        "prerequisites": [
+            {
+                "name": "Node.js",
+                "version": String::from_utf8_lossy(&node_version.stdout).trim(),
+                "executable_bytes": fs::metadata(&node).unwrap().len(),
+                "counted": false,
+            },
+        ],
+        // Release builds carry no live browser (SG-000108 is a
+        // development-build feature only), so no browser is a prerequisite yet.
+        "browser": { "required": false, "counted": false, "reason": "release builds carry no live browser" },
+        // Not measured here: a fresh install has no cache yet. Never
+        // reported as zero.
+        "cache": { "measured": false, "counted": false, "reason": "none exists at a fresh install" },
+        "not_shipped": ["live browser worker and runtime (SG-000127 slice 7)"],
+    });
+    println!("installed-size-report: {report}");
+    assert!(
+        allocated < INSTALLED_BUDGET_BYTES,
+        "installed app uses {allocated} allocated bytes ({bytes} apparent), over the {INSTALLED_BUDGET_BYTES} byte budget"
+    );
+
+    // SG-000127: the packaged app opens from the install, and stays open. It isn't in
+    // REQUIRED_FILES, which would stop a rollback to a release without it.
+    assert!(
+        !orcel_lifecycle::manifest::REQUIRED_FILES.contains(&orcel_lifecycle::install::APP_FILE)
+    );
+    assert!(
+        manifest["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == orcel_lifecycle::install::APP_FILE),
+        "the Windows app is not a manifest file"
+    );
+    // Its output must end when `orcel` exits. The open app holding `orcel`'s pipe would
+    // make anyone reading it wait until the app closes, so this has a limit of its own.
+    let opening = Command::new(root.join("bin").join("orcel.exe"))
+        .args(["app", "--json"])
+        .env("USERPROFILE", &local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(&local).join("AppData").join("Local"),
+        )
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (answer, answered) = std::sync::mpsc::channel();
+    std::thread::spawn(move || answer.send(opening.wait_with_output()));
+    let opened = json_ok(
+        &answered
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the open app kept `orcel app`'s output open")
+            .unwrap(),
+    );
+    let pid = opened["pid"].as_u64().expect("the app's pid").to_string();
+    std::thread::sleep(Duration::from_secs(5));
+    let running = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .unwrap();
+    let running = String::from_utf8_lossy(&running.stdout).into_owned();
+    let _ = Command::new("taskkill").args(["/PID", &pid, "/F"]).output();
+    assert!(
+        running.contains("Orcel.Desktop.exe"),
+        "the app didn't stay open: {running}"
+    );
+    // It's gone before the install it ran from is removed.
+    std::thread::sleep(Duration::from_secs(1));
+}
+
+/// Kills (as a crash) every orceld started from the install at `root`,
+/// and only those; returns how many.
+fn kill_installed_orceld(root: &Path) -> usize {
+    let prefix = root.display().to_string().replace('\'', "''");
+    let script = format!(
+        "$n = 0; Get-CimInstance Win32_Process -Filter \"Name='orceld.exe'\" | \
+         Where-Object {{ $_.ExecutablePath -and $_.ExecutablePath.StartsWith('{prefix}', \
+         [System.StringComparison]::OrdinalIgnoreCase) }} | ForEach-Object {{ \
+         Stop-Process -Id $_.ProcessId -Force; $n++ }}; $n"
+    );
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .expect("run powershell");
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0)
+}
+
+/// One MCP session over `orcel mcp stdio`, the entrypoint every supported
+/// local client configuration launches, driven one request at a time.
+struct McpStdio {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    lines: std::sync::mpsc::Receiver<String>,
+    stderr: PathBuf,
+    next_id: u64,
+}
+
+/// How long one MCP answer may take before the test fails with the
+/// session's standard error.
+const MCP_ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
+
+impl McpStdio {
+    fn start(cli: &Path, local: &Path, stderr: PathBuf) -> Self {
+        Self::start_with(cli, &["mcp", "stdio"], local, stderr)
+    }
+
+    fn start_with(cli: &Path, args: &[&str], local: &Path, stderr: PathBuf) -> Self {
+        let mut child = Command::new(cli)
+            .args(args)
+            .env("USERPROFILE", local)
+            // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+            .env(
+                "LOCALAPPDATA",
+                std::path::Path::new(local).join("AppData").join("Local"),
+            )
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(fs::File::create(&stderr).unwrap())
+            .spawn()
+            .expect("start orcel mcp stdio");
+        let stdin = child.stdin.take();
+        let stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        // Read on a thread so a stalled server fails the test at a deadline
+        // instead of hanging the job.
+        let (sender, lines) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in stdout.lines() {
+                let Ok(line) = line else { break };
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut session = Self {
+            child,
+            stdin,
+            lines,
+            stderr,
+            next_id: 0,
+        };
+        session.request(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": { "name": "orcel-release-qualification", "version": "1" }
+            }),
+        );
+        session
+            .send(&serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+        session
+    }
+
+    fn send(&mut self, message: &Value) {
+        use std::io::Write;
+        let stdin = self.stdin.as_mut().expect("the session is open");
+        writeln!(stdin, "{message}").unwrap();
+        stdin.flush().unwrap();
+    }
+
+    /// The result of one request; server notifications are skipped.
+    fn request(&mut self, method: &str, params: Value) -> Value {
+        self.next_id += 1;
+        let id = self.next_id;
+        self.send(
+            &serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
+        );
+        loop {
+            let line = self
+                .lines
+                .recv_timeout(MCP_ANSWER_TIMEOUT)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "orcel mcp stdio gave no answer to {method}; stderr: {}",
+                        fs::read_to_string(&self.stderr).unwrap_or_default()
+                    )
+                });
+            let message: Value = serde_json::from_str(&line).unwrap();
+            if message["id"] == id {
+                assert!(message.get("error").is_none(), "{method}: {message}");
+                return message["result"].clone();
+            }
+        }
+    }
+
+    /// A tool call's projected kernel answer: `(is_error, {result|error})`.
+    fn call(&mut self, tool: &str, arguments: Value) -> (bool, Value) {
+        let result = self.request(
+            "tools/call",
+            serde_json::json!({ "name": tool, "arguments": arguments }),
+        );
+        let text = result["content"][0]["text"]
+            .as_str()
+            .unwrap_or("{}")
+            .to_string();
+        (
+            result["isError"] == true,
+            serde_json::from_str(&text).unwrap(),
+        )
+    }
+}
+
+impl McpStdio {
+    /// Ends the session as a client does, by closing standard input, and
+    /// waits for the handed-off session to exit; kills only as a fallback.
+    /// The session's exit status, or `None` when it ignored the end of its
+    /// input for 30 s and had to be killed.
+    fn close(&mut self) -> Option<std::process::ExitStatus> {
+        drop(self.stdin.take());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                return Some(status);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        None
+    }
+}
+
+impl Drop for McpStdio {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
+// SG-000127 slice 6: the report journey through the installed release and
+// its supported local client entrypoint, `orcel mcp stdio`, up to every
+// refusal orceld makes before it would ask for approval. No request here
+// reaches the approval broker, so no platform dialog can appear; the
+// approved commit needs a person at the prompt (slice 4).
+#[test]
+#[ignore = "requires ORCEL_RELEASE_DIR; run by the release-qualification CI job"]
+fn installed_release_serves_the_report_task_to_a_local_client() {
+    let release = PathBuf::from(
+        std::env::var_os("ORCEL_RELEASE_DIR")
+            .expect("ORCEL_RELEASE_DIR must name a packaged release"),
+    );
+    let node = find_node_on_path().expect("Node.js is required on PATH");
+    let local = temp_dir("journey");
+    let root = local.join(".orcel");
+    let project = temp_dir("journey-project");
+    let _cleanup = Cleanup {
+        local: local.clone(),
+        dirs: std::cell::RefCell::new(vec![project.clone()]),
+    };
+    fs::create_dir_all(project.join("data")).unwrap();
+    fs::create_dir_all(project.join("reports")).unwrap();
+    let q3 = "region,quarter,revenue_cents\nnorth,Q3,1250000\nsouth,Q3,980050\n";
+    fs::write(project.join("data").join("q3.csv"), q3).unwrap();
+    fs::write(project.join("reports").join("taken.md"), "the user's file").unwrap();
+
+    json_ok(&orcel(
+        &release.join("orcel.exe"),
+        &local,
+        &[
+            "install",
+            "--no-path",
+            "--node",
+            node.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    let cli = root.join("bin").join("orcel.exe");
+    json_ok(&orcel(
+        &cli,
+        &local,
+        &[
+            "workspace",
+            "add",
+            "default",
+            project.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+
+    let mut mcp = McpStdio::start(&cli, &local, project.join("mcp-stderr.log"));
+    let listed = mcp.request("tools/list", serde_json::json!({}));
+    let names: Vec<&str> = listed["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for tool in [
+        "report_start",
+        "report_preview",
+        "report_commit",
+        "task_resume_summary",
+    ] {
+        assert!(names.contains(&tool), "{tool} is listed locally: {names:?}");
+    }
+    assert!(
+        !names.iter().any(|name| name.starts_with("browser_")),
+        "the release build serves no live browser tool: {names:?}"
+    );
+
+    let (failed, started) = mcp.call(
+        "report_start",
+        serde_json::json!({ "title": "Q3 revenue", "sources": ["data/q3.csv"], "folder": "reports" }),
+    );
+    assert!(!failed, "{started}");
+    let task = started["result"]["task_id"].as_str().unwrap().to_string();
+    assert_eq!(started["result"]["state"], "observed");
+    assert_eq!(started["result"]["sources"][0]["text"], q3);
+
+    let content = "# Q3 revenue\n\nnorth 1250000, south 980050\n";
+    let (failed, preview) = mcp.call(
+        "report_preview",
+        serde_json::json!({ "task_id": task, "name": "q3.md", "content": content }),
+    );
+    assert!(!failed, "{preview}");
+    let digest = preview["result"]["sha256"].as_str().unwrap().to_string();
+    assert_eq!(digest, sha256_bytes(content.as_bytes()));
+
+    // SG-000120 RJ-03: the session reads its own task's resume summary:
+    // completed steps as kinds and keyed fingerprints, never file text.
+    let (failed, summary) = mcp.call(
+        "task_resume_summary",
+        serde_json::json!({ "task_id": task }),
+    );
+    assert!(!failed, "{summary}");
+    let kinds: Vec<&str> = summary["result"]["completed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["kind"].as_str())
+        .collect();
+    assert_eq!(kinds, ["observe", "preview"], "{summary}");
+    assert!(!summary.to_string().contains("north,Q3"), "{summary}");
+
+    // An existing destination is refused at preview, before any approval,
+    // and the user's file is untouched. A commit of a report the last
+    // preview did not return is refused before any approval too.
+    let (failed, taken) = mcp.call(
+        "report_preview",
+        serde_json::json!({ "task_id": task, "name": "taken.md", "content": content }),
+    );
+    assert!(failed, "{taken}");
+    let (failed, taken) = mcp.call(
+        "report_commit",
+        serde_json::json!({ "task_id": task, "name": "taken.md", "content": content, "expected_sha256": digest }),
+    );
+    assert!(failed, "{taken}");
+    assert!(
+        taken["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("the last preview of this task returned"),
+        "{taken}"
+    );
+
+    // A changed source makes the task stale before any approval.
+    fs::write(
+        project.join("data").join("q3.csv"),
+        "region,quarter,revenue_cents\nnorth,Q3,1\n",
+    )
+    .unwrap();
+    let (failed, stale) = mcp.call(
+        "report_commit",
+        serde_json::json!({ "task_id": task, "name": "q3.md", "content": content, "expected_sha256": digest }),
+    );
+    assert!(failed, "{stale}");
+    assert_eq!(stale["error"]["code"], "TARGET_STALE", "{stale}");
+    assert!(
+        stale["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("changed since the task observed it"),
+        "the source change, not a missing preview, ends the task: {stale}"
+    );
+    let (failed, after) = mcp.call(
+        "report_preview",
+        serde_json::json!({ "task_id": task, "name": "q3.md", "content": content }),
+    );
+    assert!(failed, "a stale task stays stale: {after}");
+
+    // SG-000120 RJ-03 transcript: the session's orceld dies (killed, as a
+    // crash) and the same MCP session's next call reaches a new orceld,
+    // which reads the interrupted task's resume summary from the journal.
+    let killed = kill_installed_orceld(&root);
+    assert!(killed >= 1, "this session's orceld was running");
+    let (failed, resumed) = mcp.call(
+        "task_resume_summary",
+        serde_json::json!({ "task_id": task }),
+    );
+    assert!(
+        !failed,
+        "the same session reads its task after the crash: {resumed}"
+    );
+    assert_eq!(resumed["result"]["task_id"], task.as_str(), "{resumed}");
+    let completed: Vec<&str> = resumed["result"]["completed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["kind"].as_str())
+        .collect();
+    assert!(completed.contains(&"observe"), "{resumed}");
+    assert_eq!(
+        resumed["result"]["unknown"],
+        serde_json::json!([]),
+        "nothing was committed: {resumed}"
+    );
+    assert!(!resumed.to_string().contains("north,Q3"), "{resumed}");
+    let stderr = project.join("mcp-stderr.log");
+    let closed = mcp.close();
+    let status = closed.unwrap_or_else(|| {
+        panic!(
+            "the session ignored the end of its input; stderr: {}",
+            fs::read_to_string(&stderr).unwrap_or_default()
+        )
+    });
+    assert!(
+        status.success(),
+        "the session ended with {status}; stderr: {}",
+        fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    drop(mcp);
+
+    // SG-000120 RJ-02: the report task journal lives in the install root
+    // beside the audit log, holds no task title, and passes the install's
+    // owner-only ACL check: a second session verifies the whole tree first.
+    let journal = root.join("report-tasks.jsonl");
+    assert!(journal.is_file(), "the report task journal was written");
+    assert!(
+        !fs::read_to_string(&journal)
+            .unwrap()
+            .contains("Q3 revenue\""),
+        "the planner title is never journaled"
+    );
+    let mut again = McpStdio::start(&cli, &local, project.join("mcp-stderr-2.log"));
+    let listed = again.request("tools/list", serde_json::json!({}));
+    assert!(listed["tools"]
+        .as_array()
+        .is_some_and(|tools| !tools.is_empty()));
+    assert!(
+        again.close().is_some_and(|status| status.success()),
+        "a second session verifies the install tree, journal included"
+    );
+    drop(again);
+
+    let mut reports: Vec<String> = fs::read_dir(project.join("reports"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    reports.sort();
+    assert_eq!(reports, ["taken.md"], "nothing was written");
+    assert_eq!(
+        fs::read_to_string(project.join("reports").join("taken.md")).unwrap(),
+        "the user's file"
+    );
+
+    json_ok(&orcel(
+        &release.join("orcel.exe"),
+        &local,
+        &["uninstall", "--purge-data", "--yes", "--json"],
+    ));
+    assert!(
+        !root.exists(),
+        "uninstall leaves nothing under the install root"
+    );
+}
+
+/// `examples/mcp-clients`, in the checkout this test was built from.
+fn client_examples_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mcp-clients")
+}
+
+fn example_json(name: &str) -> Value {
+    serde_json::from_slice(&fs::read(client_examples_dir().join(name)).unwrap()).unwrap()
+}
+
+fn json_entrypoint(entry: &Value) -> (String, Vec<String>) {
+    let args = entry["args"]
+        .as_array()
+        .expect("an args list")
+        .iter()
+        .map(|arg| arg.as_str().expect("a string argument").to_owned())
+        .collect();
+    (
+        entry["command"].as_str().expect("a command").to_owned(),
+        args,
+    )
+}
+
+/// The uncommented `command` and `args` of a TOML example. Its `args` line is
+/// also valid JSON, so no TOML parser joins this test's dependencies.
+fn toml_entrypoint(name: &str) -> (String, Vec<String>) {
+    let text = fs::read_to_string(client_examples_dir().join(name)).unwrap();
+    let value = |key: &str| {
+        text.lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .find_map(|line| {
+                let (left, right) = line.split_once('=')?;
+                (left.trim() == key).then(|| right.trim().to_owned())
+            })
+            .unwrap_or_else(|| panic!("{name} has no {key}"))
+    };
+    let command: String = serde_json::from_str(&value("command")).unwrap();
+    let args: Vec<String> = serde_json::from_str(&value("args")).unwrap();
+    (command, args)
+}
+
+fn sorted_tool_names(listed: &Value) -> Vec<String> {
+    let mut names: Vec<String> = listed["tools"]
+        .as_array()
+        .expect("a tools list")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("a tool name").to_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// One HTTP/1.0 exchange, so the answer ends at the close of the connection and
+/// isn't chunked. Returns the status, the headers and the body.
+fn http_post(
+    port: u16,
+    authorization: Option<&str>,
+    session: Option<&str>,
+    body: &Value,
+) -> (u16, String, String) {
+    use std::io::{Read as _, Write as _};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream.set_read_timeout(Some(MCP_ANSWER_TIMEOUT)).unwrap();
+    let body = body.to_string();
+    let mut request = format!(
+        "POST /mcp HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
+         Accept: application/json, text/event-stream\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    if let Some(authorization) = authorization {
+        request.push_str(&format!("Authorization: {authorization}\r\n"));
+    }
+    if let Some(session) = session {
+        request.push_str(&format!("Mcp-Session-Id: {session}\r\n"));
+    }
+    request.push_str("\r\n");
+    request.push_str(&body);
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let (head, rest) = answer.split_once("\r\n\r\n").expect("an HTTP answer");
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .expect("a status");
+    (status, head.to_owned(), rest.to_owned())
+}
+
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// F5 client matrix. Every configuration in `examples/mcp-clients` is read as a
+/// client would read it and run against the installed release, and each must
+/// reach the same tools. **This shows the configuration and the protocol, not
+/// that client:** no Claude, Codex or Vibe Code runs here, and their versions are
+/// not qualified by it.
+#[test]
+#[ignore = "requires ORCEL_RELEASE_DIR; run by the release-qualification CI job"]
+fn installed_release_serves_every_client_example() {
+    let release = PathBuf::from(
+        std::env::var_os("ORCEL_RELEASE_DIR")
+            .expect("ORCEL_RELEASE_DIR must name a packaged release"),
+    );
+    let node = find_node_on_path().expect("Node.js is required on PATH");
+    let local = temp_dir("matrix");
+    let project = temp_dir("matrix-project");
+    let _cleanup = Cleanup {
+        local: local.clone(),
+        dirs: std::cell::RefCell::new(vec![project.clone()]),
+    };
+    json_ok(&orcel(
+        &release.join("orcel.exe"),
+        &local,
+        &[
+            "install",
+            "--no-path",
+            "--node",
+            node.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    let cli = local.join(".orcel").join("bin").join("orcel.exe");
+    json_ok(&orcel(
+        &cli,
+        &local,
+        &[
+            "workspace",
+            "add",
+            "default",
+            project.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+
+    let stdio = [
+        (
+            "claude-desktop.json",
+            json_entrypoint(&example_json("claude-desktop.json")["mcpServers"]["orcel"]),
+        ),
+        (
+            "claude-code.mcp.json",
+            json_entrypoint(&example_json("claude-code.mcp.json")["mcpServers"]["orcel"]),
+        ),
+        (
+            "claude-desktop-mcpb-manifest.json",
+            json_entrypoint(
+                &example_json("claude-desktop-mcpb-manifest.json")["server"]["mcp_config"],
+            ),
+        ),
+        (
+            "generic-stdio.json",
+            json_entrypoint(&example_json("generic-stdio.json")),
+        ),
+        ("codex-config.toml", toml_entrypoint("codex-config.toml")),
+        (
+            "vibe-code-config.toml",
+            toml_entrypoint("vibe-code-config.toml"),
+        ),
+    ];
+    let mut expected: Option<Vec<String>> = None;
+    for (name, (command, args)) in &stdio {
+        assert_eq!(command, "orcel", "{name}");
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let mut session =
+            McpStdio::start_with(&cli, &args, &local, project.join(format!("{name}.log")));
+        let tools = sorted_tool_names(&session.request("tools/list", serde_json::json!({})));
+        session.close().expect("the session ends with its input");
+        println!(
+            "CLIENT-MATRIX-EVIDENCE {name} stdio {} tools (configuration and protocol only, not that client)",
+            tools.len()
+        );
+        match &expected {
+            Some(first) => assert_eq!(&tools, first, "{name} reaches different tools"),
+            None => expected = Some(tools),
+        }
+    }
+    let expected = expected.expect("at least one stdio example");
+    for tool in ["fs_read", "report_start", "report_commit"] {
+        assert!(
+            expected.iter().any(|name| name == tool),
+            "{tool}: {expected:?}"
+        );
+    }
+    assert!(
+        !expected.iter().any(|name| name.starts_with("browser_")),
+        "the release build serves no live browser tool: {expected:?}"
+    );
+    let manifest = example_json("claude-desktop-mcpb-manifest.json");
+    for tool in manifest["tools"].as_array().expect("manifest tools") {
+        let name = tool["name"].as_str().expect("a tool name");
+        assert!(
+            expected.iter().any(|served| served == name),
+            "the manifest advertises {name}, which isn't served"
+        );
+    }
+
+    // Loopback HTTP, with the example's own address and header.
+    let token = "orcel-client-matrix-token-0123456789abcdef";
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let http = example_json("generic-http.json");
+    let url = http["url"].as_str().expect("a url");
+    assert_eq!(url, "http://127.0.0.1:PORT/mcp");
+    let authorization = http["headers"]["Authorization"]
+        .as_str()
+        .expect("an Authorization header")
+        .replace("${ORCEL_LOOPBACK_TOKEN}", token);
+    let _server = KillOnDrop(
+        Command::new(&cli)
+            .args(["mcp", "serve", "--port", &port.to_string()])
+            .env("USERPROFILE", &local)
+            // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+            .env(
+                "LOCALAPPDATA",
+                std::path::Path::new(&local).join("AppData").join("Local"),
+            )
+            .env("ORCEL_LOOPBACK_TOKEN", token)
+            .stdin(std::process::Stdio::null())
+            .stdout(fs::File::create(project.join("serve-stdout.log")).unwrap())
+            .stderr(fs::File::create(project.join("serve-stderr.log")).unwrap())
+            .spawn()
+            .expect("start orcel mcp serve"),
+    );
+    let deadline = Instant::now() + MCP_ANSWER_TIMEOUT;
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+        assert!(
+            Instant::now() < deadline,
+            "orcel mcp serve never listened; stderr: {}",
+            fs::read_to_string(project.join("serve-stderr.log")).unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let initialize = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": { "name": "orcel-release-qualification", "version": "1" }
+        }
+    });
+    let (status, _, _) = http_post(port, None, None, &initialize);
+    assert_eq!(status, 401, "no credential must be refused");
+    let (status, _, _) = http_post(port, Some("Bearer wrong"), None, &initialize);
+    assert_eq!(status, 401, "a wrong credential must be refused");
+    let (status, head, body) = http_post(port, Some(&authorization), None, &initialize);
+    assert_eq!(status, 200, "{head}\n{body}");
+    let session = head
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("mcp-session-id")
+                .then(|| value.trim().to_owned())
+        })
+        .expect("a session id");
+    let initialized =
+        serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
+    let (status, head, _) = http_post(port, Some(&authorization), Some(&session), &initialized);
+    assert_eq!(status, 202, "{head}");
+    let list =
+        serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} });
+    let (status, head, body) = http_post(port, Some(&authorization), Some(&session), &list);
+    assert_eq!(status, 200, "{head}\n{body}");
+    let answer: Value = serde_json::from_str(&body).expect("a JSON answer");
+    let tools = sorted_tool_names(&answer["result"]);
+    println!(
+        "CLIENT-MATRIX-EVIDENCE generic-http.json loopback {} tools (configuration and protocol only, not that client)",
+        tools.len()
+    );
+    assert_eq!(tools, expected, "loopback HTTP reaches different tools");
 }

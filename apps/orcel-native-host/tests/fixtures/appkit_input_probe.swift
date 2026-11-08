@@ -144,6 +144,6 @@ Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
     }
 }
 Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in writeState() }
-Timer.scheduledTimer(withTimeInterval: 120, repeats: false) { _ in NSApplication.shared.terminate(nil) }
+Timer.scheduledTimer(withTimeInterval: 1200, repeats: false) { _ in NSApplication.shared.terminate(nil) }
 application.activate(ignoringOtherApps: true)
 application.run()

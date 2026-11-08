@@ -16,6 +16,24 @@ pub struct InstallOptions {
     pub add_to_path: bool,
 }
 
+/// The Windows app in a release. It isn't a required file, so a release can come without it.
+pub const APP_FILE: &str = "Orcel.Desktop.exe";
+
+/// What an update or rollback did to the Start Menu entry. It's a convenience, so none of this
+/// fails the update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "change", content = "detail")]
+pub enum StartMenuChange {
+    /// The version has the app, and the entry was added or rewritten to open it.
+    Present,
+    /// The version has no app, so Orcel's own entry was removed rather than left to fail.
+    Removed,
+    /// Nothing to do: no entry wanted, or none there for a version without the app.
+    Unchanged,
+    /// It couldn't be checked or changed, for example a shortcut of someone else's by that name.
+    Problem(String),
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct InstallReport {
     pub version: String,
@@ -24,6 +42,11 @@ pub struct InstallReport {
     pub cli: PathBuf,
     pub node_path: PathBuf,
     pub path_entry_added: bool,
+    /// Why there's no Start Menu entry, if `add_to_path` asked for one. Install doesn't fail for it.
+    pub start_menu_problem: Option<String>,
+    pub start_menu_added: bool,
+    /// Whether this release has the app. Without it there's no Start Menu entry to open it.
+    pub app_included: bool,
     pub repaired_existing: bool,
     pub retained_data: Vec<PathBuf>,
 }
@@ -39,6 +62,9 @@ pub struct UninstallReport {
     pub retained: Vec<PathBuf>,
     pub purged: Vec<PathBuf>,
     pub path_entry_removed: bool,
+    pub start_menu_removed: bool,
+    /// Why the Start Menu entry couldn't be checked or removed. It doesn't stop an uninstall.
+    pub start_menu_problem: Option<String>,
     pub relocated_cli: Option<PathBuf>,
     pub residual: Vec<PathBuf>,
 }
@@ -145,6 +171,16 @@ impl<'a> Installer<'a> {
         } else {
             already_added
         };
+        // A convenience: `orcel app` works without it, so its failure doesn't fail the install.
+        let app_included = version_dir.join(APP_FILE).is_file();
+        let (start_menu_added, start_menu_problem) = if options.add_to_path && app_included {
+            match self.platform.add_start_menu_entry(&self.layout.bin_cli()) {
+                Ok(()) => (true, None),
+                Err(error) => (false, Some(error.message)),
+            }
+        } else {
+            (false, None)
+        };
         write_json_atomic(
             &self.layout.install_file(),
             &InstallRecord {
@@ -177,6 +213,9 @@ impl<'a> Installer<'a> {
             cli: self.layout.bin_cli(),
             node_path: node,
             path_entry_added,
+            start_menu_problem,
+            start_menu_added,
+            app_included,
             repaired_existing,
             retained_data: self.layout.retained_data(),
         })
@@ -348,6 +387,44 @@ impl<'a> Installer<'a> {
         })
     }
 
+    /// Brings the Start Menu entry in line with the version now active in `version_dir`. The
+    /// entry is wanted when Orcel's own is already there, or when install put Orcel on PATH,
+    /// which it does only without `--no-path`; `install.json` can't take a new field without
+    /// breaking a rollback to an older version, so the wish is read from these. A shortcut of
+    /// someone else's by that name is never touched.
+    pub fn reconcile_start_menu(
+        &self,
+        version_dir: &Path,
+        path_entry_added: bool,
+    ) -> StartMenuChange {
+        let cli = self.layout.bin_cli();
+        let app = version_dir.join(APP_FILE).is_file();
+        let ours = match self.platform.has_start_menu_entry(&cli) {
+            Ok(ours) => ours,
+            // Something by that name that can't be read as Orcel's. It only matters when an entry
+            // should be written there; it's never removed.
+            Err(error) if app && path_entry_added => {
+                return StartMenuChange::Problem(error.message)
+            }
+            Err(_) => return StartMenuChange::Unchanged,
+        };
+        let result = match (app, ours || path_entry_added) {
+            (true, true) => self
+                .platform
+                .add_start_menu_entry(&cli)
+                .map(|()| StartMenuChange::Present),
+            (false, _) if ours => self.platform.remove_start_menu_entry(&cli).map(|removed| {
+                if removed {
+                    StartMenuChange::Removed
+                } else {
+                    StartMenuChange::Unchanged
+                }
+            }),
+            _ => Ok(StartMenuChange::Unchanged),
+        };
+        result.unwrap_or_else(|error| StartMenuChange::Problem(error.message))
+    }
+
     pub fn uninstall(&self, options: &UninstallOptions) -> Result<UninstallReport, LifecycleError> {
         // #369 item 3: the payload layout exists on Windows only. On Linux
         // and macOS the layout root is the live XDG or Application Support
@@ -377,11 +454,17 @@ impl<'a> Installer<'a> {
         if !options.purge_data {
             crate::logs::transcript(&self.layout, "uninstall started; user data retained");
         }
+        // Before the CLI below moves.
+        let start_menu = self
+            .platform
+            .remove_start_menu_entry(&self.layout.bin_cli());
         let mut report = UninstallReport {
             removed: Vec::new(),
             retained: Vec::new(),
             purged: Vec::new(),
             path_entry_removed: false,
+            start_menu_removed: *start_menu.as_ref().unwrap_or(&false),
+            start_menu_problem: start_menu.err().map(|error| error.message),
             relocated_cli: None,
             residual: Vec::new(),
         };
@@ -413,8 +496,14 @@ impl<'a> Installer<'a> {
             }
         }
 
+        // Last, and only if the rest went: while part of an interrupted migration's copies remain,
+        // the marker is what keeps orceld from starting on them.
+        let marker = orcel_platform::stores::MIGRATION_IN_PROGRESS.path(&self.layout.root);
         for path in self.layout.retained_data() {
             if !path.exists() {
+                continue;
+            }
+            if options.purge_data && path == marker {
                 continue;
             }
             if options.purge_data {
@@ -427,10 +516,29 @@ impl<'a> Installer<'a> {
             }
         }
 
+        if options.purge_data && marker.exists() {
+            if report.residual.is_empty() {
+                match remove_path(&self.layout, &marker) {
+                    Ok(()) => report.purged.push(marker),
+                    Err(_) => report.residual.push(marker),
+                }
+            } else {
+                report.residual.push(marker);
+            }
+        }
+
         if options.purge_data && root_exists && report.residual.is_empty() {
             match fs::remove_dir(&self.layout.root) {
                 Ok(()) => report.purged.push(self.layout.root.clone()),
-                Err(_) => report.residual.push(self.layout.root.clone()),
+                Err(_) => {
+                    // Name what's in the way: it isn't Orcel's, so a purge left it.
+                    if let Ok(entries) = fs::read_dir(&self.layout.root) {
+                        report.residual.extend(
+                            entries.filter_map(|entry| entry.ok().map(|entry| entry.path())),
+                        );
+                    }
+                    report.residual.push(self.layout.root.clone());
+                }
             }
         }
         Ok(report)
@@ -482,7 +590,7 @@ fn remove_path(layout: &Layout, path: &Path) -> Result<(), LifecycleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{release_dir, temp_dir, FakePlatform};
+    use crate::test_support::{release_dir, release_dir_with_app, temp_dir, FakePlatform};
 
     fn options() -> InstallOptions {
         InstallOptions {
@@ -642,6 +750,318 @@ mod tests {
             .purged
             .contains(&root.join("approval-history.jsonl.lock")));
         assert!(report.purged.contains(&quarantined));
+    }
+
+    /// Every store Orcel keeps at the root: what uninstall says it kept, and what a purge removes.
+    #[test]
+    fn every_store_is_retained_and_then_purged() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-all").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        // Every registered store, so one registered later is checked too, and one sibling of
+        // each kind the naming rule gives a file store.
+        let mut stores: Vec<String> = orcel_platform::stores::STORES
+            .iter()
+            .map(|store| match store.kind {
+                orcel_platform::stores::Kind::File => store.relative.to_owned(),
+                orcel_platform::stores::Kind::Dir => format!("{}/inside", store.relative),
+                orcel_platform::stores::Kind::NumberedDirs => format!("{}1/inside", store.relative),
+            })
+            .collect();
+        stores.extend(
+            [
+                ".report-tasks.key.tmp-1-2",
+                ".remote_leases.json.tmp-1-2",
+                ".executable_registry.json.tmp-1-2",
+                ".current.json.tmp-1-2",
+                ".install.json.tmp-1-2",
+                "report-tasks.jsonl.lock",
+                "mutations.jsonl.rewrite",
+                "approval-history.jsonl.quarantine-1-abc",
+                "approval-history.jsonl.recovering-1",
+            ]
+            .map(String::from),
+        );
+        let stores: Vec<&str> = stores.iter().map(String::as_str).collect();
+        for store in stores.iter().copied() {
+            let path = root.join(store);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"x").unwrap();
+        }
+        // Each is the person's, kept and reported, or a program file's, removed.
+        let layout = Layout::new(&root);
+        let retained = layout.retained_data();
+        let removed = layout.executable_state();
+        for store in stores.iter().copied() {
+            let path = root.join(store);
+            assert!(
+                retained
+                    .iter()
+                    .chain(&removed)
+                    .any(|listed| path.starts_with(listed)),
+                "{store} is neither kept nor removed"
+            );
+        }
+        let payload_leftover = root.join(".current.json.tmp-1-2");
+        assert!(removed.contains(&payload_leftover), "{removed:?}");
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        assert!(report.residual.is_empty(), "{:?}", report.residual);
+        assert!(!root.exists());
+    }
+
+    /// A purge removes what's known to be Orcel's. Anything else stays, and is reported.
+    #[test]
+    fn a_purge_leaves_and_reports_what_it_doesnt_recognise() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-unknown").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        fs::write(root.join("somebody-elses.txt"), b"keep").unwrap();
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        assert!(report.residual.contains(&root), "{:?}", report.residual);
+        assert!(
+            report.residual.contains(&root.join("somebody-elses.txt")),
+            "{:?}",
+            report.residual
+        );
+        assert_eq!(fs::read(root.join("somebody-elses.txt")).unwrap(), b"keep");
+    }
+
+    /// A similar name isn't migration's staging.
+    #[test]
+    fn a_purge_only_takes_real_staging_folders() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-similar").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        for name in [
+            "legacy-import-my-notes.txt",
+            "legacy-import-",
+            "legacy-importer",
+        ] {
+            fs::write(root.join(name), b"keep").unwrap();
+        }
+        fs::create_dir_all(root.join("legacy-import-7")).unwrap();
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        for name in [
+            "legacy-import-my-notes.txt",
+            "legacy-import-",
+            "legacy-importer",
+        ] {
+            assert_eq!(fs::read(root.join(name)).unwrap(), b"keep", "{name}");
+        }
+        assert!(!root.join("legacy-import-7").exists());
+        assert!(report.residual.contains(&root));
+    }
+
+    /// While something couldn't be removed, the marker stays and keeps the gate closed.
+    #[test]
+    fn a_partial_purge_keeps_the_migration_marker() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("purge-partial").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        let marker = root.join("legacy-migration-in-progress");
+        fs::write(&marker, b"").unwrap();
+        // A store that can't be removed: a non-empty read-only folder on Unix, an open file on
+        // Windows.
+        fs::write(root.join("trust.jsonl"), b"x").unwrap();
+        #[cfg(windows)]
+        let _held = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(root.join("trust.jsonl"))
+                .unwrap()
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let held = root.join("browser-profile");
+            fs::create_dir_all(&held).unwrap();
+            fs::write(held.join("file"), b"x").unwrap();
+            fs::set_permissions(&held, fs::Permissions::from_mode(0o500)).unwrap();
+        }
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: true })
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                root.join("browser-profile"),
+                fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        }
+        assert!(!report.residual.is_empty());
+        assert!(marker.exists());
+        assert!(report.residual.contains(&marker));
+    }
+
+    /// Without `--purge-data`, nothing goes, and everything is reported.
+    #[test]
+    fn a_plain_uninstall_keeps_and_reports_every_store() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("uninstall-plain").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        let stores = [
+            "secrets/service.name.dpapi",
+            "executable_registry.json",
+            "remote_leases.json",
+            "contained-runs/old/left",
+            "legacy-migration-in-progress",
+            "legacy-import-1/key",
+        ];
+        for store in stores {
+            let path = root.join(store);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"x").unwrap();
+        }
+        let report = installer
+            .uninstall(&UninstallOptions { purge_data: false })
+            .unwrap();
+        for store in stores {
+            let path = root.join(store);
+            assert_eq!(fs::read(&path).unwrap(), b"x", "{store}");
+            assert!(
+                report.retained.iter().any(|kept| path.starts_with(kept)),
+                "{store} isn't reported as kept"
+            );
+        }
+    }
+
+    #[test]
+    fn the_start_menu_entry_follows_install_and_uninstall() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("start-menu").join("Orcel");
+        let layout = Layout::new(&root);
+        let installer = Installer::new(layout.clone(), &platform);
+        let report = installer
+            .install(&release_dir_with_app("0.2.0"), &options())
+            .unwrap();
+        assert!(report.app_included);
+        assert!(report.start_menu_added);
+        assert_eq!(*platform.start_menu.borrow(), Some(layout.bin_cli()));
+        let report = installer.uninstall(&UninstallOptions::default()).unwrap();
+        assert!(report.start_menu_removed);
+        assert_eq!(*platform.start_menu.borrow(), None);
+    }
+
+    #[test]
+    fn a_start_menu_failure_doesnt_fail_the_install() {
+        let platform = FakePlatform {
+            start_menu_fails: true,
+            ..FakePlatform::default()
+        };
+        let root = temp_dir("start-menu-fails").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        let report = installer
+            .install(&release_dir_with_app("0.2.0"), &options())
+            .unwrap();
+        assert!(!report.start_menu_added);
+        assert!(report.start_menu_problem.is_some());
+    }
+
+    #[test]
+    fn update_and_rollback_bring_the_start_menu_in_line_with_the_version() {
+        let root = temp_dir("start-menu-reconcile").join("Orcel");
+        let layout = Layout::new(&root);
+        let cli = layout.bin_cli();
+        let with_app = root.join("versions").join("0.3.0");
+        let without_app = root.join("versions").join("0.2.0");
+        fs::create_dir_all(&with_app).unwrap();
+        fs::create_dir_all(&without_app).unwrap();
+        fs::write(with_app.join(APP_FILE), b"app").unwrap();
+        let entry = |platform: &FakePlatform| platform.start_menu.borrow().clone();
+        // (version has the app, Orcel's entry is there, install put Orcel on PATH) -> outcome.
+        let cases = [
+            (true, false, true, StartMenuChange::Present, true),
+            (true, false, false, StartMenuChange::Unchanged, false),
+            (true, true, false, StartMenuChange::Present, true),
+            (false, true, true, StartMenuChange::Removed, false),
+            (false, true, false, StartMenuChange::Removed, false),
+            (false, false, true, StartMenuChange::Unchanged, false),
+        ];
+        for (app, ours, on_path, expected, after) in cases {
+            let platform = FakePlatform::default();
+            if ours {
+                *platform.start_menu.borrow_mut() = Some(cli.clone());
+            }
+            let installer = Installer::new(layout.clone(), &platform);
+            let dir = if app { &with_app } else { &without_app };
+            let change = installer.reconcile_start_menu(dir, on_path);
+            assert_eq!(
+                change, expected,
+                "app {app}, ours {ours}, on PATH {on_path}"
+            );
+            assert_eq!(
+                entry(&platform).is_some(),
+                after,
+                "app {app}, ours {ours}, on PATH {on_path}"
+            );
+        }
+        // Someone else's shortcut by that name, or a Start Menu that can't be written, is
+        // reported and doesn't fail anything.
+        let platform = FakePlatform {
+            start_menu_fails: true,
+            ..FakePlatform::default()
+        };
+        let change =
+            Installer::new(layout.clone(), &platform).reconcile_start_menu(&with_app, true);
+        assert!(matches!(change, StartMenuChange::Problem(_)), "{change:?}");
+    }
+
+    #[test]
+    fn a_release_without_the_app_gets_no_start_menu_entry() {
+        // Its click would only say there's no app.
+        let platform = FakePlatform::default();
+        let root = temp_dir("start-menu-no-app").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        let report = installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        assert!(!report.app_included);
+        assert!(!report.start_menu_added);
+        assert!(report.start_menu_problem.is_none());
+        assert_eq!(*platform.start_menu.borrow(), None);
+    }
+
+    #[test]
+    fn no_path_leaves_the_start_menu_alone() {
+        let platform = FakePlatform::default();
+        let root = temp_dir("start-menu-none").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        let report = installer
+            .install(
+                &release_dir("0.2.0"),
+                &InstallOptions {
+                    add_to_path: false,
+                    ..options()
+                },
+            )
+            .unwrap();
+        assert!(!report.start_menu_added);
+        assert_eq!(*platform.start_menu.borrow(), None);
     }
 
     #[test]

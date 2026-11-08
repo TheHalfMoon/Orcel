@@ -1,0 +1,177 @@
+"""SG-000129 slice 1: the license table for the Orcel Agent's locked
+dependencies.
+
+Run with the agent environment's interpreter. It reads every installed
+distribution's metadata, reduces it to an SPDX expression, and checks it
+against the allowlist and the recorded exceptions.
+
+    python tools/licenses.py --write   # regenerate THIRD_PARTY_LICENSES.md
+    python tools/licenses.py --check   # fail unless the table is current and
+                                       # every locked distribution is admitted
+
+Standard library only. It reads metadata; it never imports the packages.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import sys
+from importlib.metadata import distributions
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+LOCK = ROOT / "requirements.lock"
+TABLE = ROOT / "THIRD_PARTY_LICENSES.md"
+
+#: SPDX identifiers admitted without review (SG-000129 packet, section 4).
+ALLOWED = {"MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "PSF-2.0", "ISC"}
+
+#: Non-allowlisted licenses, each recorded in the spec and reviewed. The value
+#: is the exact expression the distribution must still carry.
+EXCEPTIONS = {
+    # Root certificates, used unmodified; MPL-2.0 copyleft is per file.
+    "certifi": "MPL-2.0",
+    # orjson's Rust sources are Apache-2.0 OR MIT; it vendors MPL-2.0 files,
+    # used unmodified in the compiled wheel.
+    "orjson": "MPL-2.0 AND (Apache-2.0 OR MIT)",
+}
+
+#: Reviewed readings of distributions whose metadata has no SPDX
+#: License-Expression, keyed on the exact version and raw License field they
+#: were reviewed at: a new version, or a changed License field, has no reading
+#: and fails until it is reviewed again. Each was checked against the license
+#: file its wheel ships (BSD clause counts included); langchain-core, langsmith
+#: and sqlite-vec ship none, so those follow their License field and
+#: classifiers.
+OVERRIDES = {
+    ("aiosqlite", "0.22.1", ""): "MIT",
+    ("annotated-types", "0.7.0", ""): "MIT",
+    ("certifi", "2026.10.19", "MPL-2.0"): "MPL-2.0",
+    ("charset-normalizer", "3.4.7", "MIT"): "MIT",
+    ("h11", "0.16.0", "MIT"): "MIT",
+    ("httpx", "0.28.1", "BSD-3-Clause"): "BSD-3-Clause",
+    ("jsonpatch", "1.33", "Modified BSD License"): "BSD-3-Clause",
+    ("jsonpointer", "3.1.1", "Modified BSD License"): "BSD-3-Clause",
+    ("langchain", "1.3.14", "MIT"): "MIT",
+    ("langchain-core", "1.4.9", "MIT"): "MIT",
+    ("langchain-protocol", "0.0.18", "MIT"): "MIT",
+    ("langsmith", "0.8.18", "MIT"): "MIT",
+    ("pyyaml", "6.0.3", "MIT"): "MIT",
+    ("requests", "2.33.1", "Apache-2.0"): "Apache-2.0",
+    ("requests-toolbelt", "1.0.0", "Apache 2.0"): "Apache-2.0",
+    ("sqlite-vec", "0.1.9", "MIT License, Apache License, Version 2.0"): "MIT OR Apache-2.0",
+    ("tenacity", "9.1.4", "Apache 2.0"): "Apache-2.0",
+    ("xxhash", "3.7.0", "BSD"): "BSD-2-Clause",
+}
+
+#: Installer tooling present in any fresh environment, not part of the lock.
+TOOLING = {"pip", "setuptools", "wheel"}
+
+
+def normalize(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def locked() -> dict[str, str]:
+    """Name -> version for every distribution in requirements.lock."""
+    found: dict[str, str] = {}
+    for line in LOCK.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^ ;\\]+)", line)
+        if match:
+            found[normalize(match.group(1))] = match.group(2)
+    return found
+
+
+def installed() -> dict[str, tuple[str, str]]:
+    """Name -> (version, SPDX expression) for every installed distribution."""
+    found: dict[str, tuple[str, str]] = {}
+    for dist in distributions():
+        name = normalize(dist.metadata["Name"])
+        if name in TOOLING:
+            continue
+        raw = (dist.metadata.get("License") or "").strip()
+        if len(raw) > 80 or len(raw.splitlines()) > 1:
+            # A long or multi-line field is keyed by its digest, so a change
+            # anywhere in it voids the reading.
+            raw = "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        expression = (dist.metadata.get("License-Expression") or "").strip()
+        if not expression:
+            expression = OVERRIDES.get((name, dist.version, raw), "")
+        found[name] = (dist.version, expression)
+    return found
+
+
+def admitted(name: str, expression: str) -> bool:
+    """An expression is admitted when it is a recorded exception, or every
+    AND term has at least one allowlisted OR alternative."""
+    if not expression:
+        return False
+    if name in EXCEPTIONS:
+        return expression == EXCEPTIONS[name]
+    if re.search(r"[()]", expression):
+        return False
+    return all(
+        any(choice.strip() in ALLOWED for choice in term.split(" OR "))
+        for term in expression.split(" AND ")
+    )
+
+
+def render(rows: dict[str, tuple[str, str]]) -> str:
+    lines = [
+        "# Third-party licenses: Orcel Agent dependencies",
+        "",
+        "Generated by `tools/licenses.py --write` from the installed metadata of",
+        "`requirements.lock` (SG-000129 slice 1). Do not edit by hand.",
+        "",
+        "| Distribution | Version | License | Admission |",
+        "|---|---|---|---|",
+    ]
+    for name, (version, expression) in sorted(rows.items()):
+        admission = "recorded exception" if name in EXCEPTIONS else "allowlist"
+        lines.append(f"| {name} | {version} | {expression} | {admission} |")
+    lines += [
+        "",
+        "DeerFlow 2.0 code copied or adapted into `orcel_agent/` is MIT-licensed:",
+        "see `third_party/deer-flow/LICENSE` and `third_party/PROVENANCE.json`.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def problems() -> list[str]:
+    lock, have = locked(), installed()
+    found: list[str] = []
+    for name in sorted(set(lock) | set(have)):
+        if name not in have:
+            found.append(f"{name}: locked but not installed")
+        elif name not in lock:
+            found.append(f"{name}: installed but not locked")
+        elif have[name][0] != lock[name]:
+            found.append(f"{name}: installed {have[name][0]}, locked {lock[name]}")
+        elif not admitted(name, have[name][1]):
+            found.append(f"{name}: license {have[name][1] or '(unknown)'} is not admitted")
+    return found
+
+
+def main(argv: list[str]) -> int:
+    if argv not in (["--write"], ["--check"]):
+        print(__doc__)
+        return 2
+    found = problems()
+    for problem in found:
+        print(problem, file=sys.stderr)
+    if found:
+        return 1
+    table = render(installed())
+    if argv == ["--write"]:
+        TABLE.write_text(table, encoding="utf-8", newline="\n")
+        return 0
+    if TABLE.read_text(encoding="utf-8") != table:
+        print("THIRD_PARTY_LICENSES.md is stale: run tools/licenses.py --write", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

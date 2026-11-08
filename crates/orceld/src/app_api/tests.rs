@@ -38,7 +38,13 @@ fn test_limits() -> Limits {
 
 fn shared_with(limits: Limits) -> Arc<Shared> {
     let log = Arc::new(EventLog::new(limits.ring_capacity, new_epoch()));
-    Arc::new(Shared::new(facts(), log, limits, "test".into()))
+    Arc::new(Shared::new(
+        facts(),
+        log,
+        Arc::new(crate::report_task::TaskRegistry::new()),
+        limits,
+        "test".into(),
+    ))
 }
 
 fn own_peer() -> PeerInfo {
@@ -124,6 +130,12 @@ fn cr01_methods_are_read_only_and_unknown_methods_are_refused() {
     // Nothing that submits, approves or mutates exists.
     for method in [
         "task.submit",
+        "task.start",
+        "task.commit",
+        "task.approve",
+        "task.cancel",
+        "task.stop",
+        "report.commit",
         "approval.grant",
         "approval.approve",
         "approval.mint",
@@ -641,8 +653,10 @@ fn cr01_status_roundtrip_over_the_os_transport() {
     assert_eq!(caps["result"]["methods"], json!(METHODS));
     let unknown = client.call("approval.grant", json!({ "approval_id": "a" }));
     assert_eq!(unknown["error"]["code"], "UNKNOWN_METHOD");
-    let reserved = client.call("task.list", json!({}));
+    let reserved = client.call("devices.list", json!({}));
     assert_eq!(reserved["error"]["code"], "METHOD_UNAVAILABLE");
+    let tasks = client.call("task.list", json!({}));
+    assert_eq!(tasks["result"]["tasks"], json!([]), "{tasks}");
     // The connection survives refused requests.
     assert_eq!(client.call("status.get", json!({}))["ok"], true);
     drop(client);
@@ -2021,6 +2035,44 @@ fn cr398_a_shared_runtime_directory_falls_back_to_the_state_root() {
     let _ = std::fs::remove_dir_all(&private);
 }
 
+/// Binds `path` the way orceld's start loop does: `InUse` is retried (#558).
+/// A lock released by this test can stay held for a moment by a process
+/// another test forked and has not yet exec'd (flock follows the open file
+/// description into the child until `O_CLOEXEC` closes it at exec). orceld
+/// retries every `REBIND_INTERVAL`; the test retries for at most 2 s and
+/// names the lock's holders when it had to.
+#[cfg(unix)]
+fn bind_as_orceld_does(path: &std::path::Path) -> (std::os::unix::net::UnixListener, unix::Bound) {
+    let started = std::time::Instant::now();
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match unix::bind(path) {
+            Ok(bound) => {
+                if attempts > 1 {
+                    eprintln!("#558: bound after {attempts} attempts");
+                }
+                return bound;
+            }
+            Err(StartError::InUse(reason)) if started.elapsed() < Duration::from_secs(2) => {
+                if attempts == 1 {
+                    let holders = std::process::Command::new("lsof")
+                        .arg(unix::lock_path(path))
+                        .output()
+                        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+                        .unwrap_or_else(|error| format!("lsof unavailable: {error}"));
+                    eprintln!(
+                        "#558: {reason}; holders:
+{holders}"
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("bind test socket after {attempts} attempts: {error:?}"),
+        }
+    }
+}
+
 /// Runs [`unix::serve_watched`] on a fresh binding with a short check
 /// interval; returns the binding's slot and the receiver of its result.
 #[cfg(unix)]
@@ -2030,7 +2082,7 @@ fn watched_server(
     Arc<Mutex<Option<unix::Bound>>>,
     std::sync::mpsc::Receiver<String>,
 ) {
-    let (listener, bound) = unix::bind(path).expect("bind test socket");
+    let (listener, bound) = bind_as_orceld_does(path);
     let slot = Arc::new(Mutex::new(Some(bound)));
     let shared = shared_with(test_limits());
     let (done, finished) = std::sync::mpsc::channel();
@@ -2053,7 +2105,8 @@ fn watched_server(
 
 /// #398 item 1: a socket or lock file removed under a running orceld (a
 /// runtime directory clean-up) ends the watched serve loop with the reason,
-/// and the endpoint can be bound again at once.
+/// and the endpoint can be bound again, as orceld's start loop binds it
+/// (an `InUse` retried, #558).
 #[cfg(unix)]
 #[test]
 fn cr398_a_removed_socket_or_lock_file_is_noticed_and_bound_again() {
@@ -2078,7 +2131,7 @@ fn cr398_a_removed_socket_or_lock_file_is_noticed_and_bound_again() {
         assert!(reason.contains(expected), "{reason}");
         // What orceld's start loop does next: release, then bind again.
         drop(slot.lock().unwrap().take());
-        let (listener, bound) = unix::bind(&path).expect("bound again");
+        let (listener, bound) = bind_as_orceld_does(&path);
         drop(std::os::unix::net::UnixStream::connect(&path).expect("connect"));
         drop((listener, bound));
         assert!(!path.exists());
@@ -2150,4 +2203,110 @@ fn cr398_touch_refreshes_the_socket_and_lock_times() {
     bound.intact().unwrap();
     drop(bound);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sg126_task_list_get_and_events_over_the_os_transport() {
+    use crate::report_task::{self, tests as journey};
+    use orcel_approval::ApprovalDecision;
+
+    let server = start_server(test_limits());
+    server
+        .shared
+        .tasks
+        .attach_events(Arc::clone(&server.shared.log));
+    let mut events = TestClient::connect(&server.endpoint);
+    let subscribed = events.call("events.subscribe", json!({ "after_seq": 0 }));
+    assert_eq!(subscribed["ok"], true, "{subscribed}");
+
+    // The journey, as the stdio channel would run it.
+    let scene = journey::Scene::new("app-api");
+    let started = journey::start_q3(&scene, &server.shared.tasks);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    let report = journey::plan_report(&started);
+    let consent = journey::consent(&scene, &[ApprovalDecision::Approved]);
+    report_task::dispatch(
+        &scene.workspace,
+        &consent.broker,
+        &server.shared.tasks,
+        &journey::request(
+            "preview",
+            json!({"task_id": task, "name": "q3.md", "content": report}),
+        ),
+    )
+    .expect("preview");
+    let sha256 = report_task::tests::sha256_of(&report);
+    report_task::dispatch(
+        &scene.workspace,
+        &consent.broker,
+        &server.shared.tasks,
+        &journey::request(
+            "commit",
+            json!({"task_id": task, "name": "q3.md", "content": report, "expected_sha256": sha256}),
+        ),
+    )
+    .expect("commit");
+
+    let mut client = TestClient::connect(&server.endpoint);
+    let list = client.call("task.list", json!({}));
+    assert_eq!(list["ok"], true, "{list}");
+    assert_eq!(list["result"]["tasks"][0]["task_id"], task.as_str());
+    assert_eq!(list["result"]["tasks"][0]["state"], "verified");
+    assert_eq!(list["result"]["tasks"][0]["kind"], "report");
+    let got = client.call("task.get", json!({ "task_id": task }));
+    assert_eq!(got["ok"], true, "{got}");
+    let record = &got["result"];
+    assert_eq!(record["state"], "verified");
+    assert_eq!(record["report"]["destination"], "reports/q3.md");
+    assert_eq!(record["report"]["sha256"], sha256.as_str());
+    assert_eq!(record["check"]["passed"], true);
+    assert_eq!(record["sources"][0]["path"], "data/q3.csv");
+    assert_eq!(record["steps"].as_array().unwrap().len(), 4);
+    let text = got.to_string();
+    assert!(!text.contains("north,Q3") && !text.contains("Q3 revenue summary"));
+
+    // Bounded, read-only parameters.
+    for (method, params, code) in [
+        ("task.get", json!({}), "INVALID_REQUEST"),
+        ("task.get", json!({ "task_id": 7 }), "INVALID_REQUEST"),
+        (
+            "task.get",
+            json!({ "task_id": task, "state": "verified" }),
+            "INVALID_REQUEST",
+        ),
+        (
+            "task.get",
+            json!({ "task_id": "rpt-0123456789abcdef0123456789abcdef" }),
+            "UNKNOWN_TASK",
+        ),
+        ("task.list", json!({ "limit": 1 }), "INVALID_REQUEST"),
+    ] {
+        let frame = client.call(method, params.clone());
+        assert_eq!(frame["error"]["code"], code, "{method} {params}");
+    }
+
+    // The timeline: one task.updated event per step, bound to the task.
+    let mut steps = Vec::new();
+    while steps.len() < 4 {
+        let frame = events.recv_event().expect("an event");
+        let event = &frame["event"];
+        if event["kind"] == "task.updated" {
+            assert_eq!(event["run_id"], task.as_str());
+            steps.push((
+                event["step_id"].as_str().unwrap().to_owned(),
+                event["data"]["step"].as_str().unwrap().to_owned(),
+                event["data"]["state"].as_str().unwrap().to_owned(),
+            ));
+        }
+    }
+    let expected: Vec<(String, String, String)> = [
+        ("s1", "observe", "observed"),
+        ("s2", "preview", "proposed"),
+        ("s3", "approval", "committing"),
+        ("s4", "verify", "verified"),
+    ]
+    .iter()
+    .map(|(a, b, c)| ((*a).into(), (*b).into(), (*c).into()))
+    .collect();
+    assert_eq!(steps, expected);
 }

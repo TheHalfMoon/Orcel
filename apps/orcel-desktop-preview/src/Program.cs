@@ -3,10 +3,14 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,7 +24,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, Unsupported }
 
     internal static class CommandRouter
     {
@@ -33,6 +37,7 @@ namespace Orcel.DesktopPreview
             if (value == "doctor") return SafeCommand.Doctor;
             if (value == "devices") return SafeCommand.Devices;
             if (value == "files") return SafeCommand.Files;
+            if (value == "tasks") return SafeCommand.Tasks;
             return SafeCommand.Unsupported;
         }
 
@@ -72,7 +77,7 @@ namespace Orcel.DesktopPreview
         /// Processes the child starts before it joins the job (a few
         /// milliseconds after start) are not covered; if no job can be created,
         /// only the direct child is killed on timeout.
-        internal static CliResult Run(string fileName, string[] arguments, int timeoutMs, string localAppData)
+        internal static CliResult Run(string fileName, string[] arguments, int timeoutMs, string userProfile)
         {
             CliResult result = new CliResult();
             using (Process process = new Process())
@@ -87,7 +92,7 @@ namespace Orcel.DesktopPreview
                     RedirectStandardInput = true,
                     WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
                 };
-                if (localAppData != null) process.StartInfo.EnvironmentVariables["LOCALAPPDATA"] = localAppData;
+                if (userProfile != null) process.StartInfo.EnvironmentVariables["USERPROFILE"] = userProfile;
                 try { process.Start(); }
                 catch (Exception) { result.FailedToStart = true; return result; }
                 // The child and everything it starts after this point are killed
@@ -223,7 +228,8 @@ namespace Orcel.DesktopPreview
         private static extern bool CloseHandle(IntPtr handle);
     }
 
-    internal enum RuntimeAvailability { NotInstalled, Unresponsive, Incompatible, Installed }
+    /// Failed: the runtime answered with its own error, which the app shows as it is.
+    internal enum RuntimeAvailability { NotInstalled, Unresponsive, Incompatible, Failed, Installed }
 
     /// What the app truthfully knows about the local Orcel runtime.
     internal sealed class RuntimeStatus
@@ -233,6 +239,23 @@ namespace Orcel.DesktopPreview
         internal string State;
         internal string Detail;
         internal int? Workspaces;
+        /// Null when the status didn't say.
+        internal bool? TunnelConfigured;
+
+        /// The background runtime `orcel start` runs carries only the optional ChatGPT tunnel;
+        /// local MCP clients start Orcel themselves, so "not running" never means Orcel is down.
+        internal string Tunnel()
+        {
+            if (Unconfigured()) return "ChatGPT tunnel not configured (optional)";
+            return "ChatGPT tunnel " + Describe(State);
+        }
+
+        /// As the CLI decides it: no tunnel configured and no supervisor record at all. A stale
+        /// record keeps its detail.
+        internal bool Unconfigured()
+        {
+            return TunnelConfigured == false && State == "not_running" && Detail == "no supervisor record";
+        }
 
         internal string Headline()
         {
@@ -241,7 +264,8 @@ namespace Orcel.DesktopPreview
                 case RuntimeAvailability.NotInstalled: return "Not installed";
                 case RuntimeAvailability.Unresponsive: return "Installed • not responding";
                 case RuntimeAvailability.Incompatible: return "Installed • incompatible response";
-                default: return "Orcel runtime " + Version + " • " + Describe(State);
+                case RuntimeAvailability.Failed: return "Installed • status reported an error";
+                default: return "Orcel runtime " + Version + " • " + Tunnel();
             }
         }
 
@@ -256,13 +280,14 @@ namespace Orcel.DesktopPreview
 
     internal static class LocalHost
     {
-        /// Same resolution as the runtime itself: %LOCALAPPDATA%, then the
-        /// known folder. Never PATH, never a model- or user-provided path.
-        internal static string LocalAppData()
+        /// %USERPROFILE%, as the runtime uses, then the known folder, which the
+        /// runtime lacks: this app passes what it finds to its child, so they agree.
+        /// Never PATH, never a model- or user-provided path.
+        internal static string UserProfile()
         {
-            string fromEnvironment = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+            string fromEnvironment = Environment.GetEnvironmentVariable("USERPROFILE");
             if (IsDriveQualified(fromEnvironment)) return fromEnvironment;
-            return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         }
 
         /// `C:\...` only: no UNC share (`\\host\share`), no drive-relative path.
@@ -274,7 +299,7 @@ namespace Orcel.DesktopPreview
 
         internal static string PathToCompatCli()
         {
-            return Path.Combine(LocalAppData(), "Orcel", "bin", "orcel.exe");
+            return Path.Combine(UserProfile(), ".orcel", "bin", "orcel.exe");
         }
 
         internal static bool IsInstalled()
@@ -286,7 +311,7 @@ namespace Orcel.DesktopPreview
         {
             string[] arguments = CommandRouter.CliArguments(command);
             if (arguments == null) throw new ArgumentException("not a read-only runtime query");
-            return BoundedProcess.Run(PathToCompatCli(), arguments, timeoutMs, LocalAppData());
+            return BoundedProcess.Run(PathToCompatCli(), arguments, timeoutMs, UserProfile());
         }
 
         internal static RuntimeStatus ReadStatus(int timeoutMs)
@@ -294,6 +319,506 @@ namespace Orcel.DesktopPreview
             if (!IsInstalled()) return new RuntimeStatus { Availability = RuntimeAvailability.NotInstalled };
             CliResult result = Query(SafeCommand.Status, timeoutMs);
             return Interpret.Status(result);
+        }
+    }
+
+    /// SG-000127 slice 5 (timeline): a read-only client of orceld's local app
+    /// API (`orcel-app-api/1`, ORCEL_APP_API_1.md). It sends only `task.list`
+    /// and `task.get`, one request per connection, and `events.subscribe`
+    /// (see TaskWatcher) to this user's pipe
+    /// `\\.\pipe\orcel-<user SID>-app` as an identification-only client; it
+    /// never sends anything that submits, approves, stops or writes. Frames
+    /// are bounded to the protocol's 65,536 bytes and every call has a
+    /// timeout. Task titles and paths come from the planner and the
+    /// workspace: they are shown as data, never acted on.
+    internal static class AppApi
+    {
+        internal const string Protocol = "orcel-app-api/1";
+        internal const int MaxFrameBytes = 65536;
+        internal const int TimeoutMs = 4000;
+        /// The only methods this client sends; all are read-only in orceld.
+        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe" };
+
+        /// This user's pipe name, or null when ORCEL_APP_API_INSTANCE is set
+        /// but invalid (refused, never replaced by the default pipe).
+        internal static string PipeName()
+        {
+            string sid = WindowsIdentity.GetCurrent().User.Value;
+            string raw = Environment.GetEnvironmentVariable("ORCEL_APP_API_INSTANCE");
+            if (string.IsNullOrEmpty(raw)) return "orcel-" + sid + "-app";
+            string suffix = InstanceSuffix(raw);
+            return suffix == null ? null : "orcel-" + sid + "-app-" + suffix;
+        }
+
+        /// The protocol's test suffix: 1-32 of a-z, 0-9 and '-'. Anything
+        /// else is ignored, never passed into a pipe name.
+        internal static string InstanceSuffix(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length > 32) return null;
+            foreach (char c in value)
+                if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return null;
+            return value;
+        }
+
+        internal static string RequestFrame(string method, string taskId)
+        {
+            if (Array.IndexOf(Methods, method) < 0) throw new ArgumentException("not a read-only app API method");
+            Dictionary<string, object> request = new Dictionary<string, object>();
+            request["v"] = Protocol;
+            request["id"] = "desktop";
+            request["method"] = method;
+            Dictionary<string, object> parameters = new Dictionary<string, object>();
+            if (method == "task.get") parameters["task_id"] = taskId ?? "";
+            request["params"] = parameters;
+            return new JavaScriptSerializer().Serialize(request) + "\n";
+        }
+
+        /// `epoch` is required with a cursor, and `after_seq` 0 may omit it.
+        internal static string SubscribeFrame(long afterSeq, string epoch)
+        {
+            Dictionary<string, object> request = new Dictionary<string, object>();
+            request["v"] = Protocol;
+            request["id"] = "desktop";
+            request["method"] = "events.subscribe";
+            Dictionary<string, object> parameters = new Dictionary<string, object>();
+            parameters["after_seq"] = afterSeq;
+            if (afterSeq > 0) parameters["epoch"] = epoch ?? "";
+            request["params"] = parameters;
+            return new JavaScriptSerializer().Serialize(request) + "\n";
+        }
+
+        /// One request on its own connection, at most TimeoutMs in all; null
+        /// when the pipe is absent, its server is not this user at Medium
+        /// integrity or above, or the answer is late or unusable. On timeout
+        /// the pipe is disposed, which cancels the pending read.
+        internal static Dictionary<string, object> Call(string method, string taskId)
+        {
+            string frame = RequestFrame(method, taskId);
+            string name = PipeName();
+            if (name == null) return null;
+            Stopwatch clock = Stopwatch.StartNew();
+            using (NamedPipeClientStream pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification))
+            {
+                try
+                {
+                    pipe.Connect(TimeoutMs);
+                    if (!ServerIsThisUser(pipe)) return null;
+                    byte[] bytes = Encoding.UTF8.GetBytes(frame);
+                    if (!pipe.WriteAsync(bytes, 0, bytes.Length).Wait(Remaining(clock))) return null;
+                    return ParseReply(ReadFrame(pipe, clock));
+                }
+                catch (Exception) { return null; }
+            }
+        }
+
+        private static int Remaining(Stopwatch clock)
+        {
+            return Math.Max(0, TimeoutMs - (int)clock.ElapsedMilliseconds);
+        }
+
+        /// One frame, newline included at most MaxFrameBytes, before the deadline.
+        private static string ReadFrame(Stream stream, Stopwatch clock)
+        {
+            MemoryStream frame = new MemoryStream();
+            byte[] chunk = new byte[4096];
+            while (true)
+            {
+                Task<int> read = stream.ReadAsync(chunk, 0, chunk.Length);
+                if (!read.Wait(Remaining(clock)) || read.Result <= 0) return null;
+                for (int i = 0; i < read.Result; i++)
+                {
+                    if (chunk[i] == '\n') return Encoding.UTF8.GetString(frame.ToArray());
+                    if (frame.Length >= MaxFrameBytes - 1) return null;
+                    frame.WriteByte(chunk[i]);
+                }
+            }
+        }
+
+        /// ORCEL_APP_API_1.md section 7: the pipe name is predictable, so the
+        /// server must run as this user, at Medium integrity or above, before
+        /// anything it says is shown.
+        internal static bool ServerIsThisUser(NamedPipeClientStream pipe)
+        {
+            uint pid;
+            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out pid) || pid == 0) return false;
+            return ProcessRunsAsThisUser(pid);
+        }
+
+        internal static bool ProcessRunsAsThisUser(uint pid)
+        {
+            IntPtr process = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+            if (process == IntPtr.Zero) return false;
+            IntPtr token = IntPtr.Zero;
+            try
+            {
+                if (!OpenProcessToken(process, TokenQuery, out token)) return false;
+                SecurityIdentifier user = TokenSid(token, TokenUserClass);
+                SecurityIdentifier label = TokenSid(token, TokenIntegrityLevelClass);
+                if (user == null || label == null || !user.Equals(WindowsIdentity.GetCurrent().User)) return false;
+                // The mandatory label's last sub-authority is the level: 0x2000 is Medium.
+                string[] parts = label.Value.Split('-');
+                uint level;
+                return uint.TryParse(parts[parts.Length - 1], out level) && level >= 0x2000;
+            }
+            finally
+            {
+                if (token != IntPtr.Zero) CloseHandle(token);
+                CloseHandle(process);
+            }
+        }
+
+        /// TokenUser and TokenIntegrityLevel both start with a SID_AND_ATTRIBUTES.
+        private static SecurityIdentifier TokenSid(IntPtr token, int infoClass)
+        {
+            int length;
+            GetTokenInformation(token, infoClass, IntPtr.Zero, 0, out length);
+            if (length <= 0 || length > 4096) return null;
+            IntPtr buffer = Marshal.AllocHGlobal(length);
+            try
+            {
+                if (!GetTokenInformation(token, infoClass, buffer, length, out length)) return null;
+                return new SecurityIdentifier(Marshal.ReadIntPtr(buffer));
+            }
+            catch (Exception) { return null; }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+
+        private const uint ProcessQueryLimitedInformation = 0x1000;
+        private const uint TokenQuery = 0x0008;
+        private const int TokenUserClass = 1;
+        private const int TokenIntegrityLevelClass = 25;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint serverProcessId);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int returnLength);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        /// The `result` of an ok frame of this protocol, else null.
+        internal static Dictionary<string, object> ParseReply(string line)
+        {
+            if (line == null) return null;
+            try
+            {
+                Dictionary<string, object> reply = new JavaScriptSerializer { MaxJsonLength = MaxFrameBytes }.DeserializeObject(line) as Dictionary<string, object>;
+                object v, ok, result;
+                if (reply == null || !reply.TryGetValue("v", out v) || !Protocol.Equals(v)) return null;
+                if (!reply.TryGetValue("ok", out ok) || !true.Equals(ok)) return null;
+                if (!reply.TryGetValue("result", out result)) return null;
+                return result as Dictionary<string, object>;
+            }
+            catch (Exception) { return null; }
+        }
+    }
+
+    /// The task timeline as text: what orceld recorded, nothing inferred.
+    internal static class Timeline
+    {
+        internal const int MaxShownTasks = 5;
+        internal const int MaxShownSteps = 8;
+        private const int MaxTitleChars = 120;
+
+        private static string Field(Dictionary<string, object> map, string key)
+        {
+            object value;
+            return map != null && map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : null;
+        }
+
+        internal static string ShownText(string value) { return Shown(value); }
+
+        private static string Shown(string value)
+        {
+            if (value == null) return "(none)";
+            StringBuilder text = new StringBuilder();
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (text.Length >= MaxTitleChars) { text.Append("…"); break; }
+                char c = value[i];
+                if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+                {
+                    text.Append(c).Append(value[++i]);
+                    continue;
+                }
+                text.Append(Safe(c));
+            }
+            return text.ToString();
+        }
+
+        /// Planner and workspace text may not start a line, reorder the
+        /// display or close the quotes around a title.
+        internal static char Safe(char c)
+        {
+            switch (CharUnicodeInfo.GetUnicodeCategory(c))
+            {
+                case UnicodeCategory.Control:
+                case UnicodeCategory.Format:
+                case UnicodeCategory.LineSeparator:
+                case UnicodeCategory.ParagraphSeparator:
+                case UnicodeCategory.Surrogate:
+                    return ' ';
+            }
+            return c == '"' ? '\'' : c;
+        }
+
+        internal static string Describe(string state)
+        {
+            switch (state)
+            {
+                case "observed": return "sources read";
+                case "proposed": return "report proposed, waiting for approval";
+                case "approval_denied": return "approval denied";
+                case "committing": return "writing the approved report";
+                case "verified": return "verified by the independent checker";
+                case "verification_failed": return "verification FAILED";
+                case "stale": return "stale (a source or the folder changed)";
+                case "failed": return "failed";
+                case "stopped": return "stopped";
+                default: return "unknown state";
+            }
+        }
+
+        private static int TaskCount(Dictionary<string, object> list)
+        {
+            object tasks;
+            int count = 0;
+            if (list != null && list.TryGetValue("tasks", out tasks) && tasks is IEnumerable)
+                foreach (object task in (IEnumerable)tasks) count++;
+            return count;
+        }
+
+        internal static List<string> NewestIds(Dictionary<string, object> list)
+        {
+            List<string> ids = new List<string>();
+            object tasks;
+            if (list == null || !list.TryGetValue("tasks", out tasks) || !(tasks is IEnumerable)) return ids;
+            foreach (object task in (IEnumerable)tasks)
+            {
+                string id = Field(task as Dictionary<string, object>, "task_id");
+                if (id != null && ids.Count < MaxShownTasks) ids.Add(id);
+            }
+            return ids;
+        }
+
+        internal static string Text(Dictionary<string, object> list, IList<Dictionary<string, object>> tasks)
+        {
+            if (list == null)
+                return "Task timeline unavailable: this user's app API pipe did not answer, gave an unusable answer, or is not served by this user at normal integrity (the runtime may not be running). Nothing was changed.";
+            List<string> ids = NewestIds(list);
+            if (ids.Count == 0) return "No report tasks in this orceld run. Tasks are started by a connected local MCP client; this app only shows them.";
+            StringBuilder text = new StringBuilder();
+            int total = TaskCount(list);
+            text.Append("Report tasks orceld knows of, newest first (showing " + ids.Count + " of " + total + "; titles and paths come from the planner and the workspace and are not verified):");
+            for (int i = 0; i < ids.Count; i++)
+            {
+                Dictionary<string, object> task = i < tasks.Count ? tasks[i] : null;
+                if (task == null) { text.Append("\n• " + ids[i] + ": details unavailable"); continue; }
+                text.Append("\n• " + Describe(Field(task, "state")) + ": \"" + Shown(Field(task, "title")) + "\"");
+                object report;
+                if (task.TryGetValue("report", out report) && report is Dictionary<string, object>)
+                    text.Append(" → " + Shown(Field((Dictionary<string, object>)report, "destination")));
+                object steps;
+                if (task.TryGetValue("steps", out steps) && steps is IEnumerable)
+                {
+                    List<string> outcomes = new List<string>();
+                    foreach (object step in (IEnumerable)steps)
+                    {
+                        Dictionary<string, object> map = step as Dictionary<string, object>;
+                        outcomes.Add(Shown(Field(map, "kind")) + " " + Shown(Field(map, "outcome")));
+                    }
+                    if (outcomes.Count > MaxShownSteps) outcomes = outcomes.Skip(outcomes.Count - MaxShownSteps).ToList();
+                    if (outcomes.Count > 0) text.Append("\n   steps: " + string.Join(" · ", outcomes));
+                }
+            }
+            text.Append("\nThis app reads tasks only; it cannot start, approve or stop them.");
+            return text.ToString();
+        }
+
+        internal static string Read()
+        {
+            Dictionary<string, object> list = AppApi.Call("task.list", null);
+            List<Dictionary<string, object>> details = new List<Dictionary<string, object>>();
+            foreach (string id in NewestIds(list)) details.Add(AppApi.Call("task.get", id));
+            return Text(list, details);
+        }
+    }
+
+    /// Splits a stream into frames, keeping what follows a newline for the next
+    /// one. A frame over MaxFrameBytes, a read past its deadline, or the end of the
+    /// stream gives null, and the connection is finished.
+    internal sealed class FrameReader
+    {
+        private readonly Stream stream;
+        private readonly byte[] chunk = new byte[4096];
+        private int start;
+        private int end;
+
+        internal FrameReader(Stream stream) { this.stream = stream; }
+
+        internal string Next(int deadlineMs, CancellationToken stop)
+        {
+            MemoryStream frame = new MemoryStream();
+            while (true)
+            {
+                while (start < end)
+                {
+                    byte value = chunk[start++];
+                    if (value == (byte)'\n') return Encoding.UTF8.GetString(frame.ToArray());
+                    if (frame.Length >= AppApi.MaxFrameBytes - 1) return null;
+                    frame.WriteByte(value);
+                }
+                Task<int> read = stream.ReadAsync(chunk, 0, chunk.Length);
+                if (!read.Wait(deadlineMs, stop) || read.Result <= 0) return null;
+                start = 0;
+                end = read.Result;
+            }
+        }
+    }
+
+    /// Where a subscription has reached in one orceld run.
+    internal sealed class WatchCursor
+    {
+        internal long AfterSeq;
+        internal string Epoch;
+        /// Events up to here happened before this app was watching: they're
+        /// history, which `tasks` shows, so they aren't announced as news.
+        internal long QuietThrough = -1;
+        /// Updates may have been missed, so the next connection shows the list.
+        internal bool Refresh;
+    }
+
+    /// The task timeline, live: follows orceld's `task.updated` events and shows
+    /// each as it happens, so "waiting for approval" appears without asking. After a
+    /// gap, such as orceld restarting, it shows the current list instead. Read
+    /// only, like everything in this app: once subscribed it sends nothing more,
+    /// and each connection checks that the server is this user, as AppApi does. The
+    /// text comes from a closed list of states and a task id made safe to show.
+    internal static class TaskWatcher
+    {
+        /// orceld sends a heartbeat after 15 s without events.
+        internal const int SilenceMs = 45000;
+        internal const int RetryMs = 5000;
+
+        private static long Number(object value)
+        {
+            try { return Convert.ToInt64(value, CultureInfo.InvariantCulture); }
+            catch (Exception) { return -1; }
+        }
+
+        private static string Text(Dictionary<string, object> map, string key)
+        {
+            object value;
+            return map != null && map.TryGetValue(key, out value) ? value as string : null;
+        }
+
+        /// Reads one frame into the cursor. Returns text to show, or null. `finished`
+        /// says this connection has nothing more to give: an error, or the snapshot
+        /// that precedes the server closing it.
+        internal static string Apply(string line, WatchCursor cursor, out bool finished)
+        {
+            finished = false;
+            Dictionary<string, object> frame;
+            try { frame = new JavaScriptSerializer { MaxJsonLength = AppApi.MaxFrameBytes }.DeserializeObject(line) as Dictionary<string, object>; }
+            catch (Exception) { finished = true; return null; }
+            object value;
+            if (frame == null || !frame.TryGetValue("v", out value) || !AppApi.Protocol.Equals(value)) { finished = true; return null; }
+            if (frame.TryGetValue("ok", out value))
+            {
+                Dictionary<string, object> result = frame.TryGetValue("result", out value) ? value as Dictionary<string, object> : null;
+                if (!true.Equals(frame["ok"]) || result == null)
+                {
+                    finished = true;
+                    object failure;
+                    Dictionary<string, object> error = frame.TryGetValue("error", out failure) ? failure as Dictionary<string, object> : null;
+                    // Too many clients for now: the same cursor is still good.
+                    if (Text(error, "code") == "BUSY") return null;
+                    // A cursor orceld won't take: start over, with what was missed
+                    // shown as the current list rather than replayed as news.
+                    cursor.AfterSeq = 0;
+                    cursor.Epoch = null;
+                    cursor.QuietThrough = -1;
+                    cursor.Refresh = true;
+                    return null;
+                }
+                // Only a fresh subscription learns its epoch here. With a cursor, the
+                // cursor's own epoch stands until a snapshot replaces it.
+                if (cursor.AfterSeq == 0) cursor.Epoch = Text(result, "epoch");
+                if (cursor.QuietThrough < 0 && result.TryGetValue("head_seq", out value)) cursor.QuietThrough = Number(value);
+                return null;
+            }
+            if (!frame.TryGetValue("event", out value)) return null;
+            Dictionary<string, object> received = value as Dictionary<string, object>;
+            if (received == null) { finished = true; return null; }
+            string kind = Text(received, "kind");
+            Dictionary<string, object> data = received.TryGetValue("data", out value) ? value as Dictionary<string, object> : null;
+            if (kind == "snapshot")
+            {
+                Dictionary<string, object> next = data != null && data.TryGetValue("resubscribe", out value) ? value as Dictionary<string, object> : null;
+                long after = next != null && next.TryGetValue("after_seq", out value) ? Number(value) : -1;
+                cursor.AfterSeq = after > 0 ? after : 0;
+                cursor.Epoch = Text(next, "epoch");
+                // What follows is new, including a new run's low sequence numbers.
+                // What came before wasn't seen: the next connection shows the list.
+                cursor.QuietThrough = cursor.AfterSeq;
+                cursor.Refresh = true;
+                finished = true;
+                return null;
+            }
+            long seq = received.TryGetValue("seq", out value) ? Number(value) : -1;
+            if (seq < 0) { finished = true; return null; }
+            cursor.AfterSeq = seq;
+            if (kind != "task.updated" || seq <= cursor.QuietThrough) return null;
+            string id = Text(received, "run_id");
+            if (id == null) return null;
+            return "Task " + Timeline.ShownText(id) + ": " + Timeline.Describe(Text(data, "state")) + ".";
+        }
+
+        /// Until `stop`: subscribes, shows what happens and, if the connection ends
+        /// or orceld isn't there, tries again. Never throws.
+        internal static void Run(Action<string> show, CancellationToken stop)
+        {
+            WatchCursor cursor = new WatchCursor();
+            while (!stop.IsCancellationRequested)
+            {
+                string name = AppApi.PipeName();
+                if (name == null) return;
+                try { Follow(name, cursor, show, stop); }
+                catch (Exception) { }
+                // Not yet connected: orceld may start in the wait, and what it does
+                // before the next try would pass as history.
+                if (cursor.QuietThrough < 0) cursor.Refresh = true;
+                if (stop.WaitHandle.WaitOne(RetryMs)) return;
+            }
+        }
+
+        private static void Follow(string name, WatchCursor cursor, Action<string> show, CancellationToken stop)
+        {
+            using (NamedPipeClientStream pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification))
+            {
+                pipe.Connect(AppApi.TimeoutMs);
+                if (!AppApi.ServerIsThisUser(pipe)) return;
+                byte[] bytes = Encoding.UTF8.GetBytes(AppApi.SubscribeFrame(cursor.AfterSeq, cursor.Epoch));
+                if (!pipe.WriteAsync(bytes, 0, bytes.Length).Wait(AppApi.TimeoutMs, stop)) return;
+                FrameReader frames = new FrameReader(pipe);
+                while (true)
+                {
+                    string line = frames.Next(SilenceMs, stop);
+                    if (line == null) return;
+                    bool finished;
+                    string text = Apply(line, cursor, out finished);
+                    if (text != null) show(text);
+                    if (cursor.Refresh && !finished)
+                    {
+                        cursor.Refresh = false;
+                        show("Task updates may have been missed. The current list:\n" + Timeline.Read());
+                    }
+                    if (finished) return;
+                }
+            }
         }
     }
 
@@ -321,6 +846,15 @@ namespace Orcel.DesktopPreview
             if (result.FailedToStart || result.TimedOut) return new RuntimeStatus { Availability = RuntimeAvailability.Unresponsive };
             Dictionary<string, object> json = Parse(result.Stdout);
             object runtime = null;
+            object error;
+            // The CLI's own error, such as a corrupt record: shown, never treated as healthy.
+            if (json != null && result.ExitCode != 0 && json.ContainsKey("ok") && false.Equals(json["ok"])
+                && json.TryGetValue("error", out error) && !string.IsNullOrEmpty(Text(error as Dictionary<string, object>, "message")))
+            {
+                string message = Plain(Text((Dictionary<string, object>)error, "message"));
+                // A message that cleans to nothing says nothing, so it's an answer this app doesn't understand.
+                if (message != ".") return new RuntimeStatus { Availability = RuntimeAvailability.Failed, Detail = message };
+            }
             if (json == null || result.ExitCode != 0 || !(json.ContainsKey("ok") && true.Equals(json["ok"]))
                 || !json.TryGetValue("runtime", out runtime) || !(runtime is Dictionary<string, object>))
                 return new RuntimeStatus { Availability = RuntimeAvailability.Incompatible };
@@ -328,28 +862,57 @@ namespace Orcel.DesktopPreview
             string version = Text(json, "installed");
             if (version == null) return new RuntimeStatus { Availability = RuntimeAvailability.NotInstalled };
             int workspaces;
+            object tunnel;
             return new RuntimeStatus {
                 Availability = RuntimeAvailability.Installed,
                 Version = version,
                 State = Text(runtimeMap, "state"),
                 Detail = Text(runtimeMap, "detail"),
-                Workspaces = int.TryParse(Text(json, "workspaces"), out workspaces) ? (int?)workspaces : null
+                Workspaces = int.TryParse(Text(json, "workspaces"), out workspaces) ? (int?)workspaces : null,
+                TunnelConfigured = json.TryGetValue("tunnel_configured", out tunnel) && tunnel is bool ? (bool?)(bool)tunnel : null
             };
+        }
+
+        /// Runtime text can quote a state file, so it may not start a line or reorder the display.
+        /// Unlike a title it isn't cut: it carries whole paths. It ends as a sentence.
+        internal static string Plain(string value)
+        {
+            StringBuilder text = new StringBuilder();
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+                {
+                    text.Append(c).Append(value[++i]);
+                    continue;
+                }
+                text.Append(Timeline.Safe(c));
+            }
+            string plain = text.ToString().Trim();
+            return plain.EndsWith(".") || plain.EndsWith("!") || plain.EndsWith("?") ? plain : plain + ".";
         }
 
         internal static string StatusMessage(RuntimeStatus status)
         {
             if (status.Availability == RuntimeAvailability.NotInstalled)
-                return "The Orcel runtime is not installed for this Windows user. No operation was attempted.";
+                return "The Orcel runtime is not installed for this Windows user. No operation was attempted. "
+                    + "Next: in a terminal in the extracted release folder, run `.\\orcel.exe install`, then Refresh status.";
             if (status.Availability == RuntimeAvailability.Unresponsive)
-                return "The Orcel runtime did not answer a read-only status query in time. No action was performed.";
+                return "The Orcel runtime did not answer a read-only status query in time. No action was performed. "
+                    + "Next: Refresh status. If it keeps failing, repair the install with `.\\orcel.exe install` from the extracted release folder of the same version.";
             if (status.Availability == RuntimeAvailability.Incompatible)
-                return "The installed Orcel runtime returned a response this preview does not understand. No action was performed.";
+                return "The installed Orcel runtime returned a response this preview does not understand. No action was performed. "
+                    + "Next: use this app from the same release as the installed runtime; `version` shows the installed release.";
+            if (status.Availability == RuntimeAvailability.Failed)
+                return "Orcel status reported an error: " + status.Detail + " No action was performed. `doctor` runs the full health check.";
             StringBuilder text = new StringBuilder();
-            text.Append("Orcel runtime ").Append(status.Version).Append(" is installed and ").Append(RuntimeStatus.Describe(status.State));
-            if (!string.IsNullOrEmpty(status.Detail)) text.Append(" (").Append(status.Detail).Append(")");
+            text.Append("Orcel runtime ").Append(status.Version).Append(" is installed. ").Append(status.Tunnel());
+            if (!string.IsNullOrEmpty(status.Detail) && !status.Unconfigured())
+                text.Append(" (").Append(status.Detail).Append(")");
             text.Append(".");
             if (status.Workspaces.HasValue) text.Append(" Workspaces configured: ").Append(status.Workspaces.Value).Append(".");
+            if (status.Workspaces == 0)
+                text.Append(" Next: add the folder Orcel may work in with `orcel workspace add <id> <folder>` in a terminal.");
             return text.ToString();
         }
 
@@ -473,8 +1036,14 @@ namespace Orcel.DesktopPreview
         private readonly TextBlock hostState = new TextBlock();
         private readonly TextBlock deviceState = new TextBlock();
         private readonly ScrollViewer conversation = new ScrollViewer();
+        private readonly CancellationTokenSource watching = new CancellationTokenSource();
         private bool refreshing;
         private int messages;
+        // #288: each message keeps its own visuals (text layout, bubble,
+        // automation peer) for the life of the window; measured on CI, the
+        // native footprint grew by about 0.2 MB per query and was never
+        // released. The transcript keeps the most recent messages only.
+        internal const int MaxTranscriptMessages = 200;
 
         internal MainWindow()
         {
@@ -488,7 +1057,21 @@ namespace Orcel.DesktopPreview
             FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
             AutomationProperties.SetAutomationId(this, "OrcelMainWindow");
             Content = Layout();
-            Loaded += delegate { RefreshHost(); commandBox.Focus(); };
+            Loaded += delegate { RefreshHost(); commandBox.Focus(); WatchTasks(); };
+            Closed += delegate { watching.Cancel(); };
+        }
+
+        /// Task updates, as they happen. Invoke, not BeginInvoke: a window that can't
+        /// keep up slows the reader, and orceld then sends a snapshot instead of
+        /// the window's queue growing.
+        private void WatchTasks()
+        {
+            CancellationToken stop = watching.Token;
+            Task.Run(delegate {
+                TaskWatcher.Run(text => {
+                    if (!stop.IsCancellationRequested) Dispatcher.Invoke(delegate { AddMessage(false, text); });
+                }, stop);
+            });
         }
 
         private static TextBlock Text(string value, double size, Brush brush, bool bold)
@@ -574,7 +1157,7 @@ namespace Orcel.DesktopPreview
             Border transcriptCard = Card(conversation, Colors.Sidebar, new Thickness(14));
             Grid.SetRow(transcriptCard, 1);
             center.Children.Add(transcriptCard);
-            AddMessage(false, "Welcome to Orcel. Type help, status, version, doctor, devices, or files. Other requests are not executed or sent anywhere.");
+            AddMessage(false, "Welcome to Orcel. Type help, status, version, doctor, devices, files, or tasks. Other requests are not executed or sent anywhere.");
 
             Grid composer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
             composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -615,6 +1198,7 @@ namespace Orcel.DesktopPreview
             deviceState.Text = "Checking runtime";
             deviceState.FontSize = 12; deviceState.Foreground = Colors.Muted;
             deviceState.Margin = new Thickness(0, 6, 0, 0);
+            deviceState.TextWrapping = TextWrapping.Wrap;
             AutomationProperties.SetAutomationId(deviceState, "DeviceState");
             host.Children.Add(deviceState);
             Border deviceCard = Card(host, Colors.Sidebar, new Thickness(16));
@@ -639,6 +1223,11 @@ namespace Orcel.DesktopPreview
             TextBlock ai = Text("Hala One + Reliance: not connected in this preview.", 12, Colors.Muted, false);
             ai.Margin = new Thickness(0, 8, 0, 14);
             right.Children.Add(ai);
+            right.Children.Add(Text("SHELL AND PROCESSES", 10, Colors.Muted, true));
+            TextBlock shell = Text("Unavailable: shell and process sessions are not armed in this build.", 12, Colors.Muted, false);
+            shell.Margin = new Thickness(0, 8, 0, 14);
+            AutomationProperties.SetAutomationId(shell, "ShellState");
+            right.Children.Add(shell);
             right.Children.Add(Text("OTHER COMPUTERS", 10, Colors.Muted, true));
             TextBlock pair = Text("No paired devices are shown because pairing is not integrated in this preview.", 12, Colors.Muted, false);
             pair.Margin = new Thickness(0, 8, 0, 10);
@@ -666,7 +1255,16 @@ namespace Orcel.DesktopPreview
             bubble.MaxWidth = 560;
             item.Children.Add(bubble);
             transcript.Children.Add(item);
+            while (transcript.Children.Count > MaxTranscriptMessages) transcript.Children.RemoveAt(0);
             conversation.ScrollToEnd();
+        }
+
+        /// #288: the transcript stays bounded however long the window is used.
+        internal static bool TranscriptStaysBounded()
+        {
+            MainWindow window = new MainWindow();
+            for (int i = 0; i < MaxTranscriptMessages + 50; i++) window.AddMessage(i % 2 == 0, "message " + i);
+            return window.transcript.Children.Count == MaxTranscriptMessages;
         }
 
         private void Send()
@@ -677,11 +1275,13 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, help. These operations are read-only. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, help. These operations are read-only. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
                 InspectFolder();
+            else if (kind == SafeCommand.Tasks)
+                ShowTasks();
             else if (CommandRouter.CanInvokeInstalledHost(kind))
                 QueryHost(kind);
             else
@@ -746,6 +1346,13 @@ namespace Orcel.DesktopPreview
             }
         }
 
+        private async void ShowTasks()
+        {
+            AddMessage(false, "Reading report tasks from the local runtime...");
+            try { AddMessage(false, await Task.Run(delegate { return Timeline.Read(); })); }
+            catch (Exception) { AddMessage(false, "The read-only task query failed unexpectedly. No action was performed."); }
+        }
+
         private async void InspectFolder()
         {
             string folder;
@@ -762,6 +1369,56 @@ namespace Orcel.DesktopPreview
 
     internal static class Program
     {
+        private static Dictionary<string, object> OneTaskList()
+        {
+            return AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[{\"task_id\":\"rpt-9\"}]}}");
+        }
+
+        private static string TaskEvent(long seq, string state, string id)
+        {
+            return "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"event\":{\"seq\":" + seq + ",\"epoch\":\"e1\",\"run_id\":\"" + id + "\",\"step_id\":\"s1\",\"kind\":\"task.updated\",\"at_ms\":1,\"data\":{\"task_kind\":\"report\",\"state\":\"" + state + "\"}}}";
+        }
+
+        private static void WatcherSelfTest(Action<bool, string> expect)
+        {
+            const string Ack = "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":true,\"result\":{\"epoch\":\"e1\",\"head_seq\":5,\"after_seq\":0}}";
+            bool finished;
+            expect(AppApi.SubscribeFrame(0, null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"events.subscribe\",\"params\":{\"after_seq\":0}}\n", "a first subscription has no epoch");
+            expect(AppApi.SubscribeFrame(7, "e1").Contains("\"params\":{\"after_seq\":7,\"epoch\":\"e1\"}"), "a cursor carries its epoch");
+
+            WatchCursor cursor = new WatchCursor();
+            expect(TaskWatcher.Apply(Ack, cursor, out finished) == null && !finished && cursor.Epoch == "e1", "the acknowledgement names the epoch");
+            expect(TaskWatcher.Apply(TaskEvent(5, "verified", "rpt-old"), cursor, out finished) == null && !finished && cursor.AfterSeq == 5, "what happened before watching is history, and the cursor still moves");
+            expect(TaskWatcher.Apply(TaskEvent(6, "proposed", "rpt-1"), cursor, out finished) == "Task rpt-1: report proposed, waiting for approval." && !finished && cursor.AfterSeq == 6, "a new update is shown");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"heartbeat\":{\"head_seq\":6}}", cursor, out finished) == null && !finished && cursor.AfterSeq == 6, "a heartbeat shows nothing");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"event\":{\"seq\":7,\"epoch\":\"e1\",\"run_id\":null,\"step_id\":null,\"kind\":\"request.completed\",\"at_ms\":1,\"data\":{}}}", cursor, out finished) == null && cursor.AfterSeq == 7, "other events move the cursor and show nothing");
+            expect(TaskWatcher.Apply(TaskEvent(8, "no_such_state", "rpt-1"), cursor, out finished) == "Task rpt-1: unknown state.", "only known states are named");
+            string shown = TaskWatcher.Apply(TaskEvent(9, "verified", "x\u2028\u2022 Task rpt-9: verified\u202E"), cursor, out finished);
+            expect(shown != null && shown.Split('\n').Length == 1 && !shown.Contains("\u2028") && !shown.Contains("\u202E"), "a task id can't add a line or reorder the display");
+
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"event\":{\"seq\":10,\"epoch\":\"e2\",\"run_id\":null,\"step_id\":null,\"kind\":\"snapshot\",\"at_ms\":1,\"data\":{\"reason\":\"epoch\",\"resubscribe\":{\"after_seq\":10,\"epoch\":\"e2\"}}}}", cursor, out finished) == null && finished && cursor.AfterSeq == 10 && cursor.Epoch == "e2", "a snapshot sets the next cursor and ends the connection");
+            expect(cursor.Refresh, "a snapshot means updates may have been missed");
+            cursor.Refresh = false;
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":true,\"result\":{\"epoch\":\"e9\",\"head_seq\":99,\"after_seq\":10}}", cursor, out finished) == null && cursor.Epoch == "e2", "with a cursor, the acknowledgement doesn't change its epoch");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"BUSY\"}}", cursor, out finished) == null && finished && cursor.AfterSeq == 10 && cursor.Epoch == "e2" && !cursor.Refresh, "busy keeps the cursor, so nothing is replayed");
+            expect(TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"INVALID_REQUEST\"}}", cursor, out finished) == null && finished && cursor.AfterSeq == 0 && cursor.Epoch == null && cursor.QuietThrough == -1 && cursor.Refresh, "a refused cursor starts again, showing the list rather than replaying");
+            foreach (string bad in new[] { "not json", "[]", "{\"v\":\"other/1\",\"event\":{}}", "{\"v\":\"orcel-app-api/1\",\"event\":{\"kind\":\"task.updated\"}}" })
+            {
+                expect(TaskWatcher.Apply(bad, new WatchCursor(), out finished) == null && finished, "an unusable frame ends the connection: " + bad);
+            }
+            // After a restart of orceld, an update with a low seq is still news.
+            WatchCursor restarted = new WatchCursor { QuietThrough = 5, AfterSeq = 5 };
+            TaskWatcher.Apply("{\"v\":\"orcel-app-api/1\",\"event\":{\"seq\":9,\"kind\":\"snapshot\",\"data\":{\"resubscribe\":{\"after_seq\":0,\"epoch\":\"e3\"}}}}", restarted, out finished);
+            expect(restarted.QuietThrough == -1 || TaskWatcher.Apply(TaskEvent(1, "proposed", "rpt-2"), restarted, out finished) != null, "a new run's updates are shown");
+
+            byte[] two = Encoding.UTF8.GetBytes("one\ntwo\npart");
+            FrameReader reader = new FrameReader(new MemoryStream(two));
+            expect(reader.Next(1000, CancellationToken.None) == "one" && reader.Next(1000, CancellationToken.None) == "two" && reader.Next(1000, CancellationToken.None) == null, "frames sharing a read are all kept; an unfinished one isn't a frame");
+            byte[] huge = new byte[AppApi.MaxFrameBytes + 1];
+            for (int i = 0; i < huge.Length; i++) huge[i] = (byte)'x';
+            expect(new FrameReader(new MemoryStream(huge)).Next(1000, CancellationToken.None) == null, "a frame over the bound is refused");
+        }
+
         private static int SelfTest()
         {
             List<string> failures = new List<string>();
@@ -771,13 +1428,58 @@ namespace Orcel.DesktopPreview
             expect(CommandRouter.Classify("rm -rf /") == SafeCommand.Unsupported, "shell text rejected");
             expect(CommandRouter.Classify("status; calc.exe") == SafeCommand.Unsupported, "chained text rejected");
             expect(CommandRouter.CliArguments(SafeCommand.Files) == null, "files never reaches the runtime");
+            expect(CommandRouter.Classify(" Tasks ") == SafeCommand.Tasks, "tasks routes");
+            expect(CommandRouter.CliArguments(SafeCommand.Tasks) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Tasks), "tasks never runs the CLI");
+            expect(AppApi.PipeName() != null && AppApi.PipeName().StartsWith("orcel-S-1-") && AppApi.PipeName().Contains("-app"), "app API pipe is this user's");
+            expect(Timeline.Text(OneTaskList(), new List<Dictionary<string, object>> { AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"x\u2028• \\\"y\\\": verified by the independent checker\u202E\",\"state\":\"proposed\",\"steps\":[]}}") }).Split('\n').Length == 3, "a planner title cannot add display rows");
+            expect(Timeline.Safe('\u2028') == ' ' && Timeline.Safe('\u202E') == ' ' && Timeline.Safe('\u2066') == ' ' && Timeline.Safe('"') == '\'' && Timeline.Safe('é') == 'é', "separators, bidi and quotes are neutralised");
+            expect(Timeline.Text(OneTaskList(), new List<Dictionary<string, object>> { AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"\\ud83d\\ude00 ok\",\"state\":\"proposed\"}}") }).Contains("\U0001F600 ok"), "emoji survive");
+            expect(AppApi.ProcessRunsAsThisUser((uint)Process.GetCurrentProcess().Id), "this process runs as this user at normal integrity");
+            expect(!AppApi.ProcessRunsAsThisUser(4), "the System process is not this user");
+            string savedInstance = Environment.GetEnvironmentVariable("ORCEL_APP_API_INSTANCE");
+            Environment.SetEnvironmentVariable("ORCEL_APP_API_INSTANCE", "..\\other");
+            expect(AppApi.PipeName() == null && AppApi.Call("task.list", null) == null, "an invalid instance is refused, not replaced");
+            Environment.SetEnvironmentVariable("ORCEL_APP_API_INSTANCE", savedInstance);
+            expect(AppApi.InstanceSuffix("ci-1") == "ci-1" && AppApi.InstanceSuffix("..\\x") == null && AppApi.InstanceSuffix("A") == null && AppApi.InstanceSuffix(new string('a', 33)) == null, "instance suffix is validated");
+            bool refused = false;
+            try { AppApi.RequestFrame("task.stop", "rpt-1"); } catch (ArgumentException) { refused = true; }
+            expect(refused, "only read-only app API methods are sent");
+            expect(AppApi.RequestFrame("task.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"task.list\",\"params\":{}}\n", "task.list frame");
+            expect(AppApi.RequestFrame("task.get", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.get frame");
+            expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"UNKNOWN_TASK\"}}") == null, "an error frame is not a result");
+            WatcherSelfTest(expect);
+            expect(AppApi.ParseReply("{\"v\":\"other/1\",\"ok\":true,\"result\":{}}") == null, "another protocol is refused");
+            expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[]}}") != null, "an ok frame parses");
+            expect(Timeline.Text(null, new List<Dictionary<string, object>>()).StartsWith("Task timeline unavailable"), "no answer is reported, not hidden");
+            Dictionary<string, object> list = AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"max_tasks\":64,\"tasks\":[{\"task_id\":\"rpt-2\"},{\"task_id\":\"rpt-1\"}]}}");
+            Dictionary<string, object> two = AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"task_id\":\"rpt-2\",\"title\":\"Q3\\nsummary\",\"state\":\"verified\",\"report\":{\"destination\":\"out/q3.md\"},\"steps\":[{\"kind\":\"observe\",\"outcome\":\"ok\"},{\"kind\":\"approval\",\"outcome\":\"approved\"},{\"kind\":\"check\",\"outcome\":\"pass\"}]}}");
+            string timeline = Timeline.Text(list, new List<Dictionary<string, object>> { two, null });
+            expect(timeline.Contains("• verified by the independent checker: \"Q3 summary\" → out/q3.md"), "a verified task is shown with its report, state first");
+            expect(timeline.Contains("steps: observe ok · approval approved · check pass"), "steps are shown in order");
+            expect(timeline.Contains("rpt-1: details unavailable"), "a missing detail is reported");
+            expect(timeline.Contains("cannot start, approve or stop"), "the timeline states it is read-only");
+            expect(Timeline.Describe("proposed").Contains("waiting for approval") && Timeline.Describe("surprise") == "unknown state", "states are described truthfully");
+            expect(Timeline.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[]}}"), new List<Dictionary<string, object>>()).StartsWith("No report tasks"), "an empty run says so");
             expect(!CommandRouter.CanInvokeInstalledHost(SafeCommand.Unsupported), "unsupported never runs");
             expect(Path.IsPathRooted(LocalHost.PathToCompatCli()), "runtime path is rooted");
 
             RuntimeStatus installed = Interpret.Status(new CliResult { ExitCode = 0, Stdout =
                 "{\"installed\":\"0.2.0\",\"ok\":true,\"runtime\":{\"detail\":\"no supervisor record\",\"state\":\"not_running\"},\"tunnel_configured\":false,\"workspaces\":0}" });
             expect(installed.Availability == RuntimeAvailability.Installed && installed.Version == "0.2.0", "status parses");
-            expect(Interpret.StatusMessage(installed).Contains("not running (no supervisor record)"), "status message is truthful");
+            expect(Interpret.StatusMessage(installed).Contains("is installed. ChatGPT tunnel not configured (optional)."), "status message is truthful");
+            expect(Interpret.StatusMessage(installed).Contains("Next: add the folder"), "no workspace names the next step");
+            expect(installed.Headline() == "Orcel runtime 0.2.0 • ChatGPT tunnel not configured (optional)", "headline names the tunnel");
+            RuntimeStatus stale = Interpret.Status(new CliResult { ExitCode = 0, Stdout =
+                "{\"installed\":\"0.2.0\",\"ok\":true,\"runtime\":{\"detail\":\"stale supervisor record\",\"state\":\"not_running\"},\"tunnel_configured\":true,\"workspaces\":1}" });
+            expect(Interpret.StatusMessage(stale).Contains("ChatGPT tunnel not running (stale supervisor record).") && !Interpret.StatusMessage(stale).Contains("Next:"), "a configured tunnel shows its detail");
+            RuntimeStatus failed = Interpret.Status(new CliResult { ExitCode = 7, Stdout =
+                "{\"ok\":false,\"error\":{\"kind\":\"state\",\"message\":\"C:\\\\x\\\\supervisor.json is corrupt\"}}" });
+            expect(failed.Availability == RuntimeAvailability.Failed && Interpret.StatusMessage(failed).Contains("supervisor.json is corrupt. No action"), "the runtime's own error is shown as a sentence");
+            expect(Interpret.Plain("a\nb\u202Ec") == "a b c.", "runtime text can't start a line or reorder the display");
+            expect(Interpret.Status(new CliResult { ExitCode = 7, Stdout = "{\"ok\":false,\"error\":{\"message\":\"\\n \"}}" }).Availability == RuntimeAvailability.Incompatible, "an empty error isn't shown as one");
+            RuntimeStatus staleUnset = Interpret.Status(new CliResult { ExitCode = 0, Stdout =
+                "{\"installed\":\"0.2.0\",\"ok\":true,\"runtime\":{\"detail\":\"stale supervisor record\",\"state\":\"not_running\"},\"tunnel_configured\":false,\"workspaces\":1}" });
+            expect(Interpret.StatusMessage(staleUnset).Contains("ChatGPT tunnel not running (stale supervisor record)."), "a stale record isn't hidden as unconfigured");
             expect(Interpret.Status(new CliResult { TimedOut = true }).Availability == RuntimeAvailability.Unresponsive, "timeout is unresponsive");
             expect(Interpret.Status(new CliResult { ExitCode = 0, Stdout = "not json" }).Availability == RuntimeAvailability.Incompatible, "garbage is incompatible");
             expect(Interpret.Status(new CliResult { ExitCode = 2, Stdout = "{\"ok\":false}" }).Availability == RuntimeAvailability.Incompatible, "error is never reported as healthy");
@@ -854,7 +1556,14 @@ namespace Orcel.DesktopPreview
         private static int Main(string[] args)
         {
             if (args.Length == 1 && args[0] == "--self-test") return SelfTest();
-            if (args.Length == 1 && args[0] == "--ui-self-test") { MainWindow window = new MainWindow(); if (window.Content == null) return 2; Console.WriteLine("Orcel WPF layout construction: PASS"); return 0; }
+            if (args.Length == 1 && args[0] == "--ui-self-test")
+            {
+                MainWindow window = new MainWindow();
+                if (window.Content == null) return 2;
+                if (!MainWindow.TranscriptStaysBounded()) { Console.WriteLine("Orcel transcript bound: FAIL"); return 3; }
+                Console.WriteLine("Orcel WPF layout construction and transcript bound: PASS");
+                return 0;
+            }
             System.Windows.Application app = new System.Windows.Application();
             // A bug must never take the window down silently; report and continue.
             bool reported = false;

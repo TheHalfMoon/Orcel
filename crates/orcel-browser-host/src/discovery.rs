@@ -2,15 +2,22 @@
 //!
 //! Orcel never bundles a browser and never downloads one. Discovery finds
 //! an installed Chromium-family engine, verifies its kind, version, and
-//! (on Windows) Authenticode signature, and refuses everything else with
-//! typed unavailable. There is no personal-browser fallback.
+//! publisher signature (Authenticode on Windows; on macOS, XP-14, the app
+//! bundle's code signature against the vendor's designated requirement),
+//! and refuses everything else with typed unavailable. There is no
+//! personal-browser fallback.
 
 use crate::error::{HostError, UnavailableReason};
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-#[cfg(not(windows))]
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(all(not(windows), not(target_os = "macos")))]
+use std::time::Instant;
+
+#[cfg(target_os = "macos")]
+#[path = "discovery_macos.rs"]
+mod macos;
 
 /// Supported engine kinds. Anything else is unsupported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,8 +29,14 @@ pub enum EngineKind {
 impl EngineKind {
     fn executable_names(&self) -> &'static [&'static str] {
         match self {
-            Self::Edge => &["msedge.exe", "msedge"],
-            Self::Chromium => &["chrome.exe", "chrome", "chromium", "chromium-browser"],
+            Self::Edge => &["msedge.exe", "msedge", "Microsoft Edge"],
+            Self::Chromium => &[
+                "chrome.exe",
+                "chrome",
+                "chromium",
+                "chromium-browser",
+                "Google Chrome",
+            ],
         }
     }
 }
@@ -34,16 +47,24 @@ impl EngineKind {
 /// every confinement, policy and network-endpoint probe re-runs per
 /// version, because a new engine can change how it honours a flag.
 /// - Edge 155: the evidence host, with the #324 leak control required.
+/// - Edge 156: the evidence host after its update to 156.0.4314.x: full
+///   native-suite passes with the #324 leak control required, after the
+///   profile-cleanup race (#483) was fixed by #497 (runs recorded in the
+///   engine-attachment decision, A10).
 /// - Chrome 154: qualified by earlier CI evidence.
-/// - Chrome 155: updated windows-latest runner; qualification requires this
-///   change's full native suite and endpoint probes to pass before merge.
+/// - Chrome 155: qualified by earlier CI evidence.
+/// - Chrome 156: windows-latest image 20261021 (Chromium 156.0.8078.48):
+///   four full native-suite passes with the endpoint probes on #431's head
+///   (runs recorded in the engine-attachment decision, A10).
 ///
 /// A new major is added only by a PR whose own native-suite run passes on
 /// it. Any other kind or major is refused at launch with a typed error.
 pub const QUALIFIED_WORKER_ENGINES: &[(EngineKind, u32)] = &[
     (EngineKind::Edge, 155),
+    (EngineKind::Edge, 156),
     (EngineKind::Chromium, 154),
     (EngineKind::Chromium, 155),
+    (EngineKind::Chromium, 156),
 ];
 
 /// A verified engine executable.
@@ -77,7 +98,8 @@ impl Engine {
     }
 
     /// A10: verify the engine file again, now, exactly as discovery did
-    /// (name, presence, version resource and, on Windows, Authenticode), and
+    /// (name, presence, version and the publisher signature: Authenticode on
+    /// Windows, the bundle's code signature on macOS), and
     /// require the same kind and version. An engine updated or replaced in
     /// place since discovery is refused, so the window and the signature
     /// are checked against the file that is about to run.
@@ -104,8 +126,9 @@ impl Engine {
     }
 
     /// Whether the OS publisher check passed. Always true on Windows
-    /// (WinVerifyTrust is mandatory there); elsewhere the path and
-    /// version checks apply and this reports false.
+    /// (WinVerifyTrust is mandatory there) and on macOS (the bundle's code
+    /// signature must satisfy the vendor's designated requirement); on
+    /// Linux the path and version checks apply and this reports false.
     pub fn publisher_verified(&self) -> bool {
         self.publisher_verified
     }
@@ -184,14 +207,32 @@ pub fn discover_engine(search: &SearchConfig) -> Result<Engine, HostError> {
     if search.system {
         candidates.extend(platform_candidates());
     }
+    first_verified(candidates, verify_candidate)
+}
+
+/// The first candidate that verifies. A candidate refused as unavailable is
+/// skipped; if none verifies and one ran out of time being verified, that
+/// is the answer (#503: a timeout is never reported as "no engine").
+fn first_verified(
+    candidates: Vec<PathBuf>,
+    verify: impl Fn(&Path) -> Result<Engine, HostError>,
+) -> Result<Engine, HostError> {
+    let mut timed_out = false;
     for path in candidates {
-        match verify_candidate(&path) {
+        match verify(&path) {
             Ok(engine) => return Ok(engine),
+            Err(HostError::Unavailable(UnavailableReason::VerificationTimedOut)) => {
+                timed_out = true;
+            }
             Err(HostError::Unavailable(_)) => continue,
             Err(other) => return Err(other),
         }
     }
-    Err(HostError::Unavailable(UnavailableReason::NoEngine))
+    Err(HostError::Unavailable(if timed_out {
+        UnavailableReason::VerificationTimedOut
+    } else {
+        UnavailableReason::NoEngine
+    }))
 }
 
 fn candidate_executables(root: &Path) -> Vec<PathBuf> {
@@ -211,9 +252,16 @@ fn verify_candidate(path: &Path) -> Result<Engine, HostError> {
         .and_then(|name| name.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let kind = if file_name == "msedge.exe" || file_name == "msedge" {
+    let kind = if ["msedge.exe", "msedge", "microsoft edge"].contains(&file_name.as_str()) {
         EngineKind::Edge
-    } else if ["chrome.exe", "chrome", "chromium", "chromium-browser"].contains(&file_name.as_str())
+    } else if [
+        "chrome.exe",
+        "chrome",
+        "chromium",
+        "chromium-browser",
+        "google chrome",
+    ]
+    .contains(&file_name.as_str())
     {
         EngineKind::Chromium
     } else {
@@ -283,9 +331,16 @@ pub fn probe_version(engine: &Path) -> Result<String, HostError> {
     parse_version(&version).ok_or(HostError::Unavailable(UnavailableReason::UnsupportedEngine))
 }
 
+/// XP-14: on macOS the version comes from the app bundle's Info.plist,
+/// which must name the expected bundle; nothing is run.
+#[cfg(target_os = "macos")]
+pub fn probe_version(engine: &Path) -> Result<String, HostError> {
+    macos::bundle_version(engine)
+}
+
 /// Run `<engine> --version` with a bounded wait and parse the version.
 /// The probe inherits only a scrubbed environment.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub fn probe_version(engine: &Path) -> Result<String, HostError> {
     let mut child = std::process::Command::new(engine)
         .arg("--version")
@@ -321,6 +376,25 @@ pub fn probe_version(engine: &Path) -> Result<String, HostError> {
     }
 }
 
+/// XP-14: the string value of `key` in an XML property list (the first
+/// `<key>` with that exact text, followed by a `<string>`). Binary or
+/// malformed lists give `None`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn plist_string(xml: &str, key: &str) -> Option<String> {
+    if !xml.trim_start().starts_with("<?xml") {
+        return None;
+    }
+    let marker = format!("<key>{key}</key>");
+    let after = &xml[xml.find(&marker)? + marker.len()..];
+    let after = after.trim_start();
+    let value = after.strip_prefix("<string>")?;
+    let end = value.find("</string>")?;
+    let value = &value[..end];
+    // Entities and nested markup are not expected in these values.
+    (!value.contains(['<', '&']) && !value.is_empty() && value.len() <= 256)
+        .then(|| value.to_owned())
+}
+
 fn parse_version(text: &str) -> Option<String> {
     let mut run = String::new();
     let mut runs = Vec::new();
@@ -336,12 +410,12 @@ fn parse_version(text: &str) -> Option<String> {
 
 /// Minimal scrubbed environment for the non-Windows version probe. No
 /// caller, user, or Orcel secret variable is inherited.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn probe_env() -> Vec<(OsString, OsString)> {
     platform_probe_env()
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn platform_probe_env() -> Vec<(OsString, OsString)> {
     vec![
         (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
@@ -370,7 +444,13 @@ fn platform_candidates() -> Vec<PathBuf> {
     out
 }
 
-#[cfg(not(windows))]
+/// XP-14: stable-channel app bundles in /Applications and ~/Applications.
+#[cfg(target_os = "macos")]
+fn platform_candidates() -> Vec<PathBuf> {
+    macos::candidates()
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn platform_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     for dir in [
@@ -496,12 +576,519 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
     Ok(true)
 }
 
-#[cfg(not(windows))]
-fn verify_publisher(_path: &Path) -> Result<bool, HostError> {
-    // No OS publisher check is implemented off Windows: path, kind, and
-    // version checks apply and the engine reports unverified. Recorded as
-    // a platform boundary in the SG-000074 note.
-    Ok(false)
+/// XP-14: the app bundle's code signature must satisfy the vendor's
+/// designated requirement (Apple-anchored, the vendor's team, the bundle's
+/// identifier); otherwise the engine is refused.
+#[cfg(target_os = "macos")]
+fn verify_publisher(path: &Path) -> Result<bool, HostError> {
+    if !macos::verify_signature(path)? {
+        return Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine));
+    }
+    Ok(true)
+}
+
+/// XP-14 (Linux): the engine is verified when its path is its own real path
+/// (not a link to it), belongs to the vendor's own package
+/// (`google-chrome-stable` or `microsoft-edge-stable`, from `dpkg -S`, else
+/// `rpm -qf`), and that package's installed files are unmodified against
+/// the package database (`dpkg --verify`, else `rpm -V`; changed conffiles
+/// are configuration and allowed). A vendor package whose files fail that
+/// check is refused. Anything else (another package, no package manager,
+/// an unowned file, a link) stays unverified, as before: weaker than
+/// Authenticode or a macOS code signature, because the database records
+/// only file digests (md5 for dpkg) and is only as trustworthy as the root
+/// account that wrote it (recorded in the SG-000074 note).
+///
+/// SG-000115 S-07 hardening: the engine, every directory above it and
+/// everything in its install directory must also be owned by root and
+/// writable by no one else (`install_tree_trusted`). The package check is a
+/// moment in time; a file or directory another account can write could be
+/// swapped after it. The tree check can only turn a pass into "unverified":
+/// a refusal stays a refusal.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn verify_publisher(path: &Path) -> Result<bool, HostError> {
+    verify_publisher_in(path, &PackageDb::production())
+}
+
+/// Where the Linux verification looks: the system's package database and
+/// root ownership in production; a private dpkg root (`--root`) and the
+/// test account in the fixture tests.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+struct PackageDb {
+    /// `None` in production. In tests, a private dpkg root: paths are
+    /// queried relative to it, and the ownership walk stops at it.
+    #[cfg(test)]
+    root: Option<PathBuf>,
+    /// The account that must own the install tree: root (0) in production.
+    owner: u32,
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+impl PackageDb {
+    /// The fixture tests' private dpkg root; always `None` outside tests,
+    /// where the field does not exist.
+    fn test_root(&self) -> Option<&PathBuf> {
+        #[cfg(test)]
+        {
+            self.root.as_ref()
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
+    }
+
+    fn production() -> Self {
+        Self {
+            #[cfg(test)]
+            root: None,
+            owner: 0,
+        }
+    }
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn verify_publisher_in(path: &Path, db: &PackageDb) -> Result<bool, HostError> {
+    let Ok(real) = path.canonicalize() else {
+        return Ok(false);
+    };
+    // A link (say a `chrome` in a writable PATH directory) can be swapped
+    // after the check, so only the real file itself can be verified.
+    if real != path {
+        return Ok(false);
+    }
+    // The engine's own install directory: what it runs is there.
+    let Some(code_path) = real.parent() else {
+        return Ok(false);
+    };
+    // Computed first, applied last: it can only turn a verified engine into
+    // an unverified one. A vendor package whose files fail the package check
+    // is still refused (`UnsupportedEngine`), exactly as before.
+    let tree_ok = install_tree_trusted(&real, code_path, db);
+    // The paths as the package database records them.
+    let (real_text, code_dir) = match db.test_root() {
+        None => (
+            real.to_string_lossy().into_owned(),
+            code_path.to_string_lossy().into_owned(),
+        ),
+        Some(root) => {
+            let Ok(root) = root.canonicalize() else {
+                return Ok(false);
+            };
+            let (Ok(file), Ok(dir)) = (real.strip_prefix(&root), code_path.strip_prefix(&root))
+            else {
+                return Ok(false);
+            };
+            (
+                format!("/{}", file.to_string_lossy()),
+                format!("/{}", dir.to_string_lossy()),
+            )
+        }
+    };
+    let root_flag = db
+        .test_root()
+        .map(|root| format!("--root={}", root.display()));
+    let admin_flag = db
+        .test_root()
+        .map(|root| format!("--admindir={}", root.join("var/lib/dpkg").display()));
+    let query: Vec<&str> = admin_flag
+        .iter()
+        .map(String::as_str)
+        .chain(["-S", real_text.as_str()])
+        .collect();
+    // #503: an ownership query that runs out of time is reported as such,
+    // never as "not owned" (which would quietly mean unverified).
+    match run_package_tool("dpkg-query", &query, QUERY_DEADLINE) {
+        PackageRun::Finished {
+            success: true,
+            output,
+        } => {
+            let Some(package) = dpkg_owner(&output, &real_text) else {
+                return Ok(false);
+            };
+            if vendor_package(&package).is_none() {
+                return Ok(false);
+            }
+            let verify: Vec<&str> = root_flag
+                .iter()
+                .map(String::as_str)
+                .chain(["--verify", package.as_str()])
+                .collect();
+            return dpkg_verdict(
+                run_package_tool("dpkg", &verify, VERIFY_DEADLINE),
+                &code_dir,
+            )
+            .map(|verified| verified && tree_ok);
+        }
+        PackageRun::TimedOut => return Err(verification_timed_out()),
+        PackageRun::Finished { .. } | PackageRun::Unavailable => {}
+    }
+    // The fixture tests use a private dpkg root only; rpm is never asked
+    // about one.
+    if db.test_root().is_some() {
+        return Ok(false);
+    }
+    match run_package_tool(
+        "rpm",
+        &["-qf", "--queryformat", "%{NAME}\\n", &real_text],
+        QUERY_DEADLINE,
+    ) {
+        PackageRun::Finished {
+            success: true,
+            output,
+        } => {
+            let package = output.trim();
+            if output.lines().count() != 1 || vendor_package(package).is_none() {
+                return Ok(false);
+            }
+            rpm_verdict(
+                run_package_tool("rpm", &["-V", package], VERIFY_DEADLINE),
+                &code_dir,
+            )
+            .map(|verified| verified && tree_ok)
+        }
+        PackageRun::TimedOut => Err(verification_timed_out()),
+        PackageRun::Finished { .. } | PackageRun::Unavailable => Ok(false),
+    }
+}
+
+/// At most this many entries are walked in an install directory; more
+/// fails closed (Chrome's has about 1,500).
+#[cfg(all(not(windows), not(target_os = "macos")))]
+const MAX_INSTALL_ENTRIES: usize = 20_000;
+
+/// SG-000115 S-07: whether the engine can only have been placed, and can
+/// only be changed, by `db.owner` (root in production).
+/// - The engine and every directory above it, up to `/` (or the fixture
+///   root), are owned by `db.owner`, are not links, and are writable by
+///   neither group nor others.
+/// - Every entry in the install directory, walked without following links
+///   and bounded, is owned by `db.owner` and writable by neither group nor
+///   others; a link there must stay inside the install directory.
+///
+/// Any failure to read fails closed.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn install_tree_trusted(engine: &Path, code_dir: &Path, db: &PackageDb) -> bool {
+    install_tree_problem(engine, code_dir, db).is_none()
+}
+
+/// The first reason the install tree is not trusted (the path and what is
+/// wrong with it), or `None`. Kept separate so tests and CI can say which
+/// entry failed.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn install_tree_problem(engine: &Path, code_dir: &Path, db: &PackageDb) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let describe = |path: &Path, meta: &std::fs::Metadata| {
+        format!(
+            "{}: uid {} mode {:o}{}",
+            path.display(),
+            meta.uid(),
+            meta.mode() & 0o7777,
+            if meta.file_type().is_symlink() {
+                " (link)"
+            } else {
+                ""
+            }
+        )
+    };
+    let safe = |meta: &std::fs::Metadata| meta.uid() == db.owner && meta.mode() & 0o022 == 0;
+    let stop = db.test_root().and_then(|root| root.canonicalize().ok());
+    let mut current = Some(engine);
+    while let Some(path) = current {
+        if stop.as_deref() == Some(path) {
+            break;
+        }
+        let Ok(meta) = std::fs::symlink_metadata(path) else {
+            return Some(format!("{}: unreadable", path.display()));
+        };
+        if meta.file_type().is_symlink() || !safe(&meta) {
+            return Some(format!("ancestor {}", describe(path, &meta)));
+        }
+        current = path.parent();
+    }
+    let mut stack = vec![code_dir.to_path_buf()];
+    let mut walked = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Some(format!("{}: unreadable directory", dir.display()));
+        };
+        for entry in entries {
+            walked += 1;
+            if walked > MAX_INSTALL_ENTRIES {
+                return Some(format!("more than {MAX_INSTALL_ENTRIES} entries"));
+            }
+            let Ok(entry) = entry else {
+                return Some(format!("{}: unreadable entry", dir.display()));
+            };
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                return Some(format!("{}: unreadable", path.display()));
+            };
+            if meta.file_type().is_symlink() {
+                // The link itself must be ours, and every hop of its chain
+                // must stay inside the install directory (each target is
+                // then walked too).
+                if meta.uid() != db.owner || !link_stays_inside(&path, code_dir) {
+                    let target = std::fs::read_link(&path)
+                        .map(|t| t.display().to_string())
+                        .unwrap_or_default();
+                    return Some(format!("{} -> {target}", describe(&path, &meta)));
+                }
+                continue;
+            }
+            if !safe(&meta) {
+                return Some(describe(&path, &meta));
+            }
+            if meta.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    None
+}
+
+/// Whether every hop of the link chain starting at `link` stays inside
+/// `code_dir`: each target must be relative and made only of plain names
+/// (no `/` root, no `..`), and the chain must end within a few hops at an
+/// existing entry. A chain through any outside path could be re-pointed
+/// after the check.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn link_stays_inside(link: &Path, code_dir: &Path) -> bool {
+    use std::path::Component;
+    let mut current = link.to_path_buf();
+    for _ in 0..8 {
+        let Ok(target) = std::fs::read_link(&current) else {
+            return false;
+        };
+        if !target
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+        {
+            return false;
+        }
+        let Some(dir) = current.parent() else {
+            return false;
+        };
+        current = dir.join(target);
+        if !current.starts_with(code_dir) {
+            return false;
+        }
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => continue,
+            Ok(_) => return true,
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+/// #503: how long a package ownership query (`dpkg-query -S`, `rpm -qf`)
+/// may take. It reads only the package database's file lists.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+const QUERY_DEADLINE: Duration = Duration::from_secs(15);
+/// #503: how long a full package verification (`dpkg --verify`, `rpm -V`)
+/// may take. It hashes every installed file of the package (hundreds of MB
+/// for Chrome or Edge). Measured on a local NVMe disk for a 292 MB,
+/// 1519-file package: 0.7 s warm, 1.3-1.9 s with a cold page cache, 2.2-2.5
+/// s cold under heavy CPU and I/O load; on a hosted CI runner's network disk
+/// under parallel tests it once ran past 15 s. The check itself is never
+/// shortened or skipped to fit a deadline.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+const VERIFY_DEADLINE: Duration = Duration::from_secs(120);
+
+/// One package tool run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+enum PackageRun {
+    /// It exited; `success` is its exit status, `output` its stdout.
+    Finished { success: bool, output: String },
+    /// It ran past its deadline and was killed.
+    TimedOut,
+    /// It is not installed, could not start, or printed more than the
+    /// output bound.
+    Unavailable,
+}
+
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn verification_timed_out() -> HostError {
+    HostError::Unavailable(UnavailableReason::VerificationTimedOut)
+}
+
+/// The verdict of `dpkg --verify` for a vendor package. It exits 0 even
+/// when it reports changes, so its report decides; a nonzero exit is a real
+/// error. Anything but a clean report is refused as an untrusted engine; a
+/// timeout is reported as a timeout.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn dpkg_verdict(run: PackageRun, code_dir: &str) -> Result<bool, HostError> {
+    match run {
+        PackageRun::Finished {
+            success: true,
+            output,
+        } if verify_report_clean(&output, code_dir) => Ok(true),
+        PackageRun::TimedOut => Err(verification_timed_out()),
+        _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
+    }
+}
+
+/// The verdict of `rpm -V` for a vendor package. It exits nonzero whenever
+/// it reports any change, conffiles included, so its output decides; a
+/// nonzero exit with nothing reported is a real error (refused).
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn rpm_verdict(run: PackageRun, code_dir: &str) -> Result<bool, HostError> {
+    match run {
+        PackageRun::Finished {
+            success: true,
+            output,
+        } if output.trim().is_empty() => Ok(true),
+        PackageRun::Finished {
+            success: false,
+            output,
+        } if !output.trim().is_empty() && verify_report_clean(&output, code_dir) => Ok(true),
+        PackageRun::TimedOut => Err(verification_timed_out()),
+        _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
+    }
+}
+
+/// XP-14 (Linux): the vendor packages whose files may be a verified engine.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn vendor_package(name: &str) -> Option<EngineKind> {
+    match name {
+        "google-chrome-stable" => Some(EngineKind::Chromium),
+        "microsoft-edge-stable" => Some(EngineKind::Edge),
+        _ => None,
+    }
+}
+
+/// The single package `dpkg -S` names for exactly `path` (`pkg: path`, or
+/// `pkg:arch: path`); diversions and several owners give `None`.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn dpkg_owner(output: &str, path: &str) -> Option<String> {
+    let mut owners = output
+        .lines()
+        .filter_map(|line| line.strip_suffix(path)?.strip_suffix(": "));
+    let owner = owners.next()?;
+    if owners.next().is_some() || owner.contains(',') || owner.starts_with("diversion") {
+        return None;
+    }
+    let name = owner.split(':').next()?.trim();
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// Whether a `dpkg --verify` or `rpm -V` report leaves the engine's code
+/// intact. Each line names one changed or missing file (`??5?????? c
+/// /etc/x`, `missing     /etc/y`, `S.5....T.  c /etc/z`). A file outside
+/// the engine's install directory `code_dir` (a conffile, a cron job, a
+/// menu entry) is not what the engine runs (CI images, for one, delete
+/// Chrome's `/etc/cron.daily` repository job). Any change inside
+/// `code_dir`, conffile or not, or a line that names no absolute path, is
+/// not clean.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn verify_report_clean(output: &str, code_dir: &str) -> bool {
+    let inside = format!("{}/", code_dir.trim_end_matches('/'));
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .all(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let Some(path) = fields.last().filter(|path| path.starts_with('/')) else {
+                return false;
+            };
+            // Inside the install directory nothing may change, conffile or
+            // not. This relies on the vendor packages keeping everything the
+            // engine runs in that one directory (true for Chrome and Edge);
+            // an engine in a shared directory such as /usr/bin would make
+            // the rule weaker.
+            !(path.starts_with(&inside) || *path == code_dir)
+        })
+}
+
+/// Run a package-database tool with the scrubbed probe environment and a
+/// bounded wait: `TimedOut` past `deadline` (the child is killed),
+/// `Unavailable` when it is absent or prints too much.
+/// Stdout is drained on its own thread (so a large answer never blocks the
+/// tool), at most 1 MiB is kept, and the child is always reaped.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn run_package_tool(program: &str, args: &[&str], deadline: Duration) -> PackageRun {
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+    const MAX_OUTPUT: u64 = 1 << 20;
+    // Its own process group, so a deadline kills everything it started: a
+    // helper still holding stdout would otherwise keep the wait open past
+    // the deadline (#503).
+    let Ok(mut child) = std::process::Command::new(program)
+        .args(args)
+        .env_clear()
+        .envs(probe_env())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+    else {
+        return PackageRun::Unavailable;
+    };
+    let Some(stdout) = child.stdout.take() else {
+        kill_tool_group(&mut child);
+        return PackageRun::Unavailable;
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut limited = stdout.take(MAX_OUTPUT + 1);
+        let _ = limited.read_to_end(&mut kept);
+        // Keep draining past the cap so the tool can finish.
+        let _ = std::io::copy(&mut limited.into_inner(), &mut std::io::sink());
+        let _ = sender.send(kept);
+    });
+    let deadline = Instant::now() + deadline;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                kill_tool_group(&mut child);
+                return PackageRun::TimedOut;
+            }
+            Err(_) => {
+                kill_tool_group(&mut child);
+                return PackageRun::Unavailable;
+            }
+        }
+    };
+    // The tool exited; its output must also end by the deadline (a helper
+    // it left behind may hold the pipe). The leader is reaped, so its group
+    // id is no longer ours to signal: the reader thread is left to end with
+    // the pipe.
+    let wait = deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_millis(500));
+    let Ok(kept) = receiver.recv_timeout(wait) else {
+        return PackageRun::TimedOut;
+    };
+    if kept.len() as u64 > MAX_OUTPUT {
+        return PackageRun::Unavailable;
+    }
+    PackageRun::Finished {
+        success: status.success(),
+        output: String::from_utf8_lossy(&kept).into_owned(),
+    }
+}
+
+/// Kill a package tool and everything in its process group, then reap it.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn kill_tool_group(child: &mut std::process::Child) {
+    extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    const SIGKILL: i32 = 9;
+    if let Ok(pgid) = i32::try_from(child.id()) {
+        // SAFETY: kill takes two integers. A negative pid addresses the
+        // process group whose leader is our own child, still unreaped here,
+        // so the group id cannot belong to anyone else.
+        let _ = unsafe { kill(-pgid, SIGKILL) };
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(windows)]
@@ -509,9 +1096,288 @@ fn app_paths_executable(name: &str) -> Option<PathBuf> {
     windows::app_paths_executable(name)
 }
 
+/// SG-000115 S-07: the Linux verifier against a real dpkg (fixture
+/// packages; test builds only).
+#[cfg(all(test, not(windows), not(target_os = "macos")))]
+#[path = "discovery_linux_tests.rs"]
+mod linux_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xp14_linux_package_answers_are_read_strictly() {
+        let chrome = "/opt/google/chrome/chrome";
+        assert_eq!(
+            dpkg_owner("google-chrome-stable: /opt/google/chrome/chrome\n", chrome).as_deref(),
+            Some("google-chrome-stable")
+        );
+        assert_eq!(
+            dpkg_owner(
+                "google-chrome-stable:amd64: /opt/google/chrome/chrome\n",
+                chrome
+            )
+            .as_deref(),
+            Some("google-chrome-stable")
+        );
+        // Another path, several owners, a diversion: no owner.
+        assert_eq!(
+            dpkg_owner(
+                "google-chrome-stable: /opt/google/chrome/chrome-sandbox\n",
+                chrome
+            ),
+            None
+        );
+        assert_eq!(
+            dpkg_owner("a, b: /opt/google/chrome/chrome\n", chrome),
+            None
+        );
+        assert_eq!(
+            dpkg_owner("diversion by x from: /opt/google/chrome/chrome\n", chrome),
+            None
+        );
+        assert_eq!(
+            vendor_package("google-chrome-stable"),
+            Some(EngineKind::Chromium)
+        );
+        assert_eq!(
+            vendor_package("microsoft-edge-stable"),
+            Some(EngineKind::Edge)
+        );
+        assert_eq!(vendor_package("chromium-browser"), None);
+        let dir = "/opt/google/chrome";
+        assert!(verify_report_clean("", dir));
+        // Configuration and files outside the install directory are not code.
+        assert!(verify_report_clean(
+            "??5?????? c /etc/default/google-chrome\n",
+            dir
+        ));
+        assert!(verify_report_clean(
+            "missing     /etc/cron.daily/google-chrome\n",
+            dir
+        ));
+        assert!(verify_report_clean("S.5....T.  c /etc/x.conf\n", dir));
+        // Any change to the engine's own files is not clean.
+        assert!(!verify_report_clean(
+            "??5??????   /opt/google/chrome/chrome\n",
+            dir
+        ));
+        assert!(!verify_report_clean(
+            "missing     /opt/google/chrome/libEGL.so\n",
+            dir
+        ));
+        assert!(!verify_report_clean(
+            "S.5....T.    /opt/google/chrome/chrome\n",
+            dir
+        ));
+        assert!(!verify_report_clean(
+            "missing     /opt/google/chrome\n",
+            dir
+        ));
+        // Even a conffile inside the install directory is a change to the engine.
+        assert!(!verify_report_clean(
+            "??5?????? c /opt/google/chrome/default.conf\n",
+            dir
+        ));
+        // A prefix that is not the directory is outside it.
+        assert!(verify_report_clean(
+            "missing     /opt/google/chrome-beta/chrome\n",
+            dir
+        ));
+        // A line naming no absolute path is not understood.
+        assert!(!verify_report_clean("error: something\n", dir));
+        verdicts_keep_a_timeout_apart_from_an_untrusted_engine(dir);
+    }
+
+    /// #503: a verification that ran out of time is `VerificationTimedOut`,
+    /// never `UnsupportedEngine` (untrusted) and never `Ok(false)`
+    /// (unverified); a clean report verifies and a dirty one is refused.
+    fn verdicts_keep_a_timeout_apart_from_an_untrusted_engine(dir: &str) {
+        fn reason(verdict: Result<bool, HostError>) -> Option<UnavailableReason> {
+            match verdict {
+                Err(HostError::Unavailable(reason)) => Some(reason),
+                _ => None,
+            }
+        }
+        let finished = |success: bool, output: &str| PackageRun::Finished {
+            success,
+            output: output.into(),
+        };
+        let changed = "??5??????   /opt/google/chrome/chrome\n";
+        // dpkg --verify
+        assert!(matches!(dpkg_verdict(finished(true, ""), dir), Ok(true)));
+        assert_eq!(
+            reason(dpkg_verdict(PackageRun::TimedOut, dir)),
+            Some(UnavailableReason::VerificationTimedOut)
+        );
+        for refused in [
+            finished(true, changed),
+            finished(false, ""),
+            PackageRun::Unavailable,
+        ] {
+            assert_eq!(
+                reason(dpkg_verdict(refused, dir)),
+                Some(UnavailableReason::UnsupportedEngine)
+            );
+        }
+        // rpm -V
+        assert!(matches!(rpm_verdict(finished(true, ""), dir), Ok(true)));
+        assert!(matches!(
+            rpm_verdict(finished(false, "S.5....T.  c /etc/x.conf\n"), dir),
+            Ok(true)
+        ));
+        assert_eq!(
+            reason(rpm_verdict(PackageRun::TimedOut, dir)),
+            Some(UnavailableReason::VerificationTimedOut)
+        );
+        for refused in [
+            finished(false, changed),
+            finished(false, ""),
+            PackageRun::Unavailable,
+        ] {
+            assert_eq!(
+                reason(rpm_verdict(refused, dir)),
+                Some(UnavailableReason::UnsupportedEngine)
+            );
+        }
+        // The two deadlines stay distinct, and verification gets the longer.
+        assert!(VERIFY_DEADLINE > QUERY_DEADLINE);
+    }
+
+    /// #503: the tool runner itself kills a tool that runs past its deadline
+    /// and says so, and tells an absent tool apart from a slow one.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn package_tools_that_run_too_long_are_reported_as_timed_out() {
+        let started = Instant::now();
+        assert_eq!(
+            run_package_tool("sh", &["-c", "sleep 30"], Duration::from_millis(300)),
+            PackageRun::TimedOut
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the slow tool was not killed"
+        );
+        // A tool that exits but leaves a helper holding stdout: the output
+        // wait ends at the deadline too.
+        let started = Instant::now();
+        assert_eq!(
+            run_package_tool(
+                "sh",
+                &["-c", "setsid sleep 30 & exit 0"],
+                Duration::from_millis(300)
+            ),
+            PackageRun::TimedOut
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "a helper holding the output kept the wait open"
+        );
+        assert_eq!(
+            run_package_tool("orcel-no-such-package-tool", &[], QUERY_DEADLINE),
+            PackageRun::Unavailable
+        );
+        assert_eq!(
+            run_package_tool("sh", &["-c", "echo ok"], QUERY_DEADLINE),
+            PackageRun::Finished {
+                success: true,
+                output: "ok\n".into()
+            }
+        );
+        // More than the 1 MiB output bound is refused, not truncated.
+        assert_eq!(
+            run_package_tool("sh", &["-c", "head -c 2000000 /dev/zero"], QUERY_DEADLINE),
+            PackageRun::Unavailable
+        );
+    }
+
+    /// On a Linux machine with Chrome installed from Google's package (the
+    /// ubuntu CI image), the engine verifies; a byte-identical copy outside
+    /// the package does not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xp14_linux_the_vendor_package_verifies_and_a_copy_does_not() {
+        let installed = Path::new("/opt/google/chrome/chrome");
+        let owned = matches!(
+            run_package_tool("dpkg-query", &["-S", "/opt/google/chrome/chrome"], QUERY_DEADLINE),
+            PackageRun::Finished { success: true, output }
+                if dpkg_owner(&output, "/opt/google/chrome/chrome").as_deref() == Some("google-chrome-stable")
+        );
+        if !installed.is_file() || !owned {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "google-chrome-stable is expected on the CI runner"
+            );
+            return;
+        }
+        let started = Instant::now();
+        let verify = run_package_tool(
+            "dpkg",
+            &["--verify", "google-chrome-stable"],
+            VERIFY_DEADLINE,
+        );
+        // #503: how long the full verification took on this runner.
+        eprintln!(
+            "XP14-EVIDENCE dpkg --verify google-chrome-stable took {:?}",
+            started.elapsed()
+        );
+        let verdict = verify_publisher(installed);
+        // SG-000115 S-07: the package check must pass on its own (only
+        // changes outside the install directory), and the verdict must then
+        // follow the install tree. The hosted image leaves the tree
+        // world-writable (prep/SG-000115.md), so there it is unverified,
+        // never refused and never verified.
+        let tree = install_tree_problem(
+            installed,
+            Path::new("/opt/google/chrome"),
+            &PackageDb::production(),
+        );
+        eprintln!("SG115-EVIDENCE real Chrome install tree: {tree:?}");
+        assert!(
+            matches!(&verify, PackageRun::Finished { success: true, output } if verify_report_clean(output, "/opt/google/chrome")),
+            "dpkg --verify google-chrome-stable: {verify:?}"
+        );
+        assert!(
+            matches!(verdict, Ok(verified) if verified == tree.is_none()),
+            "{verdict:?}; install tree: {tree:?}"
+        );
+        let copy_dir =
+            std::env::temp_dir().join(format!("orcel-xp14-linux-{}", std::process::id()));
+        std::fs::create_dir_all(&copy_dir).unwrap();
+        let copy = copy_dir.join("chrome");
+        std::fs::copy(installed, &copy).unwrap();
+        assert!(!verify_publisher(&copy).unwrap());
+        // A link to the real binary is not the binary: it stays unverified.
+        let link = copy_dir.join("chrome-link");
+        std::os::unix::fs::symlink(installed, &link).unwrap();
+        assert!(!verify_publisher(&link).unwrap());
+        let _ = std::fs::remove_dir_all(&copy_dir);
+    }
+
+    #[test]
+    fn xp14_plist_strings_are_read_exactly_and_nothing_else() {
+        let xml = "<?xml version=\"1.0\"?>
+<plist><dict>
+<key>CFBundleIdentifier</key>
+  <string>com.google.Chrome</string>
+<key>CFBundleShortVersionString</key><string>156.0.7000.1</string>
+<key>Odd</key><string>a&amp;b</string>
+<key>Num</key><integer>3</integer>
+</dict></plist>";
+        assert_eq!(
+            plist_string(xml, "CFBundleIdentifier").as_deref(),
+            Some("com.google.Chrome")
+        );
+        assert_eq!(
+            plist_string(xml, "CFBundleShortVersionString").as_deref(),
+            Some("156.0.7000.1")
+        );
+        assert_eq!(plist_string(xml, "Odd"), None);
+        assert_eq!(plist_string(xml, "Num"), None);
+        assert_eq!(plist_string(xml, "Missing"), None);
+        assert_eq!(plist_string("bplist00binary", "CFBundleIdentifier"), None);
+    }
     use std::fs;
 
     #[test]
@@ -521,15 +1387,19 @@ mod tests {
         assert_eq!(engine(EngineKind::Edge, "155.0.4283.45").major(), Some(155));
         assert!(engine(EngineKind::Chromium, "154.0.8037.58").worker_qualified());
         assert!(engine(EngineKind::Chromium, "155.0.8059.40").worker_qualified());
+        assert!(engine(EngineKind::Chromium, "156.0.8078.48").worker_qualified());
+        assert!(engine(EngineKind::Edge, "156.0.4314.42").worker_qualified());
         for (kind, version) in [
+            // Each kind has its own qualified majors: Chromium 154 is
+            // qualified, Edge 154 is not.
             (EngineKind::Edge, "154.0.1.2"),
-            (EngineKind::Edge, "156.0.1.2"),
+            (EngineKind::Edge, "157.0.1.2"),
             (EngineKind::Edge, "1550.0.1.2"),
             (EngineKind::Edge, "0.0.0.0"),
             (EngineKind::Edge, ""),
             (EngineKind::Edge, "x155.0"),
-            // Each kind has its own qualified majors.
-            (EngineKind::Chromium, "156.0.4283.45"),
+            // The next Chromium major is not qualified.
+            (EngineKind::Chromium, "157.0.4283.45"),
             (EngineKind::Chromium, "153.0.1.2"),
             (EngineKind::Edge, "154.0.8037.58"),
         ] {
@@ -570,6 +1440,48 @@ mod tests {
             ))
         ));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_verification_timeout_is_not_reported_as_no_engine() {
+        // #503: discovery reports why it found nothing usable.
+        let unavailable = |reason| Err(HostError::Unavailable(reason));
+        let reason_of = |result: Result<Engine, HostError>| match result {
+            Err(HostError::Unavailable(reason)) => Some(reason),
+            _ => None,
+        };
+        let paths = || vec![PathBuf::from("a"), PathBuf::from("b")];
+        // Nothing usable at all: no engine.
+        assert_eq!(
+            reason_of(first_verified(paths(), |_| unavailable(
+                UnavailableReason::UnsupportedEngine
+            ))),
+            Some(UnavailableReason::NoEngine)
+        );
+        // One candidate timed out and none verified: the timeout, whatever
+        // the order.
+        for timed_out in ["a", "b"] {
+            assert_eq!(
+                reason_of(first_verified(paths(), |path| {
+                    if path == Path::new(timed_out) {
+                        unavailable(UnavailableReason::VerificationTimedOut)
+                    } else {
+                        unavailable(UnavailableReason::UnsupportedEngine)
+                    }
+                })),
+                Some(UnavailableReason::VerificationTimedOut)
+            );
+        }
+        // A later candidate that verifies still wins over an earlier timeout.
+        let found = first_verified(paths(), |path| {
+            if path == Path::new("a") {
+                unavailable(UnavailableReason::VerificationTimedOut)
+            } else {
+                Ok(Engine::for_tests(path.to_path_buf(), EngineKind::Chromium))
+            }
+        })
+        .expect("the verified candidate");
+        assert_eq!(found.path, PathBuf::from("b"));
     }
 
     #[test]

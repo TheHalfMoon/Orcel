@@ -54,8 +54,16 @@ export function desktopWindowTreeSchema(defaultWorkspace: string) {
     window_id: z.string().regex(WINDOW_ID),
     window_generation: generation,
     max_depth: z.number().int().min(0).max(MAX_TREE_DEPTH).default(MAX_TREE_DEPTH),
-    max_nodes: z.number().int().min(1).max(MAX_TREE_NODES).default(MAX_TREE_NODES)
-  });
+    max_nodes: z.number().int().min(1).max(MAX_TREE_NODES).default(MAX_TREE_NODES),
+    // SG-000128: an optional subtree root, an element id Orcel issued for this
+    // window in its latest tree (tree_generation). Both or neither; orceld
+    // validates the root again and applies the same caps below it.
+    root_element_id: z.string().regex(ELEMENT_ID).optional(),
+    tree_generation: generation.optional()
+  }).refine(
+    (value) => (value.root_element_id === undefined) === (value.tree_generation === undefined),
+    "root_element_id and tree_generation go together"
+  );
 }
 
 export function desktopCursorGetSchema(defaultWorkspace: string) {
@@ -214,10 +222,10 @@ export function registerDesktopTools(
     "desktop_window_tree",
     {
       description:
-        "Read the bounded UI Automation control tree (depth at most 8, at most 256 elements) of one listed window, bound to its window_generation. Password values are never read. Read-only; no Full User grant is required.",
+        "Read the bounded UI Automation control tree (depth at most 8, at most 256 elements) of one listed window, bound to its window_generation. Optionally read below one element of that window's latest tree instead (root_element_id with its tree_generation), with the same bounds; at most 8 such reads per window until the window itself is replaced or an approved action on it succeeds. Password values are never read. Read-only; no Full User grant is required.",
       inputSchema: desktopWindowTreeSchema(defaultWorkspace)
     },
-    async ({ workspace_id, window_id, window_generation, max_depth, max_nodes }) =>
+    async ({ workspace_id, window_id, window_generation, max_depth, max_nodes, root_element_id, tree_generation }) =>
       projectKernelResult(
         await kernel.call({
           workspaceId: workspace_id,
@@ -227,7 +235,10 @@ export function registerDesktopTools(
             window_id,
             expected_window_generation: window_generation,
             max_depth,
-            max_nodes
+            max_nodes,
+            ...(root_element_id === undefined
+              ? {}
+              : { root_element_id, expected_tree_generation: tree_generation })
           }
         })
       )

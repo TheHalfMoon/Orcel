@@ -43,7 +43,7 @@ zune-core = "=0.5.1"
 uniffi = "=0.31.0"
 postcard = { version = "1", features = ["alloc"] }
 sha2 = "0.10"
-zstd = "0.13"
+zstd = "0.14.3"
 chacha20poly1305 = { version = "0.11", features = ["rand_core", "zeroize"] }
 hkdf = "0.12"
 zeroize = { version = "1", features = ["derive"] }

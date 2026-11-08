@@ -713,20 +713,39 @@ mod tests {
     #[test]
     fn sg000041_refuses_workspace_containing_each_override() {
         let base = temp_root();
-        // The per-OS state root comes from LOCALAPPDATA on Windows and from
+        // The per-OS state root comes from USERPROFILE on Windows and from
         // HOME elsewhere; both point under `lad` so it is one root per OS.
         let roots = crate::protected_state::protected_state_roots_from(&|name| match name {
-            "LOCALAPPDATA" | "HOME" => Some(base.join("lad").into_os_string()),
+            "USERPROFILE" | "HOME" => Some(base.join("lad").into_os_string()),
             "ORCEL_AUDIT_PATH" => Some(base.join("audit").join("a.jsonl").into_os_string()),
             "ORCEL_TRUST_PATH" => Some(base.join("trust").join("t.jsonl").into_os_string()),
             "ORCEL_APPROVAL_HISTORY_PATH" => {
                 Some(base.join("history").join("h.jsonl").into_os_string())
             }
             "ORCEL_BROWSER_STATE_DIR" => Some(base.join("browser").into_os_string()),
+            "ORCEL_REPORT_JOURNAL_PATH" => Some(
+                base.join("journal")
+                    .join("report-tasks.jsonl")
+                    .into_os_string(),
+            ),
+            "ORCEL_MUTATION_JOURNAL_PATH" => Some(
+                base.join("mutations")
+                    .join("mutations.jsonl")
+                    .into_os_string(),
+            ),
             _ => None,
         });
-        assert_eq!(roots.len(), 5);
-        for dir in ["lad", "audit", "trust", "history", "browser"] {
+        // Windows also protects the earlier root.
+        assert_eq!(roots.len(), 7 + usize::from(cfg!(windows)));
+        for dir in [
+            "lad",
+            "audit",
+            "trust",
+            "history",
+            "browser",
+            "journal",
+            "mutations",
+        ] {
             let workspace_root = base.join(dir);
             std::fs::create_dir_all(&workspace_root).unwrap();
             let refused = PolicyEngine::with_protected_state_roots(

@@ -190,3 +190,44 @@ fn the_profile_grants_no_hard_link_creation() {
         );
     }
 }
+
+/// #583: a live process is sampled on the first attempt, and a failure for a
+/// process that is gone is final at once (no retry).
+#[tokio::test]
+async fn a_sample_retries_only_while_the_process_is_alive() {
+    let own = i32::try_from(std::process::id()).unwrap();
+    assert!(sample_live(own).await.unwrap() > 0);
+
+    let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+    let gone = i32::try_from(child.id()).unwrap();
+    child.wait().unwrap();
+    let started = std::time::Instant::now();
+    let failure = sample_live(gone).await.unwrap_err();
+    assert!(!failure.alive);
+    assert_eq!(failure.attempts, 1);
+    assert!(started.elapsed() < SAMPLE_RETRY_BUDGET);
+    assert!(
+        failure.detail().contains("process gone"),
+        "{}",
+        failure.detail()
+    );
+}
+
+/// #583: a process that still answers `kill(pid, 0)` but cannot be sampled
+/// (an unreaped zombie has no task) is retried for the whole budget and then
+/// fails closed.
+#[tokio::test]
+async fn a_live_process_that_cannot_be_sampled_fails_after_the_budget() {
+    let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+    let zombie = i32::try_from(child.id()).unwrap();
+    // Let it exit without reaping it.
+    std::thread::sleep(Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    let failure = sample_live(zombie).await.unwrap_err();
+    let elapsed = started.elapsed();
+    child.wait().unwrap();
+    assert!(failure.alive, "{}", failure.detail());
+    assert!(failure.attempts > 1, "{}", failure.detail());
+    assert!(elapsed >= SAMPLE_RETRY_BUDGET, "{elapsed:?}");
+    assert!(elapsed < SAMPLE_RETRY_BUDGET * 3, "{elapsed:?}");
+}

@@ -38,9 +38,33 @@ fn isolated_search_without_engines_reports_typed_unavailable() {
     match result {
         Err(HostError::Unavailable(
             UnavailableReason::NoEngine | UnavailableReason::UnsupportedEngine,
-        )) => {}
+        )) if !cfg!(target_os = "macos") => {}
+        // XP-14: macOS refuses before discovery until SG-000115.
+        Err(HostError::Unavailable(UnavailableReason::UnsupportedRuntime))
+            if cfg!(target_os = "macos") => {}
         other => panic!("expected typed unavailable, got {other:?}"),
     }
+    assert!(!supervisor.is_live());
+    let _ = fs::remove_dir_all(&scratch);
+}
+
+/// XP-14: on macOS nothing launches, even with the machine's own engines
+/// in view (GitHub's macOS images have Chrome and Edge installed).
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_refuses_to_launch_before_discovery() {
+    let scratch = temp_root("macos");
+    let mut supervisor = Supervisor::new();
+    let result = supervisor.launch(&host_binary(), &scratch, &SearchConfig::production());
+    assert!(
+        matches!(
+            result,
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime
+            ))
+        ),
+        "{result:?}"
+    );
     assert!(!supervisor.is_live());
     let _ = fs::remove_dir_all(&scratch);
 }

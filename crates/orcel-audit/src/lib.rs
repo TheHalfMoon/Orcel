@@ -89,7 +89,7 @@ pub fn default_audit_path_from(
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("audit.jsonl"))
+    Ok(orcel_platform::stores::AUDIT.path(&root))
 }
 
 #[cfg(test)]
@@ -217,7 +217,7 @@ mod tests {
     fn audit_log_is_written_under_the_private_state_root() {
         let base = sandbox("root");
         #[cfg(windows)]
-        let env = vec![("LOCALAPPDATA", base.clone().into_os_string())];
+        let env = vec![("USERPROFILE", base.clone().into_os_string())];
         #[cfg(not(windows))]
         let env = vec![("HOME", base.clone().into_os_string())];
         let lookup = lookup(env);
@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(path, root.join("audit.jsonl"));
         assert!(path.starts_with(&base));
         #[cfg(windows)]
-        assert_eq!(path, base.join("Orcel").join("audit.jsonl"));
+        assert_eq!(path, base.join(".orcel").join("audit.jsonl"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

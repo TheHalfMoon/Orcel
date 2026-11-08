@@ -364,13 +364,15 @@ fn wait_seconds(args: &mut Args, default: u64) -> Result<Duration, LifecycleErro
     }
 }
 
+/// The background runtime `orcel start` supervises carries only the ChatGPT tunnel. Local MCP
+/// clients start Orcel themselves, so this never says Orcel as a whole is down.
 fn describe(status: &lifecycle::RuntimeStatus) -> String {
     let state = match status.state {
         RunState::Running => "running",
         RunState::Degraded => "degraded",
         RunState::NotRunning => "not running",
     };
-    let mut text = format!("Orcel is {state}: {}\n", status.detail);
+    let mut text = format!("ChatGPT tunnel: {state} ({})\n", status.detail);
     if let Some(pid) = status.supervisor_pid {
         text.push_str(&format!("  supervisor pid: {pid}\n"));
     }
@@ -408,15 +410,77 @@ pub fn stop(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let report = lifecycle::stop(&layout, wait)?;
     let human = match report.outcome {
-        StopOutcome::NotRunning => "Orcel is not running.\n".to_string(),
-        StopOutcome::StaleRecordRemoved => format!("Orcel was not running; {}.\n", report.detail),
-        StopOutcome::StoppedVerified => format!("Orcel stopped (verified): {}.\n", report.detail),
-        StopOutcome::SupervisorTerminated => format!("Orcel stopped: {}.\n", report.detail),
+        StopOutcome::NotRunning => "The ChatGPT tunnel is not running.\n".to_string(),
+        StopOutcome::StaleRecordRemoved => {
+            format!("The ChatGPT tunnel was not running; {}.\n", report.detail)
+        }
+        StopOutcome::StoppedVerified => {
+            format!(
+                "The ChatGPT tunnel stopped (verified): {}.\n",
+                report.detail
+            )
+        }
+        StopOutcome::SupervisorTerminated => {
+            format!("The ChatGPT tunnel stopped: {}.\n", report.detail)
+        }
     };
     Ok(Output {
         exit_code: 0,
         human,
         json: json!({"ok": true, "stop": report}),
+    })
+}
+
+/// Opens the Windows app from the active, verified install, and doesn't wait for it.
+/// The path comes only from the install, never from an argument or PATH.
+pub fn app(args: &mut Args, json: bool) -> Result<Output, LifecycleError> {
+    let result = open_app(args);
+    // Started from the Start Menu, its minimized console closes with the message in it.
+    #[cfg(windows)]
+    if let Err(error) = &result {
+        orcel_lifecycle::start_menu::show_if_no_terminal(
+            &format!("Orcel couldn't open the app: {}", error.message),
+            json,
+        );
+    }
+    #[cfg(not(windows))]
+    let _ = json;
+    result
+}
+
+fn open_app(args: &mut Args) -> Result<Output, LifecycleError> {
+    args.finish()?;
+    if !cfg!(windows) {
+        return Err(LifecycleError::usage(
+            "the Orcel app is only on Windows for now",
+        ));
+    }
+    let layout = Layout::for_current_user()?;
+    let version = active_version(&layout)?;
+    let path = layout
+        .version_dir(&version)
+        .join(orcel_lifecycle::install::APP_FILE);
+    // A release can come without it, since it isn't a required file.
+    if !path.is_file() {
+        return Err(LifecycleError::usage(format!(
+            "Orcel {version} was released without the app; update to open it"
+        )));
+    }
+    // Or the app would keep a caller's pipe to this process open until it closes.
+    #[cfg(windows)]
+    orcel_lifecycle::runtime::disinherit_standard_handles();
+    let child = std::process::Command::new(&path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            LifecycleError::usage(format!("could not open {}: {error}", path.display()))
+        })?;
+    Ok(Output {
+        exit_code: 0,
+        human: "Opened the Orcel app.\n".into(),
+        json: json!({"ok": true, "pid": child.id(), "version": version}),
     })
 }
 
@@ -443,7 +507,19 @@ pub fn status(args: &mut Args) -> Result<Output, LifecycleError> {
         )),
         Err(error) => human.push_str(&format!("configured: error: {}\n", error.message)),
     }
-    human.push_str(&describe(&runtime));
+    let tunnel_unset = matches!(&config, Ok(config) if config.tunnel.is_none());
+    if tunnel_unset && runtime.state == RunState::NotRunning && !layout.supervisor_record().exists()
+    {
+        human.push_str("ChatGPT tunnel: not configured (optional)\n");
+    } else {
+        human.push_str(&describe(&runtime));
+    }
+    if installed.is_some() {
+        human.push_str(
+            "Local MCP clients start Orcel with `orcel mcp stdio` when they need it. \
+             `orcel doctor` checks that orceld answers.\n",
+        );
+    }
     Ok(Output {
         exit_code: 0,
         human,
@@ -455,6 +531,161 @@ pub fn status(args: &mut Args) -> Result<Output, LifecycleError> {
             "runtime": runtime,
         }),
     })
+}
+
+pub fn state(args: &mut Args) -> Result<Output, LifecycleError> {
+    use orcel_lifecycle::legacy_state;
+    use orcel_platform::legacy::{examine, legacy_root_from, LegacyState};
+    let action = args.positional("state action (status, migrate, keep-separate)")?;
+    args.finish()?;
+    let layout = Layout::for_current_user()?;
+    let lookup = |name: &str| std::env::var_os(name);
+    let Some(legacy) = legacy_root_from(&lookup) else {
+        if cfg!(windows) {
+            return Err(LifecycleError::state(
+                "the earlier state location can't be found: LOCALAPPDATA is unusable and Windows \
+                 didn't name the folder",
+            ));
+        }
+        let human = "This platform has no earlier state location.\n".to_owned();
+        return Ok(Output {
+            exit_code: 0,
+            human,
+            json: json!({"ok": true, "state": "none"}),
+        });
+    };
+    match action.as_str() {
+        "status" => {
+            let state = examine(&legacy, &layout.root);
+            let (label, gate) = match &state {
+                LegacyState::None => ("none".to_owned(), "orceld can start"),
+                LegacyState::Decided(decision) => (decision.clone(), "orceld can start"),
+                LegacyState::Undecided(_) => ("undecided".to_owned(), "orceld refuses to start"),
+                LegacyState::Unreadable(..) => ("unreadable".to_owned(), "orceld refuses to start"),
+            };
+            let found = if legacy.is_dir() {
+                legacy_state::inventory(&legacy).ok()
+            } else {
+                None
+            };
+            let source = orcel_platform::paths::check_existing_private_dir(&legacy).err();
+            let mut human = format!(
+                "Earlier state location: {}\nCurrent location: {}\nState: {label} ({gate})\n",
+                legacy.display(),
+                layout.root.display()
+            );
+            let interrupted = matches!(&state, LegacyState::Undecided(file)
+                if file.ends_with(orcel_platform::legacy::MIGRATION_IN_PROGRESS));
+            if interrupted {
+                human.push_str(
+                    "A migration was interrupted. Run `orcel state migrate` to finish it; \
+                     keep-separate is refused while it's unfinished.\n",
+                );
+            } else if matches!(state, LegacyState::Undecided(_)) {
+                human.push_str(
+                    "Decide once, then orceld starts:\n  \
+                     `orcel state migrate` copies your history, trust and settings here. \
+                     Full-control grants, remote leases and this device's pairing are granted \
+                     again instead.\n  \
+                     `orcel state keep-separate` uses only what's here, and Orcel won't use \
+                     the earlier folder.\n  Neither changes or deletes the earlier folder.\n",
+                );
+            }
+            if let Some(found) = &found {
+                human.push_str(&format!(
+                    "User data files migration would copy: {}\nLeft where they are: {}\n",
+                    found.data.len(),
+                    found.left.join(", ")
+                ));
+                for reason in &found.unclean {
+                    human.push_str(&format!("Not at rest: {reason}\n"));
+                }
+                if found.payload {
+                    human.push_str(
+                        "An earlier install is there. Migration doesn't move it: reinstall, and \
+                         remove the earlier one with its own `orcel uninstall`.\n",
+                    );
+                }
+            }
+            if let Some(reason) = &source {
+                human.push_str(&format!(
+                    "Migration is refused: {reason}. Another account could have changed these \
+                     files. Use `orcel state keep-separate`, or leave it if there's nothing to \
+                     decide.\n"
+                ));
+            }
+            Ok(Output {
+                exit_code: 0,
+                human,
+                json: json!({
+                    "ok": true,
+                    "legacy": legacy,
+                    "root": layout.root,
+                    "state": label,
+                    "orceld_starts": matches!(state, LegacyState::None | LegacyState::Decided(_)),
+                    "data_files": found.as_ref().map(|found| found.data.len()),
+                    "left": found.as_ref().map(|found| found.left.clone()),
+                    "payload": found.as_ref().map(|found| found.payload),
+                    "unclean": found.as_ref().map(|found| found.unclean.clone()),
+                    "source_refused": source,
+                }),
+            })
+        }
+        "migrate" => {
+            if !legacy.is_dir() {
+                return Err(LifecycleError::state(format!(
+                    "there is nothing at {}",
+                    legacy.display()
+                )));
+            }
+            let _lock = lifecycle::lock(&layout)?;
+            let report = legacy_state::migrate(
+                &legacy,
+                &layout.root,
+                &orcel_platform::paths::check_existing_private_dir,
+                &orcel_platform::paths::check_migration_entry,
+            )?;
+            let mut human = format!(
+                "Copied {} file(s), {} already there, to {}. {} is unchanged.\n",
+                report.copied,
+                report.already_there,
+                layout.root.display(),
+                legacy.display()
+            );
+            human.push_str(
+                "Full-control authority, remote leases and this device's key and pairing aren't copied: grant them again.\n",
+            );
+            if report.payload {
+                human.push_str("Reinstall Orcel, and remove the earlier install with its own `orcel uninstall`.\n");
+            }
+            Ok(Output {
+                exit_code: 0,
+                human,
+                json: json!({
+                    "ok": true,
+                    "copied": report.copied,
+                    "already_there": report.already_there,
+                    "left": report.left,
+                    "payload": report.payload,
+                }),
+            })
+        }
+        "keep-separate" => {
+            let _lock = lifecycle::lock(&layout)?;
+            legacy_state::keep_separate(&legacy, &layout.root)?;
+            Ok(Output {
+                exit_code: 0,
+                human: format!(
+                    "Recorded. {} stays as it is and Orcel won't use it. Nothing was deleted.\n",
+                    legacy.display()
+                ),
+                json: json!({"ok": true, "decision": "kept-separate"}),
+            })
+        }
+        other => Err(LifecycleError::usage(format!(
+            "unknown state action {other}; use status, migrate or keep-separate"
+        ))),
+    }
 }
 
 pub fn doctor(args: &mut Args) -> Result<Output, LifecycleError> {
@@ -716,7 +947,7 @@ pub fn update(args: &mut Args) -> Result<Output, LifecycleError> {
     let platform = host_platform();
     let report = orcel_lifecycle::update::Updater::new(layout, platform.as_ref())
         .update(&source, &options)?;
-    let human = match report.outcome {
+    let mut human = match report.outcome {
         orcel_lifecycle::update::UpdateOutcome::Checked => format!(
             "Installed {}; candidate {} ({}). Compatible with the current configuration. Nothing was changed.\n",
             report.from, report.to, report.direction
@@ -733,6 +964,9 @@ pub fn update(args: &mut Args) -> Result<Output, LifecycleError> {
             if report.restarted { " and restarted" } else { "" }
         ),
     };
+    if let Some(change) = &report.start_menu {
+        human.push_str(&start_menu_line(change));
+    }
     Ok(Output {
         exit_code: 0,
         human,
@@ -745,20 +979,39 @@ pub fn rollback(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let platform = host_platform();
     let report = orcel_lifecycle::update::Updater::new(layout, platform.as_ref()).rollback()?;
+    let mut human = format!(
+        "Rolled back from {} to {}{}.\n",
+        report.from,
+        report.to,
+        if report.restarted {
+            " and restarted"
+        } else {
+            "; the ChatGPT tunnel is not running, start it with `orcel start` if you use it"
+        }
+    );
+    human.push_str(&start_menu_line(&report.start_menu));
     Ok(Output {
         exit_code: 0,
-        human: format!(
-            "Rolled back from {} to {}{}.\n",
-            report.from,
-            report.to,
-            if report.restarted {
-                " and restarted"
-            } else {
-                "; Orcel is not running, start it with `orcel start`"
-            }
-        ),
+        human,
         json: json!({"ok": true, "rollback": report}),
     })
+}
+
+/// What an update or rollback did to the Start Menu entry, when it did anything worth saying.
+fn start_menu_line(change: &orcel_lifecycle::install::StartMenuChange) -> String {
+    use orcel_lifecycle::install::StartMenuChange;
+    match change {
+        StartMenuChange::Present | StartMenuChange::Unchanged => String::new(),
+        // A version without the app may predate this, so its own `orcel update` won't put the
+        // entry back; a repair from the newer version does.
+        StartMenuChange::Removed => "  Start Menu: entry removed, since this version has no Orcel \
+             app. After moving to a version with it, run that release's `orcel install` to add \
+             it again\n"
+            .into(),
+        StartMenuChange::Problem(problem) => {
+            format!("  Start Menu: not updated ({problem})\n")
+        }
+    }
 }
 
 /// Local MCP entrypoint (`orcel mcp stdio`, `orcel mcp serve`). This takes

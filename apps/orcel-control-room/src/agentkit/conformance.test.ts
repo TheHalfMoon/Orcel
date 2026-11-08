@@ -19,6 +19,7 @@ import {
   APP_API_PROTOCOL,
   READ_METHODS,
   RESERVED_READ_METHODS,
+  ORCELD_METHODS,
   parseCapabilities,
   parseSnapshotData,
   parseStatus,
@@ -108,7 +109,7 @@ export async function assertAppApiConformance(
   // Capabilities truthfulness: the read-only flag and method list are exact.
   const caps = parseCapabilities(await resultOf(connector, "capabilities.get"));
   check(caps.read_only, "capabilities say read_only");
-  check(JSON.stringify(caps.methods) === JSON.stringify(READ_METHODS), `methods are ${caps.methods.join(", ")}`);
+  check(JSON.stringify(caps.methods) === JSON.stringify(ORCELD_METHODS), `methods are ${caps.methods.join(", ")}`);
   check(
     JSON.stringify(caps.reserved_methods) === JSON.stringify(RESERVED_READ_METHODS),
     "reserved methods are the read-only reservations",
@@ -137,6 +138,11 @@ export async function assertAppApiConformance(
     const frame = await call(connector, method);
     check(frame.type === "error" && frame.error.code === "METHOD_UNAVAILABLE", `${method} is reserved`);
   }
+  // SG-000126 task reads are served and only read.
+  const tasks = await call(connector, "task.list");
+  check(tasks.type === "result" && Array.isArray((tasks.result as { tasks?: unknown }).tasks), "task.list returns tasks");
+  const unknownTask = await call(connector, "task.get");
+  check(unknownTask.type === "error" && unknownTask.error.code === "INVALID_REQUEST", "task.get needs a task_id");
   checks.push("unsupported operations");
 
   // Event ordering and deduplication: a full replay is contiguous, in one

@@ -9,6 +9,7 @@ import { registerGitPushTools } from "./git_push.js";
 import { KernelClient } from "./kernel.js";
 import { processSpawnInputSchema } from "./process.js";
 import { projectKernelResult } from "./result.js";
+import { registerReportTools } from "./report.js";
 import { registerWebSearchTools } from "./web_search.js";
 import { registerLiveBrowserTools } from "./browser_live.js";
 import {
@@ -179,7 +180,11 @@ export const CANONICAL_TOOL_NAMES: readonly string[] = [
   "git_status",
   "git_unstage",
   "process_spawn",
+  "report_commit",
+  "report_preview",
+  "report_start",
   "system_status",
+  "task_resume_summary",
   "web_fetch",
   "web_search",
   "workspace_get"
@@ -522,6 +527,7 @@ export function registerOrcelTools(
   registerDesktopTools(server, kernel, defaultWorkspace);
   registerClipboardNetworkTools(server, kernel, defaultWorkspace);
   registerWebSearchTools(server, kernel, defaultWorkspace);
+  registerReportTools(server, kernel, defaultWorkspace);
   // SG-000108 slice 3c: registered only where the profile lists them.
   registerLiveBrowserTools(server, kernel, defaultWorkspace);
   registerGitFetchTools(server, kernel, defaultWorkspace);

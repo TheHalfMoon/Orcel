@@ -9,7 +9,7 @@
 //!
 //! - Windows: DPAPI (`CryptProtectData`, current-user scope, UI forbidden,
 //!   per-name entropy). The protected blob is a file in
-//!   `<state root>\secrets\`, which inherits the per-user `%LOCALAPPDATA%`
+//!   `<state root>\secrets\`, which inherits the protected DACL of the state root under `%USERPROFILE%`
 //!   ACL. DPAPI's own MAC refuses a tampered blob.
 //! - macOS: the user's default keychain through the `keyring` project's
 //!   `apple-native-keyring-store` (T-CUA-34: the crate family Cua's
@@ -352,7 +352,7 @@ pub fn legacy_device_key_path(
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, SecretError> {
     orcel_platform::paths::state_root_from(lookup)
-        .map(|root| root.join("state").join("device").join("device_key.json"))
+        .map(|root| orcel_platform::stores::DEVICE_KEY_RECORD.path(&root))
         .map_err(|_| SecretError::Unavailable("the Orcel state root is unavailable"))
 }
 
@@ -924,7 +924,7 @@ mod platform {
         lookup: &dyn Fn(&str) -> Option<OsString>,
     ) -> Result<Box<dyn SecretBackend>, SecretError> {
         let dir = orcel_platform::paths::state_root_from(lookup)
-            .map(|root| root.join("secrets"))
+            .map(|root| orcel_platform::stores::SECRETS.path(&root))
             .map_err(|_| SecretError::Unavailable("the Orcel state root is unavailable"))?;
         Ok(Box::new(DpapiFiles { dir }))
     }
