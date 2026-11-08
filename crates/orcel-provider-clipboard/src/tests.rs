@@ -741,3 +741,25 @@ fn xp15_native_round_trip_where_a_clipboard_is_reachable() {
     // Leave benign text behind.
     write_bounded_text(&native, marker, WORKSPACE, POLICY).unwrap();
 }
+
+#[test]
+fn content_its_app_marked_private_is_concealed() {
+    let none = |_: &str| false;
+    assert!(!is_concealed(none, None), "ordinary text is read");
+    assert!(!is_concealed(none, Some(1)), "history allowed is ordinary");
+    assert!(
+        is_concealed(none, Some(0)),
+        "kept out of history by its app"
+    );
+    for marker in CONCEALED_FORMATS {
+        assert!(
+            is_concealed(|format: &str| format == marker, None),
+            "{marker} marks content private"
+        );
+    }
+    assert!(!is_concealed(
+        |format: &str| format == "Something Else",
+        None
+    ));
+    assert_eq!(concealed().code, FailureCode::CapabilityDenied);
+}
