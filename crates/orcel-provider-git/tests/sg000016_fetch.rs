@@ -301,6 +301,43 @@ fn fetch_fails_closed_on_stale_head_prior_and_drift() {
 }
 
 #[test]
+fn fetch_rejects_a_url_rewrite_in_the_worktree_config() {
+    let root = repository();
+    git(&root, &["config", "extensions.worktreeConfig", "true"]);
+    git(
+        &root,
+        &[
+            "config",
+            "--worktree",
+            "url.https://evil.invalid.insteadOf",
+            "https://example.com/",
+        ],
+    );
+    let provider = GitProvider::new(&root).unwrap();
+    let head = git(&root, &["rev-parse", "HEAD"]).trim().to_owned();
+    let real_public: IpAddr = "8.8.8.8".parse().unwrap();
+    let resolver = StaticResolver {
+        addresses: vec![real_public],
+    };
+    let error = provider
+        .fetch_approved(
+            &ApprovedFetch {
+                relative: ".",
+                destination: &destination(),
+                policy_id: "test-origin",
+                branch: "main",
+                expected_head: &head,
+                expected_prior: "ABSENT",
+                pinned: &real_public,
+            },
+            &resolver,
+        )
+        .expect_err("rewrite must fail");
+    assert_eq!(error.code, orcel_contracts::FailureCode::CapabilityDenied);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn fetch_rejects_unsafe_repository_local_network_config() {
     let root = repository();
     git(
