@@ -159,6 +159,7 @@ impl Scratch {
             .map_err(|error| unavailable(format!("contained scratch root: {error}")))?;
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("contained scratch root: {error}")))?;
+        sweep_leftovers(&runs);
         // A name already taken, by a leftover or anything else, is skipped, never removed.
         let label = request_digest.get(..16).unwrap_or(request_digest);
         let dir = claim_dir(&runs, fresh_names(label), "contained scratch directory")?;
@@ -215,6 +216,57 @@ pub(crate) fn claim_dir(
         }
     }
     Err(unavailable(format!("{what}: no unused name was found")))
+}
+
+/// Removes run directories under `runs` that a crashed process left behind. An entry goes only
+/// when it is a real directory (not a link or junction) named `<pid>-...` by `fresh_names`, the
+/// pid isn't this process, and that process is known to have exited. A live, reused or unreadable
+/// pid keeps its entry, as does anything else under `runs`. `remove_dir_all` doesn't follow links
+/// inside the directory. Returns how many entries were removed.
+pub(crate) fn sweep_leftovers(runs: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(runs) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.split_once('-'))
+            .and_then(|(pid, _)| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == std::process::id()
+            || !matches!(
+                orcel_platform::process::start_generation(pid),
+                Err(orcel_platform::PlatformError::ProcessGone(_))
+            )
+        {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.is_dir() && !is_link(&metadata) && std::fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+#[cfg(windows)]
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_type().is_symlink()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 impl Drop for Scratch {

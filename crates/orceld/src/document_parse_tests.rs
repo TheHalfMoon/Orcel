@@ -462,3 +462,95 @@ fn a_stage_name_already_taken_is_skipped_and_left_alone() {
     std::fs::remove_file(runs.join("link")).unwrap();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn only_leftovers_of_exited_processes_are_swept() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("orcel-dp-sweep-{}-{unique}", std::process::id()));
+    let runs = base.join("runs");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("sentinel"), b"keep").unwrap();
+    // A process that has exited, so its pid names no running process.
+    #[cfg(windows)]
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", "exit"])
+        .spawn()
+        .unwrap();
+    #[cfg(unix)]
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let own = std::process::id();
+    // A running process that isn't this one.
+    #[cfg(windows)]
+    let mut live = std::process::Command::new("ping")
+        .args(["-n", "30", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    #[cfg(unix)]
+    let mut live = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let alive = live.id();
+    for name in [
+        format!("{dead}-0-0000000000000000-leftover"),
+        format!("{own}-0-0000000000000000-mine"),
+        format!("{alive}-0-0000000000000000-running"),
+        "not-a-run".to_owned(),
+    ] {
+        std::fs::create_dir_all(runs.join(&name).join("work")).unwrap();
+        std::fs::write(runs.join(&name).join("work").join("file"), b"x").unwrap();
+    }
+    // A link under a dead pid's name is never removed or followed.
+    let link = runs.join(format!("{dead}-1-0000000000000000-link"));
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    #[cfg(windows)]
+    assert!(std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&outside)
+        .status()
+        .unwrap()
+        .success());
+    // A plain file under a dead pid's name stays too.
+    std::fs::write(
+        runs.join(format!("{dead}-2-0000000000000000-file")),
+        b"keep",
+    )
+    .unwrap();
+
+    assert_eq!(contained_tier::sweep_leftovers(&runs), 1);
+    assert!(!runs
+        .join(format!("{dead}-0-0000000000000000-leftover"))
+        .exists());
+    for kept in [
+        format!("{own}-0-0000000000000000-mine"),
+        format!("{alive}-0-0000000000000000-running"),
+        "not-a-run".to_owned(),
+        format!("{dead}-2-0000000000000000-file"),
+    ] {
+        assert!(runs.join(&kept).exists(), "{kept} stays");
+    }
+    assert!(
+        std::fs::symlink_metadata(&link).is_ok(),
+        "the link itself stays"
+    );
+    assert_eq!(std::fs::read(outside.join("sentinel")).unwrap(), b"keep");
+    // A missing runs directory sweeps nothing.
+    assert_eq!(contained_tier::sweep_leftovers(&base.join("absent")), 0);
+
+    let _ = live.kill();
+    let _ = live.wait();
+    #[cfg(windows)]
+    std::fs::remove_dir(&link).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&link).unwrap();
+    let _ = std::fs::remove_dir_all(&base);
+}
