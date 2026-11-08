@@ -173,6 +173,55 @@ impl GitProvider {
             )
         })?;
         self.ensure_within(&repo)?;
+        // A `.git` file can name a repository anywhere: the working tree is inside the
+        // workspace, but the history and objects a read shows, and a commit, fetch or push
+        // changes, would be another repository's.
+        let dirs = self.run_git_raw(
+            &repo,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--absolute-git-dir",
+                "--git-common-dir",
+            ],
+        )?;
+        let mut seen = 0;
+        let mut common = None;
+        for dir in dirs.stdout.lines().filter(|line| !line.trim().is_empty()) {
+            let dir = std::fs::canonicalize(dir.trim()).map_err(|error| {
+                GitProviderError::new(
+                    FailureCode::InvalidRequest,
+                    format!("resolve the repository's Git directory: {error}"),
+                )
+            })?;
+            if dir != self.workspace_root && !dir.starts_with(&self.workspace_root) {
+                return Err(GitProviderError::new(
+                    FailureCode::PathEscape,
+                    "the repository's Git data is outside the trusted workspace",
+                ));
+            }
+            seen += 1;
+            common = Some(dir);
+        }
+        if seen != 2 {
+            return Err(GitProviderError::new(
+                FailureCode::InvalidRequest,
+                "Git did not report the repository's Git directories",
+            ));
+        }
+        // Alternates make Git read objects from another store, anywhere.
+        if common.is_some_and(|common| {
+            common
+                .join("objects")
+                .join("info")
+                .join("alternates")
+                .exists()
+        }) {
+            return Err(GitProviderError::new(
+                FailureCode::PathEscape,
+                "the repository borrows objects from another store (objects/info/alternates)",
+            ));
+        }
         Ok(repo)
     }
 
@@ -203,6 +252,30 @@ impl GitProvider {
         all.extend_from_slice(args);
         run_plain(cwd, &all)
     }
+}
+
+/// Lists the configuration Git applies to a command here, with the scope of each entry.
+pub(crate) const REPOSITORY_CONFIG_ARGS: [&str; 5] =
+    ["config", "--list", "--show-scope", "--includes", "-z"];
+
+/// The keys the repository itself sets, lowercased, as Git applies them: its local file,
+/// every file that includes, and the worktree's own file. `config --local --list` reads only
+/// `.git/config`, so a key in an included or per-worktree file would pass a check built on
+/// it. Orcel's own `-c` overrides (scope `command`) are left out; system and global files
+/// aren't read at all.
+pub(crate) fn repository_config_keys(listed: &str) -> Vec<String> {
+    let mut fields = listed.split('\0');
+    let mut keys = Vec::new();
+    while let (Some(scope), Some(entry)) = (fields.next(), fields.next()) {
+        if scope == "command" {
+            continue;
+        }
+        let key = entry.split('\n').next().unwrap_or_default().trim();
+        if !key.is_empty() {
+            keys.push(key.to_ascii_lowercase());
+        }
+    }
+    keys
 }
 
 /// `-c` overrides that keep a repository's own configuration from making a
@@ -326,6 +399,7 @@ fn run_plain(cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderErro
         .env("GIT_EDITOR", null_device())
         .env("GIT_SEQUENCE_EDITOR", null_device())
         .env("GIT_ALLOW_PROTOCOL", "")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .env("GCM_INTERACTIVE", "Never")
         .env("GIT_OPTIONAL_LOCKS", "0");
 
@@ -516,6 +590,61 @@ mod tests {
         git(&root, &["add", "a.txt"]);
         git(&root, &["commit", "-m", "initial"]);
         root
+    }
+
+    #[test]
+    fn repository_config_keys_cover_included_and_worktree_files_but_not_overrides() {
+        let root = repository();
+        fs::write(
+            root.join("extra.cfg"),
+            "[url \"https://127.0.0.1:9/a/\"]\n\tpushInsteadOf = https://github.com/\n",
+        )
+        .unwrap();
+        git(&root, &["config", "include.path", "../extra.cfg"]);
+        git(&root, &["config", "extensions.worktreeConfig", "true"]);
+        git(&root, &["config", "--worktree", "http.sslVerify", "false"]);
+        let provider = GitProvider::new(&root).unwrap();
+        let listed = provider.run_git(&root, &REPOSITORY_CONFIG_ARGS).unwrap();
+        let keys = repository_config_keys(&listed.stdout);
+        assert!(keys.contains(&"include.path".to_owned()), "{keys:?}");
+        assert!(
+            keys.contains(&"url.https://127.0.0.1:9/a/.pushinsteadof".to_owned()),
+            "an included file's key: {keys:?}"
+        );
+        assert!(keys.contains(&"http.sslverify".to_owned()), "{keys:?}");
+        assert!(
+            !keys
+                .iter()
+                .any(|key| key == "core.hookspath" || key == "gc.auto"),
+            "Orcel's own overrides aren't the repository's: {keys:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_refuse_a_git_file_that_names_a_repository_outside_the_workspace() {
+        let outside = repository();
+        let workspace = temp_root("workspace");
+        let project = workspace.join("proj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join(".git"),
+            format!("gitdir: {}\n", outside.join(".git").display()),
+        )
+        .unwrap();
+        let provider = GitProvider::new(&workspace).unwrap();
+        for result in [
+            provider.status("proj"),
+            provider.diff("proj", false),
+            provider.log("proj", 5),
+        ] {
+            let error = result.expect_err("an outside repository must not be read");
+            assert_eq!(error.code, FailureCode::PathEscape, "{}", error.message);
+        }
+        // The repository itself, inside its own workspace, still reads.
+        assert!(GitProvider::new(&outside).unwrap().status(".").is_ok());
+        let _ = fs::remove_dir_all(outside);
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]

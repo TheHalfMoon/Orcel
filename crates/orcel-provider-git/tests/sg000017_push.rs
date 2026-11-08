@@ -623,6 +623,83 @@ fn push_fails_closed_when_remote_advanced_after_preview() {
 }
 
 #[test]
+fn push_rejects_unsafe_config_set_outside_the_local_file() {
+    // Each case sets the key where `config --local --list` doesn't look, or a TLS key the
+    // earlier list missed.
+    let cases: [&[&[&str]]; 6] = [
+        &[
+            &["config", "extensions.worktreeConfig", "true"],
+            &[
+                "config",
+                "--worktree",
+                "url.https://evil.invalid.pushInsteadOf",
+                "https://example.com/",
+            ],
+        ],
+        &[
+            &["config", "extensions.worktreeConfig", "true"],
+            &["config", "--worktree", "http.sslVerify", "false"],
+        ],
+        &[&["config", "--local", "include.path", "../harmless.cfg"]],
+        &[&["config", "--local", "http.sslCAInfo", "/attacker/ca.pem"]],
+        &[&[
+            "config",
+            "--local",
+            "remote.https://example.com/repo.git.pushurl",
+            "https://evil.invalid/",
+        ]],
+        &[&[
+            "config",
+            "--local",
+            "remote.https://example.com/repo.git.url",
+            "https://evil.invalid/",
+        ]],
+    ];
+    for setup in cases {
+        let (work, remote) = work_repository_with_remote();
+        let base = work.parent().unwrap().to_path_buf();
+        std::fs::write(work.join("harmless.cfg"), "[core]\n\tquotepath = false\n").unwrap();
+        for args in setup {
+            git(&work, args);
+        }
+        let provider = GitProvider::new(&work).unwrap();
+        let destination = anonymous_destination();
+        let preview = provider
+            .push_preview(".", &destination, "main", "main", "anonymous")
+            .unwrap();
+        let resolver = StaticResolver {
+            addresses: vec![public_ip()],
+        };
+        let credential = StaticCredential {
+            reference: "anonymous".to_owned(),
+            secret: None,
+        };
+        let transport = LocalPushTransport { remote };
+        let pinned = public_ip();
+        let guarded = ApprovedPush {
+            relative: ".",
+            destination: &destination,
+            source_branch: "main",
+            dest_branch: "main",
+            expected_head: &preview.head,
+            expected_prior: &preview.prior,
+            credential_reference: "anonymous",
+            pinned: &pinned,
+        };
+        let error = provider
+            .push_approved(&guarded, &resolver, &credential, &transport)
+            .expect_err("unsafe config must fail");
+        assert_eq!(
+            error.code,
+            orcel_contracts::FailureCode::CapabilityDenied,
+            "setup {setup:?}: {}",
+            error.message
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+}
+
+#[test]
 fn push_rejects_unsafe_repository_local_config() {
     for (key, value) in [
         ("url.https://evil.invalid.insteadOf", "https://example.com/"),
