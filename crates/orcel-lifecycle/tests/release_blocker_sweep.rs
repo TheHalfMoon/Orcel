@@ -1249,3 +1249,89 @@ fn the_store_guard_catches_the_shapes_it_claims() {
         &[]
     ));
 }
+
+/// The release workflow keeps building and publishing apart: jobs that run repository and
+/// dependency code hold only `contents: read`, so nothing they run can mint an attestation or
+/// change a release. The publish job runs no repository code, waits for the `release`
+/// environment's approval, and attests every asset. The tag name never goes straight into a
+/// script.
+#[test]
+fn the_release_workflow_separates_building_from_publishing() {
+    let text = std::fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
+    let jobs = text.split_once("\njobs:\n").expect("a jobs section").1;
+    let mut sections: Vec<(&str, &str)> = Vec::new();
+    for (index, line) in jobs.lines().enumerate() {
+        let is_job = line.starts_with("  ")
+            && !line.starts_with("   ")
+            && line.trim_end().ends_with(':')
+            && !line.trim_start().starts_with('#');
+        if is_job {
+            let start = jobs
+                .lines()
+                .take(index)
+                .map(|line| line.len() + 1)
+                .sum::<usize>();
+            sections.push((line.trim().trim_end_matches(':'), &jobs[start..]));
+        }
+    }
+    let body = |name: &str| -> &str {
+        let at = sections.iter().position(|(job, _)| *job == name).unwrap();
+        let section = sections[at].1;
+        match sections.get(at + 1) {
+            Some((_, next)) => &section[..section.len() - next.len()],
+            None => section,
+        }
+    };
+    let names: Vec<&str> = sections.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        names,
+        ["build-windows", "build-linux", "publish"],
+        "{names:?}"
+    );
+    for build in ["build-windows", "build-linux"] {
+        let job = body(build);
+        assert!(job.contains("contents: read"), "{build} reads only");
+        for write in [
+            "contents: write",
+            "id-token: write",
+            "attestations: write",
+            "environment:",
+        ] {
+            assert!(!job.contains(write), "{build} must not hold {write}");
+        }
+    }
+    let publish = body("publish");
+    assert!(
+        publish.contains("environment: release"),
+        "publish waits for approval"
+    );
+    assert!(
+        !publish.contains("actions/checkout"),
+        "publish runs no repository code"
+    );
+    assert!(
+        !publish.contains("cargo ") && !publish.contains("npm "),
+        "publish builds nothing"
+    );
+    assert!(
+        publish.contains("attest-build-provenance"),
+        "publish attests the assets"
+    );
+    assert!(
+        !text
+            .lines()
+            .any(|line| line.contains("run:") && line.contains("${{")),
+        "workflow expressions reach scripts only through env"
+    );
+    for line in text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+    {
+        if line.contains("${{ github.ref_name }}") {
+            assert!(
+                line.trim_start().starts_with("TAG:"),
+                "the tag is passed through env: {line}"
+            );
+        }
+    }
+}
