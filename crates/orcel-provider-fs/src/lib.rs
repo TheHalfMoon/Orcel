@@ -832,6 +832,18 @@ mod win {
     }
 
     impl RenameHandle {
+        /// Whether the opened entry is itself a link, junction or other reparse point.
+        pub(crate) fn is_reparse_point(&self) -> io::Result<bool> {
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+            let mut info = ByHandleFileInformation::default();
+            // SAFETY: the handle is open for this call, and `info` is a properly sized,
+            // writable BY_HANDLE_FILE_INFORMATION.
+            if unsafe { GetFileInformationByHandle(self.0 .0, &mut info) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(info.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        }
+
         /// Where the entry is now.
         pub(crate) fn final_path(&self) -> io::Result<PathBuf> {
             final_path_from_handle(self.0 .0 as RawHandle)

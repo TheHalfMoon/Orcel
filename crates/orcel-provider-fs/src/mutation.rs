@@ -434,7 +434,11 @@ impl FsProvider {
         let opened = entry
             .final_path()
             .map_err(|error| ProviderError::io("resolve entry to move", error))?;
-        if opened != from {
+        // A link swapped in under the approved name is never moved.
+        let link = entry
+            .is_reparse_point()
+            .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+        if opened != from || link {
             return Err(ProviderError::new(
                 FailureCode::TargetStale,
                 "target changed since approval",
@@ -447,8 +451,20 @@ impl FsProvider {
             .final_path()
             .map_err(|error| ProviderError::io("verify moved entry", error))?;
         if let Err(error) = self.ensure_not_git(&moved) {
-            return Err(match entry.rename_no_replace(from) {
-                Ok(()) => error,
+            // Moved back through the same handle, then checked again: the source's own folder
+            // could have been swapped too.
+            let back = entry
+                .rename_no_replace(from)
+                .and_then(|()| entry.final_path());
+            return Err(match back {
+                Ok(returned) if self.ensure_not_git(&returned).is_ok() => error,
+                Ok(returned) => ProviderError::new(
+                    FailureCode::PostconditionFailed,
+                    format!(
+                        "the moved entry reached Git data and, moved back, is at {}",
+                        returned.display()
+                    ),
+                ),
                 Err(back) => ProviderError::new(
                     FailureCode::PostconditionFailed,
                     format!(
@@ -457,6 +473,17 @@ impl FsProvider {
                     ),
                 ),
             });
+        }
+        // Under a race Windows can place the entry under another name; that isn't the move
+        // that was approved.
+        if moved != to {
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!(
+                    "the moved entry is at {}, not where it was asked to go",
+                    moved.display()
+                ),
+            ));
         }
         Ok(moved)
     }
