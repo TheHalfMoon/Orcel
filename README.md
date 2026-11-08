@@ -1,7 +1,7 @@
 # Orcel
 
 <p align="center">
-  <img src="assets/brand/orcel-readme-lockup.svg" alt="Orcel Signal: lowercase white orcel wordmark with orange terminal on the letter l" width="630">
+  <img src="assets/brand/orcel-readme-lockup.svg" alt="Orcel: white Orca Eye mark and lowercase orcel wordmark" width="630">
 </p>
 
 <p align="center"><strong>Your computer, your terms.</strong></p>
@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/TheHalfMoon/Orcel/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TheHalfMoon/Orcel/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/TheHalfMoon/Orcel/actions/workflows/pages.yml"><img alt="Website deployment" src="https://github.com/TheHalfMoon/Orcel/actions/workflows/pages.yml/badge.svg?branch=main"></a>
-  <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-FF813E"></a>
+  <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-D4FF3F"></a>
   <a href="#requirements"><img alt="Windows x64" src="https://img.shields.io/badge/platform-Windows%20x64-555"></a>
 </p>
 

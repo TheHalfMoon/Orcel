@@ -8,9 +8,9 @@
   --text: #f7f7f8;
   --muted: #9a9aa3;
   --muted-2: #6f7078;
-  --accent-a: #FF813E;
-  --accent-b: #FF9D67;
-  --accent-c: #FFC69F;
+  --accent-a: #D4FF3F;
+  --accent-b: #E2FF7A;
+  --accent-c: #F0FFB8;
   --max: 1200px;
 }
 
@@ -27,7 +27,7 @@ body {
   margin: 0;
   color: var(--text);
   background:
-    radial-gradient(circle at 50% -20%, rgba(255, 129, 62, 0.07), transparent 32rem),
+    radial-gradient(circle at 50% -20%, rgba(212, 255, 63, 0.07), transparent 32rem),
     var(--bg);
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -278,7 +278,7 @@ svg {
   height: 28rem;
   transform: translateX(-50%);
   background:
-    radial-gradient(ellipse at center, rgba(255, 129, 62, 0.12), transparent 46%),
+    radial-gradient(ellipse at center, rgba(212, 255, 63, 0.12), transparent 46%),
     radial-gradient(ellipse at 58% 55%, rgba(255, 198, 159, 0.035), transparent 35%);
   filter: blur(28px);
   pointer-events: none;
@@ -464,7 +464,7 @@ svg {
 
 .boundary-card {
   background:
-    radial-gradient(circle at 50% 10%, rgba(255, 129, 62, 0.075), transparent 55%),
+    radial-gradient(circle at 50% 10%, rgba(212, 255, 63, 0.075), transparent 55%),
     rgba(255,255,255,0.018);
 }
 
@@ -507,7 +507,7 @@ svg {
   height: 6px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent-a), var(--accent-c));
-  box-shadow: 0 0 12px rgba(255,129,62,0.28);
+  box-shadow: 0 0 12px rgba(212,255,63,0.28);
 }
 
 .proof-strip {
@@ -626,7 +626,7 @@ svg {
   right: -7rem;
   bottom: -10rem;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,129,62,0.09), transparent 65%);
+  background: radial-gradient(circle, rgba(212,255,63,0.09), transparent 65%);
 }
 
 .protocol-line {
@@ -697,7 +697,7 @@ svg {
 .boundary-section {
   border-block: 1px solid var(--line);
   background:
-    radial-gradient(circle at 75% 50%, rgba(255,129,62,0.045), transparent 25rem),
+    radial-gradient(circle at 75% 50%, rgba(212,255,63,0.045), transparent 25rem),
     #070708;
 }
 
@@ -874,7 +874,7 @@ svg {
   height: 28rem;
   top: 3rem;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,129,62,0.06), transparent 70%);
+  background: radial-gradient(circle, rgba(212,255,63,0.06), transparent 70%);
   pointer-events: none;
 }
 
