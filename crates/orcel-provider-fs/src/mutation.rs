@@ -336,7 +336,9 @@ impl FsProvider {
         for name in missing {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let resolved = self.mkdir_at(&current, &name)?;
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(windows)]
+            let resolved = self.mkdir_pinned(&current, &name)?;
+            #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
             let resolved = {
                 let next = current.join(&name);
                 fs::create_dir(&next)
@@ -585,6 +587,57 @@ impl FsProvider {
             // The name this call created, under the parent it was created in.
             let _ = at::remove_dir(&dir, &c_name);
         }
+        checked
+    }
+
+    /// Windows: creates the directory `name` under `parent` while `parent` is pinned. The pin is
+    /// a handle with directory-list access and no `FILE_SHARE_DELETE`, so NTFS refuses to rename
+    /// or delete `parent`, or any directory above it, until it closes; the path can't be swapped
+    /// for a junction mid-create. The pinned parent's real path, read from the handle, must be
+    /// `parent` itself and not a reparse point. The new directory's real path must be exactly
+    /// where it was asked to be and not Git data; otherwise it is removed while still pinned.
+    #[cfg(windows)]
+    fn mkdir_pinned(
+        &self,
+        parent: &Path,
+        name: &std::ffi::OsStr,
+    ) -> Result<PathBuf, ProviderError> {
+        let pin = crate::win::pin_directory(parent)
+            .map_err(|error| ProviderError::io("open parent directory", error))?;
+        let real = pin
+            .final_path()
+            .map_err(|error| ProviderError::io("resolve parent directory", error))?;
+        let link = pin
+            .is_reparse_point()
+            .map_err(|error| ProviderError::io("inspect parent directory", error))?;
+        if real != parent || link {
+            return Err(ProviderError::new(
+                FailureCode::PathRaceDetected,
+                "a parent directory changed while it was checked",
+            ));
+        }
+        let next = parent.join(name);
+        self.ensure_not_git(&next)?;
+        fs::create_dir(&next).map_err(|error| ProviderError::io("create directory", error))?;
+        let checked = resolve_final_path(&next)
+            .map_err(|error| ProviderError::io("resolve created directory", error))
+            .and_then(|resolved| {
+                self.ensure_not_git(&resolved)?;
+                if resolved != next {
+                    return Err(ProviderError::new(
+                        FailureCode::PathRaceDetected,
+                        "the created directory is not where it was asked to be",
+                    ));
+                }
+                Ok(resolved)
+            });
+        if checked.is_err() {
+            // The name this call created, under the pinned parent. If the new directory was
+            // renamed away and a junction or another empty directory put at its name, that is
+            // what is removed (a junction is removed itself, not followed).
+            let _ = fs::remove_dir(&next);
+        }
+        drop(pin);
         checked
     }
 
@@ -1366,6 +1419,60 @@ mod tests {
         assert_eq!(refused.code, FailureCode::TargetStale);
         assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"replaced");
         assert!(!dir.join("b.txt").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The OS guarantee Windows mkdir relies on: while a directory is pinned, it can be neither
+    /// renamed nor deleted, its parent and grandparent can't be renamed, and entries can still
+    /// be created inside it.
+    #[cfg(windows)]
+    #[test]
+    fn a_pinned_directory_and_its_parents_cannot_be_renamed() {
+        let dir = root("pin");
+        fs::create_dir_all(dir.join("g").join("a").join("b")).unwrap();
+        let dir = dir.join("g");
+        let pinned = dir.join("a").join("b");
+        let pin = crate::win::pin_directory(&pinned).unwrap();
+        assert!(fs::rename(&pinned, dir.join("a").join("b2")).is_err());
+        assert!(fs::rename(dir.join("a"), dir.join("a2")).is_err());
+        assert!(fs::remove_dir(&pinned).is_err());
+        fs::create_dir(pinned.join("new")).unwrap();
+        // The grandparent too: the open handle sits in its subtree.
+        let outer = dir.parent().unwrap().to_path_buf();
+        assert!(fs::rename(&dir, outer.join("g2")).is_err());
+        drop(pin);
+        fs::rename(dir.join("a"), dir.join("a2")).unwrap();
+        let _ = fs::remove_dir_all(outer);
+    }
+
+    /// Windows mkdir after its checks, with the parent swapped for a junction into Git data:
+    /// refused, and nothing is created in Git data.
+    #[cfg(windows)]
+    #[test]
+    fn windows_mkdir_through_a_swapped_parent_never_reaches_git_data() {
+        let dir = resolve_final_path(&root("mkdir-swap")).unwrap();
+        let heads = dir.join(".git").join("refs").join("heads");
+        fs::create_dir_all(&heads).unwrap();
+        fs::create_dir(dir.join(".git").join("objects")).unwrap();
+        fs::write(dir.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::create_dir(dir.join("sub")).unwrap();
+        let p = provider(&dir);
+        let sub = dir.join("sub");
+        fs::rename(&sub, dir.join("sub-moved")).unwrap();
+        assert!(std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&sub)
+            .arg(&heads)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        let refused = p
+            .mkdir_pinned(&sub, std::ffi::OsStr::new("new"))
+            .unwrap_err();
+        assert_eq!(refused.code, FailureCode::PathRaceDetected, "{refused:?}");
+        assert!(!heads.join("new").exists());
+        fs::remove_dir(&sub).unwrap();
         let _ = fs::remove_dir_all(dir);
     }
 }

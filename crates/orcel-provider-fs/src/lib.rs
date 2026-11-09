@@ -991,6 +991,36 @@ mod win {
         }
     }
 
+    /// Opens the directory at `path` itself (a junction is opened, not followed) to pin it:
+    /// directory-list access with no `FILE_SHARE_DELETE` makes NTFS refuse to rename or delete
+    /// it, or any directory above it, while the handle is open. Entries can still be created
+    /// inside it.
+    pub(crate) fn pin_directory(path: &Path) -> io::Result<RenameHandle> {
+        const FILE_LIST_DIRECTORY: u32 = 0x0001;
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: `wide` is a NUL-terminated path that outlives the call; no security
+        // attributes or template are passed.
+        let raw = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            )
+        };
+        if raw == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(RenameHandle(OwnedHandle(raw)))
+    }
+
     const FILE_DISPOSITION_INFO_CLASS: u32 = 4;
     const FILE_DISPOSITION_INFO_EX_CLASS: u32 = 21;
 
