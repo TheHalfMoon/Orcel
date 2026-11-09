@@ -992,6 +992,7 @@ mod win {
     }
 
     const FILE_DISPOSITION_INFO_CLASS: u32 = 4;
+    const FILE_DISPOSITION_INFO_EX_CLASS: u32 = 21;
 
     impl RenameHandle {
         /// The volume and file index of the opened entry, which name it whatever its path.
@@ -999,13 +1000,57 @@ mod win {
             file_id(self.0 .0 as RawHandle)
         }
 
+        /// Whether the opened entry is a directory.
+        pub(crate) fn is_directory(&self) -> io::Result<bool> {
+            const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+            let mut info = ByHandleFileInformation::default();
+            // SAFETY: the handle is open for this call, and `info` is a properly sized,
+            // writable BY_HANDLE_FILE_INFORMATION.
+            if unsafe { GetFileInformationByHandle(self.0 .0, &mut info) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(info.attributes & FILE_ATTRIBUTE_DIRECTORY != 0)
+        }
+
         /// Marks the entry to be deleted when this handle closes, or clears that mark. A
-        /// directory that isn't empty is refused here.
+        /// directory that isn't empty is refused here. POSIX semantics are asked for first,
+        /// as `DeleteFileW` uses since Windows 10 1903: the name goes when this handle closes
+        /// even while another process (an indexer, say) holds the file open. Where the file
+        /// system doesn't support that, the classic mark is used.
         pub(crate) fn set_delete_on_close(&self, delete: bool) -> io::Result<()> {
+            const FILE_DISPOSITION_DELETE: u32 = 0x1;
+            const FILE_DISPOSITION_POSIX_SEMANTICS: u32 = 0x2;
+            let flags: u32 = if delete {
+                FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS
+            } else {
+                0
+            };
+            // SAFETY: the handle is open with DELETE access, and `flags` is a four-byte
+            // FILE_DISPOSITION_INFO_EX that outlives the call.
+            let ex = unsafe {
+                SetFileInformationByHandle(
+                    self.0 .0,
+                    FILE_DISPOSITION_INFO_EX_CLASS,
+                    (&flags as *const u32).cast::<c_void>(),
+                    4,
+                )
+            };
+            if ex != 0 {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            const ERROR_INVALID_PARAMETER: i32 = 87;
+            const ERROR_NOT_SUPPORTED: i32 = 50;
+            const ERROR_INVALID_FUNCTION: i32 = 1;
+            if !matches!(
+                error.raw_os_error(),
+                Some(ERROR_INVALID_PARAMETER | ERROR_NOT_SUPPORTED | ERROR_INVALID_FUNCTION)
+            ) {
+                return Err(error);
+            }
             // FILE_DISPOSITION_INFO is a single BOOLEAN.
             let info: u8 = u8::from(delete);
-            // SAFETY: the handle is open with DELETE access, and `info` is a one-byte
-            // FILE_DISPOSITION_INFO that outlives the call.
+            // SAFETY: as above; `info` is a one-byte FILE_DISPOSITION_INFO.
             if unsafe {
                 SetFileInformationByHandle(
                     self.0 .0,

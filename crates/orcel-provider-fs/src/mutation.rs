@@ -507,9 +507,10 @@ impl FsProvider {
     /// Windows: removes the checked entry through one handle to it. The handle opens the entry
     /// itself (a link is opened, not followed); its real path, read from the handle, must be the
     /// approved one and not Git data, and a file must be the one whose content was hashed (same
-    /// volume and file index). The entry is then marked to be deleted when the handle closes,
-    /// and checked once more with the mark set, so a swap anywhere on the path can neither make
-    /// it delete another entry nor delete one that has been moved into Git data.
+    /// volume and file index). The entry is then marked to be deleted when the handle closes
+    /// and checked once more with the mark set, so a swap anywhere on the path can't make it
+    /// delete another entry. Its parent could still be moved after that second check; the entry
+    /// deleted is then still the approved one.
     #[cfg(windows)]
     fn remove_checked(&self, current: &EntryIdentity) -> Result<(), ProviderError> {
         use std::os::windows::io::AsRawHandle as _;
@@ -523,7 +524,10 @@ impl FsProvider {
         let link = entry
             .is_reparse_point()
             .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
-        if opened != current.resolved || link {
+        let is_directory = entry
+            .is_directory()
+            .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
+        if opened != current.resolved || link || is_directory != (current.kind == "directory") {
             return Err(stale());
         }
         self.ensure_not_git(&opened)?;
@@ -564,8 +568,10 @@ impl FsProvider {
     /// from its descriptor, so a link swapped in above it can't redirect the removal. The entry
     /// is opened under that directory without following a link, a file's content must still be
     /// the hashed content, and right before `unlinkat` the name must still hold the same device
-    /// and inode. A rename of another entry onto that name in the instant between the last
-    /// check and `unlinkat` remains; it can only replace an entry in the same verified directory.
+    /// and inode. Two windows remain, both needing a process that can already write Git data:
+    /// another entry renamed onto the name between the last check and `unlinkat`, and the
+    /// verified directory itself moved after its check (the approved entry is then removed
+    /// wherever it now is).
     #[cfg(unix)]
     // dev_t and ino_t differ in width and sign across Unix targets.
     #[allow(clippy::unnecessary_cast)]
@@ -1035,7 +1041,14 @@ mod tests {
             .status()
             .unwrap()
             .success());
-        assert!(p.remove_checked(&identity).is_err());
+        let refused = p.remove_checked(&identity).unwrap_err();
+        assert!(
+            matches!(
+                refused.code,
+                FailureCode::TargetStale | FailureCode::CapabilityDenied
+            ),
+            "{refused:?}"
+        );
         assert_eq!(fs::read(dir.join(".git/refs/heads/main")).unwrap(), b"same");
         assert_eq!(fs::read(dir.join("moved/main")).unwrap(), b"same");
         #[cfg(windows)]
