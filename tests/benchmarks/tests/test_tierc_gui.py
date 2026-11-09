@@ -124,7 +124,11 @@ class TierCGuiDownloadsAndDiagnostics(unittest.TestCase):
                 self.assertTrue(own["npm_config_cache"].startswith(scratch))
                 self.assertTrue(own["ELECTRON_CACHE"].startswith(scratch))
                 os.environ["ORCEL_TIERC_DOWNLOAD_CACHE"] = shared
-                env = _app_env(Path(scratch), [])
+                # A launched app never gets the shared folders, only an install does.
+                launched = _app_env(Path(scratch), [])
+                self.assertTrue(launched["ELECTRON_CACHE"].startswith(scratch))
+                self.assertTrue(launched["npm_config_cache"].startswith(scratch))
+                env = _app_env(Path(scratch), [], shared_downloads=True)
                 self.assertEqual(env["npm_config_cache"], str(Path(shared) / "npm"))
                 self.assertEqual(env["ELECTRON_CACHE"], str(Path(shared) / "electron"))
                 for key in ("APPDATA", "LOCALAPPDATA", "XDG_CACHE_HOME"):
@@ -146,6 +150,9 @@ class TierCGuiDownloadsAndDiagnostics(unittest.TestCase):
             self.assertEqual(exited, "app-exited-1")
             running = Episode.missing_window(fake, app, SimpleNamespace(poll=lambda: None))
             self.assertEqual(running, "window-not-found")
+            # An id that isn't a plain name can't put its log outside scratch.
+            unsafe = Episode._stderr_log(SimpleNamespace(scratch=Path(scratch)), {"id": "../../x"})
+            self.assertEqual(unsafe.parent, Path(scratch))
             # No log at all still answers.
             gone = SimpleNamespace(_stderr_log=lambda app: Path(scratch) / "absent.log")
             self.assertEqual(Episode.missing_window(gone, app, SimpleNamespace(poll=lambda: 7)), "app-exited-7")

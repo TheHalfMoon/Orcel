@@ -95,7 +95,20 @@ def _kill_tree(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
-def _app_env(scratch: Path, unset: list[str]) -> dict[str, str]:
+def _safe_name(name: str) -> str:
+    """`name` as a plain file name: letters, digits, `-` and `_` only."""
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in name)[:64] or "app"
+
+
+def _tail(path: Path) -> str:
+    """The last 2000 bytes of a log, or nothing when it can't be read."""
+    try:
+        return path.read_bytes()[-2000:].decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _app_env(scratch: Path, unset: list[str], shared_downloads: bool = False) -> dict[str, str]:
     """The environment for npm and the task's apps: the scrubbed task
     environment plus what Node, npm and Electron need, every per-user folder
     inside the episode's scratch."""
@@ -108,13 +121,15 @@ def _app_env(scratch: Path, unset: list[str]) -> dict[str, str]:
         path = scratch / folder
         path.mkdir(exist_ok=True)
         env[key] = str(path)
-    # Downloads only: with ORCEL_TIERC_DOWNLOAD_CACHE set (CI sets it per job), the npm package
-    # cache and Electron's binary cache are shared by every episode, so one job downloads each
-    # once instead of once per app and episode. Both hold only downloads checked on use (npm
-    # against the lockfile's integrity hashes, Electron against its published checksums); each
-    # episode's app data folders above stay its own.
+    # Downloads only, and only for installs (`shared_downloads`, which `npm ci` asks for): with
+    # ORCEL_TIERC_DOWNLOAD_CACHE set (CI sets it per job), the npm package cache and Electron's
+    # binary cache are shared by every episode's install, so one job downloads each once instead
+    # of once per app and episode. npm checks every cached package against the lockfile's
+    # integrity hash when it reads it; Electron's download is checked against its checksums when
+    # it is fetched. The launched apps keep the per-episode caches above, so an app never runs
+    # with the shared folders in its environment, and each episode's app data stays its own.
     shared = os.environ.get("ORCEL_TIERC_DOWNLOAD_CACHE")
-    if shared:
+    if shared and shared_downloads:
         for key, folder in (("npm_config_cache", "npm"), ("ELECTRON_CACHE", "electron")):
             path = Path(shared) / folder
             path.mkdir(parents=True, exist_ok=True)
@@ -208,19 +223,31 @@ class Episode:
                 continue
             npm = "npm.cmd" if os.name == "nt" else "npm"
             # One retry: npm ci and Electron's install download from the network, which can
-            # fail for a moment (GitHub release downloads answered 504 on 2026-11-09).
+            # fail or stall for a while (GitHub release downloads answered 504 on 2026-11-09).
+            # Its output goes to a file in scratch, and its tail to stderr when it fails.
+            log = self.scratch / f"npm-ci-{_safe_name(Path(cwd).name)}.log"
+            ok = False
             for attempt in (1, 2):
-                done = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd, env=_app_env(self.scratch, []),
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=INSTALL_TIMEOUT_S, check=False)
-                if done.returncode == 0:
+                with open(log, "wb") as output:
+                    try:
+                        done = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd,
+                                              env=_app_env(self.scratch, [], shared_downloads=True),
+                                              stdout=output, stderr=subprocess.STDOUT,
+                                              timeout=INSTALL_TIMEOUT_S, check=False)
+                        ok = done.returncode == 0
+                        outcome = f"exit code {done.returncode}"
+                    except subprocess.TimeoutExpired:
+                        outcome = f"no result in {INSTALL_TIMEOUT_S:.0f} s"
+                if ok:
                     break
-                print(f"tierc: npm ci failed in {Path(cwd).name} (attempt {attempt})", file=sys.stderr)
-            if done.returncode != 0:
+                print(f"tierc: npm ci failed in {Path(cwd).name} (attempt {attempt}, {outcome}):\n"
+                      f"{_tail(log)}", file=sys.stderr)
+            if not ok:
                 raise TierCError(f"{task}: npm ci failed in {Path(cwd).name}")
             installed.add(cwd)
 
     def _stderr_log(self, app: dict[str, Any]) -> Path:
-        return self.scratch / f"{app['id']}.stderr.log"
+        return self.scratch / f"{_safe_name(str(app.get('id', 'app')))}.stderr.log"
 
     def launch(self, app: dict[str, Any]) -> subprocess.Popen[bytes]:
         # The app's error output goes to a file in the episode's scratch, so a window that
@@ -242,12 +269,9 @@ class Episode:
         app had already exited, else `window-not-found`. The tail of the app's error output
         goes to stderr, so the job log says why."""
         code = process.poll()
-        try:
-            tail = self._stderr_log(app).read_bytes()[-2000:].decode("utf-8", "replace")
-        except OSError:
-            tail = ""
         state = f"exited with code {code}" if code is not None else "still running"
-        print(f"tierc: {app['id']}: no window; the app {state}; its last error output:\n{tail}", file=sys.stderr)
+        print(f"tierc: {app.get('id', 'app')}: no window; the app {state}; its last error output:\n"
+              f"{_tail(self._stderr_log(app))}", file=sys.stderr)
         return f"app-exited-{code}" if code is not None else "window-not-found"
 
     def evaluate(self) -> Optional[dict[str, Any]]:
