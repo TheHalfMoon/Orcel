@@ -52,14 +52,20 @@ fn a_final_symlink_is_not_followed() {
 #[test]
 fn linux_executes_the_verified_file_not_the_path() {
     let dir = tempfile::tempdir().unwrap();
-    let echo = copy_of(Path::new("/bin/echo"), dir.path(), "tool");
+    // Since Ubuntu 26.04 the coreutils are one multi-call binary that picks its command from
+    // the name in argv[0], so the copy keeps the name `echo`, and argv[0] is its path, as the
+    // launch in linux.rs sets it, not `/proc/self/fd/<n>`.
+    let echo = copy_of(Path::new("/bin/echo"), dir.path(), "echo");
     let pinned = PinnedExecutable::open(&echo, &digest_of(&echo)).unwrap();
-    let other = copy_of(Path::new("/bin/false"), dir.path(), "other");
+    // The file swapped in must differ under any name: on 26.04 /bin/false is the same
+    // multi-call binary, and named `echo` it would echo too.
+    let other = dir.path().join("other");
+    std::fs::write(&other, "#!/bin/sh\nexit 3\n").unwrap();
+    std::fs::set_permissions(&other, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::rename(&other, &echo).unwrap();
-    let output = std::process::Command::new(pinned.exec_path())
-        .arg("pinned")
-        .output()
-        .unwrap();
+    let mut command = std::process::Command::new(pinned.exec_path());
+    std::os::unix::process::CommandExt::arg0(&mut command, pinned.path());
+    let output = command.arg("pinned").output().unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"pinned\n");
 }
