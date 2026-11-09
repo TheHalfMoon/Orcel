@@ -231,7 +231,7 @@ fn preview_lines(preview: Option<&Preview>) -> String {
     match preview {
         None => String::new(),
         Some(Preview::Hidden { chars }) => format!(
-            "\nPreview: hidden, the content looks like a credential ({})",
+            "\nPreview: hidden, the content matches a credential pattern ({})",
             plural(*chars, "character")
         ),
         Some(Preview::SizesOnly { chars, lines }) => format!(
@@ -239,6 +239,9 @@ fn preview_lines(preview: Option<&Preview>) -> String {
             plural(*chars, "character"),
             plural(*lines, "line")
         ),
+        Some(Preview::Content { lines, .. }) if lines.is_empty() => {
+            String::from("\nPreview: (empty)")
+        }
         Some(Preview::Content { lines, more_lines }) => {
             let mut out = String::from("\nPreview:");
             for (marker, line) in lines {
@@ -635,7 +638,7 @@ mod tests {
             crate::PreviewMode::Content,
             true,
         ));
-        assert!(secret.contains("\nPreview: hidden, the content looks like a credential (17 characters)\nDigest: d\n"), "{secret}");
+        assert!(secret.contains("\nPreview: hidden, the content matches a credential pattern (18 characters)\nDigest: d\n"), "{secret}");
         assert!(!secret.contains("AKIA"));
         let sizes = with(Preview::of_written(
             "private notes\nmore",
@@ -643,7 +646,7 @@ mod tests {
             false,
         ));
         assert!(
-            sizes.contains("\nPreview: off, sizes only (17 characters, 2 lines)\nDigest: d\n"),
+            sizes.contains("\nPreview: off, sizes only (18 characters, 2 lines)\nDigest: d\n"),
             "{sizes}"
         );
         assert!(!sizes.contains("private"));
@@ -653,7 +656,12 @@ mod tests {
             crate::PreviewMode::SizesOnly,
             true,
         ));
-        assert!(both.contains("looks like a credential"));
+        assert!(both.contains("matches a credential pattern"));
+        // An empty write says so.
+        assert!(
+            with(Preview::of_written("", crate::PreviewMode::Content, false))
+                .contains("\nPreview: (empty)\nDigest: d\n")
+        );
     }
 
     #[test]

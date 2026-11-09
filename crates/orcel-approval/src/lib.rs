@@ -105,7 +105,7 @@ pub struct PresenceContext {
 /// choice, read by orceld from its launch settings, never from a request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PreviewMode {
-    /// A bounded preview, hidden whenever the content looks like a credential.
+    /// A bounded preview, hidden when the content matches a known credential pattern.
     #[default]
     Content,
     /// Sizes only: the prompt shows how much content, never any of it.
@@ -125,27 +125,39 @@ pub enum Preview {
         lines: Vec<(char, String)>,
         more_lines: usize,
     },
-    /// The content looks like a credential, so none of it is shown.
+    /// The content matches a known credential pattern, so none of it is shown.
     Hidden { chars: usize },
     /// The person chose sizes only.
     SizesOnly { chars: usize, lines: usize },
 }
 
 impl Preview {
-    fn bounded(lines: Vec<(char, String)>, mode: PreviewMode, looks_secret: bool) -> Self {
-        let chars = lines.iter().map(|(_, line)| line.chars().count()).sum();
+    /// At most [`PREVIEW_LINES`] marked lines are kept; the rest are only counted, so a large
+    /// content costs no more memory here than its first lines. `chars` counts every character,
+    /// line breaks included.
+    fn bounded<'a>(
+        mut lines: impl Iterator<Item = (char, &'a str)>,
+        chars: usize,
+        mode: PreviewMode,
+        looks_secret: bool,
+    ) -> Self {
         if looks_secret {
             return Self::Hidden { chars };
         }
+        let kept: Vec<(char, String)> = lines
+            .by_ref()
+            .take(PREVIEW_LINES)
+            .map(|(marker, line)| (marker, line.to_owned()))
+            .collect();
+        let more_lines = lines.count();
         if mode == PreviewMode::SizesOnly {
             return Self::SizesOnly {
                 chars,
-                lines: lines.len(),
+                lines: kept.len() + more_lines,
             };
         }
-        let more_lines = lines.len().saturating_sub(PREVIEW_LINES);
         Self::Content {
-            lines: lines.into_iter().take(PREVIEW_LINES).collect(),
+            lines: kept,
             more_lines,
         }
     }
@@ -153,18 +165,19 @@ impl Preview {
     /// The content a write puts in a file. `looks_secret` is the caller's credential check on
     /// the whole content: when it matches, nothing is shown.
     pub fn of_written(content: &str, mode: PreviewMode, looks_secret: bool) -> Self {
-        let lines = content.lines().map(|line| ('>', line.to_owned())).collect();
-        Self::bounded(lines, mode, looks_secret)
+        let lines = content.lines().map(|line| ('>', line));
+        Self::bounded(lines, content.chars().count(), mode, looks_secret)
     }
 
-    /// The text an edit replaces and its replacement, as removed and added lines.
+    /// The text an edit replaces and its replacement, as removed and added lines. The sizes
+    /// count both.
     pub fn of_edit(old: &str, new: &str, mode: PreviewMode, looks_secret: bool) -> Self {
         let lines = old
             .lines()
-            .map(|line| ('-', line.to_owned()))
-            .chain(new.lines().map(|line| ('+', line.to_owned())))
-            .collect();
-        Self::bounded(lines, mode, looks_secret)
+            .map(|line| ('-', line))
+            .chain(new.lines().map(|line| ('+', line)));
+        let chars = old.chars().count() + new.chars().count();
+        Self::bounded(lines, chars, mode, looks_secret)
     }
 }
 

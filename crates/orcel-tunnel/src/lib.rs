@@ -264,6 +264,8 @@ fn is_safe_orcel_env(name: &str) -> bool {
             | "ORCEL_DEFAULT_WORKSPACE"
             | "ORCEL_DAEMON"
             | "ORCEL_ORCEL_SESSION_ID"
+            // The person's approval preview choice (`sizes` for sizes only); orceld reads it.
+            | "ORCEL_APPROVAL_PREVIEWS"
     )
 }
 
