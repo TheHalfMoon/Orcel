@@ -209,7 +209,8 @@ pub fn parse_committed(
             download.bytes, download.sha256, download.source_url
         ),
         digest.clone(),
-    );
+    )
+    .for_file();
     let token = approval
         .request_token(&prompt)
         .map_err(|error| ProviderError::new(error.code, error.message))?;

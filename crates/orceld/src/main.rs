@@ -33,10 +33,9 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let policy = load_policy()?;
-    let audit_path =
-        default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
-    let audit = AuditLogger::new(audit_path)
-        .map_err(|error| format!("initialize audit log: {error}"))?;
+    let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
+    let audit =
+        AuditLogger::new(audit_path).map_err(|error| format!("initialize audit log: {error}"))?;
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;
 
@@ -314,7 +313,8 @@ pub(crate) fn write_file_to(
             preview.bytes, preview.new_sha256
         ),
         digest.clone(),
-    );
+    )
+    .for_file();
 
     // SG-000120 RJ-02: journaled like every approved file mutation.
     let mutation = crate::mutation_journal::Mutation {
@@ -506,21 +506,25 @@ fn verify_registered_identity(
     #[cfg(windows)]
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         let baseline = std::fs::canonicalize(
-            PathBuf::from(system_root).join("System32").join("whoami.exe"),
+            PathBuf::from(system_root)
+                .join("System32")
+                .join("whoami.exe"),
         );
         if baseline.as_ref().is_ok_and(|path| *path == plan.executable) {
             return Ok(None);
         }
     }
-    let registry_path = orcel_policy::executable_registry::default_registry_path().map_err(|error| {
-        ProviderError::new(
-            FailureCode::ProviderUnavailable,
-            format!("executable registry is unavailable: {error}"),
-        )
-    })?;
+    let registry_path =
+        orcel_policy::executable_registry::default_registry_path().map_err(|error| {
+            ProviderError::new(
+                FailureCode::ProviderUnavailable,
+                format!("executable registry is unavailable: {error}"),
+            )
+        })?;
     let entries = orcel_policy::executable_registry::load_registry(&registry_path);
-    let entry = orcel_policy::executable_registry::check_spawn(&entries, &plan.executable, &plan.argv)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    let entry =
+        orcel_policy::executable_registry::check_spawn(&entries, &plan.executable, &plan.argv)
+            .map_err(|error| ProviderError::new(error.code, error.message))?;
     orcel_policy::executable_registry::verify_identity(entry, &plan.executable)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     Ok(Some(entry.sha256.clone()))
@@ -871,10 +875,11 @@ mod tests {
         #[cfg(not(windows))]
         let executable = {
             use orcel_policy::executable_registry::{build_entry, save_registry};
-            let executable =
-                fs::canonicalize(std::env::current_exe().expect("test executable")).expect("canonical");
+            let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
+                .expect("canonical");
             let registry = private_registry("process-approval-registry");
-            let entry = build_entry("fixture", &executable, vec![], vec![], 0, &[], 1).expect("registrable");
+            let entry = build_entry("fixture", &executable, vec![], vec![], 0, &[], 1)
+                .expect("registrable");
             save_registry(&registry, &[entry]).expect("save registry");
             std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
             executable
@@ -979,19 +984,31 @@ mod tests {
         std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
         let policy = PolicyEngine::new(vec![workspace.clone()]).expect("policy");
         let system_root = std::env::var_os("SystemRoot").expect("SystemRoot");
-        let hostname = PathBuf::from(&system_root).join("System32").join("hostname.exe");
+        let hostname = PathBuf::from(&system_root)
+            .join("System32")
+            .join("hostname.exe");
         let mut request = process_request(&workspace, hostname.clone());
         // A distinct request id gives this test its own AppContainer profile,
         // so it never collides with the SG-000010 test running in parallel.
         request.request_id = "process-registry-test-request".into();
 
         // Unregistered: denied by policy before any approval.
-        let error = policy.authorize(&request).expect_err("unregistered executable");
+        let error = policy
+            .authorize(&request)
+            .expect_err("unregistered executable");
         assert_eq!(error.code, FailureCode::CapabilityDenied);
 
         // Registered with an empty grammar: argv must be empty.
-        let entry = build_entry("hostname", &hostname, vec![], vec![], 0, std::slice::from_ref(&workspace.root), 1)
-            .expect("registrable system executable");
+        let entry = build_entry(
+            "hostname",
+            &hostname,
+            vec![],
+            vec![],
+            0,
+            std::slice::from_ref(&workspace.root),
+            1,
+        )
+        .expect("registrable system executable");
         save_registry(&registry, std::slice::from_ref(&entry)).expect("save registry");
         policy.authorize(&request).expect("registered executable");
         let mut with_args = request.clone();
@@ -1001,7 +1018,8 @@ mod tests {
             FailureCode::CapabilityDenied
         );
         let mut shell = request.clone();
-        shell.arguments["executable"] = json!(PathBuf::from(&system_root).join("System32").join("cmd.exe"));
+        shell.arguments["executable"] =
+            json!(PathBuf::from(&system_root).join("System32").join("cmd.exe"));
         assert_eq!(
             policy.authorize(&shell).expect_err("shell").code,
             FailureCode::CapabilityDenied
@@ -1033,7 +1051,9 @@ mod tests {
         )
         .expect("registered executable runs through the contained path");
         assert_eq!(result["exit_code"], 0);
-        assert!(result["stdout"].as_str().is_some_and(|value| !value.trim().is_empty()));
+        assert!(result["stdout"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty()));
         assert_eq!(result["appcontainer_verified"], true);
         assert_eq!(result["assigned_to_job_before_resume"], true);
         assert_eq!(result["job_quiescent"], true);
@@ -1064,12 +1084,22 @@ mod tests {
         request.request_id = "process-registry-unix-test-request".into();
 
         // Unregistered: denied by policy before any approval.
-        let error = policy.authorize(&request).expect_err("unregistered executable");
+        let error = policy
+            .authorize(&request)
+            .expect_err("unregistered executable");
         assert_eq!(error.code, FailureCode::CapabilityDenied);
 
         // Registered with an empty grammar: argv must be empty.
-        let entry = build_entry("hostname", &hostname, vec![], vec![], 0, std::slice::from_ref(&workspace.root), 1)
-            .expect("registrable system executable");
+        let entry = build_entry(
+            "hostname",
+            &hostname,
+            vec![],
+            vec![],
+            0,
+            std::slice::from_ref(&workspace.root),
+            1,
+        )
+        .expect("registrable system executable");
         save_registry(&registry, std::slice::from_ref(&entry)).expect("save registry");
         policy.authorize(&request).expect("registered executable");
         let mut with_args = request.clone();
@@ -1110,7 +1140,9 @@ mod tests {
         )
         .expect("registered executable runs through the Safe tier");
         assert_eq!(result["exit_code"], 0);
-        assert!(result["stdout"].as_str().is_some_and(|value| !value.trim().is_empty()));
+        assert!(result["stdout"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty()));
         assert_eq!(result["appcontainer_verified"], false);
         assert_eq!(result["assigned_to_job_before_resume"], true);
         assert_eq!(result["job_quiescent"], true);
@@ -1172,7 +1204,8 @@ mod tests {
         let registry = test_registry("contained-unavailable-store");
         std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
         let hostname = system_hostname();
-        let mut entry = build_entry("hostname", &hostname, vec![], vec![], 0, &[], 1).expect("registrable");
+        let mut entry =
+            build_entry("hostname", &hostname, vec![], vec![], 0, &[], 1).expect("registrable");
         entry.tier = ExecutionTier::Contained;
         save_registry(&registry, &[entry]).expect("save registry");
         let policy = PolicyEngine::new(vec![workspace.clone()]).expect("policy");
@@ -1190,7 +1223,12 @@ mod tests {
             )
             .expect_err("no helper"),
         ] {
-            assert_eq!(error.code, FailureCode::ProviderUnavailable, "{}", error.message);
+            assert_eq!(
+                error.code,
+                FailureCode::ProviderUnavailable,
+                "{}",
+                error.message
+            );
             assert!(error.message.contains("orcel-contain"), "{}", error.message);
         }
         let _ = fs::remove_dir_all(root);
@@ -1231,8 +1269,15 @@ mod tests {
         // A parallel test's fork can briefly hold the fresh copy open for
         // writing (ETXTBSY); wait until it starts.
         let started = std::time::Instant::now();
-        while std::process::Command::new(&probe).arg("noop").status().is_err() {
-            assert!(started.elapsed() < Duration::from_secs(10), "the probe copy never started");
+        while std::process::Command::new(&probe)
+            .arg("noop")
+            .status()
+            .is_err()
+        {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the probe copy never started"
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
         let digest = sha256_hex(&fs::read(&helper).expect("read helper"));
@@ -1280,7 +1325,10 @@ mod tests {
 
         let escape = workspace.root.join("escape.txt");
         let write = run(json!(["write", escape]), "contained-e2e-write").expect("contained write");
-        assert_eq!(write["exit_code"], 10, "the contained process wrote into the cwd: {write}");
+        assert_eq!(
+            write["exit_code"], 10,
+            "the contained process wrote into the cwd: {write}"
+        );
         assert!(!escape.exists());
         // Positive control: the same write works uncontained.
         let status = std::process::Command::new(&probe)
