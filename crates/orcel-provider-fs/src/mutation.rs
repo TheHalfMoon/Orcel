@@ -504,6 +504,167 @@ impl FsProvider {
         Ok(moved)
     }
 
+    /// Windows: removes the checked entry through one handle to it. The handle opens the entry
+    /// itself (a link is opened, not followed); its real path, read from the handle, must be the
+    /// approved one and not Git data, and a file must be the one whose content was hashed (same
+    /// volume and file index). The entry is then marked to be deleted when the handle closes
+    /// and checked once more with the mark set, so a swap anywhere on the path can't make it
+    /// delete another entry. Its parent could still be moved after that second check; the entry
+    /// deleted is then still the approved one.
+    #[cfg(windows)]
+    fn remove_checked(&self, current: &EntryIdentity) -> Result<(), ProviderError> {
+        use std::os::windows::io::AsRawHandle as _;
+        let stale =
+            || ProviderError::new(FailureCode::TargetStale, "target changed since approval");
+        let entry = crate::win::open_for_rename(&current.resolved)
+            .map_err(|error| ProviderError::io("open entry to remove", error))?;
+        let opened = entry
+            .final_path()
+            .map_err(|error| ProviderError::io("resolve entry to remove", error))?;
+        let link = entry
+            .is_reparse_point()
+            .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
+        let is_directory = entry
+            .is_directory()
+            .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
+        if opened != current.resolved || link || is_directory != (current.kind == "directory") {
+            return Err(stale());
+        }
+        self.ensure_not_git(&opened)?;
+        if let Some(expected_sha) = &current.sha256 {
+            let file = File::open(&opened)
+                .map_err(|error| ProviderError::io("open entry to remove", error))?;
+            let read_id = crate::win::file_id(file.as_raw_handle())
+                .map_err(|error| ProviderError::io("identify entry to remove", error))?;
+            let entry_id = entry
+                .file_id()
+                .map_err(|error| ProviderError::io("identify entry to remove", error))?;
+            if read_id != entry_id || &hash_file(file)? != expected_sha {
+                return Err(stale());
+            }
+        }
+        let what = if current.kind == "directory" {
+            "remove directory"
+        } else {
+            "remove file"
+        };
+        entry
+            .set_delete_on_close(true)
+            .map_err(|error| ProviderError::io(what, error))?;
+        let refusal = match entry.final_path() {
+            Ok(now) => self.ensure_not_git(&now).err(),
+            Err(error) => Some(ProviderError::io("re-resolve entry to remove", error)),
+        };
+        if let Some(error) = refusal {
+            let _ = entry.set_delete_on_close(false);
+            return Err(error);
+        }
+        // Closing the handle deletes the entry.
+        drop(entry);
+        Ok(())
+    }
+
+    /// Unix: removes the checked entry relative to its parent directory, opened and verified
+    /// from its descriptor, so a link swapped in above it can't redirect the removal. The entry
+    /// is opened under that directory without following a link, a file's content must still be
+    /// the hashed content, and right before `unlinkat` the name must still hold the same device
+    /// and inode. Two windows remain, both needing a process that can already write Git data:
+    /// another entry renamed onto the name between the last check and `unlinkat`, and the
+    /// verified directory itself moved after its check (the approved entry is then removed
+    /// wherever it now is).
+    #[cfg(unix)]
+    // dev_t and ino_t differ in width and sign across Unix targets.
+    #[allow(clippy::unnecessary_cast)]
+    fn remove_checked(&self, current: &EntryIdentity) -> Result<(), ProviderError> {
+        use std::os::fd::{AsRawFd as _, FromRawFd as _};
+        use std::os::unix::ffi::OsStrExt as _;
+        use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+        let stale =
+            || ProviderError::new(FailureCode::TargetStale, "target changed since approval");
+        let directory = current.kind == "directory";
+        let parent = current
+            .resolved
+            .parent()
+            .ok_or_else(|| invalid("target has no parent"))?;
+        let name = current
+            .resolved
+            .file_name()
+            .ok_or_else(|| invalid("target has no name"))?;
+        let dir = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+            .open(parent)
+            .map_err(|error| ProviderError::io("open parent of entry to remove", error))?;
+        let dir_path = final_path_from_open_file(&dir, parent)
+            .map_err(|error| ProviderError::io("resolve parent of entry to remove", error))?;
+        if dir_path != parent {
+            return Err(stale());
+        }
+        self.ensure_not_git(&dir_path.join(name))?;
+        let c_name = std::ffi::CString::new(name.as_bytes())
+            .map_err(|_| invalid("target name holds a NUL byte"))?;
+        let flags = libc::O_RDONLY
+            | libc::O_NOFOLLOW
+            | libc::O_CLOEXEC
+            | if directory {
+                libc::O_DIRECTORY
+            } else {
+                libc::O_NONBLOCK
+            };
+        // SAFETY: the directory descriptor is open for the lifetime of `dir`, and `c_name` is
+        // a NUL-terminated name; openat returns a new descriptor or -1.
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), c_name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(ProviderError::io(
+                "open entry to remove",
+                std::io::Error::last_os_error(),
+            ));
+        }
+        // SAFETY: openat returned a new descriptor that nothing else owns.
+        let entry = unsafe { File::from_raw_fd(fd) };
+        let metadata = entry
+            .metadata()
+            .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
+        if (directory && !metadata.is_dir()) || (!directory && !metadata.is_file()) {
+            return Err(stale());
+        }
+        if let Some(expected_sha) = &current.sha256 {
+            if &hash_file(&entry)? != expected_sha {
+                return Err(stale());
+            }
+        }
+        // SAFETY: libc::stat is plain integers, for which all-zero is a valid value.
+        let mut named: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: the directory descriptor and name are valid as above, and `named` is a
+        // writable stat buffer.
+        let status = unsafe {
+            libc::fstatat(
+                dir.as_raw_fd(),
+                c_name.as_ptr(),
+                &mut named,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if status != 0
+            || named.st_dev as u64 != metadata.dev()
+            || named.st_ino as u64 != metadata.ino()
+        {
+            return Err(stale());
+        }
+        drop(entry);
+        let unlink_flags = if directory { libc::AT_REMOVEDIR } else { 0 };
+        // SAFETY: the directory descriptor and name are valid as above.
+        if unsafe { libc::unlinkat(dir.as_raw_fd(), c_name.as_ptr(), unlink_flags) } != 0 {
+            let what = if directory {
+                "remove directory"
+            } else {
+                "remove file"
+            };
+            return Err(ProviderError::io(what, std::io::Error::last_os_error()));
+        }
+        Ok(())
+    }
+
     /// Remove one regular file or one empty directory bound to its identity.
     pub fn remove_entry(
         &self,
@@ -512,18 +673,12 @@ impl FsProvider {
     ) -> Result<Value, ProviderError> {
         self.reject_git_mutation(relative)?;
         let current = self.require_identity(relative, expected)?;
-        if current.kind == "directory" {
-            if current.size != 0 {
-                return Err(invalid(
-                    "only empty directories can be removed; there is no recursive delete",
-                ));
-            }
-            fs::remove_dir(&current.resolved)
-                .map_err(|error| ProviderError::io("remove directory", error))?;
-        } else {
-            fs::remove_file(&current.resolved)
-                .map_err(|error| ProviderError::io("remove file", error))?;
+        if current.kind == "directory" && current.size != 0 {
+            return Err(invalid(
+                "only empty directories can be removed; there is no recursive delete",
+            ));
         }
+        self.remove_checked(&current)?;
         if fs::symlink_metadata(&current.resolved).is_ok() {
             return Err(ProviderError::new(
                 FailureCode::PostconditionFailed,
@@ -856,5 +1011,50 @@ mod tests {
         assert!(outside.join("secret.txt").exists());
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    /// The window remove used to leave open: the identity was checked, then a parent directory
+    /// was swapped for a link into Git data holding a file with the same name and content. The
+    /// removal must not reach the Git file, and the real file stays where it was moved.
+    #[test]
+    fn removal_through_a_swapped_parent_never_reaches_git_data() {
+        let dir = root("remove-swap");
+        fs::create_dir_all(dir.join(".git/refs/heads")).unwrap();
+        fs::create_dir(dir.join(".git/objects")).unwrap();
+        fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(dir.join(".git/refs/heads/main"), "same").unwrap();
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/main"), "same").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("sub/main").unwrap();
+        // The swap, after the check.
+        fs::rename(dir.join("sub"), dir.join("moved")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join(".git/refs/heads"), dir.join("sub")).unwrap();
+        #[cfg(windows)]
+        assert!(std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(dir.join("sub"))
+            // mklink takes only backslashes.
+            .arg(dir.join(".git").join("refs").join("heads"))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        let refused = p.remove_checked(&identity).unwrap_err();
+        assert!(
+            matches!(
+                refused.code,
+                FailureCode::TargetStale | FailureCode::CapabilityDenied
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(fs::read(dir.join(".git/refs/heads/main")).unwrap(), b"same");
+        assert_eq!(fs::read(dir.join("moved/main")).unwrap(), b"same");
+        #[cfg(windows)]
+        fs::remove_dir(dir.join("sub")).unwrap();
+        #[cfg(unix)]
+        fs::remove_file(dir.join("sub")).unwrap();
+        let _ = fs::remove_dir_all(dir);
     }
 }
