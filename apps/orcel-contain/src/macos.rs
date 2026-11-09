@@ -511,30 +511,39 @@ fn exited(pid: libc::c_int) -> bool {
     {
         return true;
     }
+    // libc defines no `kinfo_proc` for Apple targets, so the record is read as
+    // bytes, as orcel-browser-host's `still_living` does: on 64-bit macOS a
+    // `kinfo_proc` is 648 bytes and starts with `struct extern_proc`, whose
+    // `p_stat` (a `char`) is at 36 and `p_pid` (an `int`) at 40. A record of
+    // another size, or one that doesn't name `pid`, is not taken as exited.
+    const KINFO_PROC_SIZE: usize = 648;
+    const KP_STAT: usize = 36;
+    const KP_PID: usize = 40;
     /// `SZOMB` in `<sys/proc.h>`.
-    const SZOMB: libc::c_char = 5;
+    const SZOMB: u8 = 5;
     let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
-    // SAFETY: kinfo_proc is a plain C struct of integers, pointers and arrays,
-    // for which the all-zero bit pattern is a valid value.
-    let mut record: libc::kinfo_proc = unsafe { std::mem::zeroed() };
-    let mut size = std::mem::size_of::<libc::kinfo_proc>();
+    let mut record = [0u8; KINFO_PROC_SIZE];
+    let mut size = record.len();
     // SAFETY: `mib` is a live four-element name, `record` a live, writable
-    // kinfo_proc and `size` its exact size; sysctl writes at most `size` bytes
-    // into it and the new value is null.
+    // buffer of `size` bytes that sysctl writes at most `size` bytes into, and
+    // the new value is null.
     let status = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
             mib.len() as libc::c_uint,
-            std::ptr::addr_of_mut!(record).cast(),
+            record.as_mut_ptr().cast(),
             &mut size,
             std::ptr::null_mut(),
             0,
         )
     };
-    status == 0
-        && size == std::mem::size_of::<libc::kinfo_proc>()
-        && record.kp_proc.p_pid == pid
-        && record.kp_proc.p_stat == SZOMB
+    let listed = i32::from_ne_bytes([
+        record[KP_PID],
+        record[KP_PID + 1],
+        record[KP_PID + 2],
+        record[KP_PID + 3],
+    ]);
+    status == 0 && size == KINFO_PROC_SIZE && listed == pid && record[KP_STAT] == SZOMB
 }
 fn sample_once(pid: libc::c_int) -> (Option<u64>, Option<i32>) {
     let resident = resident_bytes(pid);
