@@ -7,7 +7,7 @@
 //! destructive class. Every mutation verifies its postcondition.
 
 use crate::mutation_journal::{self, Mutation, Postcondition, Sink};
-use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
+use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation, Preview, PreviewMode};
 use orcel_contracts::{FailureCode, RequestEnvelope};
 use orcel_policy::{Workspace, POLICY_REVISION};
 use orcel_provider_fs::mutation::EntryIdentity;
@@ -66,29 +66,53 @@ fn string_arg<'a>(request: &'a RequestEnvelope, name: &str) -> Result<&'a str, P
         })
 }
 
-/// What the prompt says the target is: whether it is a file (so its type is shown) and, for a
-/// move, where it goes.
-#[derive(Clone, Copy)]
+/// The person's choice for approval previews, from orceld's launch settings (the
+/// `ORCEL_APPROVAL_PREVIEWS` variable its launcher sets, never a request): `sizes` shows sizes
+/// only; anything else, or nothing, shows a bounded preview that is hidden when the content
+/// looks like a credential.
+pub(crate) fn preview_mode() -> PreviewMode {
+    match std::env::var("ORCEL_APPROVAL_PREVIEWS").as_deref() {
+        Ok("sizes") => PreviewMode::SizesOnly,
+        _ => PreviewMode::Content,
+    }
+}
+
+/// Whether text looks like a credential, by the clipboard's secret filter: such content is
+/// never previewed.
+pub(crate) fn looks_secret(text: &str) -> bool {
+    orcel_provider_clipboard::contains_secret_material(text)
+}
+
+/// What the prompt says the target is: whether it is a file (so its type is shown), for a
+/// move where it goes, and a preview of the content.
+#[derive(Clone)]
 struct Shown<'a> {
     file: bool,
     destination: Option<&'a str>,
+    preview: Option<Preview>,
 }
 
 impl Shown<'_> {
     const DIRECTORY: Self = Self {
         file: false,
         destination: None,
+        preview: None,
     };
 
     fn entry(identity: &EntryIdentity) -> Self {
         Self {
             file: identity.kind == "file",
             destination: None,
+            preview: None,
         }
     }
 
     fn mark(self, prompt: ApprovalPrompt) -> ApprovalPrompt {
         let prompt = if self.file { prompt.for_file() } else { prompt };
+        let prompt = match self.preview {
+            Some(preview) => prompt.with_preview(preview),
+            None => prompt,
+        };
         match self.destination {
             Some(destination) => prompt.with_destination(destination),
             None => prompt,
@@ -308,10 +332,11 @@ pub(crate) fn dispatch_fs_mutation_to(
             )?
         }
         "fs.edit" => {
+            let (old, new) = (string_arg(request, "old")?, string_arg(request, "new")?);
             let preview = provider.edit_preview(
                 relative,
-                string_arg(request, "old")?,
-                string_arg(request, "new")?,
+                old,
+                new,
                 string_arg(request, "expected_sha256")?,
                 usize_arg(request, "replacements", 1)?,
             )?;
@@ -326,6 +351,12 @@ pub(crate) fn dispatch_fs_mutation_to(
                 Shown {
                     file: true,
                     destination: None,
+                    preview: Some(Preview::of_edit(
+                        old,
+                        new,
+                        preview_mode(),
+                        looks_secret(old) || looks_secret(new),
+                    )),
                 },
                 format!(
                     "path={relative} replacements={} sha256={} -> {}",
@@ -499,6 +530,68 @@ mod tests {
                 (TargetKind::Other, None),
                 (TargetKind::File, None),
             ]
+        );
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "alpha");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// An edit's prompt previews the text it removes and adds; a replacement that looks like a
+    /// credential is not shown. The broker records and denies, so nothing changes.
+    #[test]
+    fn an_edit_prompt_previews_its_change_and_hides_a_credential() {
+        use orcel_approval::{ApprovalError, ApprovedToken};
+        struct Recording(std::cell::RefCell<Vec<Option<Preview>>>);
+        impl ApprovalBroker for Recording {
+            fn request_token(
+                &self,
+                prompt: &ApprovalPrompt,
+            ) -> Result<ApprovedToken, ApprovalError> {
+                self.0.borrow_mut().push(prompt.preview.clone());
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+            fn consume(
+                &self,
+                _: &ApprovedToken,
+                _: &ConsumeExpectation,
+                _: u64,
+            ) -> Result<(), ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+        }
+        let (workspace, root) = fixture("preview");
+        fs::write(root.join("a.txt"), "alpha").unwrap();
+        let sha = format!("{:x}", Sha256::digest(b"alpha"));
+        let recording = Recording(std::cell::RefCell::new(Vec::new()));
+        for new in ["beta", "password=hunter2"] {
+            let _ = dispatch_fs_mutation(
+                &workspace,
+                &recording,
+                &request(
+                    "fs.edit",
+                    "edit",
+                    "a.txt",
+                    json!({ "old": "alpha", "new": new, "expected_sha256": sha }),
+                ),
+            );
+        }
+        let seen = recording.0.borrow();
+        assert_eq!(
+            seen[0],
+            Some(Preview::Content {
+                lines: vec![('-', "alpha".to_owned()), ('+', "beta".to_owned())],
+                more_lines: 0,
+            })
+        );
+        assert!(
+            matches!(seen[1], Some(Preview::Hidden { .. })),
+            "{:?}",
+            seen[1]
         );
         assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "alpha");
         let _ = fs::remove_dir_all(root);

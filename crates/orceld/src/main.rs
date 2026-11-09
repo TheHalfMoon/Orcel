@@ -315,7 +315,12 @@ pub(crate) fn write_file_to(
         ),
         digest.clone(),
     )
-    .for_file();
+    .for_file()
+    .with_preview(orcel_approval::Preview::of_written(
+        content,
+        crate::fs_mutation::preview_mode(),
+        crate::fs_mutation::looks_secret(content),
+    ));
 
     // SG-000120 RJ-02: journaled like every approved file mutation.
     let mutation = crate::mutation_journal::Mutation {

@@ -19,7 +19,7 @@
     allow(dead_code)
 )]
 
-use crate::{ApprovalPrompt, PresenceContext, RequestOrigin, TargetKind};
+use crate::{ApprovalPrompt, PresenceContext, Preview, RequestOrigin, TargetKind};
 
 pub(crate) const MAX_WORKSPACE_CHARS: usize = 128;
 pub(crate) const MAX_ACTION_CHARS: usize = 512;
@@ -220,6 +220,49 @@ fn target_lines(kind: TargetKind, target: &str, destination: Option<&str>) -> St
         None => typed("Target", target, target_is_file),
     }
 }
+const MAX_PREVIEW_LINE_CHARS: usize = 100;
+
+/// The preview lines, with a leading newline, or nothing. Every content line starts with its
+/// marker and a bar (`> │`, `- │`, `+ │`), so none can read as one of the prompt's own lines,
+/// and is escaped and cut like any field.
+fn preview_lines(preview: Option<&Preview>) -> String {
+    let plural =
+        |count: usize, word: &str| format!("{count} {word}{}", if count == 1 { "" } else { "s" });
+    match preview {
+        None => String::new(),
+        Some(Preview::Hidden { chars }) => format!(
+            "\nPreview: hidden, the content looks like a credential ({})",
+            plural(*chars, "character")
+        ),
+        Some(Preview::SizesOnly { chars, lines }) => format!(
+            "\nPreview: off, sizes only ({}, {})",
+            plural(*chars, "character"),
+            plural(*lines, "line")
+        ),
+        Some(Preview::Content { lines, more_lines }) => {
+            let mut out = String::from("\nPreview:");
+            for (marker, line) in lines {
+                let marker = if matches!(marker, '>' | '-' | '+') {
+                    *marker
+                } else {
+                    '?'
+                };
+                out.push_str(&format!(
+                    "\n{marker} │ {}",
+                    display_field(line, MAX_PREVIEW_LINE_CHARS)
+                ));
+            }
+            if *more_lines > 0 {
+                out.push_str(&format!(
+                    "\n({more_lines} more {} not shown)",
+                    if *more_lines == 1 { "line" } else { "lines" }
+                ));
+            }
+            out
+        }
+    }
+}
+
 /// Who is asking, from fields orceld set: the opening words and the Origin line.
 fn origin_lines(origin: &RequestOrigin) -> (&'static str, String) {
     match origin {
@@ -248,11 +291,12 @@ pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
     let nonce_prefix: String = prompt.nonce.chars().take(8).collect();
     let (opening, origin) = origin_lines(&prompt.origin);
     format!(
-        "{opening}.\n\n{origin}\nWorkspace: {}\nAction: {}\n{}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
+        "{opening}.\n\n{origin}\nWorkspace: {}\nAction: {}\n{}\n{}{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
         display_field(&prompt.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&prompt.action, MAX_ACTION_CHARS),
         target_lines(prompt.target_kind, &prompt.target, prompt.destination.as_deref()),
         display_field(&prompt.summary, MAX_SUMMARY_CHARS),
+        preview_lines(prompt.preview.as_ref()),
         display_field(&prompt.digest, MAX_DIGEST_CHARS),
         display_field(&nonce_prefix, 8),
     )
@@ -265,11 +309,12 @@ pub(crate) fn strong_body(ctx: &PresenceContext) -> String {
     let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
     let (opening, origin) = origin_lines(&ctx.origin);
     format!(
-        "{opening} that needs STRONG approval.\n\n{origin}\nWorkspace: {}\nAction: {}\n{}\n{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
+        "{opening} that needs STRONG approval.\n\n{origin}\nWorkspace: {}\nAction: {}\n{}\n{}{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
         display_field(&ctx.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&ctx.action, MAX_ACTION_CHARS),
         target_lines(ctx.target_kind, &ctx.target, ctx.destination.as_deref()),
         display_field(&ctx.summary, MAX_SUMMARY_CHARS),
+        preview_lines(ctx.preview.as_ref()),
         display_field(&ctx.digest, MAX_DIGEST_CHARS),
         display_field(&nonce_prefix, 8),
     )
@@ -528,5 +573,98 @@ mod tests {
             body.contains("\nDestination: Downloads/statement.pdf.exe\nDestination type: .exe\n"),
             "{body}"
         );
+    }
+
+    fn with(preview: Preview) -> String {
+        dialog_body(
+            &crate::ApprovalPrompt::new("default", "rev", "write", "a.txt", "summary", "d")
+                .with_preview(preview),
+        )
+    }
+
+    #[test]
+    fn a_write_previews_its_first_lines_escaped_and_bounded() {
+        let content = format!(
+            "line one\nDigest: forged\n\u{202e}x\n{}\n5\n6\n7\n8",
+            "w".repeat(300)
+        );
+        let body = with(Preview::of_written(
+            &content,
+            crate::PreviewMode::Content,
+            false,
+        ));
+        assert!(
+            body.contains(
+                "\nsummary\nPreview:\n> │ line one\n> │ Digest: forged\n> │ \\u{202e}x\n> │ "
+            ),
+            "{body}"
+        );
+        assert!(
+            body.contains(&format!(
+                "> │ {} [200 more characters not shown]\n",
+                "w".repeat(100)
+            )),
+            "{body}"
+        );
+        assert!(
+            body.contains("\n(2 more lines not shown)\nDigest: d\n"),
+            "{body}"
+        );
+        // No content line starts a line of its own: each is behind its marker.
+        assert!(!body.lines().any(|line| line == "Digest: forged"));
+    }
+
+    #[test]
+    fn an_edit_previews_removed_and_added_lines() {
+        let body = with(Preview::of_edit(
+            "old a\nold b",
+            "new a",
+            crate::PreviewMode::Content,
+            false,
+        ));
+        assert!(
+            body.contains("\nPreview:\n- │ old a\n- │ old b\n+ │ new a\nDigest: d\n"),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn a_credential_or_sizes_only_shows_no_content() {
+        let secret = with(Preview::of_written(
+            "AKIAEXAMPLE\nsecond",
+            crate::PreviewMode::Content,
+            true,
+        ));
+        assert!(secret.contains("\nPreview: hidden, the content looks like a credential (17 characters)\nDigest: d\n"), "{secret}");
+        assert!(!secret.contains("AKIA"));
+        let sizes = with(Preview::of_written(
+            "private notes\nmore",
+            crate::PreviewMode::SizesOnly,
+            false,
+        ));
+        assert!(
+            sizes.contains("\nPreview: off, sizes only (17 characters, 2 lines)\nDigest: d\n"),
+            "{sizes}"
+        );
+        assert!(!sizes.contains("private"));
+        // A credential is hidden in sizes-only mode as well, and says so.
+        let both = with(Preview::of_written(
+            "AKIAEXAMPLE",
+            crate::PreviewMode::SizesOnly,
+            true,
+        ));
+        assert!(both.contains("looks like a credential"));
+    }
+
+    #[test]
+    fn the_strong_summary_carries_the_preview() {
+        let ctx = crate::PresenceContext::new("nonce-1", "d", "default", "remove")
+            .with_details("a.txt", "s")
+            .with_preview(Some(Preview::of_written(
+                "bye",
+                crate::PreviewMode::Content,
+                false,
+            )));
+        assert!(strong_body(&ctx).contains("\ns\nPreview:\n> │ bye\nDigest: d\n"));
     }
 }

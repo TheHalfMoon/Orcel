@@ -97,6 +97,75 @@ pub struct PresenceContext {
     /// What the target is, and a move's destination, shown on the STRONG summary.
     pub target_kind: TargetKind,
     pub destination: Option<String>,
+    /// A bounded, redacted preview of the content, shown on the STRONG summary.
+    pub preview: Option<Preview>,
+}
+
+/// Whether approval prompts show a preview of the content or only its size: the person's
+/// choice, read by orceld from its launch settings, never from a request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PreviewMode {
+    /// A bounded preview, hidden whenever the content looks like a credential.
+    #[default]
+    Content,
+    /// Sizes only: the prompt shows how much content, never any of it.
+    SizesOnly,
+}
+
+/// Lines a preview shows before it says how many more there are.
+pub const PREVIEW_LINES: usize = 6;
+
+/// A preview of the content an approval is for, built by orceld and bounded before it reaches
+/// the prompt: at most [`PREVIEW_LINES`] lines, each escaped and cut to 100 characters when shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Preview {
+    /// The first lines, each with its marker: `>` for written content, `-` and `+` for the text
+    /// an edit removes and adds; and how many lines were left out.
+    Content {
+        lines: Vec<(char, String)>,
+        more_lines: usize,
+    },
+    /// The content looks like a credential, so none of it is shown.
+    Hidden { chars: usize },
+    /// The person chose sizes only.
+    SizesOnly { chars: usize, lines: usize },
+}
+
+impl Preview {
+    fn bounded(lines: Vec<(char, String)>, mode: PreviewMode, looks_secret: bool) -> Self {
+        let chars = lines.iter().map(|(_, line)| line.chars().count()).sum();
+        if looks_secret {
+            return Self::Hidden { chars };
+        }
+        if mode == PreviewMode::SizesOnly {
+            return Self::SizesOnly {
+                chars,
+                lines: lines.len(),
+            };
+        }
+        let more_lines = lines.len().saturating_sub(PREVIEW_LINES);
+        Self::Content {
+            lines: lines.into_iter().take(PREVIEW_LINES).collect(),
+            more_lines,
+        }
+    }
+
+    /// The content a write puts in a file. `looks_secret` is the caller's credential check on
+    /// the whole content: when it matches, nothing is shown.
+    pub fn of_written(content: &str, mode: PreviewMode, looks_secret: bool) -> Self {
+        let lines = content.lines().map(|line| ('>', line.to_owned())).collect();
+        Self::bounded(lines, mode, looks_secret)
+    }
+
+    /// The text an edit replaces and its replacement, as removed and added lines.
+    pub fn of_edit(old: &str, new: &str, mode: PreviewMode, looks_secret: bool) -> Self {
+        let lines = old
+            .lines()
+            .map(|line| ('-', line.to_owned()))
+            .chain(new.lines().map(|line| ('+', line.to_owned())))
+            .collect();
+        Self::bounded(lines, mode, looks_secret)
+    }
 }
 
 /// What a prompt's target is. Only a file's target, and a file's destination, get a Type line
@@ -147,7 +216,14 @@ impl PresenceContext {
             origin: RequestOrigin::Local,
             target_kind: TargetKind::Other,
             destination: None,
+            preview: None,
         }
+    }
+
+    /// The preview, copied from the prompt.
+    pub fn with_preview(mut self, preview: Option<Preview>) -> Self {
+        self.preview = preview;
+        self
     }
 
     pub fn with_origin(mut self, origin: RequestOrigin) -> Self {
@@ -517,12 +593,20 @@ pub struct ApprovalPrompt {
     pub target_kind: TargetKind,
     /// Where a move puts its target; set with [`ApprovalPrompt::with_destination`].
     pub destination: Option<String>,
+    /// A bounded, redacted preview of the content; set with [`ApprovalPrompt::with_preview`].
+    pub preview: Option<Preview>,
 }
 
 impl ApprovalPrompt {
     /// The same prompt, marked as coming from `origin`.
     pub fn with_origin(mut self, origin: RequestOrigin) -> Self {
         self.origin = origin;
+        self
+    }
+
+    /// The same prompt with a preview of its content.
+    pub fn with_preview(mut self, preview: Preview) -> Self {
+        self.preview = Some(preview);
         self
     }
 
@@ -653,6 +737,7 @@ impl ApprovalPrompt {
             origin: RequestOrigin::Local,
             target_kind: TargetKind::Other,
             destination: None,
+            preview: None,
         }
     }
 
@@ -990,7 +1075,8 @@ impl ApprovalBroker for LocalApprovalBroker {
         )
         .with_details(prompt.target.clone(), prompt.summary.clone())
         .with_origin(prompt.origin.clone())
-        .with_target(prompt.target_kind, prompt.destination.clone());
+        .with_target(prompt.target_kind, prompt.destination.clone())
+        .with_preview(prompt.preview.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
@@ -1134,7 +1220,8 @@ impl LocalApprovalBroker {
         )
         .with_details(prompt.target.clone(), prompt.summary.clone())
         .with_origin(prompt.origin.clone())
-        .with_target(prompt.target_kind, prompt.destination.clone());
+        .with_target(prompt.target_kind, prompt.destination.clone())
+        .with_preview(prompt.preview.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
