@@ -115,7 +115,8 @@ fn preview_secret_pattern(text: &str) -> bool {
         "npm_",
         "hf_",
     ];
-    let token_char = |c: char| c.is_ascii_alphanumeric() || "-_./+=".contains(c);
+    // `=` separates a name from its value, so `NAME=sk-ant-...` yields the key as its own word.
+    let token_char = |c: char| c.is_ascii_alphanumeric() || "-_./+".contains(c);
     for word in text.split(|c: char| !token_char(c)) {
         if PREFIXES
             .iter()
@@ -137,23 +138,28 @@ fn preview_secret_pattern(text: &str) -> bool {
             return true;
         }
     }
+    // A name made of parts such as DJANGO_SECRET_KEY or api-token: a whole part must be one of
+    // these words, so `authors` or `keyboard_layout` don't count.
+    const NAME_PARTS: [&str; 11] = [
+        "KEY",
+        "APIKEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "PWD",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "AUTH",
+        "PRIVATE",
+    ];
     for line in text.lines() {
         if let Some((name, value)) = line.split_once(['=', ':']) {
-            let name = name
-                .trim()
-                .trim_start_matches("export ")
-                .to_ascii_uppercase();
-            let named = [
-                "KEY",
-                "TOKEN",
-                "SECRET",
-                "PASSWORD",
-                "PASSWD",
-                "CREDENTIAL",
-                "AUTH",
-            ]
-            .iter()
-            .any(|part| name.contains(part));
+            let name = name.trim().to_ascii_uppercase();
+            let name = name.strip_prefix("EXPORT ").unwrap_or(&name).trim();
+            let named = name
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|part| NAME_PARTS.contains(&part));
             if named && !name.contains(' ') && value.trim().trim_matches(['"', '\'']).len() >= 8 {
                 return true;
             }
@@ -699,6 +705,8 @@ mod tests {
             "DJANGO_SECRET_KEY=abcdefgh1234",
             "export AWS_SESSION_TOKEN=\"abcdefghijk\"",
             "api_token: abcdefghij",
+            "EXPORT GH_TOKEN=abcdefghijk",
+            "HF=hf_abcdefghijklmnopqrstu",
             "DATABASE_URL=postgres://user:hunter22@db.example/app",
             "see https://admin:pw12345@example.com/path",
         ] {
@@ -711,6 +719,9 @@ mod tests {
             "https://example.com/a/b?x=1",
             "fn main() { println!(\"hi\"); }",
             "key = 1",
+            "authors = [\"Orcel contributors\"]",
+            "\"author\": \"someone@example.com\"",
+            "keyboard_layout = us-international",
         ] {
             assert!(!looks_secret(ordinary), "{ordinary}");
         }
