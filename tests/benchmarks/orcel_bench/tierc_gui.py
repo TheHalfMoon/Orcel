@@ -229,14 +229,17 @@ class Episode:
             ok = False
             for attempt in (1, 2):
                 with open(log, "wb") as output:
+                    install = subprocess.Popen([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd,
+                                               env=_app_env(self.scratch, [], shared_downloads=True),
+                                               stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
                     try:
-                        done = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd,
-                                              env=_app_env(self.scratch, [], shared_downloads=True),
-                                              stdout=output, stderr=subprocess.STDOUT,
-                                              timeout=INSTALL_TIMEOUT_S, check=False)
-                        ok = done.returncode == 0
-                        outcome = f"exit code {done.returncode}"
+                        code = install.wait(timeout=INSTALL_TIMEOUT_S)
+                        ok = code == 0
+                        outcome = f"exit code {code}"
                     except subprocess.TimeoutExpired:
+                        # The whole tree: npm.cmd's node child would otherwise keep running and
+                        # race the retry over node_modules.
+                        _kill_tree(install)
                         outcome = f"no result in {INSTALL_TIMEOUT_S:.0f} s"
                 if ok:
                     break
