@@ -24,6 +24,11 @@ windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Data
 # Wayland writes use wl-clipboard-rs; arboard serves X11 writes.
 [target.'cfg(target_os = "macos")'.dependencies]
 arboard = { version = "=3.6.1", default-features = false }
+# The general pasteboard's change count and offered types, to refuse content its app marked
+# private (org.nspasteboard.ConcealedType). The same releases and a subset of the features
+# arboard already uses, so no new crate.
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "=3.6.1", default-features = false }

@@ -204,7 +204,23 @@ mod linux {
     }
 
     fn wayland_read_text() -> Result<Option<String>, ClipboardError> {
-        use wl_clipboard_rs::paste::{get_contents, ClipboardType, Error, MimeType, Seat};
+        use wl_clipboard_rs::paste::{
+            get_contents, get_mime_types, ClipboardType, Error, MimeType, Seat,
+        };
+        // Content its app marked private is not read: the offered MIME types are checked first.
+        // Listing them reads no content, so the owner can't stall it.
+        match get_mime_types(ClipboardType::Regular, Seat::Unspecified) {
+            Ok(types) if crate::offers_concealed_type(types.iter().map(String::as_str)) => {
+                return Err(crate::concealed());
+            }
+            Ok(_) => {}
+            Err(Error::ClipboardEmpty | Error::NoMimeType | Error::NoSeats) => return Ok(None),
+            Err(_) => {
+                return Err(unavailable(
+                    "clipboard Unicode text is unreadable in this session",
+                ))
+            }
+        }
         match get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Text) {
             Ok((pipe, _mime)) => read_pipe_bounded(pipe, READ_DEADLINE, MAX_CLIPBOARD_BYTES)
                 .and_then(decode)
@@ -523,6 +539,54 @@ mod linux {
         let utf8 = atom(b"UTF8_STRING")?;
         let incr = atom(b"INCR")?;
         let property = atom(b"ORCEL_CLIPBOARD_READ")?;
+        let targets = atom(b"TARGETS")?;
+
+        // Content its app marked private is not read: the owner's TARGETS list is asked for
+        // first, over this connection and within the same deadline. A list too long to fetch
+        // in one bounded read fails closed.
+        conn.convert_selection(window, clipboard, targets, property, x11rb::CURRENT_TIME)
+            .map_err(|_| failed())?;
+        conn.flush().map_err(|_| failed())?;
+        loop {
+            let event = conn.wait_for_event().map_err(|_| failed())?;
+            if let Event::SelectionNotify(event) = event {
+                if event.requestor != window
+                    || event.selection != clipboard
+                    || event.target != targets
+                {
+                    continue;
+                }
+                if event.property == u32::from(AtomEnum::NONE) {
+                    // No TARGETS answer: an owner too old to list targets, or no owner.
+                    break;
+                }
+                let reply = conn
+                    .get_property(true, window, property, AtomEnum::ATOM, 0, 4096)
+                    .map_err(|_| failed())?
+                    .reply()
+                    .map_err(|_| failed())?;
+                if reply.bytes_after > 0 {
+                    return Err(unavailable(
+                        "the clipboard owner lists too many formats to check",
+                    ));
+                }
+                let offered: Vec<u32> = reply.value32().map(Iterator::collect).unwrap_or_default();
+                for target in offered {
+                    let name = conn
+                        .get_atom_name(target)
+                        .map_err(|_| failed())?
+                        .reply()
+                        .map_err(|_| failed())?;
+                    if let Ok(name) = std::str::from_utf8(&name.name) {
+                        if crate::offers_concealed_type(std::iter::once(name)) {
+                            return Err(crate::concealed());
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
         conn.convert_selection(window, clipboard, utf8, property, x11rb::CURRENT_TIME)
             .map_err(|_| failed())?;
         conn.flush().map_err(|_| failed())?;
@@ -652,15 +716,50 @@ mod macos {
             .map_err(|_| unavailable("the macOS pasteboard is unreachable in this session"))
     }
 
-    pub(super) fn current_text() -> Result<Option<String>, ClipboardError> {
-        match pasteboard()?.get_text() {
-            Ok(text) if text.len() > MAX_CLIPBOARD_BYTES => Err(oversize()),
-            Ok(text) => Ok(Some(text)),
-            Err(arboard::Error::ContentNotAvailable) => Ok(None),
-            Err(_) => Err(unavailable(
-                "clipboard Unicode text is unreadable in this session",
-            )),
+    /// The general pasteboard's change count, and whether its current content offers a type
+    /// its app uses to mark it private ([`crate::UNIX_CONCEALED_TYPES`]).
+    // Whether these AppKit calls are marked unsafe differs across objc2-app-kit releases.
+    #[allow(unused_unsafe)]
+    fn pasteboard_state() -> (isize, bool) {
+        use objc2_app_kit::NSPasteboard;
+        use objc2_foundation::{NSArray, NSString};
+        // SAFETY: the general pasteboard is a process-wide singleton, and these calls only
+        // read its change count and the types it offers.
+        unsafe {
+            let pasteboard = NSPasteboard::generalPasteboard();
+            let markers: Vec<_> = crate::UNIX_CONCEALED_TYPES
+                .iter()
+                .map(|marker| NSString::from_str(marker))
+                .collect();
+            let markers: Vec<&NSString> = markers.iter().map(|marker| &**marker).collect();
+            let wanted = NSArray::from_slice(&markers);
+            let concealed = pasteboard.availableTypeFromArray(&wanted).is_some();
+            (pasteboard.changeCount(), concealed)
         }
+    }
+
+    pub(super) fn current_text() -> Result<Option<String>, ClipboardError> {
+        let (before, concealed) = pasteboard_state();
+        if concealed {
+            return Err(crate::concealed());
+        }
+        let text = match pasteboard()?.get_text() {
+            Ok(text) if text.len() > MAX_CLIPBOARD_BYTES => return Err(oversize()),
+            Ok(text) => Some(text),
+            Err(arboard::Error::ContentNotAvailable) => None,
+            Err(_) => {
+                return Err(unavailable(
+                    "clipboard Unicode text is unreadable in this session",
+                ))
+            }
+        };
+        // New content placed between the check and the read could be private: refused.
+        if pasteboard_state().0 != before {
+            return Err(unavailable(
+                "the clipboard changed while it was read; try again",
+            ));
+        }
+        Ok(text)
     }
 
     pub(super) fn place_text(text: &str) -> Result<(), ClipboardError> {
