@@ -159,6 +159,7 @@ impl Scratch {
             .map_err(|error| unavailable(format!("contained scratch root: {error}")))?;
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("contained scratch root: {error}")))?;
+        sweep_leftovers(&runs);
         // A name already taken, by a leftover or anything else, is skipped, never removed.
         let label = request_digest.get(..16).unwrap_or(request_digest);
         let dir = claim_dir(&runs, fresh_names(label), "contained scratch directory")?;
@@ -215,6 +216,83 @@ pub(crate) fn claim_dir(
         }
     }
     Err(unavailable(format!("{what}: no unused name was found")))
+}
+
+/// Removes run directories under `runs` that a crashed process left behind. An entry goes only
+/// when it is a real directory (not a link or junction) named `<pid>-...` by `fresh_names`, the
+/// pid isn't this process, and that process is known to have exited (see `run_pid`). A live,
+/// reused or unreadable pid keeps its entry, as does anything else under `runs`. `remove_dir_all`
+/// doesn't follow links inside the directory. Returns how many entries were removed.
+pub(crate) fn sweep_leftovers(runs: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(runs) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(run_pid) else {
+            continue;
+        };
+        if pid == std::process::id()
+            || !matches!(
+                orcel_platform::process::start_generation(pid),
+                Err(orcel_platform::PlatformError::ProcessGone(_))
+            )
+        {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.is_dir() && !is_link(&metadata) && std::fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// The creating pid of a run directory name, only in the exact forms Orcel writes:
+/// `<pid>-<sequence>-<16 hex>-<label>` from `fresh_names`, or `<pid>-<64 hex>` from releases
+/// before it. The pid is a nonzero decimal without sign or leading zero.
+pub(crate) fn run_pid(name: &str) -> Option<u32> {
+    let decimal = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|byte| byte.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+    };
+    let hex = |part: &str, len: usize| {
+        part.len() == len
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    let parts: Vec<&str> = name.splitn(4, '-').collect();
+    let shaped = match parts.as_slice() {
+        [_, sequence, salt, label] => decimal(sequence) && hex(salt, 16) && !label.is_empty(),
+        [_, digest] => hex(digest, 64),
+        _ => false,
+    };
+    if !shaped || !decimal(parts[0]) {
+        return None;
+    }
+    // No OS hands out pid 0 or a pid above i32::MAX, and both would read as gone.
+    parts[0]
+        .parse::<u32>()
+        .ok()
+        .filter(|pid| *pid != 0 && *pid <= i32::MAX as u32)
+}
+
+#[cfg(windows)]
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_type().is_symlink()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 impl Drop for Scratch {

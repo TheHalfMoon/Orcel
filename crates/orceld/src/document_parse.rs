@@ -432,6 +432,7 @@ impl Stage {
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
+        contained_tier::sweep_leftovers(&runs);
         // Unique per parse; a taken name is skipped, never removed (contained_tier::claim_dir).
         let dir = contained_tier::claim_dir(
             &runs,
