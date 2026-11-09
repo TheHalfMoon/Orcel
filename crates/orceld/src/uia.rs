@@ -365,10 +365,13 @@ fn desktop_input_action(
 }
 
 /// What the person is asked to approve, in words they can check: the points
-/// (window-relative), the button, the length of the text typed, or the key.
-/// The typed text itself is shown only in the prompt's bounded preview
-/// ([`typed_preview`]), which is hidden when it matches a credential pattern
-/// and is sizes only when the person chose that.
+/// (window-relative), the button, the length of the text typed and the line
+/// breaks and other control characters in it, or the key. The typed text
+/// itself is shown only in the prompt's bounded preview ([`typed_preview`]),
+/// which is hidden when it matches a credential pattern and is sizes only
+/// when the person chose that. The counts are always shown: on Windows the
+/// computer host types every character, so a line break can press Enter, and
+/// the preview's lines don't show a final one.
 fn describe_input(action: &DesktopInputAction) -> String {
     const SHOWN: usize = 64;
     match action {
@@ -389,11 +392,34 @@ fn describe_input(action: &DesktopInputAction) -> String {
             scroll_y,
         } => format!("scroll ({scroll_x}, {scroll_y}) lines at ({x}, {y})"),
         DesktopInputAction::TypeText { text } => {
-            let count = text.chars().count();
-            format!(
-                "type {count} character{} (shown in the preview)",
-                if count == 1 { "" } else { "s" }
-            )
+            let plural = |count: usize, word: &str| {
+                format!("{count} {word}{}", if count == 1 { "" } else { "s" })
+            };
+            // `\r\n` is one line break; a lone `\r` or `\n` is one too.
+            let breaks = text.matches('\n').count()
+                + text
+                    .match_indices('\r')
+                    .filter(|(at, _)| !text[at + 1..].starts_with('\n'))
+                    .count();
+            let controls = text
+                .chars()
+                .filter(|c| c.is_control() && !matches!(c, '\r' | '\n'))
+                .count();
+            let mut described = format!("type {}", plural(text.chars().count(), "character"));
+            if breaks > 0 {
+                described.push_str(&format!(
+                    ", including {} (each can press Enter)",
+                    plural(breaks, "line break")
+                ));
+            }
+            if controls > 0 {
+                described.push_str(&format!(
+                    ", and {}",
+                    plural(controls, "other control character")
+                ));
+            }
+            described.push_str(" (shown in the preview)");
+            described
         }
         DesktopInputAction::Key { key } | DesktopInputAction::Hotkey { key } => {
             let shown: String = key
@@ -2053,10 +2079,19 @@ mod xp12_prompt_tests {
         assert_eq!(typed, "type 11 characters (shown in the preview)");
         assert_eq!(
             typed_preview(&action),
-            Some(Preview::Content {
-                lines: vec![('>', "rm -rf \"x\"\u{202e}".to_owned())],
-                more_lines: 0,
-            })
+            Some(Preview::of_written(
+                "rm -rf \"x\"\u{202e}",
+                crate::fs_mutation::preview_mode(),
+                false
+            ))
+        );
+        // A final line break leaves no line in the preview, so the summary counts it.
+        assert_eq!(
+            describe_input(&DesktopInputAction::TypeText {
+                text: "del x\r\ny\rz\n\t".into()
+            }),
+            "type 12 characters, including 3 line breaks (each can press Enter), \
+             and 1 other control character (shown in the preview)"
         );
         let secret = DesktopInputAction::TypeText {
             text: format!("ghp_{}", "a1B2".repeat(9)),
