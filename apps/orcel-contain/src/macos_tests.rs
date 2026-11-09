@@ -225,12 +225,10 @@ async fn a_zombie_is_recognised_as_exited_at_once() {
     let zombie = i32::try_from(child.id()).unwrap();
     // Let it exit without reaping it.
     std::thread::sleep(Duration::from_millis(200));
-    // SAFETY: kill with signal 0 only checks that `zombie` exists.
-    assert_eq!(
-        unsafe { libc::kill(zombie, 0) },
-        0,
-        "an unreaped zombie still exists"
-    );
+    // SAFETY: kill with signal 0 only checks that `zombie` exists; it has no memory
+    // preconditions.
+    let still_there = unsafe { libc::kill(zombie, 0) };
+    assert_eq!(still_there, 0, "an unreaped zombie still exists");
     let started = std::time::Instant::now();
     let sample = sample_live(zombie, INSTALL_SAMPLE_BUDGET).await;
     let elapsed = started.elapsed();
