@@ -981,6 +981,8 @@ jobs:
         shell: bash
         env:
           ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          # One npm and Electron download cache for every episode in this job (orcel_bench.tierc_gui).
+          ORCEL_TIERC_DOWNLOAD_CACHE: ${{ runner.temp }}/tierc-download-cache
         run: |
           set -euo pipefail
           pack="$RUNNER_TEMP/tierc-pack"
@@ -999,6 +1001,8 @@ jobs:
         shell: bash
         env:
           ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          # One npm and Electron download cache for every episode in this job (orcel_bench.tierc_gui).
+          ORCEL_TIERC_DOWNLOAD_CACHE: ${{ runner.temp }}/tierc-download-cache
         run: |
           set -euo pipefail
           act_test=$(cargo test --locked -p orceld --bin orceld --no-run --message-format=json \
