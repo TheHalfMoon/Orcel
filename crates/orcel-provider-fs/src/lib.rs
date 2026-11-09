@@ -478,16 +478,14 @@ impl FsProvider {
             .map_err(|error| ProviderError::io("resolve created target", error))?;
         if let Err(error) = self.ensure_not_git(&resolved) {
             let _ = file.set_len(0);
-            drop(file);
-            let _ = fs::remove_file(&resolved);
+            remove_created(file, &resolved);
             return Err(error);
         }
 
         let after = resolve_final_path(parent)
             .map_err(|error| ProviderError::io("re-resolve create parent", error))?;
         if before != after {
-            drop(file);
-            let _ = fs::remove_file(&resolved);
+            remove_created(file, &resolved);
             return Err(ProviderError::new(
                 FailureCode::PathRaceDetected,
                 "parent directory identity changed during create",
@@ -499,7 +497,7 @@ impl FsProvider {
         // The directory holding the new file could have been moved into Git data after the
         // check above. The file is read back from its own descriptor, so a move is seen.
         // On a refusal the content is truncated through the descriptor first; the emptied file
-        // is then removed where it now is, best effort.
+        // is then removed where it now is, only if that name still holds it.
         let refusal = match final_path_from_open_file(&file, &candidate) {
             Ok(path) => self
                 .ensure_not_git(&path)
@@ -509,9 +507,9 @@ impl FsProvider {
         };
         if let Some((error, path)) = refusal {
             let _ = file.set_len(0);
-            drop(file);
-            if let Some(path) = path {
-                let _ = fs::remove_file(path);
+            match path {
+                Some(path) => remove_created(file, &path),
+                None => drop(file),
             }
             return Err(error);
         }
@@ -780,6 +778,31 @@ mod unix_fd {
             ));
         }
         Ok(path)
+    }
+}
+
+/// Removes a file this call created and is refusing. Off Windows the name is removed only while
+/// it still names the open file (same device and inode), so a file put there by someone else
+/// after an unlink is left alone; a swap in the instant between that check and the removal
+/// remains. On Windows the name is removed after the handle closes, as before; a file swapped in
+/// at that name in between could be removed instead.
+fn remove_created(file: File, path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let same = match (file.metadata(), fs::symlink_metadata(path)) {
+            (Ok(open), Ok(named)) => open.dev() == named.dev() && open.ino() == named.ino(),
+            _ => false,
+        };
+        if same {
+            let _ = fs::remove_file(path);
+        }
+        drop(file);
+    }
+    #[cfg(not(unix))]
+    {
+        drop(file);
+        let _ = fs::remove_file(path);
     }
 }
 
