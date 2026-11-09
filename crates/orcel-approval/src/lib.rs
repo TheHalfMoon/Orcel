@@ -295,6 +295,9 @@ impl PresenceVerifier for WindowsHelloPresenceVerifier {
                 "Windows Hello verification is unavailable; STRONG approval fails closed",
             ));
         }
+        // Windows Hello's own prompt is too short to show the target, so the summary comes
+        // first; only Yes goes on to Hello.
+        windows_summary_decision(show_windows_strong_summary(&prompt_text::strong_body(ctx)))?;
         verify_with_hello(ctx, self.method())
     }
 }
@@ -309,6 +312,53 @@ fn check_hello_availability() -> bool {
             == windows::Security::Credentials::UI::UserConsentVerifierAvailability::Available)
     })();
     result.unwrap_or(false)
+}
+
+#[cfg(any(windows, test))]
+const WINDOWS_IDYES: i32 = 6;
+#[cfg(any(windows, test))]
+const WINDOWS_IDNO: i32 = 7;
+
+/// What the Windows STRONG summary's answer means: only Yes goes on to Windows Hello.
+#[cfg(any(windows, test))]
+fn windows_summary_decision(result: i32) -> Result<(), PresenceError> {
+    match result {
+        WINDOWS_IDYES => Ok(()),
+        WINDOWS_IDNO => Err(PresenceError::denied(
+            "the STRONG request was declined at its summary; nothing was asked of Windows Hello",
+        )),
+        other => Err(PresenceError::unavailable(format!(
+            "the STRONG summary returned unexpected result {other}; STRONG approval fails closed"
+        ))),
+    }
+}
+
+/// Shows the STRONG summary in a system-modal Yes/No dialog whose default is No.
+#[cfg(windows)]
+fn show_windows_strong_summary(body: &str) -> i32 {
+    use std::ffi::c_void;
+    type Hwnd = *mut c_void;
+    const MB_YESNO: u32 = 0x0000_0004;
+    const MB_ICONWARNING: u32 = 0x0000_0030;
+    const MB_DEFBUTTON2: u32 = 0x0000_0100;
+    const MB_SYSTEMMODAL: u32 = 0x0000_1000;
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(hwnd: Hwnd, text: *const u16, caption: *const u16, kind: u32) -> i32;
+    }
+    let wide =
+        |value: &str| -> Vec<u16> { value.encode_utf16().chain(std::iter::once(0)).collect() };
+    let body = wide(body);
+    let caption = wide("Orcel approval STRONG");
+    // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call; no owner window.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            body.as_ptr(),
+            caption.as_ptr(),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SYSTEMMODAL,
+        )
+    }
 }
 
 /// The Windows Hello message: the request's nonce and digest prefixes, action and workspace,

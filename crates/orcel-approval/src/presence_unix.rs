@@ -183,13 +183,27 @@ pub(crate) fn strong_reason(ctx: &PresenceContext) -> String {
     )
 }
 
-/// The platform-independent STRONG flow: validate, gate on the session,
-/// evaluate once, and bind a success to this context's nonce and digest.
+/// The platform-independent STRONG flow with no summary step.
+#[cfg(test)]
 pub(crate) fn verify_with(
     ctx: &PresenceContext,
     lease: &InputLeaseGuard,
     method: &'static str,
     session: SessionState,
+    evaluate: impl FnOnce(&str) -> LocalAuthOutcome,
+) -> Result<PresenceAttestation, PresenceError> {
+    verify_with_summary(ctx, lease, method, session, |_| Ok(()), evaluate)
+}
+
+/// The platform-independent STRONG flow: validate, gate on the session, show the summary
+/// (`strong_body`) and go on only if the person approves it, evaluate once, and bind a success
+/// to this context's nonce and digest.
+pub(crate) fn verify_with_summary(
+    ctx: &PresenceContext,
+    lease: &InputLeaseGuard,
+    method: &'static str,
+    session: SessionState,
+    summary: impl FnOnce(&str) -> Result<(), PresenceError>,
     evaluate: impl FnOnce(&str) -> LocalAuthOutcome,
 ) -> Result<PresenceAttestation, PresenceError> {
     if !lease.is_suspended() {
@@ -215,6 +229,7 @@ pub(crate) fn verify_with(
             ))
         }
     }
+    summary(&crate::prompt_text::strong_body(ctx))?;
     match evaluate(&strong_reason(ctx)) {
         LocalAuthOutcome::Success => Ok(PresenceAttestation {
             method: method.to_owned(),
@@ -259,12 +274,19 @@ impl PresenceVerifier for MacLocalAuthPresenceVerifier {
         ctx: &PresenceContext,
         lease: &InputLeaseGuard,
     ) -> Result<PresenceAttestation, PresenceError> {
-        verify_with(ctx, lease, self.method(), session_state(), |reason| {
-            macos::evaluate(
-                reason,
-                std::time::Duration::from_millis(crate::STRONG_VERIFY_TIMEOUT_MS),
-            )
-        })
+        verify_with_summary(
+            ctx,
+            lease,
+            self.method(),
+            session_state(),
+            crate::soft_macos::strong_summary,
+            |reason| {
+                macos::evaluate(
+                    reason,
+                    std::time::Duration::from_millis(crate::STRONG_VERIFY_TIMEOUT_MS),
+                )
+            },
+        )
     }
 }
 
@@ -560,5 +582,35 @@ mod tests {
             |_| LocalAuthOutcome::Success,
         );
         assert!(automation.is_err());
+    }
+
+    #[test]
+    fn a_strong_request_declined_at_its_summary_never_reaches_touch_id() {
+        let mut shown = String::new();
+        let error = verify_with_summary(
+            &ctx(),
+            &lease(),
+            MAC_LOCAL_AUTH_METHOD,
+            SessionState::Interactive,
+            |body| {
+                shown = body.to_owned();
+                Err(PresenceError::denied("declined at the summary"))
+            },
+            |_| panic!("Touch ID must not be asked after a declined summary"),
+        )
+        .unwrap_err();
+        assert_eq!(error.reason, PresenceFailureReason::Denied);
+        assert!(shown.contains("needs STRONG approval"));
+        // Gates come first: an automation runner shows no summary.
+        let automation = verify_with_summary(
+            &ctx(),
+            &lease(),
+            MAC_LOCAL_AUTH_METHOD,
+            SessionState::Automation,
+            |_| panic!("no summary on an automation runner"),
+            |_| panic!("no Touch ID on an automation runner"),
+        )
+        .unwrap_err();
+        assert_eq!(automation.reason, PresenceFailureReason::Unavailable);
     }
 }
