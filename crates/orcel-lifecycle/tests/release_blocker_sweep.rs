@@ -192,6 +192,15 @@ fn secret_allowlist() -> BTreeMap<&'static str, Vec<&'static str>> {
         vec!["ghp_rawtoken123"],
     );
     map.insert("crates/orcel-tunnel/src/lib.rs", vec!["sk-proj-test"]);
+    // Made-up keys that test the approval preview's credential check.
+    map.insert(
+        "crates/orceld/src/fs_mutation.rs",
+        vec![
+            "\"OPENAI=sk-proj-abcdefghijklmnop123\",",
+            "\"github_pat_11ABCDEFG0123456789_abcdef\",",
+            "\"token ghp_abcdefghijklmnopqrstuvwxyz0123\",",
+        ],
+    );
     map.insert(
         "crates/orcel-provider-clipboard/src/lib.rs",
         vec!["\"sk-live-\""],

@@ -7,7 +7,7 @@
 //! destructive class. Every mutation verifies its postcondition.
 
 use crate::mutation_journal::{self, Mutation, Postcondition, Sink};
-use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
+use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation, Preview, PreviewMode};
 use orcel_contracts::{FailureCode, RequestEnvelope};
 use orcel_policy::{Workspace, POLICY_REVISION};
 use orcel_provider_fs::mutation::EntryIdentity;
@@ -66,29 +66,145 @@ fn string_arg<'a>(request: &'a RequestEnvelope, name: &str) -> Result<&'a str, P
         })
 }
 
-/// What the prompt says the target is: whether it is a file (so its type is shown) and, for a
-/// move, where it goes.
-#[derive(Clone, Copy)]
+/// The person's choice for approval previews, from orceld's launch settings (the
+/// `ORCEL_APPROVAL_PREVIEWS` variable its launcher sets, never a request): `sizes` shows sizes
+/// only; anything else, or nothing, shows a bounded preview that is hidden when the content
+/// looks like a credential.
+pub(crate) fn preview_mode() -> PreviewMode {
+    match std::env::var("ORCEL_APPROVAL_PREVIEWS").as_deref() {
+        Ok("sizes") => PreviewMode::SizesOnly,
+        _ => PreviewMode::Content,
+    }
+}
+
+/// Whether text matches a known credential pattern: the clipboard's secret filter, or one of
+/// the preview patterns below. Such content is never previewed. This decides only whether a
+/// preview is hidden, so it leans towards hiding; it is a pattern list, not a guarantee.
+pub(crate) fn looks_secret(text: &str) -> bool {
+    orcel_provider_clipboard::contains_secret_material(text) || preview_secret_pattern(text)
+}
+
+/// Credential shapes the clipboard filter doesn't cover: provider key prefixes, JWTs, long
+/// mixed-case tokens, `NAME_KEY=value` style assignments, and a password in a URL.
+fn preview_secret_pattern(text: &str) -> bool {
+    const PREFIXES: [&str; 26] = [
+        "sk-ant-",
+        "sk-proj-",
+        "sk-svcacct-",
+        "sk_live_",
+        "sk_test_",
+        "rk_live_",
+        "rk_test_",
+        "pk_live_",
+        "whsec_",
+        "github_pat_",
+        "ghp_",
+        "gho_",
+        "ghu_",
+        "ghs_",
+        "ghr_",
+        "glpat-",
+        "xoxb-",
+        "xoxp-",
+        "xoxa-",
+        "xoxs-",
+        "AKIA",
+        "ASIA",
+        "AIza",
+        "ya29.",
+        "npm_",
+        "hf_",
+    ];
+    // `=` separates a name from its value, so `NAME=sk-ant-...` yields the key as its own word.
+    let token_char = |c: char| c.is_ascii_alphanumeric() || "-_./+".contains(c);
+    for word in text.split(|c: char| !token_char(c)) {
+        if PREFIXES
+            .iter()
+            .any(|prefix| word.starts_with(prefix) && word.len() >= prefix.len() + 12)
+        {
+            return true;
+        }
+        // A JWT: three dot-separated base64url parts, the first a JSON header.
+        if word.starts_with("eyJ") && word.matches('.').count() == 2 && word.len() > 30 {
+            return true;
+        }
+        // A long token mixing upper case, lower case and digits (an AWS secret key, a key
+        // body without its BEGIN line). Lower-case hex digests don't match.
+        if word.len() >= 32
+            && word.chars().any(|c| c.is_ascii_uppercase())
+            && word.chars().any(|c| c.is_ascii_lowercase())
+            && word.chars().any(|c| c.is_ascii_digit())
+        {
+            return true;
+        }
+    }
+    // A name made of parts such as DJANGO_SECRET_KEY or api-token: a whole part must be one of
+    // these words, so `authors` or `keyboard_layout` don't count.
+    const NAME_PARTS: [&str; 11] = [
+        "KEY",
+        "APIKEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "PWD",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "AUTH",
+        "PRIVATE",
+    ];
+    for line in text.lines() {
+        if let Some((name, value)) = line.split_once(['=', ':']) {
+            let name = name.trim().to_ascii_uppercase();
+            let name = name.strip_prefix("EXPORT ").unwrap_or(&name).trim();
+            let named = name
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|part| NAME_PARTS.contains(&part));
+            if named && !name.contains(' ') && value.trim().trim_matches(['"', '\'']).len() >= 8 {
+                return true;
+            }
+        }
+    }
+    // user:password@host in a URL.
+    text.match_indices("://").any(|(at, _)| {
+        let rest = &text[at + 3..];
+        let authority = &rest[..rest.find(['/', ' ', '\n', '"', '\'']).unwrap_or(rest.len())];
+        authority
+            .rsplit_once('@')
+            .is_some_and(|(user_info, _)| user_info.contains(':'))
+    })
+}
+
+/// What the prompt says the target is: whether it is a file (so its type is shown), for a
+/// move where it goes, and a preview of the content.
+#[derive(Clone)]
 struct Shown<'a> {
     file: bool,
     destination: Option<&'a str>,
+    preview: Option<Preview>,
 }
 
 impl Shown<'_> {
     const DIRECTORY: Self = Self {
         file: false,
         destination: None,
+        preview: None,
     };
 
     fn entry(identity: &EntryIdentity) -> Self {
         Self {
             file: identity.kind == "file",
             destination: None,
+            preview: None,
         }
     }
 
     fn mark(self, prompt: ApprovalPrompt) -> ApprovalPrompt {
         let prompt = if self.file { prompt.for_file() } else { prompt };
+        let prompt = match self.preview {
+            Some(preview) => prompt.with_preview(preview),
+            None => prompt,
+        };
         match self.destination {
             Some(destination) => prompt.with_destination(destination),
             None => prompt,
@@ -308,10 +424,11 @@ pub(crate) fn dispatch_fs_mutation_to(
             )?
         }
         "fs.edit" => {
+            let (old, new) = (string_arg(request, "old")?, string_arg(request, "new")?);
             let preview = provider.edit_preview(
                 relative,
-                string_arg(request, "old")?,
-                string_arg(request, "new")?,
+                old,
+                new,
                 string_arg(request, "expected_sha256")?,
                 usize_arg(request, "replacements", 1)?,
             )?;
@@ -326,6 +443,12 @@ pub(crate) fn dispatch_fs_mutation_to(
                 Shown {
                     file: true,
                     destination: None,
+                    preview: Some(Preview::of_edit(
+                        old,
+                        new,
+                        preview_mode(),
+                        looks_secret(old) || looks_secret(new),
+                    )),
                 },
                 format!(
                     "path={relative} replacements={} sha256={} -> {}",
@@ -502,6 +625,106 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "alpha");
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// An edit's prompt previews the text it removes and adds; a replacement that looks like a
+    /// credential is not shown. The broker records and denies, so nothing changes.
+    #[test]
+    fn an_edit_prompt_previews_its_change_and_hides_a_credential() {
+        use orcel_approval::{ApprovalError, ApprovedToken};
+        struct Recording(std::cell::RefCell<Vec<Option<Preview>>>);
+        impl ApprovalBroker for Recording {
+            fn request_token(
+                &self,
+                prompt: &ApprovalPrompt,
+            ) -> Result<ApprovedToken, ApprovalError> {
+                self.0.borrow_mut().push(prompt.preview.clone());
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+            fn consume(
+                &self,
+                _: &ApprovedToken,
+                _: &ConsumeExpectation,
+                _: u64,
+            ) -> Result<(), ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+        }
+        let (workspace, root) = fixture("preview");
+        fs::write(root.join("a.txt"), "alpha").unwrap();
+        let sha = format!("{:x}", Sha256::digest(b"alpha"));
+        let recording = Recording(std::cell::RefCell::new(Vec::new()));
+        for new in ["beta", "password=hunter2"] {
+            let _ = dispatch_fs_mutation(
+                &workspace,
+                &recording,
+                &request(
+                    "fs.edit",
+                    "edit",
+                    "a.txt",
+                    json!({ "old": "alpha", "new": new, "expected_sha256": sha }),
+                ),
+            );
+        }
+        let seen = recording.0.borrow();
+        assert_eq!(
+            seen[0],
+            Some(Preview::Content {
+                lines: vec![('-', "alpha".to_owned()), ('+', "beta".to_owned())],
+                more_lines: 0,
+            })
+        );
+        assert!(
+            matches!(seen[1], Some(Preview::Hidden { .. })),
+            "{:?}",
+            seen[1]
+        );
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "alpha");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The preview check hides common credential shapes and leaves ordinary text alone.
+    #[test]
+    fn the_preview_check_hides_common_credentials() {
+        for secret in [
+            "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv",
+            "OPENAI=sk-proj-abcdefghijklmnop123",
+            "stripe sk_live_51HabcdefghijklmnopQR",
+            "github_pat_11ABCDEFG0123456789_abcdef",
+            "token ghp_abcdefghijklmnopqrstuvwxyz0123",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijk",
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "AIzaSyA1234567890abcdefghijklmnopq",
+            "DJANGO_SECRET_KEY=abcdefgh1234",
+            "export AWS_SESSION_TOKEN=\"abcdefghijk\"",
+            "api_token: abcdefghij",
+            "EXPORT GH_TOKEN=abcdefghijk",
+            "HF=hf_abcdefghijklmnopqrstu",
+            "DATABASE_URL=postgres://user:hunter22@db.example/app",
+            "see https://admin:pw12345@example.com/path",
+        ] {
+            assert!(looks_secret(secret), "{secret}");
+        }
+        for ordinary in [
+            "hello world\nsecond line",
+            "the key: is to keep it short",
+            "sha256 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "https://example.com/a/b?x=1",
+            "fn main() { println!(\"hi\"); }",
+            "key = 1",
+            "authors = [\"Orcel contributors\"]",
+            "\"author\": \"someone@example.com\"",
+            "keyboard_layout = us-international",
+        ] {
+            assert!(!looks_secret(ordinary), "{ordinary}");
+        }
     }
 
     #[test]
