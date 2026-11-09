@@ -2,11 +2,14 @@
 //! macOS alert, the Linux helper and the STRONG bodies all show these lines.
 //!
 //! Every field from the request is shown exactly when it is printable and short. Control,
-//! line-break, bidi, zero-width, tag and filler characters are escaped as `\u{..}` so a field
-//! can't fake another line of the dialog or reorder what is read, and each bound applies to the
-//! escaped text. The target is kept to 120 characters around a middle ellipsis, so its start
-//! and its file extension both stay visible, and the extension is repeated on its own line: a
-//! name such as `invoice\u{202e}txt.js` reads as `Type: .js`.
+//! line-break, bidi, format, zero-width, default-ignorable, tag, filler and blank-looking
+//! characters are escaped as `\u{..}`, and so is any combining mark past the second on one
+//! character, so a field can't insert a line break, reorder what is read, hide characters or
+//! draw over other lines. Each bound applies to the escaped text. A long field can still wrap
+//! onto another visual line; every line the prompt itself adds starts with its own label.
+//!
+//! The target is kept to 120 characters around a middle ellipsis, so its start and its end,
+//! where a file's extension is, both stay visible.
 
 // Other OSes show no approval UI; tests still run these rules there.
 #![cfg_attr(
@@ -21,17 +24,27 @@ pub(crate) const MAX_ACTION_CHARS: usize = 512;
 pub(crate) const MAX_TARGET_CHARS: usize = 120;
 pub(crate) const MAX_SUMMARY_CHARS: usize = 1024;
 pub(crate) const MAX_DIGEST_CHARS: usize = 128;
-const MAX_TYPE_CHARS: usize = 24;
+/// Combining marks kept on one character before the rest are escaped: enough for real
+/// scripts, too few to stack over the lines above and below.
+const MAX_COMBINING_IN_A_ROW: usize = 2;
 
-/// One input character as it is shown: itself, or an escape.
-fn shown(ch: char) -> String {
-    if ch == '\\' {
-        String::from("\\\\")
-    } else if needs_escape(ch) {
-        format!("\\u{{{:x}}}", ch as u32)
-    } else {
-        ch.to_string()
-    }
+/// Each input character as it is shown: itself, or an escape.
+fn pieces(value: &str) -> Vec<String> {
+    let mut marks_in_a_row = 0usize;
+    value
+        .chars()
+        .map(|ch| {
+            let combining = is_combining(ch);
+            marks_in_a_row = if combining { marks_in_a_row + 1 } else { 0 };
+            if ch == '\\' {
+                String::from("\\\\")
+            } else if needs_escape(ch) || (combining && marks_in_a_row > MAX_COMBINING_IN_A_ROW) {
+                format!("\\u{{{:x}}}", ch as u32)
+            } else {
+                ch.to_string()
+            }
+        })
+        .collect()
 }
 
 fn omitted(rest: usize) -> String {
@@ -45,20 +58,20 @@ fn omitted(rest: usize) -> String {
 /// could change the dialog's layout or reading order, and stops before the escaped text would
 /// exceed `max_chars`, saying how many input characters were left out.
 pub(crate) fn display_field(value: &str, max_chars: usize) -> String {
+    let pieces = pieces(value);
     let mut out = String::new();
     let mut out_chars = 0usize;
     let mut taken = 0usize;
-    for ch in value.chars() {
-        let piece = shown(ch);
+    for piece in &pieces {
         let len = piece.chars().count();
         if out_chars + len > max_chars {
             break;
         }
-        out.push_str(&piece);
+        out.push_str(piece);
         out_chars += len;
         taken += 1;
     }
-    let rest = value.chars().count() - taken;
+    let rest = pieces.len() - taken;
     if rest > 0 {
         out.push_str(&omitted(rest));
     }
@@ -66,10 +79,9 @@ pub(crate) fn display_field(value: &str, max_chars: usize) -> String {
 }
 
 /// The target, escaped as [`display_field`] does, and kept to [`MAX_TARGET_CHARS`] by leaving
-/// out the middle: the start and the end, file extension included, stay visible. An escape is
-/// never cut in half.
+/// out the middle: the start and the end stay visible. An escape is never cut in half.
 pub(crate) fn display_target(value: &str) -> String {
-    let pieces: Vec<String> = value.chars().map(shown).collect();
+    let pieces = pieces(value);
     let width = |piece: &String| piece.chars().count();
     if pieces.iter().map(width).sum::<usize>() <= MAX_TARGET_CHARS {
         return pieces.concat();
@@ -101,23 +113,20 @@ pub(crate) fn display_target(value: &str) -> String {
     format!("{}…{}{}", head.concat(), tail.concat(), omitted(rest))
 }
 
-/// The target's file extension, escaped, when its last path part has one: `.js` for
-/// `C:\docs\invoice.txt.js`. A leading dot alone (`.bashrc`) or a trailing dot is no extension.
-pub(crate) fn target_type(value: &str) -> Option<String> {
-    let name = value.rsplit(['/', '\\']).next().unwrap_or(value);
-    let dot = name.rfind('.')?;
-    if dot == 0 || dot + 1 == name.len() {
-        return None;
-    }
-    Some(display_field(&name[dot..], MAX_TYPE_CHARS))
-}
-
-/// The target line, and the type line under it when the target has an extension.
-pub(crate) fn target_lines(value: &str) -> String {
-    match target_type(value) {
-        Some(extension) => format!("Target: {}\nType: {extension}", display_target(value)),
-        None => format!("Target: {}", display_target(value)),
-    }
+/// Combining marks in the common combining blocks.
+fn is_combining(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{0300}'..='\u{036f}'
+            | '\u{0483}'..='\u{0489}'
+            | '\u{0591}'..='\u{05bd}'
+            | '\u{0610}'..='\u{061a}'
+            | '\u{064b}'..='\u{065f}'
+            | '\u{1ab0}'..='\u{1aff}'
+            | '\u{1dc0}'..='\u{1dff}'
+            | '\u{20d0}'..='\u{20ff}'
+            | '\u{fe20}'..='\u{fe2f}'
+    )
 }
 
 fn needs_escape(ch: char) -> bool {
@@ -130,15 +139,23 @@ fn needs_escape(ch: char) -> bool {
             | '\u{200e}' | '\u{200f}' | '\u{061c}'
             | '\u{202a}'..='\u{202e}'
             | '\u{2066}'..='\u{2069}'
-            // Zero-width, invisible and deprecated formatting characters.
+            // Zero-width, invisible, deprecated formatting and default-ignorable characters.
             | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{206a}'..='\u{206f}'
-            | '\u{feff}' | '\u{00ad}' | '\u{180e}'
+            | '\u{feff}' | '\u{00ad}' | '\u{034f}'
+            | '\u{17b4}' | '\u{17b5}'
+            | '\u{180b}'..='\u{180f}'
+            | '\u{fe00}'..='\u{fe0f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0100}'..='\u{e01ef}'
             // Interlinear annotation characters.
             | '\u{fff9}'..='\u{fffb}'
             // Tag characters.
             | '\u{e0000}'..='\u{e007f}'
-            // Hangul fillers, which render as blank space.
+            // Hangul fillers and blank-looking spaces.
             | '\u{115f}' | '\u{1160}' | '\u{3164}' | '\u{ffa0}'
+            | '\u{00a0}' | '\u{2800}' | '\u{3000}'
         )
 }
 
@@ -146,10 +163,10 @@ fn needs_escape(ch: char) -> bool {
 pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
     let nonce_prefix: String = prompt.nonce.chars().take(8).collect();
     format!(
-        "Orcel requests a local action.\n\nWorkspace: {}\nAction: {}\n{}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
+        "Orcel requests a local action.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
         display_field(&prompt.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&prompt.action, MAX_ACTION_CHARS),
-        target_lines(&prompt.target),
+        display_target(&prompt.target),
         display_field(&prompt.summary, MAX_SUMMARY_CHARS),
         display_field(&prompt.digest, MAX_DIGEST_CHARS),
         display_field(&nonce_prefix, 8),
@@ -161,25 +178,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_short_target_is_shown_whole_with_its_type() {
-        assert_eq!(
-            target_lines("docs/report.pdf"),
-            "Target: docs/report.pdf\nType: .pdf"
-        );
-        assert_eq!(target_lines("docs/Makefile"), "Target: docs/Makefile");
-        assert_eq!(target_lines("home/.bashrc"), "Target: home/.bashrc");
-        assert_eq!(target_lines("odd."), "Target: odd.");
+    fn a_reversed_name_is_escaped() {
+        let shown = display_target("docs/invoice\u{202e}txt.js");
+        assert_eq!(shown, "docs/invoice\\u{202e}txt.js");
+        assert!(!shown.contains('\u{202e}'));
     }
 
     #[test]
-    fn a_reversed_name_shows_its_real_extension() {
-        let lines = target_lines("docs/invoice\u{202e}txt.js");
-        assert_eq!(lines, "Target: docs/invoice\\u{202e}txt.js\nType: .js");
-        assert!(!lines.contains('\u{202e}'));
+    fn a_target_of_120_is_whole_and_of_121_is_cut() {
+        let fits = "a".repeat(MAX_TARGET_CHARS);
+        assert_eq!(display_target(&fits), fits);
+        let over = format!("{}.exe", "a".repeat(MAX_TARGET_CHARS - 3));
+        let shown = display_target(&over);
+        let field = shown.split(" [").next().unwrap();
+        assert_eq!(field.chars().count(), MAX_TARGET_CHARS);
+        assert!(field.ends_with(".exe"));
+        assert!(shown.ends_with("[2 more characters not shown]"));
     }
 
     #[test]
-    fn a_long_target_keeps_its_start_and_extension() {
+    fn a_long_target_keeps_its_start_and_end() {
         let long = format!("C:\\work\\{}\\secret-plan.exe", "deep\\".repeat(60));
         let shown = display_target(&long);
         let field = shown.split(" [").next().unwrap();
@@ -187,8 +205,6 @@ mod tests {
         assert!(field.starts_with("C:\\\\work\\\\deep"), "{shown}");
         assert!(field.ends_with("secret-plan.exe"), "{shown}");
         assert!(field.contains('…'));
-        assert!(shown.ends_with("characters not shown]"));
-        assert_eq!(target_type(&long).as_deref(), Some(".exe"));
     }
 
     #[test]
@@ -200,7 +216,7 @@ mod tests {
             assert!(field.chars().count() <= MAX_TARGET_CHARS);
             let (head, tail) = field.split_once('…').unwrap_or((field, ""));
             for part in [head, tail] {
-                // Every escape that starts also ends.
+                // Every escape that starts also ends (the input has no literal brace).
                 assert_eq!(
                     part.matches("\\u{").count(),
                     part.matches('}').count(),
@@ -211,10 +227,36 @@ mod tests {
     }
 
     #[test]
-    fn a_hostile_extension_is_escaped_and_bounded() {
-        let ty = target_type(&format!("a.{}", "\n".repeat(40))).unwrap();
-        assert!(!ty.contains('\n'));
-        assert!(ty.contains("not shown"));
+    fn hidden_and_blank_looking_characters_are_escaped() {
+        for ch in [
+            '\u{034f}',
+            '\u{fe0f}',
+            '\u{e0100}',
+            '\u{180f}',
+            '\u{17b4}',
+            '\u{1d173}',
+            '\u{13430}',
+            '\u{1bca0}',
+            '\u{00a0}',
+            '\u{2800}',
+            '\u{3000}',
+        ] {
+            let shown = display_field(&format!("a{ch}b"), 64);
+            assert_eq!(shown, format!("a\\u{{{:x}}}b", ch as u32), "{ch:?}");
+        }
+    }
+
+    #[test]
+    fn stacked_combining_marks_are_escaped_past_the_second() {
+        // Real text keeps its marks: e with acute and grave stays as it is.
+        assert_eq!(display_field("e\u{301}\u{300}x", 64), "e\u{301}\u{300}x");
+        // A stack of 50 shows two and escapes the rest.
+        let zalgo = format!("a{}", "\u{301}".repeat(50));
+        let shown = display_field(&zalgo, 1_000);
+        assert!(shown.starts_with("a\u{301}\u{301}\\u{301}"));
+        assert_eq!(shown.matches('\u{301}').count(), 2);
+        // The count resets at the next ordinary character.
+        assert_eq!(display_field("a\u{301}b\u{301}", 64), "a\u{301}b\u{301}");
     }
 
     #[test]
