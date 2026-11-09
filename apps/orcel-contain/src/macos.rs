@@ -93,6 +93,12 @@ const MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 /// fails afterwards fails closed exactly as before.
 const SAMPLE_RETRY_BUDGET: Duration = Duration::from_millis(100);
 const SAMPLE_RETRY_STEP: Duration = Duration::from_millis(5);
+/// The first sample's budget, taken right after spawn while the shell is still
+/// exec'ing `sandbox-exec` and `sandbox-exec` is compiling and applying its
+/// profile, which on a loaded machine can take longer than
+/// [`SAMPLE_RETRY_BUDGET`]. It applies only to a live process that is not a
+/// zombie; anything over the ceiling is still killed at the first sample.
+const INSTALL_SAMPLE_BUDGET: Duration = Duration::from_secs(1);
 
 /// Immutable system directories the dynamic loader and Objective-C runtime
 /// read. None of them expose user data.
@@ -313,7 +319,9 @@ pub(crate) async fn spawn_with_tools(
             None,
         ));
     };
-    if let Err(failure) = sample_live(sample_pid).await {
+    // A child that already exited (a fast refusal, say) has nothing left to
+    // watch: that is not a failure to install the sampler.
+    if let Err(failure) = sample_live(sample_pid, INSTALL_SAMPLE_BUDGET).await {
         // SAFETY: kill has no memory preconditions. `sample_pid` is the just-spawned shell, the
         // leader of its own new process group, so -pid addresses only the contained tree.
         unsafe {
@@ -377,23 +385,22 @@ fn watch_memory(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(MEMORY_SAMPLE_INTERVAL).await;
-            let Ok(resident) = sample_live(pid).await else {
-                // ESRCH proves the child is gone. Any other sampling failure
-                // leaves the ceiling unobservable, so kill the group rather
-                // than silently continuing without enforcement.
-                // SAFETY: kill with signal 0 only checks that `pid` exists; it has no memory
-                // preconditions.
-                if unsafe { libc::kill(pid, 0) } == 0
-                    || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-                {
+            let resident = match sample_live(pid, SAMPLE_RETRY_BUDGET).await {
+                Ok(Some(resident)) => resident,
+                // The child exited: nothing is left to watch.
+                Ok(None) => return,
+                // A live process that can't be sampled leaves the ceiling
+                // unobservable, so kill the group rather than silently
+                // continuing without enforcement.
+                Err(_) => {
                     // SAFETY: kill has no memory preconditions. The sampler only runs while the
                     // guard holds the group, and the parent-death sentinel keeps the group id
                     // reserved, so -pid cannot address an unrelated group.
                     unsafe {
                         libc::kill(-pid, libc::SIGKILL);
                     }
+                    return;
                 }
-                return;
             };
             if resident > ceiling {
                 exceeded.store(true, Ordering::Release);
@@ -467,29 +474,60 @@ impl SampleFailure {
     }
 }
 
-/// Sample `pid`, retrying a failure for at most [`SAMPLE_RETRY_BUDGET`] while
-/// the process is still alive. A process that is gone is not retried.
-async fn sample_live(pid: libc::c_int) -> Result<u64, SampleFailure> {
+/// Sample `pid`: `Some` resident size, or `None` once the process has exited
+/// (it is gone, or a zombie waiting to be reaped, whose task can no longer be
+/// sampled). A live process that can't be sampled is retried for at most
+/// `budget` and then reported as a failure.
+async fn sample_live(pid: libc::c_int, budget: Duration) -> Result<Option<u64>, SampleFailure> {
     let started = tokio::time::Instant::now();
     let mut attempts = 0;
     loop {
         attempts += 1;
         let (resident, errno) = sample_once(pid);
         if let Some(resident) = resident {
-            return Ok(resident);
+            return Ok(Some(resident));
         }
-        // SAFETY: kill with signal 0 only checks that `pid` exists; it has no memory
-        // preconditions.
-        let alive = unsafe { libc::kill(pid, 0) } == 0;
-        if !alive || started.elapsed() >= SAMPLE_RETRY_BUDGET {
+        if exited(pid) {
+            return Ok(None);
+        }
+        if started.elapsed() >= budget {
             return Err(SampleFailure {
                 attempts,
                 errno,
-                alive,
+                alive: true,
             });
         }
         tokio::time::sleep(SAMPLE_RETRY_STEP).await;
     }
+}
+
+/// Whether `pid` has exited: `kill(pid, 0)` says it doesn't exist, or its BSD
+/// status says it is a zombie. A process that can't be read is not taken as
+/// exited, so it keeps being treated as live and unobservable.
+fn exited(pid: libc::c_int) -> bool {
+    // SAFETY: kill with signal 0 only checks that `pid` exists; it has no memory
+    // preconditions.
+    if unsafe { libc::kill(pid, 0) } != 0
+        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    {
+        return true;
+    }
+    // SAFETY: proc_bsdinfo is a plain C struct of integers and byte arrays,
+    // for which the all-zero bit pattern is a valid value.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the buffer is a live, writable proc_bsdinfo and `size` is its
+    // exact size, which is what PROC_PIDTBSDINFO writes.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            std::ptr::addr_of_mut!(info).cast(),
+            size,
+        )
+    };
+    written == size && info.pbi_status == libc::SZOMB
 }
 
 fn sample_once(pid: libc::c_int) -> (Option<u64>, Option<i32>) {
