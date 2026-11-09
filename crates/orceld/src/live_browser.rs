@@ -1052,6 +1052,14 @@ impl LiveBrowser {
             summary,
             digest.clone(),
         );
+        // A download's file gets its own Destination line and type, where a long source can't
+        // push it out of view.
+        let prompt = match action {
+            BindAction::Download {
+                folder, relative, ..
+            } => prompt.downloading_to(format!("{folder}/{relative}")),
+            _ => prompt,
+        };
         let token = approval
             .request_token(&prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))?;

@@ -200,25 +200,26 @@ pub(crate) fn file_type(path: &str) -> Option<String> {
 
 /// The target line; for a file its Type line; and a move's Destination with its own Type.
 fn target_lines(kind: TargetKind, target: &str, destination: Option<&str>) -> String {
-    let typed = |label: &str, path: &str| {
+    let typed = |label: &str, path: &str, is_file: bool| {
         let mut lines = format!("{label}: {}", display_target(path));
-        if kind == TargetKind::File {
+        if is_file {
             if let Some(extension) = file_type(path) {
                 lines.push_str(&format!("\n{label} type: {extension}"));
             }
         }
         lines
     };
+    let target_is_file = kind == TargetKind::File;
+    let destination_is_file = matches!(kind, TargetKind::File | TargetKind::Download);
     match destination {
         Some(destination) => format!(
             "{}\n{}",
-            typed("Target", target),
-            typed("Destination", destination)
+            typed("Target", target, target_is_file),
+            typed("Destination", destination, destination_is_file)
         ),
-        None => typed("Target", target),
+        None => typed("Target", target, target_is_file),
     }
 }
-
 /// Who is asking, from fields orceld set: the opening words and the Origin line.
 fn origin_lines(origin: &RequestOrigin) -> (&'static str, String) {
     match origin {
@@ -507,6 +508,25 @@ mod tests {
                 "\nTarget: a.txt\nTarget type: .txt\nDestination: b.sh\nDestination type: .sh\n"
             ),
             "{strong}"
+        );
+    }
+
+    #[test]
+    fn a_download_shows_its_file_and_type_but_no_type_for_the_source() {
+        let download = crate::ApprovalPrompt::new(
+            "default",
+            "rev",
+            "download",
+            format!("https://x.example/{}", "a".repeat(2_000)),
+            "s",
+            "d",
+        )
+        .downloading_to("Downloads/statement.pdf.exe");
+        let body = dialog_body(&download);
+        assert!(!body.contains("Target type:"), "{body}");
+        assert!(
+            body.contains("\nDestination: Downloads/statement.pdf.exe\nDestination type: .exe\n"),
+            "{body}"
         );
     }
 }

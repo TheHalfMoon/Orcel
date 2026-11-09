@@ -109,6 +109,9 @@ pub enum TargetKind {
     Other,
     /// A file path in the workspace.
     File,
+    /// A source (such as a web address) whose content is saved to the destination file: only
+    /// the destination gets a type line.
+    Download,
 }
 
 /// Where a request came from, as orceld knows it, for the approval prompt's Origin line. Built
@@ -526,6 +529,14 @@ impl ApprovalPrompt {
     /// The same prompt, its target marked as a file: the prompt shows the file's type.
     pub fn for_file(mut self) -> Self {
         self.target_kind = TargetKind::File;
+        self
+    }
+
+    /// The same prompt for a download from its target to the file `destination`: the
+    /// destination is shown on its own line with its type; the source gets none.
+    pub fn downloading_to(mut self, destination: impl Into<String>) -> Self {
+        self.target_kind = TargetKind::Download;
+        self.destination = Some(destination.into());
         self
     }
 
