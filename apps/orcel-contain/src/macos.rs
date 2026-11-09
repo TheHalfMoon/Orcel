@@ -96,8 +96,11 @@ const SAMPLE_RETRY_STEP: Duration = Duration::from_millis(5);
 /// The first sample's budget, taken right after spawn while the shell is still
 /// exec'ing `sandbox-exec` and `sandbox-exec` is compiling and applying its
 /// profile, which on a loaded machine can take longer than
-/// [`SAMPLE_RETRY_BUDGET`]. It applies only to a live process that is not a
-/// zombie; anything over the ceiling is still killed at the first sample.
+/// [`SAMPLE_RETRY_BUDGET`]. It stretches only while sampling a live, non-zombie
+/// process keeps failing in that window; anything over the ceiling is still
+/// killed at the first sample. (Between samples the child is unobserved for up
+/// to one interval plus the retry budget, as before: macOS enforces no memory
+/// rlimit, so the ceiling is sampled, not enforced.)
 const INSTALL_SAMPLE_BUDGET: Duration = Duration::from_secs(1);
 
 /// Immutable system directories the dynamic loader and Objective-C runtime
@@ -458,7 +461,6 @@ extern "C" {
 struct SampleFailure {
     attempts: u32,
     errno: Option<i32>,
-    alive: bool,
 }
 
 impl SampleFailure {
@@ -467,9 +469,8 @@ impl SampleFailure {
             .errno
             .map_or_else(|| "unavailable".to_owned(), |code| code.to_string());
         format!(
-            "proc_pidinfo failed {} time(s), last os error {errno}, process {}",
-            self.attempts,
-            if self.alive { "alive" } else { "gone" }
+            "proc_pidinfo failed {} time(s), last os error {errno}, process alive",
+            self.attempts
         )
     }
 }
@@ -491,19 +492,17 @@ async fn sample_live(pid: libc::c_int, budget: Duration) -> Result<Option<u64>, 
             return Ok(None);
         }
         if started.elapsed() >= budget {
-            return Err(SampleFailure {
-                attempts,
-                errno,
-                alive: true,
-            });
+            return Err(SampleFailure { attempts, errno });
         }
         tokio::time::sleep(SAMPLE_RETRY_STEP).await;
     }
 }
 
-/// Whether `pid` has exited: `kill(pid, 0)` says it doesn't exist, or its BSD
-/// status says it is a zombie. A process that can't be read is not taken as
-/// exited, so it keeps being treated as live and unobservable.
+/// Whether `pid` has exited: `kill(pid, 0)` says it doesn't exist, or the
+/// kernel's own record of it (`sysctl KERN_PROC_PID`) says it is a zombie.
+/// `proc_pidinfo` is not used here: it skips zombies for this lookup. A record
+/// that can't be read, or doesn't name `pid`, is not taken as exited, so the
+/// process keeps being treated as live and unobservable.
 fn exited(pid: libc::c_int) -> bool {
     // SAFETY: kill with signal 0 only checks that `pid` exists; it has no memory
     // preconditions.
@@ -512,24 +511,31 @@ fn exited(pid: libc::c_int) -> bool {
     {
         return true;
     }
-    // SAFETY: proc_bsdinfo is a plain C struct of integers and byte arrays,
+    /// `SZOMB` in `<sys/proc.h>`.
+    const SZOMB: libc::c_char = 5;
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
+    // SAFETY: kinfo_proc is a plain C struct of integers, pointers and arrays,
     // for which the all-zero bit pattern is a valid value.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
-    // SAFETY: the buffer is a live, writable proc_bsdinfo and `size` is its
-    // exact size, which is what PROC_PIDTBSDINFO writes.
-    let written = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTBSDINFO,
+    let mut record: libc::kinfo_proc = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<libc::kinfo_proc>();
+    // SAFETY: `mib` is a live four-element name, `record` a live, writable
+    // kinfo_proc and `size` its exact size; sysctl writes at most `size` bytes
+    // into it and the new value is null.
+    let status = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            std::ptr::addr_of_mut!(record).cast(),
+            &mut size,
+            std::ptr::null_mut(),
             0,
-            std::ptr::addr_of_mut!(info).cast(),
-            size,
         )
     };
-    written == size && info.pbi_status == libc::SZOMB
+    status == 0
+        && size == std::mem::size_of::<libc::kinfo_proc>()
+        && record.kp_proc.p_pid == pid
+        && record.kp_proc.p_stat == SZOMB
 }
-
 fn sample_once(pid: libc::c_int) -> (Option<u64>, Option<i32>) {
     let resident = resident_bytes(pid);
     let errno = resident
