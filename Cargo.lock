@@ -1063,6 +1063,7 @@ dependencies = [
 name = "orcel-provider-fs"
 version = "0.2.0"
 dependencies = [
+ "libc",
  "orcel-contracts",
  "serde_json",
  "sha2 0.10.9",

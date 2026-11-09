@@ -10,3 +10,7 @@ rust-version.workspace = true
 orcel-contracts = { path = "../orcel-contracts" }
 serde_json.workspace = true
 sha2.workspace = true
+
+# fcntl(F_GETPATH): the path of an open file, read from its descriptor.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
