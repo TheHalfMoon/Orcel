@@ -991,6 +991,50 @@ mod win {
         }
     }
 
+    const FILE_DISPOSITION_INFO_CLASS: u32 = 4;
+
+    impl RenameHandle {
+        /// The volume and file index of the opened entry, which name it whatever its path.
+        pub(crate) fn file_id(&self) -> io::Result<(u32, u64)> {
+            file_id(self.0 .0 as RawHandle)
+        }
+
+        /// Marks the entry to be deleted when this handle closes, or clears that mark. A
+        /// directory that isn't empty is refused here.
+        pub(crate) fn set_delete_on_close(&self, delete: bool) -> io::Result<()> {
+            // FILE_DISPOSITION_INFO is a single BOOLEAN.
+            let info: u8 = u8::from(delete);
+            // SAFETY: the handle is open with DELETE access, and `info` is a one-byte
+            // FILE_DISPOSITION_INFO that outlives the call.
+            if unsafe {
+                SetFileInformationByHandle(
+                    self.0 .0,
+                    FILE_DISPOSITION_INFO_CLASS,
+                    (&info as *const u8).cast::<c_void>(),
+                    1,
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+    }
+
+    /// The volume serial number and 64-bit file index of an open handle.
+    pub(crate) fn file_id(handle: RawHandle) -> io::Result<(u32, u64)> {
+        let mut info = ByHandleFileInformation::default();
+        // SAFETY: `handle` is an open handle owned by the caller for this call, and `info` is
+        // a properly sized, writable BY_HANDLE_FILE_INFORMATION.
+        if unsafe { GetFileInformationByHandle(handle as Handle, &mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((
+            info.volume_serial,
+            (u64::from(info.index_high) << 32) | u64::from(info.index_low),
+        ))
+    }
+
     /// The number of names the open file has.
     pub(super) fn link_count(handle: RawHandle) -> io::Result<u64> {
         let mut info = ByHandleFileInformation::default();

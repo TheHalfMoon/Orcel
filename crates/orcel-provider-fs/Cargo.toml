@@ -11,6 +11,7 @@ orcel-contracts = { path = "../orcel-contracts" }
 serde_json.workspace = true
 sha2.workspace = true
 
-# fcntl(F_GETPATH): the path of an open file, read from its descriptor.
-[target.'cfg(target_os = "macos")'.dependencies]
+# fcntl(F_GETPATH) on macOS, and openat, fstatat and unlinkat for removing an entry relative
+# to its verified parent directory.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
