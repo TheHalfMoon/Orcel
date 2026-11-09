@@ -568,6 +568,7 @@ mod linux {
                 if event.requestor != window
                     || event.selection != clipboard
                     || event.target != targets
+                    || (event.property != property && event.property != u32::from(AtomEnum::NONE))
                 {
                     continue;
                 }
