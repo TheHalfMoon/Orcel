@@ -92,6 +92,24 @@ pub struct PresenceContext {
     /// with [`PresenceContext::with_details`].
     pub target: String,
     pub summary: String,
+    /// Where the request came from, shown on the STRONG summary.
+    pub origin: RequestOrigin,
+}
+
+/// Where a request came from, as orceld knows it, for the approval prompt's Origin line. Built
+/// by orceld from the authenticated remote context, never from the request's own text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RequestOrigin {
+    /// A request from this computer.
+    #[default]
+    Local,
+    /// A request from a remote session, through the named provider (for example the ChatGPT
+    /// tunnel or a relay), for this enrolled device and connection.
+    Remote {
+        provider: String,
+        device: String,
+        connection: String,
+    },
 }
 
 impl PresenceContext {
@@ -108,7 +126,13 @@ impl PresenceContext {
             action: action.into(),
             target: String::new(),
             summary: String::new(),
+            origin: RequestOrigin::Local,
         }
+    }
+
+    pub fn with_origin(mut self, origin: RequestOrigin) -> Self {
+        self.origin = origin;
+        self
     }
 
     pub fn with_details(mut self, target: impl Into<String>, summary: impl Into<String>) -> Self {
@@ -460,9 +484,17 @@ pub struct ApprovalPrompt {
     pub expires_at_ms: u64,
     pub reuse_scope: String,
     pub approval_class: ApprovalClass,
+    /// Where the request came from; local unless orceld marks it remote.
+    pub origin: RequestOrigin,
 }
 
 impl ApprovalPrompt {
+    /// The same prompt, marked as coming from `origin`.
+    pub fn with_origin(mut self, origin: RequestOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
     pub fn new(
         workspace_id: impl Into<String>,
         policy_revision: impl Into<String>,
@@ -567,6 +599,7 @@ impl ApprovalPrompt {
             reuse_scope: SINGLE_OPERATION_SCOPE.to_owned(),
             digest,
             approval_class,
+            origin: RequestOrigin::Local,
         }
     }
 
@@ -902,7 +935,8 @@ impl ApprovalBroker for LocalApprovalBroker {
             prompt.workspace_id.clone(),
             prompt.action.clone(),
         )
-        .with_details(prompt.target.clone(), prompt.summary.clone());
+        .with_details(prompt.target.clone(), prompt.summary.clone())
+        .with_origin(prompt.origin.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
@@ -1044,7 +1078,8 @@ impl LocalApprovalBroker {
             prompt.workspace_id.clone(),
             prompt.action.clone(),
         )
-        .with_details(prompt.target.clone(), prompt.summary.clone());
+        .with_details(prompt.target.clone(), prompt.summary.clone())
+        .with_origin(prompt.origin.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self

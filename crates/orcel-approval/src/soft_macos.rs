@@ -309,7 +309,9 @@ mod tests {
             "Approval: SOFT {} (single use",
             &prompt.nonce[..8]
         )));
-        assert!(body.starts_with("Orcel requests a local action.\n\nWorkspace: default\n"));
+        assert!(body.starts_with(
+            "Orcel requests a local action.\n\nOrigin: this computer\nWorkspace: default\n"
+        ));
         assert!(body.ends_with("\n\nApprove this exact operation?"));
     }
 

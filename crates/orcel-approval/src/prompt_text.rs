@@ -19,7 +19,7 @@
     allow(dead_code)
 )]
 
-use crate::{ApprovalPrompt, PresenceContext};
+use crate::{ApprovalPrompt, PresenceContext, RequestOrigin};
 
 pub(crate) const MAX_WORKSPACE_CHARS: usize = 128;
 pub(crate) const MAX_ACTION_CHARS: usize = 512;
@@ -184,11 +184,37 @@ fn needs_escape(ch: char) -> bool {
         )
 }
 
+const MAX_ORIGIN_PART_CHARS: usize = 64;
+
+/// Who is asking, from fields orceld set: the opening words and the Origin line.
+fn origin_lines(origin: &RequestOrigin) -> (&'static str, String) {
+    match origin {
+        RequestOrigin::Local => (
+            "Orcel requests a local action",
+            "Origin: this computer".to_owned(),
+        ),
+        RequestOrigin::Remote {
+            provider,
+            device,
+            connection,
+        } => (
+            "Orcel requests an action for a REMOTE session",
+            format!(
+                "Origin: remote, through {} for device {} (connection {})",
+                display_field(provider, MAX_ORIGIN_PART_CHARS),
+                display_field(device, MAX_ORIGIN_PART_CHARS),
+                display_field(connection, MAX_ORIGIN_PART_CHARS),
+            ),
+        ),
+    }
+}
+
 /// The SOFT dialog's text over bounded, escaped fields.
 pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
     let nonce_prefix: String = prompt.nonce.chars().take(8).collect();
+    let (opening, origin) = origin_lines(&prompt.origin);
     format!(
-        "Orcel requests a local action.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
+        "{opening}.\n\n{origin}\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
         display_field(&prompt.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&prompt.action, MAX_ACTION_CHARS),
         display_target(&prompt.target),
@@ -203,8 +229,9 @@ pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
 /// macOS before Touch ID, whose own prompts are too short to show the target.
 pub(crate) fn strong_body(ctx: &PresenceContext) -> String {
     let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
+    let (opening, origin) = origin_lines(&ctx.origin);
     format!(
-        "Orcel requests a local action that needs STRONG approval.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
+        "{opening} that needs STRONG approval.\n\n{origin}\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
         display_field(&ctx.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&ctx.action, MAX_ACTION_CHARS),
         display_target(&ctx.target),
@@ -360,5 +387,29 @@ mod tests {
         assert!(body.contains("\nTarget: docs/invoice\\u{202e}txt.js\n"));
         assert!(body.contains("\nRemove one file\n"));
         assert!(!body.contains('\u{202e}'));
+    }
+
+    #[test]
+    fn a_remote_request_says_so_and_names_its_route() {
+        let remote = RequestOrigin::Remote {
+            provider: "chatgpt-tunnel".to_owned(),
+            device: "dev-1234\nOrigin: this computer".to_owned(),
+            connection: "conn-9".to_owned(),
+        };
+        let prompt = crate::ApprovalPrompt::new("default", "rev", "delete file", "a.txt", "s", "d")
+            .with_origin(remote.clone());
+        let body = dialog_body(&prompt);
+        assert!(body.starts_with("Orcel requests an action for a REMOTE session.\n\nOrigin: remote, through chatgpt-tunnel for device dev-1234\\u{a}Origin: this computer (connection conn-9)\nWorkspace: default\n"), "{body}");
+        let local = dialog_body(&crate::ApprovalPrompt::new(
+            "default", "rev", "a", "t", "s", "d",
+        ));
+        assert!(local.starts_with(
+            "Orcel requests a local action.\n\nOrigin: this computer\nWorkspace: default\n"
+        ));
+        // The same lines either way: a remote field can't add one.
+        assert_eq!(body.lines().count(), local.lines().count());
+        let ctx = crate::PresenceContext::new("nonce-1", "d", "default", "delete file")
+            .with_origin(remote);
+        assert!(strong_body(&ctx).starts_with("Orcel requests an action for a REMOTE session that needs STRONG approval.\n\nOrigin: remote, through"));
     }
 }

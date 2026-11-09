@@ -247,6 +247,67 @@ fn app_api_capabilities(approval_available: bool) -> Vec<Value> {
 /// SG-000055 entry: remote-context requests must pass the local
 /// remote-session lease gate before any policy or dispatch step, and local
 /// remote-lease management never reaches workspace dispatch.
+/// The broker a remote request's approvals go through: it marks each prompt as remote, with the
+/// provider, device and connection from the authenticated remote context, so the prompt's Origin
+/// line comes from orceld and never from the request's own text.
+struct OriginStamp<'a, B: ApprovalBroker> {
+    inner: &'a B,
+    origin: orcel_approval::RequestOrigin,
+}
+
+impl<'a, B: ApprovalBroker> OriginStamp<'a, B> {
+    fn new(inner: &'a B, remote: &orcel_contracts::RemoteContext) -> Self {
+        Self {
+            inner,
+            origin: orcel_approval::RequestOrigin::Remote {
+                provider: remote.provider_kind.clone(),
+                device: remote.device_id.clone(),
+                connection: remote.remote_connection_id.clone(),
+            },
+        }
+    }
+
+    fn stamped(&self, prompt: &orcel_approval::ApprovalPrompt) -> orcel_approval::ApprovalPrompt {
+        prompt.clone().with_origin(self.origin.clone())
+    }
+}
+
+impl<B: ApprovalBroker> ApprovalBroker for OriginStamp<'_, B> {
+    fn request_token(
+        &self,
+        prompt: &orcel_approval::ApprovalPrompt,
+    ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+        self.inner.request_token(&self.stamped(prompt))
+    }
+
+    fn consume(
+        &self,
+        token: &orcel_approval::ApprovedToken,
+        expected: &orcel_approval::ConsumeExpectation,
+        now_ms: u64,
+    ) -> Result<(), orcel_approval::ApprovalError> {
+        self.inner.consume(token, expected, now_ms)
+    }
+
+    fn emergency_revoke(
+        &self,
+        prompt: &orcel_approval::ApprovalPrompt,
+    ) -> Result<u64, orcel_approval::ApprovalError> {
+        self.inner.emergency_revoke(&self.stamped(prompt))
+    }
+
+    fn request(
+        &self,
+        prompt: &orcel_approval::ApprovalPrompt,
+    ) -> Result<orcel_approval::ApprovalDecision, orcel_approval::ApprovalError> {
+        self.inner.request(&self.stamped(prompt))
+    }
+
+    fn history(&self, limit: usize) -> Vec<orcel_approval::ApprovalRecordSummary> {
+        self.inner.history(limit)
+    }
+}
+
 fn handle_envelope(
     policy: &PolicyEngine,
     audit: &AuditLogger,
@@ -290,6 +351,8 @@ fn handle_envelope(
             now_ms: &clock,
         });
     if let Some(remote) = &remote {
+        // Every approval this remote request raises, the lease's included, says it is remote.
+        let approval = &OriginStamp::new(approval, remote);
         if uia::is_full_user_desktop_shape(&request.capability, &request.operation) {
             let _ = audit.record(&request, POLICY_REVISION, "REMOTE_DENIED");
             return ResponseEnvelope::failure(
@@ -2467,6 +2530,57 @@ mod sg000055_envelope_tests {
             client_profile_revision: 1,
             tool_surface_profile: "core".into(),
             scopes: vec!["orcel.read".into()],
+        }
+    }
+
+    /// Every approval a remote request raises carries its remote origin, built from the
+    /// authenticated context: the prompt says it is remote and names the device.
+    #[test]
+    fn a_remote_requests_approvals_are_marked_remote() {
+        use orcel_approval::{
+            ApprovalError, ApprovalPrompt, ApprovedToken, ConsumeExpectation, RequestOrigin,
+        };
+        struct Recording(std::cell::RefCell<Vec<RequestOrigin>>);
+        impl ApprovalBroker for Recording {
+            fn request_token(
+                &self,
+                prompt: &ApprovalPrompt,
+            ) -> Result<ApprovedToken, ApprovalError> {
+                self.0.borrow_mut().push(prompt.origin.clone());
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+            fn consume(
+                &self,
+                _: &ApprovedToken,
+                _: &ConsumeExpectation,
+                _: u64,
+            ) -> Result<(), ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+        }
+        let inner = Recording(std::cell::RefCell::new(Vec::new()));
+        let stamp = OriginStamp::new(&inner, &remote());
+        let prompt = ApprovalPrompt::new("default", "rev", "delete file", "a.txt", "s", "d");
+        assert_eq!(prompt.origin, RequestOrigin::Local);
+        let _ = stamp.request(&prompt);
+        let _ = stamp.request_token(&prompt);
+        let seen = inner.0.borrow();
+        assert_eq!(seen.len(), 2);
+        for origin in seen.iter() {
+            assert_eq!(
+                origin,
+                &RequestOrigin::Remote {
+                    provider: "generic".into(),
+                    device: remote().device_id,
+                    connection: remote().remote_connection_id,
+                }
+            );
         }
     }
 
