@@ -66,7 +66,14 @@ fn linux_executes_the_verified_file_not_the_path() {
     let mut command = std::process::Command::new(pinned.exec_path());
     std::os::unix::process::CommandExt::arg0(&mut command, pinned.path());
     let output = command.arg("pinned").output().unwrap();
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "{:?}, stdout {:?}, stderr {:?}, /bin/echo is {:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        std::fs::canonicalize("/bin/echo"),
+    );
     assert_eq!(output.stdout, b"pinned\n");
 }
 
