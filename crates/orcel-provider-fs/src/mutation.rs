@@ -410,7 +410,7 @@ impl FsProvider {
         }
         self.ensure_not_git(&parent)?;
         let target = parent.join(&name);
-        let moved = self.move_checked(&source.resolved, &target)?;
+        let moved = self.move_checked(&source, &target)?;
         if fs::symlink_metadata(&source.resolved).is_ok() || self.within(&moved).is_err() {
             return Err(ProviderError::new(
                 FailureCode::PostconditionFailed,
@@ -435,7 +435,8 @@ impl FsProvider {
     /// into the destination can neither keep it in Git data nor make the move back take
     /// another entry.
     #[cfg(windows)]
-    fn move_checked(&self, from: &Path, to: &Path) -> Result<PathBuf, ProviderError> {
+    fn move_checked(&self, source: &EntryIdentity, to: &Path) -> Result<PathBuf, ProviderError> {
+        let from = source.resolved.as_path();
         let entry = crate::win::open_for_rename(from)
             .map_err(|error| ProviderError::io("open entry to move", error))?;
         let opened = entry
@@ -497,13 +498,17 @@ impl FsProvider {
 
     /// Linux and macOS: the move is relative to both parent directories, each opened and
     /// verified from its descriptor, so a link swapped in above either end can't redirect it.
-    /// The source must still be the entry whose device and inode were read under its verified
-    /// parent, the rename never replaces an existing entry (`renameat2(RENAME_NOREPLACE)`,
+    /// A file is opened under its verified parent without following a link, its content must
+    /// still be the approved content, and its device and inode come from that descriptor; a
+    /// directory's are read under the parent. Right before the rename the name must still hold
+    /// that device and inode. The rename never replaces an existing entry (`renameat2(RENAME_NOREPLACE)`,
     /// `renameatx_np(RENAME_EXCL)`), and the moved entry is checked under the destination
     /// afterwards. A move that turns out to have reached Git data, which needs the destination
     /// directory itself to have been moved there after its check, is reported, not moved back.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn move_checked(&self, from: &Path, to: &Path) -> Result<PathBuf, ProviderError> {
+    fn move_checked(&self, source: &EntryIdentity, to: &Path) -> Result<PathBuf, ProviderError> {
+        use std::os::unix::fs::MetadataExt as _;
+        let from = source.resolved.as_path();
         let stale =
             || ProviderError::new(FailureCode::TargetStale, "target changed since approval");
         let (from_parent, from_name) = at::split(from)?;
@@ -511,9 +516,27 @@ impl FsProvider {
         let source_dir = self.verified_dir(from_parent)?;
         let target_dir = self.verified_dir(to_parent)?;
         self.ensure_not_git(to)?;
-        let before = at::stat_entry(&source_dir, &from_name)
-            .map_err(|error| ProviderError::io("inspect entry to move", error))?
-            .ok_or_else(stale)?;
+        let before = match &source.sha256 {
+            Some(expected_sha) => {
+                let file = at::open_file(&source_dir, &from_name)
+                    .map_err(|error| ProviderError::io("open entry to move", error))?;
+                let metadata = file
+                    .metadata()
+                    .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+                if !metadata.is_file() || &hash_file(&file)? != expected_sha {
+                    return Err(stale());
+                }
+                (metadata.dev(), metadata.ino())
+            }
+            None => at::stat_entry(&source_dir, &from_name)
+                .map_err(|error| ProviderError::io("inspect entry to move", error))?
+                .ok_or_else(stale)?,
+        };
+        let named = at::stat_entry(&source_dir, &from_name)
+            .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+        if named != Some(before) {
+            return Err(stale());
+        }
         at::rename_no_replace(&source_dir, &from_name, &target_dir, &to_name)
             .map_err(|error| ProviderError::io("move entry", error))?;
         let after = at::stat_entry(&target_dir, &to_name)
@@ -536,7 +559,8 @@ impl FsProvider {
     /// Creates the directory `name` under `parent`, relative to `parent` opened and verified
     /// from its descriptor, and returns its real path read from the new directory's own
     /// descriptor. A directory that turns out to be in Git data, or elsewhere than asked, is
-    /// removed relative to the same parent.
+    /// removed relative to the same parent, best effort: if it was renamed away and another
+    /// empty directory put at its name in between, that one is removed instead.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn mkdir_at(&self, parent: &Path, name: &std::ffi::OsStr) -> Result<PathBuf, ProviderError> {
         let dir = self.verified_dir(parent)?;
@@ -558,7 +582,7 @@ impl FsProvider {
                 Ok(resolved)
             });
         if checked.is_err() {
-            // The directory this call just created, under the parent it was created in.
+            // The name this call created, under the parent it was created in.
             let _ = at::remove_dir(&dir, &c_name);
         }
         checked
@@ -589,7 +613,8 @@ impl FsProvider {
     /// Other Unix: the move is by path. A move that turns out to have reached Git data is
     /// reported with where it went, and not moved back by path, which could take another entry.
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-    fn move_checked(&self, from: &Path, to: &Path) -> Result<PathBuf, ProviderError> {
+    fn move_checked(&self, source: &EntryIdentity, to: &Path) -> Result<PathBuf, ProviderError> {
+        let from = source.resolved.as_path();
         move_no_replace(from, to).map_err(|error| ProviderError::io("move entry", error))?;
         let moved = resolve_final_path(to)
             .map_err(|error| ProviderError::io("verify moved entry", error))?;
@@ -922,6 +947,19 @@ mod at {
     pub(super) fn remove_dir(dir: &File, name: &CString) -> io::Result<()> {
         // SAFETY: as in `mkdir`.
         check(unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) })
+    }
+
+    /// The file `name` under `dir`, opened read-only without following a link (and without
+    /// blocking on a FIFO).
+    pub(super) fn open_file(dir: &File, name: &CString) -> io::Result<File> {
+        let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+        // SAFETY: as in `mkdir`; openat returns a new descriptor or -1.
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: openat returned a new descriptor that nothing else owns.
+        Ok(unsafe { File::from_raw_fd(fd) })
     }
 
     /// The directory `name` under `dir`, opened without following a link.
@@ -1278,7 +1316,9 @@ mod tests {
         fs::create_dir(dir.join("dest")).unwrap();
         fs::write(dir.join("a.txt"), "a").unwrap();
         let p = provider(&dir);
-        // The paths the checks approved, then the swaps.
+        let identity = p.entry_identity("a.txt").unwrap();
+        // The paths the checks approved, then the swaps. These test a parent that is already a
+        // link when the directory is opened; a swap after the open needs a hook to time.
         let sub = dir.join("sub");
         let dest = dir.join("dest");
         fs::rename(&sub, dir.join("sub-moved")).unwrap();
@@ -1288,15 +1328,15 @@ mod tests {
 
         assert!(p.mkdir_at(&sub, std::ffi::OsStr::new("new")).is_err());
         assert!(!dir.join(".git/refs/heads/new").exists());
-        assert!(p
-            .move_checked(&dir.join("a.txt"), &dest.join("a.txt"))
-            .is_err());
+        assert!(p.move_checked(&identity, &dest.join("a.txt")).is_err());
         assert!(!dir.join(".git/refs/heads/a.txt").exists());
         assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"a");
         let _ = fs::remove_dir_all(dir);
     }
 
-    /// A move never replaces an entry that appears at the destination after the check.
+    /// A move refuses an existing destination. (The old check-then-rename refused this too; the
+    /// atomic no-replace rename is what closes a destination appearing in between, which this
+    /// test can't time.)
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn a_move_never_replaces_an_entry_at_the_destination() {
@@ -1304,11 +1344,28 @@ mod tests {
         fs::write(dir.join("a.txt"), "a").unwrap();
         fs::write(dir.join("b.txt"), "b").unwrap();
         let p = provider(&dir);
-        assert!(p
-            .move_checked(&dir.join("a.txt"), &dir.join("b.txt"))
-            .is_err());
+        let identity = p.entry_identity("a.txt").unwrap();
+        assert!(p.move_checked(&identity, &dir.join("b.txt")).is_err());
         assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"a");
         assert_eq!(fs::read(dir.join("b.txt")).unwrap(), b"b");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A file replaced in the same folder after approval is not moved: the move binds to the
+    /// approved content, read under the verified parent.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_file_replaced_after_approval_is_not_moved() {
+        let dir = fs::canonicalize(root("at-replaced")).unwrap();
+        fs::write(dir.join("a.txt"), "approved").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("a.txt").unwrap();
+        fs::write(dir.join("other"), "replaced").unwrap();
+        fs::rename(dir.join("other"), dir.join("a.txt")).unwrap();
+        let refused = p.move_checked(&identity, &dir.join("b.txt")).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale);
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"replaced");
+        assert!(!dir.join("b.txt").exists());
         let _ = fs::remove_dir_all(dir);
     }
 }
