@@ -1422,21 +1422,27 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    /// The OS guarantee Windows mkdir relies on: while a directory is pinned, neither it nor
-    /// its parent can be renamed, and entries can still be created inside it.
+    /// The OS guarantee Windows mkdir relies on: while a directory is pinned, it can be neither
+    /// renamed nor deleted, its parent and grandparent can't be renamed, and entries can still
+    /// be created inside it.
     #[cfg(windows)]
     #[test]
     fn a_pinned_directory_and_its_parents_cannot_be_renamed() {
         let dir = root("pin");
-        fs::create_dir_all(dir.join("a").join("b")).unwrap();
+        fs::create_dir_all(dir.join("g").join("a").join("b")).unwrap();
+        let dir = dir.join("g");
         let pinned = dir.join("a").join("b");
         let pin = crate::win::pin_directory(&pinned).unwrap();
         assert!(fs::rename(&pinned, dir.join("a").join("b2")).is_err());
         assert!(fs::rename(dir.join("a"), dir.join("a2")).is_err());
+        assert!(fs::remove_dir(&pinned).is_err());
         fs::create_dir(pinned.join("new")).unwrap();
+        // The grandparent too: the open handle sits in its subtree.
+        let outer = dir.parent().unwrap().to_path_buf();
+        assert!(fs::rename(&dir, outer.join("g2")).is_err());
         drop(pin);
         fs::rename(dir.join("a"), dir.join("a2")).unwrap();
-        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(outer);
     }
 
     /// Windows mkdir after its checks, with the parent swapped for a junction into Git data:
