@@ -66,12 +66,44 @@ fn string_arg<'a>(request: &'a RequestEnvelope, name: &str) -> Result<&'a str, P
         })
 }
 
+/// What the prompt says the target is: whether it is a file (so its type is shown) and, for a
+/// move, where it goes.
+#[derive(Clone, Copy)]
+struct Shown<'a> {
+    file: bool,
+    destination: Option<&'a str>,
+}
+
+impl Shown<'_> {
+    const DIRECTORY: Self = Self {
+        file: false,
+        destination: None,
+    };
+
+    fn entry(identity: &EntryIdentity) -> Self {
+        Self {
+            file: identity.kind == "file",
+            destination: None,
+        }
+    }
+
+    fn mark(self, prompt: ApprovalPrompt) -> ApprovalPrompt {
+        let prompt = if self.file { prompt.for_file() } else { prompt };
+        match self.destination {
+            Some(destination) => prompt.with_destination(destination),
+            None => prompt,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn approve(
     approval: &impl ApprovalBroker,
     workspace: &Workspace,
     strong: bool,
     action: &str,
     target: &str,
+    shown: Shown<'_>,
     summary: String,
     digest: String,
 ) -> Result<(), ProviderError> {
@@ -94,6 +126,7 @@ fn approve(
             digest.clone(),
         )
     };
+    let prompt = shown.mark(prompt);
     let token = approval
         .request_token(&prompt)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
@@ -119,6 +152,7 @@ fn approved<T>(
     strong: bool,
     action: &str,
     target: &str,
+    shown: Shown<'_>,
     summary: String,
     digest: String,
     postcondition: Postcondition,
@@ -137,7 +171,11 @@ fn approved<T>(
     mutation_journal::journaled(
         sink,
         mutation,
-        || approve(approval, workspace, strong, action, target, summary, digest),
+        || {
+            approve(
+                approval, workspace, strong, action, target, shown, summary, digest,
+            )
+        },
         act,
     )
 }
@@ -197,6 +235,7 @@ pub(crate) fn dispatch_fs_mutation_to(
                 false,
                 "create directory",
                 relative,
+                Shown::DIRECTORY,
                 format!("path={relative} parents={parents}"),
                 digest(&[
                     "ORCEL_FS_MKDIR_V1",
@@ -222,6 +261,10 @@ pub(crate) fn dispatch_fs_mutation_to(
                 false,
                 "move or rename",
                 relative,
+                Shown {
+                    destination: Some(to),
+                    ..Shown::entry(&identity)
+                },
                 format!("from={relative} to={to} {}", identity_summary(&identity)),
                 digest(&[
                     "ORCEL_FS_MOVE_V1",
@@ -248,6 +291,7 @@ pub(crate) fn dispatch_fs_mutation_to(
                 true,
                 "remove one file or empty directory",
                 relative,
+                Shown::entry(&identity),
                 format!("path={relative} {}", identity_summary(&identity)),
                 digest(&[
                     "ORCEL_FS_REMOVE_V1",
@@ -279,6 +323,10 @@ pub(crate) fn dispatch_fs_mutation_to(
                 false,
                 "edit file",
                 relative,
+                Shown {
+                    file: true,
+                    destination: None,
+                },
                 format!(
                     "path={relative} replacements={} sha256={} -> {}",
                     preview.replacements, preview.current_sha256, preview.new_sha256
@@ -386,6 +434,72 @@ mod tests {
             .is_err());
         }
         assert!(!root.join("newdir").exists());
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "alpha");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// What each prompt says its target is: a file's moves and edits are files, with a move's
+    /// destination; a directory and a new directory are not. The broker records and denies, so
+    /// nothing changes.
+    #[test]
+    fn prompts_say_what_the_target_is_and_where_a_move_goes() {
+        use orcel_approval::{ApprovalError, ApprovedToken, TargetKind};
+        struct Recording(std::cell::RefCell<Vec<(TargetKind, Option<String>)>>);
+        impl ApprovalBroker for Recording {
+            fn request_token(
+                &self,
+                prompt: &ApprovalPrompt,
+            ) -> Result<ApprovedToken, ApprovalError> {
+                self.0
+                    .borrow_mut()
+                    .push((prompt.target_kind, prompt.destination.clone()));
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+            fn consume(
+                &self,
+                _: &ApprovedToken,
+                _: &ConsumeExpectation,
+                _: u64,
+            ) -> Result<(), ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+        }
+        let (workspace, root) = fixture("shown");
+        fs::write(root.join("a.txt"), "alpha").unwrap();
+        fs::create_dir(root.join("dir")).unwrap();
+        let recording = Recording(std::cell::RefCell::new(Vec::new()));
+        for (capability, operation, target, arguments) in [
+            ("fs.move", "move", "a.txt", json!({ "to": "b.sh" })),
+            ("fs.move", "move", "dir", json!({ "to": "dir2" })),
+            ("fs.mkdir", "mkdir", "newdir", json!({})),
+            (
+                "fs.edit",
+                "edit",
+                "a.txt",
+                json!({ "old": "alpha", "new": "beta", "expected_sha256": format!("{:x}", Sha256::digest(b"alpha")) }),
+            ),
+        ] {
+            let _ = dispatch_fs_mutation(
+                &workspace,
+                &recording,
+                &request(capability, operation, target, arguments),
+            );
+        }
+        assert_eq!(
+            *recording.0.borrow(),
+            vec![
+                (TargetKind::File, Some("b.sh".to_owned())),
+                (TargetKind::Other, Some("dir2".to_owned())),
+                (TargetKind::Other, None),
+                (TargetKind::File, None),
+            ]
+        );
         assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "alpha");
         let _ = fs::remove_dir_all(root);
     }

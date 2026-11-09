@@ -19,7 +19,7 @@
     allow(dead_code)
 )]
 
-use crate::{ApprovalPrompt, PresenceContext, RequestOrigin};
+use crate::{ApprovalPrompt, PresenceContext, RequestOrigin, TargetKind};
 
 pub(crate) const MAX_WORKSPACE_CHARS: usize = 128;
 pub(crate) const MAX_ACTION_CHARS: usize = 512;
@@ -185,7 +185,41 @@ fn needs_escape(ch: char) -> bool {
 }
 
 const MAX_ORIGIN_PART_CHARS: usize = 64;
+const MAX_TYPE_CHARS: usize = 24;
 
+/// A file's extension, escaped, when its last path part has one: `.js` for
+/// `docs/invoice.txt.js`. A leading dot alone (`.bashrc`) or a trailing dot is no extension.
+pub(crate) fn file_type(path: &str) -> Option<String> {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let dot = name.rfind('.')?;
+    if dot == 0 || dot + 1 == name.len() {
+        return None;
+    }
+    Some(display_field(&name[dot..], MAX_TYPE_CHARS))
+}
+
+/// The target line; for a file its Type line; and a move's Destination with its own Type.
+fn target_lines(kind: TargetKind, target: &str, destination: Option<&str>) -> String {
+    let typed = |label: &str, path: &str, is_file: bool| {
+        let mut lines = format!("{label}: {}", display_target(path));
+        if is_file {
+            if let Some(extension) = file_type(path) {
+                lines.push_str(&format!("\n{label} type: {extension}"));
+            }
+        }
+        lines
+    };
+    let target_is_file = kind == TargetKind::File;
+    let destination_is_file = matches!(kind, TargetKind::File | TargetKind::Download);
+    match destination {
+        Some(destination) => format!(
+            "{}\n{}",
+            typed("Target", target, target_is_file),
+            typed("Destination", destination, destination_is_file)
+        ),
+        None => typed("Target", target, target_is_file),
+    }
+}
 /// Who is asking, from fields orceld set: the opening words and the Origin line.
 fn origin_lines(origin: &RequestOrigin) -> (&'static str, String) {
     match origin {
@@ -214,10 +248,10 @@ pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
     let nonce_prefix: String = prompt.nonce.chars().take(8).collect();
     let (opening, origin) = origin_lines(&prompt.origin);
     format!(
-        "{opening}.\n\n{origin}\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
+        "{opening}.\n\n{origin}\nWorkspace: {}\nAction: {}\n{}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
         display_field(&prompt.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&prompt.action, MAX_ACTION_CHARS),
-        display_target(&prompt.target),
+        target_lines(prompt.target_kind, &prompt.target, prompt.destination.as_deref()),
         display_field(&prompt.summary, MAX_SUMMARY_CHARS),
         display_field(&prompt.digest, MAX_DIGEST_CHARS),
         display_field(&nonce_prefix, 8),
@@ -231,10 +265,10 @@ pub(crate) fn strong_body(ctx: &PresenceContext) -> String {
     let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
     let (opening, origin) = origin_lines(&ctx.origin);
     format!(
-        "{opening} that needs STRONG approval.\n\n{origin}\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
+        "{opening} that needs STRONG approval.\n\n{origin}\nWorkspace: {}\nAction: {}\n{}\n{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
         display_field(&ctx.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&ctx.action, MAX_ACTION_CHARS),
-        display_target(&ctx.target),
+        target_lines(ctx.target_kind, &ctx.target, ctx.destination.as_deref()),
         display_field(&ctx.summary, MAX_SUMMARY_CHARS),
         display_field(&ctx.digest, MAX_DIGEST_CHARS),
         display_field(&nonce_prefix, 8),
@@ -411,5 +445,88 @@ mod tests {
         let ctx = crate::PresenceContext::new("nonce-1", "d", "default", "delete file")
             .with_origin(remote);
         assert!(strong_body(&ctx).starts_with("Orcel requests an action for a REMOTE session that needs STRONG approval.\n\nOrigin: remote, through"));
+    }
+
+    #[test]
+    fn only_a_file_target_gets_a_type_line() {
+        let file = crate::ApprovalPrompt::new(
+            "default",
+            "rev",
+            "edit file",
+            "docs/invoice\u{202e}txt.js",
+            "s",
+            "d",
+        )
+        .for_file();
+        let body = dialog_body(&file);
+        assert!(
+            body.contains("\nTarget: docs/invoice\\u{202e}txt.js\nTarget type: .js\n"),
+            "{body}"
+        );
+        // A host, a URL or an element id is not a file: no type line, whatever its last dot.
+        for other in ["files.zip", "https://x.example/a.pdf?y=1.exe", "uia-1.2"] {
+            let body = dialog_body(&crate::ApprovalPrompt::new(
+                "default", "rev", "a", other, "s", "d",
+            ));
+            assert!(!body.contains("type:"), "{body}");
+        }
+        // A file without an extension, or a dotfile, has none either.
+        for name in ["docs/Makefile", "home/.bashrc", "odd."] {
+            let body = dialog_body(
+                &crate::ApprovalPrompt::new("default", "rev", "a", name, "s", "d").for_file(),
+            );
+            assert!(!body.contains("type:"), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_move_shows_its_destination_and_the_destinations_type() {
+        let moved = crate::ApprovalPrompt::new(
+            "default",
+            "rev",
+            "move or rename",
+            "docs/invoice.pdf",
+            "s",
+            "d",
+        )
+        .for_file()
+        .with_destination(format!("docs/{}invoice.pdf.exe", "x".repeat(2_000)));
+        let body = dialog_body(&moved);
+        assert!(
+            body.contains("\nTarget: docs/invoice.pdf\nTarget type: .pdf\nDestination: docs/"),
+            "{body}"
+        );
+        assert!(body.contains("invoice.pdf.exe ["), "{body}");
+        assert!(body.contains("\nDestination type: .exe\n"), "{body}");
+        // The STRONG summary carries both too.
+        let ctx = crate::PresenceContext::new("nonce-1", "d", "default", "move")
+            .with_details("a.txt", "s")
+            .with_target(crate::TargetKind::File, Some("b.sh".to_owned()));
+        let strong = strong_body(&ctx);
+        assert!(
+            strong.contains(
+                "\nTarget: a.txt\nTarget type: .txt\nDestination: b.sh\nDestination type: .sh\n"
+            ),
+            "{strong}"
+        );
+    }
+
+    #[test]
+    fn a_download_shows_its_file_and_type_but_no_type_for_the_source() {
+        let download = crate::ApprovalPrompt::new(
+            "default",
+            "rev",
+            "download",
+            format!("https://x.example/{}", "a".repeat(2_000)),
+            "s",
+            "d",
+        )
+        .downloading_to("Downloads/statement.pdf.exe");
+        let body = dialog_body(&download);
+        assert!(!body.contains("Target type:"), "{body}");
+        assert!(
+            body.contains("\nDestination: Downloads/statement.pdf.exe\nDestination type: .exe\n"),
+            "{body}"
+        );
     }
 }

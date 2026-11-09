@@ -94,6 +94,24 @@ pub struct PresenceContext {
     pub summary: String,
     /// Where the request came from, shown on the STRONG summary.
     pub origin: RequestOrigin,
+    /// What the target is, and a move's destination, shown on the STRONG summary.
+    pub target_kind: TargetKind,
+    pub destination: Option<String>,
+}
+
+/// What a prompt's target is. Only a file's target, and a file's destination, get a Type line
+/// with the file extension; other targets (hosts, URLs, desktop elements, directories) are
+/// shown as they are, without one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TargetKind {
+    /// Not a file, or not said.
+    #[default]
+    Other,
+    /// A file path in the workspace.
+    File,
+    /// A source (such as a web address) whose content is saved to the destination file: only
+    /// the destination gets a type line.
+    Download,
 }
 
 /// Where a request came from, as orceld knows it, for the approval prompt's Origin line. Built
@@ -127,11 +145,20 @@ impl PresenceContext {
             target: String::new(),
             summary: String::new(),
             origin: RequestOrigin::Local,
+            target_kind: TargetKind::Other,
+            destination: None,
         }
     }
 
     pub fn with_origin(mut self, origin: RequestOrigin) -> Self {
         self.origin = origin;
+        self
+    }
+
+    /// The target's kind and a move's destination, copied from the prompt.
+    pub fn with_target(mut self, kind: TargetKind, destination: Option<String>) -> Self {
+        self.target_kind = kind;
+        self.destination = destination;
         self
     }
 
@@ -486,12 +513,36 @@ pub struct ApprovalPrompt {
     pub approval_class: ApprovalClass,
     /// Where the request came from; local unless orceld marks it remote.
     pub origin: RequestOrigin,
+    /// What the target is; set with [`ApprovalPrompt::for_file`].
+    pub target_kind: TargetKind,
+    /// Where a move puts its target; set with [`ApprovalPrompt::with_destination`].
+    pub destination: Option<String>,
 }
 
 impl ApprovalPrompt {
     /// The same prompt, marked as coming from `origin`.
     pub fn with_origin(mut self, origin: RequestOrigin) -> Self {
         self.origin = origin;
+        self
+    }
+
+    /// The same prompt, its target marked as a file: the prompt shows the file's type.
+    pub fn for_file(mut self) -> Self {
+        self.target_kind = TargetKind::File;
+        self
+    }
+
+    /// The same prompt for a download from its target to the file `destination`: the
+    /// destination is shown on its own line with its type; the source gets none.
+    pub fn downloading_to(mut self, destination: impl Into<String>) -> Self {
+        self.target_kind = TargetKind::Download;
+        self.destination = Some(destination.into());
+        self
+    }
+
+    /// The same prompt with the place a move puts its target, shown on its own line.
+    pub fn with_destination(mut self, destination: impl Into<String>) -> Self {
+        self.destination = Some(destination.into());
         self
     }
 
@@ -600,6 +651,8 @@ impl ApprovalPrompt {
             digest,
             approval_class,
             origin: RequestOrigin::Local,
+            target_kind: TargetKind::Other,
+            destination: None,
         }
     }
 
@@ -936,7 +989,8 @@ impl ApprovalBroker for LocalApprovalBroker {
             prompt.action.clone(),
         )
         .with_details(prompt.target.clone(), prompt.summary.clone())
-        .with_origin(prompt.origin.clone());
+        .with_origin(prompt.origin.clone())
+        .with_target(prompt.target_kind, prompt.destination.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
@@ -1079,7 +1133,8 @@ impl LocalApprovalBroker {
             prompt.action.clone(),
         )
         .with_details(prompt.target.clone(), prompt.summary.clone())
-        .with_origin(prompt.origin.clone());
+        .with_origin(prompt.origin.clone())
+        .with_target(prompt.target_kind, prompt.destination.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self

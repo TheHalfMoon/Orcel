@@ -314,7 +314,8 @@ pub(crate) fn write_file_to(
             preview.bytes, preview.new_sha256
         ),
         digest.clone(),
-    );
+    )
+    .for_file();
 
     // SG-000120 RJ-02: journaled like every approved file mutation.
     let mutation = crate::mutation_journal::Mutation {

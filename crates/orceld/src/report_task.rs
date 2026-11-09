@@ -1266,7 +1266,8 @@ fn commit(
             proposal.bytes, proposal.sha256, task.id, task.title
         ),
         digest.clone(),
-    );
+    )
+    .for_file();
     // SG-000120 RJ-02: the commit is durable before anything is asked or
     // spent; a journal that cannot record it refuses the commit.
     if tasks.journal_faulted {
