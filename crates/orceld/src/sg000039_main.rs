@@ -244,12 +244,10 @@ fn app_api_capabilities(approval_available: bool) -> Vec<Value> {
     ]
 }
 
-/// SG-000055 entry: remote-context requests must pass the local
-/// remote-session lease gate before any policy or dispatch step, and local
-/// remote-lease management never reaches workspace dispatch.
 /// The broker a remote request's approvals go through: it marks each prompt as remote, with the
 /// provider, device and connection from the authenticated remote context, so the prompt's Origin
-/// line comes from orceld and never from the request's own text.
+/// line comes from orceld, checked against a locally approved lease, and never from the request's
+/// own text.
 struct OriginStamp<'a, B: ApprovalBroker> {
     inner: &'a B,
     origin: orcel_approval::RequestOrigin,
@@ -308,6 +306,9 @@ impl<B: ApprovalBroker> ApprovalBroker for OriginStamp<'_, B> {
     }
 }
 
+/// SG-000055 entry: remote-context requests must pass the local
+/// remote-session lease gate before any policy or dispatch step, and local
+/// remote-lease management never reaches workspace dispatch.
 fn handle_envelope(
     policy: &PolicyEngine,
     audit: &AuditLogger,
@@ -2937,6 +2938,61 @@ mod sg000058_lease_boundary_tests {
             .expect("result")
             .to_string()
             .contains("sg58 lease boundary"));
+
+        // A lease whose reads each need approval: the read's prompt reaches the broker marked
+        // remote, through handle_envelope's wiring, with the context's provider and device.
+        {
+            use orcel_approval::{
+                ApprovalPrompt, ApprovedToken, ConsumeExpectation, RequestOrigin,
+            };
+            struct Recording {
+                inner: FixedApprovalBroker,
+                seen: std::cell::RefCell<Vec<RequestOrigin>>,
+            }
+            impl ApprovalBroker for Recording {
+                fn request_token(
+                    &self,
+                    prompt: &ApprovalPrompt,
+                ) -> Result<ApprovedToken, orcel_approval::ApprovalError> {
+                    self.seen.borrow_mut().push(prompt.origin.clone());
+                    self.inner.request_token(prompt)
+                }
+                fn consume(
+                    &self,
+                    token: &ApprovedToken,
+                    expected: &ConsumeExpectation,
+                    now_ms: u64,
+                ) -> Result<(), orcel_approval::ApprovalError> {
+                    self.inner.consume(token, expected, now_ms)
+                }
+            }
+            // The store as it is now (the session lease, pinned to its connection), put back after.
+            let saved_store = std::fs::read(&lease_path).expect("lease store");
+            let per_request = LeaseRequest {
+                read_mode: ReadMode::PerRequest,
+                ..request.clone()
+            };
+            let lease_pr = build_lease(&per_request, "lease-sg58-pr".into(), &env, &workspaces.ids)
+                .expect("per-request lease");
+            save_leases(&lease_path, std::slice::from_ref(&lease_pr)).expect("save");
+            let recording = Recording {
+                inner: FixedApprovalBroker(ApprovalDecision::Approved),
+                seen: std::cell::RefCell::new(Vec::new()),
+            };
+            let read_once =
+                handle_envelope(&policy, &audit, &recording, &workspaces, read("default"));
+            assert!(read_once.ok, "{:?}", read_once.error);
+            let seen = recording.seen.borrow();
+            assert!(!seen.is_empty(), "the per-request read raised no approval");
+            for origin in seen.iter() {
+                assert!(
+                    matches!(origin, RequestOrigin::Remote { device, provider, .. }
+                        if device == &remote("x").device_id && provider == "generic"),
+                    "{origin:?}"
+                );
+            }
+            std::fs::write(&lease_path, saved_store).expect("restore lease store");
+        }
 
         // Reconnect (different short-lived connection) never extends the lease.
         let mut reconnect = read("default");
