@@ -496,6 +496,25 @@ impl FsProvider {
 
         file.write_all(content.as_bytes())
             .map_err(|error| ProviderError::io("write created target", error))?;
+        // The directory holding the new file could have been moved into Git data after the
+        // check above. The file is read back from its own descriptor, so a move is seen.
+        // On a refusal the content is truncated through the descriptor first; the emptied file
+        // is then removed where it now is, best effort.
+        let refusal = match final_path_from_open_file(&file, &candidate) {
+            Ok(path) => self
+                .ensure_not_git(&path)
+                .err()
+                .map(|error| (error, Some(path))),
+            Err(error) => Some((ProviderError::io("resolve written target", error), None)),
+        };
+        if let Some((error, path)) = refusal {
+            let _ = file.set_len(0);
+            drop(file);
+            if let Some(path) = path {
+                let _ = fs::remove_file(path);
+            }
+            return Err(error);
+        }
         file.sync_data()
             .map_err(|error| ProviderError::io("sync created target", error))?;
         Ok(json!({
@@ -703,9 +722,64 @@ fn final_path_from_open_file(_file: &File, _path: &Path) -> io::Result<PathBuf> 
         use std::os::windows::io::AsRawHandle;
         win::final_path_from_handle(_file.as_raw_handle())
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        unix_fd::final_path(_file)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         fs::canonicalize(_path)
+    }
+}
+
+/// The real path of an open file, read from its descriptor rather than by resolving a path
+/// again, so a link swapped in after the open can't change the answer.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_fd {
+    use std::fs::File;
+    use std::io;
+    use std::path::PathBuf;
+
+    /// Linux: `/proc/self/fd/<fd>` names the open file's current path. An unlinked file reads
+    /// as `<path> (deleted)` and a non-file descriptor as `type:[inode]`; both fail closed, as
+    /// does a missing `/proc`.
+    #[cfg(target_os = "linux")]
+    pub(super) fn final_path(file: &File) -> io::Result<PathBuf> {
+        use std::os::fd::AsRawFd as _;
+        let path = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+        checked(path, b" (deleted)")
+    }
+
+    /// macOS: `fcntl(F_GETPATH)` writes the open file's current path into a `MAXPATHLEN` buffer.
+    #[cfg(target_os = "macos")]
+    pub(super) fn final_path(file: &File) -> io::Result<PathBuf> {
+        use std::os::fd::AsRawFd as _;
+        let mut buffer = vec![0u8; libc::PATH_MAX as usize];
+        // SAFETY: the descriptor is open for the lifetime of `file`, and F_GETPATH writes at
+        // most MAXPATHLEN (PATH_MAX) bytes, NUL included, into the buffer of that size.
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buffer.as_mut_ptr()) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        let length = buffer.iter().position(|byte| *byte == 0).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "F_GETPATH returned no NUL")
+        })?;
+        buffer.truncate(length);
+        use std::os::unix::ffi::OsStringExt as _;
+        checked(PathBuf::from(std::ffi::OsString::from_vec(buffer)), b"")
+    }
+
+    /// Only an absolute path counts, and on Linux not one that names an unlinked file.
+    fn checked(path: PathBuf, unlinked_suffix: &[u8]) -> io::Result<PathBuf> {
+        use std::os::unix::ffi::OsStrExt as _;
+        let bytes = path.as_os_str().as_bytes();
+        if !path.is_absolute() || (!unlinked_suffix.is_empty() && bytes.ends_with(unlinked_suffix))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("the open file has no usable path ({})", path.display()),
+            ));
+        }
+        Ok(path)
     }
 }
 
@@ -1171,6 +1245,41 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    /// The real path comes from the open descriptor: a directory renamed after the open, or a
+    /// link the file was opened through, can't make it report a stale or link path.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn the_path_of_an_open_file_comes_from_its_descriptor() {
+        let root = fs::canonicalize(temp_root("fd-path")).unwrap();
+        fs::create_dir(root.join("before")).unwrap();
+        fs::write(root.join("before/a.txt"), "a").unwrap();
+        let file = File::open(root.join("before/a.txt")).unwrap();
+        assert_eq!(
+            final_path_from_open_file(&file, &root.join("before/a.txt")).unwrap(),
+            root.join("before/a.txt")
+        );
+        // Moved after the open: the old path is gone, the descriptor reports the new one.
+        fs::rename(root.join("before"), root.join("after")).unwrap();
+        assert_eq!(
+            final_path_from_open_file(&file, &root.join("before/a.txt")).unwrap(),
+            root.join("after/a.txt")
+        );
+        // Opened through a directory link: the real path, not the link's.
+        std::os::unix::fs::symlink(root.join("after"), root.join("link")).unwrap();
+        let through = File::open(root.join("link/a.txt")).unwrap();
+        assert_eq!(
+            final_path_from_open_file(&through, &root.join("link/a.txt")).unwrap(),
+            root.join("after/a.txt")
+        );
+        // Linux: an unlinked file has no usable path, so it fails closed.
+        #[cfg(target_os = "linux")]
+        {
+            fs::remove_file(root.join("after/a.txt")).unwrap();
+            assert!(final_path_from_open_file(&file, &root.join("after/a.txt")).is_err());
+        }
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(unix)]
