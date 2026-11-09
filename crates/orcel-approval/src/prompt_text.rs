@@ -19,7 +19,7 @@
     allow(dead_code)
 )]
 
-use crate::ApprovalPrompt;
+use crate::{ApprovalPrompt, PresenceContext};
 
 pub(crate) const MAX_WORKSPACE_CHARS: usize = 128;
 pub(crate) const MAX_ACTION_CHARS: usize = 512;
@@ -198,6 +198,22 @@ pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
     )
 }
 
+/// The STRONG summary: the SOFT body's lines, marked STRONG. Every OS shows it before asking
+/// the system to confirm it is the person: Linux before polkit, Windows before Windows Hello,
+/// macOS before Touch ID, whose own prompts are too short to show the target.
+pub(crate) fn strong_body(ctx: &PresenceContext) -> String {
+    let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
+    format!(
+        "Orcel requests a local action that needs STRONG approval.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
+        display_field(&ctx.workspace_id, MAX_WORKSPACE_CHARS),
+        display_field(&ctx.action, MAX_ACTION_CHARS),
+        display_target(&ctx.target),
+        display_field(&ctx.summary, MAX_SUMMARY_CHARS),
+        display_field(&ctx.digest, MAX_DIGEST_CHARS),
+        display_field(&nonce_prefix, 8),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +324,41 @@ mod tests {
             message,
             "Orcel STRONG approval abcdefgh 0123456789ab for rm\\u{a}Approval: STRONG trusted\\u{202e} in workspace ws\\u{2067}"
         );
+    }
+
+    #[test]
+    fn only_yes_at_the_windows_strong_summary_goes_on_to_hello() {
+        assert!(crate::windows_summary_decision(crate::WINDOWS_IDYES).is_ok());
+        let declined = crate::windows_summary_decision(crate::WINDOWS_IDNO).unwrap_err();
+        assert_eq!(declined.reason, crate::PresenceFailureReason::Denied);
+        let odd = crate::windows_summary_decision(0).unwrap_err();
+        assert_eq!(odd.reason, crate::PresenceFailureReason::Unavailable);
+    }
+
+    #[test]
+    fn only_approve_at_the_macos_strong_summary_goes_on_to_touch_id() {
+        use crate::soft_macos::{summary_decision, DialogOutcome};
+        assert!(summary_decision(DialogOutcome::Response(1)).is_ok());
+        for refused in [0, 2, 3] {
+            let error = summary_decision(DialogOutcome::Response(refused)).unwrap_err();
+            assert_eq!(
+                error.reason,
+                crate::PresenceFailureReason::Denied,
+                "{refused}"
+            );
+        }
+        let error = summary_decision(DialogOutcome::NotShown(-1)).unwrap_err();
+        assert_eq!(error.reason, crate::PresenceFailureReason::Unavailable);
+    }
+
+    #[test]
+    fn the_strong_summary_names_the_target_escaped() {
+        let ctx =
+            crate::PresenceContext::new("nonce-0001", "d".repeat(64), "default", "delete file")
+                .with_details("docs/invoice\u{202e}txt.js", "Remove one file");
+        let body = strong_body(&ctx);
+        assert!(body.contains("\nTarget: docs/invoice\\u{202e}txt.js\n"));
+        assert!(body.contains("\nRemove one file\n"));
+        assert!(!body.contains('\u{202e}'));
     }
 }

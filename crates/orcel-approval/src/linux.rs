@@ -455,20 +455,7 @@ pub(crate) fn session_gate(session: SessionState) -> Result<(), ApprovalError> {
 // STRONG (pure)
 // ---------------------------------------------------------------------------
 
-/// The text the helper shows before polkit is asked: the SOFT body's lines,
-/// marked STRONG.
-pub(crate) fn strong_body(ctx: &PresenceContext) -> String {
-    let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
-    format!(
-        "Orcel requests a local action that needs STRONG approval.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
-        display_field(&ctx.workspace_id, 128),
-        display_field(&ctx.action, 512),
-        crate::prompt_text::display_target(&ctx.target),
-        display_field(&ctx.summary, 1024),
-        display_field(&ctx.digest, 128),
-        display_field(&nonce_prefix, 8),
-    )
-}
+pub(crate) use crate::prompt_text::strong_body;
 
 /// What one `pkcheck` run reported.
 #[derive(Debug, Clone, PartialEq, Eq)]

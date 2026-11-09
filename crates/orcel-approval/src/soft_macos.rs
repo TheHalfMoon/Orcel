@@ -96,8 +96,37 @@ pub(crate) fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecisio
     session_gate(crate::presence_unix::session_state())?;
     decide(
         prompt,
-        cf::display_alert(&dialog_body(prompt), SOFT_PROMPT_TIMEOUT_SECS),
+        cf::display_alert(
+            DIALOG_HEADER,
+            &dialog_body(prompt),
+            SOFT_PROMPT_TIMEOUT_SECS,
+        ),
     )
+}
+
+pub(crate) const STRONG_DIALOG_HEADER: &str = "Orcel approval STRONG";
+
+/// What the STRONG summary's answer means: only Approve goes on to Touch ID.
+pub(crate) fn summary_decision(outcome: DialogOutcome) -> Result<(), crate::PresenceError> {
+    match outcome {
+        DialogOutcome::Response(flags) if flags & RESPONSE_MASK == ALTERNATE_RESPONSE => Ok(()),
+        DialogOutcome::Response(_) => Err(crate::PresenceError::denied(
+            "the STRONG request was declined at its summary; nothing was asked of Touch ID",
+        )),
+        DialogOutcome::NotShown(status) => Err(crate::PresenceError::unavailable(format!(
+            "the STRONG summary could not be shown (status {status}); STRONG approval fails closed"
+        ))),
+    }
+}
+
+/// Shows the STRONG summary on macOS and waits for the answer.
+#[cfg(target_os = "macos")]
+pub(crate) fn strong_summary(body: &str) -> Result<(), crate::PresenceError> {
+    summary_decision(cf::display_alert(
+        STRONG_DIALOG_HEADER,
+        body,
+        SOFT_PROMPT_TIMEOUT_SECS,
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -105,7 +134,7 @@ mod cf {
     use std::ffi::c_void;
     use std::ptr;
 
-    use super::{DialogOutcome, APPROVE_BUTTON, DENY_BUTTON, DIALOG_HEADER};
+    use super::{DialogOutcome, APPROVE_BUTTON, DENY_BUTTON};
 
     type CFTypeRef = *const c_void;
     type CFStringRef = *const c_void;
@@ -174,9 +203,9 @@ mod cf {
 
     /// Shows the caution alert and blocks until the person answers or the
     /// timeout passes.
-    pub(super) fn display_alert(body: &str, timeout_secs: f64) -> DialogOutcome {
+    pub(super) fn display_alert(title: &str, body: &str, timeout_secs: f64) -> DialogOutcome {
         let (Some(header), Some(message), Some(deny), Some(approve)) = (
-            CfString::new(DIALOG_HEADER),
+            CfString::new(title),
             CfString::new(body),
             CfString::new(DENY_BUTTON),
             CfString::new(APPROVE_BUTTON),
