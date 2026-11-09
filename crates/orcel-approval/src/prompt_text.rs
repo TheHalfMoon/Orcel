@@ -3,9 +3,11 @@
 //!
 //! Every field from the request is shown exactly when it is printable and short. Control,
 //! line-break, bidi, format, zero-width, default-ignorable, tag, filler and blank-looking
-//! characters are escaped as `\u{..}`, and so is any combining mark past the second on one
-//! character, so a field can't insert a line break, reorder what is read, hide characters or
-//! draw over other lines. Each bound applies to the escaped text. A long field can still wrap
+//! characters are escaped as `\u{..}`, so a field can't insert a line break, reorder what is
+//! read or hide characters. Any combining mark past the second on one character is escaped
+//! too, for the combining blocks listed in `is_combining` (the general blocks and the scripts
+//! whose marks stack: Hebrew, Arabic, Devanagari, Thai, Lao, Tibetan, musical notation); a
+//! mark outside them is shown as it is. Each bound applies to the escaped text. A long field can still wrap
 //! onto another visual line; every line the prompt itself adds starts with its own label.
 //!
 //! The target is kept to 120 characters around a middle ellipsis, so its start and its end,
@@ -113,19 +115,41 @@ pub(crate) fn display_target(value: &str) -> String {
     format!("{}…{}{}", head.concat(), tail.concat(), omitted(rest))
 }
 
-/// Combining marks in the common combining blocks.
+/// Combining marks in the general combining blocks and in the scripts whose marks stack.
 fn is_combining(ch: char) -> bool {
     matches!(
         ch,
         '\u{0300}'..='\u{036f}'
             | '\u{0483}'..='\u{0489}'
             | '\u{0591}'..='\u{05bd}'
+            | '\u{05bf}'
+            | '\u{05c1}' | '\u{05c2}' | '\u{05c4}' | '\u{05c5}' | '\u{05c7}'
             | '\u{0610}'..='\u{061a}'
             | '\u{064b}'..='\u{065f}'
+            | '\u{0670}'
+            | '\u{06d6}'..='\u{06dc}'
+            | '\u{06df}'..='\u{06e4}'
+            | '\u{0900}'..='\u{0903}'
+            | '\u{093a}'..='\u{094f}'
+            | '\u{0951}'..='\u{0957}'
+            | '\u{0962}' | '\u{0963}'
+            | '\u{0e31}'
+            | '\u{0e34}'..='\u{0e3a}'
+            | '\u{0e47}'..='\u{0e4e}'
+            | '\u{0eb1}'
+            | '\u{0eb4}'..='\u{0ebc}'
+            | '\u{0ec8}'..='\u{0ecd}'
+            | '\u{0f71}'..='\u{0f84}'
+            | '\u{0f86}' | '\u{0f87}'
             | '\u{1ab0}'..='\u{1aff}'
             | '\u{1dc0}'..='\u{1dff}'
             | '\u{20d0}'..='\u{20ff}'
             | '\u{fe20}'..='\u{fe2f}'
+            | '\u{1d165}'..='\u{1d169}'
+            | '\u{1d16d}'..='\u{1d172}'
+            | '\u{1d17b}'..='\u{1d182}'
+            | '\u{1d185}'..='\u{1d18b}'
+            | '\u{1d1aa}'..='\u{1d1ad}'
     )
 }
 
@@ -155,7 +179,8 @@ fn needs_escape(ch: char) -> bool {
             | '\u{e0000}'..='\u{e007f}'
             // Hangul fillers and blank-looking spaces.
             | '\u{115f}' | '\u{1160}' | '\u{3164}' | '\u{ffa0}'
-            | '\u{00a0}' | '\u{2800}' | '\u{3000}'
+            | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{202f}' | '\u{205f}'
+            | '\u{2800}' | '\u{3000}'
         )
 }
 
@@ -240,6 +265,10 @@ mod tests {
             '\u{00a0}',
             '\u{2800}',
             '\u{3000}',
+            '\u{2003}',
+            '\u{202f}',
+            '\u{205f}',
+            '\u{1680}',
         ] {
             let shown = display_field(&format!("a{ch}b"), 64);
             assert_eq!(shown, format!("a\\u{{{:x}}}b", ch as u32), "{ch:?}");
@@ -257,6 +286,13 @@ mod tests {
         assert_eq!(shown.matches('\u{301}').count(), 2);
         // The count resets at the next ordinary character.
         assert_eq!(display_field("a\u{301}b\u{301}", 64), "a\u{301}b\u{301}");
+        // Marks from different blocks count together: alternating them doesn't slip past.
+        let mixed = format!("a{}", "\u{301}\u{e48}".repeat(100));
+        let shown = display_field(&mixed, 5_000);
+        assert_eq!(
+            shown.matches('\u{301}').count() + shown.matches('\u{e48}').count(),
+            2
+        );
     }
 
     #[test]
