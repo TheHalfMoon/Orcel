@@ -587,6 +587,7 @@ mod tests {
     #[test]
     fn a_strong_request_declined_at_its_summary_never_reaches_touch_id() {
         let mut shown = String::new();
+        let mut asked_touch_id = false;
         let error = verify_with_summary(
             &ctx(),
             &lease(),
@@ -596,21 +597,36 @@ mod tests {
                 shown = body.to_owned();
                 Err(PresenceError::denied("declined at the summary"))
             },
-            |_| panic!("Touch ID must not be asked after a declined summary"),
+            |_| {
+                asked_touch_id = true;
+                LocalAuthOutcome::Success
+            },
         )
         .unwrap_err();
         assert_eq!(error.reason, PresenceFailureReason::Denied);
         assert!(shown.contains("needs STRONG approval"));
-        // Gates come first: an automation runner shows no summary.
+        assert!(
+            !asked_touch_id,
+            "Touch ID was asked after a declined summary"
+        );
+        // Gates come first: an automation runner shows neither the summary nor Touch ID.
+        let (mut summary_shown, mut touch_id_asked) = (false, false);
         let automation = verify_with_summary(
             &ctx(),
             &lease(),
             MAC_LOCAL_AUTH_METHOD,
             SessionState::Automation,
-            |_| panic!("no summary on an automation runner"),
-            |_| panic!("no Touch ID on an automation runner"),
+            |_| {
+                summary_shown = true;
+                Ok(())
+            },
+            |_| {
+                touch_id_asked = true;
+                LocalAuthOutcome::Success
+            },
         )
         .unwrap_err();
         assert_eq!(automation.reason, PresenceFailureReason::Unavailable);
+        assert!(!summary_shown && !touch_id_asked);
     }
 }
