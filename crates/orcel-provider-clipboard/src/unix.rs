@@ -562,10 +562,10 @@ mod linux {
                 let Event::SelectionNotify(event) = event else {
                     continue;
                 };
-                // A SelectionNotify sent by another client (SendEvent sets the high bit) is
-                // ignored, as are answers to anything but this request.
-                if event.response_type & 0x80 != 0
-                    || event.requestor != window
+                // Only the answer to this request counts. Owners answer through SendEvent, as
+                // ICCCM has them do, so a forged answer can't be told apart (X11 has no
+                // isolation between clients).
+                if event.requestor != window
                     || event.selection != clipboard
                     || event.target != targets
                 {
