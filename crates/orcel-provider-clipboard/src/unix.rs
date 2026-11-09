@@ -208,7 +208,8 @@ mod linux {
             get_contents, get_mime_types, ClipboardType, Error, MimeType, Seat,
         };
         // Content its app marked private is not read: the offered MIME types are checked first.
-        // Listing them reads no content, so the owner can't stall it.
+        // Listing them reads no content, so the owner can't stall it. The list and the content
+        // are two requests; content replaced in between isn't detected (Wayland has no counter).
         match get_mime_types(ClipboardType::Regular, Seat::Unspecified) {
             Ok(types) if crate::offers_concealed_type(types.iter().map(String::as_str)) => {
                 return Err(crate::concealed());
@@ -540,17 +541,31 @@ mod linux {
         let incr = atom(b"INCR")?;
         let property = atom(b"ORCEL_CLIPBOARD_READ")?;
         let targets = atom(b"TARGETS")?;
+        // Interned only if some client already has it: an owner offering the marker must have
+        // interned it, so NONE means no content anywhere carries it.
+        let hint = conn
+            .intern_atom(true, b"x-kde-passwordManagerHint")
+            .map_err(|_| failed())?
+            .reply()
+            .map_err(|_| failed())?
+            .atom;
 
         // Content its app marked private is not read: the owner's TARGETS list is asked for
-        // first, over this connection and within the same deadline. A list too long to fetch
-        // in one bounded read fails closed.
-        conn.convert_selection(window, clipboard, targets, property, x11rb::CURRENT_TIME)
-            .map_err(|_| failed())?;
-        conn.flush().map_err(|_| failed())?;
-        loop {
-            let event = conn.wait_for_event().map_err(|_| failed())?;
-            if let Event::SelectionNotify(event) = event {
-                if event.requestor != window
+        // first, over this connection and within the same deadline. An answer that can't be
+        // checked (not a list of 32-bit atoms, or too long for one bounded read) fails closed.
+        if hint != u32::from(AtomEnum::NONE) {
+            conn.convert_selection(window, clipboard, targets, property, x11rb::CURRENT_TIME)
+                .map_err(|_| failed())?;
+            conn.flush().map_err(|_| failed())?;
+            loop {
+                let event = conn.wait_for_event().map_err(|_| failed())?;
+                let Event::SelectionNotify(event) = event else {
+                    continue;
+                };
+                // A SelectionNotify sent by another client (SendEvent sets the high bit) is
+                // ignored, as are answers to anything but this request.
+                if event.response_type & 0x80 != 0
+                    || event.requestor != window
                     || event.selection != clipboard
                     || event.target != targets
                 {
@@ -561,32 +576,27 @@ mod linux {
                     break;
                 }
                 let reply = conn
-                    .get_property(true, window, property, AtomEnum::ATOM, 0, 4096)
+                    .get_property(true, window, property, AtomEnum::ANY, 0, 4096)
                     .map_err(|_| failed())?
                     .reply()
                     .map_err(|_| failed())?;
+                let uncheckable = || {
+                    unavailable(
+                        "the clipboard owner's list of formats can't be checked, so it is not read",
+                    )
+                };
                 if reply.bytes_after > 0 {
-                    return Err(unavailable(
-                        "the clipboard owner lists too many formats to check",
-                    ));
+                    return Err(uncheckable());
                 }
-                let offered: Vec<u32> = reply.value32().map(Iterator::collect).unwrap_or_default();
-                for target in offered {
-                    let name = conn
-                        .get_atom_name(target)
-                        .map_err(|_| failed())?
-                        .reply()
-                        .map_err(|_| failed())?;
-                    if let Ok(name) = std::str::from_utf8(&name.name) {
-                        if crate::offers_concealed_type(std::iter::once(name)) {
-                            return Err(crate::concealed());
-                        }
-                    }
+                let Some(mut offered) = reply.value32() else {
+                    return Err(uncheckable());
+                };
+                if offered.any(|atom| atom == hint) {
+                    return Err(crate::concealed());
                 }
                 break;
             }
         }
-
         conn.convert_selection(window, clipboard, utf8, property, x11rb::CURRENT_TIME)
             .map_err(|_| failed())?;
         conn.flush().map_err(|_| failed())?;
