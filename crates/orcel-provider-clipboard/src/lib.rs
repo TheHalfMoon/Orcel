@@ -552,10 +552,8 @@ const UNIX_CONCEALED_TYPES: [&str; 2] = [
 ];
 
 /// Whether any of the offered `types` is one of [`UNIX_CONCEALED_TYPES`].
-#[cfg_attr(
-    not(any(test, target_os = "linux", target_os = "macos")),
-    allow(dead_code)
-)]
+// Linux matches names; macOS asks the pasteboard for the markers directly.
+#[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
 fn offers_concealed_type<'a>(mut types: impl Iterator<Item = &'a str>) -> bool {
     types.any(|offered| UNIX_CONCEALED_TYPES.contains(&offered))
 }
