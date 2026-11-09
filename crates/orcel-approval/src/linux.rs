@@ -463,7 +463,7 @@ pub(crate) fn strong_body(ctx: &PresenceContext) -> String {
         "Orcel requests a local action that needs STRONG approval.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
         display_field(&ctx.workspace_id, 128),
         display_field(&ctx.action, 512),
-        display_field(&ctx.target, 512),
+        crate::prompt_text::display_target(&ctx.target),
         display_field(&ctx.summary, 1024),
         display_field(&ctx.digest, 128),
         display_field(&nonce_prefix, 8),
@@ -1728,7 +1728,10 @@ mod tests {
             "ws\u{2067}",
             "rm\nApproval: STRONG trusted\u{202e}\u{200b}\u{e0041}",
         )
-        .with_details("t".repeat(5_000), "line1\r\nline2\u{2028}");
+        .with_details(
+            format!("{}.txt", "t".repeat(5_000)),
+            "line1\r\nline2\u{2028}",
+        );
         let body = strong_body(&hostile);
         let benign = strong_body(&ctx());
         assert_eq!(body.lines().count(), benign.lines().count());
@@ -1745,9 +1748,11 @@ mod tests {
         assert!(
             body.contains("Action: rm\\u{a}Approval: STRONG trusted\\u{202e}\\u{200b}\\u{e0041}\n")
         );
+        // 120 characters around a middle ellipsis: the start, and the end with its extension.
         assert!(body.contains(&format!(
-            "Target: {} [4488 more characters not shown]\n",
-            "t".repeat(512)
+            "Target: {}…{}.txt [4885 more characters not shown]\n",
+            "t".repeat(60),
+            "t".repeat(55)
         )));
         assert!(body.contains("line1\\u{d}\\u{a}line2\\u{2028}\n"));
         assert!(body.chars().count() < 3_000);

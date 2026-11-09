@@ -18,6 +18,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod linux;
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod presence_unix;
+/// The prompt text every OS shows, escaped and bounded.
+mod prompt_text;
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod soft_macos;
 
@@ -309,6 +311,21 @@ fn check_hello_availability() -> bool {
     result.unwrap_or(false)
 }
 
+/// The Windows Hello message: the request's nonce and digest prefixes, action and workspace,
+/// escaped and bounded like every prompt field.
+#[cfg(any(windows, test))]
+fn hello_message(ctx: &PresenceContext) -> String {
+    let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
+    let digest_prefix: String = ctx.digest.chars().take(12).collect();
+    format!(
+        "Orcel STRONG approval {} {} for {} in workspace {}",
+        prompt_text::display_field(&nonce_prefix, 8),
+        prompt_text::display_field(&digest_prefix, 12),
+        prompt_text::display_field(&ctx.action, 256),
+        prompt_text::display_field(&ctx.workspace_id, 128),
+    )
+}
+
 #[cfg(windows)]
 fn verify_with_hello(
     ctx: &PresenceContext,
@@ -318,12 +335,7 @@ fn verify_with_hello(
     use std::time::Duration;
     use windows::Security::Credentials::UI::{UserConsentVerificationResult, UserConsentVerifier};
 
-    let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
-    let digest_prefix: String = ctx.digest.chars().take(12).collect();
-    let message = format!(
-        "Orcel STRONG approval {nonce_prefix} {digest_prefix} for {} in workspace {}",
-        ctx.action, ctx.workspace_id
-    );
+    let message = hello_message(ctx);
     let nonce = ctx.nonce.clone();
     let digest = ctx.digest.clone();
     let (sender, receiver) = channel();
@@ -2213,16 +2225,9 @@ fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, Approval
     }
 
     debug_assert_eq!(prompt.approval_class, ApprovalClass::Soft);
-    let body = format!(
-        "Orcel requests a local action.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
-        prompt.workspace_id,
-        prompt.action,
-        prompt.target,
-        prompt.summary,
-        prompt.digest,
-        &prompt.nonce[..prompt.nonce.len().min(8)],
-    );
-    let body = wide(&body);
+    // The same escaped, bounded lines macOS and Linux show: a field can't fake another line
+    // or reorder what is read.
+    let body = wide(&prompt_text::dialog_body(prompt));
     let caption = wide("Orcel approval SOFT");
     let result = unsafe {
         MessageBoxW(
