@@ -365,9 +365,10 @@ fn desktop_input_action(
 }
 
 /// What the person is asked to approve, in words they can check: the points
-/// (window-relative), the button, the text typed (escaped, at most 64
-/// characters shown, its length always) or the key. Bounded, so a long text
-/// cannot push the rest of the prompt out of view.
+/// (window-relative), the button, the length of the text typed, or the key.
+/// The typed text itself is shown only in the prompt's bounded preview
+/// ([`typed_preview`]), which is hidden when it matches a credential pattern
+/// and is sizes only when the person chose that.
 fn describe_input(action: &DesktopInputAction) -> String {
     const SHOWN: usize = 64;
     match action {
@@ -388,20 +389,11 @@ fn describe_input(action: &DesktopInputAction) -> String {
             scroll_y,
         } => format!("scroll ({scroll_x}, {scroll_y}) lines at ({x}, {y})"),
         DesktopInputAction::TypeText { text } => {
-            let shown: String = text
-                .chars()
-                .take(SHOWN)
-                .flat_map(char::escape_default)
-                .collect();
-            let more = text.chars().count().saturating_sub(SHOWN);
-            if more > 0 {
-                format!(
-                    "type \"{shown}\" and {more} more characters ({} total)",
-                    text.chars().count()
-                )
-            } else {
-                format!("type \"{shown}\" ({} characters)", text.chars().count())
-            }
+            let count = text.chars().count();
+            format!(
+                "type {count} character{} (shown in the preview)",
+                if count == 1 { "" } else { "s" }
+            )
         }
         DesktopInputAction::Key { key } | DesktopInputAction::Hotkey { key } => {
             let shown: String = key
@@ -411,6 +403,18 @@ fn describe_input(action: &DesktopInputAction) -> String {
                 .collect();
             format!("press \"{shown}\"")
         }
+    }
+}
+
+/// The preview of the text a desktop input types; other inputs have none.
+fn typed_preview(action: &DesktopInputAction) -> Option<orcel_approval::Preview> {
+    match action {
+        DesktopInputAction::TypeText { text } => Some(orcel_approval::Preview::of_written(
+            text,
+            crate::fs_mutation::preview_mode(),
+            crate::fs_mutation::looks_secret(text),
+        )),
+        _ => None,
     }
 }
 
@@ -480,6 +484,10 @@ fn full_user_input_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = match typed_preview(&action) {
+        Some(preview) => prompt.with_preview(preview),
+        None => prompt,
+    };
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &window_id);
@@ -1072,7 +1080,12 @@ fn set_value_with_approval(
             binding.value_digest,
         ),
         digest.clone(),
-    );
+    )
+    .with_preview(orcel_approval::Preview::of_written(
+        &value,
+        crate::fs_mutation::preview_mode(),
+        crate::fs_mutation::looks_secret(&value),
+    ));
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
@@ -2025,22 +2038,38 @@ mod xp06_tests {
 
 #[cfg(test)]
 mod xp12_prompt_tests {
-    use super::describe_input;
+    use super::{describe_input, typed_preview};
+    use orcel_approval::Preview;
     use orcel_provider_uia::DesktopInputAction;
 
+    /// The summary gives only the length of typed text. The text itself is in the bounded
+    /// preview, which the prompt escapes, and which is hidden when it looks like a credential.
     #[test]
-    fn the_prompt_shows_what_will_be_typed_escaped_and_bounded() {
-        let typed = describe_input(&DesktopInputAction::TypeText {
+    fn typed_text_is_shown_only_in_the_bounded_preview() {
+        let action = DesktopInputAction::TypeText {
             text: "rm -rf \"x\"\u{202e}".into(),
-        });
-        assert!(typed.contains("rm -rf"), "{typed}");
-        assert!(!typed.contains('\u{202e}'), "{typed}");
-        assert!(typed.contains("characters"), "{typed}");
-        let long = describe_input(&DesktopInputAction::TypeText {
-            text: "a".repeat(256),
-        });
-        assert!(long.len() < 200, "{long}");
-        assert!(long.contains("192 more"), "{long}");
+        };
+        let typed = describe_input(&action);
+        assert_eq!(typed, "type 11 characters (shown in the preview)");
+        assert_eq!(
+            typed_preview(&action),
+            Some(Preview::Content {
+                lines: vec![('>', "rm -rf \"x\"\u{202e}".to_owned())],
+                more_lines: 0,
+            })
+        );
+        let secret = DesktopInputAction::TypeText {
+            text: format!("ghp_{}", "a1B2".repeat(9)),
+        };
+        assert_eq!(typed_preview(&secret), Some(Preview::Hidden { chars: 40 }));
+        assert_eq!(
+            describe_input(&DesktopInputAction::TypeText { text: "a".into() }),
+            "type 1 character (shown in the preview)"
+        );
+        assert_eq!(
+            typed_preview(&DesktopInputAction::Key { key: "a".into() }),
+            None
+        );
         let click = describe_input(&DesktopInputAction::Click {
             x: 4,
             y: 5,
