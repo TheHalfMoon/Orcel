@@ -778,3 +778,23 @@ fn the_history_marker_value_is_read_and_unreadable_counts_as_private() {
     ));
     assert!(!is_concealed(|_: &str| false, Some(2)));
 }
+
+/// Linux and macOS: content offering a type its app uses to mark it private is concealed;
+/// ordinary types are not. Pure: it touches no clipboard.
+#[test]
+fn a_private_type_on_linux_or_macos_is_concealed() {
+    let ordinary = [
+        "text/plain;charset=utf-8",
+        "UTF8_STRING",
+        "public.utf8-plain-text",
+    ];
+    assert!(!offers_concealed_type(ordinary.iter().copied()));
+    for marker in UNIX_CONCEALED_TYPES {
+        let offered = ["text/plain", marker];
+        assert!(offers_concealed_type(offered.iter().copied()), "{marker}");
+    }
+    // Exact names only: a lookalike is ordinary.
+    assert!(!offers_concealed_type(
+        ["x-kde-passwordManagerHint-not"].iter().copied()
+    ));
+}

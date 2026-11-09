@@ -114,6 +114,9 @@ mod x11_owner {
         /// this long before each: far below the size cap, so only the
         /// overall deadline can end the read (#356 item 3).
         Trickle(Duration),
+        /// Answers with one UTF8_STRING property, and lists the
+        /// `x-kde-passwordManagerHint` marker among its TARGETS, as KeePassXC does.
+        Concealed(Vec<u8>),
         /// First sends SelectionNotify events that do not answer the
         /// request (another selection, another target, another property),
         /// then answers with this text (#356 item 5).
@@ -172,6 +175,8 @@ mod x11_owner {
             let clipboard = atom(b"CLIPBOARD");
             let utf8 = atom(b"UTF8_STRING");
             let incr = atom(b"INCR");
+            let targets = atom(b"TARGETS");
+            let hint = atom(b"x-kde-passwordManagerHint");
             conn.set_selection_owner(window, clipboard, x11rb::CURRENT_TIME)
                 .unwrap();
             let owner = conn
@@ -225,7 +230,37 @@ mod x11_owner {
                             conn.flush().unwrap();
                             std::thread::sleep(Duration::from_millis(100));
                         }
-                        if let Behavior::Direct(data) | Behavior::SpoofThenDirect(data) = &behavior
+                        // TARGETS is answered as owners do: a list of atoms.
+                        if request.target == targets {
+                            let mut offered = vec![targets, utf8];
+                            if let Behavior::Concealed(_) = &behavior {
+                                offered.push(hint);
+                            }
+                            conn.change_property32(
+                                PropMode::REPLACE,
+                                request.requestor,
+                                request.property,
+                                x11rb::protocol::xproto::AtomEnum::ATOM,
+                                &offered,
+                            )
+                            .unwrap();
+                            let notify = SelectionNotifyEvent {
+                                response_type: SELECTION_NOTIFY_EVENT,
+                                sequence: 0,
+                                time: request.time,
+                                requestor: request.requestor,
+                                selection: request.selection,
+                                target: request.target,
+                                property: request.property,
+                            };
+                            conn.send_event(false, request.requestor, EventMask::NO_EVENT, notify)
+                                .unwrap();
+                            conn.flush().unwrap();
+                            continue;
+                        }
+                        if let Behavior::Direct(data)
+                        | Behavior::SpoofThenDirect(data)
+                        | Behavior::Concealed(data) = &behavior
                         {
                             conn.change_property8(
                                 PropMode::REPLACE,
@@ -450,6 +485,18 @@ mod x11_owner {
         let _owner = spawn_owner(Behavior::SpoofThenDirect(b"real answer".to_vec()));
         let text = x11_read_text(Duration::from_secs(5), MAX_CLIPBOARD_BYTES).unwrap();
         assert_eq!(text.as_deref(), Some("real answer"));
+    }
+
+    /// Content whose owner lists the private marker among its TARGETS is not read.
+    #[test]
+    fn xp15_x11_content_marked_private_is_not_read() {
+        let _guard = crate::tests::native_clipboard_test_lock();
+        if !display_or_skip("xp15_x11_content_marked_private_is_not_read") {
+            return;
+        }
+        let _owner = spawn_owner(Behavior::Concealed(b"hunter2".to_vec()));
+        let refused = x11_read_text(Duration::from_secs(5), MAX_CLIPBOARD_BYTES).unwrap_err();
+        assert_eq!(refused.code, crate::FailureCode::CapabilityDenied);
     }
 }
 

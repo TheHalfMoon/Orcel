@@ -537,7 +537,31 @@ fn history_allowed_from(data: Option<&[u8]>) -> u32 {
         .unwrap_or(0)
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+/// The markers a copying app places beside its content on Linux and macOS to keep it out of
+/// clipboard managers and history. `x-kde-passwordManagerHint` is offered as a MIME type
+/// (Wayland) or target (X11) by KeePassXC and KDE apps; `org.nspasteboard.ConcealedType` is the
+/// nspasteboard.org convention on macOS, set by 1Password, KeePassXC and others. Content
+/// offering one is not read.
+#[cfg_attr(
+    not(any(test, target_os = "linux", target_os = "macos")),
+    allow(dead_code)
+)]
+const UNIX_CONCEALED_TYPES: [&str; 2] = [
+    "x-kde-passwordManagerHint",
+    "org.nspasteboard.ConcealedType",
+];
+
+/// Whether any of the offered `types` is one of [`UNIX_CONCEALED_TYPES`].
+// Linux matches names; macOS asks the pasteboard for the markers directly.
+#[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
+fn offers_concealed_type<'a>(mut types: impl Iterator<Item = &'a str>) -> bool {
+    types.any(|offered| UNIX_CONCEALED_TYPES.contains(&offered))
+}
+
+#[cfg_attr(
+    not(any(windows, target_os = "linux", target_os = "macos")),
+    allow(dead_code)
+)]
 fn concealed() -> ClipboardError {
     ClipboardError::new(
         FailureCode::CapabilityDenied,

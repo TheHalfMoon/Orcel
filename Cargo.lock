@@ -1050,6 +1050,8 @@ version = "0.2.0"
 dependencies = [
  "arboard",
  "libc",
+ "objc2-app-kit",
+ "objc2-foundation",
  "orcel-contracts",
  "serde",
  "serde_json",
