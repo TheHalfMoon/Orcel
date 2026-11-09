@@ -52,27 +52,26 @@ fn a_final_symlink_is_not_followed() {
 #[test]
 fn linux_executes_the_verified_file_not_the_path() {
     let dir = tempfile::tempdir().unwrap();
-    // Since Ubuntu 26.04 the coreutils are one multi-call binary that picks its command from
-    // the name in argv[0], so the copy keeps the name `echo`, and argv[0] is its path, as the
-    // launch in linux.rs sets it, not `/proc/self/fd/<n>`.
-    let echo = copy_of(Path::new("/bin/echo"), dir.path(), "echo");
-    let pinned = PinnedExecutable::open(&echo, &digest_of(&echo)).unwrap();
-    // The file swapped in must differ under any name: on 26.04 /bin/false is the same
-    // multi-call binary, and named `echo` it would echo too.
+    // The shell, not /bin/echo: since Ubuntu 26.04 the coreutils are one multi-call binary
+    // that refuses to run unless its own executable path (/proc/self/exe) matches the utility
+    // named in argv[0], and after the swap below that path reads `<dir>/echo (deleted)`.
+    let shell = copy_of(Path::new("/bin/sh"), dir.path(), "sh");
+    let pinned = PinnedExecutable::open(&shell, &digest_of(&shell)).unwrap();
+    // The file swapped in is a script that fails, whatever name it runs under.
     let other = dir.path().join("other");
     std::fs::write(&other, "#!/bin/sh\nexit 3\n").unwrap();
     std::fs::set_permissions(&other, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    std::fs::rename(&other, &echo).unwrap();
+    std::fs::rename(&other, &shell).unwrap();
+    // argv[0] is the verified path, as the launch in linux.rs sets it.
     let mut command = std::process::Command::new(pinned.exec_path());
     std::os::unix::process::CommandExt::arg0(&mut command, pinned.path());
-    let output = command.arg("pinned").output().unwrap();
+    let output = command.args(["-c", "echo pinned"]).output().unwrap();
     assert!(
         output.status.success(),
-        "{:?}, stdout {:?}, stderr {:?}, /bin/echo is {:?}",
+        "{:?}, stdout {:?}, stderr {:?}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
-        std::fs::canonicalize("/bin/echo"),
     );
     assert_eq!(output.stdout, b"pinned\n");
 }
