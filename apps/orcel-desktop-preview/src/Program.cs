@@ -24,7 +24,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Previews, PreviewsSizes, PreviewsContent, Unsupported }
 
     internal static class CommandRouter
     {
@@ -39,20 +39,34 @@ namespace Orcel.DesktopPreview
             if (value == "files") return SafeCommand.Files;
             if (value == "tasks") return SafeCommand.Tasks;
             if (value == "history") return SafeCommand.History;
+            if (value == "previews") return SafeCommand.Previews;
+            if (value == "previews sizes") return SafeCommand.PreviewsSizes;
+            if (value == "previews content") return SafeCommand.PreviewsContent;
             return SafeCommand.Unsupported;
         }
 
         internal static bool CanInvokeInstalledHost(SafeCommand command)
         {
-            return command == SafeCommand.Status || command == SafeCommand.Version || command == SafeCommand.Doctor;
+            return command == SafeCommand.Status || command == SafeCommand.Version || command == SafeCommand.Doctor
+                || IsPreviewSetting(command);
         }
 
-        /// The only arguments ever passed to the runtime: fixed, read-only queries.
+        internal static bool IsPreviewSetting(SafeCommand command)
+        {
+            return command == SafeCommand.Previews || command == SafeCommand.PreviewsSizes || command == SafeCommand.PreviewsContent;
+        }
+
+        /// The only arguments ever passed to the runtime: fixed, read-only queries, and the
+        /// person's own approval preview choice (`approvals previews sizes|content`), which
+        /// saves one field in Orcel's protected configuration and changes nothing else.
         internal static string[] CliArguments(SafeCommand command)
         {
             if (command == SafeCommand.Status) return new[] { "status", "--json" };
             if (command == SafeCommand.Version) return new[] { "version", "--json" };
             if (command == SafeCommand.Doctor) return new[] { "doctor", "--json" };
+            if (command == SafeCommand.Previews) return new[] { "approvals", "previews", "--json" };
+            if (command == SafeCommand.PreviewsSizes) return new[] { "approvals", "previews", "sizes", "--json" };
+            if (command == SafeCommand.PreviewsContent) return new[] { "approvals", "previews", "content", "--json" };
             return null;
         }
     }
@@ -311,7 +325,7 @@ namespace Orcel.DesktopPreview
         internal static CliResult Query(SafeCommand command, int timeoutMs)
         {
             string[] arguments = CommandRouter.CliArguments(command);
-            if (arguments == null) throw new ArgumentException("not a read-only runtime query");
+            if (arguments == null) throw new ArgumentException("not a runtime query this app may run");
             return BoundedProcess.Run(PathToCompatCli(), arguments, timeoutMs, UserProfile());
         }
 
@@ -990,6 +1004,25 @@ namespace Orcel.DesktopPreview
             return text.ToString();
         }
 
+        /// `orcel approvals previews [sizes|content] --json`: what approval prompts show of the
+        /// content they approve. Only the runtime's own answer is reported.
+        internal static string PreviewsMessage(CliResult result)
+        {
+            if (result.FailedToStart || result.TimedOut) return "The Orcel runtime did not answer the approval preview setting in time. Nothing is known to have changed.";
+            Dictionary<string, object> json = result.ExitCode == 0 ? Parse(result.Stdout) : null;
+            string choice = Text(json, "approval_previews");
+            object changed = null;
+            if (json != null) json.TryGetValue("changed", out changed);
+            if (choice == "sizes")
+                return "Approval previews: sizes only. Approval prompts show how much would change, never the content."
+                    + (true.Equals(changed) ? " Saved. Restart your AI clients so their next sessions use it." : "");
+            if (choice == "content")
+                return "Approval previews: a short preview, hidden when it looks like a password, key or token."
+                    + (true.Equals(changed) ? " Saved. Restart your AI clients so their next sessions use it." : "")
+                    + " Type previews sizes to show sizes only.";
+            return "The installed Orcel runtime did not report an approval preview setting this preview understands. It may be older than this app.";
+        }
+
         internal static string VersionMessage(CliResult result)
         {
             if (result.FailedToStart || result.TimedOut) return "The Orcel runtime did not answer a read-only version query in time.";
@@ -1244,7 +1277,7 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Read-only commands: help, status, version, doctor, devices, files, tasks, history";
+            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, previews";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
             AutomationProperties.SetHelpText(commandBox, "Type a read-only command and press Enter");
@@ -1349,7 +1382,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, help. These operations are read-only. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, previews, help. These operations are read-only, except previews sizes and previews content, which save what approval prompts show of the content they approve. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1383,6 +1416,7 @@ namespace Orcel.DesktopPreview
                 }
                 string response = await Task.Run(delegate {
                     CliResult result = LocalHost.Query(command, command == SafeCommand.Doctor ? DoctorTimeoutMs : QueryTimeoutMs);
+                    if (CommandRouter.IsPreviewSetting(command)) return Interpret.PreviewsMessage(result);
                     return command == SafeCommand.Version ? Interpret.VersionMessage(result) : Interpret.DoctorMessage(result);
                 });
                 AddMessage(false, response);
@@ -1529,6 +1563,12 @@ namespace Orcel.DesktopPreview
             expect(refused, "only read-only app API methods are sent");
             expect(AppApi.RequestFrame("task.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"task.list\",\"params\":{}}\n", "task.list frame");
             expect(AppApi.RequestFrame("task.get", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.get frame");
+            expect(CommandRouter.Classify("previews") == SafeCommand.Previews && CommandRouter.Classify(" Previews Sizes ") == SafeCommand.PreviewsSizes && CommandRouter.Classify("previews content") == SafeCommand.PreviewsContent, "previews routes");
+            expect(CommandRouter.Classify("previews all") == SafeCommand.Unsupported && CommandRouter.Classify("previews sizes; status") == SafeCommand.Unsupported, "only the two fixed choices are accepted");
+            expect(string.Join(" ", CommandRouter.CliArguments(SafeCommand.PreviewsSizes)) == "approvals previews sizes --json" && string.Join(" ", CommandRouter.CliArguments(SafeCommand.Previews)) == "approvals previews --json", "previews passes fixed arguments only");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"sizes\",\"changed\":true}" }).StartsWith("Approval previews: sizes only.") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"sizes\",\"changed\":true}" }).Contains("Saved."), "a saved sizes choice is reported");
+            expect(!Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"content\",\"changed\":false}" }).Contains("Saved."), "an unchanged choice is not reported as saved");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 2, Stdout = "" }).Contains("did not report") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"approval_previews\":\"all\"}" }).Contains("did not report"), "an error or unknown answer is not a setting");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
