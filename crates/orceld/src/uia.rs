@@ -1456,6 +1456,7 @@ fn derive_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     let token = approval
         .request_token(&prompt)
         .map_err(|error| ProviderError::new(error.code, error.message))?;

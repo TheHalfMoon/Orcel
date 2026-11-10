@@ -3154,11 +3154,6 @@ impl UiaRegistry {
         })
     }
 
-    /// Resolve the current capture binding for approval digest computation.
-    /// This performs the same fail-closed revalidation as `capture_window`
-    /// but performs no adapter capture, so dispatch can bind approval
-    /// before capture and then revalidate again immediately before the
-    /// adapter call.
     /// The executable name of a registered window's verified process and the window's title,
     /// as recorded when it was observed, for approval prompts. Display only: it grants nothing,
     /// and the action's own binding is what is checked again before dispatch.
@@ -3168,6 +3163,11 @@ impl UiaRegistry {
         Some((process.exe_name.clone(), window.title.clone()))
     }
 
+    /// Resolve the current capture binding for approval digest computation.
+    /// This performs the same fail-closed revalidation as `capture_window`
+    /// but performs no adapter capture, so dispatch can bind approval
+    /// before capture and then revalidate again immediately before the
+    /// adapter call.
     pub fn capture_binding(
         &self,
         window_id: &str,
