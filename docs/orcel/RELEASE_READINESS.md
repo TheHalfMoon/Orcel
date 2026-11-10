@@ -5,6 +5,9 @@ here releases, signs or publishes Orcel. Each item is in exactly one of the
 five classes below. Update this file when an item moves; the restart
 checkpoint at the end says where engineering stands.
 
+The per-component view (state, commits, tests, limitations, blockers) is in
+`COMPLETION_LEDGER.md`.
+
 ## 1. Engineering that is complete (merged, qualified on exact-head CI)
 
 | Item | Where |
