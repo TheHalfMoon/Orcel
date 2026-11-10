@@ -1373,14 +1373,7 @@ namespace Orcel.DesktopPreview
             conversation.Content = transcript;
             AutomationProperties.SetAutomationId(conversation, "Transcript");
             AutomationProperties.SetName(conversation, "Conversation transcript");
-            AutomationProperties.SetAutomationId(announcer, "Announcement");
-            AutomationProperties.SetLiveSetting(announcer, AutomationLiveSetting.Polite);
-            announcer.FontSize = 1;
-            announcer.Height = 1;
-            announcer.VerticalAlignment = VerticalAlignment.Top;
-            announcer.Opacity = 0;
-            announcer.IsHitTestVisible = false;
-            announcer.Focusable = false;
+            ConfigureAnnouncer(announcer);
             center.Children.Add(announcer);
             Border transcriptCard = Card(conversation, Colors.Sidebar, new Thickness(14));
             Grid.SetRow(transcriptCard, 1);
@@ -1491,6 +1484,19 @@ namespace Orcel.DesktopPreview
             while (transcript.Children.Count > MaxTranscriptMessages) transcript.Children.RemoveAt(0);
             conversation.ScrollToEnd();
             if (!fromUser) Announce(message);
+        }
+
+        /// The live region's setup: polite, out of the way, never focused or clicked.
+        internal static void ConfigureAnnouncer(TextBlock announcer)
+        {
+            AutomationProperties.SetAutomationId(announcer, "Announcement");
+            AutomationProperties.SetLiveSetting(announcer, AutomationLiveSetting.Polite);
+            announcer.FontSize = 1;
+            announcer.Height = 1;
+            announcer.VerticalAlignment = VerticalAlignment.Top;
+            announcer.Opacity = 0;
+            announcer.IsHitTestVisible = false;
+            announcer.Focusable = false;
         }
 
         /// What a screen reader hears for a reply: the reply, cut at MaxAnnouncedChars.
@@ -1754,6 +1760,9 @@ namespace Orcel.DesktopPreview
             expect(!char.IsHighSurrogate(MainWindow.Announcement(new string('a', MainWindow.MaxAnnouncedChars - 1) + "\U0001F600 tail").TrimEnd('…').Last()), "an announcement never ends inside a surrogate pair");
             bool legacy;
             expect(AppContext.TryGetSwitch(LegacyAccessibilitySwitch, out legacy) && !legacy, "WPF's legacy accessibility behaviour is off, so live regions reach screen readers");
+            TextBlock announcer = new TextBlock();
+            MainWindow.ConfigureAnnouncer(announcer);
+            expect(AutomationProperties.GetLiveSetting(announcer) == AutomationLiveSetting.Polite && AutomationProperties.GetAutomationId(announcer) == "Announcement" && !announcer.Focusable, "the announcer is a polite live region that never takes focus");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
