@@ -29,7 +29,7 @@ Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, 
 | Saved sizes-only choice | In review (independent review: merge) | #690 (open) | config round-trip, `child_environment`, rollback refusal tests | Linux systemd and the dev tarball read their own environment; rollback refuses while sizes is saved | A switch in the desktop app's settings | none |
 | Plain warning when hidden content looks like a credential | In review (independent review: merge) | #691 (open) | `a_credential_or_sizes_only_shows_no_content` | Refusing credential-like typed text, or making it STRONG, is not done (safer default chosen: hide, warn, keep approval) | none | none |
 | Application and window identity on desktop prompts | In review (independent review: merge) | #694 (open) | prompt-text and registry tests | The title is the one recorded at observation; the executable is a name, not a signed identity | A code-signature line; an orceld-level test of a desktop prompt | none |
-| Windows approval dialog timeout | In review (independent review: merge) | #693 (open) | answer mapping on every OS; a real dialog on the Windows CI runner | Windows Hello's own prompt keeps its own timing | none | none |
+| Windows approval dialog timeout | Done (qualified) | #693 → `e90e51d6` | answer mapping on every OS; a real dialog on the Windows CI runner | Windows Hello's own prompt keeps its own timing | none | none |
 | Request origin in approval history | In review (independent review: merge) | #695 (open) | origin recorded, reload, tamper and older-record tests | Unkeyed checksums catch corruption, not a determined same-user writer; a stripped origin shows as unrecorded | An app API history view | none |
 
 ## Filesystem, clipboard, process and parser safety
