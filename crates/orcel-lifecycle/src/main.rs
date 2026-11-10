@@ -264,14 +264,19 @@ pub(crate) struct Output {
 /// The authority store's own short lock orders a revoke against a grant, and a grant approved
 /// across a revoke is refused (`full_control_store::grant_local_at_epoch`).
 fn holds_lifecycle_lock(command: &str, rest: &[String]) -> bool {
-    let reduces_or_reads_authority = command == "full-control"
-        && matches!(
-            rest.iter()
-                .find(|arg| !arg.starts_with("--"))
-                .map(String::as_str),
-            Some("revoke" | "status")
-        );
+    // The action as `Args::positional` reads it: the first argument not starting with `--`.
+    let action = rest
+        .iter()
+        .find(|arg| !arg.starts_with("--"))
+        .map(String::as_str);
+    let reduces_or_reads_authority =
+        command == "full-control" && matches!(action, Some("revoke" | "status"));
+    // Listing workspaces only reads the configuration (saved atomically) and asks orceld
+    // for each folder's trust, up to 20 s each. Holding the lock for that blocked a grant,
+    // an update or a workspace change for as long as the listing took.
+    let reads_workspaces = command == "workspace" && action == Some("list");
     !reduces_or_reads_authority
+        && !reads_workspaces
         && matches!(
             command,
             "install"
@@ -587,6 +592,11 @@ mod tests {
             &rest(&["--minutes", "revoke", "grant"])
         ));
         assert!(holds_lifecycle_lock("workspace", &rest(&["add", "a", "b"])));
+        assert!(holds_lifecycle_lock("workspace", &rest(&["remove", "a"])));
+        assert!(holds_lifecycle_lock("workspace", &rest(&["trust", "a"])));
+        assert!(!holds_lifecycle_lock("workspace", &rest(&["list"])));
+        // `list` followed by anything is still `list`, and `finish()` then refuses the rest.
+        assert!(!holds_lifecycle_lock("workspace", &rest(&["list", "add"])));
         assert!(!holds_lifecycle_lock("status", &rest(&[])));
     }
     use std::fs;
