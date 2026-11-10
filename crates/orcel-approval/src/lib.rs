@@ -102,6 +102,17 @@ pub struct PresenceContext {
     pub destination: Option<String>,
     /// A bounded, redacted preview of the content, shown on the STRONG summary.
     pub preview: Option<Preview>,
+    /// The application a desktop action targets, shown on the STRONG summary.
+    pub application: Option<TargetApplication>,
+}
+
+/// The application a desktop action targets, as orceld's window registry recorded it when the
+/// window was observed: the executable name of its verified process, and the window's title.
+/// The title is whatever the application set, so the prompt labels it as such.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetApplication {
+    pub executable: String,
+    pub window_title: String,
 }
 
 /// Whether approval prompts show a preview of the content or only its size: the person's
@@ -238,12 +249,19 @@ impl PresenceContext {
             target_kind: TargetKind::Other,
             destination: None,
             preview: None,
+            application: None,
         }
     }
 
     /// The preview, copied from the prompt.
     pub fn with_preview(mut self, preview: Option<Preview>) -> Self {
         self.preview = preview;
+        self
+    }
+
+    /// The target application, copied from the prompt.
+    pub fn with_application(mut self, application: Option<TargetApplication>) -> Self {
+        self.application = application;
         self
     }
 
@@ -599,6 +617,8 @@ pub struct ApprovalPrompt {
     pub destination: Option<String>,
     /// A bounded, redacted preview of the content; set with [`ApprovalPrompt::with_preview`].
     pub preview: Option<Preview>,
+    /// The application a desktop action targets; set with [`ApprovalPrompt::for_application`].
+    pub application: Option<TargetApplication>,
 }
 
 impl ApprovalPrompt {
@@ -611,6 +631,12 @@ impl ApprovalPrompt {
     /// The same prompt with a preview of its content.
     pub fn with_preview(mut self, preview: Preview) -> Self {
         self.preview = Some(preview);
+        self
+    }
+
+    /// The same prompt, naming the application its desktop action targets.
+    pub fn for_application(mut self, application: TargetApplication) -> Self {
+        self.application = Some(application);
         self
     }
 
@@ -742,6 +768,7 @@ impl ApprovalPrompt {
             target_kind: TargetKind::Other,
             destination: None,
             preview: None,
+            application: None,
         }
     }
 
@@ -1121,7 +1148,8 @@ impl ApprovalBroker for LocalApprovalBroker {
         .with_details(prompt.target.clone(), prompt.summary.clone())
         .with_origin(prompt.origin.clone())
         .with_target(prompt.target_kind, prompt.destination.clone())
-        .with_preview(prompt.preview.clone());
+        .with_preview(prompt.preview.clone())
+        .with_application(prompt.application.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
@@ -1266,7 +1294,8 @@ impl LocalApprovalBroker {
         .with_details(prompt.target.clone(), prompt.summary.clone())
         .with_origin(prompt.origin.clone())
         .with_target(prompt.target_kind, prompt.destination.clone())
-        .with_preview(prompt.preview.clone());
+        .with_preview(prompt.preview.clone())
+        .with_application(prompt.application.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
