@@ -130,7 +130,8 @@ try {
     Check "shell-like text is refused, not executed" ($null -ne $refused) "$refused"
     $announcement = ById $window "Announcement"
     $live = $announcement.GetCurrentPropertyValue([System.Windows.Automation.AutomationElementIdentifiers]::LiveSettingProperty)
-    Check "the announcement is a polite live region" ("$live" -eq "Polite") "LiveSetting '$live'"
+    # Polite is 1 whether the client returns the enum or the raw value; legacy mode reports Off (0).
+    Check "the announcement is a polite live region" ($null -ne $live -and [int]$live -eq 1) "LiveSetting '$live'"
     $announced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Not executed.", [StringComparison]::Ordinal)) { $a } } 3000
     Check "the reply reaches the live region" ($null -ne $announced) "$announced"
     Start-Sleep -Milliseconds 1500
