@@ -25,7 +25,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Unsupported }
 
     internal static class CommandRouter
     {
@@ -46,13 +46,14 @@ namespace Orcel.DesktopPreview
             if (value == "control") return SafeCommand.Control;
             if (value == "stop control") return SafeCommand.StopControl;
             if (value == "revoke all") return SafeCommand.RevokeAll;
+            if (value == "workspaces") return SafeCommand.Workspaces;
             return SafeCommand.Unsupported;
         }
 
         internal static bool CanInvokeInstalledHost(SafeCommand command)
         {
             return command == SafeCommand.Status || command == SafeCommand.Version || command == SafeCommand.Doctor
-                || IsPreviewSetting(command) || IsControl(command);
+                || IsPreviewSetting(command) || IsControl(command) || command == SafeCommand.Workspaces;
         }
 
         /// Desktop control: its status, and the two ways to take authority away. The app can
@@ -84,6 +85,7 @@ namespace Orcel.DesktopPreview
             if (command == SafeCommand.Control) return new[] { "full-control", "status", "--json" };
             if (command == SafeCommand.StopControl) return new[] { "full-control", "revoke", "--json" };
             if (command == SafeCommand.RevokeAll) return new[] { "emergency-revoke", "--json" };
+            if (command == SafeCommand.Workspaces) return new[] { "workspace", "list", "--json" };
             return null;
         }
     }
@@ -1036,6 +1038,44 @@ namespace Orcel.DesktopPreview
             return result.ExitCode == 0 && answer != null && answer.ContainsKey("ok") && true.Equals(answer["ok"]) ? answer : null;
         }
 
+        internal const int MaxShownWorkspaces = 20;
+
+        /// `orcel workspace list --json`: the folders Orcel may use, with their trust. The app
+        /// shows them and never adds one: adding a folder grants Orcel access, so it stays in a
+        /// terminal.
+        internal static string WorkspacesMessage(CliResult result)
+        {
+            if (result.FailedToStart || result.TimedOut) return "The Orcel runtime did not list workspaces in time.";
+            Dictionary<string, object> answer = Parse(result.Stdout);
+            string refusal = Refusal(result, answer);
+            if (refusal != null) return "The Orcel runtime could not list workspaces: " + refusal;
+            Dictionary<string, object> json = Ok(result, answer);
+            object raw;
+            IEnumerable rows = json != null && json.TryGetValue("workspaces", out raw) ? raw as IEnumerable : null;
+            if (rows == null) return "The installed Orcel runtime did not list workspaces in a form this app understands.";
+            StringBuilder text = new StringBuilder("Folders Orcel may use:");
+            int shown = 0, total = 0;
+            foreach (object item in rows)
+            {
+                Dictionary<string, object> row = item as Dictionary<string, object>;
+                if (row == null) continue;
+                total++;
+                if (shown >= MaxShownWorkspaces) continue;
+                shown++;
+                object trustRaw;
+                Dictionary<string, object> trust = row.TryGetValue("trust", out trustRaw) ? trustRaw as Dictionary<string, object> : null;
+                object trusted = null;
+                if (trust != null) trust.TryGetValue("trusted", out trusted);
+                string state = true.Equals(trusted) ? "trusted for STRONG operations" : false.Equals(trusted) ? "not trusted for STRONG operations" : "trust unknown";
+                text.Append("\n• ").Append(Timeline.ShownText(Text(row, "id"))).Append(" (").Append(state).Append("): ").Append(Timeline.ShownText(Text(row, "root")));
+            }
+            if (total == 0)
+                return "No workspaces are configured, so Orcel can't use any folder yet. To add one, run orcel workspace add <id> <folder> in a terminal. This app never adds folders.";
+            if (total > shown) text.Append("\n(" + (total - shown) + " more not shown; run orcel workspace list in a terminal)");
+            text.Append("\nTo add or remove a folder, or change its trust, use orcel workspace in a terminal. This app never grants a folder.");
+            return text.ToString();
+        }
+
         /// `orcel full-control status --json`.
         internal static string ControlMessage(CliResult result)
         {
@@ -1246,6 +1286,10 @@ namespace Orcel.DesktopPreview
         /// Desktop control commands may wait up to 60 s for the runtime's lifecycle lock, for
         /// example while an update runs or a grant waits for Windows Hello.
         private const int ControlTimeoutMs = 70000;
+        /// Listing workspaces asks the runtime about each one's trust, up to 20 s each.
+        private const int WorkspacesTimeoutMs = 90000;
+        /// Commands that change something and are still running.
+        private readonly HashSet<SafeCommand> running = new HashSet<SafeCommand>();
         private readonly StackPanel transcript = new StackPanel();
         /// A polite live region: each reply is read out by a screen reader when it arrives,
         /// without moving focus from the command box.
@@ -1391,7 +1435,7 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, previews, control, stop control, revoke all";
+            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, workspaces, previews, control, stop control, revoke all";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
             AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control and revoke all, which only take authority away");
@@ -1533,7 +1577,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, workspaces, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1557,6 +1601,15 @@ namespace Orcel.DesktopPreview
                 AddMessage(false, Interpret.StatusMessage(new RuntimeStatus { Availability = RuntimeAvailability.NotInstalled }));
                 return;
             }
+            // One run at a time for the commands that change something, so a double click or a
+            // repeated command doesn't start a second revoke or a second Windows Hello prompt.
+            bool guarded = command == SafeCommand.StopControl || command == SafeCommand.RevokeAll || command == SafeCommand.PreviewsSizes;
+            if (guarded && running.Contains(command))
+            {
+                AddMessage(false, "That is already running; wait for its answer.");
+                return;
+            }
+            if (guarded) running.Add(command);
             AddMessage(false, Progress(command));
             try
             {
@@ -1571,7 +1624,9 @@ namespace Orcel.DesktopPreview
                     CliResult result = LocalHost.Query(command, command == SafeCommand.Doctor ? DoctorTimeoutMs
                         : command == SafeCommand.RevokeAll ? RevokeAllTimeoutMs
                         : command == SafeCommand.Control || command == SafeCommand.StopControl ? ControlTimeoutMs
+                        : command == SafeCommand.Workspaces ? WorkspacesTimeoutMs
                         : QueryTimeoutMs);
+                    if (command == SafeCommand.Workspaces) return Interpret.WorkspacesMessage(result);
                     if (CommandRouter.IsPreviewSetting(command)) return Interpret.PreviewsMessage(result);
                     if (command == SafeCommand.Control) return Interpret.ControlMessage(result);
                     if (command == SafeCommand.StopControl) return Interpret.StopControlMessage(result);
@@ -1589,6 +1644,10 @@ namespace Orcel.DesktopPreview
                     : command == SafeCommand.RevokeAll
                     ? "The emergency revoke failed unexpectedly. Run orcel emergency-revoke in a terminal."
                     : "The read-only runtime query failed unexpectedly. No action was performed.");
+            }
+            finally
+            {
+                running.Remove(command);
             }
         }
 
@@ -1763,6 +1822,10 @@ namespace Orcel.DesktopPreview
             TextBlock announcer = new TextBlock();
             MainWindow.ConfigureAnnouncer(announcer);
             expect(AutomationProperties.GetLiveSetting(announcer) == AutomationLiveSetting.Polite && AutomationProperties.GetAutomationId(announcer) == "Announcement" && !announcer.Focusable, "the announcer is a polite live region that never takes focus");
+            expect(CommandRouter.Classify("workspaces") == SafeCommand.Workspaces && string.Join(" ", CommandRouter.CliArguments(SafeCommand.Workspaces)) == "workspace list --json" && CommandRouter.Classify("workspace add x c:\\") == SafeCommand.Unsupported, "workspaces lists only; nothing adds a folder");
+            string listed = Interpret.WorkspacesMessage(new CliResult { ExitCode = 0, Stdout = "{\n  \"ok\": true,\n  \"workspaces\": [\n    {\"id\": \"main\", \"root\": \"C:\\\\code\", \"trust\": {\"trusted\": true}},\n    {\"id\": \"x\\u202e\", \"root\": \"D:\\\\x\", \"trust\": null}\n  ]\n}" });
+            expect(listed.Contains("• main (trusted for STRONG operations): C:\\code") && listed.Contains("• x  (trust unknown): D:\\x") && listed.Contains("never grants a folder") && listed.Split('\n').Length == 4, "workspaces are listed with trust, escaped, one per line");
+            expect(Interpret.WorkspacesMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"workspaces\":[]}" }).StartsWith("No workspaces are configured"), "an empty list says how to add one in a terminal");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
