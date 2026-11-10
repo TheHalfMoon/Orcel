@@ -198,6 +198,10 @@ pub enum TargetKind {
 
 /// Where a request came from, as orceld knows it, for the approval prompt's Origin line. Built
 /// by orceld from the authenticated remote context, never from the request's own text.
+///
+/// The approval ledger stores it, and versions that know this shape refuse any other (no
+/// unknown fields or kinds), so one changed record would make their whole ledger unverifiable.
+/// Extend it only through a new sibling field on the ledger record, or a new ledger schema.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum RequestOrigin {
@@ -1713,7 +1717,7 @@ impl ApprovalLedger {
     }
 
     /// Applies one persisted event, returning false when it does not verify.
-    fn apply(&mut self, record: StoredRecord) -> bool {
+    fn apply(&mut self, mut record: StoredRecord) -> bool {
         if record.schema != LEDGER_SCHEMA
             || !verify_record_checksum(&record, &self.tip)
             || record.origin_checksum != origin_checksum(&record)
@@ -1733,8 +1737,9 @@ impl ApprovalLedger {
             expected.consumed = true;
             expected.prev_checksum = record.prev_checksum.clone();
             expected.checksum = record.checksum.clone();
-            // A version without origins writes its consumption entry without one; the
-            // issuance entry still carries the origin.
+            // A version without origins writes its consumption entry without one, so only
+            // that entry may lack the issuance's origin; a different origin never matches.
+            let issued_from = previous.origin.clone();
             if record.origin.is_none() {
                 expected.origin = None;
             }
@@ -1745,6 +1750,12 @@ impl ApprovalLedger {
                 return false;
             }
             self.consumed.insert(record.nonce.clone());
+            // The consumption entry replaces the issuance in memory, so it keeps the
+            // issuance's origin for the history. On disk the entry stays as written.
+            if record.origin.is_none() {
+                record.origin = issued_from;
+                record.origin_checksum = origin_checksum(&record);
+            }
         } else {
             if self.records.contains_key(&record.id)
                 || !self.nonces.insert(record.nonce.clone())
