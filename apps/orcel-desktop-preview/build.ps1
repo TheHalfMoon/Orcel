@@ -14,6 +14,7 @@ $refs = @(
     (Join-Path $wpf "PresentationFramework.dll"),
     (Join-Path $wpf "PresentationCore.dll"),
     (Join-Path $wpf "WindowsBase.dll"),
+    (Join-Path $wpf "UIAutomationTypes.dll"),
     (Join-Path $framework "System.Xaml.dll"),
     (Join-Path $framework "System.Windows.Forms.dll"),
     (Join-Path $framework "System.Core.dll"),
