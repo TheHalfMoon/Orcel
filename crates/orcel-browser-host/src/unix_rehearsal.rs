@@ -698,7 +698,7 @@ mod tests {
         drop(hold);
         std::fs::write(scratch.profile().join("leftover"), "x").unwrap();
 
-        let next = scratch.start(Mode::Run).unwrap();
+        let next = until_not_in_use(|| scratch.start(Mode::Run)).unwrap();
         assert!(
             !scratch.profile().join("leftover").exists(),
             "the next start removed the stale profile before its own"
@@ -742,7 +742,31 @@ mod tests {
             assert_eq!(ProfileHold::open(&profile).unwrap_err(), ProfileError::Busy);
             drop(hold);
             drop(sink);
-            assert_eq!(recover_stale_profile(&profile), Ok(Recovery::Removed));
+            let recovered = until_not_in_use(|| match recover_stale_profile(&profile) {
+                Ok(Recovery::EngineMayBeAlive | Recovery::InUse) => Err(Refused::InUse),
+                other => Ok(other),
+            });
+            assert!(
+                matches!(recovered, Ok(Ok(Recovery::Removed))),
+                "{label}: {recovered:?}"
+            );
+        }
+    }
+
+    /// Recovery fails closed while it can't rule out that a process of this user is the
+    /// engine: one whose arguments it can't read, or that is still listed. On a shared runner
+    /// an unrelated process, often another test's, can be in that state for a moment as it
+    /// exits (#696). Production keeps the profile then; these tests retry for a bounded time
+    /// instead, so they still fail if the refusal persists.
+    fn until_not_in_use<T>(mut attempt: impl FnMut() -> Result<T, Refused>) -> Result<T, Refused> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match attempt() {
+                Err(Refused::InUse) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                result => return result,
+            }
         }
     }
 
