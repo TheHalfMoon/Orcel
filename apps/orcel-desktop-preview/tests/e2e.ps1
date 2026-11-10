@@ -138,6 +138,28 @@ try {
     $calculators = @(Get-Process -Name "calc", "CalculatorApp" -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -ge $refusedAt })
     Check "no process was started by the refused text" ($children.Count -eq 0 -and $calculators.Count -eq 0) ((@($children | ForEach-Object { $_.Name }) + @($calculators | ForEach-Object { $_.Name })) -join ", ")
 
+    # connect shows setup text only: it runs nothing and edits no client's settings.
+    Start-Sleep -Milliseconds 1500
+    $connectAt = Get-Date
+    SendCommand $window "connect"
+    if ($expectInstalled) {
+        $cli = Join-Path $RuntimeRoot ".orcel\bin\orcel.exe"
+        $editCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Setup to copy")
+        $setup = WaitFor { (ById $window "Transcript").FindFirst($scope::Descendants, $editCondition) } 5000
+        $setupValue = $(if ($setup) { $setup.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current } else { $null })
+        Check "connect shows read-only setup text to copy" ($null -ne $setupValue -and $setupValue.IsReadOnly) ""
+        $setupText = $(if ($setupValue) { $setupValue.Value } else { "" })
+        Check "the setup names this install's CLI for each client" ($setupText.Contains('"' + $cli.Replace('\', '\\') + '"') -and $setupText.Contains("'" + $cli.Replace("'", "''") + "' mcp stdio") -and $setupText.Contains("command $cli, arguments mcp stdio")) "$(($setupText -split "`n")[0])"
+        $connectAnnounced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Setup for Claude Desktop", [StringComparison]::Ordinal)) { $a } } 3000
+        Check "the setup is announced by where it is, not read out" ($null -ne $connectAnnounced) "$connectAnnounced"
+    } else {
+        $connect = WaitForMessage $window "isn't installed for this Windows user yet" 5000
+        Check "connect without an install says to install first" ($null -ne $connect) "$connect"
+    }
+    Start-Sleep -Milliseconds 1500
+    $connectChildren = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object { $_.CreationDate -ge $connectAt })
+    Check "connect starts no process" ($connectChildren.Count -eq 0) (@($connectChildren | ForEach-Object { $_.Name }) -join ", ")
+
     if ($expectInstalled) {
         SendCommand $window "doctor"
         $doctor = WaitForMessage $window "Health check:" 45000
