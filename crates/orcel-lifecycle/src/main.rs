@@ -258,17 +258,21 @@ pub(crate) struct Output {
     pub(crate) json: serde_json::Value,
 }
 
-/// Whether a command holds the lifecycle lock (and passes the legacy-state gate) for its
-/// whole run. Taking desktop control away, or reading its status, doesn't: a grant can hold
-/// the lock for a whole Windows Hello prompt, and an emergency stop must not wait behind it.
-/// The authority store's own short lock orders a revoke against a grant, and a grant approved
-/// across a revoke is refused (`full_control_store::grant_local_at_epoch`).
-fn holds_lifecycle_lock(command: &str, rest: &[String]) -> bool {
-    // The action as `Args::positional` reads it: the first argument not starting with `--`.
-    let action = rest
-        .iter()
+/// The action as `Args::positional` reads it: the first argument not starting with `--`.
+fn action_of(rest: &[String]) -> Option<&str> {
+    rest.iter()
         .find(|arg| !arg.starts_with("--"))
-        .map(String::as_str);
+        .map(String::as_str)
+}
+
+/// Whether a command holds the lifecycle lock for its whole run. Two kinds don't:
+/// - taking desktop control away, or reading its status: a grant can hold the lock for a
+///   whole Windows Hello prompt, and an emergency stop must not wait behind it. The authority
+///   store's own short lock orders a revoke against a grant, and a grant approved across a
+///   revoke is refused (`full_control_store::grant_local_at_epoch`);
+/// - listing workspaces, which only reads (see below).
+fn holds_lifecycle_lock(command: &str, rest: &[String]) -> bool {
+    let action = action_of(rest);
     let reduces_or_reads_authority =
         command == "full-control" && matches!(action, Some("revoke" | "status"));
     // Listing workspaces only reads the configuration (saved atomically) and asks orceld
@@ -291,13 +295,22 @@ fn holds_lifecycle_lock(command: &str, rest: &[String]) -> bool {
         )
 }
 
+/// Whether a command first passes the legacy-state gate: every command that holds the lock,
+/// except stopping and uninstalling, and also `workspace list`, which would otherwise read an
+/// empty configuration at the new root while the earlier one is undecided and tell the
+/// person to add a workspace the gate would then refuse.
+fn checks_legacy_gate(command: &str, rest: &[String]) -> bool {
+    (holds_lifecycle_lock(command, rest) && !matches!(command, "stop" | "uninstall"))
+        || (command == "workspace" && action_of(rest) == Some("list"))
+}
+
 fn run(args: &mut Args, json_output: bool) -> Result<Output, LifecycleError> {
     // State-changing commands hold the per-install lifecycle lock for their
     // whole duration so they never interleave across processes.
     let mutating = holds_lifecycle_lock(&args.command, &args.rest);
     // Nothing writes to the current root over undecided earlier state, which is what orceld
     // refuses too. Stopping and uninstalling stay possible, and `state` is how to decide.
-    if mutating && !matches!(args.command.as_str(), "stop" | "uninstall") {
+    if checks_legacy_gate(&args.command, &args.rest) {
         orcel_platform::legacy::gate(
             &|name| std::env::var_os(name),
             &Layout::for_current_user()?.root,
@@ -565,7 +578,7 @@ fn version(args: &mut Args) -> Result<Output, LifecycleError> {
 #[cfg(test)]
 mod tests {
     use super::earlier_on_path;
-    use super::holds_lifecycle_lock;
+    use super::{checks_legacy_gate, holds_lifecycle_lock};
     #[test]
     fn revoking_or_reading_desktop_control_never_waits_for_the_lifecycle_lock() {
         let rest = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
@@ -597,6 +610,12 @@ mod tests {
         assert!(!holds_lifecycle_lock("workspace", &rest(&["list"])));
         // `list` followed by anything is still `list`, and `finish()` then refuses the rest.
         assert!(!holds_lifecycle_lock("workspace", &rest(&["list", "add"])));
+        // The workspace list still passes the legacy-state gate, without the lock.
+        assert!(checks_legacy_gate("workspace", &rest(&["list"])));
+        assert!(checks_legacy_gate("workspace", &rest(&["add", "a", "b"])));
+        assert!(!checks_legacy_gate("full-control", &rest(&["revoke"])));
+        assert!(!checks_legacy_gate("stop", &rest(&[])));
+        assert!(!checks_legacy_gate("status", &rest(&[])));
         assert!(!holds_lifecycle_lock("status", &rest(&[])));
     }
     use std::fs;
