@@ -58,7 +58,14 @@ pub fn normalize_environment(
 /// allowlist (OS execution variables and safe Orcel variables, with every
 /// secret-like name removed) plus the configured workspaces.
 pub fn child_environment(config: &Config) -> BTreeMap<String, String> {
-    let mut env = orcel_tunnel::sanitized_env(&host_environment());
+    child_environment_from(&host_environment(), config)
+}
+
+fn child_environment_from(
+    host: &BTreeMap<String, String>,
+    config: &Config,
+) -> BTreeMap<String, String> {
+    let mut env = orcel_tunnel::sanitized_env(host);
     env.remove("ORCEL_WORKSPACE_ROOT");
     env.remove("ORCEL_WORKSPACE_ID");
     env.insert("ORCEL_WORKSPACES_JSON".into(), config.workspaces_json());
@@ -269,21 +276,30 @@ mod tests {
                 .map(String::as_str),
             Some("sizes")
         );
-        // Content or no choice never sets the variable, so it can only come from the
-        // person's own environment, and only towards fewer previews.
-        let inherited = std::env::var("ORCEL_APPROVAL_PREVIEWS").ok();
-        for config in [
-            Config::default(),
-            Config {
-                approval_previews: Some(ApprovalPreviews::Content),
-                ..Config::default()
-            },
-        ] {
-            assert_eq!(
-                child_environment(&config).get("ORCEL_APPROVAL_PREVIEWS"),
-                inherited.as_ref()
-            );
-        }
+        // A saved sizes choice overrides an inherited request for content.
+        let inherited_content =
+            BTreeMap::from([("ORCEL_APPROVAL_PREVIEWS".to_string(), "content".to_string())]);
+        assert_eq!(
+            child_environment_from(&inherited_content, &sizes)
+                .get("ORCEL_APPROVAL_PREVIEWS")
+                .map(String::as_str),
+            Some("sizes")
+        );
+        // No saved choice leaves the person's own variable as it is, so it can still ask
+        // for sizes only; and with neither, orceld shows content previews.
+        let inherited_sizes =
+            BTreeMap::from([("ORCEL_APPROVAL_PREVIEWS".to_string(), "sizes".to_string())]);
+        assert_eq!(
+            child_environment_from(&inherited_sizes, &Config::default())
+                .get("ORCEL_APPROVAL_PREVIEWS")
+                .map(String::as_str),
+            Some("sizes")
+        );
+        assert_eq!(
+            child_environment_from(&BTreeMap::new(), &Config::default())
+                .get("ORCEL_APPROVAL_PREVIEWS"),
+            None
+        );
     }
 
     #[test]

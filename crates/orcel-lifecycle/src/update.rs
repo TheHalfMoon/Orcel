@@ -565,6 +565,19 @@ impl<'a> Updater<'a> {
                 "Orcel {previous} does not support the current configuration schema; nothing was changed"
             )));
         }
+        // A saved approval preview choice is a field that versions before it refuse to load,
+        // which would leave the rolled-back Orcel unable to start. Clearing it first is the
+        // person's choice, since it shows content previews again.
+        if crate::config::Config::load(&self.layout)?
+            .approval_previews
+            .is_some()
+        {
+            return Err(LifecycleError::conflict(format!(
+                "Orcel {previous} may not read the saved approval preview choice; nothing was changed. \
+                 Run `orcel approvals previews content` to clear it, then roll back. To keep sizes-only \
+                 prompts after that, set ORCEL_APPROVAL_PREVIEWS=sizes in your environment"
+            )));
+        }
         let was_running = stop_if_running(&self.layout)?;
         let from = current.version.clone();
         let result = (|| {
@@ -648,6 +661,32 @@ mod tests {
             )
             .unwrap();
         (layout, platform)
+    }
+
+    #[test]
+    fn a_saved_preview_choice_refuses_rollback_until_it_is_cleared() {
+        let (layout, platform) = setup("0.2.0");
+        Updater::new(layout.clone(), &platform)
+            .update(&release_dir("0.3.0"), &UpdateOptions::default())
+            .unwrap();
+        let mut config = crate::config::Config::load(&layout).unwrap();
+        config.approval_previews = Some(crate::config::ApprovalPreviews::Sizes);
+        config.save(&layout).unwrap();
+        let error = Updater::new(layout.clone(), &platform)
+            .rollback()
+            .unwrap_err();
+        assert!(
+            error.message.contains("orcel approvals previews content"),
+            "{}",
+            error.message
+        );
+        let current: CurrentRecord = read_json(&layout.current_file()).unwrap().unwrap();
+        assert_eq!(current.version, "0.3.0", "nothing was changed");
+        config.approval_previews = None;
+        config.save(&layout).unwrap();
+        Updater::new(layout.clone(), &platform).rollback().unwrap();
+        let current: CurrentRecord = read_json(&layout.current_file()).unwrap().unwrap();
+        assert_eq!(current.version, "0.2.0");
     }
 
     #[test]

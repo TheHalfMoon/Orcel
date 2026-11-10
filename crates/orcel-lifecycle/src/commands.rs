@@ -725,11 +725,18 @@ pub fn doctor(args: &mut Args) -> Result<Output, LifecycleError> {
 /// the content they approve. Saved in the protected `config.json`; orceld reads it at launch.
 fn approval_previews(layout: &Layout, choice: Option<&str>) -> Result<Output, LifecycleError> {
     let mut config = Config::load(layout)?;
+    let mut changed = false;
     if let Some(choice) = choice {
         let parsed = config::ApprovalPreviews::parse(choice)
             .ok_or_else(|| LifecycleError::usage("approval previews are `content` or `sizes`"))?;
-        config.approval_previews = Some(parsed);
-        config.save(layout)?;
+        // Content is the default, so choosing it removes the field: a configuration without
+        // it is one every Orcel version reads (see `orcel rollback`).
+        let saved = (parsed == config::ApprovalPreviews::Sizes).then_some(parsed);
+        if config.approval_previews != saved {
+            config.approval_previews = saved;
+            config.save(layout)?;
+            changed = true;
+        }
     }
     let current = config
         .approval_previews
@@ -740,14 +747,27 @@ fn approval_previews(layout: &Layout, choice: Option<&str>) -> Result<Output, Li
         }
         config::ApprovalPreviews::Sizes => "prompts show sizes only, never any content",
     };
+    let mut human = format!(
+        "Approval previews: {} ({meaning}).
+",
+        current.as_str()
+    );
+    if changed {
+        human.push_str(
+            "Sessions started from now on use it. Restart AI clients that run `orcel mcp stdio`,              and run `orcel stop` then `orcel start` for the tunnel.
+",
+        );
+    }
+    if cfg!(unix) {
+        human.push_str(
+            "On Linux and macOS, an orceld started by systemd or the dev tarball reads only its              own environment: add ORCEL_APPROVAL_PREVIEWS=sizes there (for systemd, in              ~/.config/orcel/orceld.env).
+",
+        );
+    }
     Ok(Output {
         exit_code: 0,
-        human: format!(
-            "Approval previews: {} ({meaning}).\n{}",
-            current.as_str(),
-            if choice.is_some() { RESTART_HINT } else { "" }
-        ),
-        json: json!({"ok": true, "approval_previews": current.as_str()}),
+        human,
+        json: json!({"ok": true, "approval_previews": current.as_str(), "changed": changed}),
     })
 }
 
