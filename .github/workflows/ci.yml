@@ -50,6 +50,20 @@ jobs:
           # merge commit, not the checked-out head).
           ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: cargo test --workspace
+      # The Windows approval dialog closes itself when nobody answers. This shows a real
+      # dialog, so it runs on the CI runner only; the step fails unless the test ran and passed.
+      - name: Approval dialog timeout (Windows, real dialog)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          ORCEL_TEST_REAL_DIALOG: "1"
+        run: |
+          out=$(cargo test -p orcel-approval --lib -- --exact --nocapture windows_dialog::tests::an_unanswered_dialog_closes_itself_as_a_timeout 2>&1) || status=$?
+          printf '%s
+' "$out"
+          printf '%s
+' "$out" | grep -q "test windows_dialog::tests::an_unanswered_dialog_closes_itself_as_a_timeout ... ok"
+          exit "${status:-0}"
       # SG-000115 A2b (inert, test-only): the macOS lineage sweep cases run
       # alone, one thread (in the shared Test step they return at once).
       # Their unattributable-orphan rule is system-wide, so an orphan from

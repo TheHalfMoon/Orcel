@@ -437,10 +437,13 @@ mod tests {
 
     #[test]
     fn only_yes_at_the_windows_strong_summary_goes_on_to_hello() {
-        assert!(crate::windows_summary_decision(crate::WINDOWS_IDYES).is_ok());
-        let declined = crate::windows_summary_decision(crate::WINDOWS_IDNO).unwrap_err();
+        use crate::windows_dialog::DialogAnswer;
+        assert!(crate::windows_summary_decision(DialogAnswer::Yes).is_ok());
+        let declined = crate::windows_summary_decision(DialogAnswer::No).unwrap_err();
         assert_eq!(declined.reason, crate::PresenceFailureReason::Denied);
-        let odd = crate::windows_summary_decision(0).unwrap_err();
+        let unanswered = crate::windows_summary_decision(DialogAnswer::TimedOut).unwrap_err();
+        assert_eq!(unanswered.reason, crate::PresenceFailureReason::Timeout);
+        let odd = crate::windows_summary_decision(DialogAnswer::Unexpected(0)).unwrap_err();
         assert_eq!(odd.reason, crate::PresenceFailureReason::Unavailable);
     }
 
