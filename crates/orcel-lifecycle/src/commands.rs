@@ -761,7 +761,7 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
         .unwrap_or_default()
     {
         human.push_str(&format!(
-            "{} {:<8} {:<7} workspace={} consumed={}\n",
+            "{} {:<8} {:<7} workspace={} consumed={} origin={}\n",
             entry
                 .get("decided_at_ms")
                 .and_then(Value::as_u64)
@@ -779,6 +779,7 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
                 .get("consumed")
                 .map(Value::to_string)
                 .unwrap_or_default(),
+            history_origin(entry.get("origin")),
         ));
     }
     if human.is_empty() {
@@ -789,6 +790,32 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
         human,
         json: json!({"ok": true, "approvals": result}),
     })
+}
+
+/// An approval history entry's origin in one word or a short phrase: `local`, `remote(...)`,
+/// or `unrecorded` for entries written before origins were recorded. The parts are orceld's
+/// own identifiers, shown escaped so none can break the line.
+fn history_origin(origin: Option<&Value>) -> String {
+    let part = |value: &Value, name: &str| {
+        value
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .escape_default()
+            .to_string()
+    };
+    match origin {
+        Some(value) if value.get("kind").and_then(Value::as_str) == Some("local") => {
+            "local".to_owned()
+        }
+        Some(value) if value.get("kind").and_then(Value::as_str) == Some("remote") => format!(
+            "remote({} device={} connection={})",
+            part(value, "provider"),
+            part(value, "device"),
+            part(value, "connection")
+        ),
+        _ => "unrecorded".to_owned(),
+    }
 }
 
 fn approval_history_path() -> Result<std::path::PathBuf, LifecycleError> {
@@ -1524,6 +1551,22 @@ pub fn self_check(args: &mut Args) -> Result<Output, LifecycleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_history_names_each_origin_on_one_line() {
+        assert_eq!(history_origin(Some(&json!({"kind": "local"}))), "local");
+        assert_eq!(
+            history_origin(Some(&json!({
+                "kind": "remote",
+                "provider": "tunnel",
+                "device": "dev\n1",
+                "connection": "c-1"
+            }))),
+            "remote(tunnel device=dev\\n1 connection=c-1)"
+        );
+        assert_eq!(history_origin(Some(&Value::Null)), "unrecorded");
+        assert_eq!(history_origin(None), "unrecorded");
+    }
 
     #[test]
     fn approvals_recover_quarantines_only_an_unverifiable_ledger() {
