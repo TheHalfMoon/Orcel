@@ -58,12 +58,24 @@ pub fn normalize_environment(
 /// allowlist (OS execution variables and safe Orcel variables, with every
 /// secret-like name removed) plus the configured workspaces.
 pub fn child_environment(config: &Config) -> BTreeMap<String, String> {
-    let mut env = orcel_tunnel::sanitized_env(&host_environment());
+    child_environment_from(&host_environment(), config)
+}
+
+fn child_environment_from(
+    host: &BTreeMap<String, String>,
+    config: &Config,
+) -> BTreeMap<String, String> {
+    let mut env = orcel_tunnel::sanitized_env(host);
     env.remove("ORCEL_WORKSPACE_ROOT");
     env.remove("ORCEL_WORKSPACE_ID");
     env.insert("ORCEL_WORKSPACES_JSON".into(), config.workspaces_json());
     if let Some(default) = config.default_workspace() {
         env.insert("ORCEL_DEFAULT_WORKSPACE".into(), default.into());
+    }
+    // The person's saved preview choice. Sizes only always wins, so an inherited
+    // `ORCEL_APPROVAL_PREVIEWS` can make prompts show less than the saved choice, never more.
+    if config.approval_previews == Some(crate::config::ApprovalPreviews::Sizes) {
+        env.insert("ORCEL_APPROVAL_PREVIEWS".into(), "sizes".into());
     }
     env
 }
@@ -250,6 +262,45 @@ pub fn expect_ok(response: &Value) -> Result<&Value, LifecycleError> {
 mod tests {
     use super::*;
     use crate::config::WorkspaceEntry;
+
+    #[test]
+    fn a_saved_sizes_only_choice_reaches_orceld_and_content_leaves_the_variable_alone() {
+        use crate::config::ApprovalPreviews;
+        let sizes = Config {
+            approval_previews: Some(ApprovalPreviews::Sizes),
+            ..Config::default()
+        };
+        assert_eq!(
+            child_environment(&sizes)
+                .get("ORCEL_APPROVAL_PREVIEWS")
+                .map(String::as_str),
+            Some("sizes")
+        );
+        // A saved sizes choice overrides an inherited request for content.
+        let inherited_content =
+            BTreeMap::from([("ORCEL_APPROVAL_PREVIEWS".to_string(), "content".to_string())]);
+        assert_eq!(
+            child_environment_from(&inherited_content, &sizes)
+                .get("ORCEL_APPROVAL_PREVIEWS")
+                .map(String::as_str),
+            Some("sizes")
+        );
+        // No saved choice leaves the person's own variable as it is, so it can still ask
+        // for sizes only; and with neither, orceld shows content previews.
+        let inherited_sizes =
+            BTreeMap::from([("ORCEL_APPROVAL_PREVIEWS".to_string(), "sizes".to_string())]);
+        assert_eq!(
+            child_environment_from(&inherited_sizes, &Config::default())
+                .get("ORCEL_APPROVAL_PREVIEWS")
+                .map(String::as_str),
+            Some("sizes")
+        );
+        assert_eq!(
+            child_environment_from(&BTreeMap::new(), &Config::default())
+                .get("ORCEL_APPROVAL_PREVIEWS"),
+            None
+        );
+    }
 
     #[test]
     fn child_environment_carries_workspaces_and_no_secrets() {
