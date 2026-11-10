@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-10, main at `203616b1` (#689).
+Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, #694, #695.
 
 ## Approval and security UX
 
@@ -24,13 +24,13 @@ Last updated: 2026-11-10, main at `203616b1` (#689).
 | STRONG summary before Windows Hello and Touch ID | Done (qualified) | #683 → `9c4f58ca` | `windows_summary_decision`, `soft_macos::summary_decision` tests | Real Hello and Touch ID are not exercised in CI; a person must be present | Founder-present acceptance run | Class 3 (a person at the prompt) |
 | Origin line (local or remote, with provider, device and connection) | Done (qualified) | #684 → `a03baf96` | `OriginStamp` wiring test with a negative control | — | Origin is not yet stored in approval history | none |
 | Typed targets, file Type line, move destination | Done (qualified) | #685 → `7a65b4c0` | `target_lines` tests | — | none | none |
-| Bounded, redacted content previews: file write and edit | Done (qualified) | #686 → `67799449` | `Preview` and `looks_secret` tests | `looks_secret` is a pattern list, not a guarantee | none | none |
+| Bounded, redacted content previews: file write and edit | Done (qualified) | #686 → `67799449` | `Preview` and `looks_secret` tests | `looks_secret` is a pattern list, not a guarantee. It over-hides: text naming Orcel's own crates (`orcel-approval`, `orcel-trust`) or words like `mnemonic` hides the preview, which fails safe | none | none |
 | Previews for clipboard writes, typed input, UI values; typed line breaks and control characters counted | Done (qualified) | #689 → `203616b1` | `typed_text_is_shown_only_in_the_bounded_preview` | No end-to-end clipboard or `set_value` prompt test | none | none |
-| Saved sizes-only choice | In review | #690 (open) | config round-trip and `child_environment` tests | Linux systemd uses its env file; a running session keeps its choice | A switch in the desktop app's settings | none |
-| Plain warning when hidden content looks like a credential | In review | #691 (open) | `a_credential_or_sizes_only_shows_no_content` | Refusing credential-like typed text, or making it STRONG, is not done (safer default chosen: hide, warn, keep approval) | none | none |
-| Application and window identity on desktop prompts | Not started | — | — | — | Window title and executable from the verified process | none |
-| Windows approval dialog timeout | Not started | — | — | `MessageBoxW` waits indefinitely | Bounded wait that denies on expiry | none |
-| Request origin in approval history | Not started | — | — | — | Store the origin with each decision | none |
+| Saved sizes-only choice | In review (independent review: merge) | #690 (open) | config round-trip, `child_environment`, rollback refusal tests | Linux systemd and the dev tarball read their own environment; rollback refuses while sizes is saved | A switch in the desktop app's settings | none |
+| Plain warning when hidden content looks like a credential | In review (independent review: merge) | #691 (open) | `a_credential_or_sizes_only_shows_no_content` | Refusing credential-like typed text, or making it STRONG, is not done (safer default chosen: hide, warn, keep approval) | none | none |
+| Application and window identity on desktop prompts | In review (independent review: merge) | #694 (open) | prompt-text and registry tests | The title is the one recorded at observation; the executable is a name, not a signed identity | A code-signature line; an orceld-level test of a desktop prompt | none |
+| Windows approval dialog timeout | In review (independent review: merge) | #693 (open) | answer mapping on every OS; a real dialog on the Windows CI runner | Windows Hello's own prompt keeps its own timing | none | none |
+| Request origin in approval history | In review (independent review: merge) | #695 (open) | origin recorded, reload, tamper and older-record tests | Unkeyed checksums catch corruption, not a determined same-user writer; a stripped origin shows as unrecorded | An app API history view | none |
 
 ## Filesystem, clipboard, process and parser safety
 
@@ -61,7 +61,7 @@ Last updated: 2026-11-10, main at `203616b1` (#689).
 |---|---|---|---|---|---|---|
 | Windows app (task timeline, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867` | Windows app task timeline job | #649 flaky window lookup | Onboarding, client connection management, permissions, settings and privacy screen, history, emergency stop, accessibility review | Stop needs decision 2 |
 | macOS and Linux app | Not started | — | — | — | — | Founder decision 4 |
-| Windows install, start, update, rollback, uninstall | Partial | #654 → `e0e3fa41`, #659 → `93f33b25`, #661 → `e8fd1692`, #665 | release qualification on Windows CI | #655 (uninstall lists miss some state) | #655 | Signing (founder) for a release build |
+| Windows install, start, update, rollback, uninstall | Partial | #654 → `e0e3fa41`, #659 → `93f33b25`, #661 → `e8fd1692`, #665 | release qualification on Windows CI | Unsigned; a real install under the new state root has run only in CI's release qualification | A founder-present install, upgrade and uninstall journey on a disposable machine (#655, uninstall missing stores, was closed by #659 and #661) | Signing (founder) for a release build |
 | macOS package | Blocked | — | — | — | XP-16 packaging | FD-05, signing identity |
 | Linux packages | Partial | Linux packages job | dev tarball journeys | — | — | none recorded |
 | Release workflow separation | Blocked | #673 (draft) | — | — | Merge once the `release` environment exists | Founder creates the environment; no settings changed by agents |
