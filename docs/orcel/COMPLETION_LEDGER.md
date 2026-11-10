@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, #694, #695.
+Last updated: 2026-11-10, main at `ca7ca02a` (#691). Open: #692 (this ledger), #699 (desktop sizes setting); the desktop stop controls branch opens after #699.
 
 ## Approval and security UX
 
@@ -26,7 +26,7 @@ Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, 
 | Typed targets, file Type line, move destination | Done (qualified) | #685 → `7a65b4c0` | `target_lines` tests | — | none | none |
 | Bounded, redacted content previews: file write and edit | Done (qualified) | #686 → `67799449` | `Preview` and `looks_secret` tests | `looks_secret` is a pattern list, not a guarantee. It over-hides: text naming Orcel's own crates (`orcel-approval`, `orcel-trust`) or words like `mnemonic` hides the preview, which fails safe | none | none |
 | Previews for clipboard writes, typed input, UI values; typed line breaks and control characters counted | Done (qualified) | #689 → `203616b1` | `typed_text_is_shown_only_in_the_bounded_preview` | No end-to-end clipboard or `set_value` prompt test | none | none |
-| Saved sizes-only choice | Done (qualified) | #690 → `5c55fd46` | config round-trip, `child_environment`, rollback refusal tests | Linux systemd and the dev tarball read their own environment; rollback refuses while sizes is saved | A switch in the desktop app's settings | none |
+| Saved sizes-only choice | Done (qualified) | #690 → `5c55fd46` | config round-trip, `child_environment`, rollback refusal tests | Linux systemd and the dev tarball read their own environment; rollback refuses while sizes is saved | Desktop switch in #699 (tighten-only: the app can set sizes only, never content) | none |
 | Plain warning when hidden content looks like a credential | Done (qualified) | #691 → `ca7ca02a` | `a_credential_or_sizes_only_shows_no_content` | Refusing credential-like typed text, or making it STRONG, is not done (safer default chosen: hide, warn, keep approval) | none | none |
 | Application and window identity on desktop prompts | Done (qualified) | #694 → `3e6ef8e2` | prompt-text and registry tests | The title is the one recorded at observation; the executable is a name, not a signed identity | A code-signature line; an orceld-level test of a desktop prompt | none |
 | Windows approval dialog timeout | Done (qualified) | #693 → `e90e51d6` | answer mapping on every OS; a real dialog on the Windows CI runner | Windows Hello's own prompt keeps its own timing | none | none |
@@ -51,7 +51,7 @@ Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, 
 | Desktop input (mouse, keyboard, text, UIA values) | Partial | Full User lease and approvals; #689 prompts | live-input tests on CI runners | Every action needs a lease and an approval | Founder-present run on a disposable machine | Class 3 |
 | Browser interaction | Partial | SG-000108, SG-000115 inert engineering (`RELEASE_READINESS.md` class 1) | BM-02 browser tasks on Windows | macOS and Linux launch refused until SG-000115 activation; release-build live browser needs its own decision | Activation work | Founder decisions (SG-000115 activation, slice 7) |
 | Process execution (contained tier, shell) | Partial | SG-000096 plan (#260, #266, #267 open) | contained-tier tests | #292 flaky on Windows | T04 and T05 | none recorded |
-| Stop, pause, resume, human takeover | Blocked | #640 (draft) | — | — | Slice 5 surface | Founder decision 2 |
+| Stop, pause, resume, human takeover | Partial | Desktop: Stop desktop control, `control`, `stop control` and `revoke all` (stacked on #699, reviewed: merge, not yet opened); task stop: #640 (draft) | desktop self-tests | The app only takes authority away. The CLI waits for its lifecycle lock (up to 60 s) and refuses while legacy state is undecided before a `full-control revoke`; whether the Windows Hello prompt comes to the front when the app starts `revoke all` is unchecked | A task-scoped stop and pause/resume (slice 5); a busy guard and distinct styling for the stop button; a CLI change so a revoke isn't held behind a pending grant (needs care: a grant finishing after a revoke must not undo it) | Founder decision 2 for task stop; a person to check the Hello prompt |
 | Crash recovery and state reconciliation | Partial | SG-000120 resume summary #464; mutation journal; #639 recovery and history | journal tests; #630 orceld killed during an Agent run | Effects orceld can't read back are recorded as unknown | Recovery UI in the app | none |
 | Multi-client isolation | Partial | Remote leases and origin stamping (#667 → `26f17234`, #684) | `fix395_tunnel_remote`, origin tests | — | A qualification suite across concurrent clients | none |
 
@@ -59,7 +59,7 @@ Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, 
 
 | Component | State | Evidence | Tests | Known limitations | Remaining work | Blockers |
 |---|---|---|---|---|---|---|
-| Windows app (task timeline, approval history, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867`, #697 → `3d46d797` (`history`) | Windows app task timeline job | #649 flaky window lookup | Onboarding, client connection management, permissions, settings and privacy screen, history, emergency stop, accessibility review | Stop needs decision 2 |
+| Windows app (task timeline, approval history, preview setting, stop controls, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867`, #697 → `3d46d797` (`history`) | Windows app task timeline job | #649 flaky window lookup | Onboarding, client connection management, permissions, settings and privacy screen, history, emergency stop, accessibility review | Stop needs decision 2 |
 | macOS and Linux app | Not started | — | — | — | — | Founder decision 4 |
 | Windows install, start, update, rollback, uninstall | Partial | #654 → `e0e3fa41`, #659 → `93f33b25`, #661 → `e8fd1692`, #665 | release qualification on Windows CI | Unsigned; a real install under the new state root has run only in CI's release qualification | A founder-present install, upgrade and uninstall journey on a disposable machine (#655, uninstall missing stores, was closed by #659 and #661) | Signing (founder) for a release build |
 | macOS package | Blocked | — | — | — | XP-16 packaging | FD-05, signing identity |
@@ -73,6 +73,14 @@ Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, 
 | A real client drives a real approval to a verified report | Not started | Release qualification reaches the prompt with a test client | `release_qualification.rs` | No person has answered a real prompt in a journey | F4 slice 4 | Class 3: the founder at the prompt |
 | AI model integration | Not started | Harness only (`model_eval.py`, `model_run.py`) | stub runs | No model has been run | Run a candidate | Founder decision 3 (download) |
 | Passkey test environment | Not started | — | — | — | A disposable environment and protocol | Never the founder's personal desktop or accounts |
+
+## CI reliability
+
+| Item | State | Evidence | Remaining |
+|---|---|---|---|
+| Browser-host rehearsal flakes (#696) | Fix merged, watching | #698 → `4e332520`: the two racing steps retry a fail-closed `InUse` for up to 10 s | Close #696 after a few clean runs |
+| Native host X11 latency scroll never shows its effect (#700) | Open, evidence only | Seen once on #699 | Print the fixture's scroll state and the host's outcome at the deadline if it recurs |
+| Jev review needs the PR to contain current main | Known | its merge-base check | Update a PR to main before its review gate runs |
 
 ## How to resume
 
