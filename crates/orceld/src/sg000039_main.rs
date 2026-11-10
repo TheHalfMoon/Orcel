@@ -141,9 +141,16 @@ fn run() -> Result<(), String> {
             capabilities: app_api_capabilities(approval.presence_available()),
         },
         std::sync::Arc::clone(&tasks),
-        orcel_approval::ApprovalHistoryReader::open()
-            .ok()
-            .map(std::sync::Arc::new),
+        match orcel_approval::ApprovalHistoryReader::open() {
+            Ok(reader) => Some(std::sync::Arc::new(reader)),
+            Err(error) => {
+                eprintln!(
+                    "orceld app api: approval history unavailable: {}",
+                    error.message
+                );
+                None
+            }
+        },
     );
 
     let stdin = io::stdin();

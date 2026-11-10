@@ -686,12 +686,13 @@ namespace Orcel.DesktopPreview
         {
             long ms;
             if (!long.TryParse(millis, out ms) || ms <= 0) return "(time unknown)";
-            return DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+            try { return DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"); }
+            catch (ArgumentOutOfRangeException) { return "(time unknown)"; }
         }
 
         internal static string Text(Dictionary<string, object> result)
         {
-            if (result == null) return "Approval history unavailable: the local runtime did not answer the read-only query.";
+            if (result == null) return "Approval history unavailable: the local runtime did not answer, or this version of it has no approval history to read.";
             object entries;
             if (!result.TryGetValue("entries", out entries) || !(entries is IEnumerable)) return "Approval history unavailable: the answer had no entries.";
             StringBuilder text = new StringBuilder("Recent approval decisions, newest first:");
@@ -1533,6 +1534,7 @@ namespace Orcel.DesktopPreview
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
             expect(history.Split('\n').Length == 4, "one line per decision; a field cannot add lines");
             expect(history.Contains("approved (SOFT), from REMOTE via tunnel, device d 1, workspace ws x, used") && history.Contains("denied (STRONG), from origin not recorded"), "history names decision, class, origin and use");
+            expect(ApprovalHistory.When("999999999999999999") == "(time unknown)" && ApprovalHistory.When("x") == "(time unknown)", "an impossible time is not a crash");
             expect(ApprovalHistory.Text(null).StartsWith("Approval history unavailable") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[]}}")) == "No approval decisions are recorded yet.", "empty and unavailable history say so");
             expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"UNKNOWN_TASK\"}}") == null, "an error frame is not a result");
             WatcherSelfTest(expect);
