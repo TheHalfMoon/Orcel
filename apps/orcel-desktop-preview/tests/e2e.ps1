@@ -149,7 +149,7 @@ try {
         $setupValue = $(if ($setup) { $setup.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current } else { $null })
         Check "connect shows read-only setup text to copy" ($null -ne $setupValue -and $setupValue.IsReadOnly) ""
         $setupText = $(if ($setupValue) { $setupValue.Value } else { "" })
-        Check "the setup names this install's CLI for each client" ($setupText.Contains('"' + $cli.Replace('\', '\\') + '"') -and $setupText.Contains("'" + $cli.Replace("'", "''") + "' mcp stdio") -and $setupText.Contains("command $cli, arguments mcp stdio")) "$(($setupText -split "`n")[0])"
+        Check "the setup names this install's CLI for each client" ($setupText.Contains('"command": "' + $cli.Replace('\', '\\') + '"') -and $setupText.Contains('command = "' + $cli.Replace('\', '\\') + '"') -and $setupText.Contains("'" + $cli.Replace("'", "''") + "' mcp stdio") -and $setupText.Contains("command $cli, arguments mcp stdio")) "$(($setupText -split "`n")[0])"
         $connectAnnounced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Setup for Claude Desktop", [StringComparison]::Ordinal)) { $a } } 3000
         Check "the setup is announced by where it is, not read out" ($null -ne $connectAnnounced) "$connectAnnounced"
     } else {
