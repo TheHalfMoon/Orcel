@@ -575,6 +575,17 @@ mod tests {
             &rest(&["--minutes", "30", "grant"])
         ));
         assert!(holds_lifecycle_lock("full-control", &rest(&[])));
+        // The action is the first argument not starting with `--`, as `Args::positional`
+        // reads it, so a revoke followed by anything is still a revoke, and the command
+        // then refuses the extra arguments without granting.
+        assert!(!holds_lifecycle_lock(
+            "full-control",
+            &rest(&["revoke", "grant"])
+        ));
+        assert!(!holds_lifecycle_lock(
+            "full-control",
+            &rest(&["--minutes", "revoke", "grant"])
+        ));
         assert!(holds_lifecycle_lock("workspace", &rest(&["add", "a", "b"])));
         assert!(!holds_lifecycle_lock("status", &rest(&[])));
     }

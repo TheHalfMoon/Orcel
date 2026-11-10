@@ -413,6 +413,9 @@ pub fn invalidate(path: &Path, key: &[u8; AUTHORITY_KEY_BYTES]) -> Result<u64, P
     Ok(epoch)
 }
 
+/// Grants without checking the epoch a person approved at. Production grants use
+/// [`grant_local_at_epoch`], so a revoke made while the approval prompt was open isn't
+/// overwritten; this form is for tests and for callers that hold no approval prompt open.
 #[allow(clippy::too_many_arguments)]
 pub fn grant_local(
     path: &Path,
