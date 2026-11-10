@@ -1069,18 +1069,15 @@ impl LocalApprovalBroker {
     }
 }
 
-/// Reads the approval history and nothing else: it holds no presence surface and has no way
-/// to issue, consume or revoke an approval. For readers outside the broker, such as orceld's
-/// read-only app API. It verifies the ledger as the broker does, and reports the last view it
-/// verified when the ledger is busy or fails to verify.
-/// How current an approval history answer is. History is best effort: when the ledger is
-/// busy or fails verification, the answer is the last view this reader verified, which may
-/// be empty or miss recent decisions.
+/// How current an approval history answer is. History is best effort: when the ledger can't
+/// be read or fails verification, the answer is the last view this reader verified, which
+/// may be empty or miss recent decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryState {
-    /// The ledger was read and verified for this answer.
+    /// The ledger was read and verified for this answer (as of that read).
     Verified,
-    /// Another writer held the ledger for the whole wait; this is the last verified view.
+    /// The ledger couldn't be read just now: another writer held it for the whole wait, its
+    /// lock file couldn't be opened, or a read failed. This is the last verified view.
     Busy,
     /// The ledger failed verification; this is the last verified view, possibly empty.
     Unverifiable,
@@ -1096,6 +1093,10 @@ impl HistoryState {
     }
 }
 
+/// Reads the approval history and nothing else: it holds no presence surface and has no way
+/// to issue, consume or revoke an approval. For readers outside the broker, such as orceld's
+/// read-only app API. It verifies the ledger as the broker does, and reports the last view it
+/// verified, and says so, when the ledger can't be read or fails to verify.
 pub struct ApprovalHistoryReader {
     ledger: Mutex<ApprovalLedger>,
 }
@@ -2891,6 +2892,7 @@ mod soft_decider_tests {
         let (entries, state) = reader.history_with_state(10);
         assert_eq!((entries.len(), state), (1, HistoryState::Unverifiable));
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(approval_ledger_lock_path(&path));
     }
 
     /// The history says where each request came from, and the origin survives a reload,
