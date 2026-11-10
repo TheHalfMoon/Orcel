@@ -70,6 +70,10 @@ Local MCP (no tunnel required):
 
 Approvals:
   orcel approvals [--limit <n>]           Show recent approval decisions.
+  orcel approvals previews [content|sizes]
+      Show or save what approval prompts show of the content they approve:
+      a short preview hidden when it looks like a credential (content, the
+      default), or sizes only. Applies to sessions started afterwards.
   orcel approvals recover                 Quarantine an approval ledger that fails
                                           verification and start a new one.
   orcel emergency-revoke                  Invalidate all pending approvals, Full User
