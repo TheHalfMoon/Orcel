@@ -30,7 +30,7 @@ Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, 
 | Plain warning when hidden content looks like a credential | In review (independent review: merge) | #691 (open) | `a_credential_or_sizes_only_shows_no_content` | Refusing credential-like typed text, or making it STRONG, is not done (safer default chosen: hide, warn, keep approval) | none | none |
 | Application and window identity on desktop prompts | In review (independent review: merge) | #694 (open) | prompt-text and registry tests | The title is the one recorded at observation; the executable is a name, not a signed identity | A code-signature line; an orceld-level test of a desktop prompt | none |
 | Windows approval dialog timeout | Done (qualified) | #693 → `e90e51d6` | answer mapping on every OS; a real dialog on the Windows CI runner | Windows Hello's own prompt keeps its own timing | none | none |
-| Request origin in approval history | Done (qualified) | #695 → `574ccece` | origin recorded, reload, tamper and older-record tests | Unkeyed checksums catch corruption, not a determined same-user writer; a stripped origin shows as unrecorded | App API history view and desktop `history` command in #697 | none |
+| Request origin in approval history | Done (qualified) | #695 → `574ccece` | origin recorded, reload, tamper and older-record tests | Unkeyed checksums catch corruption, not a determined same-user writer; a stripped origin shows as unrecorded | none (history view: #697 → `3d46d797`) | none |
 
 ## Filesystem, clipboard, process and parser safety
 
@@ -59,7 +59,7 @@ Last updated: 2026-11-10, main at `203616b1` (#689); open PRs #690, #691, #693, 
 
 | Component | State | Evidence | Tests | Known limitations | Remaining work | Blockers |
 |---|---|---|---|---|---|---|
-| Windows app (task timeline, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867` | Windows app task timeline job | #649 flaky window lookup | Onboarding, client connection management, permissions, settings and privacy screen, history, emergency stop, accessibility review | Stop needs decision 2 |
+| Windows app (task timeline, approval history, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867`, #697 → `3d46d797` (`history`) | Windows app task timeline job | #649 flaky window lookup | Onboarding, client connection management, permissions, settings and privacy screen, history, emergency stop, accessibility review | Stop needs decision 2 |
 | macOS and Linux app | Not started | — | — | — | — | Founder decision 4 |
 | Windows install, start, update, rollback, uninstall | Partial | #654 → `e0e3fa41`, #659 → `93f33b25`, #661 → `e8fd1692`, #665 | release qualification on Windows CI | Unsigned; a real install under the new state root has run only in CI's release qualification | A founder-present install, upgrade and uninstall journey on a disposable machine (#655, uninstall missing stores, was closed by #659 and #661) | Signing (founder) for a release build |
 | macOS package | Blocked | — | — | — | XP-16 packaging | FD-05, signing identity |
