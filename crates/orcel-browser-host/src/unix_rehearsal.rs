@@ -753,17 +753,18 @@ mod tests {
         }
     }
 
-    /// Recovery fails closed while it can't rule out that a process of this user is the
-    /// engine: one whose arguments it can't read, or that is still listed. On a shared runner
-    /// an unrelated process, often another test's, can be in that state for a moment as it
-    /// exits (#696). Production keeps the profile then; these tests retry for a bounded time
-    /// instead, so they still fail if the refusal persists.
+    /// Recovery fails closed in two ways that can last a moment on a shared runner (#696).
+    /// It can find the profile's lock still held: another test thread in this binary that
+    /// forks for a spawn keeps a copy of the lock until its exec. Or it can be unable to rule
+    /// out an engine: a process of this user whose arguments it can't read and that is still
+    /// listed. Production keeps the profile either way; these tests retry for a bounded time
+    /// instead, so a hold that is never released or a profile never removed still fails them.
     fn until_not_in_use<T>(mut attempt: impl FnMut() -> Result<T, Refused>) -> Result<T, Refused> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match attempt() {
-                Err(Refused::InUse) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                Err(Refused::InUse) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100));
                 }
                 result => return result,
             }
