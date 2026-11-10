@@ -22,6 +22,9 @@ mod presence_unix;
 mod prompt_text;
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod soft_macos;
+/// The Windows Yes/No dialog, closed as a timeout when nobody answers.
+#[cfg(any(windows, test))]
+mod windows_dialog;
 
 /// The Linux helper's own protocol module, so tests on every OS check that
 /// orceld and the helper agree.
@@ -459,51 +462,34 @@ fn check_hello_availability() -> bool {
     result.unwrap_or(false)
 }
 
-#[cfg(any(windows, test))]
-const WINDOWS_IDYES: i32 = 6;
-#[cfg(any(windows, test))]
-const WINDOWS_IDNO: i32 = 7;
-
 /// What the Windows STRONG summary's answer means: only Yes goes on to Windows Hello.
 #[cfg(any(windows, test))]
-fn windows_summary_decision(result: i32) -> Result<(), PresenceError> {
-    match result {
-        WINDOWS_IDYES => Ok(()),
-        WINDOWS_IDNO => Err(PresenceError::denied(
+fn windows_summary_decision(answer: windows_dialog::DialogAnswer) -> Result<(), PresenceError> {
+    use windows_dialog::DialogAnswer;
+    match answer {
+        DialogAnswer::Yes => Ok(()),
+        DialogAnswer::No => Err(PresenceError::denied(
             "the STRONG request was declined at its summary; nothing was asked of Windows Hello",
         )),
-        other => Err(PresenceError::unavailable(format!(
+        DialogAnswer::TimedOut => Err(PresenceError::timeout(format!(
+            "the STRONG summary was not answered within {} seconds; nothing was asked of Windows Hello",
+            windows_dialog::DIALOG_TIMEOUT.as_secs()
+        ))),
+        DialogAnswer::Unexpected(other) => Err(PresenceError::unavailable(format!(
             "the STRONG summary returned unexpected result {other}; STRONG approval fails closed"
         ))),
     }
 }
 
-/// Shows the STRONG summary in a system-modal Yes/No dialog whose default is No.
+/// Shows the STRONG summary in a system-modal Yes/No dialog whose default is No, closed as a
+/// timeout after [`windows_dialog::DIALOG_TIMEOUT`].
 #[cfg(windows)]
-fn show_windows_strong_summary(body: &str) -> i32 {
-    use std::ffi::c_void;
-    type Hwnd = *mut c_void;
-    const MB_YESNO: u32 = 0x0000_0004;
-    const MB_ICONWARNING: u32 = 0x0000_0030;
-    const MB_DEFBUTTON2: u32 = 0x0000_0100;
-    const MB_SYSTEMMODAL: u32 = 0x0000_1000;
-    #[link(name = "user32")]
-    extern "system" {
-        fn MessageBoxW(hwnd: Hwnd, text: *const u16, caption: *const u16, kind: u32) -> i32;
-    }
-    let wide =
-        |value: &str| -> Vec<u16> { value.encode_utf16().chain(std::iter::once(0)).collect() };
-    let body = wide(body);
-    let caption = wide("Orcel approval STRONG");
-    // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call; no owner window.
-    unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            body.as_ptr(),
-            caption.as_ptr(),
-            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SYSTEMMODAL,
-        )
-    }
+fn show_windows_strong_summary(body: &str) -> windows_dialog::DialogAnswer {
+    windows_dialog::ask_yes_no(
+        body,
+        "Orcel approval STRONG",
+        windows_dialog::DIALOG_TIMEOUT,
+    )
 }
 
 /// The Windows Hello message: the request's nonce and digest prefixes, action and workspace,
@@ -2512,44 +2498,17 @@ fn history_path_unavailable(error: PlatformError) -> ApprovalError {
 
 #[cfg(windows)]
 fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, ApprovalError> {
-    use std::ffi::c_void;
-    use std::ptr;
-
-    type Hwnd = *mut c_void;
-    const MB_YESNO: u32 = 0x0000_0004;
-    const MB_ICONWARNING: u32 = 0x0000_0030;
-    const MB_DEFBUTTON2: u32 = 0x0000_0100;
-    const MB_SYSTEMMODAL: u32 = 0x0000_1000;
-    const IDYES: i32 = 6;
-    const IDNO: i32 = 7;
-
-    #[link(name = "user32")]
-    extern "system" {
-        fn MessageBoxW(hwnd: Hwnd, text: *const u16, caption: *const u16, kind: u32) -> i32;
-    }
-
-    fn wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(std::iter::once(0)).collect()
-    }
+    use windows_dialog::DialogAnswer;
 
     debug_assert_eq!(prompt.approval_class, ApprovalClass::Soft);
     // The same escaped, bounded lines macOS and Linux show: a field can't fake another line
     // or reorder what is read.
-    let body = wide(&prompt_text::dialog_body(prompt));
-    let caption = wide("Orcel approval SOFT");
-    let result = unsafe {
-        MessageBoxW(
-            ptr::null_mut(),
-            body.as_ptr(),
-            caption.as_ptr(),
-            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SYSTEMMODAL,
-        )
-    };
-
-    match result {
-        IDYES => Ok(ApprovalDecision::Approved),
-        IDNO => Ok(ApprovalDecision::Denied),
-        _ => Err(ApprovalError::unavailable(format!(
+    let body = prompt_text::dialog_body(prompt);
+    match windows_dialog::ask_yes_no(&body, "Orcel approval SOFT", windows_dialog::DIALOG_TIMEOUT) {
+        DialogAnswer::Yes => Ok(ApprovalDecision::Approved),
+        // An unanswered prompt denies, as it does on macOS and Linux.
+        DialogAnswer::No | DialogAnswer::TimedOut => Ok(ApprovalDecision::Denied),
+        DialogAnswer::Unexpected(result) => Err(ApprovalError::unavailable(format!(
             "Windows approval prompt returned unexpected result {result}"
         ))),
     }
