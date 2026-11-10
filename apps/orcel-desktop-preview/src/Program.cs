@@ -1605,8 +1605,9 @@ namespace Orcel.DesktopPreview
                 AddMessage(false, Interpret.StatusMessage(new RuntimeStatus { Availability = RuntimeAvailability.NotInstalled }));
                 return;
             }
-            // One run at a time for the commands that change something, so a double click or a
-            // repeated command doesn't start a second revoke or a second Windows Hello prompt.
+            // One run at a time for the commands that change something, and for the workspace
+            // list, which holds the runtime's lock: a double click or a repeated command doesn't
+            // start a second revoke, a second Windows Hello prompt or a second wait on the lock.
             bool guarded = command == SafeCommand.StopControl || command == SafeCommand.RevokeAll || command == SafeCommand.PreviewsSizes
                 || command == SafeCommand.Workspaces;
             if (guarded && running.Contains(command))
