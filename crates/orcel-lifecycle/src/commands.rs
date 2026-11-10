@@ -721,10 +721,62 @@ pub fn doctor(args: &mut Args) -> Result<Output, LifecycleError> {
     })
 }
 
+/// `orcel approvals previews [content|sizes]`: shows or saves what approval prompts show of
+/// the content they approve. Saved in the protected `config.json`; orceld reads it at launch.
+fn approval_previews(layout: &Layout, choice: Option<&str>) -> Result<Output, LifecycleError> {
+    let mut config = Config::load(layout)?;
+    let mut changed = false;
+    if let Some(choice) = choice {
+        let parsed = config::ApprovalPreviews::parse(choice)
+            .ok_or_else(|| LifecycleError::usage("approval previews are `content` or `sizes`"))?;
+        // Content is the default, so choosing it removes the field: a configuration without
+        // it is one every Orcel version reads (see `orcel rollback`).
+        let saved = (parsed == config::ApprovalPreviews::Sizes).then_some(parsed);
+        if config.approval_previews != saved {
+            config.approval_previews = saved;
+            config.save(layout)?;
+            changed = true;
+        }
+    }
+    let current = config
+        .approval_previews
+        .unwrap_or(config::ApprovalPreviews::Content);
+    let meaning = match current {
+        config::ApprovalPreviews::Content => {
+            "prompts show a short preview, hidden when it looks like a credential"
+        }
+        config::ApprovalPreviews::Sizes => "prompts show sizes only, never any content",
+    };
+    let mut human = format!("Approval previews: {} ({meaning}).\n", current.as_str());
+    if changed {
+        human.push_str(
+            "Sessions started from now on use it. Restart AI clients that run `orcel mcp stdio`, \
+             run `orcel stop` then `orcel start` for the tunnel, and reconnect `orcel remote connect`.\n",
+        );
+    }
+    if cfg!(unix) {
+        human.push_str(
+            "On Linux and macOS, an orceld started by systemd or the dev tarball reads only its \
+             own environment: add ORCEL_APPROVAL_PREVIEWS=sizes there (for systemd, in \
+             ~/.config/orcel/orceld.env).\n",
+        );
+    }
+    Ok(Output {
+        exit_code: 0,
+        human,
+        json: json!({"ok": true, "approval_previews": current.as_str(), "changed": changed}),
+    })
+}
+
 pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
     if args.flag("recover") {
         args.finish()?;
         return approvals_recover(&approval_history_path()?);
+    }
+    if args.flag("previews") {
+        let choice = args.positional("preview choice").ok();
+        args.finish()?;
+        return approval_previews(&Layout::for_current_user()?, choice.as_deref());
     }
     let limit = match args.value("--limit")? {
         Some(value) => value
