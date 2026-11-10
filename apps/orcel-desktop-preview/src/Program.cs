@@ -759,14 +759,21 @@ namespace Orcel.DesktopPreview
     /// install's exact path. The app shows it and edits no client's configuration.
     internal static class ConnectGuide
     {
-        /// A Windows path as a JSON string's contents: backslashes and quotes escaped.
         /// A path as a PowerShell single-quoted string's contents: nothing inside it expands
-        /// (no `$`, backtick or `$(...)`), and a quote is doubled.
+        /// (no `$`, backtick or `$(...)`). PowerShell ends such a string at any of its single
+        /// quotes, the ASCII one and the curly U+2018 to U+201B, so each is doubled.
         internal static string PowerShellPath(string path)
         {
-            return (path ?? "").Replace("'", "''");
+            StringBuilder text = new StringBuilder();
+            foreach (char c in path ?? "")
+            {
+                text.Append(c);
+                if (c == '\'' || c == '\u2018' || c == '\u2019' || c == '\u201A' || c == '\u201B') text.Append(c);
+            }
+            return text.ToString();
         }
 
+        /// A Windows path as a JSON string's contents: backslashes and quotes escaped.
         internal static string JsonPath(string path)
         {
             return (path ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
@@ -1657,7 +1664,12 @@ namespace Orcel.DesktopPreview
             else if (kind == SafeCommand.History)
                 ShowHistory();
             else if (kind == SafeCommand.Connect)
-                AddMessage(false, ConnectGuide.Text(LocalHost.PathToCompatCli(), LocalHost.IsInstalled()), true);
+            {
+                // Only the setup itself goes in the copyable box; the install instruction is an
+                // ordinary reply, read out as it is.
+                bool installed = LocalHost.IsInstalled();
+                AddMessage(false, ConnectGuide.Text(LocalHost.PathToCompatCli(), installed), installed);
+            }
             else if (kind == SafeCommand.PreviewsContent)
                 AddMessage(false, "Not changed. This app only makes approval prompts show less. To show content previews again, run orcel approvals previews content in a terminal.");
             else if (CommandRouter.CanInvokeInstalledHost(kind))
@@ -1906,7 +1918,7 @@ namespace Orcel.DesktopPreview
             expect(CommandRouter.Classify("connect") == SafeCommand.Connect && CommandRouter.CliArguments(SafeCommand.Connect) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Connect), "connect runs nothing");
             string guide = ConnectGuide.Text("C:\\Users\\a b\\.orcel\\bin\\orcel.exe", true);
             expect(guide.Contains("\"command\": \"C:\\\\Users\\\\a b\\\\.orcel\\\\bin\\\\orcel.exe\"") && guide.Contains("claude mcp add --scope user orcel -- 'C:\\Users\\a b\\.orcel\\bin\\orcel.exe' mcp stdio") && guide.Contains("startup_timeout_sec = 20\ntool_timeout_sec = 60") && guide.Contains("command = \"C:\\\\Users\\\\a b\\\\.orcel\\\\bin\\\\orcel.exe\""), "connect shows the exact path, escaped for JSON and TOML, single-quoted for PowerShell");
-            expect(ConnectGuide.Text("C:\\Users\\$(calc)\\.orcel\\bin\\orcel.exe", true).Contains("-- 'C:\\Users\\$(calc)\\.orcel\\bin\\orcel.exe' mcp") && ConnectGuide.PowerShellPath("O'Brien") == "O''Brien", "the PowerShell line never expands or breaks on the path");
+            expect(ConnectGuide.Text("C:\\Users\\$(calc)\\.orcel\\bin\\orcel.exe", true).Contains("-- 'C:\\Users\\$(calc)\\.orcel\\bin\\orcel.exe' mcp") && ConnectGuide.PowerShellPath("O'Brien") == "O''Brien" && ConnectGuide.PowerShellPath("O\u2019Brien") == "O\u2019\u2019Brien" && ConnectGuide.PowerShellPath("a\u2018b\u201Ac\u201Bd") == "a\u2018\u2018b\u201A\u201Ac\u201B\u201Bd", "the PowerShell line never expands or breaks on the path, curly quotes included");
             expect(ConnectGuide.Text("C:\\Users\\O'Brien\\.orcel\\bin\\orcel.exe", true).Contains("command = \"C:\\\\Users\\\\O'Brien\\\\.orcel\\\\bin\\\\orcel.exe\""), "a path with an apostrophe stays valid TOML");
             string snippet = guide.Split('\n').First(line => line.StartsWith("{ \"mcpServers\""));
             expect(new JavaScriptSerializer().DeserializeObject(snippet) is Dictionary<string, object>, "the Claude Desktop snippet is valid JSON");
