@@ -17,4 +17,4 @@ $source = [IO.File]::ReadAllText((Join-Path $root "src\Program.cs"))
 foreach ($forbidden in @("WebClient", "HttpClient", "TcpClient", "HttpListener", "ProcessStartInfo(commandBox.Text)", "ProcessStartInfo(value)")) {
     if ($source.Contains($forbidden)) { throw "Forbidden capability: $forbidden" }
 }
-Write-Output "PASS: compiled WPF preview, command router (read-only plus the sizes-only preview setting), fixed runtime, size and no network API."
+Write-Output "PASS: compiled WPF preview, command router (read-only plus the authority-reducing controls), fixed runtime, size and no network API."

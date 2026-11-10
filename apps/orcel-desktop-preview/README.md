@@ -59,7 +59,7 @@ All generated binaries go to the user's TEMP directory. A signed installer and i
 
 ## Security boundary
 
-The preview's only connection to orceld besides the fixed CLI queries is the read-only app API pipe (this user's local pipe, whose server must run as this user; no network). The preview does not create a network listener, model connection, browser automation service, input actuation, shell execution API, file mutation (other than the runtime saving the sizes-only preview setting through its own CLI), remote pairing endpoint, or delegated approval. It never attempts to elevate privileges.
+The preview's only connection to orceld besides the fixed CLI queries is the read-only app API pipe (this user's local pipe, whose server must run as this user; no network). The preview does not create a network listener, model connection, browser automation service, input actuation, shell execution API, file mutation (other than the runtime's own CLI saving the sizes-only preview setting and recording a desktop control revoke or an emergency revoke in its protected state), remote pairing endpoint, or delegated approval. It never attempts to elevate privileges.
 
 Only fixed CLI operations may be invoked from the known per-user installation path: the read-only queries, and three that only take authority away: `approvals previews sizes`, `full-control revoke` and `emergency-revoke`. The existing Orcel/Orcel core remains the policy authority; the preview does not duplicate its grants or bypass local approvals.
 

@@ -1050,7 +1050,7 @@ namespace Orcel.DesktopPreview
             if (status.TryGetValue("active", out active) && true.Equals(active))
                 return "Desktop control is ACTIVE: Orcel may type and click in this session until its lease ends. Type stop control, or press Stop desktop control, to end it now.";
             string reason = Text(status, "reason");
-            return "Desktop control is off (Safe)" + (string.IsNullOrEmpty(reason) ? "." : ": " + Plain(reason));
+            return "Desktop control is off (Safe)" + (string.IsNullOrEmpty(reason) ? ": no active lease for this session." : ": " + Plain(reason));
         }
 
         /// `orcel full-control revoke --json`.
@@ -1064,20 +1064,25 @@ namespace Orcel.DesktopPreview
             Dictionary<string, object> json = Ok(result, answer);
             if (json == null) return "The installed Orcel runtime did not confirm that desktop control stopped. Type control to check.";
             object revoked;
-            if (json.TryGetValue("revoked", out revoked) && true.Equals(revoked))
-                return "Desktop control stopped. Orcel can no longer type or click until someone grants it again with Windows Hello.";
-            return "Desktop control was already off (Safe). Nothing was running.";
+            json.TryGetValue("revoked", out revoked);
+            if (true.Equals(revoked))
+                return "Desktop control authority revoked. Orcel can't type or click until someone grants it again with Windows Hello.";
+            if (false.Equals(revoked))
+                return "Desktop control was already off (Safe). Nothing was running.";
+            return "The installed Orcel runtime did not confirm that desktop control stopped. Type control to check.";
         }
 
         /// `orcel emergency-revoke --json`: the runtime asks for Windows Hello itself.
         internal static string RevokeAllMessage(CliResult result)
         {
             if (result.FailedToStart) return "The Orcel runtime could not be started, so nothing was revoked by this app. Run orcel emergency-revoke in a terminal.";
-            if (result.TimedOut) return "The emergency revoke did not finish in time. It may or may not have been recorded; run orcel approvals to check.";
+            if (result.TimedOut) return "The emergency revoke did not finish in time. It may or may not have been recorded; type history to check.";
             Dictionary<string, object> answer = Parse(result.Stdout);
             string refusal = Refusal(result, answer);
-            if (refusal != null) return "Nothing was revoked: " + refusal;
-            if (Ok(result, answer) == null) return "The installed Orcel runtime did not confirm the emergency revoke. Run orcel approvals to check.";
+            // An error can follow a partial revoke, or a Hello approved after the CLI stopped
+            // waiting, so it never claims that nothing happened.
+            if (refusal != null) return "The emergency revoke was not confirmed: " + refusal + " Type history to see whether it was recorded.";
+            if (Ok(result, answer) == null) return "The installed Orcel runtime did not confirm the emergency revoke. Type history to see whether it was recorded.";
             return "Emergency revoke recorded: every pending approval, desktop control and every remote session lease is now invalid.";
         }
 
@@ -1222,8 +1227,12 @@ namespace Orcel.DesktopPreview
         private const int QueryTimeoutMs = 8000;
         // Doctor starts the daemon for an IPC probe and takes about 8 s on a typical machine.
         private const int DoctorTimeoutMs = 30000;
-        /// The runtime waits up to 180 s for Windows Hello during an emergency revoke.
+        /// An emergency revoke's call to orceld is limited to 180 s (its STRONG summary and
+        /// Windows Hello each wait up to 120 s); this covers that and the CLI's start.
         private const int RevokeAllTimeoutMs = 200000;
+        /// Desktop control commands may wait up to 60 s for the runtime's lifecycle lock, for
+        /// example while an update runs or a grant waits for Windows Hello.
+        private const int ControlTimeoutMs = 70000;
         private readonly StackPanel transcript = new StackPanel();
         private readonly TextBox commandBox = new TextBox();
         private readonly TextBlock hostState = new TextBlock();
@@ -1508,7 +1517,10 @@ namespace Orcel.DesktopPreview
                     return;
                 }
                 string response = await Task.Run(delegate {
-                    CliResult result = LocalHost.Query(command, command == SafeCommand.Doctor ? DoctorTimeoutMs : command == SafeCommand.RevokeAll ? RevokeAllTimeoutMs : QueryTimeoutMs);
+                    CliResult result = LocalHost.Query(command, command == SafeCommand.Doctor ? DoctorTimeoutMs
+                        : command == SafeCommand.RevokeAll ? RevokeAllTimeoutMs
+                        : command == SafeCommand.Control || command == SafeCommand.StopControl ? ControlTimeoutMs
+                        : QueryTimeoutMs);
                     if (CommandRouter.IsPreviewSetting(command)) return Interpret.PreviewsMessage(result);
                     if (command == SafeCommand.Control) return Interpret.ControlMessage(result);
                     if (command == SafeCommand.StopControl) return Interpret.StopControlMessage(result);
@@ -1688,10 +1700,10 @@ namespace Orcel.DesktopPreview
             expect(CommandRouter.Classify("control") == SafeCommand.Control && CommandRouter.Classify(" Stop Control ") == SafeCommand.StopControl && CommandRouter.Classify("revoke all") == SafeCommand.RevokeAll, "control commands route");
             expect(CommandRouter.Classify("grant control") == SafeCommand.Unsupported && CommandRouter.Classify("full-control grant") == SafeCommand.Unsupported && CommandRouter.Classify("stop  control") == SafeCommand.Unsupported, "nothing grants control, and only exact commands route");
             expect(string.Join(" ", CommandRouter.CliArguments(SafeCommand.Control)) == "full-control status --json" && string.Join(" ", CommandRouter.CliArguments(SafeCommand.StopControl)) == "full-control revoke --json" && string.Join(" ", CommandRouter.CliArguments(SafeCommand.RevokeAll)) == "emergency-revoke --json", "control commands pass fixed arguments only");
-            expect(Interpret.StopControlMessage(new CliResult { ExitCode = 0, Stdout = "{\n  \"ok\": true,\n  \"revoked\": true,\n  \"authority_epoch\": 4\n}" }).StartsWith("Desktop control stopped.") && Interpret.StopControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"revoked\":false,\"authority_epoch\":null}" }).StartsWith("Desktop control was already off"), "stop control reports what happened");
+            expect(Interpret.StopControlMessage(new CliResult { ExitCode = 0, Stdout = "{\n  \"ok\": true,\n  \"revoked\": true,\n  \"authority_epoch\": 4\n}" }).StartsWith("Desktop control authority revoked.") && Interpret.StopControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"revoked\":false,\"authority_epoch\":null}" }).StartsWith("Desktop control was already off") && Interpret.StopControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true}" }).Contains("did not confirm"), "stop control reports what happened, and a missing answer isn't 'off'");
             expect(Interpret.StopControlMessage(new CliResult { TimedOut = true }).Contains("may or may not have stopped") && Interpret.StopControlMessage(new CliResult { ExitCode = 1, Stdout = "{\"ok\":false,\"error\":{\"kind\":\"state\",\"message\":\"the authority key is unreadable\"}}" }).StartsWith("Desktop control was NOT confirmed stopped: the authority key is unreadable."), "a stop that isn't confirmed says so");
             expect(Interpret.ControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"full_control\":{\"active\":true}}" }).StartsWith("Desktop control is ACTIVE") && Interpret.ControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"full_control\":{\"active\":false,\"reason\":\"no lease\\u202e\"}}" }) == "Desktop control is off (Safe): no lease.", "control status is read and escaped");
-            expect(Interpret.RevokeAllMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"revoke\":{\"revoke_epoch\":2}}" }).StartsWith("Emergency revoke recorded") && Interpret.RevokeAllMessage(new CliResult { ExitCode = 1, Stdout = "{\"ok\":false,\"error\":{\"kind\":\"denied\",\"message\":\"Windows Hello was cancelled\"}}" }).StartsWith("Nothing was revoked: Windows Hello was cancelled"), "revoke all reports the outcome, including a cancelled Hello");
+            expect(Interpret.RevokeAllMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"revoke\":{\"revoke_epoch\":2}}" }).StartsWith("Emergency revoke recorded") && Interpret.RevokeAllMessage(new CliResult { ExitCode = 1, Stdout = "{\"ok\":false,\"error\":{\"kind\":\"denied\",\"message\":\"Windows Hello was cancelled\"}}" }).StartsWith("The emergency revoke was not confirmed: Windows Hello was cancelled.") && Interpret.RevokeAllMessage(new CliResult { TimedOut = true }).Contains("may or may not have been recorded"), "revoke all never claims nothing happened after an error or a timeout");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
