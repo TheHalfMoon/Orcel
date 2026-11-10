@@ -104,6 +104,7 @@ pub(crate) const METHODS: &[&str] = &[
     "events.subscribe",
     "task.list",
     "task.get",
+    "approval.history",
 ];
 /// Read-only methods the protocol reserves; this revision answers
 /// `METHOD_UNAVAILABLE` for them.
@@ -334,6 +335,9 @@ struct Shared {
     log: Arc<EventLog>,
     /// SG-000126 report tasks, read for `task.list` and `task.get`.
     tasks: Arc<TaskRegistry>,
+    /// The approval history, read for `approval.history`; `None` when this user has no
+    /// private location for it.
+    history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
     limits: Limits,
     started: Instant,
     started_at_ms: u64,
@@ -357,6 +361,7 @@ impl Shared {
         facts: DaemonFacts,
         log: Arc<EventLog>,
         tasks: Arc<TaskRegistry>,
+        history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
         limits: Limits,
         endpoint: String,
     ) -> Self {
@@ -364,6 +369,7 @@ impl Shared {
             facts,
             log,
             tasks,
+            history,
             limits,
             started: Instant::now(),
             started_at_ms: now_ms(),
@@ -727,6 +733,7 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
             None => Reply::Frame(ok_frame(&id, shared.tasks.list())),
         },
         "task.get" => Reply::Frame(task_get(shared, &id, &params)),
+        "approval.history" => Reply::Frame(approval_history(shared, &id, &params)),
         method if RESERVED_METHODS.contains(&method) => Reply::Frame(error_frame(
             &id,
             "METHOD_UNAVAILABLE",
@@ -738,6 +745,66 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
             format!("{method} is not a method of {PROTOCOL}; the API is read-only"),
         )),
     }
+}
+
+/// The most entries one `approval.history` answer carries.
+const MAX_HISTORY_ENTRIES: u64 = 50;
+
+/// `approval.history {limit}`: the newest approval decisions, newest first, as the CLI's
+/// `orcel approvals` shows them. Read only: the reader can't issue, consume or revoke, and an
+/// entry carries ids, states, times and the request's origin, never what was approved.
+fn approval_history(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
+    if let Some(key) = params.keys().find(|key| key.as_str() != "limit") {
+        return error_frame(
+            id,
+            "INVALID_REQUEST",
+            format!("approval.history has no parameter {key}"),
+        );
+    }
+    let limit = match params.get("limit") {
+        None | Some(Value::Null) => 20,
+        Some(value) => match value.as_u64() {
+            Some(limit) if (1..=MAX_HISTORY_ENTRIES).contains(&limit) => limit,
+            _ => {
+                return error_frame(
+                    id,
+                    "INVALID_REQUEST",
+                    format!("approval.history limit is an integer from 1 to {MAX_HISTORY_ENTRIES}"),
+                )
+            }
+        },
+    };
+    let Some(reader) = shared.history.as_ref() else {
+        return error_frame(
+            id,
+            "METHOD_UNAVAILABLE",
+            "approval history has no private location for this user",
+        );
+    };
+    let entries: Vec<Value> = reader
+        .history(usize::try_from(limit).unwrap_or(20))
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "id": entry.id,
+                "decision": format!("{:?}", entry.decision),
+                "approval_class": entry.approval_class.as_str(),
+                "presence_outcome": entry.presence_outcome.as_str(),
+                "workspace_id": entry.workspace_id,
+                "digest": entry.digest,
+                "is_revoke": entry.is_revoke,
+                "requested_at_ms": entry.requested_at_ms,
+                "decided_at_ms": entry.decided_at_ms,
+                "expires_at_ms": entry.expires_at_ms,
+                "consumed": entry.consumed,
+                "origin": entry.origin,
+            })
+        })
+        .collect();
+    ok_frame(
+        id,
+        json!({ "max_entries": MAX_HISTORY_ENTRIES, "entries": entries }),
+    )
 }
 
 /// `task.get {task_id}`: one task of this daemon run or, read-only, of an
@@ -1181,7 +1248,11 @@ fn new_epoch() -> String {
 /// Starts the endpoint on a background thread. Never fails orceld: when the
 /// endpoint cannot be taken the reason goes to stderr and the request loop
 /// runs as before. `ORCEL_APP_API=off` disables it.
-pub(crate) fn start(facts: DaemonFacts, tasks: Arc<TaskRegistry>) -> AppApi {
+pub(crate) fn start(
+    facts: DaemonFacts,
+    tasks: Arc<TaskRegistry>,
+    history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
+) -> AppApi {
     if std::env::var_os("ORCEL_APP_API").is_some_and(|value| value == "off") {
         eprintln!("orceld app api: disabled by ORCEL_APP_API=off");
         return AppApi::disabled();
@@ -1216,7 +1287,7 @@ pub(crate) fn start(facts: DaemonFacts, tasks: Arc<TaskRegistry>) -> AppApi {
         }
     };
     tasks.attach_events(Arc::clone(&log));
-    let shared = Arc::new(Shared::new(facts, log, tasks, limits, label));
+    let shared = Arc::new(Shared::new(facts, log, tasks, history, limits, label));
     #[cfg(unix)]
     let bound = Arc::clone(&api.bound);
     let spawned = std::thread::Builder::new()
