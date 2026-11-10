@@ -698,7 +698,7 @@ mod tests {
         drop(hold);
         std::fs::write(scratch.profile().join("leftover"), "x").unwrap();
 
-        let next = scratch.start(Mode::Run).unwrap();
+        let next = until_not_in_use(|| scratch.start(Mode::Run)).unwrap();
         assert!(
             !scratch.profile().join("leftover").exists(),
             "the next start removed the stale profile before its own"
@@ -742,7 +742,32 @@ mod tests {
             assert_eq!(ProfileHold::open(&profile).unwrap_err(), ProfileError::Busy);
             drop(hold);
             drop(sink);
-            assert_eq!(recover_stale_profile(&profile), Ok(Recovery::Removed));
+            let recovered = until_not_in_use(|| match recover_stale_profile(&profile) {
+                Ok(Recovery::EngineMayBeAlive | Recovery::InUse) => Err(Refused::InUse),
+                other => Ok(other),
+            });
+            assert!(
+                matches!(recovered, Ok(Ok(Recovery::Removed))),
+                "{label}: {recovered:?}"
+            );
+        }
+    }
+
+    /// Recovery fails closed in two ways that can last a moment on a shared runner (#696).
+    /// It can find the profile's lock still held: another test thread in this binary that
+    /// forks for a spawn keeps a copy of the lock until its exec. Or it can be unable to rule
+    /// out an engine: a process of this user whose arguments it can't read and that is still
+    /// listed. Production keeps the profile either way; these tests retry for a bounded time
+    /// instead, so a hold that is never released or a profile never removed still fails them.
+    fn until_not_in_use<T>(mut attempt: impl FnMut() -> Result<T, Refused>) -> Result<T, Refused> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match attempt() {
+                Err(Refused::InUse) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                result => return result,
+            }
         }
     }
 
