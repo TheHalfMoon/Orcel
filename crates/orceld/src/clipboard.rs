@@ -187,7 +187,9 @@ fn write_with_approval_to(
         ));
     }
     // The approval summary carries the digest and bounds only, never the
-    // caller text, so secret-bearing text cannot leak through prompts.
+    // caller text. The text is shown only in the prompt's bounded preview,
+    // which is hidden when it matches a credential pattern and is sizes only
+    // when the person chose that.
     let text_digest = clipboard_write_content_digest(text);
     let byte_length = text.len();
     let digest = clipboard_write_digest(&workspace.id, POLICY_REVISION, &text_digest, byte_length);
@@ -200,7 +202,12 @@ fn write_with_approval_to(
             "format={UNICODE_TEXT_FORMAT} byte_length={byte_length} max_bytes={MAX_CLIPBOARD_BYTES} content_digest={text_digest} action=write"
         ),
         digest.clone(),
-    );
+    )
+    .with_preview(orcel_approval::Preview::of_written(
+        text,
+        crate::fs_mutation::preview_mode(),
+        crate::fs_mutation::looks_secret(text),
+    ));
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, "clipboard");
