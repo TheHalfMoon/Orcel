@@ -574,8 +574,10 @@ impl<'a> Updater<'a> {
         {
             return Err(LifecycleError::conflict(format!(
                 "Orcel {previous} may not read the saved approval preview choice; nothing was changed. \
-                 Run `orcel approvals previews content` to clear it, then roll back. To keep sizes-only \
-                 prompts after that, set ORCEL_APPROVAL_PREVIEWS=sizes in your environment"
+                 Run `orcel approvals previews content` to clear it, then roll back. After that, \
+                 prompts show content previews, except that a version which reads \
+                 ORCEL_APPROVAL_PREVIEWS shows sizes only for CLI and `orcel mcp stdio` sessions \
+                 whose environment sets it to `sizes` (never for tunnel sessions)"
             )));
         }
         let was_running = stop_if_running(&self.layout)?;

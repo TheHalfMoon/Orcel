@@ -747,21 +747,18 @@ fn approval_previews(layout: &Layout, choice: Option<&str>) -> Result<Output, Li
         }
         config::ApprovalPreviews::Sizes => "prompts show sizes only, never any content",
     };
-    let mut human = format!(
-        "Approval previews: {} ({meaning}).
-",
-        current.as_str()
-    );
+    let mut human = format!("Approval previews: {} ({meaning}).\n", current.as_str());
     if changed {
         human.push_str(
-            "Sessions started from now on use it. Restart AI clients that run `orcel mcp stdio`,              and run `orcel stop` then `orcel start` for the tunnel.
-",
+            "Sessions started from now on use it. Restart AI clients that run `orcel mcp stdio`, \
+             run `orcel stop` then `orcel start` for the tunnel, and reconnect `orcel remote connect`.\n",
         );
     }
     if cfg!(unix) {
         human.push_str(
-            "On Linux and macOS, an orceld started by systemd or the dev tarball reads only its              own environment: add ORCEL_APPROVAL_PREVIEWS=sizes there (for systemd, in              ~/.config/orcel/orceld.env).
-",
+            "On Linux and macOS, an orceld started by systemd or the dev tarball reads only its \
+             own environment: add ORCEL_APPROVAL_PREVIEWS=sizes there (for systemd, in \
+             ~/.config/orcel/orceld.env).\n",
         );
     }
     Ok(Output {
