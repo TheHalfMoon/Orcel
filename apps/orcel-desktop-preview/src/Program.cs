@@ -1319,6 +1319,12 @@ namespace Orcel.DesktopPreview
         internal static Brush OnAccent = Choose(HighContrast, "#090D19", SystemColors.HighlightTextBrush);
         internal static Brush Safe = Choose(HighContrast, "#73D6BD", SystemColors.WindowTextBrush);
         internal static Brush Bubble = Choose(HighContrast, "#222F4D", SystemColors.WindowBrush);
+        /// The stop button: a warm red with dark text, so it never looks like the accent
+        /// buttons beside it. In high contrast it is the window's colours with a heavy border,
+        /// where the accent buttons are filled with the highlight colour.
+        internal static Brush Stop = Choose(HighContrast, "#F49A93", SystemColors.WindowBrush);
+        internal static Brush OnStop = Choose(HighContrast, "#090D19", SystemColors.WindowTextBrush);
+        internal static Brush StopBorder = Choose(HighContrast, "#FFD2CE", SystemColors.WindowTextBrush);
 
         internal static Brush Choose(bool highContrast, string dark, Brush system)
         {
@@ -1411,7 +1417,7 @@ namespace Orcel.DesktopPreview
             };
         }
 
-        private static System.Windows.Controls.Button ActionButton(string title, bool enabled, string automationId)
+        internal static System.Windows.Controls.Button ActionButton(string title, bool enabled, string automationId)
         {
             System.Windows.Controls.Button button = new System.Windows.Controls.Button {
                 Content = title, IsEnabled = enabled,
@@ -1425,6 +1431,19 @@ namespace Orcel.DesktopPreview
             };
             AutomationProperties.SetAutomationId(button, automationId);
             AutomationProperties.SetName(button, title);
+            return button;
+        }
+
+        /// A button that only takes authority away, styled apart from the others: its own
+        /// colour, a border and a stop mark. Its accessible name stays the plain title.
+        internal static System.Windows.Controls.Button StopButton(string title, string automationId)
+        {
+            System.Windows.Controls.Button button = ActionButton(title, true, automationId);
+            button.Content = "■  " + title;
+            button.Background = Colors.Stop;
+            button.Foreground = Colors.OnStop;
+            button.BorderBrush = Colors.StopBorder;
+            button.BorderThickness = new Thickness(2);
             return button;
         }
 
@@ -1538,7 +1557,7 @@ namespace Orcel.DesktopPreview
             refresh.Margin = new Thickness(0);
             refresh.Click += delegate { RefreshHost(); };
             runtime.Children.Add(refresh);
-            System.Windows.Controls.Button stopControl = ActionButton("Stop desktop control", true, "StopControlButton");
+            System.Windows.Controls.Button stopControl = StopButton("Stop desktop control", "StopControlButton");
             stopControl.Margin = new Thickness(0, 10, 0, 0);
             AutomationProperties.SetHelpText(stopControl, "Ends Orcel's Full User desktop control at once; it never grants control");
             stopControl.Click += delegate { AddMessage(true, "stop control"); QueryHost(SafeCommand.StopControl); };
@@ -1911,6 +1930,10 @@ namespace Orcel.DesktopPreview
             expect(Colors.Choose(true, "#000000", SystemColors.WindowTextBrush) == SystemColors.WindowTextBrush && ((SolidColorBrush)Colors.Choose(false, "#090D19", SystemColors.WindowTextBrush)).Color == Color.FromRgb(0x09, 0x0D, 0x19), "high contrast uses the system's colours, otherwise the dark palette");
             expect(MainWindow.Announcement("  short  ") == "short" && MainWindow.Announcement(new string('a', 500)).Length == MainWindow.MaxAnnouncedChars + 1, "screen-reader announcements are trimmed and bounded");
             expect(!char.IsHighSurrogate(MainWindow.Announcement(new string('a', MainWindow.MaxAnnouncedChars - 1) + "\U0001F600 tail").TrimEnd('…').Last()), "an announcement never ends inside a surrogate pair");
+            System.Windows.Controls.Button stopButton = MainWindow.StopButton("Stop desktop control", "StopControlButton");
+            System.Windows.Controls.Button plainButton = MainWindow.ActionButton("Refresh status", true, "RefreshButton");
+            expect(stopButton.Background != plainButton.Background && stopButton.BorderThickness.Left >= 2 && ((string)stopButton.Content).EndsWith("Stop desktop control") && AutomationProperties.GetName(stopButton) == "Stop desktop control", "the stop button looks different from the others and keeps its plain accessible name");
+            expect(Colors.HighContrast || (((SolidColorBrush)Colors.Stop).Color != ((SolidColorBrush)Colors.Accent).Color && ((SolidColorBrush)Colors.OnStop).Color == Color.FromRgb(0x09, 0x0D, 0x19)), "the stop colour differs from the accent and keeps dark text");
             bool legacy;
             expect(AppContext.TryGetSwitch(LegacyAccessibilitySwitch, out legacy) && !legacy, "WPF's legacy accessibility behaviour is off, so live regions reach screen readers");
             TextBlock announcer = new TextBlock();
