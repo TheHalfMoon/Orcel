@@ -5,6 +5,9 @@ here releases, signs or publishes Orcel. Each item is in exactly one of the
 five classes below. Update this file when an item moves; the restart
 checkpoint at the end says where engineering stands.
 
+The per-component view (state, commits, tests, limitations, blockers) is in
+`COMPLETION_LEDGER.md`.
+
 ## 1. Engineering that is complete (merged, qualified on exact-head CI)
 
 | Item | Where |
@@ -150,8 +153,30 @@ Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-07). Check GitHub for the current
-head and CI: this checkpoint can't name its own merge.
+If a session ends, resume from here (2026-11-10, updated from 2026-11-07). Check GitHub for
+the current head and CI: this checkpoint can't name its own merge. The per-component state
+is in `COMPLETION_LEDGER.md`; start there.
+
+Merged 2026-11-07 to 2026-11-10, after the list below:
+- Filesystem and parser safety: #668, #670, #671, #674, #675, #676, #678, #679, #680; clipboard
+  privacy #672 (Windows) and #681 (Linux, macOS); macOS sampler #688.
+- Approval UX (founder decision 1): #682 (one escaped prompt text), #683 (STRONG summary before
+  Hello and Touch ID), #684 (Origin line), #685 (typed targets), #686 and #689 (bounded,
+  redacted previews), #690 (saved sizes-only choice), #691 (credential warning), #693 (Windows
+  dialog timeout), #694 (application line), #695 (origin in approval history).
+- Desktop app: #697 (read-only `approval.history` on the app API and a `history` command),
+  #699 (tighten-only `previews sizes`), #702 (stop desktop control, `control`, `revoke all`).
+- Security: #701 closed a race where a grant waiting for Windows Hello could overwrite a
+  revoke or emergency stop made meanwhile.
+- CI: #687 (Tier C GUI download cache), #698 (rehearsal flake retry, #696). Flakes under watch
+  also include #700 (X11 latency scroll) and #508 (UIA bind, seen again 2026-11-10).
+
+Working rules learned this stretch: a PR must contain current main before Jev reviews it;
+inline shell heredocs on this PC collapse doubled backslashes, so edit scripts go through
+files; CI runners are the bottleneck, so cancel runs for superseded heads and merge one PR
+at a time.
+
+The 2026-11-07 checkpoint follows.
 
 Plans and the founder decision documents are kept privately, at the same paths, and the
 files here are short notes (founder decision, 2026-11-06). Read the private copies for
