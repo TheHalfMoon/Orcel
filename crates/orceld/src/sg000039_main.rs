@@ -899,6 +899,8 @@ fn dispatch_trust(
                         "expires_at_ms": entry.expires_at_ms,
                         "reuse_scope": entry.reuse_scope,
                         "consumed": entry.consumed,
+                        // `null` for records written before origins were recorded.
+                        "origin": entry.origin,
                     })
                 })
                 .collect();
