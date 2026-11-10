@@ -48,6 +48,24 @@ fn registry() -> &'static Mutex<UiaRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(UiaRegistry::new()))
 }
 
+/// The prompt, naming the application whose window the action targets, from the registry's
+/// record of that window. A window the registry no longer knows gets no line; its action is
+/// refused later by its own binding check.
+fn with_target_application(
+    prompt: ApprovalPrompt,
+    window_id: &str,
+) -> Result<ApprovalPrompt, ProviderError> {
+    Ok(match locked_registry()?.window_application(window_id) {
+        Some((executable, window_title)) => {
+            prompt.for_application(orcel_approval::TargetApplication {
+                executable,
+                window_title,
+            })
+        }
+        None => prompt,
+    })
+}
+
 fn locked_registry() -> Result<std::sync::MutexGuard<'static, UiaRegistry>, ProviderError> {
     registry()
         .lock()
@@ -510,6 +528,7 @@ fn full_user_input_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     let prompt = match typed_preview(&action) {
         Some(preview) => prompt.with_preview(preview),
         None => prompt,
@@ -645,6 +664,7 @@ fn full_user_window_action_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &window_id);
@@ -979,6 +999,7 @@ fn invoke_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
@@ -1112,6 +1133,7 @@ fn set_value_with_approval(
         crate::fs_mutation::preview_mode(),
         crate::fs_mutation::looks_secret(&value),
     ));
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
@@ -1239,6 +1261,7 @@ fn select_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
@@ -1347,6 +1370,7 @@ fn execute_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &coord_id);
@@ -1432,6 +1456,7 @@ fn derive_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     let token = approval
         .request_token(&prompt)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
@@ -1538,6 +1563,7 @@ fn propose_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     let token = approval
         .request_token(&prompt)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
@@ -1617,6 +1643,7 @@ fn capture_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     let token = approval
         .request_token(&prompt)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
@@ -1753,6 +1780,7 @@ fn scroll_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);
@@ -1873,6 +1901,7 @@ fn toggle_with_approval(
         ),
         digest.clone(),
     );
+    let prompt = with_target_application(prompt, &binding.window_id)?;
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &element_id);

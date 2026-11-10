@@ -3154,6 +3154,15 @@ impl UiaRegistry {
         })
     }
 
+    /// The executable name of a registered window's verified process and the window's title,
+    /// as recorded when it was observed, for approval prompts. Display only: it grants nothing,
+    /// and the action's own binding is what is checked again before dispatch.
+    pub fn window_application(&self, window_id: &str) -> Option<(String, String)> {
+        let window = self.windows.get(window_id)?;
+        let process = self.processes.get(&window.process_id)?;
+        Some((process.exe_name.clone(), window.title.clone()))
+    }
+
     /// Resolve the current capture binding for approval digest computation.
     /// This performs the same fail-closed revalidation as `capture_window`
     /// but performs no adapter capture, so dispatch can bind approval
