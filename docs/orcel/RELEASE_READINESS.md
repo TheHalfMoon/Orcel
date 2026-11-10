@@ -165,7 +165,7 @@ Merged 2026-11-07 to 2026-11-10, after the list below:
   redacted previews), #690 (saved sizes-only choice), #691 (credential warning), #693 (Windows
   dialog timeout), #694 (application line), #695 (origin in approval history).
 - Desktop app: #697 (read-only `approval.history` on the app API and a `history` command),
-  #699 (tighten-only `previews sizes`). #702 (stop desktop control, `revoke all`) is open.
+  #699 (tighten-only `previews sizes`), #702 (stop desktop control, `control`, `revoke all`).
 - Security: #701 closed a race where a grant waiting for Windows Hello could overwrite a
   revoke or emergency stop made meanwhile.
 - CI: #687 (Tier C GUI download cache), #698 (rehearsal flake retry, #696). Flakes under watch
