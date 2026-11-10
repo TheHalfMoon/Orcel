@@ -1016,7 +1016,8 @@ namespace Orcel.DesktopPreview
             object error;
             if (answer != null && result.ExitCode != 0 && answer.TryGetValue("error", out error)
                 && !string.IsNullOrEmpty(Text(error as Dictionary<string, object>, "message")))
-                return "The Orcel runtime refused the approval preview setting: " + Plain(Text((Dictionary<string, object>)error, "message"));
+                return "The Orcel runtime answered the approval preview command with an error: " + Plain(Text((Dictionary<string, object>)error, "message"))
+                    + " If the runtime is older than this app, it may not have this setting; update Orcel.";
             Dictionary<string, object> json = result.ExitCode == 0 && answer != null && answer.ContainsKey("ok") && true.Equals(answer["ok"]) ? answer : null;
             string choice = Text(json, "approval_previews");
             object changed = null;
@@ -1582,7 +1583,7 @@ namespace Orcel.DesktopPreview
             expect(CommandRouter.CanInvokeInstalledHost(SafeCommand.Previews) && CommandRouter.CanInvokeInstalledHost(SafeCommand.PreviewsSizes), "previews and previews sizes reach the runtime");
             expect(CommandRouter.Classify("previews  sizes") == SafeCommand.Unsupported && CommandRouter.Classify("previews\tsizes") == SafeCommand.Unsupported && CommandRouter.Classify("previews \uFF53izes") == SafeCommand.Unsupported, "spacing and look-alike letters are refused");
             expect(Interpret.PreviewsMessage(new CliResult { TimedOut = true }).Contains("may or may not have been saved") && Interpret.PreviewsMessage(new CliResult { FailedToStart = true }).Contains("was not changed"), "a timeout and a failed start are reported honestly");
-            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 2, Stdout = "{\n  \"ok\": false,\n  \"error\": {\n    \"code\": \"state\",\n    \"message\": \"config.json has an unsupported schema\"\n  }\n}" }) == "The Orcel runtime refused the approval preview setting: config.json has an unsupported schema.", "the runtime's own refusal is shown");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 2, Stdout = "{\n  \"ok\": false,\n  \"error\": {\n    \"kind\": \"state\",\n    \"message\": \"config.json has an unsupported schema\"\n  }\n}" }).StartsWith("The Orcel runtime answered the approval preview command with an error: config.json has an unsupported schema."), "the runtime's own refusal is shown");
             expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\n  \"ok\": true,\n  \"approval_previews\": \"sizes\",\n  \"changed\": false\n}" }).StartsWith("Approval previews: sizes only.") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":false,\"approval_previews\":\"sizes\"}" }).Contains("did not report"), "pretty-printed output parses; ok must be true");
             expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"sizes\",\"changed\":true}" }).StartsWith("Approval previews: sizes only.") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"sizes\",\"changed\":true}" }).Contains("Saved."), "a saved sizes choice is reported");
             expect(!Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"content\",\"changed\":false}" }).Contains("Saved."), "an unchanged choice is not reported as saved");
