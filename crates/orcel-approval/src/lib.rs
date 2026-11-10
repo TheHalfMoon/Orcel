@@ -1069,6 +1069,37 @@ impl LocalApprovalBroker {
     }
 }
 
+/// Reads the approval history and nothing else: it holds no presence surface and has no way
+/// to issue, consume or revoke an approval. For readers outside the broker, such as orceld's
+/// read-only app API. It verifies the ledger as the broker does, and reports the last view it
+/// verified when the ledger is busy or fails to verify.
+pub struct ApprovalHistoryReader {
+    ledger: Mutex<ApprovalLedger>,
+}
+
+impl ApprovalHistoryReader {
+    /// A reader of this user's approval history.
+    pub fn open() -> Result<Self, ApprovalError> {
+        let path = default_approval_history_path().map_err(history_path_unavailable)?;
+        Ok(Self::at(path))
+    }
+
+    /// A reader of the approval history at `path`.
+    pub fn at(path: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            ledger: Mutex::new(ApprovalLedger::load_or_create(path.into())),
+        }
+    }
+
+    /// The newest `limit` records, newest first.
+    pub fn history(&self, limit: usize) -> Vec<ApprovalRecordSummary> {
+        self.ledger
+            .lock()
+            .map(|mut ledger| ledger.history(limit))
+            .unwrap_or_default()
+    }
+}
+
 impl ApprovalBroker for LocalApprovalBroker {
     fn request_token(&self, prompt: &ApprovalPrompt) -> Result<ApprovedToken, ApprovalError> {
         validate_prompt(prompt)?;
