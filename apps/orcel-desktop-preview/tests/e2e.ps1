@@ -1,4 +1,4 @@
-# Native Windows end-to-end test of the read-only desktop foundation, driven
+# Native Windows end-to-end test of the desktop foundation (read-only plus the sizes-only preview setting), driven
 # through Windows UI Automation (no third-party framework). It launches the
 # real executable with an isolated USERPROFILE for the app process only:
 # -RuntimeRoot points at a per-user runtime install made for testing; without
