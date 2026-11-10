@@ -1076,13 +1076,13 @@ namespace Orcel.DesktopPreview
         internal static string RevokeAllMessage(CliResult result)
         {
             if (result.FailedToStart) return "The Orcel runtime could not be started, so nothing was revoked by this app. Run orcel emergency-revoke in a terminal.";
-            if (result.TimedOut) return "The emergency revoke did not finish in time. It may or may not have been recorded; type history to check.";
+            if (result.TimedOut) return "The emergency revoke did not finish in time. It may or may not have been recorded; type history, or run orcel approvals in a terminal, to check.";
             Dictionary<string, object> answer = Parse(result.Stdout);
             string refusal = Refusal(result, answer);
             // An error can follow a partial revoke, or a Hello approved after the CLI stopped
             // waiting, so it never claims that nothing happened.
-            if (refusal != null) return "The emergency revoke was not confirmed: " + refusal + " Type history to see whether it was recorded.";
-            if (Ok(result, answer) == null) return "The installed Orcel runtime did not confirm the emergency revoke. Type history to see whether it was recorded.";
+            if (refusal != null) return "The emergency revoke was not confirmed: " + refusal + " Type history, or run orcel approvals in a terminal, to see whether it was recorded.";
+            if (Ok(result, answer) == null) return "The installed Orcel runtime did not confirm the emergency revoke. Type history, or run orcel approvals in a terminal, to see whether it was recorded.";
             return "Emergency revoke recorded: every pending approval, desktop control and every remote session lease is now invalid.";
         }
 
