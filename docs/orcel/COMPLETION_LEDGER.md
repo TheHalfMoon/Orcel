@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-10, main at `b18c67ba` (#699). Open: #692 (this ledger), #701 (grant/revoke race), #702 (desktop stop controls).
+Last updated: 2026-11-10, main at `f5731130` (#701). Open: #692 (this ledger), #702 (desktop stop controls).
 
 ## Approval and security UX
 
@@ -51,7 +51,7 @@ Last updated: 2026-11-10, main at `b18c67ba` (#699). Open: #692 (this ledger), #
 | Desktop input (mouse, keyboard, text, UIA values) | Partial | Full User lease and approvals; #689 prompts | live-input tests on CI runners | Every action needs a lease and an approval | Founder-present run on a disposable machine | Class 3 |
 | Browser interaction | Partial | SG-000108, SG-000115 inert engineering (`RELEASE_READINESS.md` class 1) | BM-02 browser tasks on Windows | macOS and Linux launch refused until SG-000115 activation; release-build live browser needs its own decision | Activation work | Founder decisions (SG-000115 activation, slice 7) |
 | Process execution (contained tier, shell) | Partial | SG-000096 plan (#260, #266, #267 open) | contained-tier tests | #292 flaky on Windows | T04 and T05 | none recorded |
-| Stop, pause, resume, human takeover | Partial | Desktop: Stop desktop control, `control`, `stop control` and `revoke all` (#702, open, reviewed: merge); grant/revoke race fix #701 (open, adversarial review: merge); task stop: #640 (draft) | desktop self-tests | The app only takes authority away. Before #701, a grant waiting for Windows Hello could overwrite a revoke made meanwhile, and a CLI revoke waited up to 60 s behind it; whether the Windows Hello prompt comes to the front when the app starts `revoke all` is unchecked | A task-scoped stop and pause/resume (slice 5); a busy guard and distinct styling for the stop button; merge #701 then #702 | Founder decision 2 for task stop; a person to check the Hello prompt |
+| Stop, pause, resume, human takeover | Partial | Desktop: Stop desktop control, `control`, `stop control` and `revoke all` (#702, open, reviewed: merge); grant/revoke race fix #701 → `f5731130`; task stop: #640 (draft) | desktop self-tests | The app only takes authority away. #701 closed a race where a grant waiting for Windows Hello could overwrite a revoke made meanwhile; a revoke's store lock waits at most 5 s and then fails closed; whether the Windows Hello prompt comes to the front when the app starts `revoke all` is unchecked | A task-scoped stop and pause/resume (slice 5); a busy guard and distinct styling for the stop button; merge #702 | Founder decision 2 for task stop; a person to check the Hello prompt |
 | Crash recovery and state reconciliation | Partial | SG-000120 resume summary #464; mutation journal; #639 recovery and history | journal tests; #630 orceld killed during an Agent run | Effects orceld can't read back are recorded as unknown | Recovery UI in the app | none |
 | Multi-client isolation | Partial | Remote leases and origin stamping (#667 → `26f17234`, #684) | `fix395_tunnel_remote`, origin tests | — | A qualification suite across concurrent clients | none |
 
