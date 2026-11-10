@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-10, main at `bb959446` (#705). Open PRs: #640 and #673 (drafts waiting on founder decisions), #342 and #328 (other work).
+Last updated: 2026-11-11, main at `eef75e1e` (#708). Open PRs: #640 and #673 (drafts waiting on founder decisions), #342 and #328 (other work).
 
 ## Approval and security UX
 
@@ -30,7 +30,7 @@ Last updated: 2026-11-10, main at `bb959446` (#705). Open PRs: #640 and #673 (dr
 | Plain warning when hidden content looks like a credential | Done (qualified) | #691 → `ca7ca02a` | `a_credential_or_sizes_only_shows_no_content` | Refusing credential-like typed text, or making it STRONG, is not done (safer default chosen: hide, warn, keep approval) | none | none |
 | Application and window identity on desktop prompts | Partial | #694 → `3e6ef8e2` | prompt-text and registry tests | The title is the one recorded at observation; the executable is a name, not a signed identity | A code-signature line; an orceld-level test of a desktop prompt | none |
 | Windows approval dialog timeout | Done (qualified) | #693 → `e90e51d6` | answer mapping on every OS; a real dialog on the Windows CI runner | Windows Hello's own prompt keeps its own timing | none | none |
-| Request origin in approval history | Done (qualified) | #695 → `574ccece` | origin recorded, reload, tamper and older-record tests | Unkeyed checksums catch corruption, not a determined same-user writer; a stripped origin shows as unrecorded | none (history view: #697 → `3d46d797`) | none |
+| Request origin in approval history | Done (qualified) | #695 → `574ccece` | origin recorded, reload, tamper and older-record tests | Unkeyed checksums catch corruption, not a determined same-user writer; a stripped origin shows as unrecorded; since #708 → `eef75e1e`, a history answer says whether it was verified or is the last view (busy or unverifiable) | none (history view: #697 → `3d46d797`) | none |
 
 ## Filesystem, clipboard, process and parser safety
 
@@ -59,7 +59,7 @@ Last updated: 2026-11-10, main at `bb959446` (#705). Open PRs: #640 and #673 (dr
 
 | Component | State | Evidence | Tests | Known limitations | Remaining work | Blockers |
 |---|---|---|---|---|---|---|
-| Windows app (task timeline, approval history, preview setting, stop controls, workspaces, accessibility, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867`, #697 → `3d46d797` (`history`), #699 → `b18c67ba` (`previews sizes`), #702 → `9af70ae3` (stop controls), #703 → `f73aeb68` (high contrast, live region), #704 → `56aae7c0` (`workspaces`, busy guard) | self-tests; Windows app task timeline job (UI Automation against a real orceld) | #649 flaky window lookup; the app never grants anything (folders, desktop control, content previews), by design; CI's managed UI Automation client can't read `LiveSetting` | Onboarding flow, client connection management, a settings screen (today the settings are commands); a person checking Narrator or NVDA speech, high contrast hover and pressed states, 150% and 200% scaling and right-to-left text | Task stop needs decision 2; the UI toolkit (FD-03) is undecided |
+| Windows app (task timeline, approval history, preview setting, stop controls, workspaces, client setup, accessibility, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867`, #697 → `3d46d797` (`history`), #699 → `b18c67ba` (`previews sizes`), #702 → `9af70ae3` (stop controls), #703 → `f73aeb68` (high contrast, live region), #704 → `56aae7c0` (`workspaces`, busy guard), #707 → `a35a9459` (`connect`), #708 → `eef75e1e` (history caveat when not verified) | self-tests; Windows app task timeline job (UI Automation against a real orceld) | #649 flaky window lookup; the app never grants anything (folders, desktop control, content previews), by design; CI's managed UI Automation client can't read `LiveSetting` | A guided first-run flow and seeing which clients are connected (`connect` shows the setup; nothing reports live connections yet), a settings screen; trying each `connect` snippet in its client by hand (today the settings are commands); a person checking Narrator or NVDA speech, high contrast hover and pressed states, 150% and 200% scaling and right-to-left text | Task stop needs decision 2; the UI toolkit (FD-03) is undecided |
 | macOS and Linux app | Not started | — | — | — | — | Founder decision 4 |
 | Windows install, start, update, rollback, uninstall | Partial | #654 → `e0e3fa41`, #659 → `93f33b25`, #661 → `e8fd1692`, #665 | release qualification on Windows CI | Unsigned; a real install under the new state root has run only in CI's release qualification | A founder-present install, upgrade and uninstall journey on a disposable machine (#655, uninstall missing stores, was closed by #659 and #661) | Signing (founder) for a release build |
 | macOS package | Blocked | — | — | — | XP-16 packaging | FD-05, signing identity |
@@ -78,12 +78,13 @@ Last updated: 2026-11-10, main at `bb959446` (#705). Open PRs: #640 and #673 (dr
 
 | Item | State | Evidence | Remaining |
 |---|---|---|---|
-| Browser-host rehearsal flakes (#696) | Fix merged, watching | #698 → `4e332520`: the two racing steps retry a fail-closed `InUse` for up to 10 s | Close #696 after a few clean runs |
+| Browser-host rehearsal flakes (#696) | Fixed, issue closed | #698 → `4e332520`: the two racing steps retry a fail-closed `InUse` for up to 10 s; 40 of 40 results passed across 10 main runs | none |
 | Native host X11 latency scroll never shows its effect (#700) | Open, evidence only | Seen once on #699 | Print the fixture's scroll state and the host's outcome at the deadline if it recurs |
 | Jev review needs the PR to contain current main | Known | its merge-base check | Update a PR to main before its review gate runs |
 | Jev review runs `git diff --check` | Known | a CRLF file fails it (#692) | Write repository files with LF line endings |
-| macOS jobs cancelled before a runner is assigned (#524) | Recurring | seen on #704 and #705, 2026-11-10 | Re-run the job; no code cause |
+| macOS jobs cancelled before a runner is assigned (#524) | Recurring | seen on #704, #705 and #707, and on main after #703 and #705 (both green on re-run), 2026-11-10 | Re-run the job; no code cause |
 | `workspace list` held the CLI lifecycle lock | Fixed | #705 → `bb959446` | none |
+| Windows browser download tests: fixture never contacted (#584) | Recurring | seen again on #708, 2026-11-10 | Re-run the job; cause still unknown |
 
 ## How to resume
 
