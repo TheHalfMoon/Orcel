@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -1207,15 +1208,27 @@ namespace Orcel.DesktopPreview
 
     internal static class Colors
     {
-        internal static Brush Ink = Hex("#E9EDFA");
-        internal static Brush Muted = Hex("#9BA7C5");
-        internal static Brush Background = Hex("#090D19");
-        internal static Brush Sidebar = Hex("#111729");
-        internal static Brush Surface = Hex("#161E34");
-        internal static Brush Border = Hex("#29334C");
-        internal static Brush Accent = Hex("#9A8CF5");
-        internal static Brush Safe = Hex("#73D6BD");
-        internal static Brush Bubble = Hex("#222F4D");
+        /// Windows high contrast replaces the dark palette with the system's own colours, so
+        /// text, borders and buttons keep the contrast the person chose. Read when the app
+        /// starts; a change applies the next time it opens.
+        internal static readonly bool HighContrast = SystemParameters.HighContrast;
+        internal static Brush Ink = Choose(HighContrast, "#E9EDFA", SystemColors.WindowTextBrush);
+        internal static Brush Muted = Choose(HighContrast, "#9BA7C5", SystemColors.WindowTextBrush);
+        internal static Brush Background = Choose(HighContrast, "#090D19", SystemColors.WindowBrush);
+        internal static Brush Sidebar = Choose(HighContrast, "#111729", SystemColors.WindowBrush);
+        internal static Brush Surface = Choose(HighContrast, "#161E34", SystemColors.WindowBrush);
+        internal static Brush Border = Choose(HighContrast, "#29334C", SystemColors.WindowTextBrush);
+        internal static Brush Accent = Choose(HighContrast, "#9A8CF5", SystemColors.HighlightBrush);
+        /// Text on an accent-coloured button: the pair Windows defines for highlighted items.
+        internal static Brush OnAccent = Choose(HighContrast, "#090D19", SystemColors.HighlightTextBrush);
+        internal static Brush Safe = Choose(HighContrast, "#73D6BD", SystemColors.WindowTextBrush);
+        internal static Brush Bubble = Choose(HighContrast, "#222F4D", SystemColors.WindowBrush);
+
+        internal static Brush Choose(bool highContrast, string dark, Brush system)
+        {
+            return highContrast ? system : Hex(dark);
+        }
+
         internal static Brush Hex(string value)
         {
             return new SolidColorBrush((Color)ColorConverter.ConvertFromString(value));
@@ -1234,6 +1247,10 @@ namespace Orcel.DesktopPreview
         /// example while an update runs or a grant waits for Windows Hello.
         private const int ControlTimeoutMs = 70000;
         private readonly StackPanel transcript = new StackPanel();
+        /// A polite live region: each reply is read out by a screen reader when it arrives,
+        /// without moving focus from the command box.
+        private readonly TextBlock announcer = new TextBlock();
+        internal const int MaxAnnouncedChars = 400;
         private readonly TextBox commandBox = new TextBox();
         private readonly TextBlock hostState = new TextBlock();
         private readonly TextBlock deviceState = new TextBlock();
@@ -1298,7 +1315,7 @@ namespace Orcel.DesktopPreview
             System.Windows.Controls.Button button = new System.Windows.Controls.Button {
                 Content = title, IsEnabled = enabled,
                 Background = enabled ? Colors.Accent : Colors.Surface,
-                Foreground = enabled ? Colors.Background : Colors.Muted,
+                Foreground = enabled ? Colors.OnAccent : Colors.Muted,
                 BorderThickness = new Thickness(0),
                 Padding = new Thickness(15, 9, 15, 9),
                 FontSize = 12, FontWeight = FontWeights.SemiBold,
@@ -1356,10 +1373,12 @@ namespace Orcel.DesktopPreview
             conversation.Content = transcript;
             AutomationProperties.SetAutomationId(conversation, "Transcript");
             AutomationProperties.SetName(conversation, "Conversation transcript");
+            ConfigureAnnouncer(announcer);
+            center.Children.Add(announcer);
             Border transcriptCard = Card(conversation, Colors.Sidebar, new Thickness(14));
             Grid.SetRow(transcriptCard, 1);
             center.Children.Add(transcriptCard);
-            AddMessage(false, "Welcome to Orcel. Type help, status, version, doctor, devices, files, or tasks. Other requests are not executed or sent anywhere.");
+            AddMessage(false, "Welcome to Orcel. Type help to see the commands, such as status, tasks, history, control or stop control. Other requests are not executed or sent anywhere.");
 
             Grid composer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
             composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1464,6 +1483,38 @@ namespace Orcel.DesktopPreview
             transcript.Children.Add(item);
             while (transcript.Children.Count > MaxTranscriptMessages) transcript.Children.RemoveAt(0);
             conversation.ScrollToEnd();
+            if (!fromUser) Announce(message);
+        }
+
+        /// The live region's setup: polite, out of the way, never focused or clicked.
+        internal static void ConfigureAnnouncer(TextBlock announcer)
+        {
+            AutomationProperties.SetAutomationId(announcer, "Announcement");
+            AutomationProperties.SetLiveSetting(announcer, AutomationLiveSetting.Polite);
+            announcer.FontSize = 1;
+            announcer.Height = 1;
+            announcer.VerticalAlignment = VerticalAlignment.Top;
+            announcer.Opacity = 0;
+            announcer.IsHitTestVisible = false;
+            announcer.Focusable = false;
+        }
+
+        /// What a screen reader hears for a reply: the reply, cut at MaxAnnouncedChars.
+        internal static string Announcement(string message)
+        {
+            string text = (message ?? "").Trim();
+            if (text.Length <= MaxAnnouncedChars) return text;
+            int cut = MaxAnnouncedChars;
+            // Never split a surrogate pair.
+            if (char.IsHighSurrogate(text[cut - 1])) cut--;
+            return text.Substring(0, cut) + "…";
+        }
+
+        private void Announce(string message)
+        {
+            announcer.Text = Announcement(message);
+            AutomationPeer peer = UIElementAutomationPeer.FromElement(announcer) ?? UIElementAutomationPeer.CreatePeerForElement(announcer);
+            if (peer != null) peer.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
         }
 
         /// #288: the transcript stays bounded however long the window is used.
@@ -1704,6 +1755,14 @@ namespace Orcel.DesktopPreview
             expect(Interpret.StopControlMessage(new CliResult { TimedOut = true }).Contains("may or may not have stopped") && Interpret.StopControlMessage(new CliResult { ExitCode = 1, Stdout = "{\"ok\":false,\"error\":{\"kind\":\"state\",\"message\":\"the authority key is unreadable\"}}" }).StartsWith("Desktop control was NOT confirmed stopped: the authority key is unreadable."), "a stop that isn't confirmed says so");
             expect(Interpret.ControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"full_control\":{\"active\":true}}" }).StartsWith("Desktop control is ACTIVE") && Interpret.ControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"full_control\":{\"active\":false,\"reason\":\"no lease\\u202e\"}}" }) == "Desktop control is off (Safe): no lease.", "control status is read and escaped");
             expect(Interpret.RevokeAllMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"revoke\":{\"revoke_epoch\":2}}" }).StartsWith("Emergency revoke recorded") && Interpret.RevokeAllMessage(new CliResult { ExitCode = 1, Stdout = "{\"ok\":false,\"error\":{\"kind\":\"denied\",\"message\":\"Windows Hello was cancelled\"}}" }).StartsWith("The emergency revoke was not confirmed: Windows Hello was cancelled.") && Interpret.RevokeAllMessage(new CliResult { TimedOut = true }).Contains("may or may not have been recorded"), "revoke all never claims nothing happened after an error or a timeout");
+            expect(Colors.Choose(true, "#000000", SystemColors.WindowTextBrush) == SystemColors.WindowTextBrush && ((SolidColorBrush)Colors.Choose(false, "#090D19", SystemColors.WindowTextBrush)).Color == Color.FromRgb(0x09, 0x0D, 0x19), "high contrast uses the system's colours, otherwise the dark palette");
+            expect(MainWindow.Announcement("  short  ") == "short" && MainWindow.Announcement(new string('a', 500)).Length == MainWindow.MaxAnnouncedChars + 1, "screen-reader announcements are trimmed and bounded");
+            expect(!char.IsHighSurrogate(MainWindow.Announcement(new string('a', MainWindow.MaxAnnouncedChars - 1) + "\U0001F600 tail").TrimEnd('…').Last()), "an announcement never ends inside a surrogate pair");
+            bool legacy;
+            expect(AppContext.TryGetSwitch(LegacyAccessibilitySwitch, out legacy) && !legacy, "WPF's legacy accessibility behaviour is off, so live regions reach screen readers");
+            TextBlock announcer = new TextBlock();
+            MainWindow.ConfigureAnnouncer(announcer);
+            expect(AutomationProperties.GetLiveSetting(announcer) == AutomationLiveSetting.Polite && AutomationProperties.GetAutomationId(announcer) == "Announcement" && !announcer.Focusable, "the announcer is a polite live region that never takes focus");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
@@ -1817,9 +1876,15 @@ namespace Orcel.DesktopPreview
             return 0;
         }
 
+        /// The in-box compiler marks no target framework, so .NET Framework would run WPF with
+        /// its legacy accessibility behaviour, which hides UI Automation live regions. Set
+        /// before any WPF type loads.
+        internal const string LegacyAccessibilitySwitch = "Switch.UseLegacyAccessibilityFeatures";
+
         [STAThread]
         private static int Main(string[] args)
         {
+            AppContext.SetSwitch(LegacyAccessibilitySwitch, false);
             if (args.Length == 1 && args[0] == "--self-test") return SelfTest();
             if (args.Length == 1 && args[0] == "--ui-self-test")
             {

@@ -128,6 +128,10 @@ try {
     SendCommand $window "rm -rf / ; calc.exe"
     $refused = WaitFor { TranscriptTexts $window | Where-Object { $_.StartsWith("Not executed. Orcel AI is not connected.", [StringComparison]::Ordinal) } | Select-Object -First 1 } 5000
     Check "shell-like text is refused, not executed" ($null -ne $refused) "$refused"
+    # The managed UI Automation client can't read LiveSetting ("Unsupported Property"), so
+    # the self-test checks the announcer's setup and this checks only that replies reach it.
+    $announced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Not executed.", [StringComparison]::Ordinal)) { $a } } 3000
+    Check "the reply reaches the live region" ($null -ne $announced) "$announced"
     Start-Sleep -Milliseconds 1500
     # Direct children still alive, plus Calculator (Windows 11 launches it through a broker).
     $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object { $_.CreationDate -ge $refusedAt })
@@ -145,7 +149,8 @@ try {
 
     $box = ById $window "CommandBox"
     Check "command box has an accessible name" ($box.Current.Name -eq "Command") "name '$($box.Current.Name)'"
-    Check "controls are keyboard focusable" ($box.Current.IsKeyboardFocusable -and (ById $window "SendButton").Current.IsKeyboardFocusable) ""
+    Check "controls are keyboard focusable" ($box.Current.IsKeyboardFocusable -and (ById $window "SendButton").Current.IsKeyboardFocusable -and (ById $window "RefreshButton").Current.IsKeyboardFocusable -and (ById $window "StopControlButton").Current.IsKeyboardFocusable) ""
+    Check "the stop button has an accessible name" ((ById $window "StopControlButton").Current.Name -eq "Stop desktop control") "name '$((ById $window "StopControlButton").Current.Name)'"
 
     $process.Refresh()
     $workingSetMb = [math]::Round($process.WorkingSet64 / 1MB, 1)
