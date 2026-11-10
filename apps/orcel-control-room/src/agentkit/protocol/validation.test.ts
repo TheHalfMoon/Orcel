@@ -96,6 +96,7 @@ test("the client sends only read-only methods", () => {
     "task.submit",
     "task.list", // orceld serves SG-000126 reads; Control Room is not allowed to send them yet
     "task.get",
+    "approval.history", // orceld serves it read-only; Control Room does not send it yet
     "task.cancel",
     "stop.request",
     "devices.list",

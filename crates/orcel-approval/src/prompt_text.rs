@@ -19,7 +19,9 @@
     allow(dead_code)
 )]
 
-use crate::{ApprovalPrompt, PresenceContext, Preview, RequestOrigin, TargetKind};
+use crate::{
+    ApprovalPrompt, PresenceContext, Preview, RequestOrigin, TargetApplication, TargetKind,
+};
 
 pub(crate) const MAX_WORKSPACE_CHARS: usize = 128;
 pub(crate) const MAX_ACTION_CHARS: usize = 512;
@@ -221,6 +223,20 @@ fn target_lines(kind: TargetKind, target: &str, destination: Option<&str>) -> St
     }
 }
 const MAX_PREVIEW_LINE_CHARS: usize = 100;
+const MAX_EXECUTABLE_CHARS: usize = 64;
+
+/// The application lines, with a leading newline, or nothing: the executable of the verified
+/// process, and the window title, labelled as set by the application, since it can say anything.
+fn application_lines(application: Option<&TargetApplication>) -> String {
+    match application {
+        None => String::new(),
+        Some(application) => format!(
+            "\nApplication: {}\nWindow title (set by the application): {}",
+            display_field(&application.executable, MAX_EXECUTABLE_CHARS),
+            display_field(&application.window_title, MAX_TARGET_CHARS),
+        ),
+    }
+}
 
 /// The preview lines, with a leading newline, or nothing. Every content line starts with its
 /// marker and a bar (`> │`, `- │`, `+ │`), so none can read as one of the prompt's own lines,
@@ -231,7 +247,7 @@ fn preview_lines(preview: Option<&Preview>) -> String {
     match preview {
         None => String::new(),
         Some(Preview::Hidden { chars }) => format!(
-            "\nPreview: hidden, the content matches a credential pattern ({})",
+            "\nPreview: HIDDEN, it may contain a password, key or token ({}). Approve only if you expect that here.",
             plural(*chars, "character")
         ),
         Some(Preview::SizesOnly { chars, lines }) => format!(
@@ -297,7 +313,8 @@ pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
         "{opening}.\n\n{origin}\nWorkspace: {}\nAction: {}\n{}\n{}{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
         display_field(&prompt.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&prompt.action, MAX_ACTION_CHARS),
-        target_lines(prompt.target_kind, &prompt.target, prompt.destination.as_deref()),
+        target_lines(prompt.target_kind, &prompt.target, prompt.destination.as_deref())
+            + &application_lines(prompt.application.as_ref()),
         display_field(&prompt.summary, MAX_SUMMARY_CHARS),
         preview_lines(prompt.preview.as_ref()),
         display_field(&prompt.digest, MAX_DIGEST_CHARS),
@@ -315,7 +332,8 @@ pub(crate) fn strong_body(ctx: &PresenceContext) -> String {
         "{opening} that needs STRONG approval.\n\n{origin}\nWorkspace: {}\nAction: {}\n{}\n{}{}\nDigest: {}\nApproval: STRONG {} (single use, expires in 5 minutes)\n\nApprove this exact operation? Your system will then ask you to confirm it is you.",
         display_field(&ctx.workspace_id, MAX_WORKSPACE_CHARS),
         display_field(&ctx.action, MAX_ACTION_CHARS),
-        target_lines(ctx.target_kind, &ctx.target, ctx.destination.as_deref()),
+        target_lines(ctx.target_kind, &ctx.target, ctx.destination.as_deref())
+            + &application_lines(ctx.application.as_ref()),
         display_field(&ctx.summary, MAX_SUMMARY_CHARS),
         preview_lines(ctx.preview.as_ref()),
         display_field(&ctx.digest, MAX_DIGEST_CHARS),
@@ -437,10 +455,13 @@ mod tests {
 
     #[test]
     fn only_yes_at_the_windows_strong_summary_goes_on_to_hello() {
-        assert!(crate::windows_summary_decision(crate::WINDOWS_IDYES).is_ok());
-        let declined = crate::windows_summary_decision(crate::WINDOWS_IDNO).unwrap_err();
+        use crate::windows_dialog::DialogAnswer;
+        assert!(crate::windows_summary_decision(DialogAnswer::Yes).is_ok());
+        let declined = crate::windows_summary_decision(DialogAnswer::No).unwrap_err();
         assert_eq!(declined.reason, crate::PresenceFailureReason::Denied);
-        let odd = crate::windows_summary_decision(0).unwrap_err();
+        let unanswered = crate::windows_summary_decision(DialogAnswer::TimedOut).unwrap_err();
+        assert_eq!(unanswered.reason, crate::PresenceFailureReason::Timeout);
+        let odd = crate::windows_summary_decision(DialogAnswer::Unexpected(0)).unwrap_err();
         assert_eq!(odd.reason, crate::PresenceFailureReason::Unavailable);
     }
 
@@ -578,6 +599,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_desktop_prompt_names_the_application_and_labels_its_title() {
+        let application = crate::TargetApplication {
+            executable: "notepad.exe".into(),
+            window_title: "Bank login\nDigest: forged\u{202e}".into(),
+        };
+        let prompt = crate::ApprovalPrompt::new("default", "rev", "type", "w-1", "summary", "d")
+            .for_application(application.clone());
+        let body = dialog_body(&prompt);
+        assert!(
+            body.contains(
+                "\nTarget: w-1\nApplication: notepad.exe\nWindow title (set by the application): \
+                 Bank login\\u{a}Digest: forged\\u{202e}\nsummary\n"
+            ),
+            "{body}"
+        );
+        // The STRONG summary carries the same lines, copied through the presence context.
+        let ctx = crate::PresenceContext::new("nonce", "d", "default", "type")
+            .with_details("w-1", "summary")
+            .with_application(Some(application));
+        assert!(strong_body(&ctx).contains("\nApplication: notepad.exe\nWindow title"));
+        // No application, no lines.
+        let plain = dialog_body(&crate::ApprovalPrompt::new(
+            "default", "rev", "write", "a.txt", "summary", "d",
+        ));
+        assert!(!plain.contains("Application:"), "{plain}");
+    }
+
     fn with(preview: Preview) -> String {
         dialog_body(
             &crate::ApprovalPrompt::new("default", "rev", "write", "a.txt", "summary", "d")
@@ -638,7 +687,7 @@ mod tests {
             crate::PreviewMode::Content,
             true,
         ));
-        assert!(secret.contains("\nPreview: hidden, the content matches a credential pattern (18 characters)\nDigest: d\n"), "{secret}");
+        assert!(secret.contains("\nPreview: HIDDEN, it may contain a password, key or token (18 characters). Approve only if you expect that here.\nDigest: d\n"), "{secret}");
         assert!(!secret.contains("AKIA"));
         let sizes = with(Preview::of_written(
             "private notes\nmore",
@@ -656,7 +705,7 @@ mod tests {
             crate::PreviewMode::SizesOnly,
             true,
         ));
-        assert!(both.contains("matches a credential pattern"));
+        assert!(both.contains("may contain a password, key or token"));
         // An empty write says so.
         assert!(
             with(Preview::of_written("", crate::PreviewMode::Content, false))

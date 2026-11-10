@@ -24,7 +24,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Unsupported }
 
     internal static class CommandRouter
     {
@@ -38,20 +38,51 @@ namespace Orcel.DesktopPreview
             if (value == "devices") return SafeCommand.Devices;
             if (value == "files") return SafeCommand.Files;
             if (value == "tasks") return SafeCommand.Tasks;
+            if (value == "history") return SafeCommand.History;
+            if (value == "previews") return SafeCommand.Previews;
+            if (value == "previews sizes") return SafeCommand.PreviewsSizes;
+            if (value == "previews content") return SafeCommand.PreviewsContent;
+            if (value == "control") return SafeCommand.Control;
+            if (value == "stop control") return SafeCommand.StopControl;
+            if (value == "revoke all") return SafeCommand.RevokeAll;
             return SafeCommand.Unsupported;
         }
 
         internal static bool CanInvokeInstalledHost(SafeCommand command)
         {
-            return command == SafeCommand.Status || command == SafeCommand.Version || command == SafeCommand.Doctor;
+            return command == SafeCommand.Status || command == SafeCommand.Version || command == SafeCommand.Doctor
+                || IsPreviewSetting(command) || IsControl(command);
         }
 
-        /// The only arguments ever passed to the runtime: fixed, read-only queries.
+        /// Desktop control: its status, and the two ways to take authority away. The app can
+        /// stop or revoke; it never grants (`orcel full-control grant` stays in a terminal,
+        /// behind Windows Hello).
+        internal static bool IsControl(SafeCommand command)
+        {
+            return command == SafeCommand.Control || command == SafeCommand.StopControl || command == SafeCommand.RevokeAll;
+        }
+
+        /// `previews content` is recognised only to say where to do it: the app never asks for
+        /// more disclosure, so a stray click or an automated agent typing into it can't loosen
+        /// what approval prompts show.
+        internal static bool IsPreviewSetting(SafeCommand command)
+        {
+            return command == SafeCommand.Previews || command == SafeCommand.PreviewsSizes;
+        }
+
+        /// The only arguments ever passed to the runtime: fixed, read-only queries, and one
+        /// privacy setting (`approvals previews sizes`) that makes approval prompts show sizes
+        /// only. It saves one field in Orcel's protected configuration and changes nothing else.
         internal static string[] CliArguments(SafeCommand command)
         {
             if (command == SafeCommand.Status) return new[] { "status", "--json" };
             if (command == SafeCommand.Version) return new[] { "version", "--json" };
             if (command == SafeCommand.Doctor) return new[] { "doctor", "--json" };
+            if (command == SafeCommand.Previews) return new[] { "approvals", "previews", "--json" };
+            if (command == SafeCommand.PreviewsSizes) return new[] { "approvals", "previews", "sizes", "--json" };
+            if (command == SafeCommand.Control) return new[] { "full-control", "status", "--json" };
+            if (command == SafeCommand.StopControl) return new[] { "full-control", "revoke", "--json" };
+            if (command == SafeCommand.RevokeAll) return new[] { "emergency-revoke", "--json" };
             return null;
         }
     }
@@ -310,7 +341,7 @@ namespace Orcel.DesktopPreview
         internal static CliResult Query(SafeCommand command, int timeoutMs)
         {
             string[] arguments = CommandRouter.CliArguments(command);
-            if (arguments == null) throw new ArgumentException("not a read-only runtime query");
+            if (arguments == null) throw new ArgumentException("not a runtime query this app may run");
             return BoundedProcess.Run(PathToCompatCli(), arguments, timeoutMs, UserProfile());
         }
 
@@ -337,7 +368,7 @@ namespace Orcel.DesktopPreview
         internal const int MaxFrameBytes = 65536;
         internal const int TimeoutMs = 4000;
         /// The only methods this client sends; all are read-only in orceld.
-        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe" };
+        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe", "approval.history" };
 
         /// This user's pipe name, or null when ORCEL_APP_API_INSTANCE is set
         /// but invalid (refused, never replaced by the default pipe).
@@ -369,6 +400,7 @@ namespace Orcel.DesktopPreview
             request["method"] = method;
             Dictionary<string, object> parameters = new Dictionary<string, object>();
             if (method == "task.get") parameters["task_id"] = taskId ?? "";
+            if (method == "approval.history") parameters["limit"] = ApprovalHistory.MaxShown;
             request["params"] = parameters;
             return new JavaScriptSerializer().Serialize(request) + "\n";
         }
@@ -647,6 +679,78 @@ namespace Orcel.DesktopPreview
         }
     }
 
+    /// The approval history as text: decisions orceld recorded, newest first, with where each
+    /// request came from. It reads only; nothing here approves, denies or revokes.
+    internal static class ApprovalHistory
+    {
+        internal const int MaxShown = 10;
+
+        private static string Field(Dictionary<string, object> map, string key)
+        {
+            object value;
+            return map != null && map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : null;
+        }
+
+        internal static string Origin(object value)
+        {
+            Dictionary<string, object> origin = value as Dictionary<string, object>;
+            string kind = Field(origin, "kind");
+            if (kind == "local") return "this computer";
+            if (kind == "remote")
+                return "REMOTE via " + Timeline.ShownText(Field(origin, "provider")) + ", device " + Timeline.ShownText(Field(origin, "device"));
+            return "origin not recorded";
+        }
+
+        internal static string Decision(string decision)
+        {
+            switch (decision)
+            {
+                case "Approved": return "approved";
+                case "Denied": return "denied";
+                case "Unavailable": return "not approved (unavailable)";
+                default: return "unknown decision";
+            }
+        }
+
+        internal static string When(string millis)
+        {
+            long ms;
+            if (!long.TryParse(millis, out ms) || ms <= 0) return "(time unknown)";
+            try { return DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"); }
+            catch (ArgumentOutOfRangeException) { return "(time unknown)"; }
+        }
+
+        internal static string Text(Dictionary<string, object> result)
+        {
+            if (result == null) return "Approval history unavailable: the local runtime did not answer, or this version of it has no approval history to read.";
+            object entries;
+            if (!result.TryGetValue("entries", out entries) || !(entries is IEnumerable)) return "Approval history unavailable: the answer had no entries.";
+            StringBuilder text = new StringBuilder("Recent approval decisions, newest first:");
+            int shown = 0;
+            foreach (object item in (IEnumerable)entries)
+            {
+                Dictionary<string, object> entry = item as Dictionary<string, object>;
+                if (entry == null) continue;
+                if (shown++ >= MaxShown) break;
+                string line = When(Field(entry, "decided_at_ms")) + "  " + Decision(Field(entry, "decision"))
+                    + " (" + Timeline.ShownText(Field(entry, "approval_class")) + ")"
+                    + ", from " + Origin(entry.ContainsKey("origin") ? entry["origin"] : null)
+                    + ", workspace " + Timeline.ShownText(Field(entry, "workspace_id"));
+                if (Field(entry, "is_revoke") == "True") line += ", emergency revoke";
+                else if (Field(entry, "consumed") == "True") line += ", used";
+                text.Append("\n• ").Append(line);
+            }
+            if (shown == 0) return "No approval decisions are recorded yet.";
+            text.Append("\nThis app reads the history only; approvals are answered in the system's own prompt.");
+            return text.ToString();
+        }
+
+        internal static string Read()
+        {
+            return Text(AppApi.Call("approval.history", null));
+        }
+    }
+
     /// Splits a stream into frames, keeping what follows a newline for the next
     /// one. A frame over MaxFrameBytes, a read past its deadline, or the end of the
     /// stream gives null, and the connection is finished.
@@ -916,6 +1020,98 @@ namespace Orcel.DesktopPreview
             return text.ToString();
         }
 
+        /// The runtime's own refusal, escaped, or null.
+        private static string Refusal(CliResult result, Dictionary<string, object> answer)
+        {
+            object error;
+            if (answer != null && result.ExitCode != 0 && answer.TryGetValue("error", out error)
+                && !string.IsNullOrEmpty(Text(error as Dictionary<string, object>, "message")))
+                return Plain(Text((Dictionary<string, object>)error, "message"));
+            return null;
+        }
+
+        private static Dictionary<string, object> Ok(CliResult result, Dictionary<string, object> answer)
+        {
+            return result.ExitCode == 0 && answer != null && answer.ContainsKey("ok") && true.Equals(answer["ok"]) ? answer : null;
+        }
+
+        /// `orcel full-control status --json`.
+        internal static string ControlMessage(CliResult result)
+        {
+            if (result.FailedToStart || result.TimedOut) return "The Orcel runtime did not answer the desktop control status in time.";
+            Dictionary<string, object> answer = Parse(result.Stdout);
+            string refusal = Refusal(result, answer);
+            if (refusal != null) return "The Orcel runtime could not read desktop control: " + refusal;
+            Dictionary<string, object> json = Ok(result, answer);
+            object raw;
+            Dictionary<string, object> status = json != null && json.TryGetValue("full_control", out raw) ? raw as Dictionary<string, object> : null;
+            if (status == null) return "The installed Orcel runtime did not report desktop control in a form this app understands.";
+            object active;
+            if (status.TryGetValue("active", out active) && true.Equals(active))
+                return "Desktop control is ACTIVE: Orcel may type and click in this session until its lease ends. Type stop control, or press Stop desktop control, to end it now.";
+            string reason = Text(status, "reason");
+            return "Desktop control is off (Safe)" + (string.IsNullOrEmpty(reason) ? ": no active lease for this session." : ": " + Plain(reason));
+        }
+
+        /// `orcel full-control revoke --json`.
+        internal static string StopControlMessage(CliResult result)
+        {
+            if (result.FailedToStart) return "The Orcel runtime could not be started, so desktop control was not stopped by this app. Run orcel full-control revoke in a terminal.";
+            if (result.TimedOut) return "The Orcel runtime did not answer in time. Desktop control may or may not have stopped; type control to check, or run orcel full-control revoke in a terminal.";
+            Dictionary<string, object> answer = Parse(result.Stdout);
+            string refusal = Refusal(result, answer);
+            if (refusal != null) return "Desktop control was NOT confirmed stopped: " + refusal + " Run orcel full-control revoke in a terminal.";
+            Dictionary<string, object> json = Ok(result, answer);
+            if (json == null) return "The installed Orcel runtime did not confirm that desktop control stopped. Type control to check.";
+            object revoked;
+            json.TryGetValue("revoked", out revoked);
+            if (true.Equals(revoked))
+                return "Desktop control authority revoked. Orcel can't type or click until someone grants it again with Windows Hello.";
+            if (false.Equals(revoked))
+                return "Desktop control was already off (Safe). Nothing was running.";
+            return "The installed Orcel runtime did not confirm that desktop control stopped. Type control to check.";
+        }
+
+        /// `orcel emergency-revoke --json`: the runtime asks for Windows Hello itself.
+        internal static string RevokeAllMessage(CliResult result)
+        {
+            if (result.FailedToStart) return "The Orcel runtime could not be started, so nothing was revoked by this app. Run orcel emergency-revoke in a terminal.";
+            if (result.TimedOut) return "The emergency revoke did not finish in time. It may or may not have been recorded; type history, or run orcel approvals in a terminal, to check.";
+            Dictionary<string, object> answer = Parse(result.Stdout);
+            string refusal = Refusal(result, answer);
+            // An error can follow a partial revoke, or a Hello approved after the CLI stopped
+            // waiting, so it never claims that nothing happened.
+            if (refusal != null) return "The emergency revoke was not confirmed: " + refusal + " Type history, or run orcel approvals in a terminal, to see whether it was recorded.";
+            if (Ok(result, answer) == null) return "The installed Orcel runtime did not confirm the emergency revoke. Type history, or run orcel approvals in a terminal, to see whether it was recorded.";
+            return "Emergency revoke recorded: every pending approval, desktop control and every remote session lease is now invalid.";
+        }
+
+        /// `orcel approvals previews [sizes|content] --json`: what approval prompts show of the
+        /// content they approve. Only the runtime's own answer is reported.
+        internal static string PreviewsMessage(CliResult result)
+        {
+            if (result.FailedToStart) return "The Orcel runtime could not be started. The approval preview setting was not changed.";
+            if (result.TimedOut) return "The Orcel runtime did not answer the approval preview setting in time. It may or may not have been saved; type previews to check.";
+            Dictionary<string, object> answer = Parse(result.Stdout);
+            object error;
+            if (answer != null && result.ExitCode != 0 && answer.TryGetValue("error", out error)
+                && !string.IsNullOrEmpty(Text(error as Dictionary<string, object>, "message")))
+                return "The Orcel runtime answered the approval preview command with an error: " + Plain(Text((Dictionary<string, object>)error, "message"))
+                    + " If the runtime is older than this app, it may not have this setting; update Orcel.";
+            Dictionary<string, object> json = result.ExitCode == 0 && answer != null && answer.ContainsKey("ok") && true.Equals(answer["ok"]) ? answer : null;
+            string choice = Text(json, "approval_previews");
+            object changed = null;
+            if (json != null) json.TryGetValue("changed", out changed);
+            if (choice == "sizes")
+                return "Approval previews: sizes only. Approval prompts show how much would change, never the content."
+                    + (true.Equals(changed) ? " Saved. Restart your AI clients so their next sessions use it." : "");
+            if (choice == "content")
+                return "Approval previews: a short preview, hidden when it looks like a password, key or token."
+                    + (true.Equals(changed) ? " Saved. Restart your AI clients so their next sessions use it." : "")
+                    + " Type previews sizes to show sizes only. (ORCEL_APPROVAL_PREVIEWS=sizes in your environment also does.)";
+            return "The installed Orcel runtime did not report an approval preview setting this app understands. It may be older than this app.";
+        }
+
         internal static string VersionMessage(CliResult result)
         {
             if (result.FailedToStart || result.TimedOut) return "The Orcel runtime did not answer a read-only version query in time.";
@@ -1031,6 +1227,12 @@ namespace Orcel.DesktopPreview
         private const int QueryTimeoutMs = 8000;
         // Doctor starts the daemon for an IPC probe and takes about 8 s on a typical machine.
         private const int DoctorTimeoutMs = 30000;
+        /// An emergency revoke's call to orceld is limited to 180 s (its STRONG summary and
+        /// Windows Hello each wait up to 120 s); this covers that and the CLI's start.
+        private const int RevokeAllTimeoutMs = 200000;
+        /// Desktop control commands may wait up to 60 s for the runtime's lifecycle lock, for
+        /// example while an update runs or a grant waits for Windows Hello.
+        private const int ControlTimeoutMs = 70000;
         private readonly StackPanel transcript = new StackPanel();
         private readonly TextBox commandBox = new TextBox();
         private readonly TextBlock hostState = new TextBlock();
@@ -1131,7 +1333,7 @@ namespace Orcel.DesktopPreview
             logoText.VerticalAlignment = VerticalAlignment.Center;
             logo.Children.Add(logoText);
             headerContent.Children.Add(logo);
-            TextBlock stage = Text("DESKTOP FOUNDATION  •  READ-ONLY", 11, Colors.Safe, true);
+            TextBlock stage = Text("DESKTOP FOUNDATION  •  READ-ONLY + STOP CONTROLS", 11, Colors.Safe, true);
             stage.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(stage, 1);
             headerContent.Children.Add(stage);
@@ -1145,7 +1347,7 @@ namespace Orcel.DesktopPreview
             Grid.SetRow(center, 1); Grid.SetColumn(center, 0);
             StackPanel headline = new StackPanel { Margin = new Thickness(6, 0, 6, 14) };
             headline.Children.Add(Text("What can I help you with?", 23, Colors.Ink, true));
-            TextBlock sub = Text("Read-only foundation: it reports the real local runtime and never executes free text. Orcel AI and remote actions are not connected.", 12, Colors.Muted, false);
+            TextBlock sub = Text("It reports the real local runtime and never executes free text. It changes things only to take authority away: sizes-only previews, stopping desktop control, and an emergency revoke. Orcel AI and remote actions are not connected.", 12, Colors.Muted, false);
             sub.Margin = new Thickness(0, 6, 0, 0);
             headline.Children.Add(sub);
             center.Children.Add(headline);
@@ -1170,10 +1372,10 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Read-only commands: help, status, version, doctor, devices, files";
+            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, previews, control, stop control, revoke all";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
-            AutomationProperties.SetHelpText(commandBox, "Type a read-only command and press Enter");
+            AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control and revoke all, which only take authority away");
             commandBox.KeyDown += delegate(object sender, System.Windows.Input.KeyEventArgs e) {
                 if (e.Key == Key.Enter) { e.Handled = true; Send(); }
             };
@@ -1216,6 +1418,11 @@ namespace Orcel.DesktopPreview
             refresh.Margin = new Thickness(0);
             refresh.Click += delegate { RefreshHost(); };
             runtime.Children.Add(refresh);
+            System.Windows.Controls.Button stopControl = ActionButton("Stop desktop control", true, "StopControlButton");
+            stopControl.Margin = new Thickness(0, 10, 0, 0);
+            AutomationProperties.SetHelpText(stopControl, "Ends Orcel's Full User desktop control at once; it never grants control");
+            stopControl.Click += delegate { AddMessage(true, "stop control"); QueryHost(SafeCommand.StopControl); };
+            runtime.Children.Add(stopControl);
             Border runtimeCard = Card(runtime, Colors.Sidebar, new Thickness(16));
             runtimeCard.Margin = new Thickness(0, 0, 0, 14);
             right.Children.Add(runtimeCard);
@@ -1275,13 +1482,17 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, help. These operations are read-only. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
                 InspectFolder();
             else if (kind == SafeCommand.Tasks)
                 ShowTasks();
+            else if (kind == SafeCommand.History)
+                ShowHistory();
+            else if (kind == SafeCommand.PreviewsContent)
+                AddMessage(false, "Not changed. This app only makes approval prompts show less. To show content previews again, run orcel approvals previews content in a terminal.");
             else if (CommandRouter.CanInvokeInstalledHost(kind))
                 QueryHost(kind);
             else
@@ -1295,7 +1506,7 @@ namespace Orcel.DesktopPreview
                 AddMessage(false, Interpret.StatusMessage(new RuntimeStatus { Availability = RuntimeAvailability.NotInstalled }));
                 return;
             }
-            AddMessage(false, "Reading local runtime " + CommandRouter.CliArguments(command)[0] + "...");
+            AddMessage(false, Progress(command));
             try
             {
                 if (command == SafeCommand.Status)
@@ -1306,15 +1517,36 @@ namespace Orcel.DesktopPreview
                     return;
                 }
                 string response = await Task.Run(delegate {
-                    CliResult result = LocalHost.Query(command, command == SafeCommand.Doctor ? DoctorTimeoutMs : QueryTimeoutMs);
+                    CliResult result = LocalHost.Query(command, command == SafeCommand.Doctor ? DoctorTimeoutMs
+                        : command == SafeCommand.RevokeAll ? RevokeAllTimeoutMs
+                        : command == SafeCommand.Control || command == SafeCommand.StopControl ? ControlTimeoutMs
+                        : QueryTimeoutMs);
+                    if (CommandRouter.IsPreviewSetting(command)) return Interpret.PreviewsMessage(result);
+                    if (command == SafeCommand.Control) return Interpret.ControlMessage(result);
+                    if (command == SafeCommand.StopControl) return Interpret.StopControlMessage(result);
+                    if (command == SafeCommand.RevokeAll) return Interpret.RevokeAllMessage(result);
                     return command == SafeCommand.Version ? Interpret.VersionMessage(result) : Interpret.DoctorMessage(result);
                 });
                 AddMessage(false, response);
             }
             catch (Exception)
             {
-                AddMessage(false, "The read-only runtime query failed unexpectedly. No action was performed.");
+                AddMessage(false, command == SafeCommand.PreviewsSizes
+                    ? "The approval preview setting failed unexpectedly. It may or may not have been saved; type previews to check."
+                    : command == SafeCommand.StopControl
+                    ? "Stopping desktop control failed unexpectedly. Run orcel full-control revoke in a terminal."
+                    : command == SafeCommand.RevokeAll
+                    ? "The emergency revoke failed unexpectedly. Run orcel emergency-revoke in a terminal."
+                    : "The read-only runtime query failed unexpectedly. No action was performed.");
             }
+        }
+
+        private static string Progress(SafeCommand command)
+        {
+            if (command == SafeCommand.PreviewsSizes) return "Saving the approval preview setting...";
+            if (command == SafeCommand.StopControl) return "Stopping desktop control...";
+            if (command == SafeCommand.RevokeAll) return "Emergency revoke: confirm with Windows Hello when it asks. Every pending approval, desktop control and remote session lease will be invalidated.";
+            return "Reading local runtime " + CommandRouter.CliArguments(command)[0] + "...";
         }
 
         private void ShowRuntime(RuntimeStatus status)
@@ -1351,6 +1583,13 @@ namespace Orcel.DesktopPreview
             AddMessage(false, "Reading report tasks from the local runtime...");
             try { AddMessage(false, await Task.Run(delegate { return Timeline.Read(); })); }
             catch (Exception) { AddMessage(false, "The read-only task query failed unexpectedly. No action was performed."); }
+        }
+
+        private async void ShowHistory()
+        {
+            AddMessage(false, "Reading the approval history from the local runtime...");
+            try { AddMessage(false, await Task.Run(delegate { return ApprovalHistory.Read(); })); }
+            catch (Exception) { AddMessage(false, "The read-only approval history query failed unexpectedly. No action was performed."); }
         }
 
         private async void InspectFolder()
@@ -1446,6 +1685,32 @@ namespace Orcel.DesktopPreview
             expect(refused, "only read-only app API methods are sent");
             expect(AppApi.RequestFrame("task.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"task.list\",\"params\":{}}\n", "task.list frame");
             expect(AppApi.RequestFrame("task.get", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.get frame");
+            expect(CommandRouter.Classify("previews") == SafeCommand.Previews && CommandRouter.Classify(" Previews Sizes ") == SafeCommand.PreviewsSizes && CommandRouter.Classify("previews content") == SafeCommand.PreviewsContent, "previews routes");
+            expect(CommandRouter.Classify("previews all") == SafeCommand.Unsupported && CommandRouter.Classify("previews sizes; status") == SafeCommand.Unsupported, "only the two fixed choices are accepted");
+            expect(string.Join(" ", CommandRouter.CliArguments(SafeCommand.PreviewsSizes)) == "approvals previews sizes --json" && string.Join(" ", CommandRouter.CliArguments(SafeCommand.Previews)) == "approvals previews --json", "previews passes fixed arguments only");
+            expect(CommandRouter.CliArguments(SafeCommand.PreviewsContent) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.PreviewsContent), "the app never asks for content previews");
+            expect(CommandRouter.CanInvokeInstalledHost(SafeCommand.Previews) && CommandRouter.CanInvokeInstalledHost(SafeCommand.PreviewsSizes), "previews and previews sizes reach the runtime");
+            expect(CommandRouter.Classify("previews  sizes") == SafeCommand.Unsupported && CommandRouter.Classify("previews\tsizes") == SafeCommand.Unsupported && CommandRouter.Classify("previews \uFF53izes") == SafeCommand.Unsupported, "spacing and look-alike letters are refused");
+            expect(Interpret.PreviewsMessage(new CliResult { TimedOut = true }).Contains("may or may not have been saved") && Interpret.PreviewsMessage(new CliResult { FailedToStart = true }).Contains("was not changed"), "a timeout and a failed start are reported honestly");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 2, Stdout = "{\n  \"ok\": false,\n  \"error\": {\n    \"kind\": \"state\",\n    \"message\": \"config.json has an unsupported schema\"\n  }\n}" }).StartsWith("The Orcel runtime answered the approval preview command with an error: config.json has an unsupported schema."), "the runtime's own refusal is shown");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\n  \"ok\": true,\n  \"approval_previews\": \"sizes\",\n  \"changed\": false\n}" }).StartsWith("Approval previews: sizes only.") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":false,\"approval_previews\":\"sizes\"}" }).Contains("did not report"), "pretty-printed output parses; ok must be true");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"sizes\",\"changed\":true}" }).StartsWith("Approval previews: sizes only.") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"sizes\",\"changed\":true}" }).Contains("Saved."), "a saved sizes choice is reported");
+            expect(!Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"content\",\"changed\":false}" }).Contains("Saved."), "an unchanged choice is not reported as saved");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 2, Stdout = "" }).Contains("did not report") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"approval_previews\":\"all\"}" }).Contains("did not report"), "an error or unknown answer is not a setting");
+            expect(CommandRouter.Classify("control") == SafeCommand.Control && CommandRouter.Classify(" Stop Control ") == SafeCommand.StopControl && CommandRouter.Classify("revoke all") == SafeCommand.RevokeAll, "control commands route");
+            expect(CommandRouter.Classify("grant control") == SafeCommand.Unsupported && CommandRouter.Classify("full-control grant") == SafeCommand.Unsupported && CommandRouter.Classify("stop  control") == SafeCommand.Unsupported, "nothing grants control, and only exact commands route");
+            expect(string.Join(" ", CommandRouter.CliArguments(SafeCommand.Control)) == "full-control status --json" && string.Join(" ", CommandRouter.CliArguments(SafeCommand.StopControl)) == "full-control revoke --json" && string.Join(" ", CommandRouter.CliArguments(SafeCommand.RevokeAll)) == "emergency-revoke --json", "control commands pass fixed arguments only");
+            expect(Interpret.StopControlMessage(new CliResult { ExitCode = 0, Stdout = "{\n  \"ok\": true,\n  \"revoked\": true,\n  \"authority_epoch\": 4\n}" }).StartsWith("Desktop control authority revoked.") && Interpret.StopControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"revoked\":false,\"authority_epoch\":null}" }).StartsWith("Desktop control was already off") && Interpret.StopControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true}" }).Contains("did not confirm"), "stop control reports what happened, and a missing answer isn't 'off'");
+            expect(Interpret.StopControlMessage(new CliResult { TimedOut = true }).Contains("may or may not have stopped") && Interpret.StopControlMessage(new CliResult { ExitCode = 1, Stdout = "{\"ok\":false,\"error\":{\"kind\":\"state\",\"message\":\"the authority key is unreadable\"}}" }).StartsWith("Desktop control was NOT confirmed stopped: the authority key is unreadable."), "a stop that isn't confirmed says so");
+            expect(Interpret.ControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"full_control\":{\"active\":true}}" }).StartsWith("Desktop control is ACTIVE") && Interpret.ControlMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"full_control\":{\"active\":false,\"reason\":\"no lease\\u202e\"}}" }) == "Desktop control is off (Safe): no lease.", "control status is read and escaped");
+            expect(Interpret.RevokeAllMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"revoke\":{\"revoke_epoch\":2}}" }).StartsWith("Emergency revoke recorded") && Interpret.RevokeAllMessage(new CliResult { ExitCode = 1, Stdout = "{\"ok\":false,\"error\":{\"kind\":\"denied\",\"message\":\"Windows Hello was cancelled\"}}" }).StartsWith("The emergency revoke was not confirmed: Windows Hello was cancelled.") && Interpret.RevokeAllMessage(new CliResult { TimedOut = true }).Contains("may or may not have been recorded"), "revoke all never claims nothing happened after an error or a timeout");
+            expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
+            expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
+            string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
+            expect(history.Split('\n').Length == 4, "one line per decision; a field cannot add lines");
+            expect(history.Contains("approved (SOFT), from REMOTE via tunnel, device d 1, workspace ws x, used") && history.Contains("denied (STRONG), from origin not recorded"), "history names decision, class, origin and use");
+            expect(ApprovalHistory.When("999999999999999999") == "(time unknown)" && ApprovalHistory.When("x") == "(time unknown)", "an impossible time is not a crash");
+            expect(ApprovalHistory.Text(null).StartsWith("Approval history unavailable") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[]}}")) == "No approval decisions are recorded yet.", "empty and unavailable history say so");
             expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"UNKNOWN_TASK\"}}") == null, "an error frame is not a result");
             WatcherSelfTest(expect);
             expect(AppApi.ParseReply("{\"v\":\"other/1\",\"ok\":true,\"result\":{}}") == null, "another protocol is refused");
@@ -1548,7 +1813,7 @@ namespace Orcel.DesktopPreview
                 foreach (string failure in failures) Console.WriteLine("FAIL: " + failure);
                 return 1;
             }
-            Console.WriteLine("Orcel read-only router, runtime interpretation, bounded process and folder self-tests: PASS");
+            Console.WriteLine("Orcel command router (read-only plus the authority-reducing controls), runtime interpretation, bounded process and folder self-tests: PASS");
             return 0;
         }
 

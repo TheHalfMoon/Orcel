@@ -721,10 +721,62 @@ pub fn doctor(args: &mut Args) -> Result<Output, LifecycleError> {
     })
 }
 
+/// `orcel approvals previews [content|sizes]`: shows or saves what approval prompts show of
+/// the content they approve. Saved in the protected `config.json`; orceld reads it at launch.
+fn approval_previews(layout: &Layout, choice: Option<&str>) -> Result<Output, LifecycleError> {
+    let mut config = Config::load(layout)?;
+    let mut changed = false;
+    if let Some(choice) = choice {
+        let parsed = config::ApprovalPreviews::parse(choice)
+            .ok_or_else(|| LifecycleError::usage("approval previews are `content` or `sizes`"))?;
+        // Content is the default, so choosing it removes the field: a configuration without
+        // it is one every Orcel version reads (see `orcel rollback`).
+        let saved = (parsed == config::ApprovalPreviews::Sizes).then_some(parsed);
+        if config.approval_previews != saved {
+            config.approval_previews = saved;
+            config.save(layout)?;
+            changed = true;
+        }
+    }
+    let current = config
+        .approval_previews
+        .unwrap_or(config::ApprovalPreviews::Content);
+    let meaning = match current {
+        config::ApprovalPreviews::Content => {
+            "prompts show a short preview, hidden when it looks like a credential"
+        }
+        config::ApprovalPreviews::Sizes => "prompts show sizes only, never any content",
+    };
+    let mut human = format!("Approval previews: {} ({meaning}).\n", current.as_str());
+    if changed {
+        human.push_str(
+            "Sessions started from now on use it. Restart AI clients that run `orcel mcp stdio`, \
+             run `orcel stop` then `orcel start` for the tunnel, and reconnect `orcel remote connect`.\n",
+        );
+    }
+    if cfg!(unix) {
+        human.push_str(
+            "On Linux and macOS, an orceld started by systemd or the dev tarball reads only its \
+             own environment: add ORCEL_APPROVAL_PREVIEWS=sizes there (for systemd, in \
+             ~/.config/orcel/orceld.env).\n",
+        );
+    }
+    Ok(Output {
+        exit_code: 0,
+        human,
+        json: json!({"ok": true, "approval_previews": current.as_str(), "changed": changed}),
+    })
+}
+
 pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
     if args.flag("recover") {
         args.finish()?;
         return approvals_recover(&approval_history_path()?);
+    }
+    if args.flag("previews") {
+        let choice = args.positional("preview choice").ok();
+        args.finish()?;
+        return approval_previews(&Layout::for_current_user()?, choice.as_deref());
     }
     let limit = match args.value("--limit")? {
         Some(value) => value
@@ -761,7 +813,7 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
         .unwrap_or_default()
     {
         human.push_str(&format!(
-            "{} {:<8} {:<7} workspace={} consumed={}\n",
+            "{} {:<8} {:<7} workspace={} consumed={} origin={}\n",
             entry
                 .get("decided_at_ms")
                 .and_then(Value::as_u64)
@@ -779,6 +831,7 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
                 .get("consumed")
                 .map(Value::to_string)
                 .unwrap_or_default(),
+            history_origin(entry.get("origin")),
         ));
     }
     if human.is_empty() {
@@ -789,6 +842,32 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
         human,
         json: json!({"ok": true, "approvals": result}),
     })
+}
+
+/// An approval history entry's origin in one word or a short phrase: `local`, `remote(...)`,
+/// or `unrecorded` for entries written before origins were recorded. The parts are orceld's
+/// own identifiers, shown escaped so none can break the line.
+fn history_origin(origin: Option<&Value>) -> String {
+    let part = |value: &Value, name: &str| {
+        value
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .escape_default()
+            .to_string()
+    };
+    match origin {
+        Some(value) if value.get("kind").and_then(Value::as_str) == Some("local") => {
+            "local".to_owned()
+        }
+        Some(value) if value.get("kind").and_then(Value::as_str) == Some("remote") => format!(
+            "remote({} device={} connection={})",
+            part(value, "provider"),
+            part(value, "device"),
+            part(value, "connection")
+        ),
+        _ => "unrecorded".to_owned(),
+    }
 }
 
 fn approval_history_path() -> Result<std::path::PathBuf, LifecycleError> {
@@ -1524,6 +1603,22 @@ pub fn self_check(args: &mut Args) -> Result<Output, LifecycleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_history_names_each_origin_on_one_line() {
+        assert_eq!(history_origin(Some(&json!({"kind": "local"}))), "local");
+        assert_eq!(
+            history_origin(Some(&json!({
+                "kind": "remote",
+                "provider": "tunnel",
+                "device": "dev\n1",
+                "connection": "c-1"
+            }))),
+            "remote(tunnel device=dev\\n1 connection=c-1)"
+        );
+        assert_eq!(history_origin(Some(&Value::Null)), "unrecorded");
+        assert_eq!(history_origin(None), "unrecorded");
+    }
 
     #[test]
     fn approvals_recover_quarantines_only_an_unverifiable_ledger() {

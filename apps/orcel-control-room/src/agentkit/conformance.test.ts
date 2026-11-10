@@ -19,7 +19,6 @@ import {
   APP_API_PROTOCOL,
   READ_METHODS,
   RESERVED_READ_METHODS,
-  ORCELD_METHODS,
   parseCapabilities,
   parseSnapshotData,
   parseStatus,
@@ -36,6 +35,7 @@ import {
   uniqueInstance,
   type RunningOrceld,
   type Sandbox,
+  ORCELD_METHODS,
 } from "../tests/orceld.js";
 
 class AppApiConformanceError extends Error {

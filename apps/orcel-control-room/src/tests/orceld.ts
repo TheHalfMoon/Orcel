@@ -20,6 +20,21 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // dist/tests -> apps/orcel-control-room -> repository root
 const repoRoot = path.resolve(here, "..", "..", "..", "..");
 
+/**
+ * Every method orceld serves: the client's own READ_METHODS plus the
+ * SG-000126 report task reads and the approval history, which this client
+ * does not send. Test support only, so the shipped bundle names no approval
+ * method (no-authority.test.ts).
+ */
+export const ORCELD_METHODS = [
+  "status.get",
+  "capabilities.get",
+  "events.subscribe",
+  "task.list",
+  "task.get",
+  "approval.history",
+] as const;
+
 const START_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 10_000;
 

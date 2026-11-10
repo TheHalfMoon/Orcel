@@ -28,6 +28,33 @@ pub struct TunnelSettings {
     pub tunnel_id: String,
 }
 
+/// What approval prompts show of the content they approve: the person's saved choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalPreviews {
+    /// A bounded preview, hidden when the content matches a credential pattern (the default).
+    Content,
+    /// Sizes only: prompts never show any of the content.
+    Sizes,
+}
+
+impl ApprovalPreviews {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Content => "content",
+            Self::Sizes => "sizes",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "content" => Some(Self::Content),
+            "sizes" => Some(Self::Sizes),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -35,6 +62,10 @@ pub struct Config {
     pub config_schema: u32,
     pub workspaces: Vec<WorkspaceEntry>,
     pub tunnel: Option<TunnelSettings>,
+    /// Absent until the person chooses; absent means content previews. Left out of the file
+    /// while unset, so a configuration saved without a choice reads the same in older builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_previews: Option<ApprovalPreviews>,
 }
 
 impl Default for Config {
@@ -44,6 +75,7 @@ impl Default for Config {
             config_schema: CONFIG_SCHEMA_VERSION,
             workspaces: Vec::new(),
             tunnel: None,
+            approval_previews: None,
         }
     }
 }
@@ -281,6 +313,33 @@ pub fn tunnel_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_preview_choice_is_saved_only_once_made_and_unknown_values_refuse() {
+        let unset = serde_json::to_string(&Config::default()).unwrap();
+        assert!(!unset.contains("approval_previews"), "{unset}");
+        let old: Config = serde_json::from_str(
+            r#"{"schema":"orcel-config-v1","config_schema":1,"workspaces":[],"tunnel":null}"#,
+        )
+        .unwrap();
+        assert_eq!(old.approval_previews, None);
+        let sizes = Config {
+            approval_previews: Some(ApprovalPreviews::Sizes),
+            ..Config::default()
+        };
+        let saved = serde_json::to_string(&sizes).unwrap();
+        assert!(saved.contains(r#""approval_previews":"sizes""#), "{saved}");
+        assert_eq!(serde_json::from_str::<Config>(&saved).unwrap(), sizes);
+        assert!(serde_json::from_str::<Config>(
+            r#"{"schema":"orcel-config-v1","config_schema":1,"workspaces":[],"tunnel":null,"approval_previews":"all"}"#,
+        )
+        .is_err());
+        assert_eq!(
+            ApprovalPreviews::parse("sizes"),
+            Some(ApprovalPreviews::Sizes)
+        );
+        assert_eq!(ApprovalPreviews::parse("Sizes"), None);
+    }
     use crate::test_support::temp_dir;
 
     #[test]
