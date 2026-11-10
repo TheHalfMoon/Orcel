@@ -42,9 +42,91 @@ fn shared_with(limits: Limits) -> Arc<Shared> {
         facts(),
         log,
         Arc::new(crate::report_task::TaskRegistry::new()),
+        None,
         limits,
         "test".into(),
     ))
+}
+
+/// `approval.history` reads the ledger through its own reader: decisions newest first with
+/// their origin, bounded, and refused parameters. It never approves anything.
+#[test]
+fn approval_history_reads_decisions_and_their_origin() {
+    use orcel_approval::{
+        ApprovalBroker, ApprovalDecision, ApprovalPrompt, LocalApprovalBroker, RequestOrigin,
+    };
+    let path = std::env::temp_dir().join(format!("orcel-app-api-history-{}.jsonl", unique()));
+    let broker = LocalApprovalBroker::with_path_and_soft_decider(
+        &path,
+        Arc::new(orcel_approval::NoPresenceVerifier),
+        Arc::new(|_| ApprovalDecision::Approved),
+    );
+    let digest = "a".repeat(64);
+    broker
+        .request_token(&ApprovalPrompt::new("ws", "rev", "act", "t", "s", &digest))
+        .unwrap();
+    broker
+        .request_token(
+            &ApprovalPrompt::new("ws", "rev", "act", "t", "s", "b".repeat(64)).with_origin(
+                RequestOrigin::Remote {
+                    provider: "tunnel".into(),
+                    device: "dev-1".into(),
+                    connection: "c-1".into(),
+                },
+            ),
+        )
+        .unwrap();
+    let limits = test_limits();
+    let shared = Arc::new(Shared::new(
+        facts(),
+        Arc::new(EventLog::new(limits.ring_capacity, new_epoch())),
+        Arc::new(crate::report_task::TaskRegistry::new()),
+        Some(Arc::new(orcel_approval::ApprovalHistoryReader::at(&path))),
+        limits,
+        "test".into(),
+    ));
+    let peer = own_peer();
+    let frame = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("approval.history", json!({ "limit": 10 })),
+    ));
+    assert_eq!(frame["ok"], true, "{frame}");
+    let entries = frame["result"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["origin"]["kind"], "remote");
+    assert_eq!(entries[0]["origin"]["device"], "dev-1");
+    assert_eq!(entries[1]["origin"]["kind"], "local");
+    assert_eq!(entries[1]["decision"], "Approved");
+    assert_eq!(entries[1]["digest"], digest.as_str());
+    let one = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("approval.history", json!({ "limit": 1 })),
+    ));
+    assert_eq!(one["result"]["entries"].as_array().unwrap().len(), 1);
+    for params in [
+        json!({ "limit": 0 }),
+        json!({ "limit": 51 }),
+        json!({ "limit": "5" }),
+        json!({ "approve": true }),
+    ] {
+        let frame = reply_frame(handle_frame(
+            &shared,
+            &peer,
+            &request("approval.history", params.clone()),
+        ));
+        assert_eq!(frame["error"]["code"], "INVALID_REQUEST", "{params}");
+    }
+    // Without a private location there is no history to read.
+    let without = shared_with(test_limits());
+    let frame = reply_frame(handle_frame(
+        &without,
+        &peer,
+        &request("approval.history", json!({})),
+    ));
+    assert_eq!(frame["error"]["code"], "METHOD_UNAVAILABLE");
+    let _ = std::fs::remove_file(&path);
 }
 
 fn own_peer() -> PeerInfo {

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
-import { APP_API_PROTOCOL, MAX_FRAME_BYTES, READ_METHODS, ORCELD_METHODS } from "../protocol/index.js";
+import { APP_API_PROTOCOL, MAX_FRAME_BYTES, READ_METHODS } from "../protocol/index.js";
 import {
   MAX_UNIX_SOCKET_PATH,
   connectEndpoint,
@@ -24,6 +24,7 @@ import {
   uniqueInstance,
   type RunningOrceld,
   type Sandbox,
+  ORCELD_METHODS,
 } from "../../tests/orceld.js";
 import { waitForState } from "../../tests/wait.js";
 import { ControlRoomClient, type IntegrityReport } from "./client.js";
