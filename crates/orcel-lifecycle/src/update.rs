@@ -668,9 +668,33 @@ mod tests {
     #[test]
     fn a_saved_preview_choice_refuses_rollback_until_it_is_cleared() {
         let (layout, platform) = setup("0.2.0");
-        Updater::new(layout.clone(), &platform)
-            .update(&release_dir("0.3.0"), &UpdateOptions::default())
-            .unwrap();
+        // 0.3.0 active with 0.2.0 retained, written directly: a real update would run the
+        // fixture's CLI, which isn't an executable.
+        let installer = Installer::new(layout.clone(), &platform);
+        let release = manifest::verify_release(&release_dir("0.3.0")).unwrap();
+        installer.stage_version(&release).unwrap();
+        let record: InstallRecord = crate::layout::read_install(&layout).unwrap().unwrap();
+        write_json_atomic(
+            &layout.current_file(),
+            &CurrentRecord {
+                schema: CURRENT_SCHEMA.into(),
+                version: "0.3.0".into(),
+                manifest_sha256: release.manifest_sha256.clone(),
+            },
+        )
+        .unwrap();
+        write_json_atomic(
+            &layout.install_file(),
+            &InstallRecord {
+                schema: INSTALL_SCHEMA.into(),
+                active: "0.3.0".into(),
+                previous: Some("0.2.0".into()),
+                node_path: record.node_path.clone(),
+                path_entry_added: record.path_entry_added,
+            },
+        )
+        .unwrap();
+        installer.verify().unwrap();
         let mut config = crate::config::Config::load(&layout).unwrap();
         config.approval_previews = Some(crate::config::ApprovalPreviews::Sizes);
         config.save(&layout).unwrap();
