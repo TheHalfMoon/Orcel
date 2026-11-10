@@ -721,10 +721,45 @@ pub fn doctor(args: &mut Args) -> Result<Output, LifecycleError> {
     })
 }
 
+/// `orcel approvals previews [content|sizes]`: shows or saves what approval prompts show of
+/// the content they approve. Saved in the protected `config.json`; orceld reads it at launch.
+fn approval_previews(layout: &Layout, choice: Option<&str>) -> Result<Output, LifecycleError> {
+    let mut config = Config::load(layout)?;
+    if let Some(choice) = choice {
+        let parsed = config::ApprovalPreviews::parse(choice)
+            .ok_or_else(|| LifecycleError::usage("approval previews are `content` or `sizes`"))?;
+        config.approval_previews = Some(parsed);
+        config.save(layout)?;
+    }
+    let current = config
+        .approval_previews
+        .unwrap_or(config::ApprovalPreviews::Content);
+    let meaning = match current {
+        config::ApprovalPreviews::Content => {
+            "prompts show a short preview, hidden when it looks like a credential"
+        }
+        config::ApprovalPreviews::Sizes => "prompts show sizes only, never any content",
+    };
+    Ok(Output {
+        exit_code: 0,
+        human: format!(
+            "Approval previews: {} ({meaning}).\n{}",
+            current.as_str(),
+            if choice.is_some() { RESTART_HINT } else { "" }
+        ),
+        json: json!({"ok": true, "approval_previews": current.as_str()}),
+    })
+}
+
 pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
     if args.flag("recover") {
         args.finish()?;
         return approvals_recover(&approval_history_path()?);
+    }
+    if args.flag("previews") {
+        let choice = args.positional("preview choice").ok();
+        args.finish()?;
+        return approval_previews(&Layout::for_current_user()?, choice.as_deref());
     }
     let limit = match args.value("--limit")? {
         Some(value) => value

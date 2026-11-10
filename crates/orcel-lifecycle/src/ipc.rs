@@ -65,6 +65,11 @@ pub fn child_environment(config: &Config) -> BTreeMap<String, String> {
     if let Some(default) = config.default_workspace() {
         env.insert("ORCEL_DEFAULT_WORKSPACE".into(), default.into());
     }
+    // The person's saved preview choice. Sizes only always wins, so an inherited
+    // `ORCEL_APPROVAL_PREVIEWS` can make prompts show less than the saved choice, never more.
+    if config.approval_previews == Some(crate::config::ApprovalPreviews::Sizes) {
+        env.insert("ORCEL_APPROVAL_PREVIEWS".into(), "sizes".into());
+    }
     env
 }
 
@@ -250,6 +255,36 @@ pub fn expect_ok(response: &Value) -> Result<&Value, LifecycleError> {
 mod tests {
     use super::*;
     use crate::config::WorkspaceEntry;
+
+    #[test]
+    fn a_saved_sizes_only_choice_reaches_orceld_and_content_leaves_the_variable_alone() {
+        use crate::config::ApprovalPreviews;
+        let sizes = Config {
+            approval_previews: Some(ApprovalPreviews::Sizes),
+            ..Config::default()
+        };
+        assert_eq!(
+            child_environment(&sizes)
+                .get("ORCEL_APPROVAL_PREVIEWS")
+                .map(String::as_str),
+            Some("sizes")
+        );
+        // Content or no choice never sets the variable, so it can only come from the
+        // person's own environment, and only towards fewer previews.
+        let inherited = std::env::var("ORCEL_APPROVAL_PREVIEWS").ok();
+        for config in [
+            Config::default(),
+            Config {
+                approval_previews: Some(ApprovalPreviews::Content),
+                ..Config::default()
+            },
+        ] {
+            assert_eq!(
+                child_environment(&config).get("ORCEL_APPROVAL_PREVIEWS"),
+                inherited.as_ref()
+            );
+        }
+    }
 
     #[test]
     fn child_environment_carries_workspaces_and_no_secrets() {
