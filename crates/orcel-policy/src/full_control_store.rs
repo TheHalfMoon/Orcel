@@ -317,8 +317,89 @@ fn advance_epoch(value: u64) -> Result<u64, PolicyError> {
         .ok_or_else(|| invalid("full-control authority epoch overflow"))
 }
 
+/// The store's own lock, held for one read-modify-write and released when dropped,
+/// including when the process dies. Every change to the store takes it, so a revoke and a
+/// grant can't interleave and lose one of the two. It is held for microseconds, never across
+/// a person's approval, so a revoke never waits behind a Windows Hello prompt.
+struct StoreLock {
+    _file: std::fs::File,
+}
+
+/// How long a change waits for another change to the store to finish.
+const STORE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn lock_store(path: &Path) -> Result<StoreLock, PolicyError> {
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| invalid("full-control authority state path has no file name"))?;
+    let mut lock_name = file_name.to_os_string();
+    lock_name.push(".lock");
+    let lock_path = path.with_file_name(lock_name);
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            unavailable(format!("create full-control authority directory: {error}"))
+        })?;
+    }
+    let deadline = std::time::Instant::now() + STORE_LOCK_WAIT;
+    loop {
+        if let Some(file) = try_lock_file(&lock_path)? {
+            return Ok(StoreLock { _file: file });
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(unavailable(
+                "full-control authority state is busy with another change; try again",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Windows: an open that shares nothing, so a second open fails with a sharing violation
+/// until this handle closes.
+#[cfg(windows)]
+fn try_lock_file(path: &Path) -> Result<Option<std::fs::File>, PolicyError> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .share_mode(0)
+        .open(path)
+    {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => Ok(None),
+        Err(error) => Err(unavailable(format!(
+            "lock full-control authority state: {error}"
+        ))),
+    }
+}
+
+/// Unix: an exclusive advisory `flock` on an owner-only lock file.
+#[cfg(unix)]
+fn try_lock_file(path: &Path) -> Result<Option<std::fs::File>, PolicyError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| unavailable(format!("lock full-control authority state: {error}")))?;
+    match paths::try_lock_exclusive(&file) {
+        Ok(true) => Ok(Some(file)),
+        Ok(false) => Ok(None),
+        Err(error) => Err(unavailable(format!(
+            "lock full-control authority state: {error}"
+        ))),
+    }
+}
+
 /// Authority-reducing invalidation used on runtime restart and emergency stop.
 pub fn invalidate(path: &Path, key: &[u8; AUTHORITY_KEY_BYTES]) -> Result<u64, PolicyError> {
+    let _lock = lock_store(path)?;
     let current = load_store(path, key)?;
     let epoch = advance_epoch(current.authority_epoch)?;
     save_store(
@@ -343,12 +424,74 @@ pub fn grant_local(
     orcel_session_id: String,
     now_ms: u64,
 ) -> Result<FullControlLease, PolicyError> {
+    grant(
+        path,
+        key,
+        None,
+        mode,
+        duration_ms,
+        windows_user_sid,
+        logon_session_id,
+        orcel_session_id,
+        now_ms,
+    )
+}
+
+/// [`grant_local`] for a grant a person approved after reading the store at
+/// `approved_at_epoch`: it is refused if anything changed the epoch since, such as a revoke,
+/// an emergency stop or a runtime restart while the approval prompt was open. Without this,
+/// a grant approved slowly would overwrite a revoke made in the meantime.
+#[allow(clippy::too_many_arguments)]
+pub fn grant_local_at_epoch(
+    path: &Path,
+    key: &[u8; AUTHORITY_KEY_BYTES],
+    approved_at_epoch: u64,
+    mode: AuthorityMode,
+    duration_ms: u64,
+    windows_user_sid: String,
+    logon_session_id: u64,
+    orcel_session_id: String,
+    now_ms: u64,
+) -> Result<FullControlLease, PolicyError> {
+    grant(
+        path,
+        key,
+        Some(approved_at_epoch),
+        mode,
+        duration_ms,
+        windows_user_sid,
+        logon_session_id,
+        orcel_session_id,
+        now_ms,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grant(
+    path: &Path,
+    key: &[u8; AUTHORITY_KEY_BYTES],
+    approved_at_epoch: Option<u64>,
+    mode: AuthorityMode,
+    duration_ms: u64,
+    windows_user_sid: String,
+    logon_session_id: u64,
+    orcel_session_id: String,
+    now_ms: u64,
+) -> Result<FullControlLease, PolicyError> {
     if mode != AuthorityMode::FullUser {
         return Err(denied(
             "SG-000095 grants DesktopInput only under Full User; Full Admin remains successor-only",
         ));
     }
+    let _lock = lock_store(path)?;
     let current = load_store(path, key)?;
+    if let Some(approved) = approved_at_epoch {
+        if current.authority_epoch != approved {
+            return Err(denied(
+                "desktop control was revoked or reset while this grant was being approved; nothing was granted, request it again",
+            ));
+        }
+    }
     let authority_epoch = advance_epoch(current.authority_epoch)?;
     let proof = LocalGrantProof::from_secret(*key)?;
     let request = FullControlLeaseRequest {
@@ -608,6 +751,72 @@ mod tests {
         let epoch = revoke(&path, &key).unwrap();
         assert_eq!(epoch, 3);
         assert!(check_desktop_input(&path, &key, "S-1-5-21-1", 42, "session-a", 2_000).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A grant approved after a revoke must not undo it: the grant read the store before
+    /// its approval prompt, a revoke advanced the epoch meanwhile, so the grant is refused
+    /// and the store keeps the revoke.
+    #[test]
+    fn a_grant_approved_after_a_revoke_is_refused() {
+        let dir = temp("revoke-race");
+        let path = dir.join("state.json");
+        let key = key();
+        let approved_at = load_store(&path, &key).unwrap().authority_epoch;
+        let revoked = revoke(&path, &key).unwrap();
+        let refused = grant_local_at_epoch(
+            &path,
+            &key,
+            approved_at,
+            AuthorityMode::FullUser,
+            60_000,
+            "S-1-5-21-1".into(),
+            42,
+            "session-a".into(),
+            1_000,
+        );
+        assert_eq!(
+            refused.map(|_| ()).map_err(|error| error.code),
+            Err(FailureCode::CapabilityDenied)
+        );
+        let status = load_store(&path, &key).unwrap();
+        assert_eq!(status.authority_epoch, revoked);
+        assert!(status.lease.is_none());
+        // Approved at the current epoch, the same grant goes through.
+        let lease = grant_local_at_epoch(
+            &path,
+            &key,
+            revoked,
+            AuthorityMode::FullUser,
+            60_000,
+            "S-1-5-21-1".into(),
+            42,
+            "session-a".into(),
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(lease.authority_epoch, revoked + 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Changes to the store hold its lock, so concurrent revokes lose no update: each one
+    /// advances the epoch.
+    #[test]
+    fn concurrent_revokes_each_advance_the_epoch() {
+        let dir = temp("revoke-concurrent");
+        let path = dir.join("state.json");
+        let key = key();
+        let start = load_store(&path, &key).unwrap().authority_epoch;
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                std::thread::spawn(move || revoke(&path, &key).unwrap())
+            })
+            .collect();
+        let mut epochs: Vec<u64> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        epochs.sort_unstable();
+        assert_eq!(epochs, (start + 1..=start + 8).collect::<Vec<_>>());
+        assert_eq!(load_store(&path, &key).unwrap().authority_epoch, start + 8);
         let _ = std::fs::remove_dir_all(dir);
     }
 
