@@ -130,8 +130,9 @@ fn run() -> Result<(), String> {
         INTERNAL_PROTOCOL_VERSION,
         audit.path().display()
     );
-    // CR-01: the read-only app API. It reads daemon facts and the events
-    // published below; it never reaches dispatch or the approval broker.
+    // CR-01: the read-only app API. It reads daemon facts, the events
+    // published below and the approval history through its own read-only
+    // reader; it never reaches dispatch or the approval broker.
     let app_api = app_api::start(
         app_api::DaemonFacts {
             mode: "SG-000039_CLIPBOARD_WRITE",
@@ -140,6 +141,16 @@ fn run() -> Result<(), String> {
             capabilities: app_api_capabilities(approval.presence_available()),
         },
         std::sync::Arc::clone(&tasks),
+        match orcel_approval::ApprovalHistoryReader::open() {
+            Ok(reader) => Some(std::sync::Arc::new(reader)),
+            Err(error) => {
+                eprintln!(
+                    "orceld app api: approval history unavailable: {}",
+                    error.message
+                );
+                None
+            }
+        },
     );
 
     let stdin = io::stdin();

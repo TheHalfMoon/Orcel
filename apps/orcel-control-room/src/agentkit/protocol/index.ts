@@ -40,13 +40,6 @@ export const READ_METHODS = [
 ] as const;
 export type ReadMethod = (typeof READ_METHODS)[number];
 
-/**
- * Every method orceld serves: the client's own READ_METHODS plus the
- * SG-000126 report task reads, which this client does not send yet. All of
- * them only read.
- */
-export const ORCELD_METHODS = [...READ_METHODS, "task.list", "task.get"] as const;
-
 /** Read-only names orceld reserves; it answers METHOD_UNAVAILABLE today. */
 export const RESERVED_READ_METHODS = ["devices.list"] as const;
 
