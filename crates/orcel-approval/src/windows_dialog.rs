@@ -101,23 +101,29 @@ pub(crate) fn ask_yes_no(body: &str, title: &str, limit: Duration) -> DialogAnsw
     let (done, finished) = mpsc::channel::<()>();
     let watcher = {
         let timed_out = Arc::clone(&timed_out);
-        std::thread::spawn(move || {
-            if finished.recv_timeout(limit) != Err(RecvTimeoutError::Timeout) {
-                return;
-            }
-            // Recorded before the dialog is answered, so its No reads as a timeout.
-            timed_out.store(true, Ordering::SeqCst);
-            // Repeated until the dialog returns, in case it wasn't up yet.
-            loop {
-                // SAFETY: the callback only reads class names and posts messages.
-                unsafe { EnumThreadWindows(thread, close_dialog, 0) };
-                if finished.recv_timeout(Duration::from_millis(100))
-                    != Err(RecvTimeoutError::Timeout)
-                {
+        std::thread::Builder::new()
+            .name("orcel-approval-dialog-timeout".into())
+            .spawn(move || {
+                if finished.recv_timeout(limit) != Err(RecvTimeoutError::Timeout) {
                     return;
                 }
-            }
-        })
+                // Recorded before the dialog is answered, so its No reads as a timeout.
+                timed_out.store(true, Ordering::SeqCst);
+                // Repeated until the dialog returns, in case it wasn't up yet.
+                loop {
+                    // SAFETY: the callback only reads class names and posts messages.
+                    unsafe { EnumThreadWindows(thread, close_dialog, 0) };
+                    if finished.recv_timeout(Duration::from_millis(100))
+                        != Err(RecvTimeoutError::Timeout)
+                    {
+                        return;
+                    }
+                }
+            })
+    };
+    // Without a watcher the dialog would wait indefinitely, so no dialog is shown: unavailable.
+    let Ok(watcher) = watcher else {
+        return DialogAnswer::Unexpected(0);
     };
     // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call; no owner window.
     let result = unsafe {
