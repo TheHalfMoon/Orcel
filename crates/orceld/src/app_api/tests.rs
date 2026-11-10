@@ -99,6 +99,7 @@ fn approval_history_reads_decisions_and_their_origin() {
     assert_eq!(entries[1]["origin"]["kind"], "local");
     assert_eq!(entries[1]["decision"], "Approved");
     assert_eq!(entries[1]["digest"], digest.as_str());
+    assert_eq!(frame["result"]["ledger"], "verified");
     let one = reply_frame(handle_frame(
         &shared,
         &peer,

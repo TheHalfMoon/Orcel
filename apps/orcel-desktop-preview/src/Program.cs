@@ -729,7 +729,15 @@ namespace Orcel.DesktopPreview
             if (result == null) return "Approval history unavailable: the local runtime did not answer, or this version of it has no approval history to read.";
             object entries;
             if (!result.TryGetValue("entries", out entries) || !(entries is IEnumerable)) return "Approval history unavailable: the answer had no entries.";
-            StringBuilder text = new StringBuilder("Recent approval decisions, newest first:");
+            string ledger = Field(result, "ledger");
+            // No field (an older runtime) says nothing; anything but "verified" is a caveat, so a
+            // state this app doesn't know is never shown as checked.
+            string caveat = ledger == null || ledger == "verified"
+                ? null
+                : ledger == "unverifiable"
+                ? "The approval history failed its integrity check, so this is the last checked view and may miss recent decisions. Run orcel approvals in a terminal for details."
+                : "The approval history couldn't be read just now (busy or unavailable), so this is the last checked view and may miss recent decisions.";
+            StringBuilder text = new StringBuilder(caveat == null ? "Recent approval decisions, newest first:" : caveat + "\nRecent approval decisions, newest first:");
             int shown = 0;
             foreach (object item in (IEnumerable)entries)
             {
@@ -744,7 +752,7 @@ namespace Orcel.DesktopPreview
                 else if (Field(entry, "consumed") == "True") line += ", used";
                 text.Append("\n• ").Append(line);
             }
-            if (shown == 0) return "No approval decisions are recorded yet.";
+            if (shown == 0) return caveat == null ? "No approval decisions are recorded yet." : caveat + " No decisions were in that view.";
             text.Append("\nThis app reads the history only; approvals are answered in the system's own prompt.");
             return text.ToString();
         }
@@ -1927,6 +1935,7 @@ namespace Orcel.DesktopPreview
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
             expect(history.Split('\n').Length == 4, "one line per decision; a field cannot add lines");
+            expect(ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"busy\",\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\",\"decided_at_ms\":1}]}}")).StartsWith("The approval history couldn't be read just now") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"something-new\",\"entries\":[]}}")).StartsWith("The approval history couldn't be read just now") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"unverifiable\",\"entries\":[]}}")).StartsWith("The approval history failed its integrity check"), "an unverified history says so");
             expect(history.Contains("approved (SOFT), from REMOTE via tunnel, device d 1, workspace ws x, used") && history.Contains("denied (STRONG), from origin not recorded"), "history names decision, class, origin and use");
             expect(ApprovalHistory.When("999999999999999999") == "(time unknown)" && ApprovalHistory.When("x") == "(time unknown)", "an impossible time is not a crash");
             expect(ApprovalHistory.Text(null).StartsWith("Approval history unavailable") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[]}}")) == "No approval decisions are recorded yet.", "empty and unavailable history say so");

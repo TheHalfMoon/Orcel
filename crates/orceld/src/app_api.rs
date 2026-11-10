@@ -781,8 +781,8 @@ fn approval_history(shared: &Shared, id: &Value, params: &serde_json::Map<String
             "approval history has no private location for this user",
         );
     };
-    let entries: Vec<Value> = reader
-        .history(usize::try_from(limit).unwrap_or(20))
+    let (history, state) = reader.history_with_state(usize::try_from(limit).unwrap_or(20));
+    let entries: Vec<Value> = history
         .into_iter()
         .map(|entry| {
             json!({
@@ -803,7 +803,11 @@ fn approval_history(shared: &Shared, id: &Value, params: &serde_json::Map<String
         .collect();
     ok_frame(
         id,
-        json!({ "max_entries": MAX_HISTORY_ENTRIES, "entries": entries }),
+        json!({
+            "max_entries": MAX_HISTORY_ENTRIES,
+            "ledger": state.as_str(),
+            "entries": entries,
+        }),
     )
 }
 
