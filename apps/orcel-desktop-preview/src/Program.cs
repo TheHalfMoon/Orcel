@@ -1376,6 +1376,8 @@ namespace Orcel.DesktopPreview
             AutomationProperties.SetAutomationId(announcer, "Announcement");
             AutomationProperties.SetLiveSetting(announcer, AutomationLiveSetting.Polite);
             announcer.FontSize = 1;
+            announcer.Height = 1;
+            announcer.VerticalAlignment = VerticalAlignment.Top;
             announcer.Opacity = 0;
             announcer.IsHitTestVisible = false;
             announcer.Focusable = false;
@@ -1495,7 +1497,11 @@ namespace Orcel.DesktopPreview
         internal static string Announcement(string message)
         {
             string text = (message ?? "").Trim();
-            return text.Length <= MaxAnnouncedChars ? text : text.Substring(0, MaxAnnouncedChars) + "…";
+            if (text.Length <= MaxAnnouncedChars) return text;
+            int cut = MaxAnnouncedChars;
+            // Never split a surrogate pair.
+            if (char.IsHighSurrogate(text[cut - 1])) cut--;
+            return text.Substring(0, cut) + "…";
         }
 
         private void Announce(string message)
@@ -1745,6 +1751,9 @@ namespace Orcel.DesktopPreview
             expect(Interpret.RevokeAllMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"revoke\":{\"revoke_epoch\":2}}" }).StartsWith("Emergency revoke recorded") && Interpret.RevokeAllMessage(new CliResult { ExitCode = 1, Stdout = "{\"ok\":false,\"error\":{\"kind\":\"denied\",\"message\":\"Windows Hello was cancelled\"}}" }).StartsWith("The emergency revoke was not confirmed: Windows Hello was cancelled.") && Interpret.RevokeAllMessage(new CliResult { TimedOut = true }).Contains("may or may not have been recorded"), "revoke all never claims nothing happened after an error or a timeout");
             expect(Colors.Choose(true, "#000000", SystemColors.WindowTextBrush) == SystemColors.WindowTextBrush && ((SolidColorBrush)Colors.Choose(false, "#090D19", SystemColors.WindowTextBrush)).Color == Color.FromRgb(0x09, 0x0D, 0x19), "high contrast uses the system's colours, otherwise the dark palette");
             expect(MainWindow.Announcement("  short  ") == "short" && MainWindow.Announcement(new string('a', 500)).Length == MainWindow.MaxAnnouncedChars + 1, "screen-reader announcements are trimmed and bounded");
+            expect(!char.IsHighSurrogate(MainWindow.Announcement(new string('a', MainWindow.MaxAnnouncedChars - 1) + "\U0001F600 tail").TrimEnd('…').Last()), "an announcement never ends inside a surrogate pair");
+            bool legacy;
+            expect(AppContext.TryGetSwitch(LegacyAccessibilitySwitch, out legacy) && !legacy, "WPF's legacy accessibility behaviour is off, so live regions reach screen readers");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
@@ -1858,9 +1867,15 @@ namespace Orcel.DesktopPreview
             return 0;
         }
 
+        /// The in-box compiler marks no target framework, so .NET Framework would run WPF with
+        /// its legacy accessibility behaviour, which hides UI Automation live regions. Set
+        /// before any WPF type loads.
+        internal const string LegacyAccessibilitySwitch = "Switch.UseLegacyAccessibilityFeatures";
+
         [STAThread]
         private static int Main(string[] args)
         {
+            AppContext.SetSwitch(LegacyAccessibilitySwitch, false);
             if (args.Length == 1 && args[0] == "--self-test") return SelfTest();
             if (args.Length == 1 && args[0] == "--ui-self-test")
             {

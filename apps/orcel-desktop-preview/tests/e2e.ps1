@@ -128,8 +128,11 @@ try {
     SendCommand $window "rm -rf / ; calc.exe"
     $refused = WaitFor { TranscriptTexts $window | Where-Object { $_.StartsWith("Not executed. Orcel AI is not connected.", [StringComparison]::Ordinal) } | Select-Object -First 1 } 5000
     Check "shell-like text is refused, not executed" ($null -ne $refused) "$refused"
+    $announcement = ById $window "Announcement"
+    $live = $announcement.GetCurrentPropertyValue([System.Windows.Automation.AutomationElementIdentifiers]::LiveSettingProperty)
+    Check "the announcement is a polite live region" ("$live" -eq "Polite") "LiveSetting '$live'"
     $announced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Not executed.", [StringComparison]::Ordinal)) { $a } } 3000
-    Check "the reply is announced through the live region" ($null -ne $announced) "$announced"
+    Check "the reply reaches the live region" ($null -ne $announced) "$announced"
     Start-Sleep -Milliseconds 1500
     # Direct children still alive, plus Calculator (Windows 11 launches it through a broker).
     $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object { $_.CreationDate -ge $refusedAt })

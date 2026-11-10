@@ -60,8 +60,8 @@ All generated binaries go to the user's TEMP directory. A signed installer and i
 ## Accessibility
 
 - **High contrast:** when Windows high contrast is on, the app uses the system's own window, text, highlight and highlighted-text colours instead of its dark palette. Buttons use the highlight pair. It reads the setting when it starts, so a change applies the next time it opens.
-- **Screen readers:** each reply is announced through a polite live region (UI Automation `LiveSetting`), cut at 400 characters, without moving focus from the command box. The command box, Send, Refresh status, Stop desktop control, the transcript and the runtime state each have an accessible name and automation id.
-- **Keyboard:** focus starts in the command box, and Enter sends. The end-to-end test (`tests/e2e.ps1`, run under UI Automation on CI's Windows runner) checks that focus starts there, that the command box, Send, Refresh status and Stop desktop control can take keyboard focus, and that a reply reaches the live region.
+- **Screen readers:** each reply is announced through a polite live region (UI Automation `LiveSetting`), cut at 400 characters, without moving focus from the command box. The app turns off .NET Framework's legacy accessibility behaviour at start (`Switch.UseLegacyAccessibilityFeatures`), which would otherwise hide live regions in a build with no target framework. The command box, Send, Refresh status, Stop desktop control, the transcript and the runtime state each have an accessible name and automation id.
+- **Keyboard:** focus starts in the command box, and Enter sends. The end-to-end test (`tests/e2e.ps1`, run under UI Automation on CI's Windows runner) checks that focus starts there, that the command box, Send, Refresh status and Stop desktop control can take keyboard focus, that the announcement element reports `LiveSetting` Polite, and that a reply reaches it. Whether a screen reader then speaks it still needs a person.
 - **Not yet checked:** a real Narrator or NVDA session, 150% and 200% scaling, and right-to-left text. Those need a person at a Windows desktop.
 
 ## Security boundary
