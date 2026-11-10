@@ -247,7 +247,7 @@ fn preview_lines(preview: Option<&Preview>) -> String {
     match preview {
         None => String::new(),
         Some(Preview::Hidden { chars }) => format!(
-            "\nPreview: hidden, the content matches a credential pattern ({})",
+            "\nPreview: HIDDEN, it may contain a password, key or token ({}). Approve only if you expect that here.",
             plural(*chars, "character")
         ),
         Some(Preview::SizesOnly { chars, lines }) => format!(
@@ -687,7 +687,7 @@ mod tests {
             crate::PreviewMode::Content,
             true,
         ));
-        assert!(secret.contains("\nPreview: hidden, the content matches a credential pattern (18 characters)\nDigest: d\n"), "{secret}");
+        assert!(secret.contains("\nPreview: HIDDEN, it may contain a password, key or token (18 characters). Approve only if you expect that here.\nDigest: d\n"), "{secret}");
         assert!(!secret.contains("AKIA"));
         let sizes = with(Preview::of_written(
             "private notes\nmore",
@@ -705,7 +705,7 @@ mod tests {
             crate::PreviewMode::SizesOnly,
             true,
         ));
-        assert!(both.contains("matches a credential pattern"));
+        assert!(both.contains("may contain a password, key or token"));
         // An empty write says so.
         assert!(
             with(Preview::of_written("", crate::PreviewMode::Content, false))
