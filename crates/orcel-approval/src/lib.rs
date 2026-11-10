@@ -1073,6 +1073,29 @@ impl LocalApprovalBroker {
 /// to issue, consume or revoke an approval. For readers outside the broker, such as orceld's
 /// read-only app API. It verifies the ledger as the broker does, and reports the last view it
 /// verified when the ledger is busy or fails to verify.
+/// How current an approval history answer is. History is best effort: when the ledger is
+/// busy or fails verification, the answer is the last view this reader verified, which may
+/// be empty or miss recent decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryState {
+    /// The ledger was read and verified for this answer.
+    Verified,
+    /// Another writer held the ledger for the whole wait; this is the last verified view.
+    Busy,
+    /// The ledger failed verification; this is the last verified view, possibly empty.
+    Unverifiable,
+}
+
+impl HistoryState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Busy => "busy",
+            Self::Unverifiable => "unverifiable",
+        }
+    }
+}
+
 pub struct ApprovalHistoryReader {
     ledger: Mutex<ApprovalLedger>,
 }
@@ -1093,10 +1116,16 @@ impl ApprovalHistoryReader {
 
     /// The newest `limit` records, newest first.
     pub fn history(&self, limit: usize) -> Vec<ApprovalRecordSummary> {
+        self.history_with_state(limit).0
+    }
+
+    /// The newest `limit` records, newest first, and whether they were verified for this
+    /// answer or are the last verified view.
+    pub fn history_with_state(&self, limit: usize) -> (Vec<ApprovalRecordSummary>, HistoryState) {
         self.ledger
             .lock()
-            .map(|mut ledger| ledger.history(limit))
-            .unwrap_or_default()
+            .map(|mut ledger| ledger.history_with_state(limit))
+            .unwrap_or((Vec::new(), HistoryState::Unverifiable))
     }
 }
 
@@ -2118,11 +2147,20 @@ impl ApprovalLedger {
     }
 
     fn history(&mut self, limit: usize) -> Vec<ApprovalRecordSummary> {
+        self.history_with_state(limit).0
+    }
+
+    fn history_with_state(&mut self, limit: usize) -> (Vec<ApprovalRecordSummary>, HistoryState) {
         // History is best effort: it waits briefly for the writer lock and a
-        // busy or failed refresh still reports the last verified view.
-        let _ = self.transact_waiting(HISTORY_LOCK_WAIT, |_| Ok(()));
+        // busy or failed refresh still reports the last verified view, and says which.
+        let state = match self.transact_waiting(HISTORY_LOCK_WAIT, |_| Ok(())) {
+            Ok(()) => HistoryState::Verified,
+            Err(_) if self.poisoned() => HistoryState::Unverifiable,
+            Err(_) => HistoryState::Busy,
+        };
         let bound = limit.clamp(1, 200);
-        self.records
+        let entries = self
+            .records
             .values()
             .rev()
             .take(bound)
@@ -2144,7 +2182,8 @@ impl ApprovalLedger {
                 consumed: self.consumed.contains(&record.nonce),
                 origin: record.origin.clone(),
             })
-            .collect()
+            .collect();
+        (entries, state)
     }
 }
 
@@ -2826,6 +2865,32 @@ mod soft_decider_tests {
             device: "dev-1".into(),
             connection: "conn-1".into(),
         }
+    }
+
+    /// A reader says whether its answer was verified, or is the last verified view because
+    /// the ledger is busy or fails verification.
+    #[test]
+    fn a_history_reader_says_how_current_its_answer_is() {
+        let path = temp_ledger("history-state");
+        let broker = approving_broker(&path);
+        broker
+            .request_token(&prompt(&"a".repeat(64)))
+            .expect("approved");
+        let reader = ApprovalHistoryReader::at(&path);
+        let (entries, state) = reader.history_with_state(10);
+        assert_eq!((entries.len(), state), (1, HistoryState::Verified));
+        // Busy: another writer holds the lock for longer than the history wait.
+        let held = acquire_ledger_lock(&path, LEDGER_LOCK_WAIT).expect("lock");
+        let (entries, state) = reader.history_with_state(10);
+        assert_eq!((entries.len(), state), (1, HistoryState::Busy));
+        drop(held);
+        // Unverifiable: the file no longer verifies; the last verified view is kept.
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("{\"not\":\"a record\"}\n");
+        std::fs::write(&path, text).unwrap();
+        let (entries, state) = reader.history_with_state(10);
+        assert_eq!((entries.len(), state), (1, HistoryState::Unverifiable));
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The history says where each request came from, and the origin survives a reload,
