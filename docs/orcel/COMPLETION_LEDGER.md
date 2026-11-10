@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-10, main at `9af70ae3` (#702). This PR: #692. Other open PRs: #640 and #673 (drafts waiting on founder decisions), #342 and #328 (other work).
+Last updated: 2026-11-10, main at `bb959446` (#705). Open PRs: #640 and #673 (drafts waiting on founder decisions), #342 and #328 (other work).
 
 ## Approval and security UX
 
@@ -51,7 +51,7 @@ Last updated: 2026-11-10, main at `9af70ae3` (#702). This PR: #692. Other open P
 | Desktop input (mouse, keyboard, text, UIA values) | Partial | Full User lease and approvals; #689 prompts | live-input tests on CI runners | Every action needs a lease and an approval | Founder-present run on a disposable machine | Class 3 |
 | Browser interaction | Partial | SG-000108, SG-000115 inert engineering (`RELEASE_READINESS.md` class 1) | BM-02 browser tasks on Windows | macOS and Linux launch refused until SG-000115 activation; release-build live browser needs its own decision | Activation work | Founder decisions (SG-000115 activation, slice 7) |
 | Process execution (contained tier, shell) | Partial | SG-000096 plan (#260, #266, #267 open) | contained-tier tests | #292 flaky on Windows | T04 and T05 | none recorded |
-| Stop, pause, resume, human takeover | Partial | Desktop: Stop desktop control, `control`, `stop control` and `revoke all` (#702 → `9af70ae3`); grant/revoke race fix #701 → `f5731130`; task stop: #640 (draft) | desktop self-tests | The app only takes authority away. #701 closed a race where a grant waiting for Windows Hello could overwrite a revoke made meanwhile; a revoke's store lock waits at most 5 s and then fails closed; whether the Windows Hello prompt comes to the front when the app starts `revoke all` is unchecked | A task-scoped stop and pause/resume (slice 5); a busy guard and distinct styling for the stop button | Founder decision 2 for task stop; a person to check the Hello prompt |
+| Stop, pause, resume, human takeover | Partial | Desktop: Stop desktop control, `control`, `stop control` and `revoke all` (#702 → `9af70ae3`); grant/revoke race fix #701 → `f5731130`; task stop: #640 (draft) | desktop self-tests | The app only takes authority away. #701 closed a race where a grant waiting for Windows Hello could overwrite a revoke made meanwhile; a revoke's store lock waits at most 5 s and then fails closed; whether the Windows Hello prompt comes to the front when the app starts `revoke all` is unchecked | A task-scoped stop and pause/resume (slice 5); distinct styling for the stop button (its busy guard landed in #704) | Founder decision 2 for task stop; a person to check the Hello prompt |
 | Crash recovery and state reconciliation | Partial | SG-000120 resume summary #464; mutation journal; #639 recovery and history | journal tests; #630 orceld killed during an Agent run | Effects orceld can't read back are recorded as unknown | Recovery UI in the app | none |
 | Multi-client isolation | Partial | Remote leases and origin stamping (#667 → `26f17234`, #684) | `fix395_tunnel_remote`, origin tests | — | A qualification suite across concurrent clients | none |
 
@@ -59,7 +59,7 @@ Last updated: 2026-11-10, main at `9af70ae3` (#702). This PR: #692. Other open P
 
 | Component | State | Evidence | Tests | Known limitations | Remaining work | Blockers |
 |---|---|---|---|---|---|---|
-| Windows app (task timeline, approval history, preview setting, stop controls, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867`, #697 → `3d46d797` (`history`) | Windows app task timeline job | #649 flaky window lookup | Onboarding, client connection management, permissions, settings and privacy screen, history, emergency stop, accessibility review | Stop needs decision 2 |
+| Windows app (task timeline, approval history, preview setting, stop controls, workspaces, accessibility, errors, Start Menu) | Partial | #622, #646, #660 → `46aa680c`, #663 → `1ff4fc14`, #664 → `7a73bac3`, #665 → `6d176867`, #697 → `3d46d797` (`history`), #699 → `b18c67ba` (`previews sizes`), #702 → `9af70ae3` (stop controls), #703 → `f73aeb68` (high contrast, live region), #704 → `56aae7c0` (`workspaces`, busy guard) | self-tests; Windows app task timeline job (UI Automation against a real orceld) | #649 flaky window lookup; the app never grants anything (folders, desktop control, content previews), by design; CI's managed UI Automation client can't read `LiveSetting` | Onboarding flow, client connection management, a settings screen (today the settings are commands); a person checking Narrator or NVDA speech, high contrast hover and pressed states, 150% and 200% scaling and right-to-left text | Task stop needs decision 2; the UI toolkit (FD-03) is undecided |
 | macOS and Linux app | Not started | — | — | — | — | Founder decision 4 |
 | Windows install, start, update, rollback, uninstall | Partial | #654 → `e0e3fa41`, #659 → `93f33b25`, #661 → `e8fd1692`, #665 | release qualification on Windows CI | Unsigned; a real install under the new state root has run only in CI's release qualification | A founder-present install, upgrade and uninstall journey on a disposable machine (#655, uninstall missing stores, was closed by #659 and #661) | Signing (founder) for a release build |
 | macOS package | Blocked | — | — | — | XP-16 packaging | FD-05, signing identity |
@@ -81,6 +81,9 @@ Last updated: 2026-11-10, main at `9af70ae3` (#702). This PR: #692. Other open P
 | Browser-host rehearsal flakes (#696) | Fix merged, watching | #698 → `4e332520`: the two racing steps retry a fail-closed `InUse` for up to 10 s | Close #696 after a few clean runs |
 | Native host X11 latency scroll never shows its effect (#700) | Open, evidence only | Seen once on #699 | Print the fixture's scroll state and the host's outcome at the deadline if it recurs |
 | Jev review needs the PR to contain current main | Known | its merge-base check | Update a PR to main before its review gate runs |
+| Jev review runs `git diff --check` | Known | a CRLF file fails it (#692) | Write repository files with LF line endings |
+| macOS jobs cancelled before a runner is assigned (#524) | Recurring | seen on #704 and #705, 2026-11-10 | Re-run the job; no code cause |
+| `workspace list` held the CLI lifecycle lock | Fixed | #705 → `bb959446` | none |
 
 ## How to resume
 
