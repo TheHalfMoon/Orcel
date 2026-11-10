@@ -258,21 +258,38 @@ pub(crate) struct Output {
     pub(crate) json: serde_json::Value,
 }
 
+/// Whether a command holds the lifecycle lock (and passes the legacy-state gate) for its
+/// whole run. Taking desktop control away, or reading its status, doesn't: a grant can hold
+/// the lock for a whole Windows Hello prompt, and an emergency stop must not wait behind it.
+/// The authority store's own short lock orders a revoke against a grant, and a grant approved
+/// across a revoke is refused (`full_control_store::grant_local_at_epoch`).
+fn holds_lifecycle_lock(command: &str, rest: &[String]) -> bool {
+    let reduces_or_reads_authority = command == "full-control"
+        && matches!(
+            rest.iter()
+                .find(|arg| !arg.starts_with("--"))
+                .map(String::as_str),
+            Some("revoke" | "status")
+        );
+    !reduces_or_reads_authority
+        && matches!(
+            command,
+            "install"
+                | "uninstall"
+                | "update"
+                | "rollback"
+                | "start"
+                | "stop"
+                | "workspace"
+                | "tunnel"
+                | "full-control"
+        )
+}
+
 fn run(args: &mut Args, json_output: bool) -> Result<Output, LifecycleError> {
     // State-changing commands hold the per-install lifecycle lock for their
     // whole duration so they never interleave across processes.
-    let mutating = matches!(
-        args.command.as_str(),
-        "install"
-            | "uninstall"
-            | "update"
-            | "rollback"
-            | "start"
-            | "stop"
-            | "workspace"
-            | "tunnel"
-            | "full-control"
-    );
+    let mutating = holds_lifecycle_lock(&args.command, &args.rest);
     // Nothing writes to the current root over undecided earlier state, which is what orceld
     // refuses too. Stopping and uninstalling stay possible, and `state` is how to decide.
     if mutating && !matches!(args.command.as_str(), "stop" | "uninstall") {
@@ -543,6 +560,35 @@ fn version(args: &mut Args) -> Result<Output, LifecycleError> {
 #[cfg(test)]
 mod tests {
     use super::earlier_on_path;
+    use super::holds_lifecycle_lock;
+    #[test]
+    fn revoking_or_reading_desktop_control_never_waits_for_the_lifecycle_lock() {
+        let rest = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+        assert!(!holds_lifecycle_lock("full-control", &rest(&["revoke"])));
+        assert!(!holds_lifecycle_lock("full-control", &rest(&["status"])));
+        assert!(holds_lifecycle_lock(
+            "full-control",
+            &rest(&["grant", "--minutes", "30"])
+        ));
+        assert!(holds_lifecycle_lock(
+            "full-control",
+            &rest(&["--minutes", "30", "grant"])
+        ));
+        assert!(holds_lifecycle_lock("full-control", &rest(&[])));
+        // The action is the first argument not starting with `--`, as `Args::positional`
+        // reads it, so a revoke followed by anything is still a revoke, and the command
+        // then refuses the extra arguments without granting.
+        assert!(!holds_lifecycle_lock(
+            "full-control",
+            &rest(&["revoke", "grant"])
+        ));
+        assert!(!holds_lifecycle_lock(
+            "full-control",
+            &rest(&["--minutes", "revoke", "grant"])
+        ));
+        assert!(holds_lifecycle_lock("workspace", &rest(&["add", "a", "b"])));
+        assert!(!holds_lifecycle_lock("status", &rest(&[])));
+    }
     use std::fs;
 
     #[test]
