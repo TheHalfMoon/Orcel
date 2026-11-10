@@ -760,10 +760,20 @@ namespace Orcel.DesktopPreview
     internal static class ConnectGuide
     {
         /// A Windows path as a JSON string's contents: backslashes and quotes escaped.
+        /// A path as a PowerShell single-quoted string's contents: nothing inside it expands
+        /// (no `$`, backtick or `$(...)`), and a quote is doubled.
+        internal static string PowerShellPath(string path)
+        {
+            return (path ?? "").Replace("'", "''");
+        }
+
         internal static string JsonPath(string path)
         {
             return (path ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
         }
+
+        /// What a screen reader hears for the guide: where to find it, not its punctuation.
+        internal const string Announcement = "Setup for Claude Desktop, Claude Code, Codex and other clients is in the text box below, to select and copy.";
 
         internal static string Text(string cli, bool installed)
         {
@@ -771,12 +781,12 @@ namespace Orcel.DesktopPreview
                 return "Orcel isn't installed for this Windows user yet, so there is nothing to connect. Install it first (in a terminal in the extracted release folder, run .\\orcel.exe install), then type connect again.";
             string json = JsonPath(cli);
             return "To connect a local AI client, add Orcel as a stdio MCP server, then restart the client. Copy what you need from here.\n\n"
-                + "Claude Desktop (claude_desktop_config.json):\n"
+                + "Claude Desktop (claude_desktop_config.json; if it already has mcpServers, add only the orcel entry inside it):\n"
                 + "{ \"mcpServers\": { \"orcel\": { \"command\": \"" + json + "\", \"args\": [\"mcp\", \"stdio\"] } } }\n\n"
-                + "Claude Code:\n"
-                + "claude mcp add orcel -- \"" + cli + "\" mcp stdio\n\n"
+                + "Claude Code, in PowerShell (for every folder you use it in):\n"
+                + "claude mcp add --scope user orcel -- '" + PowerShellPath(cli) + "' mcp stdio\n\n"
                 + "Codex (~/.codex/config.toml):\n"
-                + "[mcp_servers.orcel]\ncommand = \"" + json + "\"\nargs = [\"mcp\", \"stdio\"]\n\n"
+                + "[mcp_servers.orcel]\ncommand = \"" + json + "\"\nargs = [\"mcp\", \"stdio\"]\nstartup_timeout_sec = 20\ntool_timeout_sec = 60\n\n"
                 + "Other clients: transport stdio, command " + cli + ", arguments mcp stdio.\n\n"
                 + "Every change a client asks Orcel to make still needs your approval in Orcel's own prompt. This app doesn't edit any client's settings.";
         }
@@ -1564,9 +1574,16 @@ namespace Orcel.DesktopPreview
                 System.Windows.Controls.TextBox box = new System.Windows.Controls.TextBox {
                     Text = message, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
                     FontSize = 13, Foreground = Colors.Ink, Background = Colors.Surface,
-                    BorderThickness = new Thickness(0), FontFamily = new FontFamily("Consolas")
+                    // A border, so keyboard focus on the box is visible.
+                    BorderThickness = new Thickness(1), BorderBrush = Colors.Border,
+                    FontFamily = new FontFamily("Consolas")
                 };
                 AutomationProperties.SetName(box, "Setup to copy");
+                // The box's own scroller would swallow the wheel; the transcript scrolls instead.
+                box.PreviewMouseWheel += delegate(object sender, System.Windows.Input.MouseWheelEventArgs e) {
+                    e.Handled = true;
+                    conversation.ScrollToVerticalOffset(conversation.VerticalOffset - e.Delta / 3.0);
+                };
                 body = box;
             }
             else
@@ -1580,7 +1597,7 @@ namespace Orcel.DesktopPreview
             transcript.Children.Add(item);
             while (transcript.Children.Count > MaxTranscriptMessages) transcript.Children.RemoveAt(0);
             conversation.ScrollToEnd();
-            if (!fromUser) Announce(message);
+            if (!fromUser) Announce(selectable ? ConnectGuide.Announcement : message);
         }
 
         /// The live region's setup: polite, out of the way, never focused or clicked.
@@ -1888,7 +1905,8 @@ namespace Orcel.DesktopPreview
             expect(Interpret.WorkspacesMessage(new CliResult { TimedOut = true }).Contains("waiting for another Orcel command"), "a timeout says what may be holding it");
             expect(CommandRouter.Classify("connect") == SafeCommand.Connect && CommandRouter.CliArguments(SafeCommand.Connect) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Connect), "connect runs nothing");
             string guide = ConnectGuide.Text("C:\\Users\\a b\\.orcel\\bin\\orcel.exe", true);
-            expect(guide.Contains("\"command\": \"C:\\\\Users\\\\a b\\\\.orcel\\\\bin\\\\orcel.exe\"") && guide.Contains("claude mcp add orcel -- \"C:\\Users\\a b\\.orcel\\bin\\orcel.exe\" mcp stdio") && guide.Contains("command = \"C:\\\\Users\\\\a b\\\\.orcel\\\\bin\\\\orcel.exe\""), "connect shows the exact path, escaped for JSON and TOML, quoted for a shell");
+            expect(guide.Contains("\"command\": \"C:\\\\Users\\\\a b\\\\.orcel\\\\bin\\\\orcel.exe\"") && guide.Contains("claude mcp add --scope user orcel -- 'C:\\Users\\a b\\.orcel\\bin\\orcel.exe' mcp stdio") && guide.Contains("startup_timeout_sec = 20\ntool_timeout_sec = 60") && guide.Contains("command = \"C:\\\\Users\\\\a b\\\\.orcel\\\\bin\\\\orcel.exe\""), "connect shows the exact path, escaped for JSON and TOML, single-quoted for PowerShell");
+            expect(ConnectGuide.Text("C:\\Users\\$(calc)\\.orcel\\bin\\orcel.exe", true).Contains("-- 'C:\\Users\\$(calc)\\.orcel\\bin\\orcel.exe' mcp") && ConnectGuide.PowerShellPath("O'Brien") == "O''Brien", "the PowerShell line never expands or breaks on the path");
             expect(ConnectGuide.Text("C:\\Users\\O'Brien\\.orcel\\bin\\orcel.exe", true).Contains("command = \"C:\\\\Users\\\\O'Brien\\\\.orcel\\\\bin\\\\orcel.exe\""), "a path with an apostrophe stays valid TOML");
             string snippet = guide.Split('\n').First(line => line.StartsWith("{ \"mcpServers\""));
             expect(new JavaScriptSerializer().DeserializeObject(snippet) is Dictionary<string, object>, "the Claude Desktop snippet is valid JSON");
