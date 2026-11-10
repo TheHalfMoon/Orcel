@@ -1045,14 +1045,17 @@ namespace Orcel.DesktopPreview
         /// terminal.
         internal static string WorkspacesMessage(CliResult result)
         {
-            if (result.FailedToStart || result.TimedOut) return "The Orcel runtime did not list workspaces in time.";
+            if (result.FailedToStart) return "The Orcel runtime could not be started to list workspaces.";
+            if (result.TimedOut) return "The Orcel runtime did not list workspaces in time. It may be waiting for another Orcel command, such as a grant waiting for Windows Hello; try again, or run orcel workspace list in a terminal.";
             Dictionary<string, object> answer = Parse(result.Stdout);
             string refusal = Refusal(result, answer);
             if (refusal != null) return "The Orcel runtime could not list workspaces: " + refusal;
             Dictionary<string, object> json = Ok(result, answer);
             object raw;
-            IEnumerable rows = json != null && json.TryGetValue("workspaces", out raw) ? raw as IEnumerable : null;
+            object[] rows = json != null && json.TryGetValue("workspaces", out raw) ? raw as object[] : null;
             if (rows == null) return "The installed Orcel runtime did not list workspaces in a form this app understands.";
+            foreach (object item in rows)
+                if (!(item is Dictionary<string, object>)) return "The installed Orcel runtime did not list workspaces in a form this app understands.";
             StringBuilder text = new StringBuilder("Folders Orcel may use:");
             int shown = 0, total = 0;
             foreach (object item in rows)
@@ -1283,8 +1286,9 @@ namespace Orcel.DesktopPreview
         /// An emergency revoke's call to orceld is limited to 180 s (its STRONG summary and
         /// Windows Hello each wait up to 120 s); this covers that and the CLI's start.
         private const int RevokeAllTimeoutMs = 200000;
-        /// Desktop control commands may wait up to 60 s for the runtime's lifecycle lock, for
-        /// example while an update runs or a grant waits for Windows Hello.
+        /// Desktop control commands no longer wait for the runtime's lifecycle lock, but a
+        /// revoke may wait up to 5 s for the authority store's own lock; this leaves room for an
+        /// older runtime, which waited up to 60 s for the lifecycle lock.
         private const int ControlTimeoutMs = 70000;
         /// Listing workspaces asks the runtime about each one's trust, up to 20 s each.
         private const int WorkspacesTimeoutMs = 90000;
@@ -1603,16 +1607,17 @@ namespace Orcel.DesktopPreview
             }
             // One run at a time for the commands that change something, so a double click or a
             // repeated command doesn't start a second revoke or a second Windows Hello prompt.
-            bool guarded = command == SafeCommand.StopControl || command == SafeCommand.RevokeAll || command == SafeCommand.PreviewsSizes;
+            bool guarded = command == SafeCommand.StopControl || command == SafeCommand.RevokeAll || command == SafeCommand.PreviewsSizes
+                || command == SafeCommand.Workspaces;
             if (guarded && running.Contains(command))
             {
                 AddMessage(false, "That is already running; wait for its answer.");
                 return;
             }
-            if (guarded) running.Add(command);
-            AddMessage(false, Progress(command));
             try
             {
+                if (guarded) running.Add(command);
+                AddMessage(false, Progress(command));
                 if (command == SafeCommand.Status)
                 {
                     RuntimeStatus status = await Task.Run(delegate { return LocalHost.ReadStatus(QueryTimeoutMs); });
@@ -1826,6 +1831,9 @@ namespace Orcel.DesktopPreview
             string listed = Interpret.WorkspacesMessage(new CliResult { ExitCode = 0, Stdout = "{\n  \"ok\": true,\n  \"workspaces\": [\n    {\"id\": \"main\", \"root\": \"C:\\\\code\", \"trust\": {\"trusted\": true}},\n    {\"id\": \"x\\u202e\", \"root\": \"D:\\\\x\", \"trust\": null}\n  ]\n}" });
             expect(listed.Contains("• main (trusted for STRONG operations): C:\\code") && listed.Contains("• x  (trust unknown): D:\\x") && listed.Contains("never grants a folder") && listed.Split('\n').Length == 4, "workspaces are listed with trust, escaped, one per line");
             expect(Interpret.WorkspacesMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"workspaces\":[]}" }).StartsWith("No workspaces are configured"), "an empty list says how to add one in a terminal");
+            foreach (string malformed in new[] { "{\"ok\":true,\"workspaces\":\"x\"}", "{\"ok\":true,\"workspaces\":{}}", "{\"ok\":true,\"workspaces\":[1,2]}" })
+                expect(Interpret.WorkspacesMessage(new CliResult { ExitCode = 0, Stdout = malformed }).Contains("form this app understands"), "a malformed list is never reported as no workspaces");
+            expect(Interpret.WorkspacesMessage(new CliResult { TimedOut = true }).Contains("waiting for another Orcel command"), "a timeout says what may be holding it");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
