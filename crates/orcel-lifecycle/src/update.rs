@@ -694,6 +694,9 @@ mod tests {
             },
         )
         .unwrap();
+        installer
+            .replace_cli(&layout.version_dir("0.3.0").join("orcel.exe"))
+            .unwrap();
         installer.verify().unwrap();
         let mut config = crate::config::Config::load(&layout).unwrap();
         config.approval_previews = Some(crate::config::ApprovalPreviews::Sizes);
