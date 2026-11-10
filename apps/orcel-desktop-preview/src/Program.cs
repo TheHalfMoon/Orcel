@@ -24,7 +24,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Previews, PreviewsSizes, PreviewsContent, Unsupported }
 
     internal static class CommandRouter
     {
@@ -39,20 +39,36 @@ namespace Orcel.DesktopPreview
             if (value == "files") return SafeCommand.Files;
             if (value == "tasks") return SafeCommand.Tasks;
             if (value == "history") return SafeCommand.History;
+            if (value == "previews") return SafeCommand.Previews;
+            if (value == "previews sizes") return SafeCommand.PreviewsSizes;
+            if (value == "previews content") return SafeCommand.PreviewsContent;
             return SafeCommand.Unsupported;
         }
 
         internal static bool CanInvokeInstalledHost(SafeCommand command)
         {
-            return command == SafeCommand.Status || command == SafeCommand.Version || command == SafeCommand.Doctor;
+            return command == SafeCommand.Status || command == SafeCommand.Version || command == SafeCommand.Doctor
+                || IsPreviewSetting(command);
         }
 
-        /// The only arguments ever passed to the runtime: fixed, read-only queries.
+        /// `previews content` is recognised only to say where to do it: the app never asks for
+        /// more disclosure, so a stray click or an automated agent typing into it can't loosen
+        /// what approval prompts show.
+        internal static bool IsPreviewSetting(SafeCommand command)
+        {
+            return command == SafeCommand.Previews || command == SafeCommand.PreviewsSizes;
+        }
+
+        /// The only arguments ever passed to the runtime: fixed, read-only queries, and one
+        /// privacy setting (`approvals previews sizes`) that makes approval prompts show sizes
+        /// only. It saves one field in Orcel's protected configuration and changes nothing else.
         internal static string[] CliArguments(SafeCommand command)
         {
             if (command == SafeCommand.Status) return new[] { "status", "--json" };
             if (command == SafeCommand.Version) return new[] { "version", "--json" };
             if (command == SafeCommand.Doctor) return new[] { "doctor", "--json" };
+            if (command == SafeCommand.Previews) return new[] { "approvals", "previews", "--json" };
+            if (command == SafeCommand.PreviewsSizes) return new[] { "approvals", "previews", "sizes", "--json" };
             return null;
         }
     }
@@ -311,7 +327,7 @@ namespace Orcel.DesktopPreview
         internal static CliResult Query(SafeCommand command, int timeoutMs)
         {
             string[] arguments = CommandRouter.CliArguments(command);
-            if (arguments == null) throw new ArgumentException("not a read-only runtime query");
+            if (arguments == null) throw new ArgumentException("not a runtime query this app may run");
             return BoundedProcess.Run(PathToCompatCli(), arguments, timeoutMs, UserProfile());
         }
 
@@ -990,6 +1006,32 @@ namespace Orcel.DesktopPreview
             return text.ToString();
         }
 
+        /// `orcel approvals previews [sizes|content] --json`: what approval prompts show of the
+        /// content they approve. Only the runtime's own answer is reported.
+        internal static string PreviewsMessage(CliResult result)
+        {
+            if (result.FailedToStart) return "The Orcel runtime could not be started. The approval preview setting was not changed.";
+            if (result.TimedOut) return "The Orcel runtime did not answer the approval preview setting in time. It may or may not have been saved; type previews to check.";
+            Dictionary<string, object> answer = Parse(result.Stdout);
+            object error;
+            if (answer != null && result.ExitCode != 0 && answer.TryGetValue("error", out error)
+                && !string.IsNullOrEmpty(Text(error as Dictionary<string, object>, "message")))
+                return "The Orcel runtime answered the approval preview command with an error: " + Plain(Text((Dictionary<string, object>)error, "message"))
+                    + " If the runtime is older than this app, it may not have this setting; update Orcel.";
+            Dictionary<string, object> json = result.ExitCode == 0 && answer != null && answer.ContainsKey("ok") && true.Equals(answer["ok"]) ? answer : null;
+            string choice = Text(json, "approval_previews");
+            object changed = null;
+            if (json != null) json.TryGetValue("changed", out changed);
+            if (choice == "sizes")
+                return "Approval previews: sizes only. Approval prompts show how much would change, never the content."
+                    + (true.Equals(changed) ? " Saved. Restart your AI clients so their next sessions use it." : "");
+            if (choice == "content")
+                return "Approval previews: a short preview, hidden when it looks like a password, key or token."
+                    + (true.Equals(changed) ? " Saved. Restart your AI clients so their next sessions use it." : "")
+                    + " Type previews sizes to show sizes only. (ORCEL_APPROVAL_PREVIEWS=sizes in your environment also does.)";
+            return "The installed Orcel runtime did not report an approval preview setting this app understands. It may be older than this app.";
+        }
+
         internal static string VersionMessage(CliResult result)
         {
             if (result.FailedToStart || result.TimedOut) return "The Orcel runtime did not answer a read-only version query in time.";
@@ -1205,7 +1247,7 @@ namespace Orcel.DesktopPreview
             logoText.VerticalAlignment = VerticalAlignment.Center;
             logo.Children.Add(logoText);
             headerContent.Children.Add(logo);
-            TextBlock stage = Text("DESKTOP FOUNDATION  •  READ-ONLY", 11, Colors.Safe, true);
+            TextBlock stage = Text("DESKTOP FOUNDATION  •  READ-ONLY + ONE PRIVACY SETTING", 11, Colors.Safe, true);
             stage.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(stage, 1);
             headerContent.Children.Add(stage);
@@ -1219,7 +1261,7 @@ namespace Orcel.DesktopPreview
             Grid.SetRow(center, 1); Grid.SetColumn(center, 0);
             StackPanel headline = new StackPanel { Margin = new Thickness(6, 0, 6, 14) };
             headline.Children.Add(Text("What can I help you with?", 23, Colors.Ink, true));
-            TextBlock sub = Text("Read-only foundation: it reports the real local runtime and never executes free text. Orcel AI and remote actions are not connected.", 12, Colors.Muted, false);
+            TextBlock sub = Text("It reports the real local runtime, never executes free text, and changes one thing only: previews sizes, which makes approval prompts show sizes only. Orcel AI and remote actions are not connected.", 12, Colors.Muted, false);
             sub.Margin = new Thickness(0, 6, 0, 0);
             headline.Children.Add(sub);
             center.Children.Add(headline);
@@ -1244,10 +1286,10 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Read-only commands: help, status, version, doctor, devices, files, tasks, history";
+            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, previews";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
-            AutomationProperties.SetHelpText(commandBox, "Type a read-only command and press Enter");
+            AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes");
             commandBox.KeyDown += delegate(object sender, System.Windows.Input.KeyEventArgs e) {
                 if (e.Key == Key.Enter) { e.Handled = true; Send(); }
             };
@@ -1349,7 +1391,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, help. These operations are read-only. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, previews, help. These operations are read-only, except previews sizes, which makes approval prompts show sizes only, never content. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1358,6 +1400,8 @@ namespace Orcel.DesktopPreview
                 ShowTasks();
             else if (kind == SafeCommand.History)
                 ShowHistory();
+            else if (kind == SafeCommand.PreviewsContent)
+                AddMessage(false, "Not changed. This app only makes approval prompts show less. To show content previews again, run orcel approvals previews content in a terminal.");
             else if (CommandRouter.CanInvokeInstalledHost(kind))
                 QueryHost(kind);
             else
@@ -1371,7 +1415,7 @@ namespace Orcel.DesktopPreview
                 AddMessage(false, Interpret.StatusMessage(new RuntimeStatus { Availability = RuntimeAvailability.NotInstalled }));
                 return;
             }
-            AddMessage(false, "Reading local runtime " + CommandRouter.CliArguments(command)[0] + "...");
+            AddMessage(false, command == SafeCommand.PreviewsSizes ? "Saving the approval preview setting..." : "Reading local runtime " + CommandRouter.CliArguments(command)[0] + "...");
             try
             {
                 if (command == SafeCommand.Status)
@@ -1383,13 +1427,16 @@ namespace Orcel.DesktopPreview
                 }
                 string response = await Task.Run(delegate {
                     CliResult result = LocalHost.Query(command, command == SafeCommand.Doctor ? DoctorTimeoutMs : QueryTimeoutMs);
+                    if (CommandRouter.IsPreviewSetting(command)) return Interpret.PreviewsMessage(result);
                     return command == SafeCommand.Version ? Interpret.VersionMessage(result) : Interpret.DoctorMessage(result);
                 });
                 AddMessage(false, response);
             }
             catch (Exception)
             {
-                AddMessage(false, "The read-only runtime query failed unexpectedly. No action was performed.");
+                AddMessage(false, command == SafeCommand.PreviewsSizes
+                    ? "The approval preview setting failed unexpectedly. It may or may not have been saved; type previews to check."
+                    : "The read-only runtime query failed unexpectedly. No action was performed.");
             }
         }
 
@@ -1529,6 +1576,18 @@ namespace Orcel.DesktopPreview
             expect(refused, "only read-only app API methods are sent");
             expect(AppApi.RequestFrame("task.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"task.list\",\"params\":{}}\n", "task.list frame");
             expect(AppApi.RequestFrame("task.get", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.get frame");
+            expect(CommandRouter.Classify("previews") == SafeCommand.Previews && CommandRouter.Classify(" Previews Sizes ") == SafeCommand.PreviewsSizes && CommandRouter.Classify("previews content") == SafeCommand.PreviewsContent, "previews routes");
+            expect(CommandRouter.Classify("previews all") == SafeCommand.Unsupported && CommandRouter.Classify("previews sizes; status") == SafeCommand.Unsupported, "only the two fixed choices are accepted");
+            expect(string.Join(" ", CommandRouter.CliArguments(SafeCommand.PreviewsSizes)) == "approvals previews sizes --json" && string.Join(" ", CommandRouter.CliArguments(SafeCommand.Previews)) == "approvals previews --json", "previews passes fixed arguments only");
+            expect(CommandRouter.CliArguments(SafeCommand.PreviewsContent) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.PreviewsContent), "the app never asks for content previews");
+            expect(CommandRouter.CanInvokeInstalledHost(SafeCommand.Previews) && CommandRouter.CanInvokeInstalledHost(SafeCommand.PreviewsSizes), "previews and previews sizes reach the runtime");
+            expect(CommandRouter.Classify("previews  sizes") == SafeCommand.Unsupported && CommandRouter.Classify("previews\tsizes") == SafeCommand.Unsupported && CommandRouter.Classify("previews \uFF53izes") == SafeCommand.Unsupported, "spacing and look-alike letters are refused");
+            expect(Interpret.PreviewsMessage(new CliResult { TimedOut = true }).Contains("may or may not have been saved") && Interpret.PreviewsMessage(new CliResult { FailedToStart = true }).Contains("was not changed"), "a timeout and a failed start are reported honestly");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 2, Stdout = "{\n  \"ok\": false,\n  \"error\": {\n    \"kind\": \"state\",\n    \"message\": \"config.json has an unsupported schema\"\n  }\n}" }).StartsWith("The Orcel runtime answered the approval preview command with an error: config.json has an unsupported schema."), "the runtime's own refusal is shown");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\n  \"ok\": true,\n  \"approval_previews\": \"sizes\",\n  \"changed\": false\n}" }).StartsWith("Approval previews: sizes only.") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":false,\"approval_previews\":\"sizes\"}" }).Contains("did not report"), "pretty-printed output parses; ok must be true");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"sizes\",\"changed\":true}" }).StartsWith("Approval previews: sizes only.") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"sizes\",\"changed\":true}" }).Contains("Saved."), "a saved sizes choice is reported");
+            expect(!Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"approval_previews\":\"content\",\"changed\":false}" }).Contains("Saved."), "an unchanged choice is not reported as saved");
+            expect(Interpret.PreviewsMessage(new CliResult { ExitCode = 2, Stdout = "" }).Contains("did not report") && Interpret.PreviewsMessage(new CliResult { ExitCode = 0, Stdout = "{\"approval_previews\":\"all\"}" }).Contains("did not report"), "an error or unknown answer is not a setting");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
@@ -1638,7 +1697,7 @@ namespace Orcel.DesktopPreview
                 foreach (string failure in failures) Console.WriteLine("FAIL: " + failure);
                 return 1;
             }
-            Console.WriteLine("Orcel read-only router, runtime interpretation, bounded process and folder self-tests: PASS");
+            Console.WriteLine("Orcel command router (read-only plus the sizes-only preview setting), runtime interpretation, bounded process and folder self-tests: PASS");
             return 0;
         }
 
