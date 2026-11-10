@@ -24,7 +24,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Unsupported }
 
     internal static class CommandRouter
     {
@@ -38,6 +38,7 @@ namespace Orcel.DesktopPreview
             if (value == "devices") return SafeCommand.Devices;
             if (value == "files") return SafeCommand.Files;
             if (value == "tasks") return SafeCommand.Tasks;
+            if (value == "history") return SafeCommand.History;
             return SafeCommand.Unsupported;
         }
 
@@ -337,7 +338,7 @@ namespace Orcel.DesktopPreview
         internal const int MaxFrameBytes = 65536;
         internal const int TimeoutMs = 4000;
         /// The only methods this client sends; all are read-only in orceld.
-        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe" };
+        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe", "approval.history" };
 
         /// This user's pipe name, or null when ORCEL_APP_API_INSTANCE is set
         /// but invalid (refused, never replaced by the default pipe).
@@ -369,6 +370,7 @@ namespace Orcel.DesktopPreview
             request["method"] = method;
             Dictionary<string, object> parameters = new Dictionary<string, object>();
             if (method == "task.get") parameters["task_id"] = taskId ?? "";
+            if (method == "approval.history") parameters["limit"] = ApprovalHistory.MaxShown;
             request["params"] = parameters;
             return new JavaScriptSerializer().Serialize(request) + "\n";
         }
@@ -644,6 +646,77 @@ namespace Orcel.DesktopPreview
             List<Dictionary<string, object>> details = new List<Dictionary<string, object>>();
             foreach (string id in NewestIds(list)) details.Add(AppApi.Call("task.get", id));
             return Text(list, details);
+        }
+    }
+
+    /// The approval history as text: decisions orceld recorded, newest first, with where each
+    /// request came from. It reads only; nothing here approves, denies or revokes.
+    internal static class ApprovalHistory
+    {
+        internal const int MaxShown = 10;
+
+        private static string Field(Dictionary<string, object> map, string key)
+        {
+            object value;
+            return map != null && map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : null;
+        }
+
+        internal static string Origin(object value)
+        {
+            Dictionary<string, object> origin = value as Dictionary<string, object>;
+            string kind = Field(origin, "kind");
+            if (kind == "local") return "this computer";
+            if (kind == "remote")
+                return "REMOTE via " + Timeline.ShownText(Field(origin, "provider")) + ", device " + Timeline.ShownText(Field(origin, "device"));
+            return "origin not recorded";
+        }
+
+        internal static string Decision(string decision)
+        {
+            switch (decision)
+            {
+                case "Approved": return "approved";
+                case "Denied": return "denied";
+                case "Unavailable": return "not approved (unavailable)";
+                default: return "unknown decision";
+            }
+        }
+
+        internal static string When(string millis)
+        {
+            long ms;
+            if (!long.TryParse(millis, out ms) || ms <= 0) return "(time unknown)";
+            return DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        }
+
+        internal static string Text(Dictionary<string, object> result)
+        {
+            if (result == null) return "Approval history unavailable: the local runtime did not answer the read-only query.";
+            object entries;
+            if (!result.TryGetValue("entries", out entries) || !(entries is IEnumerable)) return "Approval history unavailable: the answer had no entries.";
+            StringBuilder text = new StringBuilder("Recent approval decisions, newest first:");
+            int shown = 0;
+            foreach (object item in (IEnumerable)entries)
+            {
+                Dictionary<string, object> entry = item as Dictionary<string, object>;
+                if (entry == null) continue;
+                if (shown++ >= MaxShown) break;
+                string line = When(Field(entry, "decided_at_ms")) + "  " + Decision(Field(entry, "decision"))
+                    + " (" + Timeline.ShownText(Field(entry, "approval_class")) + ")"
+                    + ", from " + Origin(entry.ContainsKey("origin") ? entry["origin"] : null)
+                    + ", workspace " + Timeline.ShownText(Field(entry, "workspace_id"));
+                if (Field(entry, "is_revoke") == "True") line += ", emergency revoke";
+                else if (Field(entry, "consumed") == "True") line += ", used";
+                text.Append("\n• ").Append(line);
+            }
+            if (shown == 0) return "No approval decisions are recorded yet.";
+            text.Append("\nThis app reads the history only; approvals are answered in the system's own prompt.");
+            return text.ToString();
+        }
+
+        internal static string Read()
+        {
+            return Text(AppApi.Call("approval.history", null));
         }
     }
 
@@ -1170,7 +1243,7 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Read-only commands: help, status, version, doctor, devices, files";
+            commandBox.ToolTip = "Read-only commands: help, status, version, doctor, devices, files, tasks, history";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
             AutomationProperties.SetHelpText(commandBox, "Type a read-only command and press Enter");
@@ -1275,13 +1348,15 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, help. These operations are read-only. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, help. These operations are read-only. Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
                 InspectFolder();
             else if (kind == SafeCommand.Tasks)
                 ShowTasks();
+            else if (kind == SafeCommand.History)
+                ShowHistory();
             else if (CommandRouter.CanInvokeInstalledHost(kind))
                 QueryHost(kind);
             else
@@ -1351,6 +1426,13 @@ namespace Orcel.DesktopPreview
             AddMessage(false, "Reading report tasks from the local runtime...");
             try { AddMessage(false, await Task.Run(delegate { return Timeline.Read(); })); }
             catch (Exception) { AddMessage(false, "The read-only task query failed unexpectedly. No action was performed."); }
+        }
+
+        private async void ShowHistory()
+        {
+            AddMessage(false, "Reading the approval history from the local runtime...");
+            try { AddMessage(false, await Task.Run(delegate { return ApprovalHistory.Read(); })); }
+            catch (Exception) { AddMessage(false, "The read-only approval history query failed unexpectedly. No action was performed."); }
         }
 
         private async void InspectFolder()
@@ -1446,6 +1528,12 @@ namespace Orcel.DesktopPreview
             expect(refused, "only read-only app API methods are sent");
             expect(AppApi.RequestFrame("task.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"task.list\",\"params\":{}}\n", "task.list frame");
             expect(AppApi.RequestFrame("task.get", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.get frame");
+            expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
+            expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
+            string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
+            expect(history.Split('\n').Length == 4, "one line per decision; a field cannot add lines");
+            expect(history.Contains("approved (SOFT), from REMOTE via tunnel, device d 1, workspace ws x, used") && history.Contains("denied (STRONG), from origin not recorded"), "history names decision, class, origin and use");
+            expect(ApprovalHistory.Text(null).StartsWith("Approval history unavailable") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[]}}")) == "No approval decisions are recorded yet.", "empty and unavailable history say so");
             expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"UNKNOWN_TASK\"}}") == null, "an error frame is not a result");
             WatcherSelfTest(expect);
             expect(AppApi.ParseReply("{\"v\":\"other/1\",\"ok\":true,\"result\":{}}") == null, "another protocol is refused");
