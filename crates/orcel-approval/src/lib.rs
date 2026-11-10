@@ -201,7 +201,12 @@ pub enum TargetKind {
 
 /// Where a request came from, as orceld knows it, for the approval prompt's Origin line. Built
 /// by orceld from the authenticated remote context, never from the request's own text.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// The approval ledger stores it, and versions that know this shape refuse any other (no
+/// unknown fields or kinds), so one changed record would make their whole ledger unverifiable.
+/// Extend it only through a new sibling field on the ledger record, or a new ledger schema.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum RequestOrigin {
     /// A request from this computer.
     #[default]
@@ -884,6 +889,14 @@ struct StoredRecord {
     consumed: bool,
     prev_checksum: String,
     checksum: String,
+    /// Where the request came from, as orceld stamped it on the prompt. Absent on records
+    /// written before this field, and on records a version without it writes. It is not part
+    /// of `checksum`, so versions before it still verify the record and ignore the field;
+    /// `origin_checksum` binds it to this record's checksum instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<RequestOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin_checksum: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -903,6 +916,8 @@ pub struct ApprovalRecordSummary {
     pub expires_at_ms: u64,
     pub reuse_scope: String,
     pub consumed: bool,
+    /// Where the request came from; `None` for records written before origins were recorded.
+    pub origin: Option<RequestOrigin>,
 }
 
 pub trait ApprovalBroker {
@@ -1688,8 +1703,11 @@ impl ApprovalLedger {
     }
 
     /// Applies one persisted event, returning false when it does not verify.
-    fn apply(&mut self, record: StoredRecord) -> bool {
-        if record.schema != LEDGER_SCHEMA || !verify_record_checksum(&record, &self.tip) {
+    fn apply(&mut self, mut record: StoredRecord) -> bool {
+        if record.schema != LEDGER_SCHEMA
+            || !verify_record_checksum(&record, &self.tip)
+            || record.origin_checksum != origin_checksum(&record)
+        {
             return false;
         }
         if record.is_revoke && !record.consumed {
@@ -1705,12 +1723,25 @@ impl ApprovalLedger {
             expected.consumed = true;
             expected.prev_checksum = record.prev_checksum.clone();
             expected.checksum = record.checksum.clone();
+            // A version without origins writes its consumption entry without one, so only
+            // that entry may lack the issuance's origin; a different origin never matches.
+            let issued_from = previous.origin.clone();
+            if record.origin.is_none() {
+                expected.origin = None;
+            }
+            expected.origin_checksum = origin_checksum(&expected);
             if previous.consumed
                 || serde_json::to_value(&expected).ok() != serde_json::to_value(&record).ok()
             {
                 return false;
             }
             self.consumed.insert(record.nonce.clone());
+            // The consumption entry replaces the issuance in memory, so it keeps the
+            // issuance's origin for the history. On disk the entry stays as written.
+            if record.origin.is_none() {
+                record.origin = issued_from;
+                record.origin_checksum = origin_checksum(&record);
+            }
         } else {
             if self.records.contains_key(&record.id)
                 || !self.nonces.insert(record.nonce.clone())
@@ -1814,8 +1845,11 @@ impl ApprovalLedger {
                 consumed: false,
                 prev_checksum: ledger.tip.clone(),
                 checksum: String::new(),
+                origin: None,
+                origin_checksum: None,
             };
-            record.checksum = record_checksum(&record);
+            record.origin = Some(prompt.origin.clone());
+            seal(&mut record);
             let record = ledger.append(record)?;
             if revoked_meanwhile {
                 return Err(ApprovalError::denied(
@@ -1863,8 +1897,11 @@ impl ApprovalLedger {
                 consumed: true,
                 prev_checksum: ledger.tip.clone(),
                 checksum: String::new(),
+                origin: None,
+                origin_checksum: None,
             };
-            record.checksum = record_checksum(&record);
+            record.origin = Some(prompt.origin.clone());
+            seal(&mut record);
             ledger.append(record)
         })
     }
@@ -1966,7 +2003,7 @@ impl ApprovalLedger {
         let mut marker = record.clone();
         marker.consumed = true;
         marker.prev_checksum = self.tip.clone();
-        marker.checksum = record_checksum(&marker);
+        seal(&mut marker);
         Ok(marker)
     }
 
@@ -2045,6 +2082,7 @@ impl ApprovalLedger {
                 expires_at_ms: record.expires_at_ms,
                 reuse_scope: record.reuse_scope.clone(),
                 consumed: self.consumed.contains(&record.nonce),
+                origin: record.origin.clone(),
             })
             .collect()
     }
@@ -2220,6 +2258,8 @@ fn recover_approval_ledger_with_wait(
         consumed: false,
         prev_checksum: fresh.tip.clone(),
         checksum: String::new(),
+        origin: None,
+        origin_checksum: None,
     };
     record.checksum = record_checksum(&record);
     let swapped = fresh
@@ -2360,6 +2400,34 @@ fn record_checksum(record: &StoredRecord) -> String {
     );
     checksum_field(&mut hasher, record.prev_checksum.as_bytes());
     hex_lower(&hasher.finalize())
+}
+
+/// Sets a record's checksum and then its origin checksum, which covers the first.
+fn seal(record: &mut StoredRecord) {
+    record.checksum = record_checksum(record);
+    record.origin_checksum = origin_checksum(record);
+}
+
+/// Binds a record's origin to its checksum, or nothing when it has no origin.
+fn origin_checksum(record: &StoredRecord) -> Option<String> {
+    let origin = record.origin.as_ref()?;
+    let mut hasher = Sha256::new();
+    checksum_field(&mut hasher, b"orcel-approval-origin-v1");
+    checksum_field(&mut hasher, record.checksum.as_bytes());
+    match origin {
+        RequestOrigin::Local => checksum_field(&mut hasher, b"local"),
+        RequestOrigin::Remote {
+            provider,
+            device,
+            connection,
+        } => {
+            checksum_field(&mut hasher, b"remote");
+            checksum_field(&mut hasher, provider.as_bytes());
+            checksum_field(&mut hasher, device.as_bytes());
+            checksum_field(&mut hasher, connection.as_bytes());
+        }
+    }
+    Some(hex_lower(&hasher.finalize()))
 }
 
 fn verify_record_checksum(record: &StoredRecord, tip: &str) -> bool {
@@ -2682,6 +2750,137 @@ mod soft_decider_tests {
 
     fn prompt(digest: &str) -> ApprovalPrompt {
         ApprovalPrompt::new("ws", "rev-1", "act", "target", "summary", digest)
+    }
+
+    fn approving_broker(path: &std::path::Path) -> LocalApprovalBroker {
+        LocalApprovalBroker::with_path_and_soft_decider(
+            path,
+            Arc::new(NoPresenceVerifier),
+            Arc::new(|_| ApprovalDecision::Approved),
+        )
+    }
+
+    fn remote() -> RequestOrigin {
+        RequestOrigin::Remote {
+            provider: "tunnel".into(),
+            device: "dev-1".into(),
+            connection: "conn-1".into(),
+        }
+    }
+
+    /// The history says where each request came from, and the origin survives a reload,
+    /// which verifies it against the record's checksum.
+    #[test]
+    fn the_history_records_each_request_origin_and_it_survives_a_reload() {
+        let path = temp_ledger("origin");
+        let broker = approving_broker(&path);
+        let local = broker
+            .request_token(&prompt(&"a".repeat(64)))
+            .expect("approved");
+        let distant = broker
+            .request_token(&prompt(&"b".repeat(64)).with_origin(remote()))
+            .expect("approved");
+        broker
+            .consume(
+                &distant,
+                &ConsumeExpectation::new("b".repeat(64), "ws", "rev-1"),
+                now_ms(),
+            )
+            .expect("consumed");
+        let reloaded = approving_broker(&path);
+        let history = reloaded.history(10);
+        let origin_of = |id: &str| {
+            history
+                .iter()
+                .find(|record| record.id == id)
+                .map(|record| record.origin.clone())
+        };
+        assert_eq!(
+            origin_of(&local.record_id),
+            Some(Some(RequestOrigin::Local))
+        );
+        assert_eq!(origin_of(&distant.record_id), Some(Some(remote())));
+        assert!(history
+            .iter()
+            .any(|record| record.id == distant.record_id && record.consumed));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An origin changed on disk no longer matches its checksum, so the ledger refuses to load
+    /// and no approval is issued until it is recovered.
+    #[test]
+    fn a_rewritten_origin_makes_the_ledger_unverifiable() {
+        let path = temp_ledger("origin-tamper");
+        let broker = approving_broker(&path);
+        broker
+            .request_token(&prompt(&"c".repeat(64)).with_origin(remote()))
+            .expect("approved");
+        drop(broker);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""provider":"tunnel""#), "{text}");
+        std::fs::write(
+            &path,
+            text.replace(r#""provider":"tunnel""#, r#""provider":"other""#),
+        )
+        .unwrap();
+        let reloaded = approving_broker(&path);
+        assert!(reloaded.request_token(&prompt(&"d".repeat(64))).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Records from a version without origins carry none and still verify, including a
+    /// consumption entry such a version adds to an issuance that has an origin.
+    #[test]
+    fn records_without_an_origin_still_verify() {
+        let path = temp_ledger("origin-older");
+        let broker = approving_broker(&path);
+        let token = broker
+            .request_token(&prompt(&"e".repeat(64)).with_origin(remote()))
+            .expect("approved");
+        broker
+            .consume(
+                &token,
+                &ConsumeExpectation::new("e".repeat(64), "ws", "rev-1"),
+                now_ms(),
+            )
+            .expect("consumed");
+        let plain = broker
+            .request_token(&prompt(&"f".repeat(64)))
+            .expect("approved");
+        drop(broker);
+        // Strip the origin from the consumption entry and from the last issuance, as a
+        // version without the field writes them; their checksums don't cover it.
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<String> = text
+            .lines()
+            .enumerate()
+            .map(|(index, line)| {
+                if index == 0 {
+                    return line.to_owned();
+                }
+                let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+                let object = value.as_object_mut().unwrap();
+                object.remove("origin");
+                object.remove("origin_checksum");
+                value.to_string()
+            })
+            .collect();
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+        let reloaded = approving_broker(&path);
+        let history = reloaded.history(10);
+        let consumed = history
+            .iter()
+            .find(|record| record.id == token.record_id)
+            .expect("issuance");
+        assert!(consumed.consumed);
+        assert_eq!(consumed.origin, Some(remote()));
+        let older = history
+            .iter()
+            .find(|record| record.id == plain.record_id)
+            .expect("older record");
+        assert_eq!(older.origin, None);
+        assert!(reloaded.request_token(&prompt(&"g".repeat(64))).is_ok());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -3439,6 +3638,8 @@ pub mod test_support {
             consumed: false,
             prev_checksum: String::from("TEST"),
             checksum: String::from("TEST"),
+            origin: None,
+            origin_checksum: None,
         }
     }
 
@@ -3965,6 +4166,8 @@ mod tests {
                 consumed: false,
                 prev_checksum: prev.to_owned(),
                 checksum: String::new(),
+                origin: None,
+                origin_checksum: None,
             };
             record.checksum = record_checksum(&record);
             record
