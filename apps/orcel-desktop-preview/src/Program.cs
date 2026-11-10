@@ -25,7 +25,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Unsupported }
 
     internal static class CommandRouter
     {
@@ -47,6 +47,7 @@ namespace Orcel.DesktopPreview
             if (value == "stop control") return SafeCommand.StopControl;
             if (value == "revoke all") return SafeCommand.RevokeAll;
             if (value == "workspaces") return SafeCommand.Workspaces;
+            if (value == "connect") return SafeCommand.Connect;
             return SafeCommand.Unsupported;
         }
 
@@ -754,6 +755,50 @@ namespace Orcel.DesktopPreview
         }
     }
 
+    /// How to connect a local AI client: the setup to paste into the client, with this
+    /// install's exact path. The app shows it and edits no client's configuration.
+    internal static class ConnectGuide
+    {
+        /// A path as a PowerShell single-quoted string's contents: nothing inside it expands
+        /// (no `$`, backtick or `$(...)`). PowerShell ends such a string at any of its single
+        /// quotes, the ASCII one and the curly U+2018 to U+201B, so each is doubled.
+        internal static string PowerShellPath(string path)
+        {
+            StringBuilder text = new StringBuilder();
+            foreach (char c in path ?? "")
+            {
+                text.Append(c);
+                if (c == '\'' || c == '\u2018' || c == '\u2019' || c == '\u201A' || c == '\u201B') text.Append(c);
+            }
+            return text.ToString();
+        }
+
+        /// A Windows path as a JSON string's contents: backslashes and quotes escaped.
+        internal static string JsonPath(string path)
+        {
+            return (path ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        /// What a screen reader hears for the guide: where to find it, not its punctuation.
+        internal const string Announcement = "Setup for Claude Desktop, Claude Code, Codex and other clients is in the text box below, to select and copy.";
+
+        internal static string Text(string cli, bool installed)
+        {
+            if (!installed)
+                return "Orcel isn't installed for this Windows user yet, so there is nothing to connect. Install it first (in a terminal in the extracted release folder, run .\\orcel.exe install), then type connect again.";
+            string json = JsonPath(cli);
+            return "To connect a local AI client, add Orcel as a stdio MCP server, then restart the client. Copy what you need from here.\n\n"
+                + "Claude Desktop (claude_desktop_config.json; if it already has mcpServers, add only the orcel entry inside it):\n"
+                + "{ \"mcpServers\": { \"orcel\": { \"command\": \"" + json + "\", \"args\": [\"mcp\", \"stdio\"] } } }\n\n"
+                + "Claude Code, in PowerShell (for every folder you use it in):\n"
+                + "claude mcp add --scope user orcel -- '" + PowerShellPath(cli) + "' mcp stdio\n\n"
+                + "Codex (~/.codex/config.toml):\n"
+                + "[mcp_servers.orcel]\ncommand = \"" + json + "\"\nargs = [\"mcp\", \"stdio\"]\nstartup_timeout_sec = 20\ntool_timeout_sec = 60\n\n"
+                + "Other clients: transport stdio, command " + cli + ", arguments mcp stdio.\n\n"
+                + "Every change a client asks Orcel to make still needs your approval in Orcel's own prompt. This app doesn't edit any client's settings.";
+        }
+    }
+
     /// Splits a stream into frames, keeping what follows a newline for the next
     /// one. A frame over MaxFrameBytes, a read past its deadline, or the end of the
     /// stream gives null, and the connection is finished.
@@ -1426,7 +1471,7 @@ namespace Orcel.DesktopPreview
             Border transcriptCard = Card(conversation, Colors.Sidebar, new Thickness(14));
             Grid.SetRow(transcriptCard, 1);
             center.Children.Add(transcriptCard);
-            AddMessage(false, "Welcome to Orcel. Type help to see the commands, such as status, tasks, history, control or stop control. Other requests are not executed or sent anywhere.");
+            AddMessage(false, "Welcome to Orcel. Type connect to set up an AI client, or help to see the commands, such as status, tasks, history, control or stop control. Other requests are not executed or sent anywhere.");
 
             Grid composer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
             composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1439,7 +1484,7 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, workspaces, previews, control, stop control, revoke all";
+            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, workspaces, connect, previews, control, stop control, revoke all";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
             AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control and revoke all, which only take authority away");
@@ -1517,13 +1562,41 @@ namespace Orcel.DesktopPreview
 
         private void AddMessage(bool fromUser, string message)
         {
+            AddMessage(fromUser, message, false);
+        }
+
+        /// `selectable` shows the reply in a read-only text box, so it can be selected and
+        /// copied, for setup text a person pastes elsewhere.
+        private void AddMessage(bool fromUser, string message, bool selectable)
+        {
             messages++;
             StackPanel item = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
             item.HorizontalAlignment = fromUser ? HorizontalAlignment.Right : HorizontalAlignment.Left;
             TextBlock who = Text(fromUser ? "YOU" : "ORCEL · LOCAL", 10, Colors.Muted, true);
             who.Margin = new Thickness(4, 0, 4, 5);
             item.Children.Add(who);
-            TextBlock body = Text(message, 13, Colors.Ink, false);
+            FrameworkElement body;
+            if (selectable)
+            {
+                System.Windows.Controls.TextBox box = new System.Windows.Controls.TextBox {
+                    Text = message, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                    FontSize = 13, Foreground = Colors.Ink, Background = Colors.Surface,
+                    // A border, so keyboard focus on the box is visible.
+                    BorderThickness = new Thickness(1), BorderBrush = Colors.Border,
+                    FontFamily = new FontFamily("Consolas")
+                };
+                AutomationProperties.SetName(box, "Setup to copy");
+                // The box's own scroller would swallow the wheel; the transcript scrolls instead.
+                box.PreviewMouseWheel += delegate(object sender, System.Windows.Input.MouseWheelEventArgs e) {
+                    e.Handled = true;
+                    conversation.ScrollToVerticalOffset(conversation.VerticalOffset - e.Delta / 3.0);
+                };
+                body = box;
+            }
+            else
+            {
+                body = Text(message, 13, Colors.Ink, false);
+            }
             AutomationProperties.SetAutomationId(body, "Message" + messages);
             Border bubble = Card(body, fromUser ? Colors.Bubble : Colors.Surface, new Thickness(13, 10, 13, 10));
             bubble.MaxWidth = 560;
@@ -1531,7 +1604,7 @@ namespace Orcel.DesktopPreview
             transcript.Children.Add(item);
             while (transcript.Children.Count > MaxTranscriptMessages) transcript.Children.RemoveAt(0);
             conversation.ScrollToEnd();
-            if (!fromUser) Announce(message);
+            if (!fromUser) Announce(selectable ? ConnectGuide.Announcement : message);
         }
 
         /// The live region's setup: polite, out of the way, never focused or clicked.
@@ -1581,7 +1654,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, workspaces, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1590,6 +1663,13 @@ namespace Orcel.DesktopPreview
                 ShowTasks();
             else if (kind == SafeCommand.History)
                 ShowHistory();
+            else if (kind == SafeCommand.Connect)
+            {
+                // Only the setup itself goes in the copyable box; the install instruction is an
+                // ordinary reply, read out as it is.
+                bool installed = LocalHost.IsInstalled();
+                AddMessage(false, ConnectGuide.Text(LocalHost.PathToCompatCli(), installed), installed);
+            }
             else if (kind == SafeCommand.PreviewsContent)
                 AddMessage(false, "Not changed. This app only makes approval prompts show less. To show content previews again, run orcel approvals previews content in a terminal.");
             else if (CommandRouter.CanInvokeInstalledHost(kind))
@@ -1835,6 +1915,14 @@ namespace Orcel.DesktopPreview
             foreach (string malformed in new[] { "{\"ok\":true,\"workspaces\":\"x\"}", "{\"ok\":true,\"workspaces\":{}}", "{\"ok\":true,\"workspaces\":[1,2]}" })
                 expect(Interpret.WorkspacesMessage(new CliResult { ExitCode = 0, Stdout = malformed }).Contains("form this app understands"), "a malformed list is never reported as no workspaces");
             expect(Interpret.WorkspacesMessage(new CliResult { TimedOut = true }).Contains("waiting for another Orcel command"), "a timeout says what may be holding it");
+            expect(CommandRouter.Classify("connect") == SafeCommand.Connect && CommandRouter.CliArguments(SafeCommand.Connect) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Connect), "connect runs nothing");
+            string guide = ConnectGuide.Text("C:\\Users\\a b\\.orcel\\bin\\orcel.exe", true);
+            expect(guide.Contains("\"command\": \"C:\\\\Users\\\\a b\\\\.orcel\\\\bin\\\\orcel.exe\"") && guide.Contains("claude mcp add --scope user orcel -- 'C:\\Users\\a b\\.orcel\\bin\\orcel.exe' mcp stdio") && guide.Contains("startup_timeout_sec = 20\ntool_timeout_sec = 60") && guide.Contains("command = \"C:\\\\Users\\\\a b\\\\.orcel\\\\bin\\\\orcel.exe\""), "connect shows the exact path, escaped for JSON and TOML, single-quoted for PowerShell");
+            expect(ConnectGuide.Text("C:\\Users\\$(calc)\\.orcel\\bin\\orcel.exe", true).Contains("-- 'C:\\Users\\$(calc)\\.orcel\\bin\\orcel.exe' mcp") && ConnectGuide.PowerShellPath("O'Brien") == "O''Brien" && ConnectGuide.PowerShellPath("O\u2019Brien") == "O\u2019\u2019Brien" && ConnectGuide.PowerShellPath("a\u2018b\u201Ac\u201Bd") == "a\u2018\u2018b\u201A\u201Ac\u201B\u201Bd", "the PowerShell line never expands or breaks on the path, curly quotes included");
+            expect(ConnectGuide.Text("C:\\Users\\O'Brien\\.orcel\\bin\\orcel.exe", true).Contains("command = \"C:\\\\Users\\\\O'Brien\\\\.orcel\\\\bin\\\\orcel.exe\""), "a path with an apostrophe stays valid TOML");
+            string snippet = guide.Split('\n').First(line => line.StartsWith("{ \"mcpServers\""));
+            expect(new JavaScriptSerializer().DeserializeObject(snippet) is Dictionary<string, object>, "the Claude Desktop snippet is valid JSON");
+            expect(ConnectGuide.Text("x", false).StartsWith("Orcel isn't installed"), "connect without an install says to install first");
             expect(CommandRouter.Classify(" History ") == SafeCommand.History && CommandRouter.CliArguments(SafeCommand.History) == null, "history routes and never runs the CLI");
             expect(AppApi.RequestFrame("approval.history", null).Contains("\"method\":\"approval.history\",\"params\":{\"limit\":10}"), "approval.history frame");
             string history = ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\\u2028x\",\"decided_at_ms\":1,\"consumed\":true,\"origin\":{\"kind\":\"remote\",\"provider\":\"tunnel\",\"device\":\"d\\u202e1\"}},{\"decision\":\"Denied\",\"approval_class\":\"STRONG\",\"workspace_id\":\"ws\",\"decided_at_ms\":2,\"origin\":null}]}}"));
