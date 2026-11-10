@@ -9,26 +9,26 @@ percentage. **Orcel is not finished**, and nothing here releases, signs or publi
 the per-component view. Update the row a merge changes, in the same PR where practical.
 
 States:
-- **Done (qualified)** means merged, exact-head CI, independent review, and no open work in scope.
+- **Done (qualified)** means merged, exact-head CI, independent review, and no open work in scope. The independent reviews are recorded in each PR's description, alongside the review gates' checks.
 - **Partial** means merged pieces with named work left.
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-10, main at `9af70ae3` (#702). Open: #692 (this ledger).
+Last updated: 2026-11-10, main at `9af70ae3` (#702). This PR: #692. Other open PRs: #640 and #673 (drafts waiting on founder decisions), #342 and #328 (other work).
 
 ## Approval and security UX
 
 | Component | State | Evidence (merged PR → commit) | Tests | Known limitations | Remaining work | Blockers |
 |---|---|---|---|---|---|---|
 | One escaped, bounded prompt text on every OS | Done (qualified) | #682 → `aac855c1` | `prompt_text` unit tests (bidi, controls, default-ignorables, combining marks, middle ellipsis) | Prompts escape what they show; they don't decide what is safe | none | none |
-| STRONG summary before Windows Hello and Touch ID | Done (qualified) | #683 → `9c4f58ca` | `windows_summary_decision`, `soft_macos::summary_decision` tests | Real Hello and Touch ID are not exercised in CI; a person must be present | Founder-present acceptance run | Class 3 (a person at the prompt) |
-| Origin line (local or remote, with provider, device and connection) | Done (qualified) | #684 → `a03baf96` | `OriginStamp` wiring test with a negative control | — | Origin is not yet stored in approval history | none |
+| STRONG summary before Windows Hello and Touch ID | Blocked (merged; acceptance needs a person) | #683 → `9c4f58ca` | `windows_summary_decision`, `soft_macos::summary_decision` tests | Real Hello and Touch ID are not exercised in CI; a person must be present | Founder-present acceptance run | Class 3 (a person at the prompt) |
+| Origin line (local or remote, with provider, device and connection) | Done (qualified) | #684 → `a03baf96` | `OriginStamp` wiring test with a negative control | — | none (approval history stores it since #695) | none |
 | Typed targets, file Type line, move destination | Done (qualified) | #685 → `7a65b4c0` | `target_lines` tests | — | none | none |
 | Bounded, redacted content previews: file write and edit | Done (qualified) | #686 → `67799449` | `Preview` and `looks_secret` tests | `looks_secret` is a pattern list, not a guarantee. It over-hides: text naming Orcel's own crates (`orcel-approval`, `orcel-trust`) or words like `mnemonic` hides the preview, which fails safe | none | none |
 | Previews for clipboard writes, typed input, UI values; typed line breaks and control characters counted | Done (qualified) | #689 → `203616b1` | `typed_text_is_shown_only_in_the_bounded_preview` | No end-to-end clipboard or `set_value` prompt test | none | none |
 | Saved sizes-only choice | Done (qualified) | #690 → `5c55fd46` | config round-trip, `child_environment`, rollback refusal tests | Linux systemd and the dev tarball read their own environment; rollback refuses while sizes is saved | none (desktop switch: #699 → `b18c67ba`, tighten-only) | none |
 | Plain warning when hidden content looks like a credential | Done (qualified) | #691 → `ca7ca02a` | `a_credential_or_sizes_only_shows_no_content` | Refusing credential-like typed text, or making it STRONG, is not done (safer default chosen: hide, warn, keep approval) | none | none |
-| Application and window identity on desktop prompts | Done (qualified) | #694 → `3e6ef8e2` | prompt-text and registry tests | The title is the one recorded at observation; the executable is a name, not a signed identity | A code-signature line; an orceld-level test of a desktop prompt | none |
+| Application and window identity on desktop prompts | Partial | #694 → `3e6ef8e2` | prompt-text and registry tests | The title is the one recorded at observation; the executable is a name, not a signed identity | A code-signature line; an orceld-level test of a desktop prompt | none |
 | Windows approval dialog timeout | Done (qualified) | #693 → `e90e51d6` | answer mapping on every OS; a real dialog on the Windows CI runner | Windows Hello's own prompt keeps its own timing | none | none |
 | Request origin in approval history | Done (qualified) | #695 → `574ccece` | origin recorded, reload, tamper and older-record tests | Unkeyed checksums catch corruption, not a determined same-user writer; a stripped origin shows as unrecorded | none (history view: #697 → `3d46d797`) | none |
 
