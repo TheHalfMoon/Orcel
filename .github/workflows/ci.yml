@@ -59,10 +59,8 @@ jobs:
           ORCEL_TEST_REAL_DIALOG: "1"
         run: |
           out=$(cargo test -p orcel-approval --lib -- --exact --nocapture windows_dialog::tests::an_unanswered_dialog_closes_itself_as_a_timeout 2>&1) || status=$?
-          printf '%s
-' "$out"
-          printf '%s
-' "$out" | grep -q "test windows_dialog::tests::an_unanswered_dialog_closes_itself_as_a_timeout ... ok"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "test windows_dialog::tests::an_unanswered_dialog_closes_itself_as_a_timeout ... ok"
           exit "${status:-0}"
       # SG-000115 A2b (inert, test-only): the macOS lineage sweep cases run
       # alone, one thread (in the shared Test step they return at once).
