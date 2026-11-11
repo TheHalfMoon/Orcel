@@ -836,6 +836,14 @@ namespace Orcel.DesktopPreview
             return installed && clients == ClientState.Connected;
         }
 
+        /// Whether the checklist shows by itself at launch: only while Orcel isn't installed.
+        /// After that a closed client or a runtime that isn't serving looks the same as one never
+        /// set up, so it would show at every launch; `setup` shows it on request.
+        internal static bool ShowAtLaunch(bool installed)
+        {
+            return !installed;
+        }
+
         internal static string Text(bool installed, ClientState clients, int count)
         {
             StringBuilder text = new StringBuilder("Getting started with Orcel:");
@@ -850,22 +858,24 @@ namespace Orcel.DesktopPreview
                 text.Append("\n2. Connect an AI client: none is connected now. Type connect for the setup to paste into your client, then restart the client.");
             else
                 text.Append("\n2. Connect an AI client: this app couldn't check. Type connect for the setup to paste into your client, then restart the client.");
-            text.Append("\n3. Try it: ask your client to do something on this computer. Anything that changes something asks you first in Orcel's own prompt; type history to see the decisions.");
+            text.Append("\n3. Choose a folder Orcel may work in: in a terminal, run orcel workspace add <id> <folder> (type workspaces to see them; this app never adds folders).");
+            text.Append("\n4. Try it: ask your client to do something in that folder. When an action needs your approval, Orcel asks in its own prompt; type history to see the decisions.");
             text.Append("\nAt any time: previews sizes hides content in approval prompts, and stop control or revoke all take authority away.");
             string next = !installed ? "install Orcel (step 1)."
                 : clients != ClientState.Connected ? "connect a client (step 2)."
-                : "try it (step 3).";
+                : "choose a folder (step 3) if you haven't, then try it (step 4).";
             text.Append("\nNext: " + next);
             return text.ToString();
         }
 
-        /// The checklist, and whether every step this app can check is done.
-        internal static string Read(out bool complete)
+        /// The checklist. At launch (`launch`) it is built only when it shows then, which is
+        /// before anything is installed, so no runtime is asked; null means it doesn't show.
+        internal static string Read(bool launch)
         {
             bool installed = LocalHost.IsInstalled();
+            if (launch && !ShowAtLaunch(installed)) return null;
             int count = 0;
             ClientState clients = installed ? Clients(AppApi.Call("clients.list", null), out count) : ClientState.Unknown;
-            complete = Complete(installed, clients);
             return Text(installed, clients, count);
         }
     }
@@ -1926,18 +1936,17 @@ namespace Orcel.DesktopPreview
             catch (Exception) { AddMessage(false, "The read-only approval history query failed unexpectedly. No action was performed."); }
         }
 
-        /// At start (`onlyIfIncomplete`), the checklist appears only while a step is left.
-        private async void ShowSetup(bool onlyIfIncomplete)
+        /// At launch the checklist appears only while Orcel isn't installed.
+        private async void ShowSetup(bool launch)
         {
             try
             {
-                bool complete = false;
-                string text = await Task.Run(delegate { return SetupGuide.Read(out complete); });
-                if (!onlyIfIncomplete || !complete) AddMessage(false, text);
+                string text = await Task.Run(delegate { return SetupGuide.Read(launch); });
+                if (text != null) AddMessage(false, text);
             }
             catch (Exception)
             {
-                if (!onlyIfIncomplete) AddMessage(false, "The read-only setup check failed unexpectedly. No action was performed.");
+                if (!launch) AddMessage(false, "The read-only setup check failed unexpectedly. No action was performed.");
             }
         }
 
@@ -2096,8 +2105,8 @@ namespace Orcel.DesktopPreview
             expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes and never runs the CLI");
             int setupCount;
             expect(SetupGuide.Clients(null, out setupCount) == SetupGuide.ClientState.Unknown && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.None && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[{\"pid\":1},{\"pid\":2}]}}"), out setupCount) == SetupGuide.ClientState.Connected && setupCount == 2 && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"unavailable\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.Unknown, "setup reads connected clients and never guesses");
-            expect(SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).Contains("run .\\orcel.exe install") && SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).EndsWith("Next: install Orcel (step 1).") && SetupGuide.Text(true, SetupGuide.ClientState.None, 0).EndsWith("Next: connect a client (step 2).") && SetupGuide.Text(true, SetupGuide.ClientState.Unknown, 0).Contains("couldn't check") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1).Contains("1 client is connected") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 3).EndsWith("Next: try it (step 3)."), "setup names what is done and the next step");
-            expect(!SetupGuide.Complete(false, SetupGuide.ClientState.Connected) && !SetupGuide.Complete(true, SetupGuide.ClientState.Unknown) && SetupGuide.Complete(true, SetupGuide.ClientState.Connected), "the start-up checklist shows until a client is connected");
+            expect(SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).Contains("run .\\orcel.exe install") && SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).EndsWith("Next: install Orcel (step 1).") && SetupGuide.Text(true, SetupGuide.ClientState.None, 0).EndsWith("Next: connect a client (step 2).") && SetupGuide.Text(true, SetupGuide.ClientState.Unknown, 0).Contains("couldn't check") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1).Contains("1 client is connected") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 3).EndsWith("then try it (step 4).") && SetupGuide.Text(true, SetupGuide.ClientState.None, 0).Contains("orcel workspace add <id> <folder>"), "setup names what is done and the next step");
+            expect(!SetupGuide.Complete(false, SetupGuide.ClientState.Connected) && !SetupGuide.Complete(true, SetupGuide.ClientState.Unknown) && SetupGuide.Complete(true, SetupGuide.ClientState.Connected) && SetupGuide.ShowAtLaunch(false) && !SetupGuide.ShowAtLaunch(true), "the checklist shows by itself only before Orcel is installed");
             expect(CommandRouter.Classify(" Clients ") == SafeCommand.Clients && CommandRouter.CliArguments(SafeCommand.Clients) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Clients), "clients routes and never runs the CLI");
             expect(AppApi.RequestFrame("clients.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"clients.list\",\"params\":{}}\n", "clients.list is sent with no parameters");
             string clientsText = ConnectedClients.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"truncated\":false,\"clients\":[{\"pid\":4,\"started_at_ms\":1,\"transport\":\"stdio\",\"workspace_id\":\"ws\",\"client\":{\"name\":\"claude\\u202e\\ncode\",\"version\":\"1.2\",\"verified\":false}},{\"pid\":5,\"started_at_ms\":2,\"transport\":\"stdio\",\"workspace_id\":null,\"client\":{\"name\":null,\"version\":null,\"verified\":false}}]}}"));
