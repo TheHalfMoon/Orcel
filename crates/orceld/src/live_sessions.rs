@@ -72,6 +72,7 @@ impl SessionRecord {
 }
 
 /// The folder of live session records.
+#[derive(Debug, Clone)]
 pub(crate) struct Registry {
     dir: PathBuf,
 }
@@ -104,6 +105,15 @@ impl Registry {
     /// The records of sessions still running, newest first, at most `max`, and whether more
     /// were left out. Records of processes that are gone are deleted.
     pub(crate) fn list(&self, max: usize) -> io::Result<(Vec<SessionRecord>, bool)> {
+        self.scan(max, true)
+    }
+
+    /// As [`Registry::list`], but changes nothing: for the read-only app API.
+    pub(crate) fn read(&self, max: usize) -> io::Result<(Vec<SessionRecord>, bool)> {
+        self.scan(max, false)
+    }
+
+    fn scan(&self, max: usize, prune: bool) -> io::Result<(Vec<SessionRecord>, bool)> {
         let mut live = Vec::new();
         // Only names shaped like records count toward the cap, so leftovers can't hide them.
         let candidates = std::fs::read_dir(&self.dir)?
@@ -122,7 +132,9 @@ impl Registry {
             {
                 Some(Ok(true)) => live.push(record),
                 Some(Ok(false)) => {
-                    let _ = std::fs::remove_file(&path);
+                    if prune {
+                        let _ = std::fs::remove_file(&path);
+                    }
                 }
                 // Unreadable now, or not a process this build can check: not counted.
                 Some(Err(_)) | None => {}
@@ -176,7 +188,22 @@ fn read_record(path: &Path, pid: u32, generation: u64) -> Option<SessionRecord> 
     }
     let record: SessionRecord = serde_json::from_slice(&bytes).ok()?;
     (record.v == RECORD_VERSION && record.pid == pid && record.generation == generation)
-        .then_some(record)
+        .then(|| cleaned(record))
+}
+
+/// A record as read, held to what [`Hello`] writes: another same-user process can write a
+/// record file too, so its text is bounded and cleaned again and an unknown transport is
+/// `unknown`.
+fn cleaned(mut record: SessionRecord) -> SessionRecord {
+    let again = |text: Option<String>, max: usize| text.and_then(|text| sanitize(&text, max));
+    record.client.name = again(record.client.name, MAX_NAME_CHARS);
+    record.client.version = again(record.client.version, MAX_VERSION_CHARS);
+    record.client.verified = false;
+    record.workspace_id = again(record.workspace_id, MAX_WORKSPACE_CHARS);
+    if !TRANSPORTS.contains(&record.transport.as_str()) {
+        record.transport = "unknown".to_owned();
+    }
+    record
 }
 
 /// Opens `path` itself: a link or reparse point is opened as itself and then fails the
@@ -449,6 +476,44 @@ mod tests {
         assert_eq!(response.result.unwrap()["registered"], false);
     }
 
+    /// A record another same-user process wrote for a live process is held to what a hello
+    /// writes: bounded, cleaned text, a known transport, and never verified.
+    #[test]
+    fn a_hand_written_record_is_cleaned_when_read() {
+        let (registry, dir) = temp_registry("hostile");
+        let me = process::current_instance().expect("instance");
+        let hostile = SessionRecord {
+            v: RECORD_VERSION,
+            pid: me.pid,
+            generation: me.generation,
+            boot_id: me.boot_id.map(|id| id.to_string()),
+            source: me.source.to_owned(),
+            started_at_ms: 1,
+            transport: "evil\n".to_owned(),
+            workspace_id: Some(format!("w\u{202E}{}", "s".repeat(500))),
+            client: ClientInfo {
+                name: Some(format!("Claude\u{202E}\n{}", "x".repeat(1000))),
+                version: Some("1\u{0007}".repeat(200)),
+                verified: true,
+            },
+        };
+        let guard = registry.publish(&hostile).unwrap();
+        let (live, _) = registry.read(32).unwrap();
+        assert_eq!(live.len(), 1);
+        let record = &live[0];
+        assert_eq!(record.transport, "unknown");
+        assert!(!record.client.verified);
+        let name = record.client.name.as_deref().unwrap();
+        assert!(name.starts_with("Claude") && name.chars().count() == MAX_NAME_CHARS);
+        assert!(record.client.version.as_deref().unwrap().chars().count() <= MAX_VERSION_CHARS);
+        let workspace = record.workspace_id.as_deref().unwrap();
+        assert!(
+            !workspace.contains('\u{202E}') && workspace.chars().count() == MAX_WORKSPACE_CHARS
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn dead_forged_and_odd_entries_are_not_counted() {
         let (registry, dir) = temp_registry("filter");
@@ -485,6 +550,9 @@ mod tests {
         .unwrap();
         std::fs::create_dir(dir.join("3-4.json")).unwrap();
 
+        let (listed, _) = registry.read(32).unwrap();
+        assert!(listed.is_empty(), "{listed:?}");
+        assert!(stale_path.exists(), "a read changes nothing");
         let (listed, _) = registry.list(32).unwrap();
         assert!(listed.is_empty(), "{listed:?}");
         assert!(!stale_path.exists(), "a dead record is deleted");
