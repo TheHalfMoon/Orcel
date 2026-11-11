@@ -264,10 +264,7 @@ fn app_api(endpoint: &str, method: &str) -> Value {
             #[cfg(unix)]
             let mut stream = std::os::unix::net::UnixStream::connect(&endpoint)?;
             #[cfg(windows)]
-            let mut stream = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&endpoint)?;
+            let mut stream = open_pipe(&endpoint)?;
             stream.write_all(frame.as_bytes())?;
             stream.flush()?;
             let mut line = String::new();
@@ -281,6 +278,31 @@ fn app_api(endpoint: &str, method: &str) -> Value {
         .expect("app api answered in time")
         .expect("app api read");
     serde_json::from_str(&line).expect("app api json")
+}
+
+/// Opens the holder's pipe. Between one client and the next instance the pipe is briefly busy
+/// (a waiting orceld probes the holder every few seconds), so a busy pipe is tried again, as
+/// the in-crate test client does.
+#[cfg(windows)]
+fn open_pipe(name: &str) -> std::io::Result<std::fs::File> {
+    const ERROR_PIPE_BUSY: i32 = 231;
+    for _ in 0..100 {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(name)
+        {
+            Ok(file) => return Ok(file),
+            Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "pipe stayed busy",
+    ))
 }
 
 fn listed_pids(answer: &Value) -> Vec<u64> {
@@ -334,10 +356,9 @@ fn mc01_concurrent_sessions_stay_apart() {
         "a second hello is refused"
     );
 
-    // P2: a remote hello is never recorded; C's own record stays as it was.
-    let fresh = Orceld::start(&sandbox, "D");
+    // P2: a remote hello is never recorded; the list stays as it was.
+    let mut fresh = Orceld::start(&sandbox, "D");
     fresh.wait_log("orceld app api: waiting for");
-    let mut fresh = fresh;
     assert_eq!(
         code(&fresh.hello(Some(tunnel_remote()))),
         "CAPABILITY_DENIED"
@@ -392,6 +413,8 @@ fn mc01_concurrent_sessions_stay_apart() {
     b.close();
     let remaining: Vec<u64> = all.iter().copied().filter(|pid| *pid != b_pid).collect();
     assert_eq!(listed_pids(&app_api(&endpoint, "clients.list")), remaining);
-    drop(c);
-    drop(a);
+    // Closed, not killed, so the holder removes its endpoint (on macOS it lives outside the
+    // sandbox, in the user's temporary folder).
+    c.close();
+    a.close();
 }
