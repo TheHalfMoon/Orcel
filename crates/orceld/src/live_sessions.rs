@@ -14,13 +14,14 @@ use orcel_contracts::{FailureCode, RemoteRequestEnvelope, RequestEnvelope, Respo
 use orcel_platform::process::{self, ProcessGeneration};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::io;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 pub(crate) const SESSION_CAPABILITY: &str = "session";
 pub(crate) const HELLO_OPERATION: &str = "hello";
 const RECORD_VERSION: u32 = 1;
-/// Entries a listing looks at, and the largest record it reads.
+/// Directory entries a listing scans, record files it reads, and the largest record it reads.
+const MAX_SCANNED: usize = 4096;
 const MAX_ENTRIES: usize = 256;
 const MAX_RECORD_BYTES: u64 = 4096;
 const MAX_NAME_CHARS: usize = 64;
@@ -104,10 +105,15 @@ impl Registry {
     /// were left out. Records of processes that are gone are deleted.
     pub(crate) fn list(&self, max: usize) -> io::Result<(Vec<SessionRecord>, bool)> {
         let mut live = Vec::new();
-        for entry in std::fs::read_dir(&self.dir)?.take(MAX_ENTRIES) {
-            let Ok(entry) = entry else { continue };
-            let path = entry.path();
-            let Some(record) = read_record(&path) else {
+        // Only names shaped like records count toward the cap, so leftovers can't hide them.
+        let candidates = std::fs::read_dir(&self.dir)?
+            .take(MAX_SCANNED)
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter_map(|path| record_name(&path).map(|parts| (path, parts)))
+            .take(MAX_ENTRIES);
+        for (path, (pid, generation)) in candidates {
+            let Some(record) = read_record(&path, pid, generation) else {
                 continue;
             };
             match record
@@ -122,7 +128,7 @@ impl Registry {
                 Some(Err(_)) | None => {}
             }
         }
-        live.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+        live.sort_by_key(|record| std::cmp::Reverse(record.started_at_ms));
         let truncated = live.len() > max;
         live.truncate(max);
         Ok((live, truncated))
@@ -134,21 +140,22 @@ impl Registry {
     }
 }
 
-/// A record file this registry wrote: a plain file, small, named `<pid>-<generation>.json`,
-/// owned by this user on Unix, and naming the same pid and generation inside.
-fn read_record(path: &Path) -> Option<SessionRecord> {
+/// The pid and generation of a name shaped `<pid>-<generation>.json`.
+fn record_name(path: &Path) -> Option<(u32, u64)> {
     let name = path.file_name()?.to_str()?;
     let (pid, generation) = name.strip_suffix(".json")?.split_once('-')?;
-    if pid.is_empty()
-        || generation.is_empty()
-        || !pid
-            .bytes()
-            .chain(generation.bytes())
-            .all(|byte| byte.is_ascii_digit())
-    {
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    if !digits(pid) || !digits(generation) {
         return None;
     }
-    let metadata = std::fs::symlink_metadata(path).ok()?;
+    Some((pid.parse().ok()?, generation.parse().ok()?))
+}
+
+/// A record file this registry wrote: a plain file (never followed through a link), small,
+/// owned by this user on Unix, and naming the same pid and generation inside as its name.
+fn read_record(path: &Path, pid: u32, generation: u64) -> Option<SessionRecord> {
+    let file = open_no_follow(path).ok()?;
+    let metadata = file.metadata().ok()?;
     if !metadata.file_type().is_file() || metadata.len() > MAX_RECORD_BYTES {
         return None;
     }
@@ -160,11 +167,34 @@ fn read_record(path: &Path) -> Option<SessionRecord> {
             return None;
         }
     }
-    let record: SessionRecord = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-    (record.v == RECORD_VERSION
-        && record.pid.to_string() == pid
-        && record.generation.to_string() == generation)
+    let mut bytes = Vec::new();
+    file.take(MAX_RECORD_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_RECORD_BYTES {
+        return None;
+    }
+    let record: SessionRecord = serde_json::from_slice(&bytes).ok()?;
+    (record.v == RECORD_VERSION && record.pid == pid && record.generation == generation)
         .then_some(record)
+}
+
+/// Opens `path` itself: a link or reparse point is opened as itself and then fails the
+/// plain-file check, and on Unix a FIFO can't block the open.
+fn open_no_follow(path: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path)
 }
 
 /// Client text for display: control, line and direction characters removed, trimmed, and at
@@ -196,10 +226,12 @@ pub(crate) fn is_hello(request: &RequestEnvelope) -> bool {
 }
 
 /// One session's hello: the first one publishes its record, a second is refused. It never
-/// reaches policy or dispatch, because it grants and does nothing.
+/// reaches policy or dispatch, because it grants and does nothing. A remote connection is
+/// refused: its lease is checked only on the dispatch path, so it isn't shown as a session.
 pub(crate) struct Hello {
     registry: Option<Registry>,
-    published: Option<Published>,
+    /// Held so the record is deleted when this session's orceld exits.
+    _published: Option<Published>,
     answered: bool,
 }
 
@@ -207,7 +239,7 @@ impl Hello {
     pub(crate) fn new(registry: Option<Registry>) -> Self {
         Self {
             registry,
-            published: None,
+            _published: None,
             answered: false,
         }
     }
@@ -227,6 +259,13 @@ impl Hello {
                 "unknown session operation",
             );
         }
+        if remote.is_some() {
+            return ResponseEnvelope::failure(
+                request.request_id,
+                FailureCode::CapabilityDenied,
+                "a remote connection is not recorded as a local session",
+            );
+        }
         if self.answered {
             return ResponseEnvelope::failure(
                 request.request_id,
@@ -242,13 +281,9 @@ impl Hello {
                 .and_then(|value| value.as_str())
                 .and_then(|value| sanitize(value, max))
         };
-        let transport = if remote.is_some() {
-            "remote".to_owned()
-        } else {
-            text("transport", 16)
-                .filter(|value| TRANSPORTS.contains(&value.as_str()))
-                .unwrap_or_else(|| "unknown".to_owned())
-        };
+        let transport = text("transport", 16)
+            .filter(|value| TRANSPORTS.contains(&value.as_str()))
+            .unwrap_or_else(|| "unknown".to_owned());
         let record = process::current_instance()
             .ok()
             .map(|instance| SessionRecord {
@@ -277,7 +312,7 @@ impl Hello {
             _ => None,
         };
         let registered = published.is_some();
-        self.published = published;
+        self._published = published;
         ResponseEnvelope::success(
             &request,
             json!({ "registered": registered }),
@@ -377,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn transport_is_from_a_fixed_set_and_remote_wins() {
+    fn transport_is_from_a_fixed_set_and_remote_is_refused() {
         let (registry, dir) = temp_registry("transport");
         let mut hello = Hello::new(Some(Registry::at(dir.clone())));
         hello.handle(
@@ -398,8 +433,8 @@ mod tests {
             .expect("remote context"),
         );
         let mut hello = Hello::new(Some(Registry::at(dir.clone())));
-        hello.handle(remote, "rev");
-        assert_eq!(registry.list(32).unwrap().0[0].transport, "remote");
+        assert!(!hello.handle(remote, "rev").ok);
+        assert!(registry.list(32).unwrap().0.is_empty());
         drop(hello);
         let _ = std::fs::remove_dir_all(dir);
     }
