@@ -138,6 +138,12 @@ try {
     $calculators = @(Get-Process -Name "calc", "CalculatorApp" -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -ge $refusedAt })
     Check "no process was started by the refused text" ($children.Count -eq 0 -and $calculators.Count -eq 0) ((@($children | ForEach-Object { $_.Name }) + @($calculators | ForEach-Object { $_.Name })) -join ", ")
 
+    # The guided start appears by itself while a step is left, and names the next one.
+    if (-not $expectInstalled) {
+        $setup = WaitForMessage $window "Getting started with Orcel" 10000
+        Check "the guided start appears at launch and names the next step" ($null -ne $setup -and $setup -like "*Next: install Orcel (step 1).*") "$(($setup -split "`n")[-1])"
+    }
+
     # connect shows setup text only: it runs nothing and edits no client's settings.
     Start-Sleep -Milliseconds 1500
     $connectAt = Get-Date

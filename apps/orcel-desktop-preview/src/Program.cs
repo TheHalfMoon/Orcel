@@ -25,7 +25,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Setup, Unsupported }
 
     internal static class CommandRouter
     {
@@ -41,6 +41,7 @@ namespace Orcel.DesktopPreview
             if (value == "tasks") return SafeCommand.Tasks;
             if (value == "history") return SafeCommand.History;
             if (value == "clients") return SafeCommand.Clients;
+            if (value == "setup") return SafeCommand.Setup;
             if (value == "previews") return SafeCommand.Previews;
             if (value == "previews sizes") return SafeCommand.PreviewsSizes;
             if (value == "previews content") return SafeCommand.PreviewsContent;
@@ -812,6 +813,63 @@ namespace Orcel.DesktopPreview
         }
     }
 
+    /// A guided first run: what is done and what to do next, from what this computer shows (is
+    /// Orcel installed, is a client connected). It reads only; each step is the person's to take.
+    internal static class SetupGuide
+    {
+        internal enum ClientState { Connected, None, Unknown }
+
+        /// Whether any client is connected, from a `clients.list` answer.
+        internal static ClientState Clients(Dictionary<string, object> result, out int count)
+        {
+            count = 0;
+            object registry, clients;
+            if (result == null || !result.TryGetValue("registry", out registry) || !"ok".Equals(registry)) return ClientState.Unknown;
+            if (!result.TryGetValue("clients", out clients) || !(clients is IEnumerable) || clients is string) return ClientState.Unknown;
+            foreach (object item in (IEnumerable)clients) if (item is Dictionary<string, object>) count++;
+            return count > 0 ? ClientState.Connected : ClientState.None;
+        }
+
+        /// True when every step this app can check is done.
+        internal static bool Complete(bool installed, ClientState clients)
+        {
+            return installed && clients == ClientState.Connected;
+        }
+
+        internal static string Text(bool installed, ClientState clients, int count)
+        {
+            StringBuilder text = new StringBuilder("Getting started with Orcel:");
+            text.Append(installed
+                ? "\n1. Install Orcel for this Windows user: done."
+                : "\n1. Install Orcel for this Windows user: not yet. In a terminal in the extracted release folder, run .\\orcel.exe install, then reopen this app.");
+            if (!installed)
+                text.Append("\n2. Connect an AI client: after installing, type connect for the setup to paste into Claude Desktop, Claude Code, Codex or another client.");
+            else if (clients == ClientState.Connected)
+                text.Append("\n2. Connect an AI client: done, " + count + (count == 1 ? " client is" : " clients are") + " connected now (type clients to see them).");
+            else if (clients == ClientState.None)
+                text.Append("\n2. Connect an AI client: none is connected now. Type connect for the setup to paste into your client, then restart the client.");
+            else
+                text.Append("\n2. Connect an AI client: this app couldn't check. Type connect for the setup to paste into your client, then restart the client.");
+            text.Append("\n3. Try it: ask your client to do something on this computer. Anything that changes something asks you first in Orcel's own prompt; type history to see the decisions.");
+            text.Append("\nAt any time: previews sizes hides content in approval prompts, and stop control or revoke all take authority away.");
+            string next = !installed ? "install Orcel (step 1)."
+                : clients != ClientState.Connected ? "connect a client (step 2)."
+                : "try it (step 3).";
+            text.Append("\nNext: " + next);
+            return text.ToString();
+        }
+
+        /// The checklist, and whether every step this app can check is done.
+        internal static string Read(out bool complete)
+        {
+            bool installed = LocalHost.IsInstalled();
+            int count = 0;
+            ClientState clients = installed ? Clients(AppApi.Call("clients.list", null), out count) : ClientState.Unknown;
+            complete = Complete(installed, clients);
+            return Text(installed, clients, count);
+        }
+    }
+
     /// How to connect a local AI client: the setup to paste into the client, with this
     /// install's exact path. The app shows it and edits no client's configuration.
     internal static class ConnectGuide
@@ -1432,7 +1490,7 @@ namespace Orcel.DesktopPreview
             FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
             AutomationProperties.SetAutomationId(this, "OrcelMainWindow");
             Content = Layout();
-            Loaded += delegate { RefreshHost(); commandBox.Focus(); WatchTasks(); };
+            Loaded += delegate { RefreshHost(); commandBox.Focus(); WatchTasks(); ShowSetup(true); };
             Closed += delegate { watching.Cancel(); };
         }
 
@@ -1547,7 +1605,7 @@ namespace Orcel.DesktopPreview
             Border transcriptCard = Card(conversation, Colors.Sidebar, new Thickness(14));
             Grid.SetRow(transcriptCard, 1);
             center.Children.Add(transcriptCard);
-            AddMessage(false, "Welcome to Orcel. Type connect to set up an AI client, or help to see the commands, such as status, tasks, history, control or stop control. Other requests are not executed or sent anywhere.");
+            AddMessage(false, "Welcome to Orcel. Type setup for a guided start, connect to set up an AI client, or help to see the commands, such as status, tasks, history, control or stop control. Other requests are not executed or sent anywhere.");
 
             Grid composer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
             composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1560,7 +1618,7 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, clients, workspaces, connect, previews, control, stop control, revoke all";
+            commandBox.ToolTip = "Commands: help, setup, status, version, doctor, devices, files, tasks, history, clients, workspaces, connect, previews, control, stop control, revoke all";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
             AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control and revoke all, which only take authority away");
@@ -1730,7 +1788,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, clients, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: setup, status, version, doctor, devices, files, tasks, history, clients, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1741,6 +1799,8 @@ namespace Orcel.DesktopPreview
                 ShowHistory();
             else if (kind == SafeCommand.Clients)
                 ShowClients();
+            else if (kind == SafeCommand.Setup)
+                ShowSetup(false);
             else if (kind == SafeCommand.Connect)
             {
                 // Only the setup itself goes in the copyable box; the install instruction is an
@@ -1864,6 +1924,21 @@ namespace Orcel.DesktopPreview
             AddMessage(false, "Reading the approval history from the local runtime...");
             try { AddMessage(false, await Task.Run(delegate { return ApprovalHistory.Read(); })); }
             catch (Exception) { AddMessage(false, "The read-only approval history query failed unexpectedly. No action was performed."); }
+        }
+
+        /// At start (`onlyIfIncomplete`), the checklist appears only while a step is left.
+        private async void ShowSetup(bool onlyIfIncomplete)
+        {
+            try
+            {
+                bool complete = false;
+                string text = await Task.Run(delegate { return SetupGuide.Read(out complete); });
+                if (!onlyIfIncomplete || !complete) AddMessage(false, text);
+            }
+            catch (Exception)
+            {
+                if (!onlyIfIncomplete) AddMessage(false, "The read-only setup check failed unexpectedly. No action was performed.");
+            }
         }
 
         private async void ShowClients()
@@ -2018,6 +2093,11 @@ namespace Orcel.DesktopPreview
             expect(history.Split('\n').Length == 4, "one line per decision; a field cannot add lines");
             expect(ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"busy\",\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\",\"decided_at_ms\":1}]}}")).StartsWith("The approval history couldn't be read just now") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"something-new\",\"entries\":[]}}")).StartsWith("The approval history couldn't be read just now") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"unverifiable\",\"entries\":[]}}")).StartsWith("The approval history failed its integrity check"), "an unverified history says so");
             expect(history.Contains("approved (SOFT), from REMOTE via tunnel, device d 1, workspace ws x, used") && history.Contains("denied (STRONG), from origin not recorded"), "history names decision, class, origin and use");
+            expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes and never runs the CLI");
+            int setupCount;
+            expect(SetupGuide.Clients(null, out setupCount) == SetupGuide.ClientState.Unknown && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.None && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[{\"pid\":1},{\"pid\":2}]}}"), out setupCount) == SetupGuide.ClientState.Connected && setupCount == 2 && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"unavailable\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.Unknown, "setup reads connected clients and never guesses");
+            expect(SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).Contains("run .\\orcel.exe install") && SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).EndsWith("Next: install Orcel (step 1).") && SetupGuide.Text(true, SetupGuide.ClientState.None, 0).EndsWith("Next: connect a client (step 2).") && SetupGuide.Text(true, SetupGuide.ClientState.Unknown, 0).Contains("couldn't check") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1).Contains("1 client is connected") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 3).EndsWith("Next: try it (step 3)."), "setup names what is done and the next step");
+            expect(!SetupGuide.Complete(false, SetupGuide.ClientState.Connected) && !SetupGuide.Complete(true, SetupGuide.ClientState.Unknown) && SetupGuide.Complete(true, SetupGuide.ClientState.Connected), "the start-up checklist shows until a client is connected");
             expect(CommandRouter.Classify(" Clients ") == SafeCommand.Clients && CommandRouter.CliArguments(SafeCommand.Clients) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Clients), "clients routes and never runs the CLI");
             expect(AppApi.RequestFrame("clients.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"clients.list\",\"params\":{}}\n", "clients.list is sent with no parameters");
             string clientsText = ConnectedClients.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"truncated\":false,\"clients\":[{\"pid\":4,\"started_at_ms\":1,\"transport\":\"stdio\",\"workspace_id\":\"ws\",\"client\":{\"name\":\"claude\\u202e\\ncode\",\"version\":\"1.2\",\"verified\":false}},{\"pid\":5,\"started_at_ms\":2,\"transport\":\"stdio\",\"workspace_id\":null,\"client\":{\"name\":null,\"version\":null,\"verified\":false}}]}}"));
