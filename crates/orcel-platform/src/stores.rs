@@ -86,6 +86,8 @@ pub const CONTAINED_RUNS: Store = store("contained-runs", Dir, Transient, Migrat
 pub const DOCUMENT_PARSE: Store = store("document-parse", Dir, Transient, Migrate::Leave);
 /// Left by SG-000012's isolation test on a machine that runs it.
 pub const QUALIFICATION: Store = store("sg-000012-qualification", Dir, Transient, Migrate::Leave);
+/// One record per running client session, for display; each is deleted when its session ends.
+pub const SESSIONS: Store = store("sessions", Dir, Transient, Migrate::Leave);
 pub const MIGRATION_IN_PROGRESS: Store = store(
     "legacy-migration-in-progress",
     File,
@@ -145,6 +147,7 @@ pub const STORES: &[Store] = &[
     CONTAINED_RUNS,
     DOCUMENT_PARSE,
     QUALIFICATION,
+    SESSIONS,
     MIGRATION_IN_PROGRESS,
     MIGRATION_STAGING,
     CONFIG,

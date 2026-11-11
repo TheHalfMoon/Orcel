@@ -18,11 +18,12 @@ pub const DECISION_KEPT_SEPARATE: &str = "kept-separate";
 
 /// Directories of short-lived runs, whose contents are nobody's data. Empty ones from an old
 /// test run are all some machines have at the earlier root.
-const TRANSIENT: [&str; 4] = [
+const TRANSIENT: [&str; 5] = [
     "contained-runs",
     "document-parse",
     "sg-000012-qualification",
     "run",
+    "sessions",
 ];
 
 /// What the earlier root holds, as far as starting is concerned.

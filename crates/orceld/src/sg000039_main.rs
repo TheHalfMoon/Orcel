@@ -47,6 +47,7 @@ mod journal_owner;
 ))]
 mod live_browser;
 mod live_dispatch;
+mod live_sessions;
 mod mutation_journal;
 mod profile_gate;
 mod remote_lease;
@@ -153,6 +154,27 @@ fn run() -> Result<(), String> {
         },
     );
 
+    // Live client sessions, for display only: this session's record is written on its hello
+    // and deleted when orceld exits; records of sessions that are gone are cleared now.
+    // Created like the contained-runs folder: on Windows it inherits the state root's protected
+    // DACL (user and SYSTEM only, which install verification requires); ensure_private_dir then
+    // checks it rather than creating it with its own DACL.
+    let sessions_dir = orcel_platform::stores::SESSIONS.path(&state_root);
+    let _ = contained_tier::private_dir_builder(false).create(&sessions_dir);
+    let mut hello = live_sessions::Hello::new(
+        match orcel_platform::paths::ensure_private_dir(&sessions_dir) {
+            Ok(()) => {
+                let registry = live_sessions::Registry::at(sessions_dir);
+                registry.sweep();
+                Some(registry)
+            }
+            Err(error) => {
+                eprintln!("orceld live sessions: no private folder ({error}); not recorded");
+                None
+            }
+        },
+    );
+
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
 
@@ -177,6 +199,9 @@ fn run() -> Result<(), String> {
                 // SG-000126: report tasks have their own local-only entry.
                 let response = if report_task::is_report_request(&envelope.request) {
                     report_task::handle_envelope(&policy, &audit, &approval, &tasks, envelope)
+                } else if live_sessions::is_hello(&envelope.request) {
+                    // Grants and does nothing, so it never reaches policy or dispatch.
+                    hello.handle(envelope, POLICY_REVISION)
                 } else {
                     handle_envelope(&policy, &audit, &approval, &workspace_set, envelope)
                 };
