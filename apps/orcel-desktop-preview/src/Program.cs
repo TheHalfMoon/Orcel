@@ -25,7 +25,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Setup, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Setup, Recovery, Unsupported }
 
     internal static class CommandRouter
     {
@@ -42,6 +42,7 @@ namespace Orcel.DesktopPreview
             if (value == "history") return SafeCommand.History;
             if (value == "clients") return SafeCommand.Clients;
             if (value == "setup") return SafeCommand.Setup;
+            if (value == "recovery") return SafeCommand.Recovery;
             if (value == "previews") return SafeCommand.Previews;
             if (value == "previews sizes") return SafeCommand.PreviewsSizes;
             if (value == "previews content") return SafeCommand.PreviewsContent;
@@ -631,13 +632,18 @@ namespace Orcel.DesktopPreview
 
         internal static List<string> NewestIds(Dictionary<string, object> list)
         {
+            return NewestIds(list, MaxShownTasks);
+        }
+
+        internal static List<string> NewestIds(Dictionary<string, object> list, int max)
+        {
             List<string> ids = new List<string>();
             object tasks;
             if (list == null || !list.TryGetValue("tasks", out tasks) || !(tasks is IEnumerable)) return ids;
             foreach (object task in (IEnumerable)tasks)
             {
                 string id = Field(task as Dictionary<string, object>, "task_id");
-                if (id != null && ids.Count < MaxShownTasks) ids.Add(id);
+                if (id != null && ids.Count < max) ids.Add(id);
             }
             return ids;
         }
@@ -681,6 +687,84 @@ namespace Orcel.DesktopPreview
             Dictionary<string, object> list = AppApi.Call("task.list", null);
             List<Dictionary<string, object>> details = new List<Dictionary<string, object>>();
             foreach (string id in NewestIds(list)) details.Add(AppApi.Call("task.get", id));
+            return Text(list, details);
+        }
+    }
+
+    /// What Orcel found after it restarted: when orceld exits while a report is being written,
+    /// the next orceld checks the destination and records a `reconcile` step on the task. This
+    /// says what each check found, in plain words. It reads only and never retries anything.
+    internal static class Recovery
+    {
+        internal const int MaxScanned = 10;
+
+        private static string Field(Dictionary<string, object> map, string key)
+        {
+            object value;
+            return map != null && map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : null;
+        }
+
+        /// The outcome of a task's last reconcile step, or null when it has none.
+        internal static string LastReconcile(Dictionary<string, object> task)
+        {
+            object steps;
+            string outcome = null;
+            if (task == null || !task.TryGetValue("steps", out steps) || !(steps is IEnumerable) || steps is string) return null;
+            foreach (object step in (IEnumerable)steps)
+            {
+                Dictionary<string, object> map = step as Dictionary<string, object>;
+                if (Field(map, "kind") == "reconcile") outcome = Field(map, "outcome") ?? "";
+            }
+            return outcome;
+        }
+
+        internal static string Meaning(string outcome)
+        {
+            switch (outcome)
+            {
+                case "verified": return "the report is there and the independent checker passes it.";
+                case "nothing_written": return "nothing was written. Ask your client to run it again if you still want it.";
+                case "unknown": return "a file is there, or couldn't be read, and it doesn't check, so Orcel can't tell what happened and won't retry. Check the destination yourself before using it.";
+                default: return "the check gave an answer this app doesn't know. Type tasks for the details.";
+            }
+        }
+
+        internal static string Text(Dictionary<string, object> list, IList<Dictionary<string, object>> tasks)
+        {
+            if (list == null)
+                return "Recovery check unavailable: this user's app API pipe did not answer, gave an unusable answer, or is not served by this user at normal integrity (the runtime may not be running). Nothing was changed.";
+            StringBuilder text = new StringBuilder();
+            int found = 0, unknown = 0, unreadable = 0;
+            foreach (Dictionary<string, object> task in tasks)
+            {
+                if (task == null) { unreadable++; continue; }
+                string outcome = LastReconcile(task);
+                if (outcome == null) continue;
+                found++;
+                if (outcome != "verified" && outcome != "nothing_written") unknown++;
+                text.Append("\n• \"" + Timeline.ShownText(Field(task, "title")) + "\"");
+                object proposal;
+                if (task.TryGetValue("proposal", out proposal) && proposal is Dictionary<string, object>)
+                    text.Append(" → " + Timeline.ShownText(Field((Dictionary<string, object>)proposal, "destination")));
+                text.Append(": " + Meaning(outcome));
+            }
+            // A task whose details didn't come back may be one that was checked, so it is never
+            // counted as "not interrupted".
+            string missed = unreadable == 0 ? "" : "\n" + unreadable + (unreadable == 1 ? " task's details" : " tasks' details") + " couldn't be read just now, so this may be incomplete; type recovery again.";
+            if (found == 0)
+                return (unreadable == 0
+                    ? "No report was interrupted by an Orcel restart among the newest " + MaxScanned + " tasks. Orcel checks any report it was writing when it stopped the next time it starts."
+                    : "No interrupted report was found among the tasks that could be read.") + missed;
+            string head = "Reports Orcel was writing when it stopped, as it found them the next time it started (newest first; titles and paths come from the planner and are not verified):";
+            if (unknown > 0) head = unknown + (unknown == 1 ? " report needs" : " reports need") + " your attention. " + head;
+            return head + text.ToString() + missed + "\nThis app reads only; it never retries or deletes anything.";
+        }
+
+        internal static string Read()
+        {
+            Dictionary<string, object> list = AppApi.Call("task.list", null);
+            List<Dictionary<string, object>> details = new List<Dictionary<string, object>>();
+            foreach (string id in Timeline.NewestIds(list, MaxScanned)) details.Add(AppApi.Call("task.get", id));
             return Text(list, details);
         }
     }
@@ -1628,7 +1712,7 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Commands: help, setup, status, version, doctor, devices, files, tasks, history, clients, workspaces, connect, previews, control, stop control, revoke all";
+            commandBox.ToolTip = "Commands: help, setup, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, revoke all";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
             AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control and revoke all, which only take authority away");
@@ -1798,7 +1882,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: setup, status, version, doctor, devices, files, tasks, history, clients, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: setup, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1811,6 +1895,8 @@ namespace Orcel.DesktopPreview
                 ShowClients();
             else if (kind == SafeCommand.Setup)
                 ShowSetup(false);
+            else if (kind == SafeCommand.Recovery)
+                ShowRecovery();
             else if (kind == SafeCommand.Connect)
             {
                 // Only the setup itself goes in the copyable box; the install instruction is an
@@ -1948,6 +2034,13 @@ namespace Orcel.DesktopPreview
             {
                 if (!launch) AddMessage(false, "The read-only setup check failed unexpectedly. No action was performed.");
             }
+        }
+
+        private async void ShowRecovery()
+        {
+            AddMessage(false, "Checking what Orcel found after its last restarts...");
+            try { AddMessage(false, await Task.Run(delegate { return Recovery.Read(); })); }
+            catch (Exception) { AddMessage(false, "The read-only recovery check failed unexpectedly. No action was performed."); }
         }
 
         private async void ShowClients()
@@ -2102,6 +2195,17 @@ namespace Orcel.DesktopPreview
             expect(history.Split('\n').Length == 4, "one line per decision; a field cannot add lines");
             expect(ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"busy\",\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\",\"decided_at_ms\":1}]}}")).StartsWith("The approval history couldn't be read just now") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"something-new\",\"entries\":[]}}")).StartsWith("The approval history couldn't be read just now") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"unverifiable\",\"entries\":[]}}")).StartsWith("The approval history failed its integrity check"), "an unverified history says so");
             expect(history.Contains("approved (SOFT), from REMOTE via tunnel, device d 1, workspace ws x, used") && history.Contains("denied (STRONG), from origin not recorded"), "history names decision, class, origin and use");
+            expect(CommandRouter.Classify(" Recovery ") == SafeCommand.Recovery && CommandRouter.CliArguments(SafeCommand.Recovery) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Recovery), "recovery routes and never runs the CLI");
+            List<Dictionary<string, object>> recovered = new List<Dictionary<string, object>> {
+                AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"Q3\\u202e\\nreport\",\"proposal\":{\"destination\":\"out/q3.xlsx\"},\"steps\":[{\"kind\":\"approval\",\"outcome\":\"approved\"},{\"kind\":\"reconcile\",\"outcome\":\"unknown\"}]}}"),
+                AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"Q2\",\"steps\":[{\"kind\":\"reconcile\",\"outcome\":\"nothing_written\"}]}}"),
+                AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"Q1\",\"steps\":[{\"kind\":\"verify\",\"outcome\":\"passed\"}]}}"),
+                null
+            };
+            Dictionary<string, object> recoveryList = AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[]}}");
+            string recoveryText = Recovery.Text(recoveryList, recovered);
+            expect(recoveryText.StartsWith("1 report needs your attention.") && recoveryText.Contains("out/q3.xlsx: a file is there, or couldn't be read, and it doesn't check") && recoveryText.Contains("\"Q2\": nothing was written") && !recoveryText.Contains("Q1") && recoveryText.Contains("1 task's details couldn't be read") && recoveryText.Split('\n').Length == 5, "recovery explains each restart check, escaped, one line each, skips tasks without one, and counts tasks it couldn't read");
+            expect(Recovery.Text(null, new List<Dictionary<string, object>>()).StartsWith("Recovery check unavailable") && Recovery.Text(recoveryList, new List<Dictionary<string, object>>()).StartsWith("No report was interrupted") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).StartsWith("No interrupted report was found among the tasks that could be read.") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).Contains("2 tasks' details couldn't be read") && Recovery.Meaning("verified").StartsWith("the report is there") && Recovery.Meaning("new-outcome").Contains("doesn't know"), "recovery says when there is nothing to report or no answer, and never guesses an outcome");
             expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes and never runs the CLI");
             int setupCount;
             expect(SetupGuide.Clients(null, out setupCount) == SetupGuide.ClientState.Unknown && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.None && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[{\"pid\":1},{\"pid\":2}]}}"), out setupCount) == SetupGuide.ClientState.Connected && setupCount == 2 && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"unavailable\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.Unknown, "setup reads connected clients and never guesses");

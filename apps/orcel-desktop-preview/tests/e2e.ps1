@@ -109,6 +109,15 @@ try {
         Check "tasks reports an absent app API instead of inventing tasks" ($null -ne $tasks) "$tasks"
     }
 
+    SendCommand $window "recovery"
+    if ($env:ORCEL_E2E_APP_API_INSTANCE) {
+        $recovery = WaitFor { TranscriptTexts $window | Where-Object { $_.StartsWith("No report was interrupted", [StringComparison]::Ordinal) -or $_ -like "*Reports Orcel was writing when it stopped*" } | Select-Object -First 1 } 20000
+        Check "recovery reads the live orceld's tasks" ($null -ne $recovery) "$(($recovery -split "`n")[0])"
+    } else {
+        $recovery = WaitForMessage $window "Recovery check unavailable" 15000
+        Check "recovery reports an absent app API instead of inventing results" ($null -ne $recovery) "$recovery"
+    }
+
     if ($env:ORCEL_E2E_LIVE_SIGNAL) {
         # Tell the driver the app is watching, then type nothing: orceld's next
         # task update must appear by itself.
