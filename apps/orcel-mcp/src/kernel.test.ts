@@ -102,11 +102,6 @@ test("rj03 a broken pipe to orceld rejects the request and is replaced", async (
   }
 });
 
-/**
- * SG-000120 RJ-03: when orceld dies, the session's next call starts a new
- * orceld under the same session id; the request in flight is rejected and
- * never sent again.
- */
 test("a session's hello is sent once, bounded, and again to a replacement orceld", async () => {
   const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
   const { join } = await import("node:path");
@@ -161,6 +156,11 @@ test("a session's hello is sent once, bounded, and again to a replacement orceld
   }
 });
 
+/**
+ * SG-000120 RJ-03: when orceld dies, the session's next call starts a new
+ * orceld under the same session id; the request in flight is rejected and
+ * never sent again.
+ */
 test("rj03 a crashed orceld is replaced for the same session without re-sending", async () => {
   const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
   const { join } = await import("node:path");

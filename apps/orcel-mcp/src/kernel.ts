@@ -300,8 +300,9 @@ export class KernelClient {
       // Only for a new request: nothing that was in flight is sent again.
       this.exited = false;
       this.child = this.spawnDaemon();
-      // The new orceld learns which client it serves before this request.
-      this.sayHello();
+      // The new orceld learns which client it serves before this request, unless this request
+      // is that hello.
+      if (input.capability !== "session") this.sayHello();
     }
 
     const timeoutMs = input.timeoutMs ?? 30_000;
