@@ -72,6 +72,7 @@ impl SessionRecord {
 }
 
 /// The folder of live session records.
+#[derive(Debug, Clone)]
 pub(crate) struct Registry {
     dir: PathBuf,
 }
@@ -104,6 +105,15 @@ impl Registry {
     /// The records of sessions still running, newest first, at most `max`, and whether more
     /// were left out. Records of processes that are gone are deleted.
     pub(crate) fn list(&self, max: usize) -> io::Result<(Vec<SessionRecord>, bool)> {
+        self.scan(max, true)
+    }
+
+    /// As [`Registry::list`], but changes nothing: for the read-only app API.
+    pub(crate) fn read(&self, max: usize) -> io::Result<(Vec<SessionRecord>, bool)> {
+        self.scan(max, false)
+    }
+
+    fn scan(&self, max: usize, prune: bool) -> io::Result<(Vec<SessionRecord>, bool)> {
         let mut live = Vec::new();
         // Only names shaped like records count toward the cap, so leftovers can't hide them.
         let candidates = std::fs::read_dir(&self.dir)?
@@ -122,7 +132,9 @@ impl Registry {
             {
                 Some(Ok(true)) => live.push(record),
                 Some(Ok(false)) => {
-                    let _ = std::fs::remove_file(&path);
+                    if prune {
+                        let _ = std::fs::remove_file(&path);
+                    }
                 }
                 // Unreadable now, or not a process this build can check: not counted.
                 Some(Err(_)) | None => {}
@@ -485,6 +497,9 @@ mod tests {
         .unwrap();
         std::fs::create_dir(dir.join("3-4.json")).unwrap();
 
+        let (listed, _) = registry.read(32).unwrap();
+        assert!(listed.is_empty(), "{listed:?}");
+        assert!(stale_path.exists(), "a read changes nothing");
         let (listed, _) = registry.list(32).unwrap();
         assert!(listed.is_empty(), "{listed:?}");
         assert!(!stale_path.exists(), "a dead record is deleted");

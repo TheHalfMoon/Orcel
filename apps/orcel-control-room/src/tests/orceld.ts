@@ -33,6 +33,7 @@ export const ORCELD_METHODS = [
   "task.list",
   "task.get",
   "approval.history",
+  "clients.list",
 ] as const;
 
 const START_TIMEOUT_MS = 30_000;

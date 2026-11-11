@@ -76,7 +76,15 @@ export function statusResult(epoch: string, head: number, oldest = 1) {
 export const capabilitiesResult = {
   os: "linux",
   read_only: true,
-  methods: ["status.get", "capabilities.get", "events.subscribe", "task.list", "task.get", "approval.history"],
+  methods: [
+    "status.get",
+    "capabilities.get",
+    "events.subscribe",
+    "task.list",
+    "task.get",
+    "approval.history",
+    "clients.list",
+  ],
   reserved_methods: ["devices.list"],
   capabilities: [],
 };

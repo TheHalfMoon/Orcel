@@ -48,6 +48,91 @@ fn shared_with(limits: Limits) -> Arc<Shared> {
     ))
 }
 
+/// `clients.list` reads the live session records without changing them: live sessions only,
+/// names unverified, no parameters, and `unavailable` without a registry.
+#[test]
+fn clients_list_reads_live_sessions_and_changes_nothing() {
+    use crate::live_sessions::{Hello, Registry};
+    let dir = std::env::temp_dir().join(format!("orcel-app-api-clients-{}", unique()));
+    orcel_platform::paths::ensure_private_dir(&dir).unwrap();
+    let peer = own_peer();
+
+    let none = shared_with(test_limits());
+    let frame = reply_frame(handle_frame(
+        &none,
+        &peer,
+        &request("clients.list", json!({})),
+    ));
+    assert_eq!(frame["ok"], true, "{frame}");
+    assert_eq!(frame["result"]["registry"], "unavailable");
+    assert_eq!(frame["result"]["clients"], json!([]));
+
+    let limits = test_limits();
+    let shared = Arc::new(
+        Shared::new(
+            facts(),
+            Arc::new(EventLog::new(limits.ring_capacity, new_epoch())),
+            Arc::new(crate::report_task::TaskRegistry::new()),
+            None,
+            limits,
+            "test".into(),
+        )
+        .with_sessions(Some(Registry::at(dir.clone()))),
+    );
+    let empty = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("clients.list", json!({})),
+    ));
+    assert_eq!(empty["result"]["registry"], "ok", "{empty}");
+    assert_eq!(empty["result"]["clients"], json!([]));
+
+    let mut hello = Hello::new(Some(Registry::at(dir.clone())));
+    let hello_request: orcel_contracts::RemoteRequestEnvelope = serde_json::from_value(json!({
+        "version": orcel_contracts::INTERNAL_PROTOCOL_VERSION,
+        "request_id": "r1",
+        "client_session_id": "s1",
+        "workspace_id": "ws",
+        "capability": "session",
+        "operation": "hello",
+        "arguments": { "client_name": "Claude\u{202E} Code\n", "client_version": "2.1", "transport": "stdio" },
+    }))
+    .unwrap();
+    assert!(hello.handle(hello_request, "rev").ok);
+    // A record of a process that is gone stays where it is: a read changes nothing.
+    let dead = dir.join("1-1.json");
+    std::fs::write(&dead, b"{}").unwrap();
+
+    let frame = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("clients.list", json!({})),
+    ));
+    assert_eq!(frame["ok"], true, "{frame}");
+    let clients = frame["result"]["clients"].as_array().unwrap();
+    assert_eq!(clients.len(), 1, "{frame}");
+    assert_eq!(clients[0]["pid"], std::process::id());
+    assert_eq!(clients[0]["client"]["name"], "Claude Code");
+    assert_eq!(clients[0]["client"]["version"], "2.1");
+    assert_eq!(clients[0]["client"]["verified"], false);
+    assert_eq!(clients[0]["transport"], "stdio");
+    assert_eq!(frame["result"]["truncated"], false);
+    assert_eq!(frame["result"]["max_clients"], 32);
+    assert!(clients[0].get("generation").is_none(), "{frame}");
+    assert!(dead.exists());
+
+    let refused = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("clients.list", json!({ "all": true })),
+    ));
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["error"]["code"], "INVALID_REQUEST");
+
+    drop(hello);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `approval.history` reads the ledger through its own reader: decisions newest first with
 /// their origin, bounded, and refused parameters. It never approves anything.
 #[test]

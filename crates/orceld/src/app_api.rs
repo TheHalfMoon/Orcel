@@ -105,6 +105,7 @@ pub(crate) const METHODS: &[&str] = &[
     "task.list",
     "task.get",
     "approval.history",
+    "clients.list",
 ];
 /// Read-only methods the protocol reserves; this revision answers
 /// `METHOD_UNAVAILABLE` for them.
@@ -338,6 +339,9 @@ struct Shared {
     /// The approval history, read for `approval.history`; `None` when this user has no
     /// private location for it.
     history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
+    /// The live client session records, read for `clients.list`; `None` when this user has no
+    /// private folder for them.
+    sessions: Option<crate::live_sessions::Registry>,
     limits: Limits,
     started: Instant,
     started_at_ms: u64,
@@ -370,6 +374,7 @@ impl Shared {
             log,
             tasks,
             history,
+            sessions: None,
             limits,
             started: Instant::now(),
             started_at_ms: now_ms(),
@@ -377,6 +382,11 @@ impl Shared {
             endpoint,
             wait: Mutex::new(None),
         }
+    }
+
+    fn with_sessions(mut self, sessions: Option<crate::live_sessions::Registry>) -> Self {
+        self.sessions = sessions;
+        self
     }
 
     /// Records one attempt that found the endpoint held. Returns true the
@@ -734,6 +744,14 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
         },
         "task.get" => Reply::Frame(task_get(shared, &id, &params)),
         "approval.history" => Reply::Frame(approval_history(shared, &id, &params)),
+        "clients.list" => Reply::Frame(match params.keys().next() {
+            Some(key) => error_frame(
+                &id,
+                "INVALID_REQUEST",
+                format!("clients.list has no parameter {key}"),
+            ),
+            None => ok_frame(&id, clients_list(shared)),
+        }),
         method if RESERVED_METHODS.contains(&method) => Reply::Frame(error_frame(
             &id,
             "METHOD_UNAVAILABLE",
@@ -809,6 +827,46 @@ fn approval_history(shared: &Shared, id: &Value, params: &serde_json::Map<String
             "entries": entries,
         }),
     )
+}
+
+/// The most clients one `clients.list` answer carries.
+const MAX_CLIENTS_LISTED: usize = 32;
+
+/// `clients.list`: the local AI client sessions running now, newest first, for display. Each
+/// MCP session's own orceld recorded itself on its hello; a record counts only while its
+/// process is the same instance. Names and versions are what the client said and are marked
+/// unverified. Read only: this changes nothing, not even the records of ended sessions.
+fn clients_list(shared: &Shared) -> Value {
+    let read = shared
+        .sessions
+        .as_ref()
+        .map(|registry| registry.read(MAX_CLIENTS_LISTED));
+    let (records, truncated, registry) = match read {
+        Some(Ok((records, truncated))) => (records, truncated, "ok"),
+        Some(Err(_)) | None => (Vec::new(), false, "unavailable"),
+    };
+    let clients: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            json!({
+                "pid": record.pid,
+                "started_at_ms": record.started_at_ms,
+                "transport": record.transport,
+                "workspace_id": record.workspace_id,
+                "client": {
+                    "name": record.client.name,
+                    "version": record.client.version,
+                    "verified": false,
+                },
+            })
+        })
+        .collect();
+    json!({
+        "max_clients": MAX_CLIENTS_LISTED,
+        "registry": registry,
+        "truncated": truncated,
+        "clients": clients,
+    })
 }
 
 /// `task.get {task_id}`: one task of this daemon run or, read-only, of an
@@ -1256,6 +1314,7 @@ pub(crate) fn start(
     facts: DaemonFacts,
     tasks: Arc<TaskRegistry>,
     history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
+    sessions: Option<crate::live_sessions::Registry>,
 ) -> AppApi {
     if std::env::var_os("ORCEL_APP_API").is_some_and(|value| value == "off") {
         eprintln!("orceld app api: disabled by ORCEL_APP_API=off");
@@ -1291,7 +1350,8 @@ pub(crate) fn start(
         }
     };
     tasks.attach_events(Arc::clone(&log));
-    let shared = Arc::new(Shared::new(facts, log, tasks, history, limits, label));
+    let shared =
+        Arc::new(Shared::new(facts, log, tasks, history, limits, label).with_sessions(sessions));
     #[cfg(unix)]
     let bound = Arc::clone(&api.bound);
     let spawned = std::thread::Builder::new()
