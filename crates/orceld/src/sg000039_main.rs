@@ -22,6 +22,8 @@ mod browser;
 mod clipboard;
 mod contained_tier;
 #[cfg(test)]
+mod desktop_prompt_tests;
+#[cfg(test)]
 mod sg000128_dispatch_tests;
 // WI-05: reached through the live browser's committed downloads
 // (`LiveBrowser::parse_download`), which only the Windows `live-browser-test`
