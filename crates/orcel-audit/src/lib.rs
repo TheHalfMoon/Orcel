@@ -62,12 +62,16 @@ impl AuditLogger {
             outcome,
         };
 
+        // One whole line in one write. Several orcelds (one per client session) append to the
+        // same log, and an append-mode write lands at the end in one piece; written in parts, as
+        // `to_writer` does, two records could interleave.
+        let mut line = serde_json::to_vec(&event)?;
+        line.push(b'\n');
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)?;
-        serde_json::to_writer(&mut file, &event)?;
-        file.write_all(b"\n")?;
+        file.write_all(&line)?;
         file.flush()
     }
 }
@@ -133,6 +137,45 @@ mod tests {
         assert!(!text.contains("TOP-SECRET-VALUE"));
         assert!(text.contains("\"capability\":\"fs.search\""));
         let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    /// Writers appending at once, as several orcelds do, never interleave: every line is one
+    /// whole record.
+    #[test]
+    fn concurrent_records_stay_whole_lines() {
+        let base = sandbox("concurrent");
+        let path = base.join("audit.jsonl");
+        let writers: Vec<_> = (0..8)
+            .map(|writer| {
+                let logger = AuditLogger::new(&path).expect("audit");
+                std::thread::spawn(move || {
+                    for index in 0..200 {
+                        let req = RequestEnvelope {
+                            version: 1,
+                            request_id: format!("w{writer}-{index}-{}", "x".repeat(300)),
+                            client_session_id: format!("session-{writer}"),
+                            workspace_id: "w".into(),
+                            capability: "fs.search".into(),
+                            operation: "search".into(),
+                            target: Some("some/longer/target/path".into()),
+                            arguments: json!({}),
+                        };
+                        logger.record(&req, "p1", "SUCCESS").expect("record");
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("writer");
+        }
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 8 * 200);
+        for line in lines {
+            let record: serde_json::Value = serde_json::from_str(line).expect("a whole record");
+            assert_eq!(record["outcome"], "SUCCESS");
+        }
+        let _ = std::fs::remove_dir_all(base);
     }
 
     fn lookup(vars: Vec<(&'static str, OsString)>) -> impl Fn(&str) -> Option<OsString> {
