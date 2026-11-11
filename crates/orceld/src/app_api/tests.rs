@@ -99,9 +99,22 @@ fn clients_list_reads_live_sessions_and_changes_nothing() {
     }))
     .unwrap();
     assert!(hello.handle(hello_request, "rev").ok);
-    // A record of a process that is gone stays where it is: a read changes nothing.
-    let dead = dir.join("1-1.json");
-    std::fs::write(&dead, b"{}").unwrap();
+    // A record of a process that is gone (this pid with another start time) stays where it
+    // is: a read changes nothing.
+    let me = orcel_platform::process::current_instance().unwrap();
+    let dead_generation = me.generation.wrapping_add(1);
+    let dead = dir.join(format!("{}-{dead_generation}.json", me.pid));
+    std::fs::write(
+        &dead,
+        serde_json::to_vec(&json!({
+            "v": 1, "pid": me.pid, "generation": dead_generation,
+            "boot_id": me.boot_id.map(|id| id.to_string()), "source": me.source,
+            "started_at_ms": 1, "transport": "stdio", "workspace_id": null,
+            "client": { "name": "gone", "version": null, "verified": false }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 
     let frame = reply_frame(handle_frame(
         &shared,
