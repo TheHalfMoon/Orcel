@@ -7,11 +7,16 @@ use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct AuditLogger {
     path: PathBuf,
+    /// Whether the next record first checks for a torn last line: once at start, and again
+    /// after a failed write. Checking on every record would add a read open per request.
+    check_tail: Arc<AtomicBool>,
 }
 
 /// The longest client-supplied field a record keeps, and the longest target. The client chooses
@@ -61,7 +66,10 @@ impl AuditLogger {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            check_tail: Arc::new(AtomicBool::new(true)),
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -97,19 +105,24 @@ impl AuditLogger {
         // One whole line in one write. Several orcelds (one per client session) append to the
         // same log, and an append-mode write lands at the end in one piece; written in parts, as
         // `to_writer` does, two records could interleave.
-        let mut line = if ends_mid_line(&self.path) {
+        let mut line = if self.check_tail.swap(false, Ordering::AcqRel) && ends_mid_line(&self.path)
+        {
             vec![b'\n']
         } else {
             Vec::new()
         };
         serde_json::to_writer(&mut line, &event)?;
         line.push(b'\n');
-        let mut file = OpenOptions::new()
+        let written = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.path)?;
-        file.write_all(&line)?;
-        file.flush()
+            .open(&self.path)
+            .and_then(|mut file| file.write_all(&line).and_then(|()| file.flush()));
+        if written.is_err() {
+            // A failed write may have left part of the line.
+            self.check_tail.store(true, Ordering::Release);
+        }
+        written
     }
 }
 
