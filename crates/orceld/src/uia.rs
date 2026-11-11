@@ -66,6 +66,19 @@ fn with_target_application(
     })
 }
 
+/// Tests only: lists the windows an adapter reports into orceld's own registry, as
+/// `uia.window list` does with the native adapter, so a request can target them.
+#[cfg(test)]
+pub(crate) fn seed_registry_for_test(
+    adapter: &impl orcel_provider_uia::UiaAdapter,
+    workspace_id: &str,
+) -> Value {
+    locked_registry()
+        .expect("registry")
+        .list_windows(adapter, workspace_id, POLICY_REVISION)
+        .expect("seeded windows")
+}
+
 fn locked_registry() -> Result<std::sync::MutexGuard<'static, UiaRegistry>, ProviderError> {
     registry()
         .lock()
