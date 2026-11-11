@@ -25,7 +25,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Unsupported }
 
     internal static class CommandRouter
     {
@@ -40,6 +40,7 @@ namespace Orcel.DesktopPreview
             if (value == "files") return SafeCommand.Files;
             if (value == "tasks") return SafeCommand.Tasks;
             if (value == "history") return SafeCommand.History;
+            if (value == "clients") return SafeCommand.Clients;
             if (value == "previews") return SafeCommand.Previews;
             if (value == "previews sizes") return SafeCommand.PreviewsSizes;
             if (value == "previews content") return SafeCommand.PreviewsContent;
@@ -372,7 +373,7 @@ namespace Orcel.DesktopPreview
         internal const int MaxFrameBytes = 65536;
         internal const int TimeoutMs = 4000;
         /// The only methods this client sends; all are read-only in orceld.
-        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe", "approval.history" };
+        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe", "approval.history", "clients.list" };
 
         /// This user's pipe name, or null when ORCEL_APP_API_INSTANCE is set
         /// but invalid (refused, never replaced by the default pipe).
@@ -760,6 +761,54 @@ namespace Orcel.DesktopPreview
         internal static string Read()
         {
             return Text(AppApi.Call("approval.history", null));
+        }
+    }
+
+    /// The local AI clients connected now, as orceld records them: each MCP session's own
+    /// orceld writes a record when its client says hello and removes it when the session ends.
+    /// Names are what each client said about itself. It reads only; it can't disconnect anyone.
+    internal static class ConnectedClients
+    {
+        internal const int MaxShown = 10;
+
+        private static string Field(Dictionary<string, object> map, string key)
+        {
+            object value;
+            return map != null && map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : null;
+        }
+
+        internal static string Text(Dictionary<string, object> result)
+        {
+            if (result == null) return "Connected clients unavailable: the local runtime did not answer, or this version of it can't list clients.";
+            if (Field(result, "registry") != "ok") return "Connected clients unavailable: the local runtime has no private folder for session records.";
+            object clients;
+            if (!result.TryGetValue("clients", out clients) || !(clients is IEnumerable) || clients is string) return "Connected clients unavailable: the answer had no clients.";
+            StringBuilder text = new StringBuilder("AI clients connected now, newest first. Names are what each client reported and are not verified:");
+            int shown = 0;
+            foreach (object item in (IEnumerable)clients)
+            {
+                Dictionary<string, object> entry = item as Dictionary<string, object>;
+                if (entry == null) continue;
+                if (shown++ >= MaxShown) break;
+                Dictionary<string, object> client = entry.ContainsKey("client") ? entry["client"] as Dictionary<string, object> : null;
+                string name = Field(client, "name");
+                string version = Field(client, "version");
+                string line = (name == null ? "an unnamed client" : Timeline.ShownText(name))
+                    + (version == null ? "" : " " + Timeline.ShownText(version))
+                    + ", over " + Timeline.ShownText(Field(entry, "transport") ?? "unknown")
+                    + ", since " + ApprovalHistory.When(Field(entry, "started_at_ms"))
+                    + (Field(entry, "workspace_id") == null ? "" : ", workspace " + Timeline.ShownText(Field(entry, "workspace_id")));
+                text.Append("\n• ").Append(line);
+            }
+            if (shown == 0) return "No AI clients are connected right now. A client running an older Orcel, or one that started before it was updated, isn't listed.";
+            if (Field(result, "truncated") == "True" || shown > MaxShown) text.Append("\nMore are connected than shown here.");
+            text.Append("\nThis app only shows them; it can't disconnect a client. Close the client to end its session.");
+            return text.ToString();
+        }
+
+        internal static string Read()
+        {
+            return Text(AppApi.Call("clients.list", null));
         }
     }
 
@@ -1511,7 +1560,7 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, workspaces, connect, previews, control, stop control, revoke all";
+            commandBox.ToolTip = "Commands: help, status, version, doctor, devices, files, tasks, history, clients, workspaces, connect, previews, control, stop control, revoke all";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
             AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control and revoke all, which only take authority away");
@@ -1681,7 +1730,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, history, clients, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1690,6 +1739,8 @@ namespace Orcel.DesktopPreview
                 ShowTasks();
             else if (kind == SafeCommand.History)
                 ShowHistory();
+            else if (kind == SafeCommand.Clients)
+                ShowClients();
             else if (kind == SafeCommand.Connect)
             {
                 // Only the setup itself goes in the copyable box; the install instruction is an
@@ -1813,6 +1864,13 @@ namespace Orcel.DesktopPreview
             AddMessage(false, "Reading the approval history from the local runtime...");
             try { AddMessage(false, await Task.Run(delegate { return ApprovalHistory.Read(); })); }
             catch (Exception) { AddMessage(false, "The read-only approval history query failed unexpectedly. No action was performed."); }
+        }
+
+        private async void ShowClients()
+        {
+            AddMessage(false, "Reading connected AI clients from the local runtime...");
+            try { AddMessage(false, await Task.Run(delegate { return ConnectedClients.Read(); })); }
+            catch (Exception) { AddMessage(false, "The read-only connected clients query failed unexpectedly. No action was performed."); }
         }
 
         private async void InspectFolder()
@@ -1960,6 +2018,11 @@ namespace Orcel.DesktopPreview
             expect(history.Split('\n').Length == 4, "one line per decision; a field cannot add lines");
             expect(ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"busy\",\"entries\":[{\"decision\":\"Approved\",\"approval_class\":\"SOFT\",\"workspace_id\":\"ws\",\"decided_at_ms\":1}]}}")).StartsWith("The approval history couldn't be read just now") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"something-new\",\"entries\":[]}}")).StartsWith("The approval history couldn't be read just now") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"ledger\":\"unverifiable\",\"entries\":[]}}")).StartsWith("The approval history failed its integrity check"), "an unverified history says so");
             expect(history.Contains("approved (SOFT), from REMOTE via tunnel, device d 1, workspace ws x, used") && history.Contains("denied (STRONG), from origin not recorded"), "history names decision, class, origin and use");
+            expect(CommandRouter.Classify(" Clients ") == SafeCommand.Clients && CommandRouter.CliArguments(SafeCommand.Clients) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Clients), "clients routes and never runs the CLI");
+            expect(AppApi.RequestFrame("clients.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"clients.list\",\"params\":{}}\n", "clients.list is sent with no parameters");
+            string clientsText = ConnectedClients.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"truncated\":false,\"clients\":[{\"pid\":4,\"started_at_ms\":1,\"transport\":\"stdio\",\"workspace_id\":\"ws\",\"client\":{\"name\":\"claude\\u202e\\ncode\",\"version\":\"1.2\",\"verified\":false}},{\"pid\":5,\"started_at_ms\":2,\"transport\":\"stdio\",\"workspace_id\":null,\"client\":{\"name\":null,\"version\":null,\"verified\":false}}]}}"));
+            expect(clientsText.StartsWith("AI clients connected now") && clientsText.Contains("not verified") && clientsText.Contains("an unnamed client") && clientsText.Contains("1.2, over stdio") && clientsText.Split('\n').Length == 4 && !clientsText.Contains("\u202e"), "connected clients are listed escaped, one line each, and marked unverified");
+            expect(ConnectedClients.Text(null).StartsWith("Connected clients unavailable") && ConnectedClients.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"unavailable\",\"clients\":[]}}")).StartsWith("Connected clients unavailable") && ConnectedClients.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[]}}")).StartsWith("No AI clients are connected right now") && ConnectedClients.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":\"x\"}}")).StartsWith("Connected clients unavailable"), "unavailable and empty client lists say so");
             expect(ApprovalHistory.When("999999999999999999") == "(time unknown)" && ApprovalHistory.When("x") == "(time unknown)", "an impossible time is not a crash");
             expect(ApprovalHistory.Text(null).StartsWith("Approval history unavailable") && ApprovalHistory.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":[]}}")) == "No approval decisions are recorded yet.", "empty and unavailable history say so");
             expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"UNKNOWN_TASK\"}}") == null, "an error frame is not a result");
