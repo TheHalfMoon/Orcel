@@ -724,7 +724,7 @@ namespace Orcel.DesktopPreview
             {
                 case "verified": return "the report is there and the independent checker passes it.";
                 case "nothing_written": return "nothing was written. Ask your client to run it again if you still want it.";
-                case "unknown": return "a file is there but it doesn't check, so Orcel can't tell what happened and won't retry. Check the file yourself before using it.";
+                case "unknown": return "a file is there, or couldn't be read, and it doesn't check, so Orcel can't tell what happened and won't retry. Check the destination yourself before using it.";
                 default: return "the check gave an answer this app doesn't know. Type tasks for the details.";
             }
         }
@@ -734,9 +734,10 @@ namespace Orcel.DesktopPreview
             if (list == null)
                 return "Recovery check unavailable: this user's app API pipe did not answer, gave an unusable answer, or is not served by this user at normal integrity (the runtime may not be running). Nothing was changed.";
             StringBuilder text = new StringBuilder();
-            int found = 0, unknown = 0;
+            int found = 0, unknown = 0, unreadable = 0;
             foreach (Dictionary<string, object> task in tasks)
             {
+                if (task == null) { unreadable++; continue; }
                 string outcome = LastReconcile(task);
                 if (outcome == null) continue;
                 found++;
@@ -747,11 +748,16 @@ namespace Orcel.DesktopPreview
                     text.Append(" → " + Timeline.ShownText(Field((Dictionary<string, object>)proposal, "destination")));
                 text.Append(": " + Meaning(outcome));
             }
+            // A task whose details didn't come back may be one that was checked, so it is never
+            // counted as "not interrupted".
+            string missed = unreadable == 0 ? "" : "\n" + unreadable + (unreadable == 1 ? " task's details" : " tasks' details") + " couldn't be read just now, so this may be incomplete; type recovery again.";
             if (found == 0)
-                return "No report was interrupted by an Orcel restart among the newest " + MaxScanned + " tasks. Orcel checks any report it was writing when it stopped the next time it starts.";
+                return (unreadable == 0
+                    ? "No report was interrupted by an Orcel restart among the newest " + MaxScanned + " tasks. Orcel checks any report it was writing when it stopped the next time it starts."
+                    : "No interrupted report was found among the tasks that could be read.") + missed;
             string head = "Reports Orcel was writing when it stopped, as it found them the next time it started (newest first; titles and paths come from the planner and are not verified):";
             if (unknown > 0) head = unknown + (unknown == 1 ? " report needs" : " reports need") + " your attention. " + head;
-            return head + text.ToString() + "\nThis app reads only; it never retries or deletes anything.";
+            return head + text.ToString() + missed + "\nThis app reads only; it never retries or deletes anything.";
         }
 
         internal static string Read()
@@ -2198,8 +2204,8 @@ namespace Orcel.DesktopPreview
             };
             Dictionary<string, object> recoveryList = AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[]}}");
             string recoveryText = Recovery.Text(recoveryList, recovered);
-            expect(recoveryText.StartsWith("1 report needs your attention.") && recoveryText.Contains("out/q3.xlsx: a file is there but it doesn't check") && recoveryText.Contains("\"Q2\": nothing was written") && !recoveryText.Contains("Q1") && recoveryText.Split('\n').Length == 4, "recovery explains each restart check, escaped, one line each, and skips tasks without one");
-            expect(Recovery.Text(null, new List<Dictionary<string, object>>()).StartsWith("Recovery check unavailable") && Recovery.Text(recoveryList, new List<Dictionary<string, object>>()).StartsWith("No report was interrupted") && Recovery.Meaning("verified").StartsWith("the report is there") && Recovery.Meaning("new-outcome").Contains("doesn't know"), "recovery says when there is nothing to report or no answer, and never guesses an outcome");
+            expect(recoveryText.StartsWith("1 report needs your attention.") && recoveryText.Contains("out/q3.xlsx: a file is there, or couldn't be read, and it doesn't check") && recoveryText.Contains("\"Q2\": nothing was written") && !recoveryText.Contains("Q1") && recoveryText.Contains("1 task's details couldn't be read") && recoveryText.Split('\n').Length == 5, "recovery explains each restart check, escaped, one line each, skips tasks without one, and counts tasks it couldn't read");
+            expect(Recovery.Text(null, new List<Dictionary<string, object>>()).StartsWith("Recovery check unavailable") && Recovery.Text(recoveryList, new List<Dictionary<string, object>>()).StartsWith("No report was interrupted") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).StartsWith("No interrupted report was found among the tasks that could be read.") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).Contains("2 tasks' details couldn't be read") && Recovery.Meaning("verified").StartsWith("the report is there") && Recovery.Meaning("new-outcome").Contains("doesn't know"), "recovery says when there is nothing to report or no answer, and never guesses an outcome");
             expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes and never runs the CLI");
             int setupCount;
             expect(SetupGuide.Clients(null, out setupCount) == SetupGuide.ClientState.Unknown && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.None && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[{\"pid\":1},{\"pid\":2}]}}"), out setupCount) == SetupGuide.ClientState.Connected && setupCount == 2 && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"unavailable\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.Unknown, "setup reads connected clients and never guesses");
