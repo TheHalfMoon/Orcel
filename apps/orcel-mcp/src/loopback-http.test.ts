@@ -176,7 +176,7 @@ test("a loopback session says hello once with its client's name", async () => {
     assert.equal(hellos[0]?.remote, undefined);
   } finally {
     await handle.close();
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

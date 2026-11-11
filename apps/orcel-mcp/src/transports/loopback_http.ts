@@ -346,6 +346,10 @@ export async function startLoopbackTransport(options: LoopbackOptions = {}): Pro
           return;
         }
         const kernel = kernelFactory(context.toolSurfaceProfile);
+        if (kernel.remote !== null) {
+          kernel.close();
+          throw new Error("TRANSPORT_UNAVAILABLE: a loopback session's kernel must be local");
+        }
         const server = buildOrcelServer(kernel, defaultWorkspace, context);
         // Like a stdio session, this local session tells its orceld which client it serves,
         // for the desktop app's list of connected clients. Display only.
