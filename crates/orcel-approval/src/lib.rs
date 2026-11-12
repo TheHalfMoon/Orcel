@@ -3919,6 +3919,12 @@ mod tests {
         )
     }
 
+    /// How long a test waits to take the writer lock itself. Not zero: on Linux and macOS a
+    /// child process another test forks keeps a copy of every open descriptor until it execs,
+    /// so a lock this test just released can still be held for a moment (seen on CI, #725 and
+    /// #738).
+    const TEST_HOLD_WAIT: Duration = Duration::from_secs(5);
+
     fn ledger_in(path: &std::path::Path) -> ApprovalLedger {
         ApprovalLedger::load_or_create(path.to_path_buf())
     }
@@ -4097,7 +4103,7 @@ mod tests {
         let mut ledger = ledger_in(&path);
         ledger.lock_wait = Duration::from_millis(50);
         let a = issue_strong(&mut ledger, "reg278-busy", 5_000);
-        let holder = acquire_ledger_lock(&path, Duration::ZERO).expect("hold the writer lock");
+        let holder = acquire_ledger_lock(&path, TEST_HOLD_WAIT).expect("hold the writer lock");
         let error = ledger
             .consume(&token_from(&a), &strong_expectation(&a), 5_100)
             .unwrap_err();
@@ -4482,7 +4488,7 @@ mod tests {
             FailureCode::InvalidRequest,
             "a verified ledger is never quarantined"
         );
-        let holder = acquire_ledger_lock(&path, Duration::ZERO).expect("hold the writer lock");
+        let holder = acquire_ledger_lock(&path, TEST_HOLD_WAIT).expect("hold the writer lock");
         let busy = recover_approval_ledger_with_wait(&path, Duration::from_millis(50)).unwrap_err();
         assert!(busy.message.contains("busy"), "{}", busy.message);
         drop(holder);
@@ -4840,7 +4846,7 @@ mod tests {
         let path = temp_path("ocr-windows-lock");
         let mut ledger = ledger_in(&path);
         issue_strong(&mut ledger, "ocr-windows-lock", 5_000);
-        let holder = acquire_ledger_lock(&path, Duration::ZERO).expect("hold the writer lock");
+        let holder = acquire_ledger_lock(&path, TEST_HOLD_WAIT).expect("hold the writer lock");
         assert!(
             std::fs::remove_file(approval_ledger_lock_path(&path)).is_err(),
             "a held lock file cannot be deleted and replaced"
