@@ -32,7 +32,7 @@ pub enum SignatureState {
 pub fn image_signature(path: &Path) -> SignatureState {
     #[cfg(windows)]
     {
-        imp::image_signature(path)
+        imp::image_signature(path).0
     }
     #[cfg(not(windows))]
     {
@@ -76,9 +76,16 @@ mod imp {
         subject: Option<String>,
     }
 
-    pub(super) fn image_signature(path: &Path) -> SignatureState {
+    /// Which check produced a result: the file's own signature, or a system catalog.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Checked {
+        Embedded,
+        Catalog,
+    }
+
+    pub(super) fn image_signature(path: &Path) -> (SignatureState, Checked) {
         let Ok(file) = File::open(path) else {
-            return SignatureState::Unknown;
+            return (SignatureState::Unknown, Checked::Embedded);
         };
         let handle = HANDLE(file.as_raw_handle());
         let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -94,16 +101,16 @@ mod imp {
                 pFile: &mut file_info,
             },
         );
-        let outcome = if embedded.status == TRUST_E_NOSIGNATURE {
+        let (outcome, checked) = if embedded.status == TRUST_E_NOSIGNATURE {
             match verify_catalog(handle, &wide_path) {
-                Some(outcome) => outcome,
-                None => return SignatureState::Unknown,
+                Some(outcome) => (outcome, Checked::Catalog),
+                None => return (SignatureState::Unknown, Checked::Catalog),
             }
         } else {
-            embedded
+            (embedded, Checked::Embedded)
         };
         drop(file);
-        state_of(outcome)
+        (state_of(outcome), checked)
     }
 
     fn state_of(outcome: Outcome) -> SignatureState {
@@ -235,16 +242,11 @@ mod imp {
         }
         .ok()?;
         let admin = CatAdmin(raw_admin);
-        let mut hash_len = 0u32;
-        // SAFETY: a size query (no buffer); it fails with "insufficient buffer" and sets the
-        // size, so only the size is read.
-        let _ =
-            unsafe { CryptCATAdminCalcHashFromFileHandle2(admin.0, file, &mut hash_len, None, 0) };
-        if hash_len == 0 || hash_len > 64 {
-            return None;
-        }
-        let mut hash = vec![0u8; hash_len as usize];
-        // SAFETY: `hash` holds `hash_len` bytes, as the call was just told.
+        // One hash of the file: 64 bytes holds any hash a catalog admin context computes, and
+        // the call writes the real length back.
+        let mut hash = vec![0u8; 64];
+        let mut hash_len = hash.len() as u32;
+        // SAFETY: `hash` holds `hash_len` bytes, as the call is told.
         unsafe {
             CryptCATAdminCalcHashFromFileHandle2(
                 admin.0,
@@ -255,6 +257,9 @@ mod imp {
             )
         }
         .ok()?;
+        if hash_len == 0 || hash_len as usize > hash.len() {
+            return None;
+        }
         hash.truncate(hash_len as usize);
         // SAFETY: `hash` is a live slice; no previous catalog context is passed.
         let raw_catalog = unsafe { CryptCATAdminEnumCatalogFromHash(admin.0, &hash, 0, None) };
@@ -305,20 +310,31 @@ mod imp {
 mod tests {
     use super::*;
 
+    /// Every result names Microsoft. `kernel32.dll` carries its own signature on current
+    /// Windows; inbox tools such as `cmd.exe` and `notepad.exe` are signed only through a
+    /// system catalog, so at least one of them proves the catalog fallback.
     #[cfg(windows)]
     #[test]
-    fn signature_of_a_system_binary_is_verified_and_names_microsoft() {
+    fn signature_of_system_binaries_is_verified_through_both_paths() {
         let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
-        for name in ["kernel32.dll", "notepad.exe"] {
+        let mut through_catalog = Vec::new();
+        for name in ["kernel32.dll", "cmd.exe", "notepad.exe", "where.exe"] {
             let path = Path::new(&root).join("System32").join(name);
-            match image_signature(&path) {
-                SignatureState::Verified { subject } => {
+            match imp::image_signature(&path) {
+                (SignatureState::Verified { subject }, checked) => {
                     assert!(subject.contains("Microsoft"), "{name}: {subject}");
                     assert!(subject.chars().count() <= MAX_SUBJECT_CHARS);
+                    if checked == imp::Checked::Catalog {
+                        through_catalog.push(name);
+                    }
                 }
                 other => panic!("{name}: {other:?}"),
             }
         }
+        assert!(
+            !through_catalog.is_empty(),
+            "no system binary was verified through a catalog"
+        );
     }
 
     #[test]

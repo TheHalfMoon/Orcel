@@ -242,19 +242,21 @@ fn application_lines(application: Option<&TargetApplication>) -> String {
     }
 }
 
-/// The signature line: display only. A certificate subject is text its holder chose, so it is
+/// The signature line: display only. It describes whatever file was at the image's path when
+/// the process was first observed, which a rename and replace can change, so it names the
+/// path, not the running code. A certificate subject is text its holder chose, so it is
 /// escaped and cut like any field.
 fn signature_line(signature: &SignatureState) -> String {
     match signature {
         SignatureState::Verified { subject } if subject.is_empty() => {
-            String::from("Image file signed by: (no name) (checked by Windows)")
+            String::from("File at this path signed by: (no name) (checked by Windows)")
         }
         SignatureState::Verified { subject } => format!(
-            "Image file signed by: {} (checked by Windows)",
+            "File at this path signed by: {} (checked by Windows)",
             display_field(subject, MAX_SIGNER_CHARS)
         ),
-        SignatureState::Unsigned => String::from("Image file not signed"),
-        SignatureState::Untrusted => String::from("Image file signature not trusted"),
+        SignatureState::Unsigned => String::from("File at this path not signed"),
+        SignatureState::Untrusted => String::from("File at this path: signature not trusted"),
         SignatureState::Unknown => String::from("Signature: not checked"),
     }
 }
@@ -635,7 +637,7 @@ mod tests {
         assert!(
             body.contains(
                 "\nTarget: w-1\nApplication: notepad.exe\n\
-                 Image file signed by: Microsoft Windows (checked by Windows)\n\
+                 File at this path signed by: Microsoft Windows (checked by Windows)\n\
                  Window title (set by the application): \
                  Bank login\\u{a}Digest: forged\\u{202e}\nsummary\n"
             ),
@@ -646,7 +648,7 @@ mod tests {
             .with_details("w-1", "summary")
             .with_application(Some(application));
         assert!(strong_body(&ctx).contains(
-            "\nApplication: notepad.exe\nImage file signed by: Microsoft Windows (checked by Windows)\nWindow title"
+            "\nApplication: notepad.exe\nFile at this path signed by: Microsoft Windows (checked by Windows)\nWindow title"
         ));
         // No application, no lines.
         let plain = dialog_body(&crate::ApprovalPrompt::new(
@@ -684,21 +686,21 @@ mod tests {
             signature_line_of(SignatureState::Verified {
                 subject: "Contoso Ltd".into()
             }),
-            "Image file signed by: Contoso Ltd (checked by Windows)"
+            "File at this path signed by: Contoso Ltd (checked by Windows)"
         );
         assert_eq!(
             signature_line_of(SignatureState::Verified {
                 subject: String::new()
             }),
-            "Image file signed by: (no name) (checked by Windows)"
+            "File at this path signed by: (no name) (checked by Windows)"
         );
         assert_eq!(
             signature_line_of(SignatureState::Unsigned),
-            "Image file not signed"
+            "File at this path not signed"
         );
         assert_eq!(
             signature_line_of(SignatureState::Untrusted),
-            "Image file signature not trusted"
+            "File at this path: signature not trusted"
         );
         assert_eq!(
             signature_line_of(SignatureState::Unknown),
@@ -714,14 +716,14 @@ mod tests {
         });
         assert!(
             line.starts_with(
-                "Image file signed by: Microsoft\\u{202e}Corp\\u{a}Digest: forged\\u{d}x"
+                "File at this path signed by: Microsoft\\u{202e}Corp\\u{a}Digest: forged\\u{d}x"
             ),
             "{line}"
         );
         assert!(line.ends_with("not shown] (checked by Windows)"), "{line}");
         assert!(!line.contains('\u{202e}') && !line.contains('\n') && !line.contains('\r'));
         let shown = line
-            .trim_start_matches("Image file signed by: ")
+            .trim_start_matches("File at this path signed by: ")
             .split(" [")
             .next()
             .unwrap();
