@@ -320,15 +320,17 @@ mod tests {
         let mut through_catalog = Vec::new();
         for name in ["kernel32.dll", "cmd.exe", "notepad.exe", "where.exe"] {
             let path = Path::new(&root).join("System32").join(name);
-            match imp::image_signature(&path) {
-                (SignatureState::Verified { subject }, checked) => {
-                    assert!(subject.contains("Microsoft"), "{name}: {subject}");
-                    assert!(subject.chars().count() <= MAX_SUBJECT_CHARS);
-                    if checked == imp::Checked::Catalog {
-                        through_catalog.push(name);
-                    }
+            let (state, checked) = imp::image_signature(&path);
+            assert!(
+                matches!(state, SignatureState::Verified { .. }),
+                "{name}: {state:?}"
+            );
+            if let SignatureState::Verified { subject } = state {
+                assert!(subject.contains("Microsoft"), "{name}: {subject}");
+                assert!(subject.chars().count() <= MAX_SUBJECT_CHARS);
+                if checked == imp::Checked::Catalog {
+                    through_catalog.push(name);
                 }
-                other => panic!("{name}: {other:?}"),
             }
         }
         assert!(
