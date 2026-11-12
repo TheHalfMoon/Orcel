@@ -27,7 +27,8 @@ impl UiaAdapter for OneWindow {
             generation_source: "fake-adapter",
             signature: SignatureState::Verified {
                 subject: "Microsoft Windows".into(),
-            },
+            }
+            .into(),
         }])
     }
 

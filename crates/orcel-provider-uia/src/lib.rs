@@ -868,9 +868,68 @@ pub struct NativeProcess {
     pub session_verified: bool,
     pub start_generation: u64,
     pub generation_source: &'static str,
-    /// The code signature of the image file, checked once per process instance. Display
-    /// only: it never enters an identity, a digest or a policy decision.
-    pub signature: SignatureState,
+    /// Where the code signature of the image file comes from. Display only: it never enters
+    /// an identity, a digest or a policy decision.
+    pub signature: ProcessSignature,
+}
+
+/// The source of a process's image-file signature, kept with its record. Listing never reads
+/// the file; [`WindowApplication::signature`] does, when a prompt asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessSignature {
+    /// A state the adapter already knows: fakes, and `Unknown` from the computer host.
+    Known(SignatureState),
+    /// The Win32 image path, to be checked when a prompt asks for it.
+    ImageFile { path: String },
+}
+
+impl From<SignatureState> for ProcessSignature {
+    fn from(state: SignatureState) -> Self {
+        Self::Known(state)
+    }
+}
+
+/// What an approval prompt shows about a registered window's application, copied out of
+/// the registry so the signature can be checked after the registry lock is released.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowApplication {
+    pub executable: String,
+    pub window_title: String,
+    signature: ProcessSignature,
+    exe_id: String,
+    process_generation: u64,
+}
+
+/// Process instances whose image signature is remembered before the cache starts over.
+const MAX_CACHED_SIGNATURES: usize = 512;
+
+impl WindowApplication {
+    /// The signature of the process's image file. For a native process this may hash and
+    /// verify the file the first time it is asked per (image, start generation), so callers
+    /// ask without holding the registry lock. Display only.
+    pub fn signature(&self) -> SignatureState {
+        let path = match &self.signature {
+            ProcessSignature::Known(state) => return state.clone(),
+            ProcessSignature::ImageFile { path } => path,
+        };
+        static CACHE: std::sync::OnceLock<
+            std::sync::Mutex<HashMap<(String, u64), SignatureState>>,
+        > = std::sync::OnceLock::new();
+        let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+        let key = (self.exe_id.clone(), self.process_generation);
+        if let Some(known) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
+            return known;
+        }
+        // Checked outside the cache lock too, so a slow file holds nobody else up.
+        let state = orcel_platform::signature::image_signature(std::path::Path::new(path));
+        if let Ok(mut map) = cache.lock() {
+            if map.len() >= MAX_CACHED_SIGNATURES {
+                map.clear();
+            }
+            map.insert(key, state.clone());
+        }
+        state
+    }
 }
 
 /// A top-level window as reported by an adapter.
@@ -1091,7 +1150,7 @@ impl NativeAdapter {
             session_verified: false,
             start_generation: 0,
             generation_source: "std-fallback",
-            signature: SignatureState::Unknown,
+            signature: SignatureState::Unknown.into(),
         }
     }
 }
@@ -1176,7 +1235,7 @@ struct ProcessRecord {
     session_verified: bool,
     process_generation: u64,
     generation_source: &'static str,
-    signature: SignatureState,
+    signature: ProcessSignature,
     workspace_id: String,
     policy_revision: String,
     superseded: bool,
@@ -3163,17 +3222,20 @@ impl UiaRegistry {
     }
 
     /// The executable name of a registered window's verified process, the window's title and
-    /// the signature of the process's image file, as recorded when they were observed, for
-    /// approval prompts. Display only: it grants nothing, and the action's own binding is what
-    /// is checked again before dispatch.
-    pub fn window_application(&self, window_id: &str) -> Option<(String, String, SignatureState)> {
+    /// where its image-file signature comes from, as recorded when they were observed, for
+    /// approval prompts. Reads no file: ask [`WindowApplication::signature`] after releasing
+    /// the registry. Display only: it grants nothing, and the action's own binding is what is
+    /// checked again before dispatch.
+    pub fn window_application(&self, window_id: &str) -> Option<WindowApplication> {
         let window = self.windows.get(window_id)?;
         let process = self.processes.get(&window.process_id)?;
-        Some((
-            process.exe_name.clone(),
-            window.title.clone(),
-            process.signature.clone(),
-        ))
+        Some(WindowApplication {
+            executable: process.exe_name.clone(),
+            window_title: window.title.clone(),
+            signature: process.signature.clone(),
+            exe_id: process.exe_id.clone(),
+            process_generation: process.process_generation,
+        })
     }
 
     /// Resolve the current capture binding for approval digest computation.

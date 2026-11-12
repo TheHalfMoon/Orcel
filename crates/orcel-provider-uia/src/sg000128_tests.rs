@@ -75,7 +75,7 @@ impl UiaAdapter for Fake {
             session_verified: true,
             start_generation: 7,
             generation_source: "fake-adapter",
-            signature: SignatureState::Unknown,
+            signature: SignatureState::Unknown.into(),
         }])
     }
     fn list_windows(&self, _pid: u32) -> Result<Vec<NativeWindow>, UiaError> {

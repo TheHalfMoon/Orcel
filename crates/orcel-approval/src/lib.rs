@@ -114,9 +114,10 @@ pub struct PresenceContext {
 pub struct TargetApplication {
     pub executable: String,
     pub window_title: String,
-    /// The code signature of the process's image file on disk, checked when the process was
-    /// first observed. Display only: it is not part of the approval digest and no policy
-    /// decision reads it, and it describes the file, not the code running in memory.
+    /// The code signature of the process's image file on disk, checked the first time a
+    /// prompt names that process instance, after orceld releases its registry lock. Display
+    /// only: it is not part of the approval digest and no policy decision reads it, and it
+    /// describes the file, not the code running in memory.
     pub signature: SignatureState,
 }
 

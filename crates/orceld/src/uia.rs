@@ -49,17 +49,22 @@ fn registry() -> &'static Mutex<UiaRegistry> {
 }
 
 /// The prompt, naming the application whose window the action targets and who signed its
-/// image file (display only), from the registry's record of that window. A window the registry no longer knows gets no line; its action is
-/// refused later by its own binding check.
+/// image file (display only), from the registry's record of that window. A window the
+/// registry no longer knows gets no line; its action is refused later by its own binding
+/// check.
 fn with_target_application(
     prompt: ApprovalPrompt,
     window_id: &str,
 ) -> Result<ApprovalPrompt, ProviderError> {
-    Ok(match locked_registry()?.window_application(window_id) {
-        Some((executable, window_title, signature)) => {
+    // The registry guard is a temporary of this statement, so it is released before the
+    // signature check below, which may hash and verify the image file.
+    let application = locked_registry()?.window_application(window_id);
+    Ok(match application {
+        Some(application) => {
+            let signature = application.signature();
             prompt.for_application(orcel_approval::TargetApplication {
-                executable,
-                window_title,
+                executable: application.executable,
+                window_title: application.window_title,
                 signature,
             })
         }

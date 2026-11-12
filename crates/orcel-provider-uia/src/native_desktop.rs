@@ -20,14 +20,11 @@
 //!   `IsPassword` and their values are never read.
 
 use crate::{
-    digest_hex, NativeElement, NativeProcess, NativeWindow, SignatureState, UiaError, ID_HEX_CHARS,
-    MAX_TREE_DEPTH, MAX_TREE_NODES, UIA_SCHEMA,
+    digest_hex, NativeElement, NativeProcess, NativeWindow, ProcessSignature, UiaError,
+    ID_HEX_CHARS, MAX_TREE_DEPTH, MAX_TREE_NODES, UIA_SCHEMA,
 };
 use orcel_contracts::FailureCode;
-use std::collections::HashMap;
 use std::ffi::c_void;
-use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 use windows::core::Interface;
 use windows::Win32::Foundation::{BOOL, HANDLE, HWND, LPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
@@ -234,42 +231,21 @@ pub(crate) fn process_facts(pid: u32) -> Option<NativeProcess> {
     if exe_name.is_empty() || is_excluded_executable(&exe_name) {
         return None;
     }
-    let exe_id = digest_hex(
-        &format!("{UIA_SCHEMA}|exe|{}", image.to_lowercase()),
-        ID_HEX_CHARS,
-    );
     Some(NativeProcess {
         pid,
         exe_name,
+        exe_id: digest_hex(
+            &format!("{UIA_SCHEMA}|exe|{}", image.to_lowercase()),
+            ID_HEX_CHARS,
+        ),
         session_id,
         session_verified: true,
         start_generation: generation.generation,
         generation_source: generation.source,
-        signature: cached_signature(&exe_id, generation.generation, &image),
-        exe_id,
+        // Listing never reads the file: the check runs when a prompt asks for it, outside
+        // the registry lock (`WindowApplication::signature`).
+        signature: ProcessSignature::ImageFile { path: image },
     })
-}
-
-/// Process instances whose image signature is remembered before the cache starts over.
-const MAX_CACHED_SIGNATURES: usize = 512;
-
-/// The signature of a process instance's image file, checked once per (image, start
-/// generation) so listings do not check it again. The check runs outside the lock.
-fn cached_signature(exe_id: &str, generation: u64, image: &str) -> SignatureState {
-    static CACHE: OnceLock<Mutex<HashMap<(String, u64), SignatureState>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = (exe_id.to_owned(), generation);
-    if let Some(known) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
-        return known;
-    }
-    let state = orcel_platform::signature::image_signature(Path::new(image));
-    if let Ok(mut map) = cache.lock() {
-        if map.len() >= MAX_CACHED_SIGNATURES {
-            map.clear();
-        }
-        map.insert(key, state.clone());
-    }
-    state
 }
 
 /// Bind one desktop window to the adapter window shape. The nonce changes
