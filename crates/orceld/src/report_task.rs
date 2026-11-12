@@ -511,48 +511,86 @@ impl TaskRegistry {
         }
     }
 
-    /// The tasks of the other orcelds still running, for display only: they
-    /// are never put in `self.tasks`, so no action of this run finds them.
-    fn other_sessions(&self) -> Vec<ReportTask> {
-        self.journal()
-            .map(journal::ReportJournal::peek_live)
-            .unwrap_or_default()
+    /// The other orcelds' journaled tasks this registry shows, with their
+    /// owner names, newest first: a running session's as `other_session`, a
+    /// run that exited since this one started (its tasks were not restored
+    /// at start) as `earlier_run`. For display only: they are never put in
+    /// `self.tasks`, so no action of this run finds them. `held` is the id
+    /// of each task the registry holds and whether it is an earlier run's;
+    /// a held task wins on the same id. Bounded as the registry is: at most
+    /// [`MAX_TASKS`] tasks in all, and at most
+    /// [`journal::MAX_EARLIER_TASKS`] earlier runs' tasks in all, the
+    /// latest updated kept, as a restart keeps them.
+    fn others_shown(&self, held: &[(String, bool)]) -> Vec<(ReportTask, &'static str)> {
+        let Some(journal) = self.journal() else {
+            return Vec::new();
+        };
+        let earlier_held = held.iter().filter(|(_, earlier)| *earlier).count();
+        let mut earlier_room = journal::MAX_EARLIER_TASKS.saturating_sub(earlier_held);
+        let mut others: Vec<journal::OtherTask> = journal
+            .peek_others()
+            .into_iter()
+            .filter(|other| !held.iter().any(|(id, _)| *id == other.task.id))
+            .collect();
+        others.sort_by_key(|other| std::cmp::Reverse(other.task.updated_at_ms));
+        others.retain(|other| {
+            if !other.exited {
+                return true;
+            }
+            let kept = earlier_room > 0;
+            earlier_room = earlier_room.saturating_sub(1);
+            kept
+        });
+        others.sort_by_key(|other| std::cmp::Reverse(other.task.created_at_ms));
+        others.truncate(MAX_TASKS.saturating_sub(held.len()));
+        others
+            .into_iter()
+            .map(|other| {
+                let owner = if other.exited {
+                    OWNER_EARLIER_RUN
+                } else {
+                    OWNER_OTHER_SESSION
+                };
+                (other.task, owner)
+            })
+            .collect()
+    }
+
+    /// The id of each task the registry holds and whether it is an earlier
+    /// run's, for [`Self::others_shown`].
+    fn held(tasks: &[ReportTask], seed: &str) -> Vec<(String, bool)> {
+        tasks
+            .iter()
+            .map(|task| (task.id.clone(), task.run != seed))
+            .collect()
     }
 
     /// `task.list`: summaries, newest first. Every task this registry holds
-    /// is listed; the other running sessions' tasks fill the remaining room
-    /// up to [`MAX_TASKS`], newest first. A task this registry holds wins
-    /// over a journal copy of the same id.
+    /// is listed; the other orcelds' journaled tasks ([`Self::others_shown`])
+    /// fill the remaining room up to [`MAX_TASKS`]. A task this registry
+    /// holds wins over a journal copy of the same id.
     pub(crate) fn list(&self) -> Value {
-        let local: Vec<(String, u64, Value)> = self
-            .lock()
-            .iter()
-            .rev()
-            .map(|task| {
-                (
-                    task.id.clone(),
-                    task.created_at_ms,
-                    task.summary(self.owner_of(task)),
-                )
-            })
-            .collect();
-        let mut others: Vec<ReportTask> = self
-            .other_sessions()
-            .into_iter()
-            .filter(|task| !local.iter().any(|(id, _, _)| *id == task.id))
-            .collect();
-        others.sort_by_key(|task| std::cmp::Reverse(task.created_at_ms));
-        others.truncate(MAX_TASKS.saturating_sub(local.len()));
+        let (local, held) = {
+            let tasks = self.lock();
+            let local: Vec<(u64, Value)> = tasks
+                .iter()
+                .rev()
+                .map(|task| (task.created_at_ms, task.summary(self.owner_of(task))))
+                .collect();
+            (local, Self::held(&tasks, &self.seed))
+        };
         // Merge, keeping this registry's own order.
-        let mut others = others.into_iter().peekable();
+        let mut others = self.others_shown(&held).into_iter().peekable();
         let mut tasks = Vec::with_capacity(MAX_TASKS);
-        for (_, created_at_ms, summary) in local {
-            while let Some(task) = others.next_if(|task| task.created_at_ms > created_at_ms) {
-                tasks.push(task.summary(OWNER_OTHER_SESSION));
+        for (created_at_ms, summary) in local {
+            while let Some((task, owner)) =
+                others.next_if(|(task, _)| task.created_at_ms > created_at_ms)
+            {
+                tasks.push(task.summary(owner));
             }
             tasks.push(summary);
         }
-        tasks.extend(others.map(|task| task.summary(OWNER_OTHER_SESSION)));
+        tasks.extend(others.map(|(task, owner)| task.summary(owner)));
         json!({
             "max_tasks": MAX_TASKS,
             "tasks": tasks,
@@ -560,20 +598,21 @@ impl TaskRegistry {
     }
 
     /// `task.get`: one task's record, or `None` when neither this registry
-    /// nor another running session has such a task. The registry's copy
-    /// wins over a journal copy of the same id.
+    /// nor the other orcelds' journaled tasks [`Self::list`] would show have
+    /// such a task. The registry's copy wins over a journal copy of the
+    /// same id.
     pub(crate) fn get(&self, task_id: &str) -> Option<Value> {
-        let local = self
-            .lock()
-            .iter()
-            .find(|task| task.id == task_id)
-            .map(|task| task.detail(self.owner_of(task)));
-        local.or_else(|| {
-            self.other_sessions()
-                .into_iter()
-                .find(|task| task.id == task_id)
-                .map(|task| task.detail(OWNER_OTHER_SESSION))
-        })
+        let held = {
+            let tasks = self.lock();
+            if let Some(task) = tasks.iter().find(|task| task.id == task_id) {
+                return Some(task.detail(self.owner_of(task)));
+            }
+            Self::held(&tasks, &self.seed)
+        };
+        self.others_shown(&held)
+            .into_iter()
+            .find(|(task, _)| task.id == task_id)
+            .map(|(task, owner)| task.detail(owner))
     }
 
     fn insert(&self, mut task: ReportTask) -> Result<ReportTask, ProviderError> {
