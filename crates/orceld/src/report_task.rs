@@ -415,13 +415,21 @@ impl TaskRegistry {
         };
         match report_journal.restore() {
             Ok(restored) => {
+                // This run's tasks were not journaled while it was busy: record them now,
+                // so a commit that follows has its task in the journal. Copied first, so
+                // the file writes (each may wait for the journal lock) happen without the
+                // tasks lock the app API's list and get take.
+                let unjournaled: Vec<ReportTask> = self
+                    .lock()
+                    .iter()
+                    .filter(|task| task.run == self.seed)
+                    .cloned()
+                    .collect();
+                for task in &unjournaled {
+                    report_journal.snapshot(task);
+                }
                 {
                     let mut tasks = self.lock();
-                    // This run's tasks were not journaled while it was busy: record them
-                    // now, so a commit that follows has its task in the journal.
-                    for task in tasks.iter().filter(|task| task.run == self.seed) {
-                        report_journal.snapshot(task);
-                    }
                     // The registry is oldest first and the earlier runs' tasks are older
                     // than this run's, so they go in front; past the bound the oldest go.
                     let mut merged: Vec<ReportTask> = restored
