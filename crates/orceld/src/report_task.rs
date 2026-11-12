@@ -20,8 +20,9 @@
 //!    verified.
 //!
 //! Task records live in a bounded per-run registry ([`TaskRegistry`]) that
-//! the read-only app API serves as `task.get` and `task.list`. They hold
-//! paths, sizes, hashes, states and step outcomes, never file content.
+//! the read-only app API serves as `task.get` and `task.list`, together with
+//! the tasks other running orcelds journaled (shown, never acted on). They
+//! hold paths, sizes, hashes, states and step outcomes, never file content.
 //! Report requests are local-only: a remote-context envelope is refused
 //! before policy or dispatch.
 //!
@@ -216,8 +217,14 @@ pub(crate) struct ReportTask {
     session: Option<String>,
 }
 
+/// Whose task a `task.list` or `task.get` entry is, as the app API names it.
+/// Never the session fingerprint, the run id or a pid.
+const OWNER_THIS_SESSION: &str = "this_session";
+const OWNER_OTHER_SESSION: &str = "other_session";
+const OWNER_EARLIER_RUN: &str = "earlier_run";
+
 impl ReportTask {
-    fn summary(&self) -> Value {
+    fn summary(&self, owner: &str) -> Value {
         json!({
             "task_id": self.id,
             "kind": "report",
@@ -226,6 +233,7 @@ impl ReportTask {
             "workspace_id": self.workspace_id,
             "created_at_ms": self.created_at_ms,
             "updated_at_ms": self.updated_at_ms,
+            "owner": owner,
         })
     }
 
@@ -240,8 +248,8 @@ impl ReportTask {
         })
     }
 
-    fn detail(&self) -> Value {
-        let mut value = self.summary();
+    fn detail(&self, owner: &str) -> Value {
+        let mut value = self.summary(owner);
         value["folder"] = json!(self.folder);
         value["sources"] = json!(self
             .sources
@@ -409,22 +417,79 @@ impl TaskRegistry {
         )
     }
 
-    /// `task.list`: summaries, newest first.
+    /// How the app API names the owner of a task this registry holds.
+    fn owner_of(&self, task: &ReportTask) -> &'static str {
+        if task.run == self.seed {
+            OWNER_THIS_SESSION
+        } else {
+            OWNER_EARLIER_RUN
+        }
+    }
+
+    /// The tasks of the other orcelds still running, for display only: they
+    /// are never put in `self.tasks`, so no action of this run finds them.
+    fn other_sessions(&self) -> Vec<ReportTask> {
+        self.journal
+            .as_ref()
+            .map(journal::ReportJournal::peek_live)
+            .unwrap_or_default()
+    }
+
+    /// `task.list`: summaries, newest first. Every task this registry holds
+    /// is listed; the other running sessions' tasks fill the remaining room
+    /// up to [`MAX_TASKS`], newest first. A task this registry holds wins
+    /// over a journal copy of the same id.
     pub(crate) fn list(&self) -> Value {
-        let tasks = self.lock();
+        let local: Vec<(String, u64, Value)> = self
+            .lock()
+            .iter()
+            .rev()
+            .map(|task| {
+                (
+                    task.id.clone(),
+                    task.created_at_ms,
+                    task.summary(self.owner_of(task)),
+                )
+            })
+            .collect();
+        let mut others: Vec<ReportTask> = self
+            .other_sessions()
+            .into_iter()
+            .filter(|task| !local.iter().any(|(id, _, _)| *id == task.id))
+            .collect();
+        others.sort_by_key(|task| std::cmp::Reverse(task.created_at_ms));
+        others.truncate(MAX_TASKS.saturating_sub(local.len()));
+        // Merge, keeping this registry's own order.
+        let mut others = others.into_iter().peekable();
+        let mut tasks = Vec::with_capacity(MAX_TASKS);
+        for (_, created_at_ms, summary) in local {
+            while let Some(task) = others.next_if(|task| task.created_at_ms > created_at_ms) {
+                tasks.push(task.summary(OWNER_OTHER_SESSION));
+            }
+            tasks.push(summary);
+        }
+        tasks.extend(others.map(|task| task.summary(OWNER_OTHER_SESSION)));
         json!({
             "max_tasks": MAX_TASKS,
-            "tasks": tasks.iter().rev().map(ReportTask::summary).collect::<Vec<_>>(),
+            "tasks": tasks,
         })
     }
 
-    /// `task.get`: one task's record, or `None` when this run has no such
-    /// task.
+    /// `task.get`: one task's record, or `None` when neither this registry
+    /// nor another running session has such a task. The registry's copy
+    /// wins over a journal copy of the same id.
     pub(crate) fn get(&self, task_id: &str) -> Option<Value> {
-        self.lock()
+        let local = self
+            .lock()
             .iter()
             .find(|task| task.id == task_id)
-            .map(ReportTask::detail)
+            .map(|task| task.detail(self.owner_of(task)));
+        local.or_else(|| {
+            self.other_sessions()
+                .into_iter()
+                .find(|task| task.id == task_id)
+                .map(|task| task.detail(OWNER_OTHER_SESSION))
+        })
     }
 
     fn insert(&self, mut task: ReportTask) -> Result<ReportTask, ProviderError> {

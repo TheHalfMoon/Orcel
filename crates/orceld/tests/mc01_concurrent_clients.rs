@@ -407,6 +407,39 @@ fn mc01_concurrent_sessions_stay_apart() {
         !sandbox.workspace().join("reports").join("x.md").exists(),
         "a preview writes nothing"
     );
+    // The holder (A) lists its own task and, from the shared journal, B's task, which it
+    // cannot act on.
+    let in_b = b.call(
+        "report",
+        "start",
+        json!({ "title": "Q3 revenue", "sources": ["data/q3.csv"], "folder": "reports" }),
+        None,
+    );
+    assert_eq!(in_b["ok"], true, "{in_b}");
+    let b_task = in_b["result"]["task_id"]
+        .as_str()
+        .expect("task id")
+        .to_owned();
+    let listed = app_api(&endpoint, "task.list");
+    assert_eq!(listed["ok"], true, "{listed}");
+    let owner_of = |id: &str| {
+        listed["result"]["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .find(|entry| entry["task_id"] == id)
+            .map(|entry| entry["owner"].clone())
+    };
+    assert_eq!(owner_of(&task), Some(json!("this_session")), "{listed}");
+    assert_eq!(owner_of(&b_task), Some(json!("other_session")), "{listed}");
+    assert!(!listed.to_string().contains("\"session\""), "{listed}");
+    let not_here = a.call(
+        "report",
+        "preview",
+        json!({ "task_id": b_task, "name": "y.md", "content": "y" }),
+        None,
+    );
+    assert_eq!(code(&not_here), "TARGET_STALE");
 
     // A session that ends takes its record with it.
     let b_pid: u64 = b.pid().into();
