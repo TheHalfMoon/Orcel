@@ -50,6 +50,10 @@ fn run_orceld(state: &Path, workspace: &Path, requests: &[Value]) -> Vec<Value> 
         command.env("USERPROFILE", state);
     } else if cfg!(target_os = "linux") {
         command.env("XDG_STATE_HOME", state);
+    } else {
+        // macOS resolves the state root from HOME; without this the test used the
+        // runner's real Orcel folder.
+        command.env("HOME", state);
     }
     let mut child = command.spawn().expect("spawn orceld");
     {

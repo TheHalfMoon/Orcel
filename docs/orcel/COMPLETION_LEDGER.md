@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-11, main at `c1e94a9f` (#720). Open PRs: #640 and #673 (drafts waiting on founder decisions), #342 and #328 (other work).
+Last updated: 2026-11-12, main at `d198f10e` (#725). Open PRs: #640 and #673 (drafts waiting on founder decisions), #342 and #328 (other work).
 
 ## Approval and security UX
 
@@ -28,7 +28,7 @@ Last updated: 2026-11-11, main at `c1e94a9f` (#720). Open PRs: #640 and #673 (dr
 | Previews for clipboard writes, typed input, UI values; typed line breaks and control characters counted | Done (qualified) | #689 → `203616b1` | `typed_text_is_shown_only_in_the_bounded_preview` | No end-to-end clipboard or `set_value` prompt test | none | none |
 | Saved sizes-only choice | Done (qualified) | #690 → `5c55fd46` | config round-trip, `child_environment`, rollback refusal tests | Linux systemd and the dev tarball read their own environment; rollback refuses while sizes is saved | none (desktop switch: #699 → `b18c67ba`, tighten-only) | none |
 | Plain warning when hidden content looks like a credential | Done (qualified) | #691 → `ca7ca02a` | `a_credential_or_sizes_only_shows_no_content` | Refusing credential-like typed text, or making it STRONG, is not done (safer default chosen: hide, warn, keep approval) | none | none |
-| Application and window identity on desktop prompts | Partial | #694 → `3e6ef8e2` | prompt-text and registry tests; `desktop_prompt_tests` sends a screenshot request through orceld's `handle_envelope` and checks the prompt names the application and window | The title is the one recorded at observation; the executable is a name, not a signed identity; the orceld-level test covers the capture prompt, the other ten sites share `with_target_application` | A code-signature line | none |
+| Application and window identity on desktop prompts | Partial | #694 → `3e6ef8e2`, #722 → `93a39bf8` | prompt-text and registry tests; `desktop_prompt_tests` sends a screenshot request through orceld's `handle_envelope` and checks the prompt names the application and window | The title is the one recorded at observation; the executable is a name, not a signed identity; the orceld-level test covers the capture prompt, the other ten sites share `with_target_application` | A code-signature line | none |
 | Windows approval dialog timeout | Done (qualified) | #693 → `e90e51d6` | answer mapping on every OS; a real dialog on the Windows CI runner | Windows Hello's own prompt keeps its own timing | none | none |
 | Request origin in approval history | Done (qualified) | #695 → `574ccece` | origin recorded, reload, tamper and older-record tests | Unkeyed checksums catch corruption, not a determined same-user writer; a stripped origin shows as unrecorded; since #708 → `eef75e1e`, a history answer says whether it was verified or is the last view (busy or unverifiable) | none (history view: #697 → `3d46d797`) | none |
 
@@ -53,7 +53,7 @@ Last updated: 2026-11-11, main at `c1e94a9f` (#720). Open PRs: #640 and #673 (dr
 | Process execution (contained tier, shell) | Partial | SG-000096 plan (#260, #266, #267 open) | contained-tier tests | #292 flaky on Windows | T04 and T05 | none recorded |
 | Stop, pause, resume, human takeover | Partial | Desktop: Stop desktop control, `control`, `stop control` and `revoke all` (#702 → `9af70ae3`), its own red look with a stop mark (#710 → `3faee4e9`); grant/revoke race fix #701 → `f5731130`; task stop: #640 (draft) | desktop self-tests, including the stop button's look and accessible name | The app only takes authority away. #701 closed a race where a grant waiting for Windows Hello could overwrite a revoke made meanwhile; a revoke's store lock waits at most 5 s and then fails closed; whether the Windows Hello prompt comes to the front when the app starts `revoke all` is unchecked; while the pointer is over it, Windows' default hover colour replaces the stop button's red | A task-scoped stop and pause/resume (slice 5) | Founder decision 2 for task stop; a person to check the Hello prompt |
 | Crash recovery and state reconciliation | Done (qualified) | SG-000120 resume summary #464; mutation journal; #639 recovery and history; desktop `recovery` #720 → `c1e94a9f` | journal tests; #630 orceld killed during an Agent run; desktop self-tests and the Windows app job (`recovery` against a live orceld) | Effects orceld can't read back are recorded as unknown; the app looks at the newest ten tasks; no CI run shows the app a real interrupted report | none | none |
-| Multi-client isolation | Partial | Remote leases and origin stamping (#667 → `26f17234`, #684) | `fix395_tunnel_remote`, origin tests | — | A qualification suite across concurrent clients | none |
+| Multi-client isolation | Partial | Remote leases and origin stamping (#667 → `26f17234`, #684); MC-01 #723 → `f544eb5c`; audit appends #724 → `e706ffd6` and bounds #725 → `d198f10e` | `fix395_tunnel_remote`, origin tests; `mc01_concurrent_clients` (three real orcelds, one sandbox, on Windows, macOS and Linux: per-session hello records, remote hello refused, remote requests isolated per session, report tasks actionable only by their own orceld); `concurrent_records_stay_whole_lines` | The app API shows only the endpoint holder's report tasks; approval tokens aren't bound to a session (they never leave orceld); an orceld started while another holds the report journal lock refuses report commits; the audit log has no fsync or hash chain | More MC suites: concurrent approval-ledger appends (needs a person), cross-session task visibility | none |
 
 ## Desktop application and lifecycle
 
@@ -84,7 +84,9 @@ Last updated: 2026-11-11, main at `c1e94a9f` (#720). Open PRs: #640 and #673 (dr
 | Jev review runs `git diff --check` | Known | a CRLF file fails it (#692) | Write repository files with LF line endings |
 | macOS jobs cancelled before a runner is assigned (#524) | Recurring | seen on #704, #705 and #707, and on main after #703 and #705 (both green on re-run), 2026-11-10 | Re-run the job; no code cause |
 | `workspace list` held the CLI lifecycle lock | Fixed | #705 → `bb959446` | none |
-| Windows browser download tests: fixture never contacted (#584) | Recurring | seen again on #708, 2026-11-10; a related read timeout (`a_page_is_extracted_as_untrusted_markdown_in_pieces_without_hidden_text`) on #717, 2026-11-11, green on re-run | Re-run the job; cause still unknown |
+| Windows browser download tests: fixture never contacted (#584) | Recurring | seen again on #708, 2026-11-10; a related read timeout (`a_page_is_extracted_as_untrusted_markdown_in_pieces_without_hidden_text`) on #717 and `a_staged_file_never_outlives_a_worker_that_dies_or_hangs` on #723, 2026-11-11, green on re-run | Re-run the job; cause still unknown |
+| `orcel-approval` `recovery_refuses_missing_verified_or_busy_ledgers` could not take the writer lock with zero wait | Seen once | #725 on Ubuntu, 2026-11-12, green on re-run | Investigate if it recurs |
+| Ubuntu runners could not resolve Ubuntu's package mirrors | Outage | #723, 2026-11-11 (four re-runs over about two hours) | Wait and re-run; no code cause |
 
 ## How to resume
 
