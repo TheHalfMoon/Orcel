@@ -486,7 +486,8 @@ mod windows {
     use windows_sys::Win32::Foundation::{ERROR_SUCCESS, HANDLE};
     use windows_sys::Win32::Security::WinTrust::{
         WinVerifyTrust, WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_FILE_INFO,
-        WTD_CHOICE_FILE, WTD_REVOKE_NONE, WTD_STATEACTION_VERIFY, WTD_UI_NONE,
+        WTD_CHOICE_FILE, WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY,
+        WTD_UI_NONE,
     };
     use windows_sys::Win32::System::Registry::{
         RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ,
@@ -563,7 +564,12 @@ mod windows {
             data.hWVTStateData = 0 as HANDLE;
             data.Anonymous.pFile = &mut file_info;
             let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-            Ok(WinVerifyTrust(0 as HANDLE, &mut action, &mut data as *mut _ as *mut c_void) == 0)
+            let verified =
+                WinVerifyTrust(0 as HANDLE, &mut action, &mut data as *mut _ as *mut c_void) == 0;
+            // A verify keeps state until it is closed; without this each check leaked it.
+            data.dwStateAction = WTD_STATEACTION_CLOSE;
+            WinVerifyTrust(0 as HANDLE, &mut action, &mut data as *mut _ as *mut c_void);
+            Ok(verified)
         }
     }
 }
