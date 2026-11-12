@@ -22,8 +22,10 @@
 //!
 //! The orceld that holds the app API endpoint also shows the tasks of the
 //! other orcelds ([`ReportJournal::peek_others`]): those still running with
-//! their real states, and those that exited after it started as a restart
-//! would show them. It reads their newest snapshots without the writer lock
+//! their real states, and those that exited after it started read-only as
+//! earlier runs' (an open task shown `failed`, except that one left
+//! `committing` stays `committing` until the next orceld start reconciles
+//! its commit). It reads their newest snapshots without the writer lock
 //! and never writes. Those tasks are shown, never kept in its registry, so
 //! nothing in this run can act on them.
 
@@ -445,9 +447,11 @@ impl ReportJournal {
     }
 
     /// The tasks other orcelds journaled, from their newest snapshots: a
-    /// run still alive's with their real states, an exited run's as a
-    /// restart would show them ([`restored_task`]: an open state becomes
-    /// `failed` with a final `orceld_run_ended` step). Read-only: the
+    /// run still alive's with their real states; an exited run's through
+    /// [`restored_task`] (an `observed` or `proposed` task becomes `failed`
+    /// with a final `orceld_run_ended` step), except that a task it left
+    /// `committing` is shown `committing`, unchanged, since only the next
+    /// orceld start reconciles its open commit. Read-only: the
     /// journal is read without the writer lock (an append is one write and
     /// a compaction an atomic rename, so a reader sees whole lines and at
     /// most a torn last one, which is skipped) and nothing is ever written.
@@ -485,8 +489,12 @@ impl ReportJournal {
             .iter()
             .map(|(owner, task)| {
                 let exited = cache.has_exited(owner, now);
+                // An exited run's open commit is reconciled only by the next
+                // orceld start (it may turn out verified): until then it is
+                // shown `committing`, as the snapshot says.
+                let committing = task.state == TaskState::Committing.as_str();
                 OtherTask {
-                    task: if exited {
+                    task: if exited && !committing {
                         restored_task(task.clone(), &owner.run)
                     } else {
                         live_foreign_task(task.clone(), &owner.run)

@@ -960,8 +960,32 @@ fn xs_an_exited_runs_task_is_shown_as_an_earlier_run() {
 }
 
 /// A process that stays alive until killed, to stand for another session's
-/// orceld that can exit.
-fn long_running_child() -> std::process::Child {
+/// orceld that can exit. Killed and reaped on drop, so a failing assert
+/// never leaves it running.
+struct ChildGuard(Option<std::process::Child>);
+
+impl ChildGuard {
+    fn id(&self) -> u32 {
+        self.0.as_ref().map_or(0, std::process::Child::id)
+    }
+
+    /// Kills and reaps the child now; its handle is closed too, so its pid
+    /// no longer names a live process.
+    fn end(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.end();
+    }
+}
+
+fn long_running_child() -> ChildGuard {
     let mut command = if cfg!(windows) {
         let mut command = std::process::Command::new("ping");
         command.args(["-n", "120", "127.0.0.1"]);
@@ -971,12 +995,25 @@ fn long_running_child() -> std::process::Child {
         command.arg("120");
         command
     };
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn child")
+    ChildGuard(Some(
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn child"),
+    ))
+}
+
+/// An owner standing for `child`'s process, as run `run`.
+fn owner_of_child(child: &ChildGuard, run: &str) -> Owner {
+    let instance = orcel_platform::process::start_generation(child.id()).unwrap();
+    Owner {
+        run: run.to_owned(),
+        pid: instance.pid,
+        generation: instance.generation,
+        boot_id: instance.boot_id.map(|id| id.to_string()),
+    }
 }
 
 #[test]
@@ -988,13 +1025,7 @@ fn xs_a_session_that_exits_stays_listed_as_an_earlier_run() {
 
     // The other session's orceld is a real process, so that it can exit.
     let mut child = long_running_child();
-    let instance = orcel_platform::process::start_generation(child.id()).unwrap();
-    let owner = Owner {
-        run: "exiting-run".to_owned(),
-        pid: instance.pid,
-        generation: instance.generation,
-        boot_id: instance.boot_id.map(|id| id.to_string()),
-    };
+    let owner = owner_of_child(&child, "exiting-run");
     let scratch = TaskRegistry::new();
     let (task, report) = proposed(&scene, &scratch);
     let record = scratch.lock()[0].clone();
@@ -1004,9 +1035,7 @@ fn xs_a_session_that_exits_stays_listed_as_an_earlier_run() {
     assert_eq!(shown["owner"], "other_session");
     assert_eq!(shown["state"], "proposed");
 
-    child.kill().unwrap();
-    child.wait().unwrap();
-    drop(child);
+    child.end();
     // Past the liveness TTL: drop the cached "alive" answer, as the TTL would.
     holder.journal().unwrap().peek.lock().unwrap().alive.clear();
 
@@ -1066,6 +1095,56 @@ fn xs_a_session_that_exits_stays_listed_as_an_earlier_run() {
         journal_bytes,
         "nothing journaled"
     );
+}
+
+#[test]
+fn xs_an_exited_runs_committing_task_stays_committing_until_a_restart_reconciles_it() {
+    let scene = Scene::new("xs-committing");
+    let path = journal_path(&scene);
+    orcel_platform::paths::ensure_private_dir(path.parent().unwrap()).unwrap();
+    let holder = TaskRegistry::with_journal(path.clone());
+
+    // After the holder started, a run died in the middle of a commit: the
+    // task committing, its commit dispatched, the report already created.
+    let scratch = TaskRegistry::new();
+    let (task, report) = proposed(&scene, &scratch);
+    scratch.lock()[0].state = TaskState::Committing;
+    leave_pending(
+        &scene,
+        &scratch,
+        &task,
+        exited_owner("died-committing"),
+        true,
+    );
+    std::fs::write(scene.workspace.root.join("reports").join("q3.md"), &report).unwrap();
+    let journal_bytes = std::fs::read(&path).unwrap();
+
+    let shown = holder.get(&task).expect("the exited run's task");
+    assert_eq!(shown["owner"], "earlier_run");
+    assert_eq!(shown["state"], "committing", "not failed: not reconciled");
+    assert!(shown["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|step| step["outcome"] != "orceld_run_ended"));
+    assert_eq!(listed(&holder)[0]["state"], "committing");
+    let refused = dispatch(
+        &scene.workspace,
+        &consent(&scene, &[]).broker,
+        &holder,
+        &commit_request(&task, &report),
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        journal_bytes,
+        "the holder reconciles nothing"
+    );
+
+    // The next start reconciles it, here as verified.
+    let restarted = TaskRegistry::with_journal(path.clone());
+    assert_eq!(restarted.get(&task).unwrap()["state"], "verified");
 }
 
 #[test]
