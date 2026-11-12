@@ -1995,7 +1995,8 @@ namespace Orcel.DesktopPreview
             // start a second revoke, a second Windows Hello prompt or a second wait on the lock.
             bool guarded = command == SafeCommand.StopControl || command == SafeCommand.RevokeAll || command == SafeCommand.PreviewsSizes
                 || command == SafeCommand.Workspaces;
-            if (guarded && running.Contains(command))
+            // setup lists workspaces too, so the two share one wait on the runtime's lock.
+            if (guarded && (running.Contains(command) || (command == SafeCommand.Workspaces && running.Contains(SafeCommand.Setup))))
             {
                 AddMessage(false, "That is already running; wait for its answer.");
                 return;
@@ -2096,6 +2097,18 @@ namespace Orcel.DesktopPreview
         /// At launch the checklist appears only while Orcel isn't installed.
         private async void ShowSetup(bool launch)
         {
+            // On request it lists workspaces, which waits on the runtime's lock: one at a time,
+            // and never alongside the workspaces command. At launch nothing is read.
+            if (!launch)
+            {
+                if (running.Contains(SafeCommand.Setup) || running.Contains(SafeCommand.Workspaces))
+                {
+                    AddMessage(false, "That is already running; wait for its answer.");
+                    return;
+                }
+                running.Add(SafeCommand.Setup);
+                AddMessage(false, "Checking what is set up...");
+            }
             try
             {
                 string text = await Task.Run(delegate { return SetupGuide.Read(launch); });
@@ -2104,6 +2117,10 @@ namespace Orcel.DesktopPreview
             catch (Exception)
             {
                 if (!launch) AddMessage(false, "The read-only setup check failed unexpectedly. No action was performed.");
+            }
+            finally
+            {
+                if (!launch) running.Remove(SafeCommand.Setup);
             }
         }
 
@@ -2277,7 +2294,7 @@ namespace Orcel.DesktopPreview
             string recoveryText = Recovery.Text(recoveryList, recovered);
             expect(recoveryText.StartsWith("1 report needs your attention.") && recoveryText.Contains("out/q3.xlsx: a file is there, or couldn't be read, and it doesn't check") && recoveryText.Contains("\"Q2\": nothing was written") && !recoveryText.Contains("Q1") && recoveryText.Contains("1 task's details couldn't be read") && recoveryText.Split('\n').Length == 5, "recovery explains each restart check, escaped, one line each, skips tasks without one, and counts tasks it couldn't read");
             expect(Recovery.Text(null, new List<Dictionary<string, object>>()).StartsWith("Recovery check unavailable") && Recovery.Text(recoveryList, new List<Dictionary<string, object>>()).StartsWith("No report was interrupted") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).StartsWith("No interrupted report was found among the tasks that could be read.") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).Contains("2 tasks' details couldn't be read") && Recovery.Meaning("verified").StartsWith("the report is there") && Recovery.Meaning("new-outcome").Contains("doesn't know"), "recovery says when there is nothing to report or no answer, and never guesses an outcome");
-            expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes and never runs the CLI");
+            expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes to no CLI command of its own; it reads through the workspaces command's fixed arguments");
             int setupCount;
             expect(SetupGuide.Clients(null, out setupCount) == SetupGuide.ClientState.Unknown && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.None && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[{\"pid\":1},{\"pid\":2}]}}"), out setupCount) == SetupGuide.ClientState.Connected && setupCount == 2 && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"unavailable\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.Unknown, "setup reads connected clients and never guesses");
             expect(SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).Contains("run .\\orcel.exe install") && SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).EndsWith("Next: install Orcel (step 1).") && SetupGuide.Text(true, SetupGuide.ClientState.None, 0).EndsWith("Next: connect a client (step 2).") && SetupGuide.Text(true, SetupGuide.ClientState.Unknown, 0).Contains("couldn't check") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1).Contains("1 client is connected") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 3).EndsWith("then try it (step 4).") && SetupGuide.Text(true, SetupGuide.ClientState.None, 0).Contains("orcel workspace add <id> <folder>"), "setup names what is done and the next step");
