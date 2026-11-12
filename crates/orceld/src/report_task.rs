@@ -48,7 +48,7 @@ use orcel_provider_fs::{FsProvider, ProviderError};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 /// Most tasks one daemon run keeps.
@@ -275,12 +275,17 @@ pub(crate) struct TaskRegistry {
     seed: String,
     counter: AtomicU64,
     events: OnceLock<Arc<EventLog>>,
-    /// SG-000120 RJ-02: the durable journal (`None` when orceld has none,
-    /// as in most unit tests; commits are then not journaled).
-    journal: Option<journal::ReportJournal>,
-    /// Set when the journal could not be read at start: commits are
-    /// refused until it is repaired, never run unjournaled.
-    journal_faulted: bool,
+    /// SG-000120 RJ-02: the durable journal (unset when orceld has none,
+    /// as in most unit tests; commits are then not journaled). Set at start,
+    /// or later once a journal that was busy at start has been restored.
+    journal: OnceLock<journal::ReportJournal>,
+    /// A journal another orceld held for the whole wait at start. It is
+    /// restored before the next commit; until then commits are refused, never
+    /// run unjournaled.
+    busy_journal: Mutex<Option<journal::ReportJournal>>,
+    /// Set when the journal could not be read: commits are refused until it
+    /// is repaired, never run unjournaled.
+    journal_faulted: AtomicBool,
     /// SG-000120 RJ-03: the key of session and input fingerprints; `None`
     /// refuses resume summaries.
     fingerprints: Option<crate::resume_key::FingerprintKey>,
@@ -307,8 +312,9 @@ impl TaskRegistry {
             seed: format!("{}|{nanos}", std::process::id()),
             counter: AtomicU64::new(0),
             events: OnceLock::new(),
-            journal: None,
-            journal_faulted: false,
+            journal: OnceLock::new(),
+            busy_journal: Mutex::new(None),
+            journal_faulted: AtomicBool::new(false),
             fingerprints: crate::resume_key::FingerprintKey::ephemeral().ok(),
         }
     }
@@ -316,8 +322,8 @@ impl TaskRegistry {
     /// A registry with no usable journal location: tasks can be started and
     /// previewed, commits are refused.
     pub(crate) fn faulted() -> Self {
-        let mut registry = Self::empty();
-        registry.journal_faulted = true;
+        let registry = Self::empty();
+        registry.journal_faulted.store(true, Ordering::Release);
         registry
     }
 
@@ -330,7 +336,7 @@ impl TaskRegistry {
         let mut registry = Self::empty();
         let Some(owner) = crate::journal_owner::Owner::current(&registry.seed) else {
             eprintln!("orceld report journal: this process's identity is unavailable; report commits are refused");
-            registry.journal_faulted = true;
+            registry.journal_faulted.store(true, Ordering::Release);
             return registry;
         };
         // The fingerprint key lives beside the journal, so a task's session
@@ -360,20 +366,79 @@ impl TaskRegistry {
                     );
                 }
                 *registry.lock() = restored.tasks;
-                registry.journal = Some(report_journal);
+                let _ = registry.journal.set(report_journal);
+            }
+            Err(orcel_journal::JournalError::Busy) => {
+                // Another orceld is restoring or rewriting it now. Tasks can be
+                // started and previewed; the next commit restores it first.
+                eprintln!("orceld report journal: busy in another orceld at start; it is read again before the next report commit");
+                *registry
+                    .busy_journal
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(report_journal);
             }
             Err(failure) => {
                 // The unreadable journal is left exactly as found, for
                 // repair: no snapshot or intent is appended to it.
-                if failure == orcel_journal::JournalError::Busy {
-                    eprintln!("orceld report journal: busy in another orceld at start; report commits are refused in this session, restart it to retry");
-                } else {
-                    eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
-                }
-                registry.journal_faulted = true;
+                eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
+                registry.journal_faulted.store(true, Ordering::Release);
             }
         }
         registry
+    }
+
+    /// The journal, once it has been restored.
+    fn journal(&self) -> Option<&journal::ReportJournal> {
+        self.journal.get()
+    }
+
+    /// Restores a journal that was busy at start, keeping this run's tasks and adding the
+    /// earlier runs' tasks it brings back. Ready when there is a journal to record a commit in
+    /// (or none is kept, as in unit tests); still busy, or now unreadable, otherwise.
+    fn journal_ready(&self) -> Result<(), ProviderError> {
+        if self.journal_faulted.load(Ordering::Acquire) {
+            return Err(error(
+                FailureCode::ProviderUnavailable,
+                "the report task journal is unreadable; report commits are refused until it is repaired",
+            ));
+        }
+        let mut busy = self
+            .busy_journal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(report_journal) = busy.take() else {
+            return Ok(());
+        };
+        match report_journal.restore() {
+            Ok(restored) => {
+                {
+                    let mut tasks = self.lock();
+                    for task in restored.tasks {
+                        if tasks.len() < MAX_TASKS && !tasks.iter().any(|held| held.id == task.id) {
+                            tasks.push(task);
+                        }
+                    }
+                }
+                let _ = self.journal.set(report_journal);
+                eprintln!("orceld report journal: restored after being busy at start");
+                Ok(())
+            }
+            Err(orcel_journal::JournalError::Busy) => {
+                *busy = Some(report_journal);
+                Err(error(
+                    FailureCode::ProviderUnavailable,
+                    "the report task journal is busy in another orceld; try the commit again shortly",
+                ))
+            }
+            Err(failure) => {
+                eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
+                self.journal_faulted.store(true, Ordering::Release);
+                Err(error(
+                    FailureCode::ProviderUnavailable,
+                    "the report task journal is unreadable; report commits are refused until it is repaired",
+                ))
+            }
+        }
     }
 
     /// The app API's event log, which `task.updated` events go to.
@@ -398,7 +463,7 @@ impl TaskRegistry {
 
     /// Notes how a journaled commit ended. A no-op without a journal.
     fn note(&self, intent: &str, settled: bool, outcome: &str) {
-        if let Some(journal) = &self.journal {
+        if let Some(journal) = self.journal() {
             if settled {
                 journal.settled(intent, outcome);
             } else {
@@ -429,8 +494,7 @@ impl TaskRegistry {
     /// The tasks of the other orcelds still running, for display only: they
     /// are never put in `self.tasks`, so no action of this run finds them.
     fn other_sessions(&self) -> Vec<ReportTask> {
-        self.journal
-            .as_ref()
+        self.journal()
             .map(journal::ReportJournal::peek_live)
             .unwrap_or_default()
     }
@@ -602,10 +666,10 @@ impl TaskRegistry {
             (
                 step_id,
                 json!({"task_kind": "report", "state": task.state.as_str(), "step": kind, "outcome": outcome}),
-                self.journal.is_some().then(|| task.clone()),
+                self.journal().is_some().then(|| task.clone()),
             )
         };
-        if let (Some(journal), Some(task)) = (&self.journal, &event.2) {
+        if let (Some(journal), Some(task)) = (self.journal(), &event.2) {
             journal.snapshot(task);
         }
         if let Some(log) = self.events.get() {
@@ -1335,14 +1399,9 @@ fn commit(
     .for_file();
     // SG-000120 RJ-02: the commit is durable before anything is asked or
     // spent; a journal that cannot record it refuses the commit.
-    if tasks.journal_faulted {
-        return Err(error(
-            FailureCode::ProviderUnavailable,
-            "the report task journal is unreadable; report commits are refused until it is repaired",
-        ));
-    }
+    tasks.journal_ready()?;
     let intent = tasks.next_intent(&task.id);
-    if let Some(journal) = &tasks.journal {
+    if let Some(journal) = tasks.journal() {
         journal.pending(
             &intent,
             journal::commit_line(&task, &workspace.root, &proposal, &digest),
@@ -1447,7 +1506,7 @@ fn commit(
     // SG-000120 RJ-02: from here on the create may have started. If that
     // cannot be recorded the create does not run, so a later reconcile can
     // never read a started create as one that never began.
-    if let Some(journal) = &tasks.journal {
+    if let Some(journal) = tasks.journal() {
         if let Err(failure) = journal.dispatched(&intent) {
             // Settled, not abandoned: the dispatched line may be on disk
             // even though the write reported failure, and only settled may
