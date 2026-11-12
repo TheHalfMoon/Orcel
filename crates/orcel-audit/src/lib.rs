@@ -14,8 +14,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone)]
 pub struct AuditLogger {
     path: PathBuf,
-    /// Whether the next record first checks for a torn last line: once at start, and again
-    /// after a failed write. Checking on every record would add a read open per request.
+    /// Whether the next record first checks for a torn last line: set when the log was torn
+    /// when this logger was made, and after a failed write. The check reads the log, and a read
+    /// that overlaps another writer's append can see it half done, so it runs only when there
+    /// is reason to; checking every record would also add a read open per request.
     check_tail: Arc<AtomicBool>,
 }
 
@@ -66,9 +68,11 @@ impl AuditLogger {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        // Made once at start, before this process writes anything.
+        let torn = ends_mid_line(&path);
         Ok(Self {
             path,
-            check_tail: Arc::new(AtomicBool::new(true)),
+            check_tail: Arc::new(AtomicBool::new(torn)),
         })
     }
 
