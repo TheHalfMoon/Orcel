@@ -941,12 +941,240 @@ fn xs_an_exited_runs_task_is_shown_as_an_earlier_run() {
     assert_eq!(record["state"], "failed", "its run ended while it was open");
     assert_eq!(listed(&holder)[0]["owner"], "earlier_run");
 
-    // An exited run is never shown as a running session's.
+    // A run that exited after this one started (its task was not restored
+    // at start) is shown the same way, never as a running session's.
     let (late, _) = proposed(&scene, &scratch);
     snapshot_as(&late, exited_owner("gone-later"));
-    assert!(holder.get(&late).is_none());
-    assert_eq!(listed(&holder).len(), 1);
-    assert!(holder.journal.get().unwrap().peek_live().is_empty());
+    let record = holder.get(&late).expect("a later exited run's task");
+    assert_eq!(record["owner"], "earlier_run");
+    assert_eq!(record["state"], "failed");
+    assert_eq!(listed(&holder).len(), 2);
+    assert!(listed(&holder)
+        .iter()
+        .all(|entry| entry["owner"] == "earlier_run"));
+    assert!(holder.journal().unwrap().peek_live().is_empty());
+    assert!(
+        holder.lock().iter().all(|known| known.id != late),
+        "shown, never kept in the registry"
+    );
+}
+
+/// A process that stays alive until killed, to stand for another session's
+/// orceld that can exit. Killed and reaped on drop, so a failing assert
+/// never leaves it running.
+struct ChildGuard(Option<std::process::Child>);
+
+impl ChildGuard {
+    fn id(&self) -> u32 {
+        self.0.as_ref().map_or(0, std::process::Child::id)
+    }
+
+    /// Kills and reaps the child now; its handle is closed too, so its pid
+    /// no longer names a live process.
+    fn end(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.end();
+    }
+}
+
+fn long_running_child() -> ChildGuard {
+    let mut command = if cfg!(windows) {
+        let mut command = std::process::Command::new("ping");
+        command.args(["-n", "120", "127.0.0.1"]);
+        command
+    } else {
+        let mut command = std::process::Command::new("sleep");
+        command.arg("120");
+        command
+    };
+    ChildGuard(Some(
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn child"),
+    ))
+}
+
+/// An owner standing for `child`'s process, as run `run`.
+fn owner_of_child(child: &ChildGuard, run: &str) -> Owner {
+    let instance = orcel_platform::process::start_generation(child.id()).unwrap();
+    Owner {
+        run: run.to_owned(),
+        pid: instance.pid,
+        generation: instance.generation,
+        boot_id: instance.boot_id.map(|id| id.to_string()),
+    }
+}
+
+#[test]
+fn xs_a_session_that_exits_stays_listed_as_an_earlier_run() {
+    let scene = Scene::new("xs-exits");
+    let path = journal_path(&scene);
+    orcel_platform::paths::ensure_private_dir(path.parent().unwrap()).unwrap();
+    let holder = TaskRegistry::with_journal(path.clone());
+
+    // The other session's orceld is a real process, so that it can exit.
+    let mut child = long_running_child();
+    let owner = owner_of_child(&child, "exiting-run");
+    let scratch = TaskRegistry::new();
+    let (task, report) = proposed(&scene, &scratch);
+    let record = scratch.lock()[0].clone();
+    ReportJournal::new(path.clone(), owner).snapshot(&record);
+
+    let shown = holder.get(&task).expect("a running session's task");
+    assert_eq!(shown["owner"], "other_session");
+    assert_eq!(shown["state"], "proposed");
+
+    child.end();
+    // Past the liveness TTL: drop the cached "alive" answer, as the TTL would.
+    holder.journal().unwrap().peek.lock().unwrap().alive.clear();
+
+    let journal_bytes = std::fs::read(&path).unwrap();
+    let before = scene.tree();
+    let shown = holder.get(&task).expect("still listed once its run exited");
+    assert_eq!(shown["owner"], "earlier_run");
+    assert_eq!(shown["state"], "failed", "it was open when its run ended");
+    let last = shown["steps"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(
+        (last["kind"].as_str(), last["outcome"].as_str()),
+        (Some("run"), Some("orceld_run_ended"))
+    );
+    let entries = listed(&holder);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0]["owner"], "earlier_run");
+    assert_eq!(entries[0]["state"], "failed");
+    assert!(
+        holder.lock().is_empty(),
+        "shown, never kept in the registry"
+    );
+
+    // Still read-only: nothing is asked, written or journaled.
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    let refusals = [
+        dispatch(
+            &scene.workspace,
+            &approval.broker,
+            &holder,
+            &request(
+                "preview",
+                json!({"task_id": task, "name": "q3.md", "content": report}),
+            ),
+        )
+        .unwrap_err(),
+        dispatch(
+            &scene.workspace,
+            &approval.broker,
+            &holder,
+            &commit_request(&task, &report),
+        )
+        .unwrap_err(),
+        holder.stop(&task, &scene.workspace.id).unwrap_err(),
+    ];
+    for refused in refusals {
+        assert_eq!(
+            refused.code,
+            FailureCode::TargetStale,
+            "{}",
+            refused.message
+        );
+    }
+    assert!(approval.prompts.lock().unwrap().is_empty(), "nothing asked");
+    assert_eq!(scene.tree(), before, "nothing written");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        journal_bytes,
+        "nothing journaled"
+    );
+}
+
+#[test]
+fn xs_an_exited_runs_committing_task_stays_committing_until_a_restart_reconciles_it() {
+    let scene = Scene::new("xs-committing");
+    let path = journal_path(&scene);
+    orcel_platform::paths::ensure_private_dir(path.parent().unwrap()).unwrap();
+    let holder = TaskRegistry::with_journal(path.clone());
+
+    // After the holder started, a run died in the middle of a commit: the
+    // task committing, its commit dispatched, the report already created.
+    let scratch = TaskRegistry::new();
+    let (task, report) = proposed(&scene, &scratch);
+    scratch.lock()[0].state = TaskState::Committing;
+    leave_pending(
+        &scene,
+        &scratch,
+        &task,
+        exited_owner("died-committing"),
+        true,
+    );
+    std::fs::write(scene.workspace.root.join("reports").join("q3.md"), &report).unwrap();
+    let journal_bytes = std::fs::read(&path).unwrap();
+
+    let shown = holder.get(&task).expect("the exited run's task");
+    assert_eq!(shown["owner"], "earlier_run");
+    assert_eq!(shown["state"], "committing", "not failed: not reconciled");
+    assert!(shown["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|step| step["outcome"] != "orceld_run_ended"));
+    assert_eq!(listed(&holder)[0]["state"], "committing");
+    let refused = dispatch(
+        &scene.workspace,
+        &consent(&scene, &[]).broker,
+        &holder,
+        &commit_request(&task, &report),
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        journal_bytes,
+        "the holder reconciles nothing"
+    );
+
+    // The next start reconciles it, here as verified.
+    let restarted = TaskRegistry::with_journal(path.clone());
+    assert_eq!(restarted.get(&task).unwrap()["state"], "verified");
+}
+
+#[test]
+fn xs_earlier_runs_tasks_stay_within_the_bound_counting_those_restored() {
+    let scene = Scene::new("xs-bound");
+    let path = journal_path(&scene);
+    let scratch = TaskRegistry::new();
+    let snapshot_as = |owner: &str| {
+        start_q3(&scene, &scratch);
+        let record = scratch.lock().last().cloned().unwrap();
+        ReportJournal::new(path.clone(), exited_owner(owner)).snapshot(&record);
+    };
+    // One earlier run's task is restored at start...
+    snapshot_as("gone");
+    let holder = TaskRegistry::with_journal(path.clone());
+    assert_eq!(holder.lock().len(), 1);
+    // ...then a full bound's worth of runs exit after it started.
+    for _ in 0..MAX_EARLIER_TASKS {
+        snapshot_as("gone-later");
+    }
+    let entries = listed(&holder);
+    assert_eq!(entries.len(), MAX_EARLIER_TASKS, "restored ones count");
+    assert!(entries.iter().all(|entry| entry["owner"] == "earlier_run"));
+    let own = start_q3(&scene, &holder)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let entries = listed(&holder);
+    assert_eq!(entries.len(), MAX_EARLIER_TASKS + 1);
+    assert_eq!(entries[0]["task_id"], own.as_str());
 }
 
 #[test]

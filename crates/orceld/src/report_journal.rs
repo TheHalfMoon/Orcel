@@ -21,9 +21,13 @@
 //! an earlier run cannot be previewed or committed again.
 //!
 //! The orceld that holds the app API endpoint also shows the tasks of the
-//! other orcelds still running ([`ReportJournal::peek_live`]): it reads their
-//! newest snapshots without the writer lock and never writes. Those tasks are
-//! shown, never kept in its registry, so nothing in this run can act on them.
+//! other orcelds ([`ReportJournal::peek_others`]): those still running with
+//! their real states, and those that exited after it started read-only as
+//! earlier runs' (an open task shown `failed`, except that one left
+//! `committing` stays `committing` until the next orceld start reconciles
+//! its commit). It reads their newest snapshots without the writer lock
+//! and never writes. Those tasks are shown, never kept in its registry, so
+//! nothing in this run can act on them.
 
 use super::{error, Proposal, ReportTask, SourceRecord, Step, TaskState, MAX_STEPS, MAX_TASKS};
 use crate::journal_owner::Owner;
@@ -44,7 +48,7 @@ const SCHEMA: &str = "orcel-report-task/1";
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// Most tasks of earlier runs a starting orceld shows and keeps.
 pub(super) const MAX_EARLIER_TASKS: usize = MAX_TASKS / 2;
-/// How long [`ReportJournal::peek_live`] trusts that a run is still alive
+/// How long [`ReportJournal::peek_others`] trusts that a run is still alive
 /// before it asks the OS again. A run seen exited stays exited.
 const LIVENESS_TTL: Duration = Duration::from_secs(2);
 
@@ -357,12 +361,20 @@ pub(super) fn reconcile(commit: &CommitLine) -> Reconciled {
 pub(super) struct ReportJournal {
     path: PathBuf,
     owner: Owner,
-    /// What [`Self::peek_live`] last read, so a repeated `task.list` does
+    /// What [`Self::peek_others`] last read, so a repeated `task.list` does
     /// not re-read an unchanged journal or ask the OS about every run.
     peek: Mutex<PeekCache>,
 }
 
-/// The cache behind [`ReportJournal::peek_live`].
+/// One task another orceld journaled, as [`ReportJournal::peek_others`]
+/// shows it.
+pub(super) struct OtherTask {
+    pub task: ReportTask,
+    /// Its run has exited: the task is shown as an earlier run's.
+    pub exited: bool,
+}
+
+/// The cache behind [`ReportJournal::peek_others`].
 #[derive(Default)]
 struct PeekCache {
     /// The journal's length and modified time when `snapshots` was read;
@@ -424,16 +436,31 @@ impl ReportJournal {
         }
     }
 
-    /// The tasks of the other orcelds still running, from their newest
-    /// snapshots, with their real states. Read-only: the journal is read
-    /// without the writer lock (an append is one write and a compaction an
-    /// atomic rename, so a reader sees whole lines and at most a torn last
-    /// one, which is skipped) and nothing is ever written. A line over
-    /// [`orcel_journal::MAX_LINE_BYTES`], a line it cannot read and a journal
-    /// over [`orcel_journal::MAX_JOURNAL_BYTES`] are skipped: a damaged
-    /// journal shows fewer tasks, never an error. This run's own lines are
-    /// left out, since its registry holds them.
+    /// [`Self::peek_others`], the tasks of runs still alive only.
+    #[cfg(test)]
     pub(super) fn peek_live(&self) -> Vec<ReportTask> {
+        self.peek_others()
+            .into_iter()
+            .filter(|other| !other.exited)
+            .map(|other| other.task)
+            .collect()
+    }
+
+    /// The tasks other orcelds journaled, from their newest snapshots: a
+    /// run still alive's with their real states; an exited run's through
+    /// [`restored_task`] (an `observed` or `proposed` task becomes `failed`
+    /// with a final `orceld_run_ended` step), except that a task it left
+    /// `committing` is shown `committing`, unchanged, since only the next
+    /// orceld start reconciles its open commit. Read-only: the
+    /// journal is read without the writer lock (an append is one write and
+    /// a compaction an atomic rename, so a reader sees whole lines and at
+    /// most a torn last one, which is skipped) and nothing is ever written.
+    /// A line over [`orcel_journal::MAX_LINE_BYTES`], a line it cannot read
+    /// and a journal over [`orcel_journal::MAX_JOURNAL_BYTES`] are skipped:
+    /// a damaged journal shows fewer tasks, never an error. This run's own
+    /// lines are left out, since its registry holds them. Unbounded here:
+    /// the registry decides how many it shows.
+    pub(super) fn peek_others(&self) -> Vec<OtherTask> {
         let mut cache = self
             .peek
             .lock()
@@ -458,13 +485,26 @@ impl ReportJournal {
         }
         let now = Instant::now();
         let snapshots = std::mem::take(&mut cache.snapshots);
-        let live = snapshots
+        let others = snapshots
             .iter()
-            .filter(|(owner, _)| !cache.has_exited(owner, now))
-            .map(|(owner, task)| live_foreign_task(task.clone(), &owner.run))
+            .map(|(owner, task)| {
+                let exited = cache.has_exited(owner, now);
+                // An exited run's open commit is reconciled only by the next
+                // orceld start (it may turn out verified): until then it is
+                // shown `committing`, as the snapshot says.
+                let committing = task.state == TaskState::Committing.as_str();
+                OtherTask {
+                    task: if exited && !committing {
+                        restored_task(task.clone(), &owner.run)
+                    } else {
+                        live_foreign_task(task.clone(), &owner.run)
+                    },
+                    exited,
+                }
+            })
             .collect();
         cache.snapshots = snapshots;
-        live
+        others
     }
 
     /// The newest snapshot of each task other runs wrote, and whether the
