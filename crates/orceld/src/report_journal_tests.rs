@@ -7,6 +7,8 @@ use super::super::{dispatch, TaskRegistry};
 use super::*;
 use orcel_approval::ApprovalDecision;
 use serde_json::json;
+use std::sync::atomic::Ordering;
+use std::sync::OnceLock;
 
 fn journal_path(scene: &Scene) -> PathBuf {
     scene.dir.join("state").join("report-tasks.jsonl")
@@ -125,7 +127,7 @@ fn rj02_an_approved_journey_is_journaled_and_survives_a_restart() {
     // run starts) shows the task read-only, still verified.
     drop(tasks);
     let mut restarted = TaskRegistry::new();
-    restarted.journal = Some(ReportJournal::new(path.clone(), exited_owner("next")));
+    restarted.journal = OnceLock::from(ReportJournal::new(path.clone(), exited_owner("next")));
     // Restore as the next run, treating the earlier run as exited.
     let restored = restore_as_exited(&path, &restarted.seed);
     *restarted.lock() = restored;
@@ -291,7 +293,7 @@ fn rj02_an_unreadable_journal_refuses_commits_and_asks_nothing() {
     )
     .unwrap();
     let tasks = TaskRegistry::with_journal(path.clone());
-    assert!(tasks.journal_faulted);
+    assert!(tasks.journal_faulted.load(Ordering::Acquire));
     let (task, report) = proposed(&scene, &tasks);
     let before = scene.tree();
     let approval = consent(&scene, &[ApprovalDecision::Approved]);
@@ -315,6 +317,55 @@ fn rj02_an_unreadable_journal_refuses_commits_and_asks_nothing() {
     );
 }
 
+/// A journal another orceld holds at start no longer refuses commits for the whole session:
+/// the next commit restores it first, and while it is still held that commit is refused as busy,
+/// to be tried again, not as unreadable.
+#[test]
+fn rj02_a_journal_busy_at_start_is_restored_before_the_next_commit() {
+    let scene = Scene::new("rj02-busy-start");
+    let path = journal_path(&scene);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = {
+        let path = path.clone();
+        std::thread::spawn(move || {
+            orcel_journal::with_lock(&path, std::time::Duration::from_secs(5), || {
+                held_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+                Ok(())
+            })
+            .unwrap();
+        })
+    };
+    held_rx.recv().unwrap();
+
+    let tasks = TaskRegistry::with_journal(path.clone());
+    assert!(
+        !tasks.journal_faulted.load(Ordering::Acquire),
+        "busy is not unreadable"
+    );
+    assert!(tasks.journal().is_none());
+    let busy = tasks.journal_ready().unwrap_err();
+    assert_eq!(busy.code, FailureCode::ProviderUnavailable);
+    assert!(busy.message.contains("busy"), "{}", busy.message);
+    assert!(!tasks.journal_faulted.load(Ordering::Acquire));
+
+    // A task this run started while the journal was busy.
+    let (task, _report) = proposed(&scene, &tasks);
+
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    tasks
+        .journal_ready()
+        .expect("restored once the other orceld lets go");
+    assert!(tasks.journal().is_some());
+    tasks.journal_ready().expect("and stays ready");
+    // The restore recorded that task, so a commit that follows has it in the journal.
+    let journaled = std::fs::read_to_string(&path).unwrap();
+    assert!(journaled.contains(&task), "{journaled}");
+}
+
 #[test]
 fn rj02_a_commit_that_cannot_be_journaled_asks_nothing() {
     let scene = Scene::new("rj02-unwritable");
@@ -324,7 +375,7 @@ fn rj02_a_commit_that_cannot_be_journaled_asks_nothing() {
     let tasks = TaskRegistry::new();
     let (task, report) = proposed(&scene, &tasks);
     let mut journaled = tasks;
-    journaled.journal = Some(ReportJournal::new(
+    journaled.journal = OnceLock::from(ReportJournal::new(
         journal_path(&scene),
         exited_owner("this"),
     ));
@@ -895,7 +946,7 @@ fn xs_an_exited_runs_task_is_shown_as_an_earlier_run() {
     snapshot_as(&late, exited_owner("gone-later"));
     assert!(holder.get(&late).is_none());
     assert_eq!(listed(&holder).len(), 1);
-    assert!(holder.journal.as_ref().unwrap().peek_live().is_empty());
+    assert!(holder.journal.get().unwrap().peek_live().is_empty());
 }
 
 #[test]
@@ -946,7 +997,7 @@ fn xs_peek_live_never_writes_and_skips_torn_and_oversized_lines() {
     };
     let journal_bytes = std::fs::read(&path).unwrap();
     let before = listing();
-    let journal = holder.journal.as_ref().unwrap();
+    let journal = holder.journal.get().unwrap();
     for _ in 0..3 {
         let live = journal.peek_live();
         assert_eq!(live.len(), 1, "only the whole, bounded line");
