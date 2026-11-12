@@ -753,3 +753,301 @@ fn rj03_a_reconnecting_session_reads_what_its_crashed_task_did() {
         assert!(refused.message.contains("no task with this id"));
     }
 }
+
+/// The summaries `tasks.list()` returns.
+fn listed(tasks: &TaskRegistry) -> Vec<Value> {
+    tasks.list()["tasks"].as_array().unwrap().clone()
+}
+
+#[test]
+fn xs_another_running_sessions_task_is_shown_with_its_real_state_and_never_acted_on() {
+    let scene = Scene::new("xs-live");
+    let path = journal_path(&scene);
+    // Two orcelds over one journal: both are this test process, as two runs.
+    // The state directory exists first, as in product, so both load the
+    // same fingerprint key.
+    orcel_platform::paths::ensure_private_dir(path.parent().unwrap()).unwrap();
+    let holder = TaskRegistry::with_journal(path.clone());
+    let other = TaskRegistry::with_journal(path.clone());
+    let (task, report) = proposed(&scene, &other);
+    let own = start_q3(&scene, &holder)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let entries = listed(&holder);
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    assert_eq!(entries[0]["task_id"], own.as_str(), "newest first");
+    assert_eq!(entries[0]["owner"], "this_session");
+    assert_eq!(entries[1]["task_id"], task.as_str());
+    assert_eq!(entries[1]["state"], "proposed", "its real state");
+    assert_eq!(entries[1]["owner"], "other_session");
+
+    let record = holder.get(&task).expect("another session's task");
+    assert_eq!(record["state"], "proposed");
+    assert_eq!(record["owner"], "other_session");
+    assert_eq!(record["proposal"]["destination"], "reports/q3.md");
+    for hidden in ["session", "run", "pid"] {
+        assert!(record.get(hidden).is_none(), "{hidden}: {record}");
+    }
+    assert!(
+        holder.lock().iter().all(|known| known.id != task),
+        "shown, never kept in the registry"
+    );
+
+    // No action of the holder finds it: nothing is asked or written.
+    let before = scene.tree();
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    let refusals = [
+        dispatch(
+            &scene.workspace,
+            &approval.broker,
+            &holder,
+            &request(
+                "preview",
+                json!({"task_id": task, "name": "q3.md", "content": report}),
+            ),
+        )
+        .unwrap_err(),
+        dispatch(
+            &scene.workspace,
+            &approval.broker,
+            &holder,
+            &commit_request(&task, &report),
+        )
+        .unwrap_err(),
+        holder.stop(&task, &scene.workspace.id).unwrap_err(),
+    ];
+    for refused in refusals {
+        assert_eq!(
+            refused.code,
+            FailureCode::TargetStale,
+            "{}",
+            refused.message
+        );
+    }
+    assert!(approval.prompts.lock().unwrap().is_empty(), "nothing asked");
+    assert_eq!(scene.tree(), before, "nothing written");
+    // The resume lookup: the same session fingerprint (one key file), yet
+    // the holder answers as for an unknown id.
+    let refused = dispatch(
+        &scene.workspace,
+        &consent(&scene, &[]).broker,
+        &holder,
+        &request("resume_summary", json!({ "task_id": task })),
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::CapabilityDenied);
+    assert!(
+        dispatch(
+            &scene.workspace,
+            &consent(&scene, &[]).broker,
+            &other,
+            &request("resume_summary", json!({ "task_id": task })),
+        )
+        .is_ok(),
+        "its own session still reads it"
+    );
+
+    // The owning session is untouched and sees the holder's task in turn.
+    assert_eq!(other.get(&task).unwrap()["owner"], "this_session");
+    assert_eq!(other.get(&task).unwrap()["state"], "proposed");
+    assert_eq!(other.get(&own).unwrap()["owner"], "other_session");
+
+    // The owner's next step shows up in the holder's view.
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    dispatch(
+        &scene.workspace,
+        &approval.broker,
+        &other,
+        &commit_request(&task, &report),
+    )
+    .expect("the owner commits");
+    assert_eq!(holder.get(&task).unwrap()["state"], "verified");
+    assert_eq!(listed(&holder)[1]["state"], "verified");
+}
+
+#[test]
+fn xs_an_exited_runs_task_is_shown_as_an_earlier_run() {
+    let scene = Scene::new("xs-exited");
+    let path = journal_path(&scene);
+    let scratch = TaskRegistry::new();
+    let snapshot_as = |task: &str, owner: Owner| {
+        let record = scratch
+            .lock()
+            .iter()
+            .find(|known| known.id == task)
+            .cloned()
+            .unwrap();
+        ReportJournal::new(path.clone(), owner).snapshot(&record);
+    };
+    let (task, _) = proposed(&scene, &scratch);
+    snapshot_as(&task, exited_owner("gone"));
+
+    let holder = TaskRegistry::with_journal(path.clone());
+    let record = holder.get(&task).expect("an earlier run's task");
+    assert_eq!(record["owner"], "earlier_run");
+    assert_eq!(record["state"], "failed", "its run ended while it was open");
+    assert_eq!(listed(&holder)[0]["owner"], "earlier_run");
+
+    // An exited run is never shown as a running session's.
+    let (late, _) = proposed(&scene, &scratch);
+    snapshot_as(&late, exited_owner("gone-later"));
+    assert!(holder.get(&late).is_none());
+    assert_eq!(listed(&holder).len(), 1);
+    assert!(holder.journal.as_ref().unwrap().peek_live().is_empty());
+}
+
+#[test]
+fn xs_peek_live_never_writes_and_skips_torn_and_oversized_lines() {
+    use std::io::Write as _;
+    let scene = Scene::new("xs-peek");
+    let path = journal_path(&scene);
+    let holder = TaskRegistry::with_journal(path.clone());
+    let other = TaskRegistry::with_journal(path.clone());
+    let (task, _) = proposed(&scene, &other);
+
+    // A whole line over the line bound, of a live run: never read.
+    let mut big = other.lock()[0].clone();
+    big.id = "rpt-big".to_owned();
+    big.folder = "x".repeat(orcel_journal::MAX_LINE_BYTES);
+    let mut bytes = serde_json::to_vec(&Line::Task {
+        schema: SCHEMA.to_owned(),
+        owner: Owner::current("big-run").unwrap(),
+        task: task_line(&big),
+    })
+    .unwrap();
+    bytes.push(b'\n');
+    // Then a torn last line, as a crash in the middle of an append leaves.
+    bytes.extend_from_slice(br#"{"event":"task","schema":"orcel-report-task/1","owner":{"run":"#);
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(&bytes)
+        .unwrap();
+
+    let dir = path.parent().unwrap().to_path_buf();
+    let listing = || {
+        let mut entries: Vec<(String, u64, SystemTime)> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let meta = entry.metadata().unwrap();
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    meta.len(),
+                    meta.modified().unwrap(),
+                )
+            })
+            .collect();
+        entries.sort();
+        entries
+    };
+    let journal_bytes = std::fs::read(&path).unwrap();
+    let before = listing();
+    let journal = holder.journal.as_ref().unwrap();
+    for _ in 0..3 {
+        let live = journal.peek_live();
+        assert_eq!(live.len(), 1, "only the whole, bounded line");
+        assert_eq!(live[0].id, task);
+        assert_eq!(live[0].state, TaskState::Proposed);
+        assert_eq!(listed(&holder).len(), 1);
+        assert!(holder.get(&task).is_some());
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), journal_bytes);
+    assert_eq!(listing(), before, "no file created, changed or removed");
+}
+
+/// How many times `journal`'s peek has read the journal file.
+fn peek_reads(journal: &ReportJournal) -> usize {
+    journal.peek.lock().unwrap().reads
+}
+
+/// Appends raw bytes to the journal at `path`.
+fn append_raw(path: &Path, bytes: &[u8]) {
+    use std::io::Write as _;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(bytes)
+        .unwrap();
+}
+
+#[test]
+fn xs_a_torn_line_in_the_middle_still_lets_the_peek_cache() {
+    let scene = Scene::new("xs-cache");
+    let path = journal_path(&scene);
+    let scratch = TaskRegistry::new();
+    let task = start_q3(&scene, &scratch)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let record = scratch.lock()[0].clone();
+    // A live run (this process, as another run) wrote the task, a crash
+    // left a torn line, and later appends followed it.
+    let writer = ReportJournal::new(path.clone(), Owner::current("writer-run").unwrap());
+    writer.snapshot(&record);
+    append_raw(
+        &path,
+        br#"{"event":"task","schema":"orcel-report-task/1","ow"#,
+    );
+    append_raw(&path, b"\n");
+    writer.snapshot(&record);
+
+    let peeker = ReportJournal::new(path.clone(), Owner::current("peeker-run").unwrap());
+    for _ in 0..3 {
+        let live = peeker.peek_live();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].id, task);
+    }
+    assert_eq!(peek_reads(&peeker), 1, "an unchanged journal is read once");
+
+    // A torn tail is read again on every call, since it may be completing.
+    append_raw(
+        &path,
+        br#"{"event":"task","schema":"orcel-report-task/1","ow"#,
+    );
+    peeker.peek_live();
+    peeker.peek_live();
+    assert_eq!(peek_reads(&peeker), 3);
+    // Once the line is whole the stamp is trusted again.
+    append_raw(&path, b"\n");
+    peeker.peek_live();
+    peeker.peek_live();
+    assert_eq!(peek_reads(&peeker), 4);
+}
+
+#[test]
+fn xs_a_missing_or_unreadable_journal_is_never_cached_as_empty() {
+    let scene = Scene::new("xs-unreadable");
+    let path = journal_path(&scene);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let peeker = ReportJournal::new(path.clone(), Owner::current("peeker-run").unwrap());
+
+    // Missing: read again on every call.
+    assert!(peeker.peek_live().is_empty());
+    assert!(peeker.peek_live().is_empty());
+    assert_eq!(peek_reads(&peeker), 2);
+
+    // Unreadable (a directory where the journal belongs: its metadata
+    // reads, the file does not): read again on every call.
+    std::fs::create_dir(&path).unwrap();
+    assert!(peeker.peek_live().is_empty());
+    assert!(peeker.peek_live().is_empty());
+    assert_eq!(peek_reads(&peeker), 4, "a failed read is not cached");
+
+    // Once it reads, the other run's task shows.
+    std::fs::remove_dir(&path).unwrap();
+    let scratch = TaskRegistry::new();
+    let task = start_q3(&scene, &scratch)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    ReportJournal::new(path.clone(), Owner::current("writer-run").unwrap())
+        .snapshot(&scratch.lock()[0].clone());
+    let live = peeker.peek_live();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].id, task);
+}

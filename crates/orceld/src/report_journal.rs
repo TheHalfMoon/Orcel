@@ -19,6 +19,11 @@
 //! anything else is `unknown`. Nothing is written to the user's files and
 //! nothing is retried. Tasks of exited runs come back read-only; a task of
 //! an earlier run cannot be previewed or committed again.
+//!
+//! The orceld that holds the app API endpoint also shows the tasks of the
+//! other orcelds still running ([`ReportJournal::peek_live`]): it reads their
+//! newest snapshots without the writer lock and never writes. Those tasks are
+//! shown, never kept in its registry, so nothing in this run can act on them.
 
 use super::{error, Proposal, ReportTask, SourceRecord, Step, TaskState, MAX_STEPS, MAX_TASKS};
 use crate::journal_owner::Owner;
@@ -28,14 +33,20 @@ use orcel_journal::{IntentState, JournalError};
 use orcel_provider_fs::ProviderError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime};
 
 const SCHEMA: &str = "orcel-report-task/1";
 /// How long one append waits for another orceld's line.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// Most tasks of earlier runs a starting orceld shows and keeps.
 pub(super) const MAX_EARLIER_TASKS: usize = MAX_TASKS / 2;
+/// How long [`ReportJournal::peek_live`] trusts that a run is still alive
+/// before it asks the OS again. A run seen exited stays exited.
+const LIVENESS_TTL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct SourceLine {
@@ -192,8 +203,29 @@ pub(super) fn task_line(task: &ReportTask) -> TaskLine {
 /// A task of an earlier run, read-only: its state is never `observed`,
 /// `proposed` or `committing` any more, since its orceld has exited.
 fn restored_task(line: TaskLine, run: &str) -> ReportTask {
-    let mut state = TaskState::from_str(&line.state).unwrap_or(TaskState::Failed);
-    let mut steps: Vec<Step> = line
+    let mut task = live_foreign_task(line, run);
+    if !task.state.is_final() && task.state != TaskState::ApprovalDenied {
+        task.state = TaskState::Failed;
+        task.next_step += 1;
+        task.steps.push(Step {
+            step_id: format!("s{}", task.next_step),
+            kind: "run".to_owned(),
+            outcome: "orceld_run_ended".to_owned(),
+            at_ms: task.updated_at_ms,
+        });
+        if task.steps.len() > MAX_STEPS {
+            task.steps.remove(0);
+        }
+    }
+    task
+}
+
+/// A task of another orceld that still runs, as its newest snapshot says:
+/// its real state, for display only. It is never kept in this run's
+/// registry, so nothing in this run can act on it.
+fn live_foreign_task(line: TaskLine, run: &str) -> ReportTask {
+    let state = TaskState::from_str(&line.state).unwrap_or(TaskState::Failed);
+    let steps: Vec<Step> = line
         .steps
         .into_iter()
         .map(|step| Step {
@@ -203,20 +235,6 @@ fn restored_task(line: TaskLine, run: &str) -> ReportTask {
             at_ms: step.at_ms,
         })
         .collect();
-    let mut next_step = line.next_step;
-    if !state.is_final() && state != TaskState::ApprovalDenied {
-        state = TaskState::Failed;
-        next_step += 1;
-        steps.push(Step {
-            step_id: format!("s{next_step}"),
-            kind: "run".to_owned(),
-            outcome: "orceld_run_ended".to_owned(),
-            at_ms: line.updated_at_ms,
-        });
-        if steps.len() > MAX_STEPS {
-            steps.remove(0);
-        }
-    }
     let source = |source: SourceLine| SourceRecord {
         path: source.path,
         sha256: source.sha256,
@@ -244,7 +262,7 @@ fn restored_task(line: TaskLine, run: &str) -> ReportTask {
         check: line.check,
         state,
         steps,
-        next_step,
+        next_step: line.next_step,
         created_at_ms: line.created_at_ms,
         updated_at_ms: line.updated_at_ms,
         session: line.session,
@@ -339,6 +357,48 @@ pub(super) fn reconcile(commit: &CommitLine) -> Reconciled {
 pub(super) struct ReportJournal {
     path: PathBuf,
     owner: Owner,
+    /// What [`Self::peek_live`] last read, so a repeated `task.list` does
+    /// not re-read an unchanged journal or ask the OS about every run.
+    peek: Mutex<PeekCache>,
+}
+
+/// The cache behind [`ReportJournal::peek_live`].
+#[derive(Default)]
+struct PeekCache {
+    /// The journal's length and modified time when `snapshots` was read;
+    /// `None` reads it again.
+    stamp: Option<(u64, SystemTime)>,
+    /// The newest snapshot of each other run's task, in journal order.
+    snapshots: Vec<(Owner, TaskLine)>,
+    /// Runs seen exited, for good (a run id is never reused).
+    exited: Vec<String>,
+    /// Runs seen alive, and when.
+    alive: Vec<(String, Instant)>,
+    /// How many times the journal was read, for tests of the cache.
+    reads: usize,
+}
+
+impl PeekCache {
+    /// Whether `owner`'s run has exited, asking the OS at most once per
+    /// [`LIVENESS_TTL`] about a run still alive.
+    fn has_exited(&mut self, owner: &Owner, now: Instant) -> bool {
+        if self.exited.contains(&owner.run) {
+            return true;
+        }
+        if let Some((_, seen)) = self.alive.iter().find(|(run, _)| *run == owner.run) {
+            if now.saturating_duration_since(*seen) < LIVENESS_TTL {
+                return false;
+            }
+        }
+        self.alive.retain(|(run, _)| *run != owner.run);
+        let gone = owner.has_exited();
+        if gone {
+            self.exited.push(owner.run.clone());
+        } else {
+            self.alive.push((owner.run.clone(), now));
+        }
+        gone
+    }
 }
 
 /// What a starting orceld found in the journal.
@@ -357,7 +417,126 @@ fn unavailable() -> ProviderError {
 
 impl ReportJournal {
     pub(super) fn new(path: PathBuf, owner: Owner) -> Self {
-        Self { path, owner }
+        Self {
+            path,
+            owner,
+            peek: Mutex::new(PeekCache::default()),
+        }
+    }
+
+    /// The tasks of the other orcelds still running, from their newest
+    /// snapshots, with their real states. Read-only: the journal is read
+    /// without the writer lock (an append is one write and a compaction an
+    /// atomic rename, so a reader sees whole lines and at most a torn last
+    /// one, which is skipped) and nothing is ever written. A line over
+    /// [`orcel_journal::MAX_LINE_BYTES`], a line it cannot read and a journal
+    /// over [`orcel_journal::MAX_JOURNAL_BYTES`] are skipped: a damaged
+    /// journal shows fewer tasks, never an error. This run's own lines are
+    /// left out, since its registry holds them.
+    pub(super) fn peek_live(&self) -> Vec<ReportTask> {
+        let mut cache = self
+            .peek
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let stamp = std::fs::metadata(&self.path).ok().map(|meta| {
+            (
+                meta.len(),
+                meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            )
+        });
+        if stamp.is_none() || stamp != cache.stamp {
+            let (snapshots, cacheable) = self.read_others();
+            cache.reads += 1;
+            // A failed read, or a torn last line that may still be
+            // completing at this length, is read again next time rather
+            // than trusted under this stamp.
+            cache.stamp = if cacheable { stamp } else { None };
+            let known = |run: &String| snapshots.iter().any(|(owner, _)| owner.run == *run);
+            cache.exited.retain(|run| known(run));
+            cache.alive.retain(|(run, _)| known(run));
+            cache.snapshots = snapshots;
+        }
+        let now = Instant::now();
+        let snapshots = std::mem::take(&mut cache.snapshots);
+        let live = snapshots
+            .iter()
+            .filter(|(owner, _)| !cache.has_exited(owner, now))
+            .map(|(owner, task)| live_foreign_task(task.clone(), &owner.run))
+            .collect();
+        cache.snapshots = snapshots;
+        live
+    }
+
+    /// The newest snapshot of each task other runs wrote, and whether the
+    /// result may be cached under the journal's stamp: not after a failed
+    /// open or read, nor when bytes follow the final newline (a torn last
+    /// line, possibly still being appended). A line in the middle that does
+    /// not parse is skipped and does not stop caching. Never takes the
+    /// writer lock, never writes.
+    fn read_others(&self) -> (Vec<(Owner, TaskLine)>, bool) {
+        // The journal is held open only for this read. On Windows,
+        // `File::open` shares read, write and delete, so a writer's
+        // atomic-rename rewrite (`orcel_journal::rewrite`, under its lock)
+        // still replaces it on NTFS meanwhile. On a filesystem without
+        // POSIX rename semantics a `restore` that renames while this read
+        // holds the file could fail; that orceld then refuses commits and
+        // retries at its next start.
+        let Ok(file) = std::fs::File::open(&self.path) else {
+            return (Vec::new(), false);
+        };
+        let mut text = Vec::new();
+        if file
+            .take(orcel_journal::MAX_JOURNAL_BYTES + 1)
+            .read_to_end(&mut text)
+            .is_err()
+        {
+            return (Vec::new(), false);
+        }
+        if text.len() as u64 > orcel_journal::MAX_JOURNAL_BYTES {
+            // Over the bound: shown as no tasks until the journal changes.
+            return (Vec::new(), true);
+        }
+        // As in `orcel_journal::read_lines`: zero bytes are never part of a
+        // written line.
+        let trim = |raw: &[u8]| -> usize {
+            raw.iter()
+                .rposition(|byte| *byte != 0)
+                .map_or(0, |last| last + 1)
+        };
+        let tail = match text.iter().rposition(|byte| *byte == b'\n') {
+            Some(last) => &text[last + 1..],
+            None => &text[..],
+        };
+        let torn = !tail[..trim(tail)].iter().all(u8::is_ascii_whitespace);
+        let mut snapshots: Vec<(Owner, TaskLine)> = Vec::new();
+        let mut index: HashMap<String, usize> = HashMap::new();
+        for raw in text.split(|byte| *byte == b'\n') {
+            let raw = &raw[..trim(raw)];
+            // The bound counts the newline, as at append.
+            if raw.iter().all(u8::is_ascii_whitespace) || raw.len() >= orcel_journal::MAX_LINE_BYTES
+            {
+                continue;
+            }
+            match serde_json::from_slice::<Line>(raw) {
+                Ok(Line::Task {
+                    schema,
+                    owner,
+                    task,
+                }) if schema == SCHEMA && owner.run != self.owner.run => {
+                    match index.get(&task.id) {
+                        Some(&slot) => snapshots[slot] = (owner, task),
+                        None => {
+                            index.insert(task.id.clone(), snapshots.len());
+                            snapshots.push((owner, task));
+                        }
+                    }
+                }
+                // Another event, or a line that does not parse (the torn
+                // tail, or a line a crash left in the middle): skipped.
+                _ => {}
+            }
+        }
+        (snapshots, !torn)
     }
 
     fn line(&self, line: &Line) -> Result<(), JournalError> {

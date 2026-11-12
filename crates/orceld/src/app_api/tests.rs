@@ -2386,6 +2386,68 @@ fn cr398_touch_refreshes_the_socket_and_lock_times() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The endpoint holder's `task.get` and `task.list` show another running
+/// session's task from the shared journal, owned `other_session`, and never
+/// its session fingerprint, run id or pid.
+#[test]
+fn task_get_shows_another_sessions_task_without_its_session() {
+    use crate::report_task::{tests as journey, TaskRegistry};
+
+    let scene = journey::Scene::new("app-api-xs");
+    let path = scene.dir.join("state").join("report-tasks.jsonl");
+    orcel_platform::paths::ensure_private_dir(path.parent().unwrap()).unwrap();
+    let holder = Arc::new(TaskRegistry::with_journal(path.clone()));
+    let other = TaskRegistry::with_journal(path.clone());
+    let started = journey::start_q3(&scene, &other);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    let limits = test_limits();
+    let shared = Arc::new(Shared::new(
+        facts(),
+        Arc::new(EventLog::new(limits.ring_capacity, new_epoch())),
+        holder,
+        None,
+        limits,
+        "test".into(),
+    ));
+    let peer = own_peer();
+
+    let got = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("task.get", json!({ "task_id": task })),
+    ));
+    assert_eq!(got["ok"], true, "{got}");
+    let record = &got["result"];
+    assert_eq!(record["task_id"], task.as_str());
+    assert_eq!(record["state"], "observed");
+    assert_eq!(record["owner"], "other_session");
+    for hidden in ["session", "run", "pid"] {
+        assert!(record.get(hidden).is_none(), "{hidden}: {record}");
+    }
+    let listed = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("task.list", json!({})),
+    ));
+    assert_eq!(listed["result"]["tasks"][0]["task_id"], task.as_str());
+    assert_eq!(listed["result"]["tasks"][0]["owner"], "other_session");
+
+    // The journal holds the task's keyed session fingerprint; no frame
+    // carries it.
+    let fingerprint = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find_map(|line| line["task"]["session"].as_str().map(str::to_owned))
+        .expect("the journal keeps the session fingerprint");
+    assert!(!fingerprint.is_empty());
+    for frame in [&got, &listed] {
+        let text = frame.to_string();
+        assert!(!text.contains(&fingerprint), "{text}");
+        assert!(!text.contains("\"session\""), "{text}");
+    }
+}
+
 #[test]
 fn sg126_task_list_get_and_events_over_the_os_transport() {
     use crate::report_task::{self, tests as journey};
@@ -2434,6 +2496,7 @@ fn sg126_task_list_get_and_events_over_the_os_transport() {
     assert_eq!(list["result"]["tasks"][0]["task_id"], task.as_str());
     assert_eq!(list["result"]["tasks"][0]["state"], "verified");
     assert_eq!(list["result"]["tasks"][0]["kind"], "report");
+    assert_eq!(list["result"]["tasks"][0]["owner"], "this_session");
     let got = client.call("task.get", json!({ "task_id": task }));
     assert_eq!(got["ok"], true, "{got}");
     let record = &got["result"];
