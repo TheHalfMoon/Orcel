@@ -199,9 +199,14 @@ mod tests {
     fn concurrent_records_stay_whole_lines() {
         let base = sandbox("concurrent");
         let path = base.join("audit.jsonl");
-        let writers: Vec<_> = (0..8)
-            .map(|writer| {
-                let logger = AuditLogger::new(&path).expect("audit");
+        // Every logger is made before any writes, as each orceld makes its own at start.
+        let loggers: Vec<AuditLogger> = (0..8)
+            .map(|_| AuditLogger::new(&path).expect("audit"))
+            .collect();
+        let writers: Vec<_> = loggers
+            .into_iter()
+            .enumerate()
+            .map(|(writer, logger)| {
                 std::thread::spawn(move || {
                     for index in 0..200 {
                         let req = RequestEnvelope {
