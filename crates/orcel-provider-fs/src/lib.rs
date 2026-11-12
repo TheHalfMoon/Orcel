@@ -1108,8 +1108,9 @@ mod win {
 
     /// The volume serial number and 128-bit file id of an open handle (`FILE_ID_INFO`), which
     /// ReFS needs: its ids don't fit the 64-bit index. A file system that doesn't support that
-    /// class (`ERROR_INVALID_PARAMETER`) gets the 32-bit serial and 64-bit index instead; one
-    /// volume always answers the same way, so ids from it stay comparable.
+    /// class (the same codes `set_delete_on_close` treats as unsupported) gets the 32-bit serial
+    /// and 64-bit index instead; one volume always answers the same way, so ids from it stay
+    /// comparable.
     pub(crate) fn file_id(handle: RawHandle) -> io::Result<(u64, u128)> {
         let mut ex = FileIdInfo::default();
         // SAFETY: `handle` is an open handle owned by the caller for this call, and `ex` is a
@@ -1127,7 +1128,12 @@ mod win {
         }
         let error = io::Error::last_os_error();
         const ERROR_INVALID_PARAMETER: i32 = 87;
-        if error.raw_os_error() != Some(ERROR_INVALID_PARAMETER) {
+        const ERROR_NOT_SUPPORTED: i32 = 50;
+        const ERROR_INVALID_FUNCTION: i32 = 1;
+        if !matches!(
+            error.raw_os_error(),
+            Some(ERROR_INVALID_PARAMETER | ERROR_NOT_SUPPORTED | ERROR_INVALID_FUNCTION)
+        ) {
             return Err(error);
         }
         let mut info = ByHandleFileInformation::default();
@@ -1143,8 +1149,8 @@ mod win {
     }
 
     /// Opens the entry at `path` itself (a link is opened, not followed) only to read its
-    /// attributes and id.
-    pub(crate) fn open_for_identity(path: &Path) -> io::Result<RenameHandle> {
+    /// attributes and id. Its own type, so nothing can rename or delete through it.
+    pub(crate) fn open_for_identity(path: &Path) -> io::Result<IdentityHandle> {
         let wide: Vec<u16> = path
             .as_os_str()
             .encode_wide()
@@ -1166,7 +1172,30 @@ mod win {
         if raw == INVALID_HANDLE_VALUE {
             return Err(io::Error::last_os_error());
         }
-        Ok(RenameHandle(OwnedHandle(raw)))
+        Ok(IdentityHandle(OwnedHandle(raw)))
+    }
+
+    /// One entry opened with attribute access only: it can be identified, never renamed or
+    /// deleted.
+    pub(crate) struct IdentityHandle(OwnedHandle);
+
+    impl IdentityHandle {
+        /// Whether the opened entry is itself a link, junction or other reparse point.
+        pub(crate) fn is_reparse_point(&self) -> io::Result<bool> {
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+            let mut info = ByHandleFileInformation::default();
+            // SAFETY: the handle is open for this call, and `info` is a properly sized,
+            // writable BY_HANDLE_FILE_INFORMATION.
+            if unsafe { GetFileInformationByHandle(self.0 .0, &mut info) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(info.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        }
+
+        /// The volume and file id of the opened entry.
+        pub(crate) fn file_id(&self) -> io::Result<(u64, u128)> {
+            file_id(self.0 .0 as RawHandle)
+        }
     }
 
     /// The number of names the open file has.

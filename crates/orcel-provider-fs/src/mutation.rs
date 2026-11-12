@@ -664,28 +664,33 @@ impl FsProvider {
         let back = at::rename_no_replace(&target_dir, &to_name, &source_dir, &from_name)
             .and_then(|()| final_path_from_open_file(&source_dir, from_parent))
             .map(|parent| parent.join(from.file_name().unwrap_or_default()));
+        // Another process that can write the destination folder could swap in a different
+        // entry between the stat above and the rename back, so the entry now at the source
+        // name is called the moved one only when its device and inode still match.
         Err(match back {
-            Ok(returned)
-                if self.ensure_not_git(&returned).is_ok()
-                    && at::stat_entry(&source_dir, &from_name).ok().flatten() == Some(before) =>
-            {
-                ProviderError::new(
-                    FailureCode::PostconditionFailed,
+            Ok(returned) => {
+                let verified =
+                    at::stat_entry(&source_dir, &from_name).ok().flatten() == Some(before);
+                let protected = if self.ensure_not_git(&returned).is_err() {
+                    " (that path is now Git data or outside the workspace)"
+                } else {
+                    ""
+                };
+                let message = if verified {
                     format!(
-                        "the moved entry did not verify at {shown} ({}) and was moved back to {}",
+                        "the moved entry did not verify at {shown} ({}) and was moved back to {}{protected}; verified as the moved entry",
                         refusal.message,
                         returned.display()
-                    ),
-                )
+                    )
+                } else {
+                    format!(
+                        "the moved entry did not verify at {shown} ({}); an entry was moved back to {}{protected}; it is not verified to be the one that was moved",
+                        refusal.message,
+                        returned.display()
+                    )
+                };
+                ProviderError::new(FailureCode::PostconditionFailed, message)
             }
-            Ok(returned) => ProviderError::new(
-                FailureCode::PostconditionFailed,
-                format!(
-                    "the moved entry did not verify at {shown} ({}) and, moved back, is at {}",
-                    refusal.message,
-                    returned.display()
-                ),
-            ),
             Err(back) => ProviderError::new(
                 FailureCode::PostconditionFailed,
                 format!(
