@@ -18,7 +18,9 @@
 // one action, and compares the window's binding (pid, start generation and
 // nonce) with the one the approval was armed on. Windows is unchanged.
 
-use crate::{CapturedImage, NativeElement, NativeProcess, NativeWindow, UiaAdapter, UiaError};
+use crate::{
+    CapturedImage, NativeElement, NativeProcess, NativeWindow, SignatureState, UiaAdapter, UiaError,
+};
 use orcel_contracts::FailureCode;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -1495,6 +1497,8 @@ mod platform {
                         "macos-bsd-start-time" => "macos-bsd-start-time",
                         _ => "computer-host",
                     },
+                    // The host protocol reports no signature; prompts say it was not checked.
+                    signature: SignatureState::Unknown,
                 })
                 .collect())
         }

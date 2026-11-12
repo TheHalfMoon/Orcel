@@ -48,18 +48,19 @@ fn registry() -> &'static Mutex<UiaRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(UiaRegistry::new()))
 }
 
-/// The prompt, naming the application whose window the action targets, from the registry's
-/// record of that window. A window the registry no longer knows gets no line; its action is
+/// The prompt, naming the application whose window the action targets and who signed its
+/// image file (display only), from the registry's record of that window. A window the registry no longer knows gets no line; its action is
 /// refused later by its own binding check.
 fn with_target_application(
     prompt: ApprovalPrompt,
     window_id: &str,
 ) -> Result<ApprovalPrompt, ProviderError> {
     Ok(match locked_registry()?.window_application(window_id) {
-        Some((executable, window_title)) => {
+        Some((executable, window_title, signature)) => {
             prompt.for_application(orcel_approval::TargetApplication {
                 executable,
                 window_title,
+                signature,
             })
         }
         None => prompt,

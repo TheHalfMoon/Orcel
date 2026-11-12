@@ -4,7 +4,7 @@
 //! needs no live desktop and runs on every OS.
 
 use super::*;
-use orcel_approval::{ApprovalDecision, NoPresenceVerifier, TargetApplication};
+use orcel_approval::{ApprovalDecision, NoPresenceVerifier, SignatureState, TargetApplication};
 use orcel_provider_uia::{NativeElement, NativeProcess, NativeWindow, UiaAdapter, UiaError};
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +25,9 @@ impl UiaAdapter for OneWindow {
             session_verified: true,
             start_generation: 77,
             generation_source: "fake-adapter",
+            signature: SignatureState::Verified {
+                subject: "Microsoft Windows".into(),
+            },
         }])
     }
 
@@ -123,6 +126,9 @@ fn a_desktop_prompt_names_the_target_application_through_orceld() {
         Some(TargetApplication {
             executable: "notepad.exe".into(),
             window_title: "Quarterly notes".into(),
+            signature: SignatureState::Verified {
+                subject: "Microsoft Windows".into(),
+            },
         })
     );
     drop(seen);

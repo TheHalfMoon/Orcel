@@ -9,6 +9,7 @@
 //! the registry and local IPC bind to: a pid with its start generation, the
 //! current user and login session, and the kernel-reported credentials of a
 //! local socket peer.
+//! `signature` reports, for display only, who signed an executable image file.
 
 #[cfg(any(windows, test))]
 mod acl;
@@ -20,6 +21,7 @@ pub mod paths;
 pub mod peer;
 pub mod process;
 pub mod session;
+pub mod signature;
 pub mod stores;
 
 pub use paths::PlatformError;

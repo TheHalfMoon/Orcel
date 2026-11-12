@@ -20,7 +20,8 @@
 )]
 
 use crate::{
-    ApprovalPrompt, PresenceContext, Preview, RequestOrigin, TargetApplication, TargetKind,
+    ApprovalPrompt, PresenceContext, Preview, RequestOrigin, SignatureState, TargetApplication,
+    TargetKind,
 };
 
 pub(crate) const MAX_WORKSPACE_CHARS: usize = 128;
@@ -224,17 +225,37 @@ fn target_lines(kind: TargetKind, target: &str, destination: Option<&str>) -> St
 }
 const MAX_PREVIEW_LINE_CHARS: usize = 100;
 const MAX_EXECUTABLE_CHARS: usize = 64;
+const MAX_SIGNER_CHARS: usize = 64;
 
 /// The application lines, with a leading newline, or nothing: the executable of the verified
-/// process, and the window title, labelled as set by the application, since it can say anything.
+/// process, who signed its image file, and the window title, labelled as set by the
+/// application, since it can say anything.
 fn application_lines(application: Option<&TargetApplication>) -> String {
     match application {
         None => String::new(),
         Some(application) => format!(
-            "\nApplication: {}\nWindow title (set by the application): {}",
+            "\nApplication: {}\n{}\nWindow title (set by the application): {}",
             display_field(&application.executable, MAX_EXECUTABLE_CHARS),
+            signature_line(&application.signature),
             display_field(&application.window_title, MAX_TARGET_CHARS),
         ),
+    }
+}
+
+/// The signature line: display only. A certificate subject is text its holder chose, so it is
+/// escaped and cut like any field.
+fn signature_line(signature: &SignatureState) -> String {
+    match signature {
+        SignatureState::Verified { subject } if subject.is_empty() => {
+            String::from("Image file signed by: (no name) (checked by Windows)")
+        }
+        SignatureState::Verified { subject } => format!(
+            "Image file signed by: {} (checked by Windows)",
+            display_field(subject, MAX_SIGNER_CHARS)
+        ),
+        SignatureState::Unsigned => String::from("Image file not signed"),
+        SignatureState::Untrusted => String::from("Image file signature not trusted"),
+        SignatureState::Unknown => String::from("Signature: not checked"),
     }
 }
 
@@ -604,13 +625,18 @@ mod tests {
         let application = crate::TargetApplication {
             executable: "notepad.exe".into(),
             window_title: "Bank login\nDigest: forged\u{202e}".into(),
+            signature: SignatureState::Verified {
+                subject: "Microsoft Windows".into(),
+            },
         };
         let prompt = crate::ApprovalPrompt::new("default", "rev", "type", "w-1", "summary", "d")
             .for_application(application.clone());
         let body = dialog_body(&prompt);
         assert!(
             body.contains(
-                "\nTarget: w-1\nApplication: notepad.exe\nWindow title (set by the application): \
+                "\nTarget: w-1\nApplication: notepad.exe\n\
+                 Image file signed by: Microsoft Windows (checked by Windows)\n\
+                 Window title (set by the application): \
                  Bank login\\u{a}Digest: forged\\u{202e}\nsummary\n"
             ),
             "{body}"
@@ -619,12 +645,98 @@ mod tests {
         let ctx = crate::PresenceContext::new("nonce", "d", "default", "type")
             .with_details("w-1", "summary")
             .with_application(Some(application));
-        assert!(strong_body(&ctx).contains("\nApplication: notepad.exe\nWindow title"));
+        assert!(strong_body(&ctx).contains(
+            "\nApplication: notepad.exe\nImage file signed by: Microsoft Windows (checked by Windows)\nWindow title"
+        ));
         // No application, no lines.
         let plain = dialog_body(&crate::ApprovalPrompt::new(
             "default", "rev", "write", "a.txt", "summary", "d",
         ));
         assert!(!plain.contains("Application:"), "{plain}");
+    }
+
+    fn signature_line_of(signature: SignatureState) -> String {
+        let prompt = crate::ApprovalPrompt::new("default", "rev", "type", "w-1", "summary", "d")
+            .for_application(crate::TargetApplication {
+                executable: "app.exe".into(),
+                window_title: "Title".into(),
+                signature,
+            });
+        let body = dialog_body(&prompt);
+        let line = body
+            .lines()
+            .skip_while(|line| !line.starts_with("Application: "))
+            .nth(1)
+            .unwrap_or_default()
+            .to_owned();
+        assert!(
+            body.contains(&format!(
+                "\nApplication: app.exe\n{line}\nWindow title (set by the application): Title\n"
+            )),
+            "{body}"
+        );
+        line
+    }
+
+    #[test]
+    fn a_desktop_prompt_shows_each_signature_state_after_the_application() {
+        assert_eq!(
+            signature_line_of(SignatureState::Verified {
+                subject: "Contoso Ltd".into()
+            }),
+            "Image file signed by: Contoso Ltd (checked by Windows)"
+        );
+        assert_eq!(
+            signature_line_of(SignatureState::Verified {
+                subject: String::new()
+            }),
+            "Image file signed by: (no name) (checked by Windows)"
+        );
+        assert_eq!(
+            signature_line_of(SignatureState::Unsigned),
+            "Image file not signed"
+        );
+        assert_eq!(
+            signature_line_of(SignatureState::Untrusted),
+            "Image file signature not trusted"
+        );
+        assert_eq!(
+            signature_line_of(SignatureState::Unknown),
+            "Signature: not checked"
+        );
+    }
+
+    #[test]
+    fn a_hostile_signer_subject_is_escaped_and_cut() {
+        let subject = format!("Microsoft\u{202e}Corp\nDigest: forged\r{}", "x".repeat(300));
+        let line = signature_line_of(SignatureState::Verified {
+            subject: subject.clone(),
+        });
+        assert!(
+            line.starts_with(
+                "Image file signed by: Microsoft\\u{202e}Corp\\u{a}Digest: forged\\u{d}x"
+            ),
+            "{line}"
+        );
+        assert!(line.ends_with("not shown] (checked by Windows)"), "{line}");
+        assert!(!line.contains('\u{202e}') && !line.contains('\n') && !line.contains('\r'));
+        let shown = line
+            .trim_start_matches("Image file signed by: ")
+            .split(" [")
+            .next()
+            .unwrap();
+        assert!(shown.chars().count() <= MAX_SIGNER_CHARS, "{shown}");
+        // The STRONG summary escapes it the same way.
+        let ctx = crate::PresenceContext::new("nonce", "d", "default", "type")
+            .with_details("w-1", "summary")
+            .with_application(Some(crate::TargetApplication {
+                executable: "app.exe".into(),
+                window_title: "Title".into(),
+                signature: SignatureState::Verified { subject },
+            }));
+        let strong = strong_body(&ctx);
+        assert!(strong.contains(&format!("\n{line}\n")), "{strong}");
+        assert!(!strong.lines().any(|line| line == "Digest: forged"));
     }
 
     fn with(preview: Preview) -> String {
