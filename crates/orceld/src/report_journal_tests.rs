@@ -351,6 +351,9 @@ fn rj02_a_journal_busy_at_start_is_restored_before_the_next_commit() {
     assert!(busy.message.contains("busy"), "{}", busy.message);
     assert!(!tasks.journal_faulted.load(Ordering::Acquire));
 
+    // A task this run started while the journal was busy.
+    let (task, _report) = proposed(&scene, &tasks);
+
     release_tx.send(()).unwrap();
     holder.join().unwrap();
     tasks
@@ -358,6 +361,9 @@ fn rj02_a_journal_busy_at_start_is_restored_before_the_next_commit() {
         .expect("restored once the other orceld lets go");
     assert!(tasks.journal().is_some());
     tasks.journal_ready().expect("and stays ready");
+    // The restore recorded that task, so a commit that follows has it in the journal.
+    let journaled = std::fs::read_to_string(&path).unwrap();
+    assert!(journaled.contains(&task), "{journaled}");
 }
 
 #[test]

@@ -396,16 +396,20 @@ impl TaskRegistry {
     /// earlier runs' tasks it brings back. Ready when there is a journal to record a commit in
     /// (or none is kept, as in unit tests); still busy, or now unreadable, otherwise.
     fn journal_ready(&self) -> Result<(), ProviderError> {
-        if self.journal_faulted.load(Ordering::Acquire) {
-            return Err(error(
+        let unreadable = || {
+            error(
                 FailureCode::ProviderUnavailable,
                 "the report task journal is unreadable; report commits are refused until it is repaired",
-            ));
-        }
+            )
+        };
         let mut busy = self
             .busy_journal
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Read under the lock, so a restore that just failed is seen here.
+        if self.journal_faulted.load(Ordering::Acquire) {
+            return Err(unreadable());
+        }
         let Some(report_journal) = busy.take() else {
             return Ok(());
         };
@@ -413,11 +417,22 @@ impl TaskRegistry {
             Ok(restored) => {
                 {
                     let mut tasks = self.lock();
-                    for task in restored.tasks {
-                        if tasks.len() < MAX_TASKS && !tasks.iter().any(|held| held.id == task.id) {
-                            tasks.push(task);
-                        }
+                    // This run's tasks were not journaled while it was busy: record them
+                    // now, so a commit that follows has its task in the journal.
+                    for task in tasks.iter().filter(|task| task.run == self.seed) {
+                        report_journal.snapshot(task);
                     }
+                    // The registry is oldest first and the earlier runs' tasks are older
+                    // than this run's, so they go in front; past the bound the oldest go.
+                    let mut merged: Vec<ReportTask> = restored
+                        .tasks
+                        .into_iter()
+                        .filter(|task| !tasks.iter().any(|held| held.id == task.id))
+                        .collect();
+                    merged.append(&mut tasks);
+                    let excess = merged.len().saturating_sub(MAX_TASKS);
+                    merged.drain(..excess);
+                    *tasks = merged;
                 }
                 let _ = self.journal.set(report_journal);
                 eprintln!("orceld report journal: restored after being busy at start");
@@ -433,10 +448,7 @@ impl TaskRegistry {
             Err(failure) => {
                 eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
                 self.journal_faulted.store(true, Ordering::Release);
-                Err(error(
-                    FailureCode::ProviderUnavailable,
-                    "the report task journal is unreadable; report commits are refused until it is repaired",
-                ))
+                Err(unreadable())
             }
         }
     }
