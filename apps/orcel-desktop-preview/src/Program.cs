@@ -928,7 +928,34 @@ namespace Orcel.DesktopPreview
             return !installed;
         }
 
+        /// How many entries a read-only answer lists under `key` (`entries` of
+        /// `approval.history`, `tasks` of `task.list`), or null without a usable answer.
+        internal static int? Listed(Dictionary<string, object> result, string key)
+        {
+            object items;
+            if (result == null || !result.TryGetValue(key, out items) || !(items is IEnumerable) || items is string) return null;
+            int count = 0;
+            foreach (object item in (IEnumerable)items) if (item is Dictionary<string, object>) count++;
+            return count;
+        }
+
+        /// Whether Orcel has done anything yet: a recorded approval decision or a report task
+        /// says so. Null when neither could be read.
+        internal static bool? Tried(int? decisions, int? tasks)
+        {
+            if ((decisions ?? 0) > 0 || (tasks ?? 0) > 0) return true;
+            if (decisions == null && tasks == null) return null;
+            return false;
+        }
+
         internal static string Text(bool installed, ClientState clients, int count)
+        {
+            return Text(installed, clients, count, null, null);
+        }
+
+        /// `workspaces` is how many folders Orcel may use and `tried` whether it has done
+        /// anything yet; null means this app couldn't tell, and the step says so.
+        internal static string Text(bool installed, ClientState clients, int count, int? workspaces, bool? tried)
         {
             StringBuilder text = new StringBuilder("Getting started with Orcel:");
             text.Append(installed
@@ -942,12 +969,25 @@ namespace Orcel.DesktopPreview
                 text.Append("\n2. Connect an AI client: none is connected now. Type connect for the setup to paste into your client, then restart the client.");
             else
                 text.Append("\n2. Connect an AI client: this app couldn't check. Type connect for the setup to paste into your client, then restart the client.");
-            text.Append("\n3. Choose a folder Orcel may work in: in a terminal, run orcel workspace add <id> <folder> (type workspaces to see them; this app never adds folders).");
-            text.Append("\n4. Try it: ask your client to do something in that folder. When an action needs your approval, Orcel asks in its own prompt; type history to see the decisions.");
+            const string addFolder = "in a terminal, run orcel workspace add <id> <folder> (type workspaces to see them; this app never adds folders).";
+            if (installed && workspaces > 0)
+                text.Append("\n3. Choose a folder Orcel may work in: done, " + workspaces + (workspaces == 1 ? " folder is" : " folders are") + " set up (type workspaces to see them).");
+            else if (installed && workspaces == 0)
+                text.Append("\n3. Choose a folder Orcel may work in: none yet; " + addFolder);
+            else
+                text.Append("\n3. Choose a folder Orcel may work in: " + addFolder);
+            const string tryIt = "ask your client to do something in that folder. When an action needs your approval, Orcel asks in its own prompt; type history to see the decisions.";
+            if (installed && tried == true)
+                text.Append("\n4. Try it: done, Orcel has recorded work (type history or tasks to see it).");
+            else
+                text.Append("\n4. Try it: " + tryIt);
             text.Append("\nAt any time: previews sizes hides content in approval prompts, and stop control or revoke all take authority away.");
             string next = !installed ? "install Orcel (step 1)."
                 : clients != ClientState.Connected ? "connect a client (step 2)."
-                : "choose a folder (step 3) if you haven't, then try it (step 4).";
+                : workspaces == 0 ? "choose a folder (step 3)."
+                : workspaces == null ? "choose a folder (step 3) if you haven't, then try it (step 4)."
+                : tried == true ? "nothing; Orcel is set up. Type help for what this app shows."
+                : "try it (step 4).";
             text.Append("\nNext: " + next);
             return text.ToString();
         }
@@ -960,8 +1000,19 @@ namespace Orcel.DesktopPreview
             if (launch && !ShowAtLaunch(installed)) return null;
             int count = 0;
             ClientState clients = installed ? Clients(AppApi.Call("clients.list", null), out count) : ClientState.Unknown;
-            return Text(installed, clients, count);
+            if (!installed) return Text(installed, clients, count);
+            // Read only: the same fixed `workspace list` the workspaces command runs, and the
+            // app API's approval history and task list.
+            int? workspaces = null;
+            try { workspaces = Interpret.WorkspaceCount(LocalHost.Query(SafeCommand.Workspaces, WorkspacesTimeoutMs)); }
+            catch (Exception) { workspaces = null; }
+            bool? tried = Tried(Listed(AppApi.Call("approval.history", null), "entries"), Listed(AppApi.Call("task.list", null), "tasks"));
+            return Text(installed, clients, count, workspaces, tried);
         }
+
+        /// Listing workspaces asks the runtime about each one's trust; the guided start waits
+        /// less than the workspaces command does.
+        private const int WorkspacesTimeoutMs = 30000;
     }
 
     /// How to connect a local AI client: the setup to paste into the client, with this
@@ -1331,6 +1382,26 @@ namespace Orcel.DesktopPreview
             if (total > shown) text.Append("\n(" + (total - shown) + " more not shown; run orcel workspace list in a terminal)");
             text.Append("\nTo add or remove a folder, or change its trust, use orcel workspace in a terminal. This app never grants a folder.");
             return text.ToString();
+        }
+
+        /// How many workspaces `orcel workspace list --json` reports, or null when it gave no
+        /// usable answer.
+        internal static int? WorkspaceCount(CliResult result)
+        {
+            if (result == null || result.FailedToStart || result.TimedOut) return null;
+            Dictionary<string, object> answer = Parse(result.Stdout);
+            if (Refusal(result, answer) != null) return null;
+            Dictionary<string, object> json = Ok(result, answer);
+            object raw;
+            object[] rows = json != null && json.TryGetValue("workspaces", out raw) ? raw as object[] : null;
+            if (rows == null) return null;
+            int count = 0;
+            foreach (object item in rows)
+            {
+                if (!(item is Dictionary<string, object>)) return null;
+                count++;
+            }
+            return count;
         }
 
         /// `orcel full-control status --json`.
@@ -1924,7 +1995,8 @@ namespace Orcel.DesktopPreview
             // start a second revoke, a second Windows Hello prompt or a second wait on the lock.
             bool guarded = command == SafeCommand.StopControl || command == SafeCommand.RevokeAll || command == SafeCommand.PreviewsSizes
                 || command == SafeCommand.Workspaces;
-            if (guarded && running.Contains(command))
+            // setup lists workspaces too, so the two share one wait on the runtime's lock.
+            if (guarded && (running.Contains(command) || (command == SafeCommand.Workspaces && running.Contains(SafeCommand.Setup))))
             {
                 AddMessage(false, "That is already running; wait for its answer.");
                 return;
@@ -2025,6 +2097,18 @@ namespace Orcel.DesktopPreview
         /// At launch the checklist appears only while Orcel isn't installed.
         private async void ShowSetup(bool launch)
         {
+            // On request it lists workspaces, which waits on the runtime's lock: one at a time,
+            // and never alongside the workspaces command. At launch nothing is read.
+            if (!launch)
+            {
+                if (running.Contains(SafeCommand.Setup) || running.Contains(SafeCommand.Workspaces))
+                {
+                    AddMessage(false, "That is already running; wait for its answer.");
+                    return;
+                }
+                running.Add(SafeCommand.Setup);
+                AddMessage(false, "Checking what is set up...");
+            }
             try
             {
                 string text = await Task.Run(delegate { return SetupGuide.Read(launch); });
@@ -2033,6 +2117,10 @@ namespace Orcel.DesktopPreview
             catch (Exception)
             {
                 if (!launch) AddMessage(false, "The read-only setup check failed unexpectedly. No action was performed.");
+            }
+            finally
+            {
+                if (!launch) running.Remove(SafeCommand.Setup);
             }
         }
 
@@ -2206,10 +2294,14 @@ namespace Orcel.DesktopPreview
             string recoveryText = Recovery.Text(recoveryList, recovered);
             expect(recoveryText.StartsWith("1 report needs your attention.") && recoveryText.Contains("out/q3.xlsx: a file is there, or couldn't be read, and it doesn't check") && recoveryText.Contains("\"Q2\": nothing was written") && !recoveryText.Contains("Q1") && recoveryText.Contains("1 task's details couldn't be read") && recoveryText.Split('\n').Length == 5, "recovery explains each restart check, escaped, one line each, skips tasks without one, and counts tasks it couldn't read");
             expect(Recovery.Text(null, new List<Dictionary<string, object>>()).StartsWith("Recovery check unavailable") && Recovery.Text(recoveryList, new List<Dictionary<string, object>>()).StartsWith("No report was interrupted") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).StartsWith("No interrupted report was found among the tasks that could be read.") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).Contains("2 tasks' details couldn't be read") && Recovery.Meaning("verified").StartsWith("the report is there") && Recovery.Meaning("new-outcome").Contains("doesn't know"), "recovery says when there is nothing to report or no answer, and never guesses an outcome");
-            expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes and never runs the CLI");
+            expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes to no CLI command of its own; it reads through the workspaces command's fixed arguments");
             int setupCount;
             expect(SetupGuide.Clients(null, out setupCount) == SetupGuide.ClientState.Unknown && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.None && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[{\"pid\":1},{\"pid\":2}]}}"), out setupCount) == SetupGuide.ClientState.Connected && setupCount == 2 && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"unavailable\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.Unknown, "setup reads connected clients and never guesses");
             expect(SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).Contains("run .\\orcel.exe install") && SetupGuide.Text(false, SetupGuide.ClientState.Unknown, 0).EndsWith("Next: install Orcel (step 1).") && SetupGuide.Text(true, SetupGuide.ClientState.None, 0).EndsWith("Next: connect a client (step 2).") && SetupGuide.Text(true, SetupGuide.ClientState.Unknown, 0).Contains("couldn't check") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1).Contains("1 client is connected") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 3).EndsWith("then try it (step 4).") && SetupGuide.Text(true, SetupGuide.ClientState.None, 0).Contains("orcel workspace add <id> <folder>"), "setup names what is done and the next step");
+            expect(SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1, 2, true).Contains("3. Choose a folder Orcel may work in: done, 2 folders are set up") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1, 2, true).Contains("4. Try it: done") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1, 2, true).EndsWith("Next: nothing; Orcel is set up. Type help for what this app shows."), "a finished setup says so");
+            expect(SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1, 0, false).Contains("3. Choose a folder Orcel may work in: none yet;") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1, 0, false).EndsWith("Next: choose a folder (step 3).") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1, 1, false).EndsWith("Next: try it (step 4).") && SetupGuide.Text(true, SetupGuide.ClientState.Connected, 1, null, null).EndsWith("then try it (step 4)."), "setup names the next step from what it could check, and never guesses");
+            expect(SetupGuide.Tried(null, null) == null && SetupGuide.Tried(0, null) == false && SetupGuide.Tried(null, 1) == true && SetupGuide.Tried(2, 0) == true && SetupGuide.Listed(null, "entries") == null && SetupGuide.Listed(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"entries\":\"x\"}}"), "entries") == null && SetupGuide.Listed(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[{\"task_id\":\"t\"}]}}"), "tasks") == 1, "activity is read from decisions and tasks, and unreadable answers are unknown");
+            expect(Interpret.WorkspaceCount(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"workspaces\":[{\"id\":\"a\"},{\"id\":\"b\"}]}" }) == 2 && Interpret.WorkspaceCount(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true,\"workspaces\":[]}" }) == 0 && Interpret.WorkspaceCount(new CliResult { TimedOut = true }) == null && Interpret.WorkspaceCount(new CliResult { ExitCode = 0, Stdout = "{\"ok\":true}" }) == null, "workspaces are counted from the runtime's own answer, or unknown");
             expect(!SetupGuide.Complete(false, SetupGuide.ClientState.Connected) && !SetupGuide.Complete(true, SetupGuide.ClientState.Unknown) && SetupGuide.Complete(true, SetupGuide.ClientState.Connected) && SetupGuide.ShowAtLaunch(false) && !SetupGuide.ShowAtLaunch(true), "the checklist shows by itself only before Orcel is installed");
             expect(CommandRouter.Classify(" Clients ") == SafeCommand.Clients && CommandRouter.CliArguments(SafeCommand.Clients) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Clients), "clients routes and never runs the CLI");
             expect(AppApi.RequestFrame("clients.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"clients.list\",\"params\":{}}\n", "clients.list is sent with no parameters");
