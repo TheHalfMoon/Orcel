@@ -958,3 +958,96 @@ fn xs_peek_live_never_writes_and_skips_torn_and_oversized_lines() {
     assert_eq!(std::fs::read(&path).unwrap(), journal_bytes);
     assert_eq!(listing(), before, "no file created, changed or removed");
 }
+
+/// How many times `journal`'s peek has read the journal file.
+fn peek_reads(journal: &ReportJournal) -> usize {
+    journal.peek.lock().unwrap().reads
+}
+
+/// Appends raw bytes to the journal at `path`.
+fn append_raw(path: &Path, bytes: &[u8]) {
+    use std::io::Write as _;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(bytes)
+        .unwrap();
+}
+
+#[test]
+fn xs_a_torn_line_in_the_middle_still_lets_the_peek_cache() {
+    let scene = Scene::new("xs-cache");
+    let path = journal_path(&scene);
+    let scratch = TaskRegistry::new();
+    let task = start_q3(&scene, &scratch)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let record = scratch.lock()[0].clone();
+    // A live run (this process, as another run) wrote the task, a crash
+    // left a torn line, and later appends followed it.
+    let writer = ReportJournal::new(path.clone(), Owner::current("writer-run").unwrap());
+    writer.snapshot(&record);
+    append_raw(
+        &path,
+        br#"{"event":"task","schema":"orcel-report-task/1","ow"#,
+    );
+    append_raw(&path, b"\n");
+    writer.snapshot(&record);
+
+    let peeker = ReportJournal::new(path.clone(), Owner::current("peeker-run").unwrap());
+    for _ in 0..3 {
+        let live = peeker.peek_live();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].id, task);
+    }
+    assert_eq!(peek_reads(&peeker), 1, "an unchanged journal is read once");
+
+    // A torn tail is read again on every call, since it may be completing.
+    append_raw(
+        &path,
+        br#"{"event":"task","schema":"orcel-report-task/1","ow"#,
+    );
+    peeker.peek_live();
+    peeker.peek_live();
+    assert_eq!(peek_reads(&peeker), 3);
+    // Once the line is whole the stamp is trusted again.
+    append_raw(&path, b"\n");
+    peeker.peek_live();
+    peeker.peek_live();
+    assert_eq!(peek_reads(&peeker), 4);
+}
+
+#[test]
+fn xs_a_missing_or_unreadable_journal_is_never_cached_as_empty() {
+    let scene = Scene::new("xs-unreadable");
+    let path = journal_path(&scene);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let peeker = ReportJournal::new(path.clone(), Owner::current("peeker-run").unwrap());
+
+    // Missing: read again on every call.
+    assert!(peeker.peek_live().is_empty());
+    assert!(peeker.peek_live().is_empty());
+    assert_eq!(peek_reads(&peeker), 2);
+
+    // Unreadable (a directory where the journal belongs: its metadata
+    // reads, the file does not): read again on every call.
+    std::fs::create_dir(&path).unwrap();
+    assert!(peeker.peek_live().is_empty());
+    assert!(peeker.peek_live().is_empty());
+    assert_eq!(peek_reads(&peeker), 4, "a failed read is not cached");
+
+    // Once it reads, the other run's task shows.
+    std::fs::remove_dir(&path).unwrap();
+    let scratch = TaskRegistry::new();
+    let task = start_q3(&scene, &scratch)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    ReportJournal::new(path.clone(), Owner::current("writer-run").unwrap())
+        .snapshot(&scratch.lock()[0].clone());
+    let live = peeker.peek_live();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].id, task);
+}

@@ -374,6 +374,8 @@ struct PeekCache {
     exited: Vec<String>,
     /// Runs seen alive, and when.
     alive: Vec<(String, Instant)>,
+    /// How many times the journal was read, for tests of the cache.
+    reads: usize,
 }
 
 impl PeekCache {
@@ -443,10 +445,12 @@ impl ReportJournal {
             )
         });
         if stamp.is_none() || stamp != cache.stamp {
-            let (snapshots, torn) = self.read_others();
-            // A torn last line may still be completing at this length:
-            // read again next time rather than trust the stamp.
-            cache.stamp = if torn { None } else { stamp };
+            let (snapshots, cacheable) = self.read_others();
+            cache.reads += 1;
+            // A failed read, or a torn last line that may still be
+            // completing at this length, is read again next time rather
+            // than trusted under this stamp.
+            cache.stamp = if cacheable { stamp } else { None };
             let known = |run: &String| snapshots.iter().any(|(owner, _)| owner.run == *run);
             cache.exited.retain(|run| known(run));
             cache.alive.retain(|(run, _)| known(run));
@@ -463,9 +467,20 @@ impl ReportJournal {
         live
     }
 
-    /// The newest snapshot of each task other runs wrote, and whether a
-    /// torn line was seen. Never takes the writer lock, never writes.
+    /// The newest snapshot of each task other runs wrote, and whether the
+    /// result may be cached under the journal's stamp: not after a failed
+    /// open or read, nor when bytes follow the final newline (a torn last
+    /// line, possibly still being appended). A line in the middle that does
+    /// not parse is skipped and does not stop caching. Never takes the
+    /// writer lock, never writes.
     fn read_others(&self) -> (Vec<(Owner, TaskLine)>, bool) {
+        // The journal is held open only for this read. On Windows,
+        // `File::open` shares read, write and delete, so a writer's
+        // atomic-rename rewrite (`orcel_journal::rewrite`, under its lock)
+        // still replaces it on NTFS meanwhile. On a filesystem without
+        // POSIX rename semantics a `restore` that renames while this read
+        // holds the file could fail; that orceld then refuses commits and
+        // retries at its next start.
         let Ok(file) = std::fs::File::open(&self.path) else {
             return (Vec::new(), false);
         };
@@ -474,21 +489,29 @@ impl ReportJournal {
             .take(orcel_journal::MAX_JOURNAL_BYTES + 1)
             .read_to_end(&mut text)
             .is_err()
-            || text.len() as u64 > orcel_journal::MAX_JOURNAL_BYTES
         {
             return (Vec::new(), false);
         }
+        if text.len() as u64 > orcel_journal::MAX_JOURNAL_BYTES {
+            // Over the bound: shown as no tasks until the journal changes.
+            return (Vec::new(), true);
+        }
+        // As in `orcel_journal::read_lines`: zero bytes are never part of a
+        // written line.
+        let trim = |raw: &[u8]| -> usize {
+            raw.iter()
+                .rposition(|byte| *byte != 0)
+                .map_or(0, |last| last + 1)
+        };
+        let tail = match text.iter().rposition(|byte| *byte == b'\n') {
+            Some(last) => &text[last + 1..],
+            None => &text[..],
+        };
+        let torn = !tail[..trim(tail)].iter().all(u8::is_ascii_whitespace);
         let mut snapshots: Vec<(Owner, TaskLine)> = Vec::new();
         let mut index: HashMap<String, usize> = HashMap::new();
-        let mut torn = false;
         for raw in text.split(|byte| *byte == b'\n') {
-            // As in `orcel_journal::read_lines`: zero bytes are never part
-            // of a written line.
-            let end = raw
-                .iter()
-                .rposition(|byte| *byte != 0)
-                .map_or(0, |last| last + 1);
-            let raw = &raw[..end];
+            let raw = &raw[..trim(raw)];
             // The bound counts the newline, as at append.
             if raw.iter().all(u8::is_ascii_whitespace) || raw.len() >= orcel_journal::MAX_LINE_BYTES
             {
@@ -508,11 +531,12 @@ impl ReportJournal {
                         }
                     }
                 }
-                Ok(_) => {}
-                Err(error) => torn |= error.is_eof(),
+                // Another event, or a line that does not parse (the torn
+                // tail, or a line a crash left in the middle): skipped.
+                _ => {}
             }
         }
-        (snapshots, torn)
+        (snapshots, !torn)
     }
 
     fn line(&self, line: &Line) -> Result<(), JournalError> {
