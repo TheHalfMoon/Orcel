@@ -26,13 +26,18 @@ pub const MAX_FIND_VISITED: usize = 20_000;
 pub const MAX_EDIT_NEEDLE_BYTES: usize = 64 * 1024;
 pub const MAX_EDIT_REPLACEMENTS: usize = 100;
 
-/// Identity of an existing entry, bound into approval digests.
+/// Identity of an existing entry. `kind`, `size` and `sha256` are bound into approval digests;
+/// `resolved` and `node` bind the approved call to the entry itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryIdentity {
     pub kind: &'static str,
     pub size: u64,
     pub sha256: Option<String>,
     pub resolved: PathBuf,
+    /// The entry the approval saw: device and inode on Unix, volume serial number and file id
+    /// on Windows. A move or removal refuses any other entry found at the name, even one with
+    /// the same content. It is never part of `digest_fields`, so approval digests are unchanged.
+    pub(crate) node: (u64, u128),
 }
 
 impl EntryIdentity {
@@ -261,16 +266,68 @@ impl FsProvider {
             .map_err(|error| ProviderError::io("resolve target", error))?;
         self.within(&resolved)?;
         self.ensure_not_git(&resolved)?;
+        #[cfg(unix)]
+        let named = {
+            use std::os::unix::fs::MetadataExt as _;
+            let named = fs::symlink_metadata(&resolved)
+                .map_err(|error| ProviderError::io("inspect target", error))?;
+            (named.dev(), u128::from(named.ino()))
+        };
         if metadata.is_file() {
             let file =
                 File::open(&resolved).map_err(|error| ProviderError::io("open target", error))?;
+            // The entry whose content is hashed is the one bound.
+            #[cfg(unix)]
+            let node = {
+                use std::os::unix::fs::MetadataExt as _;
+                let opened = file
+                    .metadata()
+                    .map_err(|error| ProviderError::io("inspect target", error))?;
+                if (opened.dev(), u128::from(opened.ino())) != named {
+                    return Err(ProviderError::new(
+                        FailureCode::TargetStale,
+                        "target changed while it was read",
+                    ));
+                }
+                named
+            };
+            #[cfg(windows)]
+            let node = {
+                use std::os::windows::io::AsRawHandle as _;
+                crate::win::file_id(file.as_raw_handle())
+                    .map_err(|error| ProviderError::io("identify target", error))?
+            };
+            #[cfg(not(any(unix, windows)))]
+            let node = (0, 0);
             Ok(EntryIdentity {
                 kind: "file",
                 size: metadata.len(),
                 sha256: Some(hash_file(file)?),
                 resolved,
+                node,
             })
         } else if metadata.is_dir() {
+            #[cfg(unix)]
+            let node = named;
+            #[cfg(windows)]
+            let node = {
+                let entry = crate::win::open_for_identity(&resolved)
+                    .map_err(|error| ProviderError::io("open target", error))?;
+                let link = entry
+                    .is_reparse_point()
+                    .map_err(|error| ProviderError::io("inspect target", error))?;
+                if link {
+                    return Err(ProviderError::new(
+                        FailureCode::CapabilityDenied,
+                        "links, junctions, and reparse points are never moved or removed",
+                    ));
+                }
+                entry
+                    .file_id()
+                    .map_err(|error| ProviderError::io("identify target", error))?
+            };
+            #[cfg(not(any(unix, windows)))]
+            let node = (0, 0);
             let entries = fs::read_dir(&resolved)
                 .map_err(|error| ProviderError::io("list target", error))?
                 .count() as u64;
@@ -279,6 +336,7 @@ impl FsProvider {
                 size: entries,
                 sha256: None,
                 resolved,
+                node,
             })
         } else {
             Err(invalid("target is neither a regular file nor a directory"))
@@ -448,7 +506,12 @@ impl FsProvider {
         let link = entry
             .is_reparse_point()
             .map_err(|error| ProviderError::io("inspect entry to move", error))?;
-        if opened != from || link {
+        // An entry put at the approved name after approval, even with the same content, has
+        // another file id.
+        let id = entry
+            .file_id()
+            .map_err(|error| ProviderError::io("identify entry to move", error))?;
+        if opened != from || link || id != source.node {
             return Err(ProviderError::new(
                 FailureCode::TargetStale,
                 "target changed since approval",
@@ -503,12 +566,26 @@ impl FsProvider {
     /// A file is opened under its verified parent without following a link, its content must
     /// still be the approved content, and its device and inode come from that descriptor; a
     /// directory's are read under the parent. Right before the rename the name must still hold
-    /// that device and inode. The rename never replaces an existing entry (`renameat2(RENAME_NOREPLACE)`,
-    /// `renameatx_np(RENAME_EXCL)`), and the moved entry is checked under the destination
-    /// afterwards. A move that turns out to have reached Git data, which needs the destination
-    /// directory itself to have been moved there after its check, is reported, not moved back.
+    /// that device and inode, and it must be the device and inode the approval saw. The rename
+    /// never replaces an existing entry (`renameat2(RENAME_NOREPLACE)`,
+    /// `renameatx_np(RENAME_EXCL)`; a file system without it fails closed), and the moved entry
+    /// is checked under the destination afterwards. A move that turns out to have reached Git
+    /// data or left the workspace, which needs the destination directory itself to have changed
+    /// after its check, is moved back relative to both directories, only while the destination
+    /// name still holds the moved device and inode, and reported with where the entry is.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn move_checked(&self, source: &EntryIdentity, to: &Path) -> Result<PathBuf, ProviderError> {
+        self.move_checked_with(source, to, || ())
+    }
+
+    /// `move_checked`, with `after_rename` run right after the rename so tests can time a race.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn move_checked_with(
+        &self,
+        source: &EntryIdentity,
+        to: &Path,
+        after_rename: impl FnOnce(),
+    ) -> Result<PathBuf, ProviderError> {
         use std::os::unix::fs::MetadataExt as _;
         let from = source.resolved.as_path();
         let stale =
@@ -534,6 +611,11 @@ impl FsProvider {
                 .map_err(|error| ProviderError::io("inspect entry to move", error))?
                 .ok_or_else(stale)?,
         };
+        // An entry put at the approved name after approval, even with the same content, has
+        // another device or inode.
+        if (before.0, u128::from(before.1)) != source.node {
+            return Err(stale());
+        }
         let named = at::stat_entry(&source_dir, &from_name)
             .map_err(|error| ProviderError::io("inspect entry to move", error))?;
         if named != Some(before) {
@@ -541,21 +623,77 @@ impl FsProvider {
         }
         at::rename_no_replace(&source_dir, &from_name, &target_dir, &to_name)
             .map_err(|error| ProviderError::io("move entry", error))?;
-        let after = at::stat_entry(&target_dir, &to_name)
-            .map_err(|error| ProviderError::io("verify moved entry", error))?;
-        let target_path = final_path_from_open_file(&target_dir, to_parent)
-            .map_err(|error| ProviderError::io("verify moved entry", error))?
-            .join(to.file_name().unwrap_or_default());
-        if after != Some(before) || self.ensure_not_git(&target_path).is_err() {
+        after_rename();
+        let to_file_name = to.file_name().unwrap_or_default();
+        let landed = final_path_from_open_file(&target_dir, to_parent)
+            .map(|parent| parent.join(to_file_name));
+        let refusal = match &landed {
+            Ok(path) => self.ensure_not_git(path).err(),
+            Err(error) => Some(ProviderError::io(
+                "verify moved entry",
+                std::io::Error::new(error.kind(), error.to_string()),
+            )),
+        };
+        let after = at::stat_entry(&target_dir, &to_name).ok().flatten();
+        let shown = match &landed {
+            Ok(path) => path.display().to_string(),
+            Err(_) => to.display().to_string(),
+        };
+        let Some(refusal) = refusal else {
+            if after == Some(before) {
+                if let Ok(path) = landed {
+                    return Ok(path);
+                }
+            }
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!("the moved entry did not verify at {shown}"),
+            ));
+        };
+        // The destination name no longer holds the entry this call moved: nothing is moved
+        // back, since that could take another entry.
+        if after != Some(before) {
             return Err(ProviderError::new(
                 FailureCode::PostconditionFailed,
                 format!(
-                    "the moved entry did not verify at {}",
-                    target_path.display()
+                    "the moved entry did not verify at {shown} ({}) and is no longer there",
+                    refusal.message
                 ),
             ));
         }
-        Ok(target_path)
+        let back = at::rename_no_replace(&target_dir, &to_name, &source_dir, &from_name)
+            .and_then(|()| final_path_from_open_file(&source_dir, from_parent))
+            .map(|parent| parent.join(from.file_name().unwrap_or_default()));
+        Err(match back {
+            Ok(returned)
+                if self.ensure_not_git(&returned).is_ok()
+                    && at::stat_entry(&source_dir, &from_name).ok().flatten() == Some(before) =>
+            {
+                ProviderError::new(
+                    FailureCode::PostconditionFailed,
+                    format!(
+                        "the moved entry did not verify at {shown} ({}) and was moved back to {}",
+                        refusal.message,
+                        returned.display()
+                    ),
+                )
+            }
+            Ok(returned) => ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!(
+                    "the moved entry did not verify at {shown} ({}) and, moved back, is at {}",
+                    refusal.message,
+                    returned.display()
+                ),
+            ),
+            Err(back) => ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!(
+                    "the moved entry did not verify at {shown} ({}) and could not be moved back: {back}",
+                    refusal.message
+                ),
+            ),
+        })
     }
 
     /// Creates the directory `name` under `parent`, relative to `parent` opened and verified
@@ -668,6 +806,18 @@ impl FsProvider {
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     fn move_checked(&self, source: &EntryIdentity, to: &Path) -> Result<PathBuf, ProviderError> {
         let from = source.resolved.as_path();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            let named = fs::symlink_metadata(from)
+                .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+            if (named.dev(), u128::from(named.ino())) != source.node {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "target changed since approval",
+                ));
+            }
+        }
         move_no_replace(from, to).map_err(|error| ProviderError::io("move entry", error))?;
         let moved = resolve_final_path(to)
             .map_err(|error| ProviderError::io("verify moved entry", error))?;
@@ -682,8 +832,8 @@ impl FsProvider {
 
     /// Windows: removes the checked entry through one handle to it. The handle opens the entry
     /// itself (a link is opened, not followed); its real path, read from the handle, must be the
-    /// approved one and not Git data, and a file must be the one whose content was hashed (same
-    /// volume and file index). The entry is then marked to be deleted when the handle closes
+    /// approved one and not Git data, its volume and file id must be the ones the approval saw,
+    /// and a file must be the one whose content was hashed (same volume and file id). The entry is then marked to be deleted when the handle closes
     /// and checked once more with the mark set, so a swap anywhere on the path can't make it
     /// delete another entry. Its parent could still be moved after that second check; the entry
     /// deleted is then still the approved one.
@@ -703,7 +853,15 @@ impl FsProvider {
         let is_directory = entry
             .is_directory()
             .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
-        if opened != current.resolved || link || is_directory != (current.kind == "directory") {
+        // The entry the approval saw, by file id: one put at the name since is refused.
+        let entry_id = entry
+            .file_id()
+            .map_err(|error| ProviderError::io("identify entry to remove", error))?;
+        if opened != current.resolved
+            || link
+            || is_directory != (current.kind == "directory")
+            || entry_id != current.node
+        {
             return Err(stale());
         }
         self.ensure_not_git(&opened)?;
@@ -711,9 +869,6 @@ impl FsProvider {
             let file = File::open(&opened)
                 .map_err(|error| ProviderError::io("open entry to remove", error))?;
             let read_id = crate::win::file_id(file.as_raw_handle())
-                .map_err(|error| ProviderError::io("identify entry to remove", error))?;
-            let entry_id = entry
-                .file_id()
                 .map_err(|error| ProviderError::io("identify entry to remove", error))?;
             if read_id != entry_id || &hash_file(file)? != expected_sha {
                 return Err(stale());
@@ -742,8 +897,9 @@ impl FsProvider {
 
     /// Unix: removes the checked entry relative to its parent directory, opened and verified
     /// from its descriptor, so a link swapped in above it can't redirect the removal. The entry
-    /// is opened under that directory without following a link, a file's content must still be
-    /// the hashed content, and right before `unlinkat` the name must still hold the same device
+    /// is opened under that directory without following a link, it must be the device and inode
+    /// the approval saw, a file's content must still be the hashed content, and right before
+    /// `unlinkat` the name must still hold the same device
     /// and inode. Two windows remain, both needing a process that can already write Git data:
     /// another entry renamed onto the name between the last check and `unlinkat`, and the
     /// verified directory itself moved after its check (the approved entry is then removed
@@ -801,7 +957,11 @@ impl FsProvider {
         let metadata = entry
             .metadata()
             .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
-        if (directory && !metadata.is_dir()) || (!directory && !metadata.is_file()) {
+        // The entry the approval saw, by device and inode: one put at the name since is refused.
+        if (directory && !metadata.is_dir())
+            || (!directory && !metadata.is_file())
+            || (metadata.dev(), u128::from(metadata.ino())) != current.node
+        {
             return Err(stale());
         }
         if let Some(expected_sha) = &current.sha256 {
@@ -1404,22 +1564,142 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    /// A file replaced in the same folder after approval is not moved: the move binds to the
-    /// approved content, read under the verified parent.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    /// A file replaced in the same folder after approval is not moved, even with the same
+    /// content: the move binds to the approved entry itself (device and inode, or file id).
     #[test]
     fn a_file_replaced_after_approval_is_not_moved() {
-        let dir = fs::canonicalize(root("at-replaced")).unwrap();
+        let dir = resolve_final_path(&root("at-replaced")).unwrap();
         fs::write(dir.join("a.txt"), "approved").unwrap();
         let p = provider(&dir);
         let identity = p.entry_identity("a.txt").unwrap();
-        fs::write(dir.join("other"), "replaced").unwrap();
+        fs::write(dir.join("other"), "approved").unwrap();
         fs::rename(dir.join("other"), dir.join("a.txt")).unwrap();
         let refused = p.move_checked(&identity, &dir.join("b.txt")).unwrap_err();
-        assert_eq!(refused.code, FailureCode::TargetStale);
-        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"replaced");
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        let refused = p.move_entry("a.txt", "b.txt", &identity).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"approved");
         assert!(!dir.join("b.txt").exists());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A directory replaced in the same folder after approval by another empty directory is not
+    /// moved: kind, size and content alone can't tell them apart, the entry binding does.
+    #[test]
+    fn a_directory_replaced_after_approval_is_not_moved() {
+        let dir = resolve_final_path(&root("dir-replaced-move")).unwrap();
+        fs::create_dir(dir.join("d")).unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("d").unwrap();
+        fs::rename(dir.join("d"), dir.join("d-approved")).unwrap();
+        fs::create_dir(dir.join("d")).unwrap();
+        let refused = p.move_checked(&identity, &dir.join("e")).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        let refused = p.move_entry("d", "e", &identity).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        assert!(dir.join("d").is_dir());
+        assert!(dir.join("d-approved").is_dir());
+        assert!(!dir.join("e").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The same for removal: the replacement empty directory is not removed.
+    #[test]
+    fn a_directory_replaced_after_approval_is_not_removed() {
+        let dir = resolve_final_path(&root("dir-replaced-remove")).unwrap();
+        fs::create_dir(dir.join("d")).unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("d").unwrap();
+        fs::rename(dir.join("d"), dir.join("d-approved")).unwrap();
+        fs::create_dir(dir.join("d")).unwrap();
+        let refused = p.remove_checked(&identity).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        let refused = p.remove_entry("d", &identity).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        assert!(dir.join("d").is_dir());
+        assert!(dir.join("d-approved").is_dir());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Two handles to one file give one id; two files give two ids. A rename handle and a read
+    /// handle to one file agree too.
+    #[cfg(windows)]
+    #[test]
+    fn file_ids_name_one_entry() {
+        use std::os::windows::io::AsRawHandle as _;
+        let dir = resolve_final_path(&root("file-ids")).unwrap();
+        fs::write(dir.join("a.txt"), "same").unwrap();
+        fs::write(dir.join("b.txt"), "same").unwrap();
+        let first = File::open(dir.join("a.txt")).unwrap();
+        let second = File::open(dir.join("a.txt")).unwrap();
+        let other = File::open(dir.join("b.txt")).unwrap();
+        let first_id = crate::win::file_id(first.as_raw_handle()).unwrap();
+        let second_id = crate::win::file_id(second.as_raw_handle()).unwrap();
+        let other_id = crate::win::file_id(other.as_raw_handle()).unwrap();
+        assert_eq!(first_id, second_id);
+        assert_ne!(first_id, other_id);
+        let renaming = crate::win::open_for_rename(&dir.join("a.txt")).unwrap();
+        assert_eq!(renaming.file_id().unwrap(), first_id);
+        drop((first, second, other, renaming));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The destination directory becomes Git data between the rename and its check: the move is
+    /// refused and the file is moved back.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_move_into_new_git_data_is_moved_back() {
+        let dir = fs::canonicalize(root("moveback-git")).unwrap();
+        let dest = dir.join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("a.txt").unwrap();
+        let refused = p
+            .move_checked_with(&identity, &dest.join("a.txt"), || {
+                fs::write(dest.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+                fs::create_dir(dest.join("objects")).unwrap();
+                fs::create_dir(dest.join("refs")).unwrap();
+            })
+            .unwrap_err();
+        assert_eq!(
+            refused.code,
+            FailureCode::PostconditionFailed,
+            "{refused:?}"
+        );
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"a");
+        assert!(fs::symlink_metadata(dest.join("a.txt")).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The destination directory is moved out of the workspace between the rename and its
+    /// check: the move is refused and the file is moved back.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_move_out_of_the_workspace_is_moved_back() {
+        let dir = fs::canonicalize(root("moveback-out")).unwrap();
+        let outside = fs::canonicalize(root("moveback-outside")).unwrap();
+        let dest = dir.join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("a.txt").unwrap();
+        let refused = p
+            .move_checked_with(&identity, &dest.join("a.txt"), || {
+                fs::rename(&dest, outside.join("dest")).unwrap();
+            })
+            .unwrap_err();
+        assert_eq!(
+            refused.code,
+            FailureCode::PostconditionFailed,
+            "{refused:?}"
+        );
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"a");
+        assert!(fs::symlink_metadata(&dest).is_err());
+        assert!(outside.join("dest").is_dir());
+        assert!(fs::symlink_metadata(outside.join("dest").join("a.txt")).is_err());
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(outside);
     }
 
     /// The OS guarantee Windows mkdir relies on: while a directory is pinned, it can be neither

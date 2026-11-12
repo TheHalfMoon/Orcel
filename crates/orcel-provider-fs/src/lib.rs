@@ -1025,8 +1025,8 @@ mod win {
     const FILE_DISPOSITION_INFO_EX_CLASS: u32 = 21;
 
     impl RenameHandle {
-        /// The volume and file index of the opened entry, which name it whatever its path.
-        pub(crate) fn file_id(&self) -> io::Result<(u32, u64)> {
+        /// The volume and file id of the opened entry, which name it whatever its path.
+        pub(crate) fn file_id(&self) -> io::Result<(u64, u128)> {
             file_id(self.0 .0 as RawHandle)
         }
 
@@ -1096,8 +1096,40 @@ mod win {
         }
     }
 
-    /// The volume serial number and 64-bit file index of an open handle.
-    pub(crate) fn file_id(handle: RawHandle) -> io::Result<(u32, u64)> {
+    /// `FILE_ID_INFO`: a 64-bit volume serial number and a 128-bit file id.
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileIdInfo {
+        volume_serial: u64,
+        file_id: [u8; 16],
+    }
+
+    const FILE_ID_INFO_CLASS: u32 = 18;
+
+    /// The volume serial number and 128-bit file id of an open handle (`FILE_ID_INFO`), which
+    /// ReFS needs: its ids don't fit the 64-bit index. A file system that doesn't support that
+    /// class (`ERROR_INVALID_PARAMETER`) gets the 32-bit serial and 64-bit index instead; one
+    /// volume always answers the same way, so ids from it stay comparable.
+    pub(crate) fn file_id(handle: RawHandle) -> io::Result<(u64, u128)> {
+        let mut ex = FileIdInfo::default();
+        // SAFETY: `handle` is an open handle owned by the caller for this call, and `ex` is a
+        // properly sized, writable FILE_ID_INFO.
+        let read = unsafe {
+            GetFileInformationByHandleEx(
+                handle as Handle,
+                FILE_ID_INFO_CLASS,
+                (&mut ex as *mut FileIdInfo).cast::<c_void>(),
+                std::mem::size_of::<FileIdInfo>() as u32,
+            )
+        };
+        if read != 0 {
+            return Ok((ex.volume_serial, u128::from_le_bytes(ex.file_id)));
+        }
+        let error = io::Error::last_os_error();
+        const ERROR_INVALID_PARAMETER: i32 = 87;
+        if error.raw_os_error() != Some(ERROR_INVALID_PARAMETER) {
+            return Err(error);
+        }
         let mut info = ByHandleFileInformation::default();
         // SAFETY: `handle` is an open handle owned by the caller for this call, and `info` is
         // a properly sized, writable BY_HANDLE_FILE_INFORMATION.
@@ -1105,9 +1137,36 @@ mod win {
             return Err(io::Error::last_os_error());
         }
         Ok((
-            info.volume_serial,
-            (u64::from(info.index_high) << 32) | u64::from(info.index_low),
+            u64::from(info.volume_serial),
+            u128::from((u64::from(info.index_high) << 32) | u64::from(info.index_low)),
         ))
+    }
+
+    /// Opens the entry at `path` itself (a link is opened, not followed) only to read its
+    /// attributes and id.
+    pub(crate) fn open_for_identity(path: &Path) -> io::Result<RenameHandle> {
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: `wide` is a NUL-terminated path that outlives the call; no security
+        // attributes or template are passed.
+        let raw = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            )
+        };
+        if raw == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(RenameHandle(OwnedHandle(raw)))
     }
 
     /// The number of names the open file has.
@@ -1142,6 +1201,12 @@ mod win {
         ) -> Handle;
         fn GetFinalPathNameByHandleW(file: Handle, path: *mut u16, size: u32, flags: u32) -> u32;
         fn GetFileInformationByHandle(file: Handle, info: *mut ByHandleFileInformation) -> i32;
+        fn GetFileInformationByHandleEx(
+            file: Handle,
+            class: u32,
+            info: *mut c_void,
+            size: u32,
+        ) -> i32;
         fn SetFileInformationByHandle(
             file: Handle,
             class: u32,
