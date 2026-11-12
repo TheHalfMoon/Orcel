@@ -25,7 +25,8 @@ fn fake_process(pid: u32, exe: &str, generation: u64) -> NativeProcess {
         generation_source: "fake-adapter",
         signature: SignatureState::Verified {
             subject: "Fake Signer".to_owned(),
-        },
+        }
+        .into(),
     }
 }
 
@@ -741,18 +742,58 @@ fn capture_binding_matches_pre_capture_revalidation() {
 #[test]
 fn a_registered_window_names_its_application_for_prompts() {
     let (adapter, registry, window_id, _) = setup_window();
+    let application = registry
+        .window_application(&window_id)
+        .expect("a registered window names its application");
+    assert_eq!(application.executable, "notepad.exe");
+    assert_eq!(application.window_title, "Document");
     assert_eq!(
-        registry.window_application(&window_id),
-        Some((
-            "notepad.exe".to_owned(),
-            "Document".to_owned(),
-            SignatureState::Verified {
-                subject: "Fake Signer".to_owned()
-            }
-        ))
+        application.signature(),
+        SignatureState::Verified {
+            subject: "Fake Signer".to_owned()
+        }
     );
-    assert_eq!(registry.window_application("w-unknown"), None);
+    assert!(registry.window_application("w-unknown").is_none());
     let _ = adapter;
+}
+
+/// The native adapter reports only the image path; the file is checked when a prompt asks
+/// for the signature, which orceld does after releasing its registry lock. An unreadable
+/// path is not checked, and a system binary verifies on Windows (elsewhere: not checked).
+#[test]
+fn an_image_path_is_checked_only_when_the_signature_is_asked_for() {
+    let application = |path: &str, generation: u64| WindowApplication {
+        executable: "app.exe".to_owned(),
+        window_title: "Title".to_owned(),
+        signature: ProcessSignature::ImageFile {
+            path: path.to_owned(),
+        },
+        exe_id: digest_hex(&format!("{UIA_SCHEMA}|exe|{path}"), ID_HEX_CHARS),
+        process_generation: generation,
+    };
+    let missing = std::env::temp_dir().join("orcel-uia-no-such-image-5b1e.exe");
+    assert_eq!(
+        application(&missing.to_string_lossy(), 1).signature(),
+        SignatureState::Unknown
+    );
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let kernel32 = std::path::Path::new(&root)
+        .join("System32")
+        .join("kernel32.dll");
+    let state = application(&kernel32.to_string_lossy(), 2).signature();
+    if cfg!(windows) {
+        assert!(
+            matches!(&state, SignatureState::Verified { subject } if subject.contains("Microsoft")),
+            "{state:?}"
+        );
+    } else {
+        assert_eq!(state, SignatureState::Unknown);
+    }
+    // A second ask for the same process instance is answered from the cache.
+    assert_eq!(
+        application(&kernel32.to_string_lossy(), 2).signature(),
+        state
+    );
 }
 
 #[test]

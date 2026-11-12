@@ -1498,7 +1498,7 @@ mod platform {
                         _ => "computer-host",
                     },
                     // The host protocol reports no signature; prompts say it was not checked.
-                    signature: SignatureState::Unknown,
+                    signature: SignatureState::Unknown.into(),
                 })
                 .collect())
         }

@@ -243,8 +243,8 @@ fn application_lines(application: Option<&TargetApplication>) -> String {
 }
 
 /// The signature line: display only. It describes whatever file was at the image's path when
-/// the process was first observed, which a rename and replace can change, so it names the
-/// path, not the running code. A certificate subject is text its holder chose, so it is
+/// a prompt first named that process instance, which a rename and replace can change, so it
+/// names the path, not the running code. A certificate subject is text its holder chose, so it is
 /// escaped and cut like any field.
 fn signature_line(signature: &SignatureState) -> String {
     match signature {
