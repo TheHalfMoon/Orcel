@@ -2,28 +2,62 @@ use orcel_contracts::RequestEnvelope;
 use orcel_platform::paths;
 pub use orcel_platform::PlatformError;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct AuditLogger {
     path: PathBuf,
+    /// Whether the next record first checks for a torn last line: once at start, and again
+    /// after a failed write. Checking on every record would add a read open per request.
+    check_tail: Arc<AtomicBool>,
 }
+
+/// The longest client-supplied field a record keeps, and the longest target. The client chooses
+/// these values, so without a bound one request could make one record, and the log, any size.
+pub const MAX_FIELD_CHARS: usize = 256;
+pub const MAX_TARGET_CHARS: usize = 1024;
+const TRUNCATED: &str = "…[truncated]";
 
 #[derive(Debug, Serialize)]
 struct AuditEvent<'a> {
     timestamp_ms: u128,
-    request_id: &'a str,
-    client_session_id: &'a str,
-    workspace_id: &'a str,
-    capability: &'a str,
-    operation: &'a str,
-    target: Option<&'a str>,
+    request_id: Cow<'a, str>,
+    client_session_id: Cow<'a, str>,
+    workspace_id: Cow<'a, str>,
+    capability: Cow<'a, str>,
+    operation: Cow<'a, str>,
+    target: Option<Cow<'a, str>>,
     policy_revision: &'a str,
     outcome: &'a str,
+}
+
+/// `value`, or its first `max` characters marked as cut.
+fn bounded(value: &str, max: usize) -> Cow<'_, str> {
+    match value.char_indices().nth(max) {
+        None => Cow::Borrowed(value),
+        Some((end, _)) => Cow::Owned(format!("{}{TRUNCATED}", &value[..end])),
+    }
+}
+
+/// Whether the log ends in the middle of a line, as a crash or a full disk during an earlier
+/// write can leave it. The next record then starts on a line of its own, so it isn't glued onto
+/// the broken one.
+fn ends_mid_line(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    if file.seek(SeekFrom::End(-1)).is_err() {
+        return false;
+    }
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last).is_ok() && last[0] != b'\n'
 }
 
 impl AuditLogger {
@@ -32,7 +66,10 @@ impl AuditLogger {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            check_tail: Arc::new(AtomicBool::new(true)),
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -52,12 +89,15 @@ impl AuditLogger {
 
         let event = AuditEvent {
             timestamp_ms,
-            request_id: &request.request_id,
-            client_session_id: &request.client_session_id,
-            workspace_id: &request.workspace_id,
-            capability: &request.capability,
-            operation: &request.operation,
-            target: request.target.as_deref(),
+            request_id: bounded(&request.request_id, MAX_FIELD_CHARS),
+            client_session_id: bounded(&request.client_session_id, MAX_FIELD_CHARS),
+            workspace_id: bounded(&request.workspace_id, MAX_FIELD_CHARS),
+            capability: bounded(&request.capability, MAX_FIELD_CHARS),
+            operation: bounded(&request.operation, MAX_FIELD_CHARS),
+            target: request
+                .target
+                .as_deref()
+                .map(|target| bounded(target, MAX_TARGET_CHARS)),
             policy_revision,
             outcome,
         };
@@ -65,14 +105,24 @@ impl AuditLogger {
         // One whole line in one write. Several orcelds (one per client session) append to the
         // same log, and an append-mode write lands at the end in one piece; written in parts, as
         // `to_writer` does, two records could interleave.
-        let mut line = serde_json::to_vec(&event)?;
+        let mut line = if self.check_tail.swap(false, Ordering::AcqRel) && ends_mid_line(&self.path)
+        {
+            vec![b'\n']
+        } else {
+            Vec::new()
+        };
+        serde_json::to_writer(&mut line, &event)?;
         line.push(b'\n');
-        let mut file = OpenOptions::new()
+        let written = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.path)?;
-        file.write_all(&line)?;
-        file.flush()
+            .open(&self.path)
+            .and_then(|mut file| file.write_all(&line).and_then(|()| file.flush()));
+        if written.is_err() {
+            // A failed write may have left part of the line.
+            self.check_tail.store(true, Ordering::Release);
+        }
+        written
     }
 }
 
@@ -175,6 +225,73 @@ mod tests {
             let record: serde_json::Value = serde_json::from_str(line).expect("a whole record");
             assert_eq!(record["outcome"], "SUCCESS");
         }
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    fn request(request_id: String, target: Option<String>) -> RequestEnvelope {
+        RequestEnvelope {
+            version: 1,
+            request_id,
+            client_session_id: "s".into(),
+            workspace_id: "w".into(),
+            capability: "fs.search".into(),
+            operation: "search".into(),
+            target,
+            arguments: json!({}),
+        }
+    }
+
+    /// A client chooses its ids and target, so a record keeps at most a bounded part of each.
+    #[test]
+    fn client_fields_are_bounded() {
+        let base = sandbox("bounded");
+        let path = base.join("audit.jsonl");
+        let logger = AuditLogger::new(&path).expect("audit");
+        logger
+            .record(
+                &request("é".repeat(100_000), Some("t".repeat(100_000))),
+                "p1",
+                "DENIED",
+            )
+            .expect("record");
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        assert!(text.len() < 8 * 1024, "{} bytes", text.len());
+        let record: serde_json::Value = serde_json::from_str(text.trim()).expect("record");
+        let id = record["request_id"].as_str().unwrap();
+        assert_eq!(
+            id.chars().count(),
+            MAX_FIELD_CHARS + TRUNCATED.chars().count()
+        );
+        assert!(id.ends_with(TRUNCATED));
+        let target = record["target"].as_str().unwrap();
+        assert_eq!(
+            target.chars().count(),
+            MAX_TARGET_CHARS + TRUNCATED.chars().count()
+        );
+        assert_eq!(bounded("short", MAX_FIELD_CHARS), "short");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A log left mid-line by an earlier crash keeps its next record on a line of its own.
+    #[test]
+    fn a_record_never_joins_a_torn_last_line() {
+        let base = sandbox("torn");
+        let path = base.join("audit.jsonl");
+        std::fs::write(&path, "{\"timestamp_ms\":1,\"request_id\":\"torn").expect("torn log");
+        let logger = AuditLogger::new(&path).expect("audit");
+        logger
+            .record(&request("after".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        let record: serde_json::Value = serde_json::from_str(lines[1]).expect("whole record");
+        assert_eq!(record["request_id"], "after");
+        // A whole log gains no blank line.
+        logger
+            .record(&request("next".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
         let _ = std::fs::remove_dir_all(base);
     }
 
