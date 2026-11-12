@@ -1,4 +1,5 @@
 pub use orcel_contracts::FailureCode;
+pub use orcel_platform::signature::SignatureState;
 pub use orcel_platform::PlatformError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -113,6 +114,10 @@ pub struct PresenceContext {
 pub struct TargetApplication {
     pub executable: String,
     pub window_title: String,
+    /// The code signature of the process's image file on disk, checked when the process was
+    /// first observed. Display only: it is not part of the approval digest and no policy
+    /// decision reads it, and it describes the file, not the code running in memory.
+    pub signature: SignatureState,
 }
 
 /// Whether approval prompts show a preview of the content or only its size: the person's
@@ -2891,6 +2896,46 @@ mod soft_decider_tests {
         std::fs::write(&path, text).unwrap();
         let (entries, state) = reader.history_with_state(10);
         assert_eq!((entries.len(), state), (1, HistoryState::Unverifiable));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(approval_ledger_lock_path(&path));
+    }
+
+    /// The image file's signature is display only: prompts that differ only in it carry the
+    /// same digest, and an approval given under one signature is consumed under the digest
+    /// alone, whatever signature the prompt showed.
+    #[test]
+    fn the_signature_line_never_enters_the_approval_digest() {
+        let path = temp_ledger("signature-digest");
+        let broker = approving_broker(&path);
+        let digest = "c".repeat(64);
+        let with_signature = |signature: SignatureState| {
+            prompt(&digest).for_application(TargetApplication {
+                executable: "notepad.exe".into(),
+                window_title: "Notes".into(),
+                signature,
+            })
+        };
+        let states = [
+            SignatureState::Verified {
+                subject: "Microsoft Windows".into(),
+            },
+            SignatureState::Unsigned,
+            SignatureState::Untrusted,
+            SignatureState::Unknown,
+        ];
+        for state in states {
+            let shown = with_signature(state.clone());
+            assert_eq!(shown.digest, digest);
+            let token = broker.request_token(&shown).expect("approved");
+            assert_eq!(token.digest, digest, "{state:?}");
+            broker
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest.clone(), "ws", "rev-1"),
+                    now_ms(),
+                )
+                .expect("consumed under the digest alone");
+        }
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(approval_ledger_lock_path(&path));
     }

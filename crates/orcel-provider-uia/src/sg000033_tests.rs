@@ -23,6 +23,9 @@ fn fake_process(pid: u32, exe: &str, generation: u64) -> NativeProcess {
         session_verified: true,
         start_generation: generation,
         generation_source: "fake-adapter",
+        signature: SignatureState::Verified {
+            subject: "Fake Signer".to_owned(),
+        },
     }
 }
 
@@ -733,13 +736,20 @@ fn capture_binding_matches_pre_capture_revalidation() {
 }
 
 /// Approval prompts name the application from the registry's own records: the verified
-/// process's executable and the observed window's title. An unknown window has none.
+/// process's executable, the signature the adapter reported for its image file, and the
+/// observed window's title. An unknown window has none.
 #[test]
 fn a_registered_window_names_its_application_for_prompts() {
     let (adapter, registry, window_id, _) = setup_window();
     assert_eq!(
         registry.window_application(&window_id),
-        Some(("notepad.exe".to_owned(), "Document".to_owned()))
+        Some((
+            "notepad.exe".to_owned(),
+            "Document".to_owned(),
+            SignatureState::Verified {
+                subject: "Fake Signer".to_owned()
+            }
+        ))
     );
     assert_eq!(registry.window_application("w-unknown"), None);
     let _ = adapter;

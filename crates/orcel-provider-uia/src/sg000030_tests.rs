@@ -23,6 +23,7 @@ fn fake_process(pid: u32, exe: &str, generation: u64) -> NativeProcess {
         session_verified: true,
         start_generation: generation,
         generation_source: "fake-adapter",
+        signature: SignatureState::Unknown,
     }
 }
 

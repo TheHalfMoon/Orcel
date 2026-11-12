@@ -38,6 +38,7 @@
 //! and must not be read as interactive desktop evidence.
 
 use orcel_contracts::FailureCode;
+pub use orcel_platform::signature::SignatureState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -867,6 +868,9 @@ pub struct NativeProcess {
     pub session_verified: bool,
     pub start_generation: u64,
     pub generation_source: &'static str,
+    /// The code signature of the image file, checked once per process instance. Display
+    /// only: it never enters an identity, a digest or a policy decision.
+    pub signature: SignatureState,
 }
 
 /// A top-level window as reported by an adapter.
@@ -1087,6 +1091,7 @@ impl NativeAdapter {
             session_verified: false,
             start_generation: 0,
             generation_source: "std-fallback",
+            signature: SignatureState::Unknown,
         }
     }
 }
@@ -1171,6 +1176,7 @@ struct ProcessRecord {
     session_verified: bool,
     process_generation: u64,
     generation_source: &'static str,
+    signature: SignatureState,
     workspace_id: String,
     policy_revision: String,
     superseded: bool,
@@ -1483,6 +1489,7 @@ impl UiaRegistry {
                     session_verified: native.session_verified,
                     process_generation: native.start_generation,
                     generation_source: native.generation_source,
+                    signature: native.signature.clone(),
                     workspace_id: workspace_id.to_owned(),
                     policy_revision: policy_revision.to_owned(),
                     superseded: false,
@@ -1500,6 +1507,7 @@ impl UiaRegistry {
                     session_verified: native.session_verified,
                     process_generation: native.start_generation,
                     generation_source: native.generation_source,
+                    signature: native.signature.clone(),
                     workspace_id: workspace_id.to_owned(),
                     policy_revision: policy_revision.to_owned(),
                     superseded: false,
@@ -3154,13 +3162,18 @@ impl UiaRegistry {
         })
     }
 
-    /// The executable name of a registered window's verified process and the window's title,
-    /// as recorded when it was observed, for approval prompts. Display only: it grants nothing,
-    /// and the action's own binding is what is checked again before dispatch.
-    pub fn window_application(&self, window_id: &str) -> Option<(String, String)> {
+    /// The executable name of a registered window's verified process, the window's title and
+    /// the signature of the process's image file, as recorded when they were observed, for
+    /// approval prompts. Display only: it grants nothing, and the action's own binding is what
+    /// is checked again before dispatch.
+    pub fn window_application(&self, window_id: &str) -> Option<(String, String, SignatureState)> {
         let window = self.windows.get(window_id)?;
         let process = self.processes.get(&window.process_id)?;
-        Some((process.exe_name.clone(), window.title.clone()))
+        Some((
+            process.exe_name.clone(),
+            window.title.clone(),
+            process.signature.clone(),
+        ))
     }
 
     /// Resolve the current capture binding for approval digest computation.
