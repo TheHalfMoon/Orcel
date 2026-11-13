@@ -1973,14 +1973,13 @@ mod platform {
                     #[cfg(test)]
                     {
                         eprintln!("SG108-DIAG navigation {url} failed: {reason}");
-                        // #438: the worker's stage timeline of a timeout.
-                        if reason == "timeout" {
-                            self.print_stderr_tail();
-                            eprintln!(
-                                "SG108-DIAG engine at the timeout: {}",
-                                self.engine_processes()
-                            );
-                        }
+                        // #438, #584: the worker's stage timeline and, for a failure, the
+                        // engine's network error code, which "failed" alone doesn't carry.
+                        self.print_stderr_tail();
+                        eprintln!(
+                            "SG108-DIAG engine at the {reason}: {}",
+                            self.engine_processes()
+                        );
                     }
                     return Err(navigation_failure(&reason));
                 }
