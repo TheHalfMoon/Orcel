@@ -25,7 +25,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Setup, Recovery, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Setup, Recovery, Settings, Unsupported }
 
     internal static class CommandRouter
     {
@@ -42,6 +42,7 @@ namespace Orcel.DesktopPreview
             if (value == "history") return SafeCommand.History;
             if (value == "clients") return SafeCommand.Clients;
             if (value == "setup") return SafeCommand.Setup;
+            if (value == "settings") return SafeCommand.Settings;
             if (value == "recovery") return SafeCommand.Recovery;
             if (value == "previews") return SafeCommand.Previews;
             if (value == "previews sizes") return SafeCommand.PreviewsSizes;
@@ -1015,6 +1016,58 @@ namespace Orcel.DesktopPreview
         private const int WorkspacesTimeoutMs = 30000;
     }
 
+    /// The settings Orcel has now, in one place, each with where it is changed. It reads only,
+    /// through the same fixed queries `previews`, `control` and `workspaces` run and the app
+    /// API's `clients.list`; the one change the app makes itself (sizes-only previews) stays its
+    /// own command, and everything that grants anything stays in a terminal.
+    internal static class SettingsView
+    {
+        /// The first line of a reply this app wrote.
+        internal static string FirstLine(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "(no answer)";
+            int end = text.IndexOf('\n');
+            return end < 0 ? text : text.Substring(0, end);
+        }
+
+        internal static string Text(string previews, string control, int? workspaces, SetupGuide.ClientState clients, int clientCount)
+        {
+            StringBuilder text = new StringBuilder("Orcel settings (this app only reads them; where each is changed is named):");
+            text.Append("\n• ").Append(FirstLine(previews))
+                .Append(" To show sizes only, type previews sizes; content previews are set in a terminal (orcel approvals previews content).");
+            text.Append("\n• ").Append(FirstLine(control))
+                .Append(" To end it, type stop control; granting it stays in a terminal, behind Windows Hello.");
+            text.Append("\n• Folders Orcel may use: ")
+                .Append(workspaces == null ? "couldn't check." : workspaces + ".")
+                .Append(" Type workspaces to see them; add or remove them with orcel workspace in a terminal.");
+            text.Append("\n• AI clients connected now: ")
+                .Append(clients == SetupGuide.ClientState.Unknown ? "couldn't check." : clientCount + ".")
+                .Append(" Type clients to see them, or connect for the setup to paste into a client.");
+            text.Append("\n• Emergency: revoke all invalidates every pending approval, desktop control and remote session lease, with Windows Hello.");
+            return text.ToString();
+        }
+
+        internal static string Read()
+        {
+            if (!LocalHost.IsInstalled())
+                return "Orcel isn't installed for this Windows user yet, so it has no settings to show. Type setup for the first steps.";
+            string previews, control;
+            int? workspaces;
+            try { previews = Interpret.PreviewsMessage(LocalHost.Query(SafeCommand.Previews, QueryTimeoutMs)); }
+            catch (Exception) { previews = "Approval previews: couldn't check."; }
+            try { control = Interpret.ControlMessage(LocalHost.Query(SafeCommand.Control, QueryTimeoutMs)); }
+            catch (Exception) { control = "Desktop control: couldn't check."; }
+            try { workspaces = Interpret.WorkspaceCount(LocalHost.Query(SafeCommand.Workspaces, WorkspacesTimeoutMs)); }
+            catch (Exception) { workspaces = null; }
+            int count;
+            SetupGuide.ClientState clients = SetupGuide.Clients(AppApi.Call("clients.list", null), out count);
+            return Text(previews, control, workspaces, clients, count);
+        }
+
+        private const int QueryTimeoutMs = 15000;
+        private const int WorkspacesTimeoutMs = 30000;
+    }
+
     /// How to connect a local AI client: the setup to paste into the client, with this
     /// install's exact path. The app shows it and edits no client's configuration.
     internal static class ConnectGuide
@@ -1783,7 +1836,7 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Commands: help, setup, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, revoke all";
+            commandBox.ToolTip = "Commands: help, setup, settings, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, revoke all";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
             AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control and revoke all, which only take authority away");
@@ -1953,7 +2006,7 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: setup, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: setup, settings, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
@@ -1964,6 +2017,8 @@ namespace Orcel.DesktopPreview
                 ShowHistory();
             else if (kind == SafeCommand.Clients)
                 ShowClients();
+            else if (kind == SafeCommand.Settings)
+                ShowSettings();
             else if (kind == SafeCommand.Setup)
                 ShowSetup(false);
             else if (kind == SafeCommand.Recovery)
@@ -1996,7 +2051,7 @@ namespace Orcel.DesktopPreview
             bool guarded = command == SafeCommand.StopControl || command == SafeCommand.RevokeAll || command == SafeCommand.PreviewsSizes
                 || command == SafeCommand.Workspaces;
             // setup lists workspaces too, so the two share one wait on the runtime's lock.
-            if (guarded && (running.Contains(command) || (command == SafeCommand.Workspaces && running.Contains(SafeCommand.Setup))))
+            if (guarded && (running.Contains(command) || (command == SafeCommand.Workspaces && (running.Contains(SafeCommand.Setup) || running.Contains(SafeCommand.Settings)))))
             {
                 AddMessage(false, "That is already running; wait for its answer.");
                 return;
@@ -2095,13 +2150,28 @@ namespace Orcel.DesktopPreview
         }
 
         /// At launch the checklist appears only while Orcel isn't installed.
+        /// Lists workspaces too, so it shares their one wait on the runtime's lock.
+        private async void ShowSettings()
+        {
+            if (running.Contains(SafeCommand.Settings) || running.Contains(SafeCommand.Setup) || running.Contains(SafeCommand.Workspaces))
+            {
+                AddMessage(false, "That is already running; wait for its answer.");
+                return;
+            }
+            running.Add(SafeCommand.Settings);
+            AddMessage(false, "Reading Orcel's settings...");
+            try { AddMessage(false, await Task.Run(delegate { return SettingsView.Read(); })); }
+            catch (Exception) { AddMessage(false, "The read-only settings check failed unexpectedly. No action was performed."); }
+            finally { running.Remove(SafeCommand.Settings); }
+        }
+
         private async void ShowSetup(bool launch)
         {
             // On request it lists workspaces, which waits on the runtime's lock: one at a time,
             // and never alongside the workspaces command. At launch nothing is read.
             if (!launch)
             {
-                if (running.Contains(SafeCommand.Setup) || running.Contains(SafeCommand.Workspaces))
+                if (running.Contains(SafeCommand.Setup) || running.Contains(SafeCommand.Workspaces) || running.Contains(SafeCommand.Settings))
                 {
                     AddMessage(false, "That is already running; wait for its answer.");
                     return;
@@ -2294,6 +2364,10 @@ namespace Orcel.DesktopPreview
             string recoveryText = Recovery.Text(recoveryList, recovered);
             expect(recoveryText.StartsWith("1 report needs your attention.") && recoveryText.Contains("out/q3.xlsx: a file is there, or couldn't be read, and it doesn't check") && recoveryText.Contains("\"Q2\": nothing was written") && !recoveryText.Contains("Q1") && recoveryText.Contains("1 task's details couldn't be read") && recoveryText.Split('\n').Length == 5, "recovery explains each restart check, escaped, one line each, skips tasks without one, and counts tasks it couldn't read");
             expect(Recovery.Text(null, new List<Dictionary<string, object>>()).StartsWith("Recovery check unavailable") && Recovery.Text(recoveryList, new List<Dictionary<string, object>>()).StartsWith("No report was interrupted") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).StartsWith("No interrupted report was found among the tasks that could be read.") && Recovery.Text(recoveryList, new List<Dictionary<string, object>> { null, null }).Contains("2 tasks' details couldn't be read") && Recovery.Meaning("verified").StartsWith("the report is there") && Recovery.Meaning("new-outcome").Contains("doesn't know"), "recovery says when there is nothing to report or no answer, and never guesses an outcome");
+            expect(CommandRouter.Classify(" Settings ") == SafeCommand.Settings && CommandRouter.CliArguments(SafeCommand.Settings) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Settings), "settings routes to no CLI command of its own; it reads through the fixed previews, control and workspace queries");
+            string settingsText = SettingsView.Text("Approval previews: sizes only. Approval prompts show how much would change.\nSaved.", "Desktop control is off (Safe): no lease.", 2, SetupGuide.ClientState.Connected, 1);
+            expect(settingsText.StartsWith("Orcel settings (this app only reads them") && settingsText.Contains("• Approval previews: sizes only. Approval prompts show how much would change. To show sizes only") && !settingsText.Contains("Saved.") && settingsText.Contains("Folders Orcel may use: 2.") && settingsText.Contains("AI clients connected now: 1.") && settingsText.Contains("granting it stays in a terminal"), "settings shows each setting with where it is changed, first lines only");
+            expect(SettingsView.Text("x", "y", null, SetupGuide.ClientState.Unknown, 0).Contains("Folders Orcel may use: couldn't check.") && SettingsView.Text("x", "y", null, SetupGuide.ClientState.Unknown, 0).Contains("AI clients connected now: couldn't check.") && SettingsView.FirstLine(null) == "(no answer)", "settings never guesses an unknown value");
             expect(CommandRouter.Classify(" Setup ") == SafeCommand.Setup && CommandRouter.CliArguments(SafeCommand.Setup) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Setup), "setup routes to no CLI command of its own; it reads through the workspaces command's fixed arguments");
             int setupCount;
             expect(SetupGuide.Clients(null, out setupCount) == SetupGuide.ClientState.Unknown && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.None && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"ok\",\"clients\":[{\"pid\":1},{\"pid\":2}]}}"), out setupCount) == SetupGuide.ClientState.Connected && setupCount == 2 && SetupGuide.Clients(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"registry\":\"unavailable\",\"clients\":[]}}"), out setupCount) == SetupGuide.ClientState.Unknown, "setup reads connected clients and never guesses");
