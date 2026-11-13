@@ -77,3 +77,12 @@ export function traceWatchEventLoop(intervalMs = 250, clock: () => number = Date
     if (busy !== null) traceMark(`system_cpu_busy_${busy}pct`, clock());
   };
 }
+
+/**
+ * #584: the engine's network error code in a failed navigation's message, such as
+ * `net::ERR_PROXY_CONNECTION_FAILED`, or "unknown". Only the code is kept: the rest of the
+ * message can name the URL.
+ */
+export function netErrorCode(message: string): string {
+  return /net::ERR_[A-Z0-9_]+/.exec(message)?.[0] ?? "unknown";
+}
