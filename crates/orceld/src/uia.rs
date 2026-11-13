@@ -65,7 +65,8 @@ fn with_target_application(
             prompt.for_application(orcel_approval::TargetApplication {
                 executable: application.executable,
                 window_title: application.window_title,
-                signature,
+                signature: signature.state,
+                running_image: signature.running_image,
             })
         }
         None => prompt,
