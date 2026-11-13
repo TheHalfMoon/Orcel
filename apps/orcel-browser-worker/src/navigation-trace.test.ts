@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cpuBusyPercent, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
+import { cpuBusyPercent, netErrorCode, rendererAnswers, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
 
 test("the timeline names stages with elapsed milliseconds and restarts", () => {
   traceStart(1_000);
@@ -76,4 +76,19 @@ test("busy share is across all cores and refuses readings it can't compare", () 
   assert.equal(cpuBusyPercent([cpu(0, 0)], [cpu(0, 0)]), null);
   assert.equal(cpuBusyPercent([], []), null);
   assert.equal(cpuBusyPercent([cpu(0, 0)], [cpu(1, 1), cpu(1, 1)]), null);
+});
+
+test("#584: a failed navigation keeps only the engine's network error code", () => {
+  assert.equal(
+    netErrorCode("page.goto: net::ERR_PROXY_CONNECTION_FAILED at https://fixture.test/site/dl?q=secret"),
+    "net::ERR_PROXY_CONNECTION_FAILED"
+  );
+  assert.equal(netErrorCode("net::ERR_NAME_NOT_RESOLVED"), "net::ERR_NAME_NOT_RESOLVED");
+  assert.equal(netErrorCode("Target page, context or browser has been closed"), "unknown");
+});
+
+test("#584: a renderer that answers, even with an error, is told apart from one that doesn't", async () => {
+  assert.equal(await rendererAnswers(() => Promise.resolve(1), 1_000), "answered");
+  assert.equal(await rendererAnswers(() => Promise.reject(new Error("closed")), 1_000), "answered");
+  assert.equal(await rendererAnswers(() => new Promise(() => {}), 20), "no answer");
 });

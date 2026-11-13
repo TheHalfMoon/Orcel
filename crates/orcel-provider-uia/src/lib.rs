@@ -38,6 +38,7 @@
 //! and must not be read as interactive desktop evidence.
 
 use orcel_contracts::FailureCode;
+pub use orcel_platform::signature::{ImageSignature, RunningImage, SignatureState};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -867,6 +868,79 @@ pub struct NativeProcess {
     pub session_verified: bool,
     pub start_generation: u64,
     pub generation_source: &'static str,
+    /// Where the code signature of the image file comes from. Display only: it never enters
+    /// an identity, a digest or a policy decision.
+    pub signature: ProcessSignature,
+}
+
+/// The source of a process's image-file signature, kept with its record. Listing never reads
+/// the file; [`WindowApplication::signature`] does, when a prompt asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessSignature {
+    /// A state the adapter already knows: fakes, and `Unknown` from the computer host.
+    Known(SignatureState),
+    /// The Win32 image path, to be checked when a prompt asks for it.
+    ImageFile { path: String },
+}
+
+impl From<SignatureState> for ProcessSignature {
+    fn from(state: SignatureState) -> Self {
+        Self::Known(state)
+    }
+}
+
+/// What an approval prompt shows about a registered window's application, copied out of
+/// the registry so the signature can be checked after the registry lock is released.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowApplication {
+    pub executable: String,
+    pub window_title: String,
+    signature: ProcessSignature,
+    exe_id: String,
+    pid: u32,
+    process_generation: u64,
+}
+
+/// Process instances whose image signature is remembered before the cache starts over.
+const MAX_CACHED_SIGNATURES: usize = 512;
+
+/// Signature answers per (image, pid, start generation).
+type SignatureCache = HashMap<(String, u32, u64), ImageSignature>;
+
+impl WindowApplication {
+    /// The signature of the file at the process's image path, and Orcel's comparison of that
+    /// file with the file the process's image appears to be mapped from. For a native process
+    /// this may hash and verify the file, and query the process, the first time it is asked
+    /// per (image, pid, start generation), so callers ask without holding the registry lock.
+    /// The answer is then cached for that process instance: a file swapped at the path later
+    /// is not seen. A state the adapter already knew was compared with no process. Display
+    /// only.
+    pub fn signature(&self) -> ImageSignature {
+        let path = match &self.signature {
+            ProcessSignature::Known(state) => return ImageSignature::unconfirmed(state.clone()),
+            ProcessSignature::ImageFile { path } => path,
+        };
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<SignatureCache>> =
+            std::sync::OnceLock::new();
+        let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+        let key = (self.exe_id.clone(), self.pid, self.process_generation);
+        if let Some(known) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
+            return known;
+        }
+        // Checked outside the cache lock too, so a slow file holds nobody else up.
+        let state = orcel_platform::signature::image_signature_for(
+            std::path::Path::new(path),
+            self.pid,
+            self.process_generation,
+        );
+        if let Ok(mut map) = cache.lock() {
+            if map.len() >= MAX_CACHED_SIGNATURES {
+                map.clear();
+            }
+            map.insert(key, state.clone());
+        }
+        state
+    }
 }
 
 /// A top-level window as reported by an adapter.
@@ -1087,6 +1161,7 @@ impl NativeAdapter {
             session_verified: false,
             start_generation: 0,
             generation_source: "std-fallback",
+            signature: SignatureState::Unknown.into(),
         }
     }
 }
@@ -1171,6 +1246,7 @@ struct ProcessRecord {
     session_verified: bool,
     process_generation: u64,
     generation_source: &'static str,
+    signature: ProcessSignature,
     workspace_id: String,
     policy_revision: String,
     superseded: bool,
@@ -1483,6 +1559,7 @@ impl UiaRegistry {
                     session_verified: native.session_verified,
                     process_generation: native.start_generation,
                     generation_source: native.generation_source,
+                    signature: native.signature.clone(),
                     workspace_id: workspace_id.to_owned(),
                     policy_revision: policy_revision.to_owned(),
                     superseded: false,
@@ -1500,6 +1577,7 @@ impl UiaRegistry {
                     session_verified: native.session_verified,
                     process_generation: native.start_generation,
                     generation_source: native.generation_source,
+                    signature: native.signature.clone(),
                     workspace_id: workspace_id.to_owned(),
                     policy_revision: policy_revision.to_owned(),
                     superseded: false,
@@ -3151,6 +3229,24 @@ impl UiaRegistry {
             amount,
             hwnd: window.hwnd,
             runtime_id: record.runtime_id.clone(),
+        })
+    }
+
+    /// The executable name of a registered window's verified process, the window's title and
+    /// where its image-file signature comes from, as recorded when they were observed, for
+    /// approval prompts. Reads no file: ask [`WindowApplication::signature`] after releasing
+    /// the registry. Display only: it grants nothing, and the action's own binding is what is
+    /// checked again before dispatch.
+    pub fn window_application(&self, window_id: &str) -> Option<WindowApplication> {
+        let window = self.windows.get(window_id)?;
+        let process = self.processes.get(&window.process_id)?;
+        Some(WindowApplication {
+            executable: process.exe_name.clone(),
+            window_title: window.title.clone(),
+            signature: process.signature.clone(),
+            exe_id: process.exe_id.clone(),
+            pid: process.pid,
+            process_generation: process.process_generation,
         })
     }
 

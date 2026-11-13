@@ -77,3 +77,34 @@ export function traceWatchEventLoop(intervalMs = 250, clock: () => number = Date
     if (busy !== null) traceMark(`system_cpu_busy_${busy}pct`, clock());
   };
 }
+
+/**
+ * #584: the engine's network error code in a failed navigation's message, such as
+ * `net::ERR_PROXY_CONNECTION_FAILED`, or "unknown". Only the code is kept: the rest of the
+ * message can name the URL.
+ */
+export function netErrorCode(message: string): string {
+  return /net::ERR_[A-Z0-9_]+/.exec(message)?.[0] ?? "unknown";
+}
+
+/**
+ * #584: whether the page's renderer answers at all after a navigation stalled: "answered"
+ * if `evaluate` settles (resolves or rejects) within `ms`, else "no answer". A renderer that
+ * never started, or hangs, gives no answer; one that is alive but never began the
+ * navigation answers.
+ */
+export async function rendererAnswers(evaluate: () => Promise<unknown>, ms = 2_000): Promise<"answered" | "no answer"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"no answer">((resolve) => {
+    timer = setTimeout(() => resolve("no answer"), ms);
+  });
+  try {
+    const answer = evaluate().then(
+      () => "answered" as const,
+      () => "answered" as const
+    );
+    return await Promise.race([answer, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

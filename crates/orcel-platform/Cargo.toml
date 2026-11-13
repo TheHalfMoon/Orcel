@@ -17,13 +17,21 @@ libc = "0.2"
 
 # #358/#384: Security, Security_Authorization and Storage_FileSystem read
 # owners and DACLs and create owner-only directories (no new crates).
+# Security_WinTrust and Security_Cryptography(_Catalog, _Sip) check image
+# signatures for display on desktop prompts, and System_ProcessStatus finds the
+# file a process's image is mapped from, to compare with it (no new crates).
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Cryptography_Sip",
+    "Win32_Security_WinTrust",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_ProcessStatus",
     "Win32_System_RemoteDesktop",
     "Win32_System_Threading",
     "Win32_UI_Shell",

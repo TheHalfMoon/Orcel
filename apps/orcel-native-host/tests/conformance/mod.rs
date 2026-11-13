@@ -1382,13 +1382,16 @@ const LATENCY_POLL: Duration = Duration::from_millis(5);
 pub type SemanticStep = (&'static str, &'static str, &'static str, Option<String>);
 
 /// Waits until the fixture's own state shows the effect, and panics if it never does.
-fn await_effect(case: &str, mut shown: impl FnMut() -> bool) {
+fn await_effect(case: &str, mut shown: impl FnMut() -> bool, at_deadline: impl FnOnce() -> String) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !shown() {
-        assert!(
-            Instant::now() < deadline,
-            "{case}: the fixture never showed the effect"
-        );
+        if Instant::now() >= deadline {
+            // #700: what the fixture and the window system showed when the effect never
+            // came, so a recurrence says whether it was focus, a lost event or a slow
+            // handler.
+            let seen = at_deadline();
+            panic!("{case}: the fixture never showed the effect; {seen}");
+        }
         std::thread::sleep(LATENCY_POLL);
     }
 }
@@ -1434,7 +1437,18 @@ pub fn semantic_latency(
                 "{case} {action}: {reply}"
             );
         }
-        await_effect(case, || done(&state(), action));
+        let shared = std::cell::RefCell::new(&mut state);
+        await_effect(
+            case,
+            || done(&(shared.borrow_mut())(), action),
+            || {
+                format!(
+                    "action {action}; fixture state {}; desktop {:?}",
+                    (shared.borrow_mut())(),
+                    desktop()
+                )
+            },
+        );
         samples.push(started.elapsed());
     }
     std::thread::sleep(Duration::from_millis(300));
@@ -1500,9 +1514,21 @@ pub fn raw_latency(
             let reply = host.request(cell.op, fields);
             assert_eq!(reply["ok"], true, "{case}: {reply}");
             assert_eq!(reply["action"]["state"], "completed", "{case}: {reply}");
-            await_effect(&case, || {
-                crate::support::events(&state()).len() >= seen + cell.wanted
-            });
+            await_effect(
+                &case,
+                || crate::support::events(&state()).len() >= seen + cell.wanted,
+                || {
+                    let events = crate::support::events(&state());
+                    let recent = &events[events.len().saturating_sub(5)..];
+                    format!(
+                        "host reply {reply}; journal held {seen} events before, {} now, \
+                         {} wanted; last events {recent:?}; desktop {:?}",
+                        events.len(),
+                        cell.wanted,
+                        desktop()
+                    )
+                },
+            );
             samples.push(started.elapsed());
         }
         std::thread::sleep(Duration::from_millis(300));

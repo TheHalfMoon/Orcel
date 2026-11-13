@@ -136,6 +136,32 @@ function toolNames(response: Record<string, unknown>): string[] {
   return ((response.result as { tools: Array<{ name: string }> }).tools ?? []).map((t) => t.name).sort();
 }
 
+test("a local stdio session says hello once with its client's name; a tunnel session never does", async () => {
+  const local = stdioSessionConfig({ ORCEL_DEFAULT_WORKSPACE: "default" });
+  const wire: KernelRequest[] = [];
+  const server = stdioServerFactory(local, (c) => recordingKernel(c, wire))();
+  const transport = new TestTransport();
+  await server.connect(transport);
+  await transport.request(1, "initialize", {
+    ...INIT,
+    clientInfo: { name: "claude-ai", version: "0.1.2" }
+  });
+  transport.notify("notifications/initialized");
+  await transport.request(2, "tools/list");
+  const hellos = wire.filter((request) => request.capability === "session");
+  assert.equal(hellos.length, 1);
+  assert.equal(hellos[0]?.operation, "hello");
+  assert.deepEqual(hellos[0]?.arguments, { client_name: "claude-ai", client_version: "0.1.2", transport: "stdio" });
+  assert.equal(hellos[0]?.remote, undefined);
+  // Saying it again changes nothing.
+  (server as unknown as { server: { oninitialized?: () => void } }).server.oninitialized?.();
+  assert.equal(wire.filter((request) => request.capability === "session").length, 1);
+
+  const tunnel = await tunnelSession();
+  await tunnel.transport.request(2, "tools/list");
+  assert.equal(tunnel.wire.filter((request) => request.capability === "session").length, 0);
+});
+
 test("a tunnel-launched host serves exactly the core profile", async () => {
   // A local profile variable left in the environment changes nothing.
   for (const profile of [undefined, "desktop_structured", "browser_structured"]) {

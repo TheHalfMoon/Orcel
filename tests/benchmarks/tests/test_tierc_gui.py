@@ -13,7 +13,7 @@ BENCH = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCH))
 
 from orcel_bench.tierc import TierCError  # noqa: E402
-from orcel_bench.tierc_gui import _fill, electron_apps, judge_act, load_plan, run_observe_episode  # noqa: E402
+from orcel_bench.tierc_gui import Episode, _app_env, _fill, electron_apps, judge_act, load_plan, run_observe_episode  # noqa: E402
 
 VALUES = {"bundle": "/b", "workspace": "/w"}
 
@@ -114,6 +114,48 @@ class TierCGuiHarness(unittest.TestCase):
                 if value is not None:
                     os.environ[key] = value
 
+class TierCGuiDownloadsAndDiagnostics(unittest.TestCase):
+    def test_downloads_are_shared_only_when_a_cache_is_given_and_app_data_stays_per_episode(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as scratch, tempfile.TemporaryDirectory() as shared:
+            saved = os.environ.pop("ORCEL_TIERC_DOWNLOAD_CACHE", None)
+            try:
+                own = _app_env(Path(scratch), [])
+                self.assertTrue(own["npm_config_cache"].startswith(scratch))
+                self.assertTrue(own["ELECTRON_CACHE"].startswith(scratch))
+                os.environ["ORCEL_TIERC_DOWNLOAD_CACHE"] = shared
+                # A launched app never gets the shared folders, only an install does.
+                launched = _app_env(Path(scratch), [])
+                self.assertTrue(launched["ELECTRON_CACHE"].startswith(scratch))
+                self.assertTrue(launched["npm_config_cache"].startswith(scratch))
+                env = _app_env(Path(scratch), [], shared_downloads=True)
+                self.assertEqual(env["npm_config_cache"], str(Path(shared) / "npm"))
+                self.assertEqual(env["ELECTRON_CACHE"], str(Path(shared) / "electron"))
+                for key in ("APPDATA", "LOCALAPPDATA", "XDG_CACHE_HOME"):
+                    self.assertTrue(env[key].startswith(scratch), key)
+            finally:
+                os.environ.pop("ORCEL_TIERC_DOWNLOAD_CACHE", None)
+                if saved is not None:
+                    os.environ["ORCEL_TIERC_DOWNLOAD_CACHE"] = saved
+
+    def test_a_missing_window_says_whether_the_app_exited(self) -> None:
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / "chat.stderr.log"
+            log.write_bytes(b"Error: Electron failed to install correctly\n")
+            fake = SimpleNamespace(_stderr_log=lambda app: log)
+            app = {"id": "chat"}
+            exited = Episode.missing_window(fake, app, SimpleNamespace(poll=lambda: 1))
+            self.assertEqual(exited, "app-exited-1")
+            running = Episode.missing_window(fake, app, SimpleNamespace(poll=lambda: None))
+            self.assertEqual(running, "window-not-found")
+            # An id that isn't a plain name can't put its log outside scratch.
+            unsafe = Episode._stderr_log(SimpleNamespace(scratch=Path(scratch)), {"id": "../../x"})
+            self.assertEqual(unsafe.parent, Path(scratch))
+            # No log at all still answers.
+            gone = SimpleNamespace(_stderr_log=lambda app: Path(scratch) / "absent.log")
+            self.assertEqual(Episode.missing_window(gone, app, SimpleNamespace(poll=lambda: 7)), "app-exited-7")
 
 if __name__ == "__main__":
     unittest.main()

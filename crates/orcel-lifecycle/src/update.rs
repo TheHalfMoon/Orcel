@@ -565,6 +565,21 @@ impl<'a> Updater<'a> {
                 "Orcel {previous} does not support the current configuration schema; nothing was changed"
             )));
         }
+        // A saved approval preview choice is a field that versions before it refuse to load,
+        // which would leave the rolled-back Orcel unable to start. Clearing it first is the
+        // person's choice, since it shows content previews again.
+        if crate::config::Config::load(&self.layout)?
+            .approval_previews
+            .is_some()
+        {
+            return Err(LifecycleError::conflict(format!(
+                "Orcel {previous} may not read the saved approval preview choice; nothing was changed. \
+                 Run `orcel approvals previews content` to clear it, then roll back. After that, \
+                 prompts show content previews, except that a version which reads \
+                 ORCEL_APPROVAL_PREVIEWS shows sizes only for CLI and `orcel mcp stdio` sessions \
+                 whose environment sets it to `sizes` (never for tunnel sessions)"
+            )));
+        }
         let was_running = stop_if_running(&self.layout)?;
         let from = current.version.clone();
         let result = (|| {
@@ -648,6 +663,59 @@ mod tests {
             )
             .unwrap();
         (layout, platform)
+    }
+
+    #[test]
+    fn a_saved_preview_choice_refuses_rollback_until_it_is_cleared() {
+        let (layout, platform) = setup("0.2.0");
+        // 0.3.0 active with 0.2.0 retained, written directly: a real update would run the
+        // fixture's CLI, which isn't an executable.
+        let installer = Installer::new(layout.clone(), &platform);
+        let release = manifest::verify_release(&release_dir("0.3.0")).unwrap();
+        installer.stage_version(&release).unwrap();
+        let record: InstallRecord = crate::layout::read_install(&layout).unwrap().unwrap();
+        write_json_atomic(
+            &layout.current_file(),
+            &CurrentRecord {
+                schema: CURRENT_SCHEMA.into(),
+                version: "0.3.0".into(),
+                manifest_sha256: release.manifest_sha256.clone(),
+            },
+        )
+        .unwrap();
+        write_json_atomic(
+            &layout.install_file(),
+            &InstallRecord {
+                schema: INSTALL_SCHEMA.into(),
+                active: "0.3.0".into(),
+                previous: Some("0.2.0".into()),
+                node_path: record.node_path.clone(),
+                path_entry_added: record.path_entry_added,
+            },
+        )
+        .unwrap();
+        installer
+            .replace_cli(&layout.version_dir("0.3.0").join("orcel.exe"))
+            .unwrap();
+        installer.verify().unwrap();
+        let mut config = crate::config::Config::load(&layout).unwrap();
+        config.approval_previews = Some(crate::config::ApprovalPreviews::Sizes);
+        config.save(&layout).unwrap();
+        let error = Updater::new(layout.clone(), &platform)
+            .rollback()
+            .unwrap_err();
+        assert!(
+            error.message.contains("orcel approvals previews content"),
+            "{}",
+            error.message
+        );
+        let current: CurrentRecord = read_json(&layout.current_file()).unwrap().unwrap();
+        assert_eq!(current.version, "0.3.0", "nothing was changed");
+        config.approval_previews = None;
+        config.save(&layout).unwrap();
+        Updater::new(layout.clone(), &platform).rollback().unwrap();
+        let current: CurrentRecord = read_json(&layout.current_file()).unwrap().unwrap();
+        assert_eq!(current.version, "0.2.0");
     }
 
     #[test]

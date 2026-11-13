@@ -396,3 +396,189 @@ fn wi05_each_parse_gets_its_own_stage() {
         b"first"
     );
 }
+
+#[test]
+fn a_stage_name_already_taken_is_skipped_and_left_alone() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("orcel-dp-claim-{}-{unique}", std::process::id()));
+    let runs = base.join("runs");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(runs.join("taken")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(runs.join("taken").join("sentinel"), b"keep").unwrap();
+    std::fs::write(runs.join("file"), b"keep").unwrap();
+    std::fs::write(outside.join("sentinel"), b"keep").unwrap();
+    // A link under a predicted name: a directory symlink, or a junction on Windows.
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, runs.join("link")).unwrap();
+    #[cfg(windows)]
+    assert!(std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(runs.join("link"))
+        .arg(&outside)
+        .status()
+        .unwrap()
+        .success());
+    // A dangling junction too: creating at its name must not create its missing target.
+    #[cfg(windows)]
+    {
+        assert!(std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(runs.join("dangling"))
+            .arg(base.join("missing"))
+            .status()
+            .unwrap()
+            .success());
+        assert!(
+            contained_tier::claim_dir(&runs, ["dangling".to_owned()].into_iter(), "test").is_err()
+        );
+        assert!(
+            !base.join("missing").exists(),
+            "a dangling link's target is never created"
+        );
+        std::fs::remove_dir(runs.join("dangling")).unwrap();
+    }
+    let names = ["taken", "file", "link", "fresh"].map(String::from);
+    let claimed = contained_tier::claim_dir(&runs, names.into_iter(), "test").unwrap();
+    assert_eq!(claimed, runs.join("fresh"));
+    assert_eq!(
+        std::fs::read(runs.join("taken").join("sentinel")).unwrap(),
+        b"keep"
+    );
+    assert_eq!(std::fs::read(runs.join("file")).unwrap(), b"keep");
+    assert_eq!(std::fs::read(outside.join("sentinel")).unwrap(), b"keep");
+    assert!(
+        std::fs::symlink_metadata(runs.join("link")).is_ok(),
+        "the link itself stays"
+    );
+    // When every name is taken, it fails closed instead of reusing one.
+    assert!(contained_tier::claim_dir(&runs, ["taken".to_owned()].into_iter(), "test").is_err());
+    #[cfg(windows)]
+    std::fs::remove_dir(runs.join("link")).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(runs.join("link")).unwrap();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn only_leftovers_of_exited_processes_are_swept() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("orcel-dp-sweep-{}-{unique}", std::process::id()));
+    let runs = base.join("runs");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("sentinel"), b"keep").unwrap();
+    // A process that has exited, so its pid names no running process.
+    #[cfg(windows)]
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", "exit"])
+        .spawn()
+        .unwrap();
+    #[cfg(unix)]
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let own = std::process::id();
+    // A running process that isn't this one.
+    #[cfg(windows)]
+    let mut live = std::process::Command::new("ping")
+        .args(["-n", "30", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    #[cfg(unix)]
+    let mut live = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let alive = live.id();
+    for name in [
+        format!("{dead}-0-0000000000000000-leftover"),
+        format!("{own}-0-0000000000000000-mine"),
+        format!("{alive}-0-0000000000000000-running"),
+        "not-a-run".to_owned(),
+    ] {
+        std::fs::create_dir_all(runs.join(&name).join("work")).unwrap();
+        std::fs::write(runs.join(&name).join("work").join("file"), b"x").unwrap();
+    }
+    // A link under a dead pid's name is never removed or followed.
+    let link = runs.join(format!("{dead}-1-0000000000000000-link"));
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    #[cfg(windows)]
+    assert!(std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&outside)
+        .status()
+        .unwrap()
+        .success());
+    // A plain file under a dead pid's name stays too.
+    std::fs::write(
+        runs.join(format!("{dead}-2-0000000000000000-file")),
+        b"keep",
+    )
+    .unwrap();
+
+    assert_eq!(contained_tier::sweep_leftovers(&runs), 1);
+    assert!(!runs
+        .join(format!("{dead}-0-0000000000000000-leftover"))
+        .exists());
+    for kept in [
+        format!("{own}-0-0000000000000000-mine"),
+        format!("{alive}-0-0000000000000000-running"),
+        "not-a-run".to_owned(),
+        format!("{dead}-2-0000000000000000-file"),
+    ] {
+        assert!(runs.join(&kept).exists(), "{kept} stays");
+    }
+    assert!(
+        std::fs::symlink_metadata(&link).is_ok(),
+        "the link itself stays"
+    );
+    assert_eq!(std::fs::read(outside.join("sentinel")).unwrap(), b"keep");
+    // A missing runs directory sweeps nothing.
+    assert_eq!(contained_tier::sweep_leftovers(&base.join("absent")), 0);
+
+    let _ = live.kill();
+    let _ = live.wait();
+    #[cfg(windows)]
+    std::fs::remove_dir(&link).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&link).unwrap();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn only_names_orcel_writes_carry_a_run_pid() {
+    let salt = "0123456789abcdef";
+    let digest = "ab".repeat(32);
+    assert_eq!(
+        contained_tier::run_pid(&format!("123-0-{salt}-label")),
+        Some(123)
+    );
+    assert_eq!(contained_tier::run_pid(&format!("123-{digest}")), Some(123));
+    for name in [
+        format!("+123-0-{salt}-label"),
+        format!("0123-0-{salt}-label"),
+        format!("0-0-{salt}-label"),
+        format!("4294967295-0-{salt}-label"),
+        format!("2147483648-0-{salt}-label"),
+        format!("123-0-{salt}-"),
+        format!("123-00-{salt}-label"),
+        "123-0-0123456789ABCDEF-label".to_owned(),
+        format!("123-0-{}-label", &salt[..15]),
+        format!("123-{}", &digest[..63]),
+        "123-x".to_owned(),
+        "123".to_owned(),
+        "not-a-run".to_owned(),
+    ] {
+        assert_eq!(contained_tier::run_pid(&name), None, "{name}");
+    }
+}

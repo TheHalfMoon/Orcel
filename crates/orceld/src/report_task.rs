@@ -20,8 +20,9 @@
 //!    verified.
 //!
 //! Task records live in a bounded per-run registry ([`TaskRegistry`]) that
-//! the read-only app API serves as `task.get` and `task.list`. They hold
-//! paths, sizes, hashes, states and step outcomes, never file content.
+//! the read-only app API serves as `task.get` and `task.list`, together with
+//! the tasks other running orcelds journaled (shown, never acted on). They
+//! hold paths, sizes, hashes, states and step outcomes, never file content.
 //! Report requests are local-only: a remote-context envelope is refused
 //! before policy or dispatch.
 //!
@@ -47,7 +48,7 @@ use orcel_provider_fs::{FsProvider, ProviderError};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 /// Most tasks one daemon run keeps.
@@ -100,9 +101,9 @@ pub(crate) enum TaskState {
     VerificationFailed,
     Stale,
     Failed,
-    /// F4 slice 5 (kernel only, `prep/F4_TASK_STOP.md`): the task can never
-    /// write. No surface reaches this outside tests yet; which surface may
-    /// is a founder decision on #446.
+    /// F4 slice 5 (`prep/F4_TASK_STOP.md`): the task can never write. Its
+    /// only surface is the local app API's `task.stop` (founder decision of
+    /// 2026-11-13, #446); never MCP or the stdio channel.
     Stopped,
 }
 
@@ -216,8 +217,14 @@ pub(crate) struct ReportTask {
     session: Option<String>,
 }
 
+/// Whose task a `task.list` or `task.get` entry is, as the app API names it.
+/// Never the session fingerprint, the run id or a pid.
+const OWNER_THIS_SESSION: &str = "this_session";
+const OWNER_OTHER_SESSION: &str = "other_session";
+const OWNER_EARLIER_RUN: &str = "earlier_run";
+
 impl ReportTask {
-    fn summary(&self) -> Value {
+    fn summary(&self, owner: &str) -> Value {
         json!({
             "task_id": self.id,
             "kind": "report",
@@ -226,6 +233,7 @@ impl ReportTask {
             "workspace_id": self.workspace_id,
             "created_at_ms": self.created_at_ms,
             "updated_at_ms": self.updated_at_ms,
+            "owner": owner,
         })
     }
 
@@ -240,8 +248,8 @@ impl ReportTask {
         })
     }
 
-    fn detail(&self) -> Value {
-        let mut value = self.summary();
+    fn detail(&self, owner: &str) -> Value {
+        let mut value = self.summary(owner);
         value["folder"] = json!(self.folder);
         value["sources"] = json!(self
             .sources
@@ -267,15 +275,26 @@ pub(crate) struct TaskRegistry {
     seed: String,
     counter: AtomicU64,
     events: OnceLock<Arc<EventLog>>,
-    /// SG-000120 RJ-02: the durable journal (`None` when orceld has none,
-    /// as in most unit tests; commits are then not journaled).
-    journal: Option<journal::ReportJournal>,
-    /// Set when the journal could not be read at start: commits are
-    /// refused until it is repaired, never run unjournaled.
-    journal_faulted: bool,
+    /// SG-000120 RJ-02: the durable journal (unset when orceld has none,
+    /// as in most unit tests; commits are then not journaled). Set at start,
+    /// or later once a journal that was busy at start has been restored.
+    journal: OnceLock<journal::ReportJournal>,
+    /// A journal another orceld held for the whole wait at start. It is
+    /// restored before the next commit; until then commits are refused, never
+    /// run unjournaled.
+    busy_journal: Mutex<Option<journal::ReportJournal>>,
+    /// Set when the journal could not be read: commits are refused until it
+    /// is repaired, never run unjournaled.
+    journal_faulted: AtomicBool,
     /// SG-000120 RJ-03: the key of session and input fingerprints; `None`
     /// refuses resume summaries.
     fingerprints: Option<crate::resume_key::FingerprintKey>,
+    /// Held from a task change until its journal snapshot and `task.updated`
+    /// event are written, so they land in the order the changes were made: a
+    /// preview or denial that raced a stop can never journal its older state
+    /// after the stop's, which a restart would then restore. Only writers take
+    /// it; `task.list` and `task.get` take the tasks lock alone.
+    journal_order: Mutex<()>,
 }
 
 impl TaskRegistry {
@@ -299,17 +318,19 @@ impl TaskRegistry {
             seed: format!("{}|{nanos}", std::process::id()),
             counter: AtomicU64::new(0),
             events: OnceLock::new(),
-            journal: None,
-            journal_faulted: false,
+            journal: OnceLock::new(),
+            busy_journal: Mutex::new(None),
+            journal_faulted: AtomicBool::new(false),
             fingerprints: crate::resume_key::FingerprintKey::ephemeral().ok(),
+            journal_order: Mutex::new(()),
         }
     }
 
     /// A registry with no usable journal location: tasks can be started and
     /// previewed, commits are refused.
     pub(crate) fn faulted() -> Self {
-        let mut registry = Self::empty();
-        registry.journal_faulted = true;
+        let registry = Self::empty();
+        registry.journal_faulted.store(true, Ordering::Release);
         registry
     }
 
@@ -322,7 +343,7 @@ impl TaskRegistry {
         let mut registry = Self::empty();
         let Some(owner) = crate::journal_owner::Owner::current(&registry.seed) else {
             eprintln!("orceld report journal: this process's identity is unavailable; report commits are refused");
-            registry.journal_faulted = true;
+            registry.journal_faulted.store(true, Ordering::Release);
             return registry;
         };
         // The fingerprint key lives beside the journal, so a task's session
@@ -352,25 +373,114 @@ impl TaskRegistry {
                     );
                 }
                 *registry.lock() = restored.tasks;
-                registry.journal = Some(report_journal);
+                let _ = registry.journal.set(report_journal);
+            }
+            Err(orcel_journal::JournalError::Busy) => {
+                // Another orceld is restoring or rewriting it now. Tasks can be
+                // started and previewed; the next commit restores it first.
+                eprintln!("orceld report journal: busy in another orceld at start; it is read again before the next report commit");
+                *registry
+                    .busy_journal
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(report_journal);
             }
             Err(failure) => {
                 // The unreadable journal is left exactly as found, for
                 // repair: no snapshot or intent is appended to it.
-                if failure == orcel_journal::JournalError::Busy {
-                    eprintln!("orceld report journal: busy in another orceld at start; report commits are refused in this session, restart it to retry");
-                } else {
-                    eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
-                }
-                registry.journal_faulted = true;
+                eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
+                registry.journal_faulted.store(true, Ordering::Release);
             }
         }
         registry
     }
 
+    /// The journal, once it has been restored.
+    fn journal(&self) -> Option<&journal::ReportJournal> {
+        self.journal.get()
+    }
+
+    /// Restores a journal that was busy at start, keeping this run's tasks and adding the
+    /// earlier runs' tasks it brings back. Ready when there is a journal to record a commit in
+    /// (or none is kept, as in unit tests); still busy, or now unreadable, otherwise.
+    fn journal_ready(&self) -> Result<(), ProviderError> {
+        let unreadable = || {
+            error(
+                FailureCode::ProviderUnavailable,
+                "the report task journal is unreadable; report commits are refused until it is repaired",
+            )
+        };
+        let mut busy = self
+            .busy_journal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Read under the lock, so a restore that just failed is seen here.
+        if self.journal_faulted.load(Ordering::Acquire) {
+            return Err(unreadable());
+        }
+        let Some(report_journal) = busy.take() else {
+            return Ok(());
+        };
+        match report_journal.restore() {
+            Ok(restored) => {
+                // No task change journals in between: one that waits here is snapshotted
+                // once the journal is set, so after these copies.
+                let _order = self.order();
+                // This run's tasks were not journaled while it was busy: record them now,
+                // so a commit that follows has its task in the journal. Copied first, so
+                // the file writes (each may wait for the journal lock) happen without the
+                // tasks lock the app API's list and get take.
+                let unjournaled: Vec<ReportTask> = self
+                    .lock()
+                    .iter()
+                    .filter(|task| task.run == self.seed)
+                    .cloned()
+                    .collect();
+                for task in &unjournaled {
+                    report_journal.snapshot(task);
+                }
+                {
+                    let mut tasks = self.lock();
+                    // The registry is oldest first and the earlier runs' tasks are older
+                    // than this run's, so they go in front; past the bound the oldest go.
+                    let mut merged: Vec<ReportTask> = restored
+                        .tasks
+                        .into_iter()
+                        .filter(|task| !tasks.iter().any(|held| held.id == task.id))
+                        .collect();
+                    merged.append(&mut tasks);
+                    let excess = merged.len().saturating_sub(MAX_TASKS);
+                    merged.drain(..excess);
+                    *tasks = merged;
+                }
+                let _ = self.journal.set(report_journal);
+                eprintln!("orceld report journal: restored after being busy at start");
+                Ok(())
+            }
+            Err(orcel_journal::JournalError::Busy) => {
+                *busy = Some(report_journal);
+                Err(error(
+                    FailureCode::ProviderUnavailable,
+                    "the report task journal is busy in another orceld; try the commit again shortly",
+                ))
+            }
+            Err(failure) => {
+                eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
+                self.journal_faulted.store(true, Ordering::Release);
+                Err(unreadable())
+            }
+        }
+    }
+
     /// The app API's event log, which `task.updated` events go to.
     pub(crate) fn attach_events(&self, log: Arc<EventLog>) {
         let _ = self.events.set(log);
+    }
+
+    /// See `journal_order`. Taken before the tasks lock, never while holding it.
+    fn order(&self) -> MutexGuard<'_, ()> {
+        self.journal_order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn lock(&self) -> MutexGuard<'_, Vec<ReportTask>> {
@@ -390,7 +500,7 @@ impl TaskRegistry {
 
     /// Notes how a journaled commit ended. A no-op without a journal.
     fn note(&self, intent: &str, settled: bool, outcome: &str) {
-        if let Some(journal) = &self.journal {
+        if let Some(journal) = self.journal() {
             if settled {
                 journal.settled(intent, outcome);
             } else {
@@ -409,22 +519,117 @@ impl TaskRegistry {
         )
     }
 
-    /// `task.list`: summaries, newest first.
+    /// How the app API names the owner of a task this registry holds.
+    fn owner_of(&self, task: &ReportTask) -> &'static str {
+        if task.run == self.seed {
+            OWNER_THIS_SESSION
+        } else {
+            OWNER_EARLIER_RUN
+        }
+    }
+
+    /// The other orcelds' journaled tasks this registry shows, with their
+    /// owner names, newest first: a running session's as `other_session`, a
+    /// run that exited since this one started (its tasks were not restored
+    /// at start) as `earlier_run`. For display only: they are never put in
+    /// `self.tasks`, so no action of this run finds them. `held` is the id
+    /// of each task the registry holds and whether it is an earlier run's;
+    /// a held task wins on the same id. Bounded as the registry is: at most
+    /// [`MAX_TASKS`] tasks in all, and at most
+    /// [`journal::MAX_EARLIER_TASKS`] earlier runs' tasks in all, the
+    /// latest updated kept, as a restart keeps them.
+    fn others_shown(&self, held: &[(String, bool)]) -> Vec<(ReportTask, &'static str)> {
+        let Some(journal) = self.journal() else {
+            return Vec::new();
+        };
+        let earlier_held = held.iter().filter(|(_, earlier)| *earlier).count();
+        let mut earlier_room = journal::MAX_EARLIER_TASKS.saturating_sub(earlier_held);
+        let mut others: Vec<journal::OtherTask> = journal
+            .peek_others()
+            .into_iter()
+            .filter(|other| !held.iter().any(|(id, _)| *id == other.task.id))
+            .collect();
+        others.sort_by_key(|other| std::cmp::Reverse(other.task.updated_at_ms));
+        others.retain(|other| {
+            if !other.exited {
+                return true;
+            }
+            let kept = earlier_room > 0;
+            earlier_room = earlier_room.saturating_sub(1);
+            kept
+        });
+        others.sort_by_key(|other| std::cmp::Reverse(other.task.created_at_ms));
+        others.truncate(MAX_TASKS.saturating_sub(held.len()));
+        others
+            .into_iter()
+            .map(|other| {
+                let owner = if other.exited {
+                    OWNER_EARLIER_RUN
+                } else {
+                    OWNER_OTHER_SESSION
+                };
+                (other.task, owner)
+            })
+            .collect()
+    }
+
+    /// The id of each task the registry holds and whether it is an earlier
+    /// run's, for [`Self::others_shown`].
+    fn held(tasks: &[ReportTask], seed: &str) -> Vec<(String, bool)> {
+        tasks
+            .iter()
+            .map(|task| (task.id.clone(), task.run != seed))
+            .collect()
+    }
+
+    /// `task.list`: summaries, newest first. Every task this registry holds
+    /// is listed; the other orcelds' journaled tasks ([`Self::others_shown`])
+    /// fill the remaining room up to [`MAX_TASKS`]. A task this registry
+    /// holds wins over a journal copy of the same id.
     pub(crate) fn list(&self) -> Value {
-        let tasks = self.lock();
+        let (local, held) = {
+            let tasks = self.lock();
+            let local: Vec<(u64, Value)> = tasks
+                .iter()
+                .rev()
+                .map(|task| (task.created_at_ms, task.summary(self.owner_of(task))))
+                .collect();
+            (local, Self::held(&tasks, &self.seed))
+        };
+        // Merge, keeping this registry's own order.
+        let mut others = self.others_shown(&held).into_iter().peekable();
+        let mut tasks = Vec::with_capacity(MAX_TASKS);
+        for (created_at_ms, summary) in local {
+            while let Some((task, owner)) =
+                others.next_if(|(task, _)| task.created_at_ms > created_at_ms)
+            {
+                tasks.push(task.summary(owner));
+            }
+            tasks.push(summary);
+        }
+        tasks.extend(others.map(|(task, owner)| task.summary(owner)));
         json!({
             "max_tasks": MAX_TASKS,
-            "tasks": tasks.iter().rev().map(ReportTask::summary).collect::<Vec<_>>(),
+            "tasks": tasks,
         })
     }
 
-    /// `task.get`: one task's record, or `None` when this run has no such
-    /// task.
+    /// `task.get`: one task's record, or `None` when neither this registry
+    /// nor the other orcelds' journaled tasks [`Self::list`] would show have
+    /// such a task. The registry's copy wins over a journal copy of the
+    /// same id.
     pub(crate) fn get(&self, task_id: &str) -> Option<Value> {
-        self.lock()
-            .iter()
-            .find(|task| task.id == task_id)
-            .map(ReportTask::detail)
+        let held = {
+            let tasks = self.lock();
+            if let Some(task) = tasks.iter().find(|task| task.id == task_id) {
+                return Some(task.detail(self.owner_of(task)));
+            }
+            Self::held(&tasks, &self.seed)
+        };
+        self.others_shown(&held)
+            .into_iter()
+            .find(|(task, _)| task.id == task_id)
+            .map(|(task, owner)| task.detail(owner))
     }
 
     fn insert(&self, mut task: ReportTask) -> Result<ReportTask, ProviderError> {
@@ -512,6 +717,7 @@ impl TaskRegistry {
         allowed: impl FnOnce(&ReportTask) -> bool,
         change: impl FnOnce(&mut ReportTask),
     ) -> Transition {
+        let _order = self.order();
         let now = orcel_approval::now_ms();
         let event = {
             let mut tasks = self.lock();
@@ -537,10 +743,10 @@ impl TaskRegistry {
             (
                 step_id,
                 json!({"task_kind": "report", "state": task.state.as_str(), "step": kind, "outcome": outcome}),
-                self.journal.is_some().then(|| task.clone()),
+                self.journal().is_some().then(|| task.clone()),
             )
         };
-        if let (Some(journal), Some(task)) = (&self.journal, &event.2) {
+        if let (Some(journal), Some(task)) = (self.journal(), &event.2) {
             journal.snapshot(task);
         }
         if let Some(log) = self.events.get() {
@@ -549,11 +755,27 @@ impl TaskRegistry {
         Transition::Applied
     }
 
-    /// F4 slice 5, kernel only (`prep/F4_TASK_STOP.md`): ends one task of this
+    /// F4 slice 5: stops a task of this run in its own workspace. The app API has no
+    /// workspace scope, so a task of an earlier run or an unknown id is refused here.
+    pub(crate) fn stop_in_this_run(&self, task_id: &str) -> Result<Value, ProviderError> {
+        let workspace = self
+            .lock()
+            .iter()
+            .find(|task| task.id == task_id && task.run == self.seed)
+            .map(|task| task.workspace_id.clone());
+        match workspace {
+            Some(workspace) => self.stop(task_id, &workspace),
+            None => Err(error(
+                FailureCode::TargetStale,
+                "this orceld run has no such report task",
+            )),
+        }
+    }
+
+    /// F4 slice 5 (`prep/F4_TASK_STOP.md`): ends one task of this
     /// run so that it can never write. Authority-reducing: it grants, approves
     /// and writes nothing. Final and idempotent; refused while a commit is
-    /// writing. Compiled for tests only until a surface is decided on #446.
-    #[cfg(test)]
+    /// writing. Its only surface is the local app API's `task.stop`.
     pub(crate) fn stop(&self, task_id: &str, workspace_id: &str) -> Result<Value, ProviderError> {
         let run = self.seed.clone();
         let workspace = workspace_id.to_owned();
@@ -1266,17 +1488,13 @@ fn commit(
             proposal.bytes, proposal.sha256, task.id, task.title
         ),
         digest.clone(),
-    );
+    )
+    .for_file();
     // SG-000120 RJ-02: the commit is durable before anything is asked or
     // spent; a journal that cannot record it refuses the commit.
-    if tasks.journal_faulted {
-        return Err(error(
-            FailureCode::ProviderUnavailable,
-            "the report task journal is unreadable; report commits are refused until it is repaired",
-        ));
-    }
+    tasks.journal_ready()?;
     let intent = tasks.next_intent(&task.id);
-    if let Some(journal) = &tasks.journal {
+    if let Some(journal) = tasks.journal() {
         journal.pending(
             &intent,
             journal::commit_line(&task, &workspace.root, &proposal, &digest),
@@ -1381,7 +1599,7 @@ fn commit(
     // SG-000120 RJ-02: from here on the create may have started. If that
     // cannot be recorded the create does not run, so a later reconcile can
     // never read a started create as one that never began.
-    if let Some(journal) = &tasks.journal {
+    if let Some(journal) = tasks.journal() {
         if let Err(failure) = journal.dispatched(&intent) {
             // Settled, not abandoned: the dispatched line may be on disk
             // even though the write reported failure, and only settled may

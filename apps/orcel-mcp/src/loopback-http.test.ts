@@ -124,6 +124,62 @@ test("loopback serves the authoritative catalog over an authenticated session", 
   }
 });
 
+test("a loopback session says hello once with its client's name", async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { KernelClient } = await import("./kernel.js");
+  const dir = mkdtempSync(join(tmpdir(), "orcel-loopback-hello-"));
+  const daemon = join(dir, "fake-orceld.mjs");
+  const log = join(dir, "requests.log");
+  writeFileSync(
+    daemon,
+    [
+      'import { createInterface } from "node:readline";',
+      'import { appendFileSync } from "node:fs";',
+      "createInterface({ input: process.stdin }).on('line', (line) => {",
+      "  const request = JSON.parse(line);",
+      "  appendFileSync(" + JSON.stringify(log) + ", line + '\\n');",
+      "  process.stdout.write(JSON.stringify({ ok: true, request_id: request.request_id, result: {} }) + '\\n');",
+      "});"
+    ].join("\n")
+  );
+  const handle = await startLoopbackTransport({
+    token: TOKEN,
+    kernelFactory: (profile) => new KernelClient(process.execPath, null, profile, [daemon])
+  });
+  try {
+    const init = await post(
+      handle.url,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "codex", version: "9" } }
+      },
+      authHeaders(TOKEN)
+    );
+    const sessionId = init.headers.get("mcp-session-id") as string;
+    await post(handle.url, { jsonrpc: "2.0", method: "notifications/initialized" }, authHeaders(TOKEN, { "mcp-session-id": sessionId }));
+    const deadline = Date.now() + 5000;
+    while (!(existsSync(log) && readFileSync(log, "utf8").includes('"session"')) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const hellos = readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { capability: string; operation: string; arguments: Record<string, unknown>; remote?: unknown })
+      .filter((request) => request.capability === "session");
+    assert.equal(hellos.length, 1);
+    assert.equal(hellos[0]?.operation, "hello");
+    assert.deepEqual(hellos[0]?.arguments, { client_name: "codex", client_version: "9", transport: "loopback_http" });
+    assert.equal(hellos[0]?.remote, undefined);
+  } finally {
+    await handle.close();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("loopback denies unauthenticated, forged, oversized, and unknown traffic", async () => {
   const handle = await startLoopbackTransport({ token: TOKEN });
   try {

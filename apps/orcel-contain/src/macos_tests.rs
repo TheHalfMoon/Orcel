@@ -191,43 +191,48 @@ fn the_profile_grants_no_hard_link_creation() {
     }
 }
 
-/// #583: a live process is sampled on the first attempt, and a failure for a
-/// process that is gone is final at once (no retry).
+/// #583: a live process is sampled on the first attempt, and a process that is
+/// gone has simply exited: no retry, and no failure.
 #[tokio::test]
-async fn a_sample_retries_only_while_the_process_is_alive() {
+async fn a_sample_of_a_gone_process_is_an_exit_not_a_failure() {
     let own = i32::try_from(std::process::id()).unwrap();
-    assert!(sample_live(own).await.unwrap() > 0);
+    assert!(
+        sample_live(own, SAMPLE_RETRY_BUDGET)
+            .await
+            .unwrap()
+            .unwrap()
+            > 0
+    );
 
     let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
     let gone = i32::try_from(child.id()).unwrap();
     child.wait().unwrap();
     let started = std::time::Instant::now();
-    let failure = sample_live(gone).await.unwrap_err();
-    assert!(!failure.alive);
-    assert_eq!(failure.attempts, 1);
-    assert!(started.elapsed() < SAMPLE_RETRY_BUDGET);
-    assert!(
-        failure.detail().contains("process gone"),
-        "{}",
-        failure.detail()
+    assert_eq!(
+        sample_live(gone, INSTALL_SAMPLE_BUDGET).await.unwrap(),
+        None
     );
+    assert!(started.elapsed() < SAMPLE_RETRY_BUDGET);
 }
 
-/// #583: a process that still answers `kill(pid, 0)` but cannot be sampled
-/// (an unreaped zombie has no task) is retried for the whole budget and then
-/// fails closed.
+/// The CI failure behind this: a child that exits before its first sample is an
+/// unreaped zombie, which still answers `kill(pid, 0)` but has no task to
+/// sample. It is recognised as exited at once, so installing the sampler
+/// succeeds instead of waiting out the budget and refusing the run.
 #[tokio::test]
-async fn a_live_process_that_cannot_be_sampled_fails_after_the_budget() {
+async fn a_zombie_is_recognised_as_exited_at_once() {
     let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
     let zombie = i32::try_from(child.id()).unwrap();
     // Let it exit without reaping it.
     std::thread::sleep(Duration::from_millis(200));
+    // SAFETY: kill with signal 0 only checks that `zombie` exists; it has no memory
+    // preconditions.
+    let still_there = unsafe { libc::kill(zombie, 0) };
+    assert_eq!(still_there, 0, "an unreaped zombie still exists");
     let started = std::time::Instant::now();
-    let failure = sample_live(zombie).await.unwrap_err();
+    let sample = sample_live(zombie, INSTALL_SAMPLE_BUDGET).await;
     let elapsed = started.elapsed();
     child.wait().unwrap();
-    assert!(failure.alive, "{}", failure.detail());
-    assert!(failure.attempts > 1, "{}", failure.detail());
-    assert!(elapsed >= SAMPLE_RETRY_BUDGET, "{elapsed:?}");
-    assert!(elapsed < SAMPLE_RETRY_BUDGET * 3, "{elapsed:?}");
+    assert_eq!(sample.unwrap(), None);
+    assert!(elapsed < SAMPLE_RETRY_BUDGET, "{elapsed:?}");
 }

@@ -95,7 +95,20 @@ def _kill_tree(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
-def _app_env(scratch: Path, unset: list[str]) -> dict[str, str]:
+def _safe_name(name: str) -> str:
+    """`name` as a plain file name: letters, digits, `-` and `_` only."""
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in name)[:64] or "app"
+
+
+def _tail(path: Path) -> str:
+    """The last 2000 bytes of a log, or nothing when it can't be read."""
+    try:
+        return path.read_bytes()[-2000:].decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _app_env(scratch: Path, unset: list[str], shared_downloads: bool = False) -> dict[str, str]:
     """The environment for npm and the task's apps: the scrubbed task
     environment plus what Node, npm and Electron need, every per-user folder
     inside the episode's scratch."""
@@ -108,6 +121,19 @@ def _app_env(scratch: Path, unset: list[str]) -> dict[str, str]:
         path = scratch / folder
         path.mkdir(exist_ok=True)
         env[key] = str(path)
+    # Downloads only, and only for installs (`shared_downloads`, which `npm ci` asks for): with
+    # ORCEL_TIERC_DOWNLOAD_CACHE set (CI sets it per job), the npm package cache and Electron's
+    # binary cache are shared by every episode's install, so one job downloads each once instead
+    # of once per app and episode. npm checks every cached package against the lockfile's
+    # integrity hash when it reads it; Electron's download is checked against its checksums when
+    # it is fetched. The launched apps keep the per-episode caches above, so an app never runs
+    # with the shared folders in its environment, and each episode's app data stays its own.
+    shared = os.environ.get("ORCEL_TIERC_DOWNLOAD_CACHE")
+    if shared and shared_downloads:
+        for key, folder in (("npm_config_cache", "npm"), ("ELECTRON_CACHE", "electron")):
+            path = Path(shared) / folder
+            path.mkdir(parents=True, exist_ok=True)
+            env[key] = str(path)
     for key in unset:
         env.pop(key, None)
     return env
@@ -196,23 +222,60 @@ class Episode:
             if cwd in installed:
                 continue
             npm = "npm.cmd" if os.name == "nt" else "npm"
-            done = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd, env=_app_env(self.scratch, []),
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=INSTALL_TIMEOUT_S, check=False)
-            if done.returncode != 0:
+            # One retry: npm ci and Electron's install download from the network, which can
+            # fail or stall for a while (GitHub release downloads answered 504 on 2026-11-09).
+            # Its output goes to a file in scratch, and its tail to stderr when it fails.
+            log = self.scratch / f"npm-ci-{_safe_name(Path(cwd).name)}.log"
+            ok = False
+            for attempt in (1, 2):
+                with open(log, "wb") as output:
+                    install = subprocess.Popen([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd,
+                                               env=_app_env(self.scratch, [], shared_downloads=True),
+                                               stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+                    try:
+                        code = install.wait(timeout=INSTALL_TIMEOUT_S)
+                        ok = code == 0
+                        outcome = f"exit code {code}"
+                    except subprocess.TimeoutExpired:
+                        # The whole tree: npm.cmd's node child would otherwise keep running and
+                        # race the retry over node_modules.
+                        _kill_tree(install)
+                        outcome = f"no result in {INSTALL_TIMEOUT_S:.0f} s"
+                if ok:
+                    break
+                print(f"tierc: npm ci failed in {Path(cwd).name} (attempt {attempt}, {outcome}):\n"
+                      f"{_tail(log)}", file=sys.stderr)
+            if not ok:
                 raise TierCError(f"{task}: npm ci failed in {Path(cwd).name}")
             installed.add(cwd)
 
+    def _stderr_log(self, app: dict[str, Any]) -> Path:
+        return self.scratch / f"{_safe_name(str(app.get('id', 'app')))}.stderr.log"
+
     def launch(self, app: dict[str, Any]) -> subprocess.Popen[bytes]:
-        process = subprocess.Popen(
-            [_fill(part, self.values) for part in app["command"]],
-            cwd=_fill(app["cwd"], self.values),
-            env=_app_env(self.scratch, list(app.get("unset_env", []))),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        # The app's error output goes to a file in the episode's scratch, so a window that
+        # never appears can be explained (see `missing_window`).
+        with open(self._stderr_log(app), "wb") as stderr:
+            process = subprocess.Popen(
+                [_fill(part, self.values) for part in app["command"]],
+                cwd=_fill(app["cwd"], self.values),
+                env=_app_env(self.scratch, list(app.get("unset_env", []))),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=stderr,
+            )
         self.launched.append(process)
         return process
+
+    def missing_window(self, app: dict[str, Any], process: subprocess.Popen[bytes]) -> str:
+        """The observed code for a window that never appeared: `app-exited-<code>` when the
+        app had already exited, else `window-not-found`. The tail of the app's error output
+        goes to stderr, so the job log says why."""
+        code = process.poll()
+        state = f"exited with code {code}" if code is not None else "still running"
+        print(f"tierc: {app.get('id', 'app')}: no window; the app {state}; its last error output:\n"
+              f"{_tail(self._stderr_log(app))}", file=sys.stderr)
+        return f"app-exited-{code}" if code is not None else "window-not-found"
 
     def evaluate(self) -> Optional[dict[str, Any]]:
         """The task's evaluator; its result, or None when it failed."""
@@ -273,11 +336,11 @@ def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, o
                 started = time.perf_counter()
                 calls_before = len(orcel.calls)
                 status, observed = "pass", "observed"
-                episode.launch(app)
+                process = episode.launch(app)
                 try:
                     entry = _find_window(orcel, app["window"]["title"])
                     if entry is None:
-                        status, observed = "fail", "window-not-found"
+                        status, observed = "fail", episode.missing_window(app, process)
                     else:
                         orcel.call("uia.window", "observe", None, {
                             "window_id": entry["window_id"],
@@ -418,7 +481,7 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
         if app is None or app["window"]["title"] != plan["window_title"]:
             raise TierCError("the plan's app or window title is not in the task's descriptor")
         with Orceld(orceld, episode.workspace) as orcel:
-            episode.launch(app)
+            process = episode.launch(app)
             # The title changes while the page loads; act only once it has
             # held across two listings a few seconds apart.
             found = _find_window(orcel, plan["window_title"])
@@ -426,8 +489,9 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
                 time.sleep(3.0)
                 found = _find_window(orcel, plan["window_title"])
             if found is None:
+                observed = episode.missing_window(app, process)
                 episode.teardown(orcel, [plan["window_title"]])
-                return [_row(f"tierc-act/{plan['task']}/{plan['app']}/{episode.os_name}", "fail", "window-not-found", started, 0)]
+                return [_row(f"tierc-act/{plan['task']}/{plan['app']}/{episode.os_name}", "fail", observed, started, 0)]
             # The untouched state, scored before any action.
             baseline = episode.evaluate()
             state = episode.root / "act-state"

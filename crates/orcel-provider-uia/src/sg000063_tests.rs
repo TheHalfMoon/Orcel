@@ -175,6 +175,7 @@ impl UiaAdapter for ReuseAdapter {
             session_verified: true,
             start_generation: 7,
             generation_source: "win32-creation-time",
+            signature: SignatureState::Unsigned.into(),
         }])
     }
 

@@ -26,13 +26,18 @@ pub const MAX_FIND_VISITED: usize = 20_000;
 pub const MAX_EDIT_NEEDLE_BYTES: usize = 64 * 1024;
 pub const MAX_EDIT_REPLACEMENTS: usize = 100;
 
-/// Identity of an existing entry, bound into approval digests.
+/// Identity of an existing entry. `kind`, `size` and `sha256` are bound into approval digests;
+/// `resolved` and `node` bind the approved call to the entry itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntryIdentity {
     pub kind: &'static str,
     pub size: u64,
     pub sha256: Option<String>,
     pub resolved: PathBuf,
+    /// The entry the approval saw: device and inode on Unix, volume serial number and file id
+    /// on Windows. A move or removal refuses any other entry found at the name, even one with
+    /// the same content. It is never part of `digest_fields`, so approval digests are unchanged.
+    pub(crate) node: (u64, u128),
 }
 
 impl EntryIdentity {
@@ -247,6 +252,7 @@ impl FsProvider {
 
     /// Identity of an existing file or directory that is not a link.
     pub fn entry_identity(&self, relative: &str) -> Result<EntryIdentity, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let candidate = self.root.join(relative);
         let metadata = fs::symlink_metadata(&candidate)
             .map_err(|error| ProviderError::io("inspect target", error))?;
@@ -259,16 +265,69 @@ impl FsProvider {
         let resolved = resolve_final_path(&candidate)
             .map_err(|error| ProviderError::io("resolve target", error))?;
         self.within(&resolved)?;
+        self.ensure_not_git(&resolved)?;
+        #[cfg(unix)]
+        let named = {
+            use std::os::unix::fs::MetadataExt as _;
+            let named = fs::symlink_metadata(&resolved)
+                .map_err(|error| ProviderError::io("inspect target", error))?;
+            (named.dev(), u128::from(named.ino()))
+        };
         if metadata.is_file() {
             let file =
                 File::open(&resolved).map_err(|error| ProviderError::io("open target", error))?;
+            // The entry whose content is hashed is the one bound.
+            #[cfg(unix)]
+            let node = {
+                use std::os::unix::fs::MetadataExt as _;
+                let opened = file
+                    .metadata()
+                    .map_err(|error| ProviderError::io("inspect target", error))?;
+                if (opened.dev(), u128::from(opened.ino())) != named {
+                    return Err(ProviderError::new(
+                        FailureCode::TargetStale,
+                        "target changed while it was read",
+                    ));
+                }
+                named
+            };
+            #[cfg(windows)]
+            let node = {
+                use std::os::windows::io::AsRawHandle as _;
+                crate::win::file_id(file.as_raw_handle())
+                    .map_err(|error| ProviderError::io("identify target", error))?
+            };
+            #[cfg(not(any(unix, windows)))]
+            let node = (0, 0);
             Ok(EntryIdentity {
                 kind: "file",
                 size: metadata.len(),
                 sha256: Some(hash_file(file)?),
                 resolved,
+                node,
             })
         } else if metadata.is_dir() {
+            #[cfg(unix)]
+            let node = named;
+            #[cfg(windows)]
+            let node = {
+                let entry = crate::win::open_for_identity(&resolved)
+                    .map_err(|error| ProviderError::io("open target", error))?;
+                let link = entry
+                    .is_reparse_point()
+                    .map_err(|error| ProviderError::io("inspect target", error))?;
+                if link {
+                    return Err(ProviderError::new(
+                        FailureCode::CapabilityDenied,
+                        "links, junctions, and reparse points are never moved or removed",
+                    ));
+                }
+                entry
+                    .file_id()
+                    .map_err(|error| ProviderError::io("identify target", error))?
+            };
+            #[cfg(not(any(unix, windows)))]
+            let node = (0, 0);
             let entries = fs::read_dir(&resolved)
                 .map_err(|error| ProviderError::io("list target", error))?
                 .count() as u64;
@@ -277,6 +336,7 @@ impl FsProvider {
                 size: entries,
                 sha256: None,
                 resolved,
+                node,
             })
         } else {
             Err(invalid("target is neither a regular file nor a directory"))
@@ -300,6 +360,7 @@ impl FsProvider {
 
     /// Create one directory, or its missing parents when `parents` is true.
     pub fn mkdir(&self, relative: &str, parents: bool) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let candidate = self.root.join(relative);
         if fs::symlink_metadata(&candidate).is_ok() {
             return Err(invalid("directory target already exists"));
@@ -331,14 +392,27 @@ impl FsProvider {
         self.ensure_within(&current)?;
         let mut created = Vec::new();
         for name in missing {
-            let next = current.join(&name);
-            fs::create_dir(&next).map_err(|error| ProviderError::io("create directory", error))?;
-            let resolved = resolve_final_path(&next)
-                .map_err(|error| ProviderError::io("resolve created directory", error))?;
-            if let Err(error) = self.within(&resolved) {
-                let _ = fs::remove_dir(&next);
-                return Err(error);
-            }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let resolved = self.mkdir_at(&current, &name)?;
+            #[cfg(windows)]
+            let resolved = self.mkdir_pinned(&current, &name)?;
+            #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+            let resolved = {
+                let next = current.join(&name);
+                fs::create_dir(&next)
+                    .map_err(|error| ProviderError::io("create directory", error))?;
+                let resolved = resolve_final_path(&next)
+                    .map_err(|error| ProviderError::io("resolve created directory", error))?;
+                if let Err(error) = self
+                    .within(&resolved)
+                    .and_then(|()| self.ensure_not_git(&resolved))
+                {
+                    // The directory this call just created, wherever it really is.
+                    let _ = fs::remove_dir(&resolved);
+                    return Err(error);
+                }
+                resolved
+            };
             created.push(
                 resolved
                     .strip_prefix(&self.root)
@@ -366,6 +440,8 @@ impl FsProvider {
         to: &str,
         expected: &EntryIdentity,
     ) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(from)?;
+        self.reject_git_mutation(to)?;
         let source = self.require_identity(from, expected)?;
         let destination = self.root.join(to);
         if fs::symlink_metadata(&destination).is_ok() {
@@ -392,11 +468,9 @@ impl FsProvider {
         {
             return Err(invalid("a directory cannot be moved into itself"));
         }
+        self.ensure_not_git(&parent)?;
         let target = parent.join(&name);
-        move_no_replace(&source.resolved, &target)
-            .map_err(|error| ProviderError::io("move entry", error))?;
-        let moved = resolve_final_path(&target)
-            .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        let moved = self.move_checked(&source, &target)?;
         if fs::symlink_metadata(&source.resolved).is_ok() || self.within(&moved).is_err() {
             return Err(ProviderError::new(
                 FailureCode::PostconditionFailed,
@@ -416,25 +490,536 @@ impl FsProvider {
         Ok(json!({ "from": from, "to": to, "kind": source.kind }))
     }
 
+    /// Moves the entry at `from` to `to` and returns where it really went. On Windows the
+    /// move, that check and any move back act on one handle to the entry, so a link swapped
+    /// into the destination can neither keep it in Git data nor make the move back take
+    /// another entry.
+    #[cfg(windows)]
+    fn move_checked(&self, source: &EntryIdentity, to: &Path) -> Result<PathBuf, ProviderError> {
+        let from = source.resolved.as_path();
+        let entry = crate::win::open_for_rename(from)
+            .map_err(|error| ProviderError::io("open entry to move", error))?;
+        let opened = entry
+            .final_path()
+            .map_err(|error| ProviderError::io("resolve entry to move", error))?;
+        // A link swapped in under the approved name is never moved.
+        let link = entry
+            .is_reparse_point()
+            .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+        // An entry put at the approved name after approval, even with the same content, has
+        // another file id.
+        let id = entry
+            .file_id()
+            .map_err(|error| ProviderError::io("identify entry to move", error))?;
+        if opened != from || link || id != source.node {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "target changed since approval",
+            ));
+        }
+        entry
+            .rename_no_replace(to)
+            .map_err(|error| ProviderError::io("move entry", error))?;
+        let moved = entry
+            .final_path()
+            .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        if let Err(error) = self.ensure_not_git(&moved) {
+            // Moved back through the same handle, then checked again: the source's own folder
+            // could have been swapped too.
+            let back = entry
+                .rename_no_replace(from)
+                .and_then(|()| entry.final_path());
+            return Err(match back {
+                Ok(returned) if self.ensure_not_git(&returned).is_ok() => error,
+                Ok(returned) => ProviderError::new(
+                    FailureCode::PostconditionFailed,
+                    format!(
+                        "the moved entry reached Git data and, moved back, is at {}",
+                        returned.display()
+                    ),
+                ),
+                Err(back) => ProviderError::new(
+                    FailureCode::PostconditionFailed,
+                    format!(
+                        "the moved entry reached Git data at {} and could not be moved back: {back}",
+                        moved.display()
+                    ),
+                ),
+            });
+        }
+        // Under a race Windows can place the entry under another name; that isn't the move
+        // that was approved.
+        if moved != to {
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!(
+                    "the moved entry is at {}, not where it was asked to go",
+                    moved.display()
+                ),
+            ));
+        }
+        Ok(moved)
+    }
+
+    /// Linux and macOS: the move is relative to both parent directories, each opened and
+    /// verified from its descriptor, so a link swapped in above either end can't redirect it.
+    /// A file is opened under its verified parent without following a link, its content must
+    /// still be the approved content, and its device and inode come from that descriptor; a
+    /// directory's are read under the parent. Right before the rename the name must still hold
+    /// that device and inode, and it must be the device and inode the approval saw. The rename
+    /// never replaces an existing entry (`renameat2(RENAME_NOREPLACE)`,
+    /// `renameatx_np(RENAME_EXCL)`; a file system without it fails closed), and the moved entry
+    /// is checked under the destination afterwards. A move that turns out to have reached Git
+    /// data or left the workspace, which needs the destination directory itself to have changed
+    /// after its check, is moved back relative to both directories, only while the destination
+    /// name still holds the moved device and inode, and reported with where the entry is.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn move_checked(&self, source: &EntryIdentity, to: &Path) -> Result<PathBuf, ProviderError> {
+        self.move_checked_with(source, to, || ())
+    }
+
+    /// `move_checked`, with `after_rename` run right after the rename so tests can time a race.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn move_checked_with(
+        &self,
+        source: &EntryIdentity,
+        to: &Path,
+        after_rename: impl FnOnce(),
+    ) -> Result<PathBuf, ProviderError> {
+        use std::os::unix::fs::MetadataExt as _;
+        let from = source.resolved.as_path();
+        let stale =
+            || ProviderError::new(FailureCode::TargetStale, "target changed since approval");
+        let (from_parent, from_name) = at::split(from)?;
+        let (to_parent, to_name) = at::split(to)?;
+        let source_dir = self.verified_dir(from_parent)?;
+        let target_dir = self.verified_dir(to_parent)?;
+        self.ensure_not_git(to)?;
+        let before = match &source.sha256 {
+            Some(expected_sha) => {
+                let file = at::open_file(&source_dir, &from_name)
+                    .map_err(|error| ProviderError::io("open entry to move", error))?;
+                let metadata = file
+                    .metadata()
+                    .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+                if !metadata.is_file() || &hash_file(&file)? != expected_sha {
+                    return Err(stale());
+                }
+                (metadata.dev(), metadata.ino())
+            }
+            None => at::stat_entry(&source_dir, &from_name)
+                .map_err(|error| ProviderError::io("inspect entry to move", error))?
+                .ok_or_else(stale)?,
+        };
+        // An entry put at the approved name after approval, even with the same content, has
+        // another device or inode.
+        if (before.0, u128::from(before.1)) != source.node {
+            return Err(stale());
+        }
+        let named = at::stat_entry(&source_dir, &from_name)
+            .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+        if named != Some(before) {
+            return Err(stale());
+        }
+        at::rename_no_replace(&source_dir, &from_name, &target_dir, &to_name)
+            .map_err(|error| ProviderError::io("move entry", error))?;
+        after_rename();
+        let to_file_name = to.file_name().unwrap_or_default();
+        let landed = final_path_from_open_file(&target_dir, to_parent)
+            .map(|parent| parent.join(to_file_name));
+        let refusal = match &landed {
+            Ok(path) => self.ensure_not_git(path).err(),
+            Err(error) => Some(ProviderError::io(
+                "verify moved entry",
+                std::io::Error::new(error.kind(), error.to_string()),
+            )),
+        };
+        let after = at::stat_entry(&target_dir, &to_name).ok().flatten();
+        let shown = match &landed {
+            Ok(path) => path.display().to_string(),
+            Err(_) => to.display().to_string(),
+        };
+        let Some(refusal) = refusal else {
+            if after == Some(before) {
+                if let Ok(path) = landed {
+                    return Ok(path);
+                }
+            }
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!("the moved entry did not verify at {shown}"),
+            ));
+        };
+        // The destination name no longer holds the entry this call moved: nothing is moved
+        // back, since that could take another entry.
+        if after != Some(before) {
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!(
+                    "the moved entry did not verify at {shown} ({}) and is no longer there",
+                    refusal.message
+                ),
+            ));
+        }
+        let back = at::rename_no_replace(&target_dir, &to_name, &source_dir, &from_name)
+            .and_then(|()| final_path_from_open_file(&source_dir, from_parent))
+            .map(|parent| parent.join(from.file_name().unwrap_or_default()));
+        // Another process that can write the destination folder could swap in a different
+        // entry between the stat above and the rename back, so the entry now at the source
+        // name is called the moved one only when its device and inode still match.
+        Err(match back {
+            Ok(returned) => {
+                let verified =
+                    at::stat_entry(&source_dir, &from_name).ok().flatten() == Some(before);
+                let protected = if self.ensure_not_git(&returned).is_err() {
+                    " (that path is now Git data or outside the workspace)"
+                } else {
+                    ""
+                };
+                let message = if verified {
+                    format!(
+                        "the moved entry did not verify at {shown} ({}) and was moved back to {}{protected}; verified as the moved entry",
+                        refusal.message,
+                        returned.display()
+                    )
+                } else {
+                    format!(
+                        "the moved entry did not verify at {shown} ({}); an entry was moved back to {}{protected}; it is not verified to be the one that was moved",
+                        refusal.message,
+                        returned.display()
+                    )
+                };
+                ProviderError::new(FailureCode::PostconditionFailed, message)
+            }
+            Err(back) => ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!(
+                    "the moved entry did not verify at {shown} ({}) and could not be moved back: {back}",
+                    refusal.message
+                ),
+            ),
+        })
+    }
+
+    /// Creates the directory `name` under `parent`, relative to `parent` opened and verified
+    /// from its descriptor, and returns its real path read from the new directory's own
+    /// descriptor. A directory that turns out to be in Git data, or elsewhere than asked, is
+    /// removed relative to the same parent, best effort: if it was renamed away and another
+    /// empty directory put at its name in between, that one is removed instead.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn mkdir_at(&self, parent: &Path, name: &std::ffi::OsStr) -> Result<PathBuf, ProviderError> {
+        let dir = self.verified_dir(parent)?;
+        let wanted = parent.join(name);
+        self.ensure_not_git(&wanted)?;
+        let c_name = at::c_name(name)?;
+        at::mkdir(&dir, &c_name).map_err(|error| ProviderError::io("create directory", error))?;
+        let checked = at::open_dir(&dir, &c_name)
+            .and_then(|created| final_path_from_open_file(&created, &wanted))
+            .map_err(|error| ProviderError::io("resolve created directory", error))
+            .and_then(|resolved| {
+                self.ensure_not_git(&resolved)?;
+                if resolved != wanted {
+                    return Err(ProviderError::new(
+                        FailureCode::PathRaceDetected,
+                        "the created directory is not where it was asked to be",
+                    ));
+                }
+                Ok(resolved)
+            });
+        if checked.is_err() {
+            // The name this call created, under the parent it was created in.
+            let _ = at::remove_dir(&dir, &c_name);
+        }
+        checked
+    }
+
+    /// Windows: creates the directory `name` under `parent` while `parent` is pinned. The pin is
+    /// a handle with directory-list access and no `FILE_SHARE_DELETE`, so NTFS refuses to rename
+    /// or delete `parent`, or any directory above it, until it closes; the path can't be swapped
+    /// for a junction mid-create. The pinned parent's real path, read from the handle, must be
+    /// `parent` itself and not a reparse point. The new directory's real path must be exactly
+    /// where it was asked to be and not Git data; otherwise it is removed while still pinned.
+    #[cfg(windows)]
+    fn mkdir_pinned(
+        &self,
+        parent: &Path,
+        name: &std::ffi::OsStr,
+    ) -> Result<PathBuf, ProviderError> {
+        let pin = crate::win::pin_directory(parent)
+            .map_err(|error| ProviderError::io("open parent directory", error))?;
+        let real = pin
+            .final_path()
+            .map_err(|error| ProviderError::io("resolve parent directory", error))?;
+        let link = pin
+            .is_reparse_point()
+            .map_err(|error| ProviderError::io("inspect parent directory", error))?;
+        if real != parent || link {
+            return Err(ProviderError::new(
+                FailureCode::PathRaceDetected,
+                "a parent directory changed while it was checked",
+            ));
+        }
+        let next = parent.join(name);
+        self.ensure_not_git(&next)?;
+        fs::create_dir(&next).map_err(|error| ProviderError::io("create directory", error))?;
+        let checked = resolve_final_path(&next)
+            .map_err(|error| ProviderError::io("resolve created directory", error))
+            .and_then(|resolved| {
+                self.ensure_not_git(&resolved)?;
+                if resolved != next {
+                    return Err(ProviderError::new(
+                        FailureCode::PathRaceDetected,
+                        "the created directory is not where it was asked to be",
+                    ));
+                }
+                Ok(resolved)
+            });
+        if checked.is_err() {
+            // The name this call created, under the pinned parent. If the new directory was
+            // renamed away and a junction or another empty directory put at its name, that is
+            // what is removed (a junction is removed itself, not followed).
+            let _ = fs::remove_dir(&next);
+        }
+        drop(pin);
+        checked
+    }
+
+    /// `path` opened as a directory, whose real path read from the descriptor must be `path`
+    /// itself (so no link was followed on the way) and inside the workspace.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn verified_dir(&self, path: &Path) -> Result<File, ProviderError> {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let dir = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+            .open(path)
+            .map_err(|error| ProviderError::io("open parent directory", error))?;
+        let real = final_path_from_open_file(&dir, path)
+            .map_err(|error| ProviderError::io("resolve parent directory", error))?;
+        if real != path {
+            return Err(ProviderError::new(
+                FailureCode::PathRaceDetected,
+                "a parent directory changed while it was checked",
+            ));
+        }
+        self.ensure_within(&real)?;
+        Ok(dir)
+    }
+
+    /// Other Unix: the move is by path. A move that turns out to have reached Git data is
+    /// reported with where it went, and not moved back by path, which could take another entry.
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    fn move_checked(&self, source: &EntryIdentity, to: &Path) -> Result<PathBuf, ProviderError> {
+        let from = source.resolved.as_path();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            let named = fs::symlink_metadata(from)
+                .map_err(|error| ProviderError::io("inspect entry to move", error))?;
+            if (named.dev(), u128::from(named.ino())) != source.node {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "target changed since approval",
+                ));
+            }
+        }
+        move_no_replace(from, to).map_err(|error| ProviderError::io("move entry", error))?;
+        let moved = resolve_final_path(to)
+            .map_err(|error| ProviderError::io("verify moved entry", error))?;
+        if self.ensure_not_git(&moved).is_err() {
+            return Err(ProviderError::new(
+                FailureCode::PostconditionFailed,
+                format!("the moved entry reached Git data at {}", moved.display()),
+            ));
+        }
+        Ok(moved)
+    }
+
+    /// Windows: removes the checked entry through one handle to it. The handle opens the entry
+    /// itself (a link is opened, not followed); its real path, read from the handle, must be the
+    /// approved one and not Git data, its volume and file id must be the ones the approval saw,
+    /// and a file must be the one whose content was hashed (same volume and file id). The entry is then marked to be deleted when the handle closes
+    /// and checked once more with the mark set, so a swap anywhere on the path can't make it
+    /// delete another entry. Its parent could still be moved after that second check; the entry
+    /// deleted is then still the approved one.
+    #[cfg(windows)]
+    fn remove_checked(&self, current: &EntryIdentity) -> Result<(), ProviderError> {
+        use std::os::windows::io::AsRawHandle as _;
+        let stale =
+            || ProviderError::new(FailureCode::TargetStale, "target changed since approval");
+        let entry = crate::win::open_for_rename(&current.resolved)
+            .map_err(|error| ProviderError::io("open entry to remove", error))?;
+        let opened = entry
+            .final_path()
+            .map_err(|error| ProviderError::io("resolve entry to remove", error))?;
+        let link = entry
+            .is_reparse_point()
+            .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
+        let is_directory = entry
+            .is_directory()
+            .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
+        // The entry the approval saw, by file id: one put at the name since is refused.
+        let entry_id = entry
+            .file_id()
+            .map_err(|error| ProviderError::io("identify entry to remove", error))?;
+        if opened != current.resolved
+            || link
+            || is_directory != (current.kind == "directory")
+            || entry_id != current.node
+        {
+            return Err(stale());
+        }
+        self.ensure_not_git(&opened)?;
+        if let Some(expected_sha) = &current.sha256 {
+            let file = File::open(&opened)
+                .map_err(|error| ProviderError::io("open entry to remove", error))?;
+            let read_id = crate::win::file_id(file.as_raw_handle())
+                .map_err(|error| ProviderError::io("identify entry to remove", error))?;
+            if read_id != entry_id || &hash_file(file)? != expected_sha {
+                return Err(stale());
+            }
+        }
+        let what = if current.kind == "directory" {
+            "remove directory"
+        } else {
+            "remove file"
+        };
+        entry
+            .set_delete_on_close(true)
+            .map_err(|error| ProviderError::io(what, error))?;
+        let refusal = match entry.final_path() {
+            Ok(now) => self.ensure_not_git(&now).err(),
+            Err(error) => Some(ProviderError::io("re-resolve entry to remove", error)),
+        };
+        if let Some(error) = refusal {
+            let _ = entry.set_delete_on_close(false);
+            return Err(error);
+        }
+        // Closing the handle deletes the entry.
+        drop(entry);
+        Ok(())
+    }
+
+    /// Unix: removes the checked entry relative to its parent directory, opened and verified
+    /// from its descriptor, so a link swapped in above it can't redirect the removal. The entry
+    /// is opened under that directory without following a link, it must be the device and inode
+    /// the approval saw, a file's content must still be the hashed content, and right before
+    /// `unlinkat` the name must still hold the same device
+    /// and inode. Two windows remain, both needing a process that can already write Git data:
+    /// another entry renamed onto the name between the last check and `unlinkat`, and the
+    /// verified directory itself moved after its check (the approved entry is then removed
+    /// wherever it now is).
+    #[cfg(unix)]
+    // dev_t and ino_t differ in width and sign across Unix targets.
+    #[allow(clippy::unnecessary_cast)]
+    fn remove_checked(&self, current: &EntryIdentity) -> Result<(), ProviderError> {
+        use std::os::fd::{AsRawFd as _, FromRawFd as _};
+        use std::os::unix::ffi::OsStrExt as _;
+        use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+        let stale =
+            || ProviderError::new(FailureCode::TargetStale, "target changed since approval");
+        let directory = current.kind == "directory";
+        let parent = current
+            .resolved
+            .parent()
+            .ok_or_else(|| invalid("target has no parent"))?;
+        let name = current
+            .resolved
+            .file_name()
+            .ok_or_else(|| invalid("target has no name"))?;
+        let dir = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+            .open(parent)
+            .map_err(|error| ProviderError::io("open parent of entry to remove", error))?;
+        let dir_path = final_path_from_open_file(&dir, parent)
+            .map_err(|error| ProviderError::io("resolve parent of entry to remove", error))?;
+        if dir_path != parent {
+            return Err(stale());
+        }
+        self.ensure_not_git(&dir_path.join(name))?;
+        let c_name = std::ffi::CString::new(name.as_bytes())
+            .map_err(|_| invalid("target name holds a NUL byte"))?;
+        let flags = libc::O_RDONLY
+            | libc::O_NOFOLLOW
+            | libc::O_CLOEXEC
+            | if directory {
+                libc::O_DIRECTORY
+            } else {
+                libc::O_NONBLOCK
+            };
+        // SAFETY: the directory descriptor is open for the lifetime of `dir`, and `c_name` is
+        // a NUL-terminated name; openat returns a new descriptor or -1.
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), c_name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(ProviderError::io(
+                "open entry to remove",
+                std::io::Error::last_os_error(),
+            ));
+        }
+        // SAFETY: openat returned a new descriptor that nothing else owns.
+        let entry = unsafe { File::from_raw_fd(fd) };
+        let metadata = entry
+            .metadata()
+            .map_err(|error| ProviderError::io("inspect entry to remove", error))?;
+        // The entry the approval saw, by device and inode: one put at the name since is refused.
+        if (directory && !metadata.is_dir())
+            || (!directory && !metadata.is_file())
+            || (metadata.dev(), u128::from(metadata.ino())) != current.node
+        {
+            return Err(stale());
+        }
+        if let Some(expected_sha) = &current.sha256 {
+            if &hash_file(&entry)? != expected_sha {
+                return Err(stale());
+            }
+        }
+        // SAFETY: libc::stat is plain integers, for which all-zero is a valid value.
+        let mut named: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: the directory descriptor and name are valid as above, and `named` is a
+        // writable stat buffer.
+        let status = unsafe {
+            libc::fstatat(
+                dir.as_raw_fd(),
+                c_name.as_ptr(),
+                &mut named,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if status != 0
+            || named.st_dev as u64 != metadata.dev()
+            || named.st_ino as u64 != metadata.ino()
+        {
+            return Err(stale());
+        }
+        drop(entry);
+        let unlink_flags = if directory { libc::AT_REMOVEDIR } else { 0 };
+        // SAFETY: the directory descriptor and name are valid as above.
+        if unsafe { libc::unlinkat(dir.as_raw_fd(), c_name.as_ptr(), unlink_flags) } != 0 {
+            let what = if directory {
+                "remove directory"
+            } else {
+                "remove file"
+            };
+            return Err(ProviderError::io(what, std::io::Error::last_os_error()));
+        }
+        Ok(())
+    }
+
     /// Remove one regular file or one empty directory bound to its identity.
     pub fn remove_entry(
         &self,
         relative: &str,
         expected: &EntryIdentity,
     ) -> Result<Value, ProviderError> {
+        self.reject_git_mutation(relative)?;
         let current = self.require_identity(relative, expected)?;
-        if current.kind == "directory" {
-            if current.size != 0 {
-                return Err(invalid(
-                    "only empty directories can be removed; there is no recursive delete",
-                ));
-            }
-            fs::remove_dir(&current.resolved)
-                .map_err(|error| ProviderError::io("remove directory", error))?;
-        } else {
-            fs::remove_file(&current.resolved)
-                .map_err(|error| ProviderError::io("remove file", error))?;
+        if current.kind == "directory" && current.size != 0 {
+            return Err(invalid(
+                "only empty directories can be removed; there is no recursive delete",
+            ));
         }
+        self.remove_checked(&current)?;
         if fs::symlink_metadata(&current.resolved).is_ok() {
             return Err(ProviderError::new(
                 FailureCode::PostconditionFailed,
@@ -453,6 +1038,7 @@ impl FsProvider {
         expected_sha256: &str,
         expected_replacements: usize,
     ) -> Result<EditPreview, ProviderError> {
+        self.reject_git_mutation(relative)?;
         if old.is_empty() || old.len() > MAX_EDIT_NEEDLE_BYTES || new.len() > MAX_EDIT_NEEDLE_BYTES
         {
             return Err(invalid(
@@ -469,7 +1055,8 @@ impl FsProvider {
             File::open(&candidate).map_err(|error| ProviderError::io("open edit target", error))?;
         let resolved = final_path_from_open_file(&file, &candidate)
             .map_err(|error| ProviderError::io("resolve edit target", error))?;
-        self.ensure_within(&resolved)?;
+        // The Git rule too, so an edit that apply would refuse is never offered for approval.
+        self.ensure_not_git(&resolved)?;
         let metadata = file
             .metadata()
             .map_err(|error| ProviderError::io("inspect edit target", error))?;
@@ -538,28 +1125,129 @@ impl FsProvider {
     }
 }
 
-#[cfg(windows)]
-fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+/// Directory-relative calls for Linux and macOS.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod at {
+    use super::{invalid, ProviderError};
+    use std::ffi::{CString, OsStr};
+    use std::fs::File;
+    use std::io;
+    use std::os::fd::{AsRawFd as _, FromRawFd as _};
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::path::Path;
+
+    /// The parent and the plain final name of an absolute path.
+    pub(super) fn split(path: &Path) -> Result<(&Path, CString), ProviderError> {
+        let parent = path.parent().ok_or_else(|| invalid("path has no parent"))?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| invalid("path has no name"))?;
+        Ok((parent, c_name(name)?))
     }
-    let wide = |path: &Path| -> Vec<u16> {
-        path.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
-    };
-    let (source, target) = (wide(from), wide(to));
-    // Flags 0: never replace an existing destination and never copy across volumes.
-    if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), 0) } == 0 {
-        return Err(std::io::Error::last_os_error());
+
+    pub(super) fn c_name(name: &OsStr) -> Result<CString, ProviderError> {
+        CString::new(name.as_bytes()).map_err(|_| invalid("name holds a NUL byte"))
     }
-    Ok(())
+
+    fn check(status: libc::c_int) -> io::Result<()> {
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    pub(super) fn mkdir(dir: &File, name: &CString) -> io::Result<()> {
+        // SAFETY: the descriptor is open for the lifetime of `dir` and `name` is NUL-terminated.
+        check(unsafe { libc::mkdirat(dir.as_raw_fd(), name.as_ptr(), 0o777) })
+    }
+
+    pub(super) fn remove_dir(dir: &File, name: &CString) -> io::Result<()> {
+        // SAFETY: as in `mkdir`.
+        check(unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) })
+    }
+
+    /// The file `name` under `dir`, opened read-only without following a link (and without
+    /// blocking on a FIFO).
+    pub(super) fn open_file(dir: &File, name: &CString) -> io::Result<File> {
+        let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+        // SAFETY: as in `mkdir`; openat returns a new descriptor or -1.
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: openat returned a new descriptor that nothing else owns.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    /// The directory `name` under `dir`, opened without following a link.
+    pub(super) fn open_dir(dir: &File, name: &CString) -> io::Result<File> {
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: as in `mkdir`; openat returns a new descriptor or -1.
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: openat returned a new descriptor that nothing else owns.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    /// The device and inode of the entry `name` under `dir`, not following a link; `None`
+    /// when the entry is a link.
+    #[allow(clippy::unnecessary_cast)] // dev_t and ino_t differ across targets
+    pub(super) fn stat_entry(dir: &File, name: &CString) -> io::Result<Option<(u64, u64)>> {
+        // SAFETY: libc::stat is plain integers, for which all-zero is a valid value.
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: as in `mkdir`, and `stat` is a writable stat buffer.
+        check(unsafe {
+            libc::fstatat(
+                dir.as_raw_fd(),
+                name.as_ptr(),
+                &mut stat,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        })?;
+        if stat.st_mode & libc::S_IFMT == libc::S_IFLNK {
+            return Ok(None);
+        }
+        Ok(Some((stat.st_dev as u64, stat.st_ino as u64)))
+    }
+
+    /// Renames `from` under `from_dir` to `to` under `to_dir`, never replacing an entry.
+    pub(super) fn rename_no_replace(
+        from_dir: &File,
+        from: &CString,
+        to_dir: &File,
+        to: &CString,
+    ) -> io::Result<()> {
+        // SAFETY: both descriptors are open for the lifetime of their files and both names
+        // are NUL-terminated.
+        #[cfg(target_os = "linux")]
+        let status = unsafe {
+            libc::renameat2(
+                from_dir.as_raw_fd(),
+                from.as_ptr(),
+                to_dir.as_raw_fd(),
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        // SAFETY: as above.
+        #[cfg(target_os = "macos")]
+        let status = unsafe {
+            libc::renameatx_np(
+                from_dir.as_raw_fd(),
+                from.as_ptr(),
+                to_dir.as_raw_fd(),
+                to.as_ptr(),
+                libc::RENAME_EXCL,
+            )
+        };
+        check(status)
+    }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
     if fs::symlink_metadata(to).is_ok() {
         return Err(std::io::Error::new(
@@ -786,5 +1474,290 @@ mod tests {
         assert!(outside.join("secret.txt").exists());
         let _ = fs::remove_dir_all(dir);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    /// The window remove used to leave open: the identity was checked, then a parent directory
+    /// was swapped for a link into Git data holding a file with the same name and content. The
+    /// removal must not reach the Git file, and the real file stays where it was moved.
+    #[test]
+    fn removal_through_a_swapped_parent_never_reaches_git_data() {
+        let dir = root("remove-swap");
+        fs::create_dir_all(dir.join(".git/refs/heads")).unwrap();
+        fs::create_dir(dir.join(".git/objects")).unwrap();
+        fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(dir.join(".git/refs/heads/main"), "same").unwrap();
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/main"), "same").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("sub/main").unwrap();
+        // The swap, after the check.
+        fs::rename(dir.join("sub"), dir.join("moved")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join(".git/refs/heads"), dir.join("sub")).unwrap();
+        #[cfg(windows)]
+        assert!(std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(dir.join("sub"))
+            // mklink takes only backslashes.
+            .arg(dir.join(".git").join("refs").join("heads"))
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        let refused = p.remove_checked(&identity).unwrap_err();
+        assert!(
+            matches!(
+                refused.code,
+                FailureCode::TargetStale | FailureCode::CapabilityDenied
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(fs::read(dir.join(".git/refs/heads/main")).unwrap(), b"same");
+        assert_eq!(fs::read(dir.join("moved/main")).unwrap(), b"same");
+        #[cfg(windows)]
+        fs::remove_dir(dir.join("sub")).unwrap();
+        #[cfg(unix)]
+        fs::remove_file(dir.join("sub")).unwrap();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Mkdir and move after their checks, with a parent swapped for a link into Git data: each
+    /// is refused, and nothing is created or moved in Git data.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn mkdir_and_move_through_a_swapped_parent_never_reach_git_data() {
+        let dir = fs::canonicalize(root("at-swap")).unwrap();
+        fs::create_dir_all(dir.join(".git/refs/heads")).unwrap();
+        fs::create_dir(dir.join(".git/objects")).unwrap();
+        fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::create_dir(dir.join("dest")).unwrap();
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("a.txt").unwrap();
+        // The paths the checks approved, then the swaps. These test a parent that is already a
+        // link when the directory is opened; a swap after the open needs a hook to time.
+        let sub = dir.join("sub");
+        let dest = dir.join("dest");
+        fs::rename(&sub, dir.join("sub-moved")).unwrap();
+        std::os::unix::fs::symlink(dir.join(".git/refs/heads"), &sub).unwrap();
+        fs::rename(&dest, dir.join("dest-moved")).unwrap();
+        std::os::unix::fs::symlink(dir.join(".git/refs/heads"), &dest).unwrap();
+
+        assert!(p.mkdir_at(&sub, std::ffi::OsStr::new("new")).is_err());
+        assert!(!dir.join(".git/refs/heads/new").exists());
+        assert!(p.move_checked(&identity, &dest.join("a.txt")).is_err());
+        assert!(!dir.join(".git/refs/heads/a.txt").exists());
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"a");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A move refuses an existing destination. (The old check-then-rename refused this too; the
+    /// atomic no-replace rename is what closes a destination appearing in between, which this
+    /// test can't time.)
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_move_never_replaces_an_entry_at_the_destination() {
+        let dir = fs::canonicalize(root("at-noreplace")).unwrap();
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        fs::write(dir.join("b.txt"), "b").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("a.txt").unwrap();
+        assert!(p.move_checked(&identity, &dir.join("b.txt")).is_err());
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"a");
+        assert_eq!(fs::read(dir.join("b.txt")).unwrap(), b"b");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A file replaced in the same folder after approval is not moved, even with the same
+    /// content: the move binds to the approved entry itself (device and inode, or file id).
+    #[test]
+    fn a_file_replaced_after_approval_is_not_moved() {
+        let dir = resolve_final_path(&root("at-replaced")).unwrap();
+        fs::write(dir.join("a.txt"), "approved").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("a.txt").unwrap();
+        fs::write(dir.join("other"), "approved").unwrap();
+        fs::rename(dir.join("other"), dir.join("a.txt")).unwrap();
+        let refused = p.move_checked(&identity, &dir.join("b.txt")).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        let refused = p.move_entry("a.txt", "b.txt", &identity).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"approved");
+        assert!(!dir.join("b.txt").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A directory replaced in the same folder after approval by another empty directory is not
+    /// moved: kind, size and content alone can't tell them apart, the entry binding does.
+    #[test]
+    fn a_directory_replaced_after_approval_is_not_moved() {
+        let dir = resolve_final_path(&root("dir-replaced-move")).unwrap();
+        fs::create_dir(dir.join("d")).unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("d").unwrap();
+        fs::rename(dir.join("d"), dir.join("d-approved")).unwrap();
+        fs::create_dir(dir.join("d")).unwrap();
+        let refused = p.move_checked(&identity, &dir.join("e")).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        let refused = p.move_entry("d", "e", &identity).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        assert!(dir.join("d").is_dir());
+        assert!(dir.join("d-approved").is_dir());
+        assert!(!dir.join("e").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The same for removal: the replacement empty directory is not removed.
+    #[test]
+    fn a_directory_replaced_after_approval_is_not_removed() {
+        let dir = resolve_final_path(&root("dir-replaced-remove")).unwrap();
+        fs::create_dir(dir.join("d")).unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("d").unwrap();
+        fs::rename(dir.join("d"), dir.join("d-approved")).unwrap();
+        fs::create_dir(dir.join("d")).unwrap();
+        let refused = p.remove_checked(&identity).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        let refused = p.remove_entry("d", &identity).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale, "{refused:?}");
+        assert!(dir.join("d").is_dir());
+        assert!(dir.join("d-approved").is_dir());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Two handles to one file give one id; two files give two ids. A rename handle and a read
+    /// handle to one file agree too.
+    #[cfg(windows)]
+    #[test]
+    fn file_ids_name_one_entry() {
+        use std::os::windows::io::AsRawHandle as _;
+        let dir = resolve_final_path(&root("file-ids")).unwrap();
+        fs::write(dir.join("a.txt"), "same").unwrap();
+        fs::write(dir.join("b.txt"), "same").unwrap();
+        let first = File::open(dir.join("a.txt")).unwrap();
+        let second = File::open(dir.join("a.txt")).unwrap();
+        let other = File::open(dir.join("b.txt")).unwrap();
+        let first_id = crate::win::file_id(first.as_raw_handle()).unwrap();
+        let second_id = crate::win::file_id(second.as_raw_handle()).unwrap();
+        let other_id = crate::win::file_id(other.as_raw_handle()).unwrap();
+        assert_eq!(first_id, second_id);
+        assert_ne!(first_id, other_id);
+        let renaming = crate::win::open_for_rename(&dir.join("a.txt")).unwrap();
+        assert_eq!(renaming.file_id().unwrap(), first_id);
+        drop((first, second, other, renaming));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The destination directory becomes Git data between the rename and its check: the move is
+    /// refused and the file is moved back.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_move_into_new_git_data_is_moved_back() {
+        let dir = fs::canonicalize(root("moveback-git")).unwrap();
+        let dest = dir.join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("a.txt").unwrap();
+        let refused = p
+            .move_checked_with(&identity, &dest.join("a.txt"), || {
+                fs::write(dest.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+                fs::create_dir(dest.join("objects")).unwrap();
+                fs::create_dir(dest.join("refs")).unwrap();
+            })
+            .unwrap_err();
+        assert_eq!(
+            refused.code,
+            FailureCode::PostconditionFailed,
+            "{refused:?}"
+        );
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"a");
+        assert!(fs::symlink_metadata(dest.join("a.txt")).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The destination directory is moved out of the workspace between the rename and its
+    /// check: the move is refused and the file is moved back.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_move_out_of_the_workspace_is_moved_back() {
+        let dir = fs::canonicalize(root("moveback-out")).unwrap();
+        let outside = fs::canonicalize(root("moveback-outside")).unwrap();
+        let dest = dir.join("dest");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        let p = provider(&dir);
+        let identity = p.entry_identity("a.txt").unwrap();
+        let refused = p
+            .move_checked_with(&identity, &dest.join("a.txt"), || {
+                fs::rename(&dest, outside.join("dest")).unwrap();
+            })
+            .unwrap_err();
+        assert_eq!(
+            refused.code,
+            FailureCode::PostconditionFailed,
+            "{refused:?}"
+        );
+        assert_eq!(fs::read(dir.join("a.txt")).unwrap(), b"a");
+        assert!(fs::symlink_metadata(&dest).is_err());
+        assert!(outside.join("dest").is_dir());
+        assert!(fs::symlink_metadata(outside.join("dest").join("a.txt")).is_err());
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    /// The OS guarantee Windows mkdir relies on: while a directory is pinned, it can be neither
+    /// renamed nor deleted, its parent and grandparent can't be renamed, and entries can still
+    /// be created inside it.
+    #[cfg(windows)]
+    #[test]
+    fn a_pinned_directory_and_its_parents_cannot_be_renamed() {
+        let dir = root("pin");
+        fs::create_dir_all(dir.join("g").join("a").join("b")).unwrap();
+        let dir = dir.join("g");
+        let pinned = dir.join("a").join("b");
+        let pin = crate::win::pin_directory(&pinned).unwrap();
+        assert!(fs::rename(&pinned, dir.join("a").join("b2")).is_err());
+        assert!(fs::rename(dir.join("a"), dir.join("a2")).is_err());
+        assert!(fs::remove_dir(&pinned).is_err());
+        fs::create_dir(pinned.join("new")).unwrap();
+        // The grandparent too: the open handle sits in its subtree.
+        let outer = dir.parent().unwrap().to_path_buf();
+        assert!(fs::rename(&dir, outer.join("g2")).is_err());
+        drop(pin);
+        fs::rename(dir.join("a"), dir.join("a2")).unwrap();
+        let _ = fs::remove_dir_all(outer);
+    }
+
+    /// Windows mkdir after its checks, with the parent swapped for a junction into Git data:
+    /// refused, and nothing is created in Git data.
+    #[cfg(windows)]
+    #[test]
+    fn windows_mkdir_through_a_swapped_parent_never_reaches_git_data() {
+        let dir = resolve_final_path(&root("mkdir-swap")).unwrap();
+        let heads = dir.join(".git").join("refs").join("heads");
+        fs::create_dir_all(&heads).unwrap();
+        fs::create_dir(dir.join(".git").join("objects")).unwrap();
+        fs::write(dir.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::create_dir(dir.join("sub")).unwrap();
+        let p = provider(&dir);
+        let sub = dir.join("sub");
+        fs::rename(&sub, dir.join("sub-moved")).unwrap();
+        assert!(std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&sub)
+            .arg(&heads)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        let refused = p
+            .mkdir_pinned(&sub, std::ffi::OsStr::new("new"))
+            .unwrap_err();
+        assert_eq!(refused.code, FailureCode::PathRaceDetected, "{refused:?}");
+        assert!(!heads.join("new").exists());
+        fs::remove_dir(&sub).unwrap();
+        let _ = fs::remove_dir_all(dir);
     }
 }

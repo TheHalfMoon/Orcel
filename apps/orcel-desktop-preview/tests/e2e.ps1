@@ -1,4 +1,4 @@
-# Native Windows end-to-end test of the read-only desktop foundation, driven
+# Native Windows end-to-end test of the desktop foundation (read-only plus the authority-reducing controls), driven
 # through Windows UI Automation (no third-party framework). It launches the
 # real executable with an isolated USERPROFILE for the app process only:
 # -RuntimeRoot points at a per-user runtime install made for testing; without
@@ -109,12 +109,27 @@ try {
         Check "tasks reports an absent app API instead of inventing tasks" ($null -ne $tasks) "$tasks"
     }
 
+    SendCommand $window "recovery"
+    if ($env:ORCEL_E2E_APP_API_INSTANCE) {
+        $recovery = WaitFor { TranscriptTexts $window | Where-Object { $_.StartsWith("No report was interrupted", [StringComparison]::Ordinal) -or $_ -like "*Reports Orcel was writing when it stopped*" } | Select-Object -First 1 } 20000
+        Check "recovery reads the live orceld's tasks" ($null -ne $recovery) "$(($recovery -split "`n")[0])"
+    } else {
+        $recovery = WaitForMessage $window "Recovery check unavailable" 15000
+        Check "recovery reports an absent app API instead of inventing results" ($null -ne $recovery) "$recovery"
+    }
+
     if ($env:ORCEL_E2E_LIVE_SIGNAL) {
         # Tell the driver the app is watching, then type nothing: orceld's next
         # task update must appear by itself.
         [IO.File]::WriteAllText($env:ORCEL_E2E_LIVE_SIGNAL, "ready")
         $live = WaitForMessage $window $env:ORCEL_E2E_EXPECT_LIVE_UPDATE 30000
         Check "a task update appears with nothing typed" ($null -ne $live) "$live"
+    }
+
+    if ($env:ORCEL_E2E_EXPECT_STOP) {
+        (ById $window "StopTaskButton").GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $stopped = WaitForMessage $window $env:ORCEL_E2E_EXPECT_STOP 15000
+        Check "Stop ends the newest task and says control is back" ($null -ne $stopped -and $stopped -like "*Control is back with you*") "$stopped"
     }
 
     SendCommand $window "status"
@@ -128,11 +143,43 @@ try {
     SendCommand $window "rm -rf / ; calc.exe"
     $refused = WaitFor { TranscriptTexts $window | Where-Object { $_.StartsWith("Not executed. Orcel AI is not connected.", [StringComparison]::Ordinal) } | Select-Object -First 1 } 5000
     Check "shell-like text is refused, not executed" ($null -ne $refused) "$refused"
+    # The managed UI Automation client can't read LiveSetting ("Unsupported Property"), so
+    # the self-test checks the announcer's setup and this checks only that replies reach it.
+    $announced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Not executed.", [StringComparison]::Ordinal)) { $a } } 3000
+    Check "the reply reaches the live region" ($null -ne $announced) "$announced"
     Start-Sleep -Milliseconds 1500
     # Direct children still alive, plus Calculator (Windows 11 launches it through a broker).
     $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object { $_.CreationDate -ge $refusedAt })
     $calculators = @(Get-Process -Name "calc", "CalculatorApp" -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -ge $refusedAt })
     Check "no process was started by the refused text" ($children.Count -eq 0 -and $calculators.Count -eq 0) ((@($children | ForEach-Object { $_.Name }) + @($calculators | ForEach-Object { $_.Name })) -join ", ")
+
+    # The guided start appears by itself while a step is left, and names the next one.
+    if (-not $expectInstalled) {
+        $setup = WaitForMessage $window "Getting started with Orcel" 10000
+        Check "the guided start appears at launch and names the next step" ($null -ne $setup -and $setup -like "*Next: install Orcel (step 1).*") "$(($setup -split "`n")[-1])"
+    }
+
+    # connect shows setup text only: it runs nothing and edits no client's settings.
+    Start-Sleep -Milliseconds 1500
+    $connectAt = Get-Date
+    SendCommand $window "connect"
+    if ($expectInstalled) {
+        $cli = Join-Path $RuntimeRoot ".orcel\bin\orcel.exe"
+        $editCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Setup to copy")
+        $setup = WaitFor { (ById $window "Transcript").FindFirst($scope::Descendants, $editCondition) } 5000
+        $setupValue = $(if ($setup) { $setup.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current } else { $null })
+        Check "connect shows read-only setup text to copy" ($null -ne $setupValue -and $setupValue.IsReadOnly) ""
+        $setupText = $(if ($setupValue) { $setupValue.Value } else { "" })
+        Check "the setup names this install's CLI for each client" ($setupText.Contains('"command": "' + $cli.Replace('\', '\\') + '"') -and $setupText.Contains('command = "' + $cli.Replace('\', '\\') + '"') -and $setupText.Contains("'" + $cli.Replace("'", "''") + "' mcp stdio") -and $setupText.Contains("command $cli, arguments mcp stdio")) "$(($setupText -split "`n")[0])"
+        $connectAnnounced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Setup for Claude Desktop", [StringComparison]::Ordinal)) { $a } } 3000
+        Check "the setup is announced by where it is, not read out" ($null -ne $connectAnnounced) "$connectAnnounced"
+    } else {
+        $connect = WaitForMessage $window "isn't installed for this Windows user yet" 5000
+        Check "connect without an install says to install first" ($null -ne $connect) "$connect"
+    }
+    Start-Sleep -Milliseconds 1500
+    $connectChildren = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object { $_.CreationDate -ge $connectAt })
+    Check "connect starts no process" ($connectChildren.Count -eq 0) (@($connectChildren | ForEach-Object { $_.Name }) -join ", ")
 
     if ($expectInstalled) {
         SendCommand $window "doctor"
@@ -145,7 +192,8 @@ try {
 
     $box = ById $window "CommandBox"
     Check "command box has an accessible name" ($box.Current.Name -eq "Command") "name '$($box.Current.Name)'"
-    Check "controls are keyboard focusable" ($box.Current.IsKeyboardFocusable -and (ById $window "SendButton").Current.IsKeyboardFocusable) ""
+    Check "controls are keyboard focusable" ($box.Current.IsKeyboardFocusable -and (ById $window "SendButton").Current.IsKeyboardFocusable -and (ById $window "RefreshButton").Current.IsKeyboardFocusable -and (ById $window "StopControlButton").Current.IsKeyboardFocusable) ""
+    Check "the stop button has an accessible name" ((ById $window "StopControlButton").Current.Name -eq "Stop desktop control") "name '$((ById $window "StopControlButton").Current.Name)'"
 
     $process.Refresh()
     $workingSetMb = [math]::Round($process.WorkingSet64 / 1MB, 1)

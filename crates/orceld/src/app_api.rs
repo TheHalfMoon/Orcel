@@ -39,11 +39,14 @@
 //! peer has exited or whose pid now names another process is closed
 //! unanswered.
 //!
-//! The API is read-only. Its methods (`status.get`, `capabilities.get`,
-//! `events.subscribe`, and SG-000126's `task.list` and `task.get`) read
-//! daemon facts, the event log and the report task registry; nothing reaches
-//! the request dispatcher, the policy engine or the approval broker, so no
-//! client can submit work or mint an approval through it. Frames are JSON
+//! The API is read-only except `task.stop`. Its other methods (`status.get`,
+//! `capabilities.get`, `events.subscribe`, SG-000126's `task.list` and
+//! `task.get`, `approval.history` and `clients.list`) read daemon facts, the
+//! event log, the report task registry and the approval record. `task.stop`
+//! can only move one task of this run to a final state (founder decision of
+//! 2026-11-13, #446). Nothing
+//! reaches the request dispatcher, the policy engine or the approval broker,
+//! so no client can submit work or mint an approval through it. Frames are JSON
 //! lines of at most [`MAX_FRAME_BYTES`]; concurrent clients, the event ring
 //! and the per-client event rate are bounded, and writes time out, so a
 //! slow client never blocks orceld's request loop: [`EventLog::publish`]
@@ -97,13 +100,17 @@ const REBIND_INTERVAL: Duration = Duration::from_secs(5);
 /// How often a streaming subscription reads its peer's instance again.
 const PEER_RECHECK: Duration = Duration::from_secs(1);
 
-/// The methods this revision serves. All of them only read.
+/// The methods this revision serves. All of them only read, except `task.stop`,
+/// which can only remove the ability to write (F4 slice 5).
 pub(crate) const METHODS: &[&str] = &[
     "status.get",
     "capabilities.get",
     "events.subscribe",
     "task.list",
     "task.get",
+    "task.stop",
+    "approval.history",
+    "clients.list",
 ];
 /// Read-only methods the protocol reserves; this revision answers
 /// `METHOD_UNAVAILABLE` for them.
@@ -334,6 +341,15 @@ struct Shared {
     log: Arc<EventLog>,
     /// SG-000126 report tasks, read for `task.list` and `task.get`.
     tasks: Arc<TaskRegistry>,
+    /// The approval history, read for `approval.history`; `None` when this user has no
+    /// private location for it.
+    history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
+    /// The live client session records, read for `clients.list`; `None` when this user has no
+    /// private folder for them.
+    sessions: Option<crate::live_sessions::Registry>,
+    /// orceld's audit log, where every `task.stop` attempt is recorded with its caller (F4
+    /// slice 5); `None` only in tests that do not read it.
+    audit: Option<orcel_audit::AuditLogger>,
     limits: Limits,
     started: Instant,
     started_at_ms: u64,
@@ -357,6 +373,7 @@ impl Shared {
         facts: DaemonFacts,
         log: Arc<EventLog>,
         tasks: Arc<TaskRegistry>,
+        history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
         limits: Limits,
         endpoint: String,
     ) -> Self {
@@ -364,6 +381,9 @@ impl Shared {
             facts,
             log,
             tasks,
+            history,
+            sessions: None,
+            audit: None,
             limits,
             started: Instant::now(),
             started_at_ms: now_ms(),
@@ -371,6 +391,16 @@ impl Shared {
             endpoint,
             wait: Mutex::new(None),
         }
+    }
+
+    fn with_sessions(mut self, sessions: Option<crate::live_sessions::Registry>) -> Self {
+        self.sessions = sessions;
+        self
+    }
+
+    fn with_audit(mut self, audit: Option<orcel_audit::AuditLogger>) -> Self {
+        self.audit = audit;
+        self
     }
 
     /// Records one attempt that found the endpoint held. Returns true the
@@ -727,6 +757,16 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
             None => Reply::Frame(ok_frame(&id, shared.tasks.list())),
         },
         "task.get" => Reply::Frame(task_get(shared, &id, &params)),
+        "task.stop" => Reply::Frame(task_stop(shared, peer, &id, &params)),
+        "approval.history" => Reply::Frame(approval_history(shared, &id, &params)),
+        "clients.list" => Reply::Frame(match params.keys().next() {
+            Some(key) => error_frame(
+                &id,
+                "INVALID_REQUEST",
+                format!("clients.list has no parameter {key}"),
+            ),
+            None => ok_frame(&id, clients_list(shared)),
+        }),
         method if RESERVED_METHODS.contains(&method) => Reply::Frame(error_frame(
             &id,
             "METHOD_UNAVAILABLE",
@@ -735,13 +775,118 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
         method => Reply::Frame(error_frame(
             &id,
             "UNKNOWN_METHOD",
-            format!("{method} is not a method of {PROTOCOL}; the API is read-only"),
+            format!("{method} is not a method of {PROTOCOL}"),
         )),
     }
 }
 
-/// `task.get {task_id}`: one task of this daemon run or, read-only, of an
-/// exited run the report task journal kept (SG-000120 RJ-02).
+/// The most entries one `approval.history` answer carries.
+const MAX_HISTORY_ENTRIES: u64 = 50;
+
+/// `approval.history {limit}`: the newest approval decisions, newest first, as the CLI's
+/// `orcel approvals` shows them. Read only: the reader can't issue, consume or revoke, and an
+/// entry carries ids, states, times and the request's origin, never what was approved.
+fn approval_history(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
+    if let Some(key) = params.keys().find(|key| key.as_str() != "limit") {
+        return error_frame(
+            id,
+            "INVALID_REQUEST",
+            format!("approval.history has no parameter {key}"),
+        );
+    }
+    let limit = match params.get("limit") {
+        None | Some(Value::Null) => 20,
+        Some(value) => match value.as_u64() {
+            Some(limit) if (1..=MAX_HISTORY_ENTRIES).contains(&limit) => limit,
+            _ => {
+                return error_frame(
+                    id,
+                    "INVALID_REQUEST",
+                    format!("approval.history limit is an integer from 1 to {MAX_HISTORY_ENTRIES}"),
+                )
+            }
+        },
+    };
+    let Some(reader) = shared.history.as_ref() else {
+        return error_frame(
+            id,
+            "METHOD_UNAVAILABLE",
+            "approval history has no private location for this user",
+        );
+    };
+    let (history, state) = reader.history_with_state(usize::try_from(limit).unwrap_or(20));
+    let entries: Vec<Value> = history
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "id": entry.id,
+                "decision": format!("{:?}", entry.decision),
+                "approval_class": entry.approval_class.as_str(),
+                "presence_outcome": entry.presence_outcome.as_str(),
+                "workspace_id": entry.workspace_id,
+                "digest": entry.digest,
+                "is_revoke": entry.is_revoke,
+                "requested_at_ms": entry.requested_at_ms,
+                "decided_at_ms": entry.decided_at_ms,
+                "expires_at_ms": entry.expires_at_ms,
+                "consumed": entry.consumed,
+                "origin": entry.origin,
+            })
+        })
+        .collect();
+    ok_frame(
+        id,
+        json!({
+            "max_entries": MAX_HISTORY_ENTRIES,
+            "ledger": state.as_str(),
+            "entries": entries,
+        }),
+    )
+}
+
+/// The most clients one `clients.list` answer carries.
+const MAX_CLIENTS_LISTED: usize = 32;
+
+/// `clients.list`: the local AI client sessions running now, newest first, for display. Each
+/// MCP session's own orceld recorded itself on its hello; a record counts only while its
+/// process is the same instance. Names and versions are what the client said and are marked
+/// unverified. Read only: this changes nothing, not even the records of ended sessions.
+fn clients_list(shared: &Shared) -> Value {
+    let read = shared
+        .sessions
+        .as_ref()
+        .map(|registry| registry.read(MAX_CLIENTS_LISTED));
+    let (records, truncated, registry) = match read {
+        Some(Ok((records, truncated))) => (records, truncated, "ok"),
+        Some(Err(_)) | None => (Vec::new(), false, "unavailable"),
+    };
+    let clients: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            json!({
+                "pid": record.pid,
+                "started_at_ms": record.started_at_ms,
+                "transport": record.transport,
+                "workspace_id": record.workspace_id,
+                "client": {
+                    "name": record.client.name,
+                    "version": record.client.version,
+                    "verified": false,
+                },
+            })
+        })
+        .collect();
+    json!({
+        "max_clients": MAX_CLIENTS_LISTED,
+        "registry": registry,
+        "truncated": truncated,
+        "clients": clients,
+    })
+}
+
+/// `task.get {task_id}`: one task of this daemon run or, read-only, of
+/// another running session or an exited run the report task journal kept
+/// (SG-000120 RJ-02).
 fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
     if let Some(key) = params.keys().find(|key| key.as_str() != "task_id") {
         return error_frame(
@@ -758,8 +903,160 @@ fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>
         None => error_frame(
             id,
             "UNKNOWN_TASK",
-            "orceld has no such task (this run, or the earlier runs its journal kept)",
+            "orceld has no such task (this run, another running session, or the earlier runs its journal kept)",
         ),
+    }
+}
+
+/// F4 slice 5: ends one task of this run. It never approves, writes or resumes.
+/// Every attempt, accepted or refused, is audited with its caller
+/// (`prep/F4_TASK_STOP.md` section 4).
+fn task_stop(
+    shared: &Shared,
+    peer: &PeerInfo,
+    id: &Value,
+    params: &serde_json::Map<String, Value>,
+) -> Value {
+    let frame = task_stop_frame(shared, id, params);
+    audit_stop(shared, peer, id, params, &frame);
+    frame
+}
+
+/// Records one `task.stop` attempt in orceld's audit log: the task id it
+/// named, the outcome (`SUCCESS` or the refusal code), and the caller as the
+/// kernel identified the peer. A failed write goes to stderr and never
+/// changes the answer: the stop only takes authority away, so it is not
+/// withheld for want of a record.
+fn audit_stop(
+    shared: &Shared,
+    peer: &PeerInfo,
+    id: &Value,
+    params: &serde_json::Map<String, Value>,
+    frame: &Value,
+) {
+    let Some(audit) = &shared.audit else {
+        return;
+    };
+    let task_id = params
+        .get("task_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let workspace_id = task_id
+        .as_deref()
+        .and_then(|task| shared.tasks.get(task))
+        .and_then(|task| task["workspace_id"].as_str().map(str::to_owned))
+        .unwrap_or_default();
+    let outcome = if frame["ok"] == true {
+        "SUCCESS".to_owned()
+    } else {
+        frame["error"]["code"]
+            .as_str()
+            .unwrap_or("INTERNAL")
+            .to_owned()
+    };
+    let request = orcel_contracts::RequestEnvelope {
+        version: 1,
+        request_id: match id {
+            Value::String(text) => text.clone(),
+            Value::Null => String::new(),
+            other => other.to_string(),
+        },
+        client_session_id: "app_api".into(),
+        workspace_id,
+        capability: "app_api".into(),
+        operation: "task.stop".into(),
+        target: task_id,
+        arguments: Value::Null,
+    };
+    let caller = orcel_audit::AuditCaller {
+        pid: peer.process.pid,
+        start_generation: peer.process.generation,
+        generation_source: peer.process.source.to_owned(),
+        executable: peer_executable(&peer.process),
+    };
+    if let Err(failure) =
+        audit.record_with_caller(&request, &shared.facts.policy_revision, &outcome, &caller)
+    {
+        eprintln!("orceld app api: task.stop audit write failed: {failure}");
+    }
+}
+
+/// The executable of the admitted peer, read now and kept only if the pid
+/// still names the same process instance afterwards; otherwise why not.
+fn peer_executable(process: &ProcessGeneration) -> Result<String, String> {
+    let path = executable_of(process.pid)?;
+    match process::start_generation(process.pid) {
+        Ok(now) if now.generation == process.generation && now.boot_id == process.boot_id => {
+            Ok(path)
+        }
+        Ok(_) => Err("the pid now names another process".into()),
+        Err(failure) => Err(failure.to_string()),
+    }
+}
+
+#[cfg(windows)]
+fn executable_of(pid: u32) -> Result<String, String> {
+    process::image_path_and_generation(pid)
+        .map(|(path, _)| path)
+        .map_err(|failure| failure.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn executable_of(pid: u32) -> Result<String, String> {
+    std::fs::read_link(format!("/proc/{pid}/exe"))
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|failure| format!("/proc/{pid}/exe: {failure}"))
+}
+
+#[cfg(target_os = "macos")]
+fn executable_of(pid: u32) -> Result<String, String> {
+    let raw_pid = libc::c_int::try_from(pid).map_err(|_| format!("pid {pid} is out of range"))?;
+    let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: `buffer` is a live, writable allocation of exactly the size
+    // passed; proc_pidpath writes at most that many bytes into it.
+    let written = unsafe {
+        libc::proc_pidpath(
+            raw_pid,
+            buffer.as_mut_ptr().cast(),
+            u32::try_from(buffer.len()).unwrap_or(0),
+        )
+    };
+    if written <= 0 {
+        return Err(format!(
+            "proc_pidpath({pid}): {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    buffer.truncate(usize::try_from(written).unwrap_or(0));
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn executable_of(_pid: u32) -> Result<String, String> {
+    Err("not read on this OS".into())
+}
+
+fn task_stop_frame(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
+    if let Some(key) = params.keys().find(|key| key.as_str() != "task_id") {
+        return error_frame(
+            id,
+            "INVALID_REQUEST",
+            format!("task.stop has no parameter {key}"),
+        );
+    }
+    let Some(task_id) = params.get("task_id").and_then(Value::as_str) else {
+        return error_frame(id, "INVALID_REQUEST", "task.stop requires a string task_id");
+    };
+    match shared.tasks.stop_in_this_run(task_id) {
+        Ok(stopped) => ok_frame(id, stopped),
+        Err(failure) => {
+            let code = if failure.code == orcel_approval::FailureCode::TargetStale {
+                "TARGET_STALE"
+            } else {
+                "INVALID_REQUEST"
+            };
+            error_frame(id, code, failure.message)
+        }
     }
 }
 
@@ -1181,7 +1478,13 @@ fn new_epoch() -> String {
 /// Starts the endpoint on a background thread. Never fails orceld: when the
 /// endpoint cannot be taken the reason goes to stderr and the request loop
 /// runs as before. `ORCEL_APP_API=off` disables it.
-pub(crate) fn start(facts: DaemonFacts, tasks: Arc<TaskRegistry>) -> AppApi {
+pub(crate) fn start(
+    facts: DaemonFacts,
+    tasks: Arc<TaskRegistry>,
+    history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
+    sessions: Option<crate::live_sessions::Registry>,
+    audit: orcel_audit::AuditLogger,
+) -> AppApi {
     if std::env::var_os("ORCEL_APP_API").is_some_and(|value| value == "off") {
         eprintln!("orceld app api: disabled by ORCEL_APP_API=off");
         return AppApi::disabled();
@@ -1216,7 +1519,11 @@ pub(crate) fn start(facts: DaemonFacts, tasks: Arc<TaskRegistry>) -> AppApi {
         }
     };
     tasks.attach_events(Arc::clone(&log));
-    let shared = Arc::new(Shared::new(facts, log, tasks, limits, label));
+    let shared = Arc::new(
+        Shared::new(facts, log, tasks, history, limits, label)
+            .with_sessions(sessions)
+            .with_audit(Some(audit)),
+    );
     #[cfg(unix)]
     let bound = Arc::clone(&api.bound);
     let spawned = std::thread::Builder::new()

@@ -50,6 +50,29 @@ test("sg127 only report.ts forwards report/*, and it carries no approval", () =>
   assert.doesNotMatch(source, /\b(approv\w*|approval_id|token|secret|overwrite|force|presence)\s*:/i);
 });
 
+/**
+ * F4 slice 5 (founder decision of 2026-11-13, #446): `task.stop` exists only on
+ * orceld's local app API. No MCP tool, profile or contract entry names a stop,
+ * and no tool source forwards one.
+ */
+test("f4 task stop is absent from every MCP tool, profile and source", () => {
+  const stop = /stop/i;
+  assert.deepEqual(Object.keys(TOOL_CONTRACT).filter((name) => stop.test(name)), []);
+  assert.deepEqual(
+    Object.values(TOOL_CONTRACT)
+      .map((entry) => entry.operation)
+      .filter((operation) => stop.test(operation)),
+    []
+  );
+  for (const [profile, tools] of Object.entries(SURFACE_PROFILES)) {
+    assert.deepEqual([...tools].filter((name) => stop.test(name)), [], profile);
+  }
+  for (const name of readdirSync(srcDir).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"))) {
+    const text = readFileSync(join(srcDir, name), "utf8");
+    assert.doesNotMatch(text, /task\.stop|task_stop|operation:\s*["']stop["']/, name);
+  }
+});
+
 test("sg127 the kernel shapes match orcel-policy's admitted report shapes", () => {
   const policy = readFileSync(join(repo, "crates", "orcel-policy", "src", "report.rs"), "utf8");
   for (const operation of ["start", "preview", "commit", "resume_summary"]) {

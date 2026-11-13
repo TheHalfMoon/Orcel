@@ -243,6 +243,13 @@ pub fn grant_full_user(
     let key_path = full_control_store::authority_key_path(&layout.root);
     let key = full_control_store::ensure_key(&key_path).map_err(policy_error)?;
     let device_id = full_control_store::derive_device_id(&key);
+    let store_path = full_control_store::authority_store_path(&layout.root);
+    // The epoch this grant is approved at. A revoke, emergency stop or restart while the
+    // approval prompt is open advances it, and the grant is then refused rather than
+    // overwriting the revoke.
+    let approved_at_epoch = full_control_store::load_store(&store_path, &key)
+        .map_err(policy_error)?
+        .authority_epoch;
     let duration_ms = minutes
         .checked_mul(60_000)
         .ok_or_else(|| LifecycleError::usage("--minutes overflow"))?;
@@ -269,9 +276,10 @@ pub fn grant_full_user(
         .map_err(approval_error)?
         .request(&prompt)
         .map_err(approval_error)?;
-    full_control_store::grant_local(
-        &full_control_store::authority_store_path(&layout.root),
+    full_control_store::grant_local_at_epoch(
+        &store_path,
         &key,
+        approved_at_epoch,
         AuthorityMode::FullUser,
         duration_ms,
         identity.windows_user_sid,

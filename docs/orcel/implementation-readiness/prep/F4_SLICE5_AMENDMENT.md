@@ -1,6 +1,6 @@
 # F4 slice 5: proposed amendment for stop without paid signing
 
-**Status: PROPOSAL, NOT ACTIVE.** Nothing here takes effect until the founder decides on #446. The rule in `protocol/ORCEL_APP_API_1.md` stands: "The first method that changes state or carries authority must add a first-party code requirement before it ships." This builds on the design in `prep/F4_TASK_STOP.md`, whose kernel part is #607 (in review when this was written).
+**Status: DECIDED 2026-11-13 (#446): option 2, and for the open prompt, leave the dialog and document it.** The founder accepts the residual that another same-user program could stop the user's in-flight report tasks. The exception text below is applied in `protocol/ORCEL_APP_API_1.md`; it is in force once #640 merges. For every other method the rule stands: "The first method that changes state or carries authority must add a first-party code requirement before it ships." This builds on the design in `prep/F4_TASK_STOP.md`, whose kernel part is #607 (in review when this was written).
 
 ## The decision
 

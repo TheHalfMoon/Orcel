@@ -101,7 +101,7 @@ namespaces. Unit tests in `linux.rs` keep them in the unit.
 | `UMask=0077` | Every file `orceld` creates is owner-only, on top of the 0600 and 0700 modes the state store already sets. |
 | `KillMode=control-group` | When a connection ends, every process the instance started ends too. This is the Linux counterpart of the Windows kill-on-close Job Object. |
 | `Delegate=yes` | XP-13b: the instance's cgroup is delegated to `orceld`. The Safe tier puts each registered executable in its own child cgroup and ends the whole tree with `cgroup.kill`, including descendants that left the process group. Delegation lets `orceld` create child cgroups and move its own children into them. It grants no other rights: no controllers are enabled, so no resource limits are lifted. The cleanup is best effort against a cooperative child: the delegated subtree belongs to the user, so a child running as the user could move itself to another cgroup in it before `cgroup.kill`. `KillMode=control-group` still ends it when the instance stops. |
-| `EnvironmentFile=-%E/orcel/orceld.env` | Workspaces come from the user's own config. When the file is missing, `orceld` refuses to start (fail closed). |
+| `EnvironmentFile=-%E/orcel/orceld.env` | Workspaces come from the user's own config. When the file is missing, `orceld` refuses to start (fail closed). The same file can hold `ORCEL_APPROVAL_PREVIEWS=sizes` for approval prompts that show sizes only, never content. |
 
 ### Directives left out
 

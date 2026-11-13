@@ -1427,7 +1427,8 @@ fn download_with_approval(
             record.canonical_relative_destination
         ),
         digest.clone(),
-    );
+    )
+    .for_file();
     let token = approval
         .request_token(&prompt)
         .map_err(|error| ProviderError::new(error.code, error.message))?;

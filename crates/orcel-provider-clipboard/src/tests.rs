@@ -741,3 +741,60 @@ fn xp15_native_round_trip_where_a_clipboard_is_reachable() {
     // Leave benign text behind.
     write_bounded_text(&native, marker, WORKSPACE, POLICY).unwrap();
 }
+
+#[test]
+fn content_its_app_marked_private_is_concealed() {
+    let none = |_: &str| false;
+    assert!(!is_concealed(none, None), "ordinary text is read");
+    assert!(!is_concealed(none, Some(1)), "history allowed is ordinary");
+    assert!(
+        is_concealed(none, Some(0)),
+        "kept out of history by its app"
+    );
+    for marker in CONCEALED_FORMATS {
+        assert!(
+            is_concealed(|format: &str| format == marker, None),
+            "{marker} marks content private"
+        );
+    }
+    assert!(!is_concealed(
+        |format: &str| format == "Something Else",
+        None
+    ));
+    assert_eq!(concealed().code, FailureCode::CapabilityDenied);
+}
+
+#[test]
+fn the_history_marker_value_is_read_and_unreadable_counts_as_private() {
+    assert_eq!(history_allowed_from(Some(&1u32.to_le_bytes())), 1);
+    assert_eq!(history_allowed_from(Some(&2u32.to_le_bytes())), 2);
+    assert_eq!(history_allowed_from(Some(&0u32.to_le_bytes())), 0);
+    // Present but unreadable, or shorter than a DWORD: private.
+    assert_eq!(history_allowed_from(None), 0);
+    assert_eq!(history_allowed_from(Some(&[1, 0])), 0);
+    assert!(is_concealed(
+        |_: &str| false,
+        Some(history_allowed_from(None))
+    ));
+    assert!(!is_concealed(|_: &str| false, Some(2)));
+}
+
+/// Linux and macOS: content offering a type its app uses to mark it private is concealed;
+/// ordinary types are not. Pure: it touches no clipboard.
+#[test]
+fn a_private_type_on_linux_or_macos_is_concealed() {
+    let ordinary = [
+        "text/plain;charset=utf-8",
+        "UTF8_STRING",
+        "public.utf8-plain-text",
+    ];
+    assert!(!offers_concealed_type(ordinary.iter().copied()));
+    for marker in UNIX_CONCEALED_TYPES {
+        let offered = ["text/plain", marker];
+        assert!(offers_concealed_type(offered.iter().copied()), "{marker}");
+    }
+    // Exact names only: a lookalike is ordinary.
+    assert!(!offers_concealed_type(
+        ["x-kde-passwordManagerHint-not"].iter().copied()
+    ));
+}

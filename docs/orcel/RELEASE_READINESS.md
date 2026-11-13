@@ -5,6 +5,9 @@ here releases, signs or publishes Orcel. Each item is in exactly one of the
 five classes below. Update this file when an item moves; the restart
 checkpoint at the end says where engineering stands.
 
+The per-component view (state, commits, tests, limitations, blockers) is in
+`COMPLETION_LEDGER.md`.
+
 ## 1. Engineering that is complete (merged, qualified on exact-head CI)
 
 | Item | Where |
@@ -119,7 +122,7 @@ checkpoint at the end says where engineering stands.
 | F4 slice 5 stop and takeover | (1) signing, (2) governed amendment for an authority-reducing task-scoped stop, (3) record as an open F4 gate — see #446 |
 | F4 slice 7: live browser in release builds | Its own governed change and security review |
 | FD-03 (gates CR-03), FD-05, FD-08 | As recorded in the frontier |
-| Activation of SG-000115 (XP-14 launch, network sink, supervision on macOS/Linux) and the other prepared grains | Activation grants authority; only the founder activates |
+| Activation of SG-000115 (XP-14 launch, network sink, supervision on macOS/Linux) and the other prepared grains | Activation grants authority; only the founder activates. Gate (F4 slice 5, #640): before SG-000115 is activated, the Unix browser engine (on Linux it runs in new user and PID namespaces but no new mount namespace, `orcel-browser-host/src/unix_supervise.rs`) must be shown unable to reach orceld's app API socket (`$XDG_RUNTIME_DIR/orcel/app-api.sock`, or the macOS per-user temp directory's), or `task.stop`'s exception to the first-party code rule (`ORCEL_APP_API_1.md` section 2, founder decision of 2026-11-13, #446) is judged again. The exception rests on no confined process being able to reach the endpoint yet not signal orceld |
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
@@ -150,8 +153,30 @@ Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-07). Check GitHub for the current
-head and CI: this checkpoint can't name its own merge.
+If a session ends, resume from here (2026-11-10, updated from 2026-11-07). Check GitHub for
+the current head and CI: this checkpoint can't name its own merge. The per-component state
+is in `COMPLETION_LEDGER.md`; start there.
+
+Merged 2026-11-07 to 2026-11-10, after the list below:
+- Filesystem and parser safety: #668, #670, #671, #674, #675, #676, #678, #679, #680; clipboard
+  privacy #672 (Windows) and #681 (Linux, macOS); macOS sampler #688.
+- Approval UX (founder decision 1): #682 (one escaped prompt text), #683 (STRONG summary before
+  Hello and Touch ID), #684 (Origin line), #685 (typed targets), #686 and #689 (bounded,
+  redacted previews), #690 (saved sizes-only choice), #691 (credential warning), #693 (Windows
+  dialog timeout), #694 (application line), #695 (origin in approval history).
+- Desktop app: #697 (read-only `approval.history` on the app API and a `history` command),
+  #699 (tighten-only `previews sizes`), #702 (stop desktop control, `control`, `revoke all`).
+- Security: #701 closed a race where a grant waiting for Windows Hello could overwrite a
+  revoke or emergency stop made meanwhile.
+- CI: #687 (Tier C GUI download cache), #698 (rehearsal flake retry, #696). Flakes under watch
+  also include #700 (X11 latency scroll) and #508 (UIA bind, seen again 2026-11-10).
+
+Working rules learned this stretch: a PR must contain current main before Jev reviews it;
+inline shell heredocs on this PC collapse doubled backslashes, so edit scripts go through
+files; CI runners are the bottleneck, so cancel runs for superseded heads and merge one PR
+at a time.
+
+The 2026-11-07 checkpoint follows.
 
 Plans and the founder decision documents are kept privately, at the same paths, and the
 files here are short notes (founder decision, 2026-11-06). Read the private copies for

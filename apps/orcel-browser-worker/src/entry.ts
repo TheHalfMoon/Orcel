@@ -15,7 +15,7 @@ import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FE
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
-import { traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
+import { netErrorCode, rendererAnswers, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
 import { runProbes } from "./verify.js";
@@ -111,11 +111,17 @@ const playwrightLauncher: Launcher = {
         const message = String((error as Error).message);
         if (message.includes("ERR_BLOCKED_BY_CLIENT")) throw new NavigationError("denied");
         if ((error as Error).name === "TimeoutError") {
-          // #438: where it stalled, for the host's failure diagnostics.
+          // #438: where it stalled, for the host's failure diagnostics. #584: and whether
+          // the page's renderer answers at all (a constant expression, no page data read).
+          traceMark(`renderer_${(await rendererAnswers(() => page.evaluate("1"))).replace(" ", "_")}`);
+          traceMark(`page_closed_${page.isClosed()}`);
           process.stderr.write(`orcel-browser-worker: ${traceLine()}
 `);
           throw new NavigationError("timeout");
         }
+        // #584: why the engine gave up, which "failed" alone doesn't say.
+        process.stderr.write(`orcel-browser-worker: goto failed ${netErrorCode(message)} ${traceLine()}
+`);
         throw new NavigationError("failed");
       }
     };
