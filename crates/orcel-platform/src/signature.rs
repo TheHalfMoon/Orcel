@@ -1,10 +1,24 @@
 //! The code signature of an executable image file, for display on approval prompts.
 //!
-//! Display only: the result describes the file on disk when it was checked, not the code
-//! running in memory, and nothing grants or refuses anything because of it. On Windows the
-//! file is checked with `WinVerifyTrust` (Authenticode, then the system catalogs, since many
-//! inbox binaries are catalog-signed only), offline: no revocation check and no network
-//! retrieval. Other systems report [`SignatureState::Unknown`].
+//! Display only: nothing grants or refuses anything because of it. On Windows the file is
+//! opened once and checked through that handle with `WinVerifyTrust` (Authenticode, then the
+//! system catalogs, since many inbox binaries are catalog-signed only, hashing the same
+//! handle), offline: no revocation check and no network retrieval. Other systems report
+//! [`SignatureState::Unknown`].
+//!
+//! The signature describes a file on disk, not the code in memory. [`image_signature_for`]
+//! also says whether the file it checked is the file a running process's image is mapped
+//! from ([`RunningImage`]): a file renamed away and replaced after launch leaves another
+//! file at the path. On Windows it opens the process (`PROCESS_QUERY_INFORMATION` and
+//! `PROCESS_VM_READ`), confirms its creation time is the recorded start generation, takes the
+//! first module `K32EnumProcessModules` lists (the executable), asks `K32GetMappedFileNameW`
+//! for the current name of the file mapped at that base, opens that name, asks again and
+//! requires the same name, then compares the volume serial number and file id
+//! (`FILE_ID_INFO`) of that file and of the checked handle. Where any step fails (another
+//! user's or an elevated process, which deny that access; an exited process; a reused pid;
+//! a file system without file ids) the answer is [`RunningImage::Unconfirmed`], never a
+//! match. The two name queries narrow, but cannot close, the window in which the image could
+//! be renamed away and back while another file holds its name.
 
 use std::path::Path;
 
@@ -41,18 +55,68 @@ pub fn image_signature(path: &Path) -> SignatureState {
     }
 }
 
+/// Whether the file a signature check read is the file a running process's image is mapped
+/// from. Display only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunningImage {
+    /// The checked file is the file the process's image is mapped from.
+    Same,
+    /// The checked file is another file than the one the process's image is mapped from.
+    Different,
+    /// Not established: another system, an unreadable file, a process that denies the
+    /// access the comparison needs, an exited process or reused pid, or a failed query.
+    Unconfirmed,
+}
+
+/// The signature of the file at a process's image path, and whether that file is the one the
+/// process runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageSignature {
+    pub state: SignatureState,
+    pub running_image: RunningImage,
+}
+
+impl ImageSignature {
+    /// A state known without reading any file, whose file nothing compared with a process.
+    pub fn unconfirmed(state: SignatureState) -> Self {
+        Self {
+            state,
+            running_image: RunningImage::Unconfirmed,
+        }
+    }
+}
+
+/// The signature state of the image file at `path`, checked through one open handle, and
+/// whether that same file is the image of the process `pid` whose start generation (on
+/// Windows its creation time, as [`crate::process::start_generation`] reads it) is
+/// `generation`. Never fails: what cannot be checked is [`SignatureState::Unknown`] and what
+/// cannot be compared is [`RunningImage::Unconfirmed`].
+pub fn image_signature_for(path: &Path, pid: u32, generation: u64) -> ImageSignature {
+    #[cfg(windows)]
+    {
+        imp::image_signature_for(path, pid, generation)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, pid, generation);
+        ImageSignature::unconfirmed(SignatureState::Unknown)
+    }
+}
+
 #[cfg(windows)]
 mod imp {
-    use super::{SignatureState, MAX_SUBJECT_CHARS};
+    use super::{ImageSignature, RunningImage, SignatureState, MAX_SUBJECT_CHARS};
     use std::ffi::c_void;
     use std::fs::File;
-    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
     use windows::core::{GUID, HRESULT, PCWSTR};
     use windows::Win32::Foundation::{
-        BOOL, CRYPT_E_FILE_ERROR, HANDLE, HWND, TRUST_E_ACTION_UNKNOWN, TRUST_E_NOSIGNATURE,
-        TRUST_E_PROVIDER_UNKNOWN, TRUST_E_SUBJECT_FORM_UNKNOWN,
+        CloseHandle, BOOL, CRYPT_E_FILE_ERROR, FILETIME, HANDLE, HMODULE, HWND,
+        TRUST_E_ACTION_UNKNOWN, TRUST_E_NOSIGNATURE, TRUST_E_PROVIDER_UNKNOWN,
+        TRUST_E_SUBJECT_FORM_UNKNOWN,
     };
     use windows::Win32::Security::Cryptography::Catalog::{
         CryptCATAdminAcquireContext2, CryptCATAdminCalcHashFromFileHandle2,
@@ -68,6 +132,15 @@ mod imp {
         WINTRUST_DATA_UNION_CHOICE, WINTRUST_FILE_INFO, WTD_CACHE_ONLY_URL_RETRIEVAL,
         WTD_CHOICE_CATALOG, WTD_CHOICE_FILE, WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE,
         WTD_STATEACTION_VERIFY, WTD_UI_NONE,
+    };
+    use windows::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    use windows::Win32::System::ProcessStatus::{K32EnumProcessModules, K32GetMappedFileNameW};
+    use windows::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
     };
 
     /// One `WinVerifyTrust` outcome: its status, and the signer's name when it succeeded.
@@ -87,6 +160,137 @@ mod imp {
         let Ok(file) = File::open(path) else {
             return (SignatureState::Unknown, Checked::Embedded);
         };
+        signature_of_open(&file, path)
+    }
+
+    pub(super) fn image_signature_for(path: &Path, pid: u32, generation: u64) -> ImageSignature {
+        let Ok(file) = File::open(path) else {
+            return ImageSignature::unconfirmed(SignatureState::Unknown);
+        };
+        // One open file: the signature is checked, and the identity read, through this handle.
+        let (state, _) = signature_of_open(&file, path);
+        let running_image = match (file_id(&file), image_file_id(pid, generation)) {
+            (Some(checked), Some(running)) if checked == running => RunningImage::Same,
+            (Some(_), Some(_)) => RunningImage::Different,
+            _ => RunningImage::Unconfirmed,
+        };
+        ImageSignature {
+            state,
+            running_image,
+        }
+    }
+
+    /// A process handle, closed on drop.
+    struct ProcessHandle(HANDLE);
+
+    impl Drop for ProcessHandle {
+        fn drop(&mut self) {
+            // SAFETY: the handle came from a successful OpenProcess and is closed once here.
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// The longest NT path `K32GetMappedFileNameW` is given room for, in UTF-16 units.
+    const MAPPED_NAME_UNITS: usize = 32_768;
+
+    /// The current NT name (`\Device\...`) of the file mapped at `address` in the process,
+    /// or `None` when the query fails or the name might not fit.
+    fn mapped_name(process: &ProcessHandle, address: *const c_void) -> Option<Vec<u16>> {
+        let mut name = vec![0u16; MAPPED_NAME_UNITS];
+        // SAFETY: the handle is open with PROCESS_QUERY_INFORMATION; `address` is only read
+        // as a number in the other process; the call writes at most `name.len()` units.
+        let len = unsafe { K32GetMappedFileNameW(process.0, address, &mut name) } as usize;
+        if len == 0 || len >= name.len() - 1 {
+            return None;
+        }
+        name.truncate(len);
+        Some(name)
+    }
+
+    /// The identity of the file the image of process `pid` is mapped from, when the process
+    /// still is the instance started at `generation` and every query succeeds.
+    fn image_file_id(pid: u32, generation: u64) -> Option<(u64, u128)> {
+        // SAFETY: plain values in; the returned handle is owned by ProcessHandle.
+        let process = ProcessHandle(
+            unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }.ok()?,
+        );
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        // SAFETY: the handle is open with PROCESS_QUERY_INFORMATION and all four pointers are
+        // live FILETIME values the call writes.
+        unsafe { GetProcessTimes(process.0, &mut creation, &mut exit, &mut kernel, &mut user) }
+            .ok()?;
+        let created =
+            (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+        if created != generation {
+            return None;
+        }
+        // The first module listed is the executable.
+        let mut module = HMODULE::default();
+        let mut needed = 0u32;
+        // SAFETY: room for exactly one HMODULE, as the call is told; `needed` is written.
+        let listed = unsafe {
+            K32EnumProcessModules(
+                process.0,
+                &mut module,
+                std::mem::size_of::<HMODULE>() as u32,
+                &mut needed,
+            )
+        };
+        if !listed.as_bool() || needed == 0 || module.is_invalid() {
+            return None;
+        }
+        let base = module.0 as *const c_void;
+        let name = mapped_name(&process, base)?;
+        let mut global: Vec<u16> = r"\\?\GLOBALROOT".encode_utf16().collect();
+        global.extend_from_slice(&name);
+        let image = std::fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES.0)
+            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
+            .open(std::ffi::OsString::from_wide(&global))
+            .ok()?;
+        // The image still has the name just opened, so the open reached the image's file
+        // unless it was renamed away and back in between.
+        if mapped_name(&process, base)? != name {
+            return None;
+        }
+        file_id(&image)
+    }
+
+    /// The volume serial number and 128-bit file id of an open file (`FILE_ID_INFO`); a file
+    /// system without that class gets the 32-bit serial and 64-bit index, as
+    /// orcel-provider-fs does. One volume always answers the same way.
+    fn file_id(file: &File) -> Option<(u64, u128)> {
+        let handle = HANDLE(file.as_raw_handle());
+        let mut info = FILE_ID_INFO::default();
+        // SAFETY: the handle is open for this call and `info` is a writable FILE_ID_INFO of
+        // the size the call is told.
+        let read = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileIdInfo,
+                (&mut info as *mut FILE_ID_INFO).cast::<c_void>(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        };
+        if read.is_ok() {
+            return Some((
+                info.VolumeSerialNumber,
+                u128::from_le_bytes(info.FileId.Identifier),
+            ));
+        }
+        let mut basic = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: the handle is open for this call and `basic` is a writable structure.
+        unsafe { GetFileInformationByHandle(handle, &mut basic) }.ok()?;
+        Some((
+            u64::from(basic.dwVolumeSerialNumber),
+            (u128::from(basic.nFileIndexHigh) << 32) | u128::from(basic.nFileIndexLow),
+        ))
+    }
+
+    fn signature_of_open(file: &File, path: &Path) -> (SignatureState, Checked) {
         let handle = HANDLE(file.as_raw_handle());
         let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         let mut file_info = WINTRUST_FILE_INFO {
@@ -109,7 +313,6 @@ mod imp {
         } else {
             (embedded, Checked::Embedded)
         };
-        drop(file);
         (state_of(outcome), checked)
     }
 
@@ -382,5 +585,122 @@ mod tests {
     fn signature_of_a_missing_file_is_unknown() {
         let path = std::env::temp_dir().join("orcel-signature-no-such-file-7f3a.exe");
         assert_eq!(image_signature(&path), SignatureState::Unknown);
+        assert_eq!(
+            image_signature_for(&path, std::process::id(), 0),
+            ImageSignature::unconfirmed(SignatureState::Unknown)
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn running_image_is_not_compared_off_windows() {
+        let exe = std::env::current_exe().unwrap();
+        assert_eq!(
+            image_signature_for(&exe, std::process::id(), 0),
+            ImageSignature::unconfirmed(SignatureState::Unknown)
+        );
+    }
+
+    /// A fresh directory under the temp dir for one test.
+    #[cfg(windows)]
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "orcel-signature-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The test's own executable is its running image; a byte-for-byte copy of it is not,
+    /// and neither is anything checked against a start generation this process never had.
+    #[cfg(windows)]
+    #[test]
+    fn running_image_of_this_process_is_its_own_file_and_not_a_copy() {
+        let exe = std::env::current_exe().unwrap();
+        let pid = std::process::id();
+        let generation = crate::process::current_instance().unwrap().generation;
+        let own = image_signature_for(&exe, pid, generation);
+        assert_eq!(own.running_image, RunningImage::Same, "{own:?}");
+        assert_eq!(own.state, image_signature(&exe));
+
+        let dir = scratch_dir("copy");
+        let copy = dir.join("copy-of-test.exe");
+        std::fs::copy(&exe, &copy).unwrap();
+        let copied = image_signature_for(&copy, pid, generation);
+        let stale = image_signature_for(&exe, pid, generation.wrapping_add(1));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(copied.running_image, RunningImage::Different, "{copied:?}");
+        assert_eq!(stale.running_image, RunningImage::Unconfirmed, "{stale:?}");
+    }
+
+    /// The case the comparison exists for: a running program's file is renamed away and
+    /// another file put at its path. The path then names a different file, and the renamed
+    /// file is still the running image.
+    #[cfg(windows)]
+    #[test]
+    fn running_image_follows_a_rename_and_replace() {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let cmd = Path::new(&root).join("System32").join("cmd.exe");
+        let dir = scratch_dir("rename");
+        let launched = dir.join("launched.exe");
+        let renamed = dir.join("renamed.exe");
+        std::fs::copy(&cmd, &launched).unwrap();
+        let mut child = std::process::Command::new(&launched)
+            .args(["/d", "/q", "/k"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let generation = crate::process::start_generation(pid).map(|g| g.generation);
+        // A process just created may not list its modules yet; give it a few seconds.
+        let before = generation.as_ref().map(|generation| {
+            let mut seen = image_signature_for(&launched, pid, *generation);
+            for _ in 0..50 {
+                if seen.running_image != RunningImage::Unconfirmed {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                seen = image_signature_for(&launched, pid, *generation);
+            }
+            seen
+        });
+        let moved = std::fs::rename(&launched, &renamed);
+        let replaced = moved
+            .as_ref()
+            .map_err(|error| error.to_string())
+            .and_then(|()| {
+                std::fs::copy(std::env::current_exe().unwrap(), &launched)
+                    .map_err(|error| error.to_string())
+            });
+        let after = generation.as_ref().map(|generation| {
+            (
+                image_signature_for(&launched, pid, *generation),
+                image_signature_for(&renamed, pid, *generation),
+            )
+        });
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(replaced.is_ok(), "{moved:?} {replaced:?}");
+        let before = before.unwrap();
+        assert_eq!(before.running_image, RunningImage::Same, "{before:?}");
+        let (at_path, at_new_name) = after.unwrap();
+        assert_eq!(
+            at_path.running_image,
+            RunningImage::Different,
+            "{at_path:?}"
+        );
+        assert_eq!(
+            at_new_name.running_image,
+            RunningImage::Same,
+            "{at_new_name:?}"
+        );
     }
 }

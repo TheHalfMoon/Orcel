@@ -38,7 +38,7 @@
 //! and must not be read as interactive desktop evidence.
 
 use orcel_contracts::FailureCode;
-pub use orcel_platform::signature::SignatureState;
+pub use orcel_platform::signature::{ImageSignature, RunningImage, SignatureState};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -897,6 +897,7 @@ pub struct WindowApplication {
     pub window_title: String,
     signature: ProcessSignature,
     exe_id: String,
+    pid: u32,
     process_generation: u64,
 }
 
@@ -904,24 +905,30 @@ pub struct WindowApplication {
 const MAX_CACHED_SIGNATURES: usize = 512;
 
 impl WindowApplication {
-    /// The signature of the process's image file. For a native process this may hash and
-    /// verify the file the first time it is asked per (image, start generation), so callers
-    /// ask without holding the registry lock. Display only.
-    pub fn signature(&self) -> SignatureState {
+    /// The signature of the file at the process's image path, and whether that file is the
+    /// one the process runs. For a native process this may hash and verify the file, and
+    /// query the process, the first time it is asked per (image, pid, start generation), so
+    /// callers ask without holding the registry lock. A state the adapter already knew was
+    /// compared with no process. Display only.
+    pub fn signature(&self) -> ImageSignature {
         let path = match &self.signature {
-            ProcessSignature::Known(state) => return state.clone(),
+            ProcessSignature::Known(state) => return ImageSignature::unconfirmed(state.clone()),
             ProcessSignature::ImageFile { path } => path,
         };
         static CACHE: std::sync::OnceLock<
-            std::sync::Mutex<HashMap<(String, u64), SignatureState>>,
+            std::sync::Mutex<HashMap<(String, u32, u64), ImageSignature>>,
         > = std::sync::OnceLock::new();
         let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-        let key = (self.exe_id.clone(), self.process_generation);
+        let key = (self.exe_id.clone(), self.pid, self.process_generation);
         if let Some(known) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
             return known;
         }
         // Checked outside the cache lock too, so a slow file holds nobody else up.
-        let state = orcel_platform::signature::image_signature(std::path::Path::new(path));
+        let state = orcel_platform::signature::image_signature_for(
+            std::path::Path::new(path),
+            self.pid,
+            self.process_generation,
+        );
         if let Ok(mut map) = cache.lock() {
             if map.len() >= MAX_CACHED_SIGNATURES {
                 map.clear();
@@ -3234,6 +3241,7 @@ impl UiaRegistry {
             window_title: window.title.clone(),
             signature: process.signature.clone(),
             exe_id: process.exe_id.clone(),
+            pid: process.pid,
             process_generation: process.process_generation,
         })
     }

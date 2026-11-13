@@ -20,8 +20,8 @@
 )]
 
 use crate::{
-    ApprovalPrompt, PresenceContext, Preview, RequestOrigin, SignatureState, TargetApplication,
-    TargetKind,
+    ApprovalPrompt, PresenceContext, Preview, RequestOrigin, RunningImage, SignatureState,
+    TargetApplication, TargetKind,
 };
 
 pub(crate) const MAX_WORKSPACE_CHARS: usize = 128;
@@ -236,27 +236,35 @@ fn application_lines(application: Option<&TargetApplication>) -> String {
         Some(application) => format!(
             "\nApplication: {}\n{}\nWindow title (set by the application): {}",
             display_field(&application.executable, MAX_EXECUTABLE_CHARS),
-            signature_line(&application.signature),
+            signature_line(&application.signature, application.running_image),
             display_field(&application.window_title, MAX_TARGET_CHARS),
         ),
     }
 }
 
 /// The signature line: display only. It describes whatever file was at the image's path when
-/// a prompt first named that process instance, which a rename and replace can change, so it
-/// names the path, not the running code. A certificate subject is text its holder chose, so it is
-/// escaped and cut like any field.
-fn signature_line(signature: &SignatureState) -> String {
+/// a prompt first named that process instance, so it names the path, and then says whether
+/// that file was found to be the one the process runs, since a rename and replace can leave
+/// another file there. A certificate subject is text its holder chose, so it is escaped and
+/// cut like any field.
+fn signature_line(signature: &SignatureState, running_image: RunningImage) -> String {
+    let image = match running_image {
+        RunningImage::Same => "it is the running program's file",
+        RunningImage::Different => "it is not the running program's file",
+        RunningImage::Unconfirmed => "not confirmed as the running program's file",
+    };
     match signature {
         SignatureState::Verified { subject } if subject.is_empty() => {
-            String::from("File at this path signed by: (no name) (checked by Windows)")
+            format!("File at this path signed by: (no name) (checked by Windows; {image})")
         }
         SignatureState::Verified { subject } => format!(
-            "File at this path signed by: {} (checked by Windows)",
+            "File at this path signed by: {} (checked by Windows; {image})",
             display_field(subject, MAX_SIGNER_CHARS)
         ),
-        SignatureState::Unsigned => String::from("File at this path not signed"),
-        SignatureState::Untrusted => String::from("File at this path: signature not trusted"),
+        SignatureState::Unsigned => format!("File at this path not signed ({image})"),
+        SignatureState::Untrusted => {
+            format!("File at this path: signature not trusted ({image})")
+        }
         SignatureState::Unknown => String::from("Signature: not checked"),
     }
 }
@@ -630,6 +638,7 @@ mod tests {
             signature: SignatureState::Verified {
                 subject: "Microsoft Windows".into(),
             },
+            running_image: RunningImage::Same,
         };
         let prompt = crate::ApprovalPrompt::new("default", "rev", "type", "w-1", "summary", "d")
             .for_application(application.clone());
@@ -637,7 +646,8 @@ mod tests {
         assert!(
             body.contains(
                 "\nTarget: w-1\nApplication: notepad.exe\n\
-                 File at this path signed by: Microsoft Windows (checked by Windows)\n\
+                 File at this path signed by: Microsoft Windows \
+                 (checked by Windows; it is the running program's file)\n\
                  Window title (set by the application): \
                  Bank login\\u{a}Digest: forged\\u{202e}\nsummary\n"
             ),
@@ -648,7 +658,8 @@ mod tests {
             .with_details("w-1", "summary")
             .with_application(Some(application));
         assert!(strong_body(&ctx).contains(
-            "\nApplication: notepad.exe\nFile at this path signed by: Microsoft Windows (checked by Windows)\nWindow title"
+            "\nApplication: notepad.exe\nFile at this path signed by: Microsoft Windows \
+             (checked by Windows; it is the running program's file)\nWindow title"
         ));
         // No application, no lines.
         let plain = dialog_body(&crate::ApprovalPrompt::new(
@@ -658,11 +669,19 @@ mod tests {
     }
 
     fn signature_line_of(signature: SignatureState) -> String {
+        signature_and_image_line_of(signature, RunningImage::Unconfirmed)
+    }
+
+    fn signature_and_image_line_of(
+        signature: SignatureState,
+        running_image: RunningImage,
+    ) -> String {
         let prompt = crate::ApprovalPrompt::new("default", "rev", "type", "w-1", "summary", "d")
             .for_application(crate::TargetApplication {
                 executable: "app.exe".into(),
                 window_title: "Title".into(),
                 signature,
+                running_image,
             });
         let body = dialog_body(&prompt);
         let line = body
@@ -686,26 +705,70 @@ mod tests {
             signature_line_of(SignatureState::Verified {
                 subject: "Contoso Ltd".into()
             }),
-            "File at this path signed by: Contoso Ltd (checked by Windows)"
+            "File at this path signed by: Contoso Ltd \
+             (checked by Windows; not confirmed as the running program's file)"
         );
         assert_eq!(
             signature_line_of(SignatureState::Verified {
                 subject: String::new()
             }),
-            "File at this path signed by: (no name) (checked by Windows)"
+            "File at this path signed by: (no name) \
+             (checked by Windows; not confirmed as the running program's file)"
         );
         assert_eq!(
             signature_line_of(SignatureState::Unsigned),
-            "File at this path not signed"
+            "File at this path not signed (not confirmed as the running program's file)"
         );
         assert_eq!(
             signature_line_of(SignatureState::Untrusted),
-            "File at this path: signature not trusted"
+            "File at this path: signature not trusted \
+             (not confirmed as the running program's file)"
         );
         assert_eq!(
             signature_line_of(SignatureState::Unknown),
             "Signature: not checked"
         );
+    }
+
+    /// The comparison with the running image is worded for each answer, after any signature
+    /// state that read a file; a file that was not checked says nothing more.
+    #[test]
+    fn a_desktop_prompt_says_whether_the_file_is_the_running_program() {
+        let verified = || SignatureState::Verified {
+            subject: "Contoso Ltd".into(),
+        };
+        assert_eq!(
+            signature_and_image_line_of(verified(), RunningImage::Same),
+            "File at this path signed by: Contoso Ltd \
+             (checked by Windows; it is the running program's file)"
+        );
+        assert_eq!(
+            signature_and_image_line_of(verified(), RunningImage::Different),
+            "File at this path signed by: Contoso Ltd \
+             (checked by Windows; it is not the running program's file)"
+        );
+        assert_eq!(
+            signature_and_image_line_of(SignatureState::Unsigned, RunningImage::Same),
+            "File at this path not signed (it is the running program's file)"
+        );
+        assert_eq!(
+            signature_and_image_line_of(SignatureState::Unsigned, RunningImage::Different),
+            "File at this path not signed (it is not the running program's file)"
+        );
+        assert_eq!(
+            signature_and_image_line_of(SignatureState::Untrusted, RunningImage::Different),
+            "File at this path: signature not trusted (it is not the running program's file)"
+        );
+        for image in [
+            RunningImage::Same,
+            RunningImage::Different,
+            RunningImage::Unconfirmed,
+        ] {
+            assert_eq!(
+                signature_and_image_line_of(SignatureState::Unknown, image),
+                "Signature: not checked"
+            );
+        }
     }
 
     #[test]
@@ -720,7 +783,12 @@ mod tests {
             ),
             "{line}"
         );
-        assert!(line.ends_with("not shown] (checked by Windows)"), "{line}");
+        assert!(
+            line.ends_with(
+                "not shown] (checked by Windows; not confirmed as the running program's file)"
+            ),
+            "{line}"
+        );
         assert!(!line.contains('\u{202e}') && !line.contains('\n') && !line.contains('\r'));
         let shown = line
             .trim_start_matches("File at this path signed by: ")
@@ -735,6 +803,7 @@ mod tests {
                 executable: "app.exe".into(),
                 window_title: "Title".into(),
                 signature: SignatureState::Verified { subject },
+                running_image: RunningImage::Unconfirmed,
             }));
         let strong = strong_body(&ctx);
         assert!(strong.contains(&format!("\n{line}\n")), "{strong}");

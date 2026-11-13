@@ -4,7 +4,9 @@
 //! needs no live desktop and runs on every OS.
 
 use super::*;
-use orcel_approval::{ApprovalDecision, NoPresenceVerifier, SignatureState, TargetApplication};
+use orcel_approval::{
+    ApprovalDecision, NoPresenceVerifier, RunningImage, SignatureState, TargetApplication,
+};
 use orcel_provider_uia::{NativeElement, NativeProcess, NativeWindow, UiaAdapter, UiaError};
 use std::sync::{Arc, Mutex};
 
@@ -130,6 +132,8 @@ fn a_desktop_prompt_names_the_target_application_through_orceld() {
             signature: SignatureState::Verified {
                 subject: "Microsoft Windows".into(),
             },
+            // The fake adapter reports a state, not a file, so nothing was compared.
+            running_image: RunningImage::Unconfirmed,
         })
     );
     drop(seen);

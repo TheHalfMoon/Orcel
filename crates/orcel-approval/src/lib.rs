@@ -1,5 +1,5 @@
 pub use orcel_contracts::FailureCode;
-pub use orcel_platform::signature::SignatureState;
+pub use orcel_platform::signature::{RunningImage, SignatureState};
 pub use orcel_platform::PlatformError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -114,11 +114,14 @@ pub struct PresenceContext {
 pub struct TargetApplication {
     pub executable: String,
     pub window_title: String,
-    /// The code signature of the process's image file on disk, checked the first time a
+    /// The code signature of the file at the process's image path, checked the first time a
     /// prompt names that process instance, after orceld releases its registry lock. Display
     /// only: it is not part of the approval digest and no policy decision reads it, and it
     /// describes the file, not the code running in memory.
     pub signature: SignatureState,
+    /// Whether that file is the one the process's image is mapped from, compared with the
+    /// signature check. Display only, like the signature.
+    pub running_image: RunningImage,
 }
 
 /// Whether approval prompts show a preview of the content or only its size: the person's
@@ -2909,11 +2912,12 @@ mod soft_decider_tests {
         let path = temp_ledger("signature-digest");
         let broker = approving_broker(&path);
         let digest = "c".repeat(64);
-        let with_signature = |signature: SignatureState| {
+        let with_signature = |signature: SignatureState, running_image: RunningImage| {
             prompt(&digest).for_application(TargetApplication {
                 executable: "notepad.exe".into(),
                 window_title: "Notes".into(),
                 signature,
+                running_image,
             })
         };
         let states = [
@@ -2924,8 +2928,16 @@ mod soft_decider_tests {
             SignatureState::Untrusted,
             SignatureState::Unknown,
         ];
-        for state in states {
-            let shown = with_signature(state.clone());
+        let images = [
+            RunningImage::Same,
+            RunningImage::Different,
+            RunningImage::Unconfirmed,
+        ];
+        let shown_states = states
+            .iter()
+            .flat_map(|state| images.iter().map(move |image| (state.clone(), *image)));
+        for (state, running_image) in shown_states {
+            let shown = with_signature(state.clone(), running_image);
             assert_eq!(shown.digest, digest);
             let token = broker.request_token(&shown).expect("approved");
             assert_eq!(token.digest, digest, "{state:?}");
