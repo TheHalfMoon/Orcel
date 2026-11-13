@@ -98,11 +98,11 @@ export async function rendererAnswers(evaluate: () => Promise<unknown>, ms = 2_0
   const deadline = new Promise<"no answer">((resolve) => {
     timer = setTimeout(() => resolve("no answer"), ms);
   });
-  const answer = evaluate().then(
-    () => "answered" as const,
-    () => "answered" as const
-  );
   try {
+    const answer = evaluate().then(
+      () => "answered" as const,
+      () => "answered" as const
+    );
     return await Promise.race([answer, deadline]);
   } finally {
     clearTimeout(timer);
