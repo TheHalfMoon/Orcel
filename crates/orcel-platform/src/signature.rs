@@ -794,12 +794,13 @@ mod tests {
         assert_eq!(own.running_image, RunningImage::Same, "{own:?}");
         assert_eq!(own.state, image_signature(&exe));
 
-        let dir = scratch_dir("copy");
-        let copy = dir.join("copy-of-test.exe");
+        // Beside the test binary, so the copy is on the same volume: a copy on another volume
+        // (CI's temp folder and target folder can be on different drives) is not confirmed.
+        let copy = exe.with_file_name(format!("copy-of-test-{pid}-{generation}.exe"));
         std::fs::copy(&exe, &copy).unwrap();
         let copied = image_signature_for(&copy, pid, generation);
         let stale = image_signature_for(&exe, pid, generation.wrapping_add(1));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&copy);
         assert_eq!(copied.running_image, RunningImage::Different, "{copied:?}");
         assert_eq!(stale.running_image, RunningImage::Unconfirmed, "{stale:?}");
     }
