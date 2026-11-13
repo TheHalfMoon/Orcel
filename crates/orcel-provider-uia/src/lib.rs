@@ -904,6 +904,9 @@ pub struct WindowApplication {
 /// Process instances whose image signature is remembered before the cache starts over.
 const MAX_CACHED_SIGNATURES: usize = 512;
 
+/// Signature answers per (image, pid, start generation).
+type SignatureCache = HashMap<(String, u32, u64), ImageSignature>;
+
 impl WindowApplication {
     /// The signature of the file at the process's image path, and Orcel's comparison of that
     /// file with the file the process's image appears to be mapped from. For a native process
@@ -917,9 +920,8 @@ impl WindowApplication {
             ProcessSignature::Known(state) => return ImageSignature::unconfirmed(state.clone()),
             ProcessSignature::ImageFile { path } => path,
         };
-        static CACHE: std::sync::OnceLock<
-            std::sync::Mutex<HashMap<(String, u32, u64), ImageSignature>>,
-        > = std::sync::OnceLock::new();
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<SignatureCache>> =
+            std::sync::OnceLock::new();
         let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
         let key = (self.exe_id.clone(), self.pid, self.process_generation);
         if let Some(known) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
