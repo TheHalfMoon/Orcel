@@ -26,7 +26,12 @@ use std::process::Command;
 /// sanitized environment. Everything else `ORCEL_*` (a local tool-surface
 /// profile, the runtime session binding, provider configuration, a daemon
 /// override) is dropped; the host then sets its own values.
-const TUNNEL_HOST_ORCEL_ENV: [&str; 2] = ["ORCEL_WORKSPACES_JSON", "ORCEL_DEFAULT_WORKSPACE"];
+const TUNNEL_HOST_ORCEL_ENV: [&str; 3] = [
+    "ORCEL_WORKSPACES_JSON",
+    "ORCEL_DEFAULT_WORKSPACE",
+    // The person's approval preview choice, so remote requests' prompts follow it too.
+    "ORCEL_APPROVAL_PREVIEWS",
+];
 
 /// The resolved launch for one MCP session.
 #[derive(Debug, Clone, PartialEq, Eq)]

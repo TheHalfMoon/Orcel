@@ -994,6 +994,7 @@ dependencies = [
 name = "orcel-lifecycle"
 version = "0.2.0"
 dependencies = [
+ "fs4",
  "libc",
  "orcel-approval",
  "orcel-contracts",
@@ -1003,6 +1004,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "windows 0.58.0",
  "windows-sys 0.52.0",
 ]
 
@@ -1048,6 +1050,8 @@ version = "0.2.0"
 dependencies = [
  "arboard",
  "libc",
+ "objc2-app-kit",
+ "objc2-foundation",
  "orcel-contracts",
  "serde",
  "serde_json",
@@ -1061,6 +1065,7 @@ dependencies = [
 name = "orcel-provider-fs"
 version = "0.2.0"
 dependencies = [
+ "libc",
  "orcel-contracts",
  "serde_json",
  "sha2 0.10.9",
@@ -1091,6 +1096,7 @@ version = "0.2.0"
 dependencies = [
  "orcel-approval",
  "orcel-lifecycle",
+ "orcel-platform",
  "orcel-policy",
  "serde_json",
  "sha2 0.10.9",

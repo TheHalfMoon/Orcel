@@ -1,6 +1,6 @@
 //! Windows-native install qualification: real ACLs, a real registry PATH value
 //! under an isolated test key, and the real `orcel` binary installing from a
-//! synthetic release into an isolated LOCALAPPDATA.
+//! synthetic release into an isolated USERPROFILE.
 #![cfg(windows)]
 
 use orcel_lifecycle::manifest::{
@@ -61,6 +61,50 @@ fn protect_tree_resets_foreign_access_and_verification_detects_it() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// A real shortcut through the real Windows API, in a folder of its own.
+#[test]
+fn the_start_menu_entry_is_a_real_shortcut_and_only_ours_is_removed() {
+    let dir = std::env::temp_dir().join(format!("orcel-start-menu-{}", orcel_lifecycle::nonce()));
+    fs::create_dir_all(&dir).unwrap();
+    let platform = WindowsPlatform::with_start_menu_dir(&dir);
+    let cli = Path::new(r"C:\Users\example\.orcel\bin\orcel.exe");
+    let other = Path::new(r"C:\Program Files\Other\other.exe");
+    let entry = dir.join("Orcel.lnk");
+
+    assert!(!platform.remove_start_menu_entry(cli).unwrap());
+    assert!(!platform.has_start_menu_entry(cli).unwrap());
+    platform.add_start_menu_entry(cli).unwrap();
+    assert!(entry.is_file());
+    assert!(platform.has_start_menu_entry(cli).unwrap());
+    assert!(!platform.has_start_menu_entry(other).unwrap());
+    let (target, arguments) = orcel_lifecycle::start_menu::read_entry(&entry).unwrap();
+    assert_eq!(target, cli);
+    assert_eq!(arguments, "app");
+    // Again, as a repair does: replaced, not refused.
+    platform.add_start_menu_entry(cli).unwrap();
+
+    // Someone else's shortcut under that name stays, on uninstall and on install.
+    assert!(!platform.remove_start_menu_entry(other).unwrap());
+    assert!(entry.is_file());
+    assert!(platform.add_start_menu_entry(other).is_err());
+    assert_eq!(
+        orcel_lifecycle::start_menu::read_entry(&entry).unwrap().0,
+        cli
+    );
+    // Other spellings of the same path are still ours.
+    let spelled = Path::new(r"c:/users/EXAMPLE/.orcel/bin/orcel.exe");
+    assert!(platform.remove_start_menu_entry(spelled).unwrap());
+    assert!(!entry.exists());
+
+    // So does something that isn't a shortcut at all, which can't be told to be ours.
+    fs::write(&entry, b"not a shortcut").unwrap();
+    assert!(platform.has_start_menu_entry(cli).is_err());
+    assert!(platform.remove_start_menu_entry(cli).is_err());
+    assert!(platform.add_start_menu_entry(cli).is_err());
+    assert_eq!(fs::read(&entry).unwrap(), b"not a shortcut");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn user_path_edits_are_idempotent_and_exact() {
     let key = format!(
@@ -85,7 +129,7 @@ fn junction_inside_install_root_is_refused_before_acl_reset() {
     let node = find_node_on_path().expect("Node.js is required on PATH for this qualification");
     let release = release_with_real_cli();
     let local = temp_dir("junction");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let outside = temp_dir("junction-target");
     fs::create_dir_all(root.join("state")).unwrap();
     let link = root.join("state").join("escape");
@@ -155,7 +199,14 @@ fn release_with_real_cli() -> PathBuf {
 fn orcel(exe: &Path, local_app_data: &Path, args: &[&str]) -> Output {
     Command::new(exe)
         .args(args)
-        .env("LOCALAPPDATA", local_app_data)
+        .env("USERPROFILE", local_app_data)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(local_app_data)
+                .join("AppData")
+                .join("Local"),
+        )
         .output()
         .unwrap()
 }
@@ -176,7 +227,7 @@ fn real_cli_installs_verifies_and_uninstalls_from_a_release() {
     let release = release_with_real_cli();
     let exe = release.join("orcel.exe");
     let local = temp_dir("localappdata");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let node_arg = node.to_str().unwrap();
 
     // Tampered release is refused before anything is written.

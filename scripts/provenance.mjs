@@ -75,6 +75,9 @@ const artifacts = values("--artifact");
 if (artifacts.length === 0) fail("at least one --artifact is required");
 const manifest = JSON.parse(readFileSync(join(release, "manifest.json"), "utf8"));
 const env = process.env;
+// The Windows app's compiler floats with the runner image, so a build must say which it was.
+const dotnetSdk = run("dotnet", ["--version"]);
+if (!dotnetSdk) fail("the .NET SDK version is unavailable; the Windows app's compiler would go unrecorded");
 const record = {
   schema: "orcel-provenance-v1",
   product: { name: "orcel", version: manifest.version },
@@ -95,7 +98,8 @@ const record = {
     rustc: run("rustc", ["-vV"]),
     cargo: run("cargo", ["-V"]),
     node: process.version,
-    npm: npmVersion()
+    npm: npmVersion(),
+    dotnet_sdk: dotnetSdk
   },
   locks: {
     "Cargo.lock": sha256File(join(repo, "Cargo.lock")),

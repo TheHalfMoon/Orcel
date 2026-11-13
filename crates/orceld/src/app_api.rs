@@ -40,9 +40,11 @@
 //! unanswered.
 //!
 //! The API is read-only except `task.stop`. Its other methods (`status.get`,
-//! `capabilities.get`, `events.subscribe`, and SG-000126's `task.list` and
-//! `task.get`) read daemon facts, the event log and the report task registry.
-//! `task.stop` can only move one task of this run to a final state. Nothing
+//! `capabilities.get`, `events.subscribe`, SG-000126's `task.list` and
+//! `task.get`, `approval.history` and `clients.list`) read daemon facts, the
+//! event log, the report task registry and the approval record. `task.stop`
+//! can only move one task of this run to a final state (founder decision of
+//! 2026-11-13, #446). Nothing
 //! reaches the request dispatcher, the policy engine or the approval broker,
 //! so no client can submit work or mint an approval through it. Frames are JSON
 //! lines of at most [`MAX_FRAME_BYTES`]; concurrent clients, the event ring
@@ -107,6 +109,8 @@ pub(crate) const METHODS: &[&str] = &[
     "task.list",
     "task.get",
     "task.stop",
+    "approval.history",
+    "clients.list",
 ];
 /// Read-only methods the protocol reserves; this revision answers
 /// `METHOD_UNAVAILABLE` for them.
@@ -337,6 +341,12 @@ struct Shared {
     log: Arc<EventLog>,
     /// SG-000126 report tasks, read for `task.list` and `task.get`.
     tasks: Arc<TaskRegistry>,
+    /// The approval history, read for `approval.history`; `None` when this user has no
+    /// private location for it.
+    history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
+    /// The live client session records, read for `clients.list`; `None` when this user has no
+    /// private folder for them.
+    sessions: Option<crate::live_sessions::Registry>,
     limits: Limits,
     started: Instant,
     started_at_ms: u64,
@@ -360,6 +370,7 @@ impl Shared {
         facts: DaemonFacts,
         log: Arc<EventLog>,
         tasks: Arc<TaskRegistry>,
+        history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
         limits: Limits,
         endpoint: String,
     ) -> Self {
@@ -367,6 +378,8 @@ impl Shared {
             facts,
             log,
             tasks,
+            history,
+            sessions: None,
             limits,
             started: Instant::now(),
             started_at_ms: now_ms(),
@@ -374,6 +387,11 @@ impl Shared {
             endpoint,
             wait: Mutex::new(None),
         }
+    }
+
+    fn with_sessions(mut self, sessions: Option<crate::live_sessions::Registry>) -> Self {
+        self.sessions = sessions;
+        self
     }
 
     /// Records one attempt that found the endpoint held. Returns true the
@@ -731,6 +749,15 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
         },
         "task.get" => Reply::Frame(task_get(shared, &id, &params)),
         "task.stop" => Reply::Frame(task_stop(shared, &id, &params)),
+        "approval.history" => Reply::Frame(approval_history(shared, &id, &params)),
+        "clients.list" => Reply::Frame(match params.keys().next() {
+            Some(key) => error_frame(
+                &id,
+                "INVALID_REQUEST",
+                format!("clients.list has no parameter {key}"),
+            ),
+            None => ok_frame(&id, clients_list(shared)),
+        }),
         method if RESERVED_METHODS.contains(&method) => Reply::Frame(error_frame(
             &id,
             "METHOD_UNAVAILABLE",
@@ -744,8 +771,113 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
     }
 }
 
-/// `task.get {task_id}`: one task of this daemon run or, read-only, of an
-/// exited run the report task journal kept (SG-000120 RJ-02).
+/// The most entries one `approval.history` answer carries.
+const MAX_HISTORY_ENTRIES: u64 = 50;
+
+/// `approval.history {limit}`: the newest approval decisions, newest first, as the CLI's
+/// `orcel approvals` shows them. Read only: the reader can't issue, consume or revoke, and an
+/// entry carries ids, states, times and the request's origin, never what was approved.
+fn approval_history(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
+    if let Some(key) = params.keys().find(|key| key.as_str() != "limit") {
+        return error_frame(
+            id,
+            "INVALID_REQUEST",
+            format!("approval.history has no parameter {key}"),
+        );
+    }
+    let limit = match params.get("limit") {
+        None | Some(Value::Null) => 20,
+        Some(value) => match value.as_u64() {
+            Some(limit) if (1..=MAX_HISTORY_ENTRIES).contains(&limit) => limit,
+            _ => {
+                return error_frame(
+                    id,
+                    "INVALID_REQUEST",
+                    format!("approval.history limit is an integer from 1 to {MAX_HISTORY_ENTRIES}"),
+                )
+            }
+        },
+    };
+    let Some(reader) = shared.history.as_ref() else {
+        return error_frame(
+            id,
+            "METHOD_UNAVAILABLE",
+            "approval history has no private location for this user",
+        );
+    };
+    let (history, state) = reader.history_with_state(usize::try_from(limit).unwrap_or(20));
+    let entries: Vec<Value> = history
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "id": entry.id,
+                "decision": format!("{:?}", entry.decision),
+                "approval_class": entry.approval_class.as_str(),
+                "presence_outcome": entry.presence_outcome.as_str(),
+                "workspace_id": entry.workspace_id,
+                "digest": entry.digest,
+                "is_revoke": entry.is_revoke,
+                "requested_at_ms": entry.requested_at_ms,
+                "decided_at_ms": entry.decided_at_ms,
+                "expires_at_ms": entry.expires_at_ms,
+                "consumed": entry.consumed,
+                "origin": entry.origin,
+            })
+        })
+        .collect();
+    ok_frame(
+        id,
+        json!({
+            "max_entries": MAX_HISTORY_ENTRIES,
+            "ledger": state.as_str(),
+            "entries": entries,
+        }),
+    )
+}
+
+/// The most clients one `clients.list` answer carries.
+const MAX_CLIENTS_LISTED: usize = 32;
+
+/// `clients.list`: the local AI client sessions running now, newest first, for display. Each
+/// MCP session's own orceld recorded itself on its hello; a record counts only while its
+/// process is the same instance. Names and versions are what the client said and are marked
+/// unverified. Read only: this changes nothing, not even the records of ended sessions.
+fn clients_list(shared: &Shared) -> Value {
+    let read = shared
+        .sessions
+        .as_ref()
+        .map(|registry| registry.read(MAX_CLIENTS_LISTED));
+    let (records, truncated, registry) = match read {
+        Some(Ok((records, truncated))) => (records, truncated, "ok"),
+        Some(Err(_)) | None => (Vec::new(), false, "unavailable"),
+    };
+    let clients: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            json!({
+                "pid": record.pid,
+                "started_at_ms": record.started_at_ms,
+                "transport": record.transport,
+                "workspace_id": record.workspace_id,
+                "client": {
+                    "name": record.client.name,
+                    "version": record.client.version,
+                    "verified": false,
+                },
+            })
+        })
+        .collect();
+    json!({
+        "max_clients": MAX_CLIENTS_LISTED,
+        "registry": registry,
+        "truncated": truncated,
+        "clients": clients,
+    })
+}
+
+/// `task.get {task_id}`: one task of this daemon run or, read-only, of
+/// another running session or an exited run the report task journal kept
+/// (SG-000120 RJ-02).
 fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
     if let Some(key) = params.keys().find(|key| key.as_str() != "task_id") {
         return error_frame(
@@ -762,7 +894,7 @@ fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>
         None => error_frame(
             id,
             "UNKNOWN_TASK",
-            "orceld has no such task (this run, or the earlier runs its journal kept)",
+            "orceld has no such task (this run, another running session, or the earlier runs its journal kept)",
         ),
     }
 }
@@ -1210,7 +1342,12 @@ fn new_epoch() -> String {
 /// Starts the endpoint on a background thread. Never fails orceld: when the
 /// endpoint cannot be taken the reason goes to stderr and the request loop
 /// runs as before. `ORCEL_APP_API=off` disables it.
-pub(crate) fn start(facts: DaemonFacts, tasks: Arc<TaskRegistry>) -> AppApi {
+pub(crate) fn start(
+    facts: DaemonFacts,
+    tasks: Arc<TaskRegistry>,
+    history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
+    sessions: Option<crate::live_sessions::Registry>,
+) -> AppApi {
     if std::env::var_os("ORCEL_APP_API").is_some_and(|value| value == "off") {
         eprintln!("orceld app api: disabled by ORCEL_APP_API=off");
         return AppApi::disabled();
@@ -1245,7 +1382,8 @@ pub(crate) fn start(facts: DaemonFacts, tasks: Arc<TaskRegistry>) -> AppApi {
         }
     };
     tasks.attach_events(Arc::clone(&log));
-    let shared = Arc::new(Shared::new(facts, log, tasks, limits, label));
+    let shared =
+        Arc::new(Shared::new(facts, log, tasks, history, limits, label).with_sessions(sessions));
     #[cfg(unix)]
     let bound = Arc::clone(&api.bound);
     let spawned = std::thread::Builder::new()
@@ -1456,7 +1594,7 @@ mod unix {
             return Ok(runtime.join("orcel"));
         }
         orcel_platform::paths::state_root_for(layout, lookup)
-            .map(|root| root.join("run"))
+            .map(|root| orcel_platform::stores::RUN.path(&root))
             .map_err(|error| error.to_string())
     }
 
@@ -1475,7 +1613,7 @@ mod unix {
 
     /// The lock file of the socket at `path`: `app-api<suffix>.lock`.
     pub(super) fn lock_path(path: &Path) -> PathBuf {
-        path.with_extension("lock")
+        path.with_extension("lock") // registry: inside `run`, beside the socket
     }
 
     /// Takes the advisory lock that makes the endpoint single-instance per

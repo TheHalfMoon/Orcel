@@ -27,6 +27,13 @@ pub trait Platform {
     fn add_user_path(&self, dir: &Path) -> Result<bool, LifecycleError>;
     /// Removes `dir` from the user `PATH`; returns whether an entry was removed.
     fn remove_user_path(&self, dir: &Path) -> Result<bool, LifecycleError>;
+    /// Adds or replaces the Start Menu entry that opens the app through `cli`.
+    fn add_start_menu_entry(&self, cli: &Path) -> Result<(), LifecycleError>;
+    /// Removes the Start Menu entry if it points at `cli`; returns whether it did. One under the
+    /// same name that points elsewhere isn't Orcel's, and stays.
+    fn remove_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError>;
+    /// Whether Orcel's own Start Menu entry, the one that opens the app through `cli`, is there.
+    fn has_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError>;
     /// Runs `node --version` and returns the parsed version.
     fn node_version(&self, node: &Path) -> Result<crate::version::Version, LifecycleError>;
 }
@@ -190,12 +197,14 @@ mod windows {
     #[derive(Debug, Clone)]
     pub struct WindowsPlatform {
         environment_key: String,
+        start_menu_dir: Option<std::path::PathBuf>,
     }
 
     impl Default for WindowsPlatform {
         fn default() -> Self {
             Self {
                 environment_key: "Environment".into(),
+                start_menu_dir: None,
             }
         }
     }
@@ -204,7 +213,24 @@ mod windows {
         pub fn with_environment_key(key: impl Into<String>) -> Self {
             Self {
                 environment_key: key.into(),
+                start_menu_dir: None,
             }
+        }
+
+        /// A platform whose Start Menu is `dir`, so tests leave the real one alone.
+        pub fn with_start_menu_dir(dir: impl Into<std::path::PathBuf>) -> Self {
+            Self {
+                environment_key: "Environment".into(),
+                start_menu_dir: Some(dir.into()),
+            }
+        }
+
+        fn start_menu_entry(&self) -> Result<std::path::PathBuf, LifecycleError> {
+            let dir = match &self.start_menu_dir {
+                Some(dir) => dir.clone(),
+                None => crate::start_menu::programs_folder()?,
+            };
+            Ok(dir.join("Orcel.lnk"))
         }
 
         fn is_production_environment(&self) -> bool {
@@ -569,6 +595,18 @@ mod windows {
                 }
                 None => Ok(false),
             }
+        }
+
+        fn add_start_menu_entry(&self, cli: &Path) -> Result<(), LifecycleError> {
+            crate::start_menu::write_entry(&self.start_menu_entry()?, cli)
+        }
+
+        fn remove_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
+            crate::start_menu::remove_entry(&self.start_menu_entry()?, cli)
+        }
+
+        fn has_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
+            crate::start_menu::is_ours(&self.start_menu_entry()?, cli)
         }
 
         fn node_version(&self, node: &Path) -> Result<crate::version::Version, LifecycleError> {

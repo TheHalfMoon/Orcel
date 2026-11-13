@@ -173,7 +173,10 @@ try {
   if (!report.coverage.complete) throw new Error("not every exact-diff hunk received a Jev judgment");
   report.status = report.blocking_findings.length === 0 ? "PASSED" : "FAILED";
 } catch (error) {
-  report.error = error instanceof Error ? error.message : String(error);
+  // This goes into a public artifact, which GitHub's log masking doesn't reach.
+  const message = String(error instanceof Error ? error.message : error);
+  const key = process.env.TYPESAFE_API_KEY;
+  report.error = key ? message.split(key).join("***") : message;
 }
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 if (report.status !== "PASSED") process.exitCode = 1;

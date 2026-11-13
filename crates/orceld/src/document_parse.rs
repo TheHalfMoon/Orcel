@@ -209,7 +209,8 @@ pub fn parse_committed(
             download.bytes, download.sha256, download.source_url
         ),
         digest.clone(),
-    );
+    )
+    .for_file();
     let token = approval
         .request_token(&prompt)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
@@ -426,34 +427,29 @@ impl Stage {
     fn create(digest: &str) -> Result<Self, ProviderError> {
         let state = orcel_platform::paths::state_root()
             .map_err(|error| unavailable(format!("state root is unavailable: {error}")))?;
-        let runs = state.join("document-parse");
+        let runs = orcel_platform::stores::DOCUMENT_PARSE.path(&state);
         contained_tier::private_dir_builder(true)
             .create(&runs)
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
-        // Unique per parse (process, sequence, digest), so two parses of one
-        // download never share, or remove, each other's stage.
-        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let root = runs.join(format!(
-            "{}-{sequence}-{}",
-            std::process::id(),
-            &digest[..16]
-        ));
-        // A leftover from a crashed run with the same name is not reused.
-        let _ = std::fs::remove_dir_all(&root);
+        contained_tier::sweep_leftovers(&runs);
+        // Unique per parse; a taken name is skipped, never removed (contained_tier::claim_dir).
+        let dir = contained_tier::claim_dir(
+            &runs,
+            contained_tier::fresh_names(&digest[..16]),
+            "document parse directory",
+        )?;
         let made = |path: &Path| {
             contained_tier::private_dir_builder(false)
                 .create(path)
                 .map_err(|error| unavailable(format!("document parse directory: {error}")))
         };
-        made(&root)?;
-        // From here on, dropping the stage removes everything below `root`.
+        // From here on, dropping the stage removes everything below `dir`.
         let mut stage = Self {
-            input: root.join("input"),
-            work: root.join("work"),
-            root,
+            input: dir.join("input"),
+            work: dir.join("work"),
+            root: dir,
         };
         made(&stage.input)?;
         made(&stage.work)?;

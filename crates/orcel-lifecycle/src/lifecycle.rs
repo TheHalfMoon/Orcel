@@ -178,16 +178,28 @@ mod imp {
     /// not an installed `versions\<version>\orcel.exe` beneath the install
     /// root, so a tampered record can never direct `stop` at another process.
     fn read_supervisor_record(layout: &Layout) -> Result<Option<SupervisorRecord>, LifecycleError> {
-        let record: Option<SupervisorRecord> = read_json(&layout.supervisor_record())?;
+        let path = layout.supervisor_record();
+        // What to do about a record that can't be trusted, with its full path.
+        let fix = |problem: &str| {
+            LifecycleError::state(format!(
+                "{problem}. Close MCP clients using Orcel, check that no orcel.exe under {} is \
+                 running (`Get-Process orcel | Select-Object Id,Path`), then delete {}",
+                layout.root.display(),
+                path.display()
+            ))
+        };
+        let record: Option<SupervisorRecord> =
+            read_json(&path).map_err(|error| match error.kind {
+                crate::ErrorKind::State => fix(&error.message),
+                _ => error,
+            })?;
         if let Some(record) = &record {
             if record.schema != SUPERVISOR_SCHEMA {
-                return Err(LifecycleError::state(
-                    "the supervisor record has an unsupported schema; inspect and remove run/supervisor.json",
-                ));
+                return Err(fix("the supervisor record has an unsupported schema"));
             }
             if !is_installed_cli(layout, std::path::Path::new(&record.supervisor.image)) {
-                return Err(LifecycleError::state(
-                    "the supervisor record names a process outside the Orcel install; inspect and remove run/supervisor.json",
+                return Err(fix(
+                    "the supervisor record names a process outside the Orcel install",
                 ));
             }
         }

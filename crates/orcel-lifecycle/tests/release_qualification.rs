@@ -99,7 +99,7 @@ impl Drop for Cleanup {
             // Surface the runtime's own logs before they are removed, so a
             // failure on a CI runner can be diagnosed.
             for log in ["tunnel.log", "supervisor.log", "lifecycle.log"] {
-                let path = self.local.join("Orcel").join("logs").join(log);
+                let path = self.local.join(".orcel").join("logs").join(log);
                 let text = fs::read_to_string(&path).unwrap_or_default();
                 let tail = text.lines().rev().take(40).collect::<Vec<_>>();
                 eprintln!("---- {log} (last {} lines) ----", tail.len());
@@ -108,11 +108,18 @@ impl Drop for Cleanup {
                 }
             }
         }
-        let cli = self.local.join("Orcel").join("bin").join("orcel.exe");
+        let cli = self.local.join(".orcel").join("bin").join("orcel.exe");
         if cli.is_file() {
             let _ = Command::new(&cli)
                 .args(["stop", "--json"])
-                .env("LOCALAPPDATA", &self.local)
+                .env("USERPROFILE", &self.local)
+                // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+                .env(
+                    "LOCALAPPDATA",
+                    std::path::Path::new(&self.local)
+                        .join("AppData")
+                        .join("Local"),
+                )
                 .output();
         }
         for dir in self
@@ -167,7 +174,12 @@ fn derived_release(source: &Path, version: &str, replace: Option<(&str, &[u8])>)
 fn orcel(exe: &Path, local: &Path, args: &[&str]) -> Output {
     let output = Command::new(exe)
         .args(args)
-        .env("LOCALAPPDATA", local)
+        .env("USERPROFILE", local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(local).join("AppData").join("Local"),
+        )
         .output()
         .unwrap();
     let all = format!(
@@ -247,7 +259,7 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     let node = find_node_on_path().expect("Node.js is required on PATH");
     let tunnel = fake_tunnel();
     let local = temp_dir("local");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let project = temp_dir("project");
     fs::write(project.join("hello.txt"), b"hello from the workspace").unwrap();
     let key_dir = temp_dir("key");
@@ -417,9 +429,19 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
     assert_eq!(status["runtime"]["state"], "running", "{status}");
     let doctor = orcel(&cli, &local, &["doctor", "--json"]);
-    let doctor_text = String::from_utf8_lossy(&doctor.stdout);
-    assert!(doctor_text.contains("update_state"), "{doctor_text}");
-    assert!(doctor_text.contains("was restored"), "{doctor_text}");
+    let doctor_json: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    let update_state = doctor_json["doctor"]["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == "update_state"))
+        .unwrap_or_else(|| panic!("no update_state check: {doctor_json}"));
+    // It reports the failure; the integrity check says what is active.
+    assert_eq!(update_state["status"], "warn", "{update_state}");
+    assert!(
+        update_state["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("failed")),
+        "{update_state}"
+    );
 
     // Stop and uninstall; user data is retained until purged.
     let stopped = json_ok(&orcel(&cli, &local, &["stop", "--json"]));
@@ -503,7 +525,7 @@ fn installed_release_fits_the_400_mb_budget() {
         serde_json::from_slice(&fs::read(release.join(MANIFEST_FILE)).unwrap()).unwrap();
     let node = find_node_on_path().expect("Node.js is required on PATH");
     let local = temp_dir("size");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let _cleanup = Cleanup {
         local: local.clone(),
         dirs: std::cell::RefCell::new(Vec::new()),
@@ -579,13 +601,63 @@ fn installed_release_fits_the_400_mb_budget() {
         // Not measured here: a fresh install has no cache yet. Never
         // reported as zero.
         "cache": { "measured": false, "counted": false, "reason": "none exists at a fresh install" },
-        "not_shipped": ["live browser worker and runtime (SG-000127 slice 7)", "Windows app (apps/orcel-desktop-preview)"],
+        "not_shipped": ["live browser worker and runtime (SG-000127 slice 7)"],
     });
     println!("installed-size-report: {report}");
     assert!(
         allocated < INSTALLED_BUDGET_BYTES,
         "installed app uses {allocated} allocated bytes ({bytes} apparent), over the {INSTALLED_BUDGET_BYTES} byte budget"
     );
+
+    // SG-000127: the packaged app opens from the install, and stays open. It isn't in
+    // REQUIRED_FILES, which would stop a rollback to a release without it.
+    assert!(
+        !orcel_lifecycle::manifest::REQUIRED_FILES.contains(&orcel_lifecycle::install::APP_FILE)
+    );
+    assert!(
+        manifest["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == orcel_lifecycle::install::APP_FILE),
+        "the Windows app is not a manifest file"
+    );
+    // Its output must end when `orcel` exits. The open app holding `orcel`'s pipe would
+    // make anyone reading it wait until the app closes, so this has a limit of its own.
+    let opening = Command::new(root.join("bin").join("orcel.exe"))
+        .args(["app", "--json"])
+        .env("USERPROFILE", &local)
+        // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+        .env(
+            "LOCALAPPDATA",
+            std::path::Path::new(&local).join("AppData").join("Local"),
+        )
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (answer, answered) = std::sync::mpsc::channel();
+    std::thread::spawn(move || answer.send(opening.wait_with_output()));
+    let opened = json_ok(
+        &answered
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the open app kept `orcel app`'s output open")
+            .unwrap(),
+    );
+    let pid = opened["pid"].as_u64().expect("the app's pid").to_string();
+    std::thread::sleep(Duration::from_secs(5));
+    let running = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .unwrap();
+    let running = String::from_utf8_lossy(&running.stdout).into_owned();
+    let _ = Command::new("taskkill").args(["/PID", &pid, "/F"]).output();
+    assert!(
+        running.contains("Orcel.Desktop.exe"),
+        "the app didn't stay open: {running}"
+    );
+    // It's gone before the install it ran from is removed.
+    std::thread::sleep(Duration::from_secs(1));
 }
 
 /// Kills (as a crash) every orceld started from the install at `root`,
@@ -630,7 +702,12 @@ impl McpStdio {
     fn start_with(cli: &Path, args: &[&str], local: &Path, stderr: PathBuf) -> Self {
         let mut child = Command::new(cli)
             .args(args)
-            .env("LOCALAPPDATA", local)
+            .env("USERPROFILE", local)
+            // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+            .env(
+                "LOCALAPPDATA",
+                std::path::Path::new(local).join("AppData").join("Local"),
+            )
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(fs::File::create(&stderr).unwrap())
@@ -759,7 +836,7 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
     );
     let node = find_node_on_path().expect("Node.js is required on PATH");
     let local = temp_dir("journey");
-    let root = local.join("Orcel");
+    let root = local.join(".orcel");
     let project = temp_dir("journey-project");
     let _cleanup = Cleanup {
         local: local.clone(),
@@ -1109,7 +1186,7 @@ fn installed_release_serves_every_client_example() {
             "--json",
         ],
     ));
-    let cli = local.join("Orcel").join("bin").join("orcel.exe");
+    let cli = local.join(".orcel").join("bin").join("orcel.exe");
     json_ok(&orcel(
         &cli,
         &local,
@@ -1201,7 +1278,12 @@ fn installed_release_serves_every_client_example() {
     let _server = KillOnDrop(
         Command::new(&cli)
             .args(["mcp", "serve", "--port", &port.to_string()])
-            .env("LOCALAPPDATA", &local)
+            .env("USERPROFILE", &local)
+            // Not the real machine's %LOCALAPPDATA%\Orcel, which the earlier-state gate reads.
+            .env(
+                "LOCALAPPDATA",
+                std::path::Path::new(&local).join("AppData").join("Local"),
+            )
             .env("ORCEL_LOOPBACK_TOKEN", token)
             .stdin(std::process::Stdio::null())
             .stdout(fs::File::create(project.join("serve-stdout.log")).unwrap())

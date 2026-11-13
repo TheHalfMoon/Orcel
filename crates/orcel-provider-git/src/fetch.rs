@@ -694,12 +694,19 @@ impl GitProvider {
     }
 
     fn reject_unsafe_local_network_config(&self, repo: &Path) -> Result<(), GitProviderError> {
-        let output = self.run_git(repo, &["config", "--local", "--list"])?;
-        for line in output.stdout.lines() {
-            let key = line
-                .split_once('=')
-                .map(|(key, _)| key.trim().to_ascii_lowercase())
-                .unwrap_or_default();
+        let output = self.run_git(repo, &crate::REPOSITORY_CONFIG_ARGS)?;
+        if output.stdout_truncated {
+            return Err(provider_error(
+                "Git configuration exceeded the bounded output limit",
+            ));
+        }
+        for key in crate::repository_config_keys(&output.stdout) {
+            if key.starts_with("include.") || key.starts_with("includeif.") {
+                return Err(GitProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "repository configuration includes another file; fetch is denied",
+                ));
+            }
             if key.starts_with("url.")
                 && (key.contains("insteadof") || key.contains("pushinsteadof"))
             {
@@ -708,13 +715,16 @@ impl GitProvider {
                     "repository-local URL rewrite widens the approved destination; fetch is denied",
                 ));
             }
+            // TLS trust, client identity and name resolution are Orcel's: `ssl` covers
+            // sslVerify, sslCAInfo, sslCAPath, sslBackend, sslCert and sslKey; `curlopt` an
+            // extra resolve entry beside the pinned address.
             if key.starts_with("http.")
                 && (key.contains("proxy")
                     || key.contains("extraheader")
                     || key.contains("cookie")
-                    || key.contains("sslverify")
-                    || key.contains("followredirects")
-                    || key == "http.proxy")
+                    || key.contains("ssl")
+                    || key.contains("curlopt")
+                    || key.contains("followredirects"))
             {
                 return Err(GitProviderError::new(
                     FailureCode::CapabilityDenied,
@@ -725,6 +735,30 @@ impl GitProvider {
                 return Err(GitProviderError::new(
                     FailureCode::CapabilityDenied,
                     "repository-local credential configuration is denied for anonymous fetch",
+                ));
+            }
+            // Given a URL, Git first looks for a remote named exactly that URL and uses its
+            // url or pushurl instead. A nickname has no '/' or ':'.
+            if let Some(name) = key
+                .strip_prefix("remote.")
+                .and_then(|rest| rest.rsplit_once('.'))
+                .map(|(name, _)| name)
+            {
+                if name.contains(['/', ':']) {
+                    return Err(GitProviderError::new(
+                        FailureCode::CapabilityDenied,
+                        "a repository remote is named like a URL and would replace the approved destination; fetch is denied",
+                    ));
+                }
+            }
+            // A promisor remote can make Git fetch missing objects from elsewhere mid-fetch.
+            if key == "extensions.partialclone"
+                || (key.starts_with("remote.")
+                    && (key.ends_with(".promisor") || key.ends_with(".partialclonefilter")))
+            {
+                return Err(GitProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "repository partial-clone configuration can reach another remote; fetch is denied",
                 ));
             }
             if key == "core.askpass" || key == "core.sshcommand" {
@@ -852,6 +886,7 @@ impl GitProvider {
             .env("GIT_EDITOR", null_fetch_device())
             .env("GIT_SEQUENCE_EDITOR", null_fetch_device())
             .env("GIT_ALLOW_PROTOCOL", "https")
+            .env("GIT_NO_LAZY_FETCH", "1")
             .env("GCM_INTERACTIVE", "Never")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("GIT_SSH_COMMAND", null_fetch_device())

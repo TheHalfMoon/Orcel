@@ -5,6 +5,9 @@ here releases, signs or publishes Orcel. Each item is in exactly one of the
 five classes below. Update this file when an item moves; the restart
 checkpoint at the end says where engineering stands.
 
+The per-component view (state, commits, tests, limitations, blockers) is in
+`COMPLETION_LEDGER.md`.
+
 ## 1. Engineering that is complete (merged, qualified on exact-head CI)
 
 | Item | Where |
@@ -136,21 +139,48 @@ checkpoint at the end says where engineering stands.
 | The Mac with Chrome or Edge installed | Positive vendor-bundle evidence on hardware (CI has it hosted) |
 | `remote-desktop-commander` OAuth (`/mcp` in an interactive terminal) | Remote runs on the user's devices from this agent |
 
-## Readiness by area (2026-11-01)
+## Completion, tracked separately (2026-11-07)
 
-| Area | State |
-|---|---|
-| Engineering | Class 1 merged on exact-head green CI with independent review; class 2 in progress |
-| Core MVP | **Not complete**: F4 slices 4, 5 and 7 and the closeout are open (classes 3 and 4) |
-| AI capability | Planner client (SG-000129) evaluated only with scripted plans and a scripted policy model; no model has been run. M4 waits for its selection and licensing gate |
-| Cross-platform | Windows and Linux lifecycle qualified on CI; macOS has no package (FD-05); macOS/Linux browser launch is refused until SG-000115 is activated |
-| Security | No accepted risks; SG-000115 residuals are open founder decisions (class 4) |
-| Release | Not authorized: nothing is signed, published or released |
+Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished while its core user journeys are incomplete. These five are separate, and one being ahead says nothing about another. Nothing is signed, published or released.
+
+| Track | State | What's open |
+|---|---|---|
+| **1. Engineering** | Class 1 merged on exact-head green CI with independent review; class 2 in progress | Slice 5's surface is a draft waiting on decision 2. The rest of section 2 |
+| **2. Real end-to-end product** | **Not complete. No real client has driven a real approval to a verified report.** The installed Windows journey passes in release qualification up to the prompt (`release_qualification.rs`, `orcel mcp stdio`), with a test client | Slice 4 needs the founder at the prompt (`prep/F4_SLICE4_CLIENT_JOURNEY.md`). Slice 5 (stop and takeover) needs decision 2. Slice 7 needs decision 6. Then the F4 closeout |
+| **3. AI model** | **No model has been run.** Every agent result is scripted, and labelled so. The harness and scoring exist (`model_eval.py`, `model_run.py`, `model_memory.py`), and have only run against a stub | Decision 3 approves the download. A model may miss the bar, and then the honest result is "no qualified model yet" |
+| **4. Cross-platform** | Windows and Linux lifecycle qualified on CI. Unsigned dev tarballs for macOS and Linux reach the approval through a test client. The Windows app has no macOS or Linux equal (decision 4) | macOS package (FD-05). macOS and Linux browser launch waits for SG-000115. Real GNOME and KDE approvals, and macOS direct-capture consent, need a person |
+| **5. Security and release** | No accepted risks. SG-000115's residuals are open founder decisions, and B9c shows Landlock alone doesn't close the cgroup. Release isn't authorized | Signing, publication, and the residuals in section 4. The repository stays public by founder decision (2026-11-06), with plans kept privately. Earlier versions of those plans remain in public history, which is treated as already disclosed. Irreversible cleanup would be its own decision |
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-05). Check GitHub for the current
-head and CI: this checkpoint can't name its own merge.
+If a session ends, resume from here (2026-11-10, updated from 2026-11-07). Check GitHub for
+the current head and CI: this checkpoint can't name its own merge. The per-component state
+is in `COMPLETION_LEDGER.md`; start there.
+
+Merged 2026-11-07 to 2026-11-10, after the list below:
+- Filesystem and parser safety: #668, #670, #671, #674, #675, #676, #678, #679, #680; clipboard
+  privacy #672 (Windows) and #681 (Linux, macOS); macOS sampler #688.
+- Approval UX (founder decision 1): #682 (one escaped prompt text), #683 (STRONG summary before
+  Hello and Touch ID), #684 (Origin line), #685 (typed targets), #686 and #689 (bounded,
+  redacted previews), #690 (saved sizes-only choice), #691 (credential warning), #693 (Windows
+  dialog timeout), #694 (application line), #695 (origin in approval history).
+- Desktop app: #697 (read-only `approval.history` on the app API and a `history` command),
+  #699 (tighten-only `previews sizes`), #702 (stop desktop control, `control`, `revoke all`).
+- Security: #701 closed a race where a grant waiting for Windows Hello could overwrite a
+  revoke or emergency stop made meanwhile.
+- CI: #687 (Tier C GUI download cache), #698 (rehearsal flake retry, #696). Flakes under watch
+  also include #700 (X11 latency scroll) and #508 (UIA bind, seen again 2026-11-10).
+
+Working rules learned this stretch: a PR must contain current main before Jev reviews it;
+inline shell heredocs on this PC collapse doubled backslashes, so edit scripts go through
+files; CI runners are the bottleneck, so cancel runs for superseded heads and merge one PR
+at a time.
+
+The 2026-11-07 checkpoint follows.
+
+Plans and the founder decision documents are kept privately, at the same paths, and the
+files here are short notes (founder decision, 2026-11-06). Read the private copies for
+those. Orcel itself stays public.
 
 1. Merged since the last checkpoint: #617 (XLSX reader, decision 7 still open),
    #621 (MCP from the dev tarballs), #622 (live task timeline in the Windows app),
@@ -161,7 +191,22 @@ head and CI: this checkpoint can't name its own merge.
    Linux), #631 (M-BR-04, worker and engine only), #633 (M-NAT-01, 200 calls), #634
    (M-WI-01, crawl), #635 (#438: the engine's processes at a timeout), #636 (B9c:
    Landlock alone doesn't give a cgroup the engine can't leave) and #637 (a test race
-   on `ORCEL_TRUST_PATH`) followed.
+   on `ORCEL_TRUST_PATH`) followed. Then #639 (the F4 journey with recovery, history and a
+   preflight, ready for a person at a real prompt), #643 (build packages kept only on a manual
+   run, for 3 days, and both review jobs refuse forks), #644 (plans moved to private documents),
+   #645 (clean toolchain in the agent job; PowerShell limit tests get time to start) and #646
+   (the Windows app ships in the release, opened with `orcel app`). Then #641 (the five tracks),
+   #642 (M-WI-02 on five real pages: text reduction only, no tokens or answer accuracy), #647
+   (provenance needs the .NET SDK's version), #648 (the F4 kit built by CI, `ready` needs `orceld`
+   to answer, runbook corrected from an audit) and #650 (evidence for #438 and #649, no limit
+   changed). Then #654, #656 and #657: Windows state moves to `%USERPROFILE%\.orcel`, since other
+   software on an ordinary account can hold rights on `AppData` that the unchanged ancestor check
+   rightly refuses. `orceld` and most commands that write state refuse while data at
+   `%LOCALAPPDATA%\Orcel` is undecided, and `orcel state migrate` or `keep-separate` decides. Real
+   binaries on a real Windows account with those grants, non-elevated, show it creating the private
+   root, restarting, and refusing the old location, foreign grants and hard links. A real install
+   under the new root ran only in CI's release qualification. #656 samples the machine in the
+   Windows Node job, and prints `MACHINE` lines to set a timeout against.
    Evidence so far, all scripted or test clients, never a model or a real client:
    browser tasks 15/15 with no timeouts, on Windows only, p50 about 1.0 to 1.8 s across
    runs; native host peak 6.7 MiB on X11, 6.4 to 6.9 on Sway across three runs,
@@ -171,8 +216,14 @@ head and CI: this checkpoint can't name its own merge.
    actions p50 324 ms on X11, 107 on Sway, 727 on macOS; raw click 762, drag 1016, scroll
    835 ms, on X11 only; worker and engine peak 327 to 343 MiB committed, on Windows,
    without the host. Linux's p95 is within a few ms of its p50, which suggests fixed
-   waits: raw input includes the 250 ms `EFFECT_SETTLE`, and why semantic actions take
-   about 215 ms longer on X11 than on Sway isn't known. `list_windows` p50 27 ms on X11,
+   waits. From reading the code, not measured: X11's extra 215 ms on semantic actions
+   fits the focus guard's settle watch of about 240 ms (`focus_guard.rs`), which needs a
+   reachable `DISPLAY` and is skipped on CI's Sway. It catches and undoes a late focus
+   steal, so it isn't a saving to take. The X11 raw click pays the same watch, which leaves about
+   520 ms of its 762 unexplained. The 250 ms human-input quiet wait (`worker.rs`) isn't it: a
+   local run on Xvfb in WSL, with `raw_latency` changed by hand to 40 samples each and a sleep
+   before each action, left click p50 at 840 ms and 843 ms with 350 ms more between actions,
+   drag 1120 and 1150, scroll 906 and 920. `EFFECT_SETTLE` is on the uinput route, which Xvfb doesn't use. `list_windows` p50 27 ms on X11,
    44 on Sway, 73 on macOS, and `observe_window` 50, 78, 121, with no Windows figure yet
    to check M-NAT-01's 1.5x target against. A crawl of ten pages, six read, takes about
    2.2 s on Windows, with 359 MiB committed at peak. #438's latest timeline shows a
@@ -181,31 +232,38 @@ head and CI: this checkpoint can't name its own merge.
    protection needs each PR up to date with main, so PRs merge one at a
    time: merge main in, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
-2. Local runs on Windows need a private temp folder (`TEMP`/`TMP` outside
-   AppData, or `ORCEL_BM02_STATE_PARENT` for Tier A): this host's AppData
-   grants an app-container SID delete rights, so orceld and the agent store
-   refuse it. GUI work (`tests/memory.ps1`, `tierc-observe`, `tierc-act`)
-   runs on CI runners only. Locally, run only filtered `orcel-provider-uia`
-   tests. Rust builds run in WSL Ubuntu (copy the tree without `target`,
-   touch the sources, use a per-PR `CARGO_TARGET_DIR`); rustfmt is there too.
+2. Local test runs on Windows need a private temp folder (`TEMP`/`TMP` outside
+   AppData and outside the repository, or `ORCEL_BM02_STATE_PARENT` for Tier A):
+   this host grants others rights on both, which tests' private folders inherit or
+   are refused under. The real root isn't affected. GUI work (`tests/memory.ps1`,
+   `tierc-observe`, `tierc-act`) runs on CI runners only. Locally, run only filtered
+   `orcel-provider-uia` tests. Rust builds also work natively here with the pinned MSVC
+   toolchain, which lacks clippy and rustfmt: use WSL for clippy for the Windows target, and
+   `cargo +stable fmt` or WSL's rustfmt (stable can drift from the pin). `orceld` is built from `crates/orceld/src/sg000039_main.rs`, not
+   `main.rs`: a change meant for the binary needs a test that runs the binary.
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
 4. Next engineering, in order: the next product milestone that needs no
    founder (the frontier's "Next executable grain" and `FOUNDER_DECISIONS.md`), with
-   these candidates: why semantic actions are slower on X11; M-WI-02's token reduction
-   (its answer accuracy needs a scoring method or a planner); a terminal task timeline
+   these candidates: the rest of the X11 raw click's time; M-WI-02's real tokens and answer
+   accuracy (#642 measured characters; tokens need a tokenizer, accuracy a scoring method or a
+   planner); a terminal task timeline
    on macOS and Linux, once someone decides whether that client may use `task.*`.
    Checked figures for CSV reports aren't on the roadmap and would change what
-   `verified` means, so they need adopting first. Then #438 when #635's process list
-   first prints. A cgroup the engine cannot leave stays open: B9c shows Landlock alone
+   `verified` means, so they need adopting first. Then #438: a browser loop on CI shows about 40 s of slowdown during a
+   `StorSvc` or VSS burst after a Defender update, in 3 of 3 runs, gone in the 2 runs with `StorSvc`
+   stopped and the update running, but with no navigation timeout in any of them, so its link to
+   this issue is unproven. Compare `MACHINE` lines at the next real timeout. Don't change Windows
+   services on a person's machine for this. Then #649 when its evidence first prints, #653 by comparing supervisor logs if it recurs,
+   and #655 (uninstall's lists miss some state). A cgroup the engine cannot leave stays open: B9c shows Landlock alone
    doesn't do it (an inherited descriptor, `clone3` and the user bus all get past it),
    and refusing `clone3` needs a real engine to test against, which waits on activation.
    Then what the founder's answers to
    `FOUNDER_DECISION_PACKET.md` unlock.
-5. Known CI flakes: toolchain install conflict on macOS, and once on Ubuntu in
-   #627's `Orcel Agent M1` job (rerun failed jobs),
-   #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
+5. Known CI flakes: toolchain install conflict on macOS and Ubuntu (the `Orcel Agent M1` job now
+   installs its toolchain from clean, #645; rerun failed jobs elsewhere),
+   #438, #649 (the Windows app's window; not known to be the runner), #653 (the MCP edge didn't answer within 60 s in the lifecycle test; seen once), #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
    Seen once, not yet tracked: `unix_rehearsal::tests::survivors_and_unverified_coverage_keep_the_sink_and_the_profile`
    on macOS, and the upstream-asset parity tests when GitHub blob fetches fail.
    Wording: GitHub reads "fix #N" and "close #N" as closing keywords even after "doesn't",

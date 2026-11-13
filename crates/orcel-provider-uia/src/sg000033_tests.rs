@@ -23,6 +23,10 @@ fn fake_process(pid: u32, exe: &str, generation: u64) -> NativeProcess {
         session_verified: true,
         start_generation: generation,
         generation_source: "fake-adapter",
+        signature: SignatureState::Verified {
+            subject: "Fake Signer".to_owned(),
+        }
+        .into(),
     }
 }
 
@@ -730,6 +734,92 @@ fn capture_binding_matches_pre_capture_revalidation() {
         FailureCode::TargetStale
     );
     let _ = adapter;
+}
+
+/// Approval prompts name the application from the registry's own records: the verified
+/// process's executable, the signature the adapter reported for its image file, and the
+/// observed window's title. An unknown window has none.
+#[test]
+fn a_registered_window_names_its_application_for_prompts() {
+    let (adapter, registry, window_id, _) = setup_window();
+    let application = registry
+        .window_application(&window_id)
+        .expect("a registered window names its application");
+    assert_eq!(application.executable, "notepad.exe");
+    assert_eq!(application.window_title, "Document");
+    // The adapter knew the state; no file was compared with the process.
+    assert_eq!(
+        application.signature(),
+        ImageSignature::unconfirmed(SignatureState::Verified {
+            subject: "Fake Signer".to_owned()
+        })
+    );
+    assert!(registry.window_application("w-unknown").is_none());
+    let _ = adapter;
+}
+
+/// The native adapter reports only the image path; the file is checked when a prompt asks
+/// for the signature, which orceld does after releasing its registry lock. An unreadable
+/// path is not checked, and a system binary verifies on Windows (elsewhere: not checked).
+/// Neither is this process's image, so neither is confirmed as its running file; this
+/// process's own executable is (on Windows).
+#[test]
+fn an_image_path_is_checked_only_when_the_signature_is_asked_for() {
+    let pid = std::process::id();
+    let application = |path: &str, generation: u64| WindowApplication {
+        executable: "app.exe".to_owned(),
+        window_title: "Title".to_owned(),
+        signature: ProcessSignature::ImageFile {
+            path: path.to_owned(),
+        },
+        exe_id: digest_hex(&format!("{UIA_SCHEMA}|exe|{path}"), ID_HEX_CHARS),
+        pid,
+        process_generation: generation,
+    };
+    let missing = std::env::temp_dir().join("orcel-uia-no-such-image-5b1e.exe");
+    assert_eq!(
+        application(&missing.to_string_lossy(), 1).signature(),
+        ImageSignature::unconfirmed(SignatureState::Unknown)
+    );
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let kernel32 = std::path::Path::new(&root)
+        .join("System32")
+        .join("kernel32.dll");
+    let generation = orcel_platform::process::current_instance()
+        .map(|instance| instance.generation)
+        .unwrap_or(2);
+    let state = application(&kernel32.to_string_lossy(), generation).signature();
+    if cfg!(windows) {
+        assert!(
+            matches!(&state.state, SignatureState::Verified { subject } if subject.contains("Microsoft")),
+            "{state:?}"
+        );
+        // kernel32.dll is mapped into this process, but it is not its executable: never Same.
+        // On the executable's volume it is Different; when the test binary is on another
+        // volume (CI builds on D:, Windows is on C:) the comparison is not confirmed.
+        assert!(
+            matches!(
+                state.running_image,
+                RunningImage::Different | RunningImage::Unconfirmed
+            ),
+            "{state:?}"
+        );
+    } else {
+        assert_eq!(state, ImageSignature::unconfirmed(SignatureState::Unknown));
+    }
+    // A second ask for the same process instance is answered from the cache.
+    assert_eq!(
+        application(&kernel32.to_string_lossy(), generation).signature(),
+        state
+    );
+    let exe = std::env::current_exe().unwrap();
+    let own = application(&exe.to_string_lossy(), generation).signature();
+    let expected = if cfg!(windows) {
+        RunningImage::Same
+    } else {
+        RunningImage::Unconfirmed
+    };
+    assert_eq!(own.running_image, expected, "{own:?}");
 }
 
 #[test]

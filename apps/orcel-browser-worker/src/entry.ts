@@ -15,7 +15,7 @@ import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FE
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
-import { traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
+import { netErrorCode, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
 import { runProbes } from "./verify.js";
@@ -116,6 +116,9 @@ const playwrightLauncher: Launcher = {
 `);
           throw new NavigationError("timeout");
         }
+        // #584: why the engine gave up, which "failed" alone doesn't say.
+        process.stderr.write(`orcel-browser-worker: goto failed ${netErrorCode(message)} ${traceLine()}
+`);
         throw new NavigationError("failed");
       }
     };

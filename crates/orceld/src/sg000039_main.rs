@@ -22,6 +22,8 @@ mod browser;
 mod clipboard;
 mod contained_tier;
 #[cfg(test)]
+mod desktop_prompt_tests;
+#[cfg(test)]
 mod sg000128_dispatch_tests;
 // WI-05: reached through the live browser's committed downloads
 // (`LiveBrowser::parse_download`), which only the Windows `live-browser-test`
@@ -47,6 +49,7 @@ mod journal_owner;
 ))]
 mod live_browser;
 mod live_dispatch;
+mod live_sessions;
 mod mutation_journal;
 mod profile_gate;
 mod remote_lease;
@@ -88,6 +91,11 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
+    // Before anything creates state: starting fresh would abandon what's at the earlier root.
+    let lookup = |name: &str| std::env::var_os(name);
+    let state_root = orcel_platform::paths::state_root_from(&lookup)
+        .map_err(|error| format!("resolve state root: {error}"))?;
+    orcel_platform::legacy::gate(&lookup, &state_root)?;
     let policy = legacy::load_policy_bridge()?;
     let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
     let audit =
@@ -120,13 +128,33 @@ fn run() -> Result<(), String> {
         }
     });
 
+    // Live client sessions, for display only: this session's record is written on its hello
+    // and deleted when orceld exits; records of sessions that are gone are cleared now.
+    // Created like the contained-runs folder: on Windows it inherits the state root's protected
+    // DACL (user and SYSTEM only, which install verification requires); ensure_private_dir then
+    // checks it rather than creating it with its own DACL.
+    let sessions_dir = orcel_platform::stores::SESSIONS.path(&state_root);
+    let _ = contained_tier::private_dir_builder(false).create(&sessions_dir);
+    let sessions = match orcel_platform::paths::ensure_private_dir(&sessions_dir) {
+        Ok(()) => {
+            let registry = live_sessions::Registry::at(sessions_dir);
+            registry.sweep();
+            Some(registry)
+        }
+        Err(error) => {
+            eprintln!("orceld live sessions: no private folder ({error}); not recorded");
+            None
+        }
+    };
+
     eprintln!(
         "orceld ready: protocol={} audit={} mode=SG-000039_CLIPBOARD_WRITE",
         INTERNAL_PROTOCOL_VERSION,
         audit.path().display()
     );
-    // CR-01: the read-only app API. It reads daemon facts and the events
-    // published below; it never reaches dispatch or the approval broker.
+    // CR-01: the read-only app API. It reads daemon facts, the events
+    // published below and the approval history through its own read-only
+    // reader; it never reaches dispatch or the approval broker.
     let app_api = app_api::start(
         app_api::DaemonFacts {
             mode: "SG-000039_CLIPBOARD_WRITE",
@@ -135,7 +163,20 @@ fn run() -> Result<(), String> {
             capabilities: app_api_capabilities(approval.presence_available()),
         },
         std::sync::Arc::clone(&tasks),
+        match orcel_approval::ApprovalHistoryReader::open() {
+            Ok(reader) => Some(std::sync::Arc::new(reader)),
+            Err(error) => {
+                eprintln!(
+                    "orceld app api: approval history unavailable: {}",
+                    error.message
+                );
+                None
+            }
+        },
+        sessions.clone(),
     );
+
+    let mut hello = live_sessions::Hello::new(sessions.clone());
 
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
@@ -161,6 +202,9 @@ fn run() -> Result<(), String> {
                 // SG-000126: report tasks have their own local-only entry.
                 let response = if report_task::is_report_request(&envelope.request) {
                     report_task::handle_envelope(&policy, &audit, &approval, &tasks, envelope)
+                } else if live_sessions::is_hello(&envelope.request) {
+                    // Grants and does nothing, so it never reaches policy or dispatch.
+                    hello.handle(envelope, POLICY_REVISION)
                 } else {
                     handle_envelope(&policy, &audit, &approval, &workspace_set, envelope)
                 };
@@ -239,6 +283,68 @@ fn app_api_capabilities(approval_available: bool) -> Vec<Value> {
     ]
 }
 
+/// The broker a remote request's approvals go through: it marks each prompt as remote, with the
+/// provider, device and connection from the authenticated remote context, so the prompt's Origin
+/// line comes from orceld, checked against a locally approved lease, and never from the request's
+/// own text.
+struct OriginStamp<'a, B: ApprovalBroker> {
+    inner: &'a B,
+    origin: orcel_approval::RequestOrigin,
+}
+
+impl<'a, B: ApprovalBroker> OriginStamp<'a, B> {
+    fn new(inner: &'a B, remote: &orcel_contracts::RemoteContext) -> Self {
+        Self {
+            inner,
+            origin: orcel_approval::RequestOrigin::Remote {
+                provider: remote.provider_kind.clone(),
+                device: remote.device_id.clone(),
+                connection: remote.remote_connection_id.clone(),
+            },
+        }
+    }
+
+    fn stamped(&self, prompt: &orcel_approval::ApprovalPrompt) -> orcel_approval::ApprovalPrompt {
+        prompt.clone().with_origin(self.origin.clone())
+    }
+}
+
+impl<B: ApprovalBroker> ApprovalBroker for OriginStamp<'_, B> {
+    fn request_token(
+        &self,
+        prompt: &orcel_approval::ApprovalPrompt,
+    ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+        self.inner.request_token(&self.stamped(prompt))
+    }
+
+    fn consume(
+        &self,
+        token: &orcel_approval::ApprovedToken,
+        expected: &orcel_approval::ConsumeExpectation,
+        now_ms: u64,
+    ) -> Result<(), orcel_approval::ApprovalError> {
+        self.inner.consume(token, expected, now_ms)
+    }
+
+    fn emergency_revoke(
+        &self,
+        prompt: &orcel_approval::ApprovalPrompt,
+    ) -> Result<u64, orcel_approval::ApprovalError> {
+        self.inner.emergency_revoke(&self.stamped(prompt))
+    }
+
+    fn request(
+        &self,
+        prompt: &orcel_approval::ApprovalPrompt,
+    ) -> Result<orcel_approval::ApprovalDecision, orcel_approval::ApprovalError> {
+        self.inner.request(&self.stamped(prompt))
+    }
+
+    fn history(&self, limit: usize) -> Vec<orcel_approval::ApprovalRecordSummary> {
+        self.inner.history(limit)
+    }
+}
+
 /// SG-000055 entry: remote-context requests must pass the local
 /// remote-session lease gate before any policy or dispatch step, and local
 /// remote-lease management never reaches workspace dispatch.
@@ -285,6 +391,8 @@ fn handle_envelope(
             now_ms: &clock,
         });
     if let Some(remote) = &remote {
+        // Every approval this remote request raises, the lease's included, says it is remote.
+        let approval = &OriginStamp::new(approval, remote);
         if uia::is_full_user_desktop_shape(&request.capability, &request.operation) {
             let _ = audit.record(&request, POLICY_REVISION, "REMOTE_DENIED");
             return ResponseEnvelope::failure(
@@ -830,6 +938,8 @@ fn dispatch_trust(
                         "expires_at_ms": entry.expires_at_ms,
                         "reuse_scope": entry.reuse_scope,
                         "consumed": entry.consumed,
+                        // `null` for records written before origins were recorded.
+                        "origin": entry.origin,
                     })
                 })
                 .collect();
@@ -2465,6 +2575,57 @@ mod sg000055_envelope_tests {
         }
     }
 
+    /// Every approval a remote request raises carries its remote origin, built from the
+    /// authenticated context: the prompt says it is remote and names the device.
+    #[test]
+    fn a_remote_requests_approvals_are_marked_remote() {
+        use orcel_approval::{
+            ApprovalError, ApprovalPrompt, ApprovedToken, ConsumeExpectation, RequestOrigin,
+        };
+        struct Recording(std::cell::RefCell<Vec<RequestOrigin>>);
+        impl ApprovalBroker for Recording {
+            fn request_token(
+                &self,
+                prompt: &ApprovalPrompt,
+            ) -> Result<ApprovedToken, ApprovalError> {
+                self.0.borrow_mut().push(prompt.origin.clone());
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+            fn consume(
+                &self,
+                _: &ApprovedToken,
+                _: &ConsumeExpectation,
+                _: u64,
+            ) -> Result<(), ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalDenied,
+                    message: "recorded only".into(),
+                })
+            }
+        }
+        let inner = Recording(std::cell::RefCell::new(Vec::new()));
+        let stamp = OriginStamp::new(&inner, &remote());
+        let prompt = ApprovalPrompt::new("default", "rev", "delete file", "a.txt", "s", "d");
+        assert_eq!(prompt.origin, RequestOrigin::Local);
+        let _ = stamp.request(&prompt);
+        let _ = stamp.request_token(&prompt);
+        let seen = inner.0.borrow();
+        assert_eq!(seen.len(), 2);
+        for origin in seen.iter() {
+            assert_eq!(
+                origin,
+                &RequestOrigin::Remote {
+                    provider: "generic".into(),
+                    device: remote().device_id,
+                    connection: remote().remote_connection_id,
+                }
+            );
+        }
+    }
+
     fn code(response: &ResponseEnvelope) -> FailureCode {
         response.error.as_ref().expect("failure").code.clone()
     }
@@ -2818,6 +2979,61 @@ mod sg000058_lease_boundary_tests {
             .expect("result")
             .to_string()
             .contains("sg58 lease boundary"));
+
+        // A lease whose reads each need approval: the read's prompt reaches the broker marked
+        // remote, through handle_envelope's wiring, with the context's provider and device.
+        {
+            use orcel_approval::{
+                ApprovalPrompt, ApprovedToken, ConsumeExpectation, RequestOrigin,
+            };
+            struct Recording {
+                inner: FixedApprovalBroker,
+                seen: std::cell::RefCell<Vec<RequestOrigin>>,
+            }
+            impl ApprovalBroker for Recording {
+                fn request_token(
+                    &self,
+                    prompt: &ApprovalPrompt,
+                ) -> Result<ApprovedToken, orcel_approval::ApprovalError> {
+                    self.seen.borrow_mut().push(prompt.origin.clone());
+                    self.inner.request_token(prompt)
+                }
+                fn consume(
+                    &self,
+                    token: &ApprovedToken,
+                    expected: &ConsumeExpectation,
+                    now_ms: u64,
+                ) -> Result<(), orcel_approval::ApprovalError> {
+                    self.inner.consume(token, expected, now_ms)
+                }
+            }
+            // The store as it is now (the session lease, pinned to its connection), put back after.
+            let saved_store = std::fs::read(&lease_path).expect("lease store");
+            let per_request = LeaseRequest {
+                read_mode: ReadMode::PerRequest,
+                ..request.clone()
+            };
+            let lease_pr = build_lease(&per_request, "lease-sg58-pr".into(), &env, &workspaces.ids)
+                .expect("per-request lease");
+            save_leases(&lease_path, std::slice::from_ref(&lease_pr)).expect("save");
+            let recording = Recording {
+                inner: FixedApprovalBroker(ApprovalDecision::Approved),
+                seen: std::cell::RefCell::new(Vec::new()),
+            };
+            let read_once =
+                handle_envelope(&policy, &audit, &recording, &workspaces, read("default"));
+            assert!(read_once.ok, "{:?}", read_once.error);
+            let seen = recording.seen.borrow();
+            assert!(!seen.is_empty(), "the per-request read raised no approval");
+            for origin in seen.iter() {
+                assert!(
+                    matches!(origin, RequestOrigin::Remote { device, provider, .. }
+                        if device == &remote("x").device_id && provider == "generic"),
+                    "{origin:?}"
+                );
+            }
+            std::fs::write(&lease_path, saved_store).expect("restore lease store");
+        }
 
         // Reconnect (different short-lived connection) never extends the lease.
         let mut reconnect = read("default");

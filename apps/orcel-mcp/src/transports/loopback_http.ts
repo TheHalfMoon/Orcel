@@ -43,6 +43,8 @@ export const MAX_HEADER_COUNT = 100;
 export interface LoopbackOptions {
   readonly port?: number | undefined;
   readonly token?: string | undefined;
+  /** Each session's kernel; tests inject one. Local only: it gets no remote context. */
+  readonly kernelFactory?: ((profile: string | null) => KernelClient) | undefined;
 }
 
 export interface LoopbackHandle {
@@ -220,6 +222,8 @@ export async function startLoopbackTransport(options: LoopbackOptions = {}): Pro
   const requestedPort = validatePort(options.port);
   const defaultWorkspace = process.env.ORCEL_DEFAULT_WORKSPACE ?? "default";
   const context = { ...localTransportContext(), transportKind: "loopback_http" as const };
+  const kernelFactory =
+    options.kernelFactory ?? ((profile: string | null) => new KernelClient(undefined, null, profile));
   const sessions = new Map<string, SessionRecord>();
 
   function sweep(now: number): void {
@@ -341,8 +345,19 @@ export async function startLoopbackTransport(options: LoopbackOptions = {}): Pro
           logLine(method, path, 503);
           return;
         }
-        const kernel = new KernelClient(undefined, null, context.toolSurfaceProfile);
+        const kernel = kernelFactory(context.toolSurfaceProfile);
+        if (kernel.remote !== null) {
+          kernel.close();
+          throw new Error("TRANSPORT_UNAVAILABLE: a loopback session's kernel must be local");
+        }
         const server = buildOrcelServer(kernel, defaultWorkspace, context);
+        // Like a stdio session, this local session tells its orceld which client it serves,
+        // for the desktop app's list of connected clients. Display only.
+        const previousOnInitialized = server.server.oninitialized;
+        server.server.oninitialized = () => {
+          previousOnInitialized?.();
+          kernel.hello(defaultWorkspace, server.server.getClientVersion() ?? {}, "loopback_http");
+        };
         const transport = new WebStandardStreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           enableJsonResponse: true,

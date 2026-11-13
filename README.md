@@ -1,7 +1,7 @@
 # Orcel
 
 <p align="center">
-  <img src="assets/brand/orcel-readme-lockup.svg" alt="Orcel Signal: lowercase white orcel wordmark with orange terminal on the letter l" width="630">
+  <img src="assets/brand/orcel-readme-lockup.svg" alt="Orcel: white Orca Eye mark and lowercase orcel wordmark" width="630">
 </p>
 
 <p align="center"><strong>Your computer, your terms.</strong></p>
@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/TheHalfMoon/Orcel/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TheHalfMoon/Orcel/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/TheHalfMoon/Orcel/actions/workflows/pages.yml"><img alt="Website deployment" src="https://github.com/TheHalfMoon/Orcel/actions/workflows/pages.yml/badge.svg?branch=main"></a>
-  <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-FF813E"></a>
+  <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-D4FF3F"></a>
   <a href="#requirements"><img alt="Windows x64" src="https://img.shields.io/badge/platform-Windows%20x64-555"></a>
 </p>
 
@@ -117,7 +117,18 @@ Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, 
    Optionally verify provenance: `gh attestation verify .\orcel-<version>-windows-x64.zip --repo TheHalfMoon/Orcel`.
 2. Extract the archive and run, from the extracted folder:
    `.\orcel.exe install`
-   For a qualified Orcel build, the installer checks files against `manifest.json` before copying them. The current source uses `%LOCALAPPDATA%\Orcel` and adds `%LOCALAPPDATA%\Orcel\bin` to your user PATH (`--no-path` to skip). Follow the exact published release notes and open a new terminal afterwards.
+   For a qualified Orcel build, the installer checks files against `manifest.json` before copying them. The current source uses `%USERPROFILE%\.orcel` and adds `%USERPROFILE%\.orcel\bin` to your user PATH (`--no-path` to skip). Follow the exact published release notes and open a new terminal afterwards.
+3. If the release includes the Windows app, install also adds an **Orcel** entry to the Start Menu that opens it. `orcel app` opens the app from a terminal too. If the app can't open, the Start Menu entry shows why in a dialog. `--no-path` leaves the Start Menu alone, as it does PATH.
+4. If install prints a `Note:` that another `orcel` comes first on PATH, that copy is what `orcel` runs. An earlier Orcel install is uninstalled with its own `orcel uninstall`; anything else, take its folder off PATH.
+
+### State from an earlier build
+
+Earlier builds kept their state in `%LOCALAPPDATA%\Orcel`. If that folder holds anything, `orceld` won't start until you decide what happens to it, so starting fresh never silently abandons it. `orcel state status` shows what's there and the two choices:
+
+- `orcel state migrate` copies your history, trust and settings to `%USERPROFILE%\.orcel`, and only if no other account could have changed them. Full-control grants, remote leases and this device's pairing aren't copied: grant them again.
+- `orcel state keep-separate` records that Orcel won't use the earlier folder, and keeps what's already in `%USERPROFILE%\.orcel`.
+
+Neither changes nor deletes the earlier folder. Once a decision is recorded, it can't be changed with these commands.
 
 ## Configure
 
@@ -163,7 +174,7 @@ Codex and other command-based clients use the same command and arguments:
 
 Mistral Vibe Code accepts a stdio entry in its MCP server list with command `orcel` and arguments `["mcp", "stdio"]`. Generic MCP clients and the MCP Inspector connect with transport `stdio`, command `orcel`, and arguments `["mcp", "stdio"]`.
 
-`orcel` here is the retained compatibility command at `%LOCALAPPDATA%\Orcel\bin\orcel.exe` on your user PATH after install. It resolves the active verified release on every launch, refuses tampered or inactive payloads, and fails closed when no workspace is configured. Tested per-client files live in [`examples/mcp-clients`](examples/mcp-clients) (Claude Desktop JSON and Desktop Extension manifest, Codex TOML, Vibe Code TOML, generic shapes, and the Inspector qualification script).
+`orcel` here is the retained compatibility command at `%USERPROFILE%\.orcel\bin\orcel.exe` on your user PATH after install. It resolves the active verified release on every launch, refuses tampered or inactive payloads, and fails closed when no workspace is configured. Tested per-client files live in [`examples/mcp-clients`](examples/mcp-clients) (Claude Desktop JSON and Desktop Extension manifest, Codex TOML, Vibe Code TOML, generic shapes, and the Inspector qualification script).
 
 ## Connect over loopback HTTP (no tunnel required)
 
@@ -182,7 +193,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 
 | Command | Purpose |
 |---|---|
-| `orcel status` | Installed version, configuration, and whether the runtime is running |
+| `orcel status` | Installed version, configuration, and whether the optional ChatGPT tunnel is running |
 | `orcel doctor` | Full diagnostics; exits non-zero if any check fails (`--json` for details) |
 | `orcel stop` | Stops the tunnel client and everything it started, and confirms they exited |
 | `orcel workspace list` | Workspaces and their trust state |
@@ -192,7 +203,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 
 ## Diagnose problems
 
-Run `orcel doctor`. Each check reports `PASS`, `WARN`, `FAIL`, or `????` (could not be checked) with one line of evidence — Orcel never reports health it did not observe. Logs are currently stored in the compatibility path `%LOCALAPPDATA%\Orcel\logs` (`tunnel.log`, `supervisor.log`, `lifecycle.log`); tunnel output is redacted before it is written.
+Run `orcel doctor`. A ChatGPT tunnel that isn't configured is a `WARN`, not a failure: local MCP clients don't need one. Each check reports `PASS`, `WARN`, `FAIL`, or `????` (could not be checked) with one line of evidence — Orcel never reports health it did not observe. Logs are currently stored in the compatibility path `%USERPROFILE%\.orcel\logs` (`tunnel.log`, `supervisor.log`, `lifecycle.log`); tunnel output is redacted before it is written.
 
 ## Update
 
@@ -205,8 +216,8 @@ Orcel never checks for or downloads updates by itself.
 
 ## Uninstall
 
-- `orcel uninstall` stops Orcel and removes its programs and the PATH entry. Your configuration, tunnel key, logs, and audit/approval/trust history are **kept** and listed.
-- `orcel uninstall --purge-data --yes` also deletes that data.
+- `orcel uninstall` stops Orcel and removes its programs, the PATH entry and its Start Menu entry. Your configuration, tunnel key, logs, and audit/approval/trust history are **kept** and listed.
+- `orcel uninstall --purge-data --yes` also deletes that data, including stored secrets, the executable registry and leases. Anything under the folder that isn't Orcel's stays, and is named in the report.
 - Your workspaces are never touched.
 
 ## Security model and governance

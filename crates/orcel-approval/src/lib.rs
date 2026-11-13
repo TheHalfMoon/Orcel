@@ -1,4 +1,5 @@
 pub use orcel_contracts::FailureCode;
+pub use orcel_platform::signature::{RunningImage, SignatureState};
 pub use orcel_platform::PlatformError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,8 +19,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod linux;
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod presence_unix;
+/// The prompt text every OS shows, escaped and bounded.
+mod prompt_text;
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod soft_macos;
+/// The Windows Yes/No dialog, closed as a timeout when nobody answers.
+#[cfg(any(windows, test))]
+mod windows_dialog;
 
 /// The Linux helper's own protocol module, so tests on every OS check that
 /// orceld and the helper agree.
@@ -90,6 +96,150 @@ pub struct PresenceContext {
     /// with [`PresenceContext::with_details`].
     pub target: String,
     pub summary: String,
+    /// Where the request came from, shown on the STRONG summary.
+    pub origin: RequestOrigin,
+    /// What the target is, and a move's destination, shown on the STRONG summary.
+    pub target_kind: TargetKind,
+    pub destination: Option<String>,
+    /// A bounded, redacted preview of the content, shown on the STRONG summary.
+    pub preview: Option<Preview>,
+    /// The application a desktop action targets, shown on the STRONG summary.
+    pub application: Option<TargetApplication>,
+}
+
+/// The application a desktop action targets, as orceld's window registry recorded it when the
+/// window was observed: the executable name of its verified process, and the window's title.
+/// The title is whatever the application set, so the prompt labels it as such.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetApplication {
+    pub executable: String,
+    pub window_title: String,
+    /// The code signature of the file at the process's image path, checked the first time a
+    /// prompt names that process instance, after orceld releases its registry lock. Display
+    /// only: it is not part of the approval digest and no policy decision reads it, and it
+    /// describes the file, not the code running in memory.
+    pub signature: SignatureState,
+    /// Orcel's own comparison of that file with the file the process's image appears to be
+    /// mapped from (not part of the Windows check). Display only, like the signature; the
+    /// prompt words a match as a hedged finding and a mismatch as a warning, since the
+    /// process's loader data can mislead it and nothing reads the code now running.
+    pub running_image: RunningImage,
+}
+
+/// Whether approval prompts show a preview of the content or only its size: the person's
+/// choice, read by orceld from its launch settings, never from a request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PreviewMode {
+    /// A bounded preview, hidden when the content matches a known credential pattern.
+    #[default]
+    Content,
+    /// Sizes only: the prompt shows how much content, never any of it.
+    SizesOnly,
+}
+
+/// Lines a preview shows before it says how many more there are.
+pub const PREVIEW_LINES: usize = 6;
+
+/// A preview of the content an approval is for, built by orceld and bounded before it reaches
+/// the prompt: at most [`PREVIEW_LINES`] lines, each escaped and cut to 100 characters when shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Preview {
+    /// The first lines, each with its marker: `>` for written content, `-` and `+` for the text
+    /// an edit removes and adds; and how many lines were left out.
+    Content {
+        lines: Vec<(char, String)>,
+        more_lines: usize,
+    },
+    /// The content matches a known credential pattern, so none of it is shown.
+    Hidden { chars: usize },
+    /// The person chose sizes only.
+    SizesOnly { chars: usize, lines: usize },
+}
+
+impl Preview {
+    /// At most [`PREVIEW_LINES`] marked lines are kept; the rest are only counted, so a large
+    /// content costs no more memory here than its first lines. `chars` counts every character,
+    /// line breaks included.
+    fn bounded<'a>(
+        mut lines: impl Iterator<Item = (char, &'a str)>,
+        chars: usize,
+        mode: PreviewMode,
+        looks_secret: bool,
+    ) -> Self {
+        if looks_secret {
+            return Self::Hidden { chars };
+        }
+        let kept: Vec<(char, String)> = lines
+            .by_ref()
+            .take(PREVIEW_LINES)
+            .map(|(marker, line)| (marker, line.to_owned()))
+            .collect();
+        let more_lines = lines.count();
+        if mode == PreviewMode::SizesOnly {
+            return Self::SizesOnly {
+                chars,
+                lines: kept.len() + more_lines,
+            };
+        }
+        Self::Content {
+            lines: kept,
+            more_lines,
+        }
+    }
+
+    /// The content a write puts in a file. `looks_secret` is the caller's credential check on
+    /// the whole content: when it matches, nothing is shown.
+    pub fn of_written(content: &str, mode: PreviewMode, looks_secret: bool) -> Self {
+        let lines = content.lines().map(|line| ('>', line));
+        Self::bounded(lines, content.chars().count(), mode, looks_secret)
+    }
+
+    /// The text an edit replaces and its replacement, as removed and added lines. The sizes
+    /// count both.
+    pub fn of_edit(old: &str, new: &str, mode: PreviewMode, looks_secret: bool) -> Self {
+        let lines = old
+            .lines()
+            .map(|line| ('-', line))
+            .chain(new.lines().map(|line| ('+', line)));
+        let chars = old.chars().count() + new.chars().count();
+        Self::bounded(lines, chars, mode, looks_secret)
+    }
+}
+
+/// What a prompt's target is. Only a file's target, and a file's destination, get a Type line
+/// with the file extension; other targets (hosts, URLs, desktop elements, directories) are
+/// shown as they are, without one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TargetKind {
+    /// Not a file, or not said.
+    #[default]
+    Other,
+    /// A file path in the workspace.
+    File,
+    /// A source (such as a web address) whose content is saved to the destination file: only
+    /// the destination gets a type line.
+    Download,
+}
+
+/// Where a request came from, as orceld knows it, for the approval prompt's Origin line. Built
+/// by orceld from the authenticated remote context, never from the request's own text.
+///
+/// The approval ledger stores it, and versions that know this shape refuse any other (no
+/// unknown fields or kinds), so one changed record would make their whole ledger unverifiable.
+/// Extend it only through a new sibling field on the ledger record, or a new ledger schema.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum RequestOrigin {
+    /// A request from this computer.
+    #[default]
+    Local,
+    /// A request from a remote session, through the named provider (for example the ChatGPT
+    /// tunnel or a relay), for this enrolled device and connection.
+    Remote {
+        provider: String,
+        device: String,
+        connection: String,
+    },
 }
 
 impl PresenceContext {
@@ -106,7 +256,36 @@ impl PresenceContext {
             action: action.into(),
             target: String::new(),
             summary: String::new(),
+            origin: RequestOrigin::Local,
+            target_kind: TargetKind::Other,
+            destination: None,
+            preview: None,
+            application: None,
         }
+    }
+
+    /// The preview, copied from the prompt.
+    pub fn with_preview(mut self, preview: Option<Preview>) -> Self {
+        self.preview = preview;
+        self
+    }
+
+    /// The target application, copied from the prompt.
+    pub fn with_application(mut self, application: Option<TargetApplication>) -> Self {
+        self.application = application;
+        self
+    }
+
+    pub fn with_origin(mut self, origin: RequestOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// The target's kind and a move's destination, copied from the prompt.
+    pub fn with_target(mut self, kind: TargetKind, destination: Option<String>) -> Self {
+        self.target_kind = kind;
+        self.destination = destination;
+        self
     }
 
     pub fn with_details(mut self, target: impl Into<String>, summary: impl Into<String>) -> Self {
@@ -293,6 +472,9 @@ impl PresenceVerifier for WindowsHelloPresenceVerifier {
                 "Windows Hello verification is unavailable; STRONG approval fails closed",
             ));
         }
+        // Windows Hello's own prompt is too short to show the target, so the summary comes
+        // first; only Yes goes on to Hello.
+        windows_summary_decision(show_windows_strong_summary(&prompt_text::strong_body(ctx)))?;
         verify_with_hello(ctx, self.method())
     }
 }
@@ -309,6 +491,51 @@ fn check_hello_availability() -> bool {
     result.unwrap_or(false)
 }
 
+/// What the Windows STRONG summary's answer means: only Yes goes on to Windows Hello.
+#[cfg(any(windows, test))]
+fn windows_summary_decision(answer: windows_dialog::DialogAnswer) -> Result<(), PresenceError> {
+    use windows_dialog::DialogAnswer;
+    match answer {
+        DialogAnswer::Yes => Ok(()),
+        DialogAnswer::No => Err(PresenceError::denied(
+            "the STRONG request was declined at its summary; nothing was asked of Windows Hello",
+        )),
+        DialogAnswer::TimedOut => Err(PresenceError::timeout(format!(
+            "the STRONG summary was not answered within {} seconds; nothing was asked of Windows Hello",
+            windows_dialog::DIALOG_TIMEOUT.as_secs()
+        ))),
+        DialogAnswer::Unexpected(other) => Err(PresenceError::unavailable(format!(
+            "the STRONG summary returned unexpected result {other}; STRONG approval fails closed"
+        ))),
+    }
+}
+
+/// Shows the STRONG summary in a system-modal Yes/No dialog whose default is No, closed as a
+/// timeout after [`windows_dialog::DIALOG_TIMEOUT`].
+#[cfg(windows)]
+fn show_windows_strong_summary(body: &str) -> windows_dialog::DialogAnswer {
+    windows_dialog::ask_yes_no(
+        body,
+        "Orcel approval STRONG",
+        windows_dialog::DIALOG_TIMEOUT,
+    )
+}
+
+/// The Windows Hello message: the request's nonce and digest prefixes, action and workspace,
+/// escaped and bounded like every prompt field.
+#[cfg(any(windows, test))]
+fn hello_message(ctx: &PresenceContext) -> String {
+    let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
+    let digest_prefix: String = ctx.digest.chars().take(12).collect();
+    format!(
+        "Orcel STRONG approval {} {} for {} in workspace {}",
+        prompt_text::display_field(&nonce_prefix, 8),
+        prompt_text::display_field(&digest_prefix, 12),
+        prompt_text::display_field(&ctx.action, 256),
+        prompt_text::display_field(&ctx.workspace_id, 128),
+    )
+}
+
 #[cfg(windows)]
 fn verify_with_hello(
     ctx: &PresenceContext,
@@ -318,12 +545,7 @@ fn verify_with_hello(
     use std::time::Duration;
     use windows::Security::Credentials::UI::{UserConsentVerificationResult, UserConsentVerifier};
 
-    let nonce_prefix: String = ctx.nonce.chars().take(8).collect();
-    let digest_prefix: String = ctx.digest.chars().take(12).collect();
-    let message = format!(
-        "Orcel STRONG approval {nonce_prefix} {digest_prefix} for {} in workspace {}",
-        ctx.action, ctx.workspace_id
-    );
+    let message = hello_message(ctx);
     let nonce = ctx.nonce.clone();
     let digest = ctx.digest.clone();
     let (sender, receiver) = channel();
@@ -398,9 +620,57 @@ pub struct ApprovalPrompt {
     pub expires_at_ms: u64,
     pub reuse_scope: String,
     pub approval_class: ApprovalClass,
+    /// Where the request came from; local unless orceld marks it remote.
+    pub origin: RequestOrigin,
+    /// What the target is; set with [`ApprovalPrompt::for_file`].
+    pub target_kind: TargetKind,
+    /// Where a move puts its target; set with [`ApprovalPrompt::with_destination`].
+    pub destination: Option<String>,
+    /// A bounded, redacted preview of the content; set with [`ApprovalPrompt::with_preview`].
+    pub preview: Option<Preview>,
+    /// The application a desktop action targets; set with [`ApprovalPrompt::for_application`].
+    pub application: Option<TargetApplication>,
 }
 
 impl ApprovalPrompt {
+    /// The same prompt, marked as coming from `origin`.
+    pub fn with_origin(mut self, origin: RequestOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// The same prompt with a preview of its content.
+    pub fn with_preview(mut self, preview: Preview) -> Self {
+        self.preview = Some(preview);
+        self
+    }
+
+    /// The same prompt, naming the application its desktop action targets.
+    pub fn for_application(mut self, application: TargetApplication) -> Self {
+        self.application = Some(application);
+        self
+    }
+
+    /// The same prompt, its target marked as a file: the prompt shows the file's type.
+    pub fn for_file(mut self) -> Self {
+        self.target_kind = TargetKind::File;
+        self
+    }
+
+    /// The same prompt for a download from its target to the file `destination`: the
+    /// destination is shown on its own line with its type; the source gets none.
+    pub fn downloading_to(mut self, destination: impl Into<String>) -> Self {
+        self.target_kind = TargetKind::Download;
+        self.destination = Some(destination.into());
+        self
+    }
+
+    /// The same prompt with the place a move puts its target, shown on its own line.
+    pub fn with_destination(mut self, destination: impl Into<String>) -> Self {
+        self.destination = Some(destination.into());
+        self
+    }
+
     pub fn new(
         workspace_id: impl Into<String>,
         policy_revision: impl Into<String>,
@@ -505,6 +775,11 @@ impl ApprovalPrompt {
             reuse_scope: SINGLE_OPERATION_SCOPE.to_owned(),
             digest,
             approval_class,
+            origin: RequestOrigin::Local,
+            target_kind: TargetKind::Other,
+            destination: None,
+            preview: None,
+            application: None,
         }
     }
 
@@ -652,6 +927,14 @@ struct StoredRecord {
     consumed: bool,
     prev_checksum: String,
     checksum: String,
+    /// Where the request came from, as orceld stamped it on the prompt. Absent on records
+    /// written before this field, and on records a version without it writes. It is not part
+    /// of `checksum`, so versions before it still verify the record and ignore the field;
+    /// `origin_checksum` binds it to this record's checksum instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<RequestOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin_checksum: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -671,6 +954,8 @@ pub struct ApprovalRecordSummary {
     pub expires_at_ms: u64,
     pub reuse_scope: String,
     pub consumed: bool,
+    /// Where the request came from; `None` for records written before origins were recorded.
+    pub origin: Option<RequestOrigin>,
 }
 
 pub trait ApprovalBroker {
@@ -795,6 +1080,67 @@ impl LocalApprovalBroker {
     }
 }
 
+/// How current an approval history answer is. History is best effort: when the ledger can't
+/// be read or fails verification, the answer is the last view this reader verified, which
+/// may be empty or miss recent decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryState {
+    /// The ledger was read and verified for this answer (as of that read).
+    Verified,
+    /// The ledger couldn't be read just now: another writer held it for the whole wait, its
+    /// lock file couldn't be opened, or a read failed. This is the last verified view.
+    Busy,
+    /// The ledger failed verification; this is the last verified view, possibly empty.
+    Unverifiable,
+}
+
+impl HistoryState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Busy => "busy",
+            Self::Unverifiable => "unverifiable",
+        }
+    }
+}
+
+/// Reads the approval history and nothing else: it holds no presence surface and has no way
+/// to issue, consume or revoke an approval. For readers outside the broker, such as orceld's
+/// read-only app API. It verifies the ledger as the broker does, and reports the last view it
+/// verified, and says so, when the ledger can't be read or fails to verify.
+pub struct ApprovalHistoryReader {
+    ledger: Mutex<ApprovalLedger>,
+}
+
+impl ApprovalHistoryReader {
+    /// A reader of this user's approval history.
+    pub fn open() -> Result<Self, ApprovalError> {
+        let path = default_approval_history_path().map_err(history_path_unavailable)?;
+        Ok(Self::at(path))
+    }
+
+    /// A reader of the approval history at `path`.
+    pub fn at(path: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            ledger: Mutex::new(ApprovalLedger::load_or_create(path.into())),
+        }
+    }
+
+    /// The newest `limit` records, newest first.
+    pub fn history(&self, limit: usize) -> Vec<ApprovalRecordSummary> {
+        self.history_with_state(limit).0
+    }
+
+    /// The newest `limit` records, newest first, and whether they were verified for this
+    /// answer or are the last verified view.
+    pub fn history_with_state(&self, limit: usize) -> (Vec<ApprovalRecordSummary>, HistoryState) {
+        self.ledger
+            .lock()
+            .map(|mut ledger| ledger.history_with_state(limit))
+            .unwrap_or((Vec::new(), HistoryState::Unverifiable))
+    }
+}
+
 impl ApprovalBroker for LocalApprovalBroker {
     fn request_token(&self, prompt: &ApprovalPrompt) -> Result<ApprovedToken, ApprovalError> {
         validate_prompt(prompt)?;
@@ -840,7 +1186,11 @@ impl ApprovalBroker for LocalApprovalBroker {
             prompt.workspace_id.clone(),
             prompt.action.clone(),
         )
-        .with_details(prompt.target.clone(), prompt.summary.clone());
+        .with_details(prompt.target.clone(), prompt.summary.clone())
+        .with_origin(prompt.origin.clone())
+        .with_target(prompt.target_kind, prompt.destination.clone())
+        .with_preview(prompt.preview.clone())
+        .with_application(prompt.application.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
@@ -982,7 +1332,11 @@ impl LocalApprovalBroker {
             prompt.workspace_id.clone(),
             prompt.action.clone(),
         )
-        .with_details(prompt.target.clone(), prompt.summary.clone());
+        .with_details(prompt.target.clone(), prompt.summary.clone())
+        .with_origin(prompt.origin.clone())
+        .with_target(prompt.target_kind, prompt.destination.clone())
+        .with_preview(prompt.preview.clone())
+        .with_application(prompt.application.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
@@ -1450,8 +1804,11 @@ impl ApprovalLedger {
     }
 
     /// Applies one persisted event, returning false when it does not verify.
-    fn apply(&mut self, record: StoredRecord) -> bool {
-        if record.schema != LEDGER_SCHEMA || !verify_record_checksum(&record, &self.tip) {
+    fn apply(&mut self, mut record: StoredRecord) -> bool {
+        if record.schema != LEDGER_SCHEMA
+            || !verify_record_checksum(&record, &self.tip)
+            || record.origin_checksum != origin_checksum(&record)
+        {
             return false;
         }
         if record.is_revoke && !record.consumed {
@@ -1467,12 +1824,25 @@ impl ApprovalLedger {
             expected.consumed = true;
             expected.prev_checksum = record.prev_checksum.clone();
             expected.checksum = record.checksum.clone();
+            // A version without origins writes its consumption entry without one, so only
+            // that entry may lack the issuance's origin; a different origin never matches.
+            let issued_from = previous.origin.clone();
+            if record.origin.is_none() {
+                expected.origin = None;
+            }
+            expected.origin_checksum = origin_checksum(&expected);
             if previous.consumed
                 || serde_json::to_value(&expected).ok() != serde_json::to_value(&record).ok()
             {
                 return false;
             }
             self.consumed.insert(record.nonce.clone());
+            // The consumption entry replaces the issuance in memory, so it keeps the
+            // issuance's origin for the history. On disk the entry stays as written.
+            if record.origin.is_none() {
+                record.origin = issued_from;
+                record.origin_checksum = origin_checksum(&record);
+            }
         } else {
             if self.records.contains_key(&record.id)
                 || !self.nonces.insert(record.nonce.clone())
@@ -1576,8 +1946,11 @@ impl ApprovalLedger {
                 consumed: false,
                 prev_checksum: ledger.tip.clone(),
                 checksum: String::new(),
+                origin: None,
+                origin_checksum: None,
             };
-            record.checksum = record_checksum(&record);
+            record.origin = Some(prompt.origin.clone());
+            seal(&mut record);
             let record = ledger.append(record)?;
             if revoked_meanwhile {
                 return Err(ApprovalError::denied(
@@ -1625,8 +1998,11 @@ impl ApprovalLedger {
                 consumed: true,
                 prev_checksum: ledger.tip.clone(),
                 checksum: String::new(),
+                origin: None,
+                origin_checksum: None,
             };
-            record.checksum = record_checksum(&record);
+            record.origin = Some(prompt.origin.clone());
+            seal(&mut record);
             ledger.append(record)
         })
     }
@@ -1728,7 +2104,7 @@ impl ApprovalLedger {
         let mut marker = record.clone();
         marker.consumed = true;
         marker.prev_checksum = self.tip.clone();
-        marker.checksum = record_checksum(&marker);
+        seal(&mut marker);
         Ok(marker)
     }
 
@@ -1783,11 +2159,20 @@ impl ApprovalLedger {
     }
 
     fn history(&mut self, limit: usize) -> Vec<ApprovalRecordSummary> {
+        self.history_with_state(limit).0
+    }
+
+    fn history_with_state(&mut self, limit: usize) -> (Vec<ApprovalRecordSummary>, HistoryState) {
         // History is best effort: it waits briefly for the writer lock and a
-        // busy or failed refresh still reports the last verified view.
-        let _ = self.transact_waiting(HISTORY_LOCK_WAIT, |_| Ok(()));
+        // busy or failed refresh still reports the last verified view, and says which.
+        let state = match self.transact_waiting(HISTORY_LOCK_WAIT, |_| Ok(())) {
+            Ok(()) => HistoryState::Verified,
+            Err(_) if self.poisoned() => HistoryState::Unverifiable,
+            Err(_) => HistoryState::Busy,
+        };
         let bound = limit.clamp(1, 200);
-        self.records
+        let entries = self
+            .records
             .values()
             .rev()
             .take(bound)
@@ -1807,8 +2192,10 @@ impl ApprovalLedger {
                 expires_at_ms: record.expires_at_ms,
                 reuse_scope: record.reuse_scope.clone(),
                 consumed: self.consumed.contains(&record.nonce),
+                origin: record.origin.clone(),
             })
-            .collect()
+            .collect();
+        (entries, state)
     }
 }
 
@@ -1982,6 +2369,8 @@ fn recover_approval_ledger_with_wait(
         consumed: false,
         prev_checksum: fresh.tip.clone(),
         checksum: String::new(),
+        origin: None,
+        origin_checksum: None,
     };
     record.checksum = record_checksum(&record);
     let swapped = fresh
@@ -2124,6 +2513,34 @@ fn record_checksum(record: &StoredRecord) -> String {
     hex_lower(&hasher.finalize())
 }
 
+/// Sets a record's checksum and then its origin checksum, which covers the first.
+fn seal(record: &mut StoredRecord) {
+    record.checksum = record_checksum(record);
+    record.origin_checksum = origin_checksum(record);
+}
+
+/// Binds a record's origin to its checksum, or nothing when it has no origin.
+fn origin_checksum(record: &StoredRecord) -> Option<String> {
+    let origin = record.origin.as_ref()?;
+    let mut hasher = Sha256::new();
+    checksum_field(&mut hasher, b"orcel-approval-origin-v1");
+    checksum_field(&mut hasher, record.checksum.as_bytes());
+    match origin {
+        RequestOrigin::Local => checksum_field(&mut hasher, b"local"),
+        RequestOrigin::Remote {
+            provider,
+            device,
+            connection,
+        } => {
+            checksum_field(&mut hasher, b"remote");
+            checksum_field(&mut hasher, provider.as_bytes());
+            checksum_field(&mut hasher, device.as_bytes());
+            checksum_field(&mut hasher, connection.as_bytes());
+        }
+    }
+    Some(hex_lower(&hasher.finalize()))
+}
+
 fn verify_record_checksum(record: &StoredRecord, tip: &str) -> bool {
     if record.prev_checksum != tip {
         return false;
@@ -2183,7 +2600,7 @@ pub fn default_approval_history_path_from(
     }
     let root = orcel_platform::paths::state_root_from(lookup)?;
     orcel_platform::paths::ensure_private_dir(&root)?;
-    Ok(root.join("approval-history.jsonl"))
+    Ok(orcel_platform::stores::APPROVAL_HISTORY.path(&root))
 }
 
 fn history_path_unavailable(error: PlatformError) -> ApprovalError {
@@ -2192,51 +2609,17 @@ fn history_path_unavailable(error: PlatformError) -> ApprovalError {
 
 #[cfg(windows)]
 fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, ApprovalError> {
-    use std::ffi::c_void;
-    use std::ptr;
-
-    type Hwnd = *mut c_void;
-    const MB_YESNO: u32 = 0x0000_0004;
-    const MB_ICONWARNING: u32 = 0x0000_0030;
-    const MB_DEFBUTTON2: u32 = 0x0000_0100;
-    const MB_SYSTEMMODAL: u32 = 0x0000_1000;
-    const IDYES: i32 = 6;
-    const IDNO: i32 = 7;
-
-    #[link(name = "user32")]
-    extern "system" {
-        fn MessageBoxW(hwnd: Hwnd, text: *const u16, caption: *const u16, kind: u32) -> i32;
-    }
-
-    fn wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(std::iter::once(0)).collect()
-    }
+    use windows_dialog::DialogAnswer;
 
     debug_assert_eq!(prompt.approval_class, ApprovalClass::Soft);
-    let body = format!(
-        "Orcel requests a local action.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
-        prompt.workspace_id,
-        prompt.action,
-        prompt.target,
-        prompt.summary,
-        prompt.digest,
-        &prompt.nonce[..prompt.nonce.len().min(8)],
-    );
-    let body = wide(&body);
-    let caption = wide("Orcel approval SOFT");
-    let result = unsafe {
-        MessageBoxW(
-            ptr::null_mut(),
-            body.as_ptr(),
-            caption.as_ptr(),
-            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SYSTEMMODAL,
-        )
-    };
-
-    match result {
-        IDYES => Ok(ApprovalDecision::Approved),
-        IDNO => Ok(ApprovalDecision::Denied),
-        _ => Err(ApprovalError::unavailable(format!(
+    // The same escaped, bounded lines macOS and Linux show: a field can't fake another line
+    // or reorder what is read.
+    let body = prompt_text::dialog_body(prompt);
+    match windows_dialog::ask_yes_no(&body, "Orcel approval SOFT", windows_dialog::DIALOG_TIMEOUT) {
+        DialogAnswer::Yes => Ok(ApprovalDecision::Approved),
+        // An unanswered prompt denies, as it does on macOS and Linux.
+        DialogAnswer::No | DialogAnswer::TimedOut => Ok(ApprovalDecision::Denied),
+        DialogAnswer::Unexpected(result) => Err(ApprovalError::unavailable(format!(
             "Windows approval prompt returned unexpected result {result}"
         ))),
     }
@@ -2297,7 +2680,7 @@ mod state_root_tests {
     /// The per-user variable the running OS's layout reads, pointed at `base`.
     fn user_root_env(base: &Path) -> Vec<(&'static str, OsString)> {
         #[cfg(windows)]
-        let name = "LOCALAPPDATA";
+        let name = "USERPROFILE";
         #[cfg(not(windows))]
         let name = "HOME";
         vec![(name, base.as_os_str().to_owned())]
@@ -2438,16 +2821,15 @@ mod state_root_tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_ledger_path_is_byte_identical_to_the_previous_default() {
+    fn windows_ledger_path_is_under_the_profile_state_root() {
         let local_app_data = sandbox("windows");
         let lookup = lookup(vec![(
-            "LOCALAPPDATA",
+            "USERPROFILE",
             local_app_data.clone().into_os_string(),
         )]);
         let path = default_approval_history_path_from(&lookup).expect("history path");
-        // The expression the previous default used.
         let previous = PathBuf::from(local_app_data.clone().into_os_string())
-            .join("Orcel")
+            .join(".orcel")
             .join("approval-history.jsonl");
         assert_eq!(
             path.as_os_str().as_encoded_bytes(),
@@ -2455,7 +2837,7 @@ mod state_root_tests {
         );
         // Resolution creates the directory private, as on Unix (#358 item
         // 2), so it passes the private-directory check again.
-        let orcel = local_app_data.join("Orcel");
+        let orcel = local_app_data.join(".orcel");
         assert!(orcel.is_dir());
         assert_eq!(orcel_platform::paths::ensure_private_dir(&orcel), Ok(()));
         let _ = std::fs::remove_dir_all(local_app_data);
@@ -2479,6 +2861,213 @@ mod soft_decider_tests {
 
     fn prompt(digest: &str) -> ApprovalPrompt {
         ApprovalPrompt::new("ws", "rev-1", "act", "target", "summary", digest)
+    }
+
+    fn approving_broker(path: &std::path::Path) -> LocalApprovalBroker {
+        LocalApprovalBroker::with_path_and_soft_decider(
+            path,
+            Arc::new(NoPresenceVerifier),
+            Arc::new(|_| ApprovalDecision::Approved),
+        )
+    }
+
+    fn remote() -> RequestOrigin {
+        RequestOrigin::Remote {
+            provider: "tunnel".into(),
+            device: "dev-1".into(),
+            connection: "conn-1".into(),
+        }
+    }
+
+    /// A reader says whether its answer was verified, or is the last verified view because
+    /// the ledger is busy or fails verification.
+    #[test]
+    fn a_history_reader_says_how_current_its_answer_is() {
+        let path = temp_ledger("history-state");
+        let broker = approving_broker(&path);
+        broker
+            .request_token(&prompt(&"a".repeat(64)))
+            .expect("approved");
+        let reader = ApprovalHistoryReader::at(&path);
+        let (entries, state) = reader.history_with_state(10);
+        assert_eq!((entries.len(), state), (1, HistoryState::Verified));
+        // Busy: another writer holds the lock for longer than the history wait.
+        let held = acquire_ledger_lock(&path, LEDGER_LOCK_WAIT).expect("lock");
+        let (entries, state) = reader.history_with_state(10);
+        assert_eq!((entries.len(), state), (1, HistoryState::Busy));
+        drop(held);
+        // Unverifiable: the file no longer verifies; the last verified view is kept.
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("{\"not\":\"a record\"}\n");
+        std::fs::write(&path, text).unwrap();
+        let (entries, state) = reader.history_with_state(10);
+        assert_eq!((entries.len(), state), (1, HistoryState::Unverifiable));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(approval_ledger_lock_path(&path));
+    }
+
+    /// The image file's signature is display only: prompts that differ only in it carry the
+    /// same digest, and an approval given under one signature is consumed under the digest
+    /// alone, whatever signature the prompt showed.
+    #[test]
+    fn the_signature_line_never_enters_the_approval_digest() {
+        let path = temp_ledger("signature-digest");
+        let broker = approving_broker(&path);
+        let digest = "c".repeat(64);
+        let with_signature = |signature: SignatureState, running_image: RunningImage| {
+            prompt(&digest).for_application(TargetApplication {
+                executable: "notepad.exe".into(),
+                window_title: "Notes".into(),
+                signature,
+                running_image,
+            })
+        };
+        let states = [
+            SignatureState::Verified {
+                subject: "Microsoft Windows".into(),
+            },
+            SignatureState::Unsigned,
+            SignatureState::Untrusted,
+            SignatureState::Unknown,
+        ];
+        let images = [
+            RunningImage::Same,
+            RunningImage::Different,
+            RunningImage::Unconfirmed,
+        ];
+        let shown_states = states
+            .iter()
+            .flat_map(|state| images.iter().map(move |image| (state.clone(), *image)));
+        for (state, running_image) in shown_states {
+            let shown = with_signature(state.clone(), running_image);
+            assert_eq!(shown.digest, digest);
+            let token = broker.request_token(&shown).expect("approved");
+            assert_eq!(token.digest, digest, "{state:?}");
+            broker
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest.clone(), "ws", "rev-1"),
+                    now_ms(),
+                )
+                .expect("consumed under the digest alone");
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(approval_ledger_lock_path(&path));
+    }
+
+    /// The history says where each request came from, and the origin survives a reload,
+    /// which verifies it against the record's checksum.
+    #[test]
+    fn the_history_records_each_request_origin_and_it_survives_a_reload() {
+        let path = temp_ledger("origin");
+        let broker = approving_broker(&path);
+        let local = broker
+            .request_token(&prompt(&"a".repeat(64)))
+            .expect("approved");
+        let distant = broker
+            .request_token(&prompt(&"b".repeat(64)).with_origin(remote()))
+            .expect("approved");
+        broker
+            .consume(
+                &distant,
+                &ConsumeExpectation::new("b".repeat(64), "ws", "rev-1"),
+                now_ms(),
+            )
+            .expect("consumed");
+        let reloaded = approving_broker(&path);
+        let history = reloaded.history(10);
+        let origin_of = |id: &str| {
+            history
+                .iter()
+                .find(|record| record.id == id)
+                .map(|record| record.origin.clone())
+        };
+        assert_eq!(
+            origin_of(&local.record_id),
+            Some(Some(RequestOrigin::Local))
+        );
+        assert_eq!(origin_of(&distant.record_id), Some(Some(remote())));
+        assert!(history
+            .iter()
+            .any(|record| record.id == distant.record_id && record.consumed));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An origin changed on disk no longer matches its checksum, so the ledger refuses to load
+    /// and no approval is issued until it is recovered.
+    #[test]
+    fn a_rewritten_origin_makes_the_ledger_unverifiable() {
+        let path = temp_ledger("origin-tamper");
+        let broker = approving_broker(&path);
+        broker
+            .request_token(&prompt(&"c".repeat(64)).with_origin(remote()))
+            .expect("approved");
+        drop(broker);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""provider":"tunnel""#), "{text}");
+        std::fs::write(
+            &path,
+            text.replace(r#""provider":"tunnel""#, r#""provider":"other""#),
+        )
+        .unwrap();
+        let reloaded = approving_broker(&path);
+        assert!(reloaded.request_token(&prompt(&"d".repeat(64))).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Records from a version without origins carry none and still verify, including a
+    /// consumption entry such a version adds to an issuance that has an origin.
+    #[test]
+    fn records_without_an_origin_still_verify() {
+        let path = temp_ledger("origin-older");
+        let broker = approving_broker(&path);
+        let token = broker
+            .request_token(&prompt(&"e".repeat(64)).with_origin(remote()))
+            .expect("approved");
+        broker
+            .consume(
+                &token,
+                &ConsumeExpectation::new("e".repeat(64), "ws", "rev-1"),
+                now_ms(),
+            )
+            .expect("consumed");
+        let plain = broker
+            .request_token(&prompt(&"f".repeat(64)))
+            .expect("approved");
+        drop(broker);
+        // Strip the origin from the consumption entry and from the last issuance, as a
+        // version without the field writes them; their checksums don't cover it.
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<String> = text
+            .lines()
+            .enumerate()
+            .map(|(index, line)| {
+                if index == 0 {
+                    return line.to_owned();
+                }
+                let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+                let object = value.as_object_mut().unwrap();
+                object.remove("origin");
+                object.remove("origin_checksum");
+                value.to_string()
+            })
+            .collect();
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+        let reloaded = approving_broker(&path);
+        let history = reloaded.history(10);
+        let consumed = history
+            .iter()
+            .find(|record| record.id == token.record_id)
+            .expect("issuance");
+        assert!(consumed.consumed);
+        assert_eq!(consumed.origin, Some(remote()));
+        let older = history
+            .iter()
+            .find(|record| record.id == plain.record_id)
+            .expect("older record");
+        assert_eq!(older.origin, None);
+        assert!(reloaded.request_token(&prompt(&"g".repeat(64))).is_ok());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -3236,6 +3825,8 @@ pub mod test_support {
             consumed: false,
             prev_checksum: String::from("TEST"),
             checksum: String::from("TEST"),
+            origin: None,
+            origin_checksum: None,
         }
     }
 
@@ -3341,6 +3932,12 @@ mod tests {
             now,
         )
     }
+
+    /// How long a test waits to take the writer lock itself. Not zero: on Linux and macOS a
+    /// child process another test forks keeps a copy of every open descriptor until it execs,
+    /// so a lock this test just released can still be held for a moment (seen on CI, #725 and
+    /// #738).
+    const TEST_HOLD_WAIT: Duration = Duration::from_secs(5);
 
     fn ledger_in(path: &std::path::Path) -> ApprovalLedger {
         ApprovalLedger::load_or_create(path.to_path_buf())
@@ -3520,7 +4117,7 @@ mod tests {
         let mut ledger = ledger_in(&path);
         ledger.lock_wait = Duration::from_millis(50);
         let a = issue_strong(&mut ledger, "reg278-busy", 5_000);
-        let holder = acquire_ledger_lock(&path, Duration::ZERO).expect("hold the writer lock");
+        let holder = acquire_ledger_lock(&path, TEST_HOLD_WAIT).expect("hold the writer lock");
         let error = ledger
             .consume(&token_from(&a), &strong_expectation(&a), 5_100)
             .unwrap_err();
@@ -3762,6 +4359,8 @@ mod tests {
                 consumed: false,
                 prev_checksum: prev.to_owned(),
                 checksum: String::new(),
+                origin: None,
+                origin_checksum: None,
             };
             record.checksum = record_checksum(&record);
             record
@@ -3903,7 +4502,7 @@ mod tests {
             FailureCode::InvalidRequest,
             "a verified ledger is never quarantined"
         );
-        let holder = acquire_ledger_lock(&path, Duration::ZERO).expect("hold the writer lock");
+        let holder = acquire_ledger_lock(&path, TEST_HOLD_WAIT).expect("hold the writer lock");
         let busy = recover_approval_ledger_with_wait(&path, Duration::from_millis(50)).unwrap_err();
         assert!(busy.message.contains("busy"), "{}", busy.message);
         drop(holder);
@@ -4261,7 +4860,7 @@ mod tests {
         let path = temp_path("ocr-windows-lock");
         let mut ledger = ledger_in(&path);
         issue_strong(&mut ledger, "ocr-windows-lock", 5_000);
-        let holder = acquire_ledger_lock(&path, Duration::ZERO).expect("hold the writer lock");
+        let holder = acquire_ledger_lock(&path, TEST_HOLD_WAIT).expect("hold the writer lock");
         assert!(
             std::fs::remove_file(approval_ledger_lock_path(&path)).is_err(),
             "a held lock file cannot be deleted and replaced"

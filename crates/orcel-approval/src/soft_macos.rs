@@ -14,11 +14,8 @@
 //! session or an automation runner is `unavailable` without showing
 //! anything, and a dialog that cannot be shown is `unavailable`.
 //!
-//! The body has the same lines as the Windows prompt. Every field from the
-//! request is shown exactly when it is printable and short. Control,
-//! line-break, bidi, zero-width, tag and filler characters are escaped as
-//! `\u{..}` so a field cannot fake another line of the dialog, and the
-//! bound applies to the escaped text.
+//! The body is the one every OS shows (`prompt_text`): bounded fields, with
+//! control, bidi, zero-width, tag and filler characters escaped.
 
 // Off macOS this module is compiled into tests, which run the formatting,
 // escaping and decision rules on every OS, and on Linux, whose SOFT helper
@@ -34,86 +31,13 @@ pub(crate) const DIALOG_HEADER: &str = "Orcel approval SOFT";
 pub(crate) const DENY_BUTTON: &str = "Deny";
 pub(crate) const APPROVE_BUTTON: &str = "Approve";
 
-const MAX_WORKSPACE_CHARS: usize = 128;
-const MAX_ACTION_CHARS: usize = 512;
-const MAX_TARGET_CHARS: usize = 512;
-const MAX_SUMMARY_CHARS: usize = 1024;
-const MAX_DIGEST_CHARS: usize = 128;
+#[cfg(test)]
+use crate::prompt_text::MAX_SUMMARY_CHARS;
+pub(crate) use crate::prompt_text::{dialog_body, display_field};
 
 /// `kCFUserNotificationDefaultResponse` .. `kCFUserNotificationCancelResponse`.
 const RESPONSE_MASK: usize = 0x3;
 const ALTERNATE_RESPONSE: usize = 1;
-
-/// Shows `value` exactly when it is printable and short; otherwise escapes
-/// the characters that could change the dialog's layout or reading order,
-/// and stops before the escaped text would exceed `max_chars`, saying how
-/// many input characters were left out.
-pub(crate) fn display_field(value: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    let mut out_chars = 0usize;
-    let mut taken = 0usize;
-    for ch in value.chars() {
-        let piece = if ch == '\\' {
-            String::from("\\\\")
-        } else if needs_escape(ch) {
-            format!("\\u{{{:x}}}", ch as u32)
-        } else {
-            ch.to_string()
-        };
-        let len = piece.chars().count();
-        if out_chars + len > max_chars {
-            break;
-        }
-        out.push_str(&piece);
-        out_chars += len;
-        taken += 1;
-    }
-    let rest = value.chars().count() - taken;
-    if rest > 0 {
-        out.push_str(&format!(
-            " [{rest} more {} not shown]",
-            if rest == 1 { "character" } else { "characters" }
-        ));
-    }
-    out
-}
-
-fn needs_escape(ch: char) -> bool {
-    ch.is_control()
-        || matches!(
-            ch,
-            // Line and paragraph separators.
-            '\u{2028}' | '\u{2029}'
-            // Bidi embeddings, overrides, isolates and marks.
-            | '\u{200e}' | '\u{200f}' | '\u{061c}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2066}'..='\u{2069}'
-            // Zero-width, invisible and deprecated formatting characters.
-            | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{206a}'..='\u{206f}'
-            | '\u{feff}' | '\u{00ad}' | '\u{180e}'
-            // Interlinear annotation characters.
-            | '\u{fff9}'..='\u{fffb}'
-            // Tag characters.
-            | '\u{e0000}'..='\u{e007f}'
-            // Hangul fillers, which render as blank space.
-            | '\u{115f}' | '\u{1160}' | '\u{3164}' | '\u{ffa0}'
-        )
-}
-
-/// The dialog text: the Windows prompt's lines over bounded, escaped
-/// fields.
-pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
-    let nonce_prefix: String = prompt.nonce.chars().take(8).collect();
-    format!(
-        "Orcel requests a local action.\n\nWorkspace: {}\nAction: {}\nTarget: {}\n{}\nDigest: {}\nApproval: SOFT {} (single use, expires in 5 minutes)\n\nApprove this exact operation?",
-        display_field(&prompt.workspace_id, MAX_WORKSPACE_CHARS),
-        display_field(&prompt.action, MAX_ACTION_CHARS),
-        display_field(&prompt.target, MAX_TARGET_CHARS),
-        display_field(&prompt.summary, MAX_SUMMARY_CHARS),
-        display_field(&prompt.digest, MAX_DIGEST_CHARS),
-        display_field(&nonce_prefix, 8),
-    )
-}
 
 /// What the system dialog reported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,8 +96,37 @@ pub(crate) fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecisio
     session_gate(crate::presence_unix::session_state())?;
     decide(
         prompt,
-        cf::display_alert(&dialog_body(prompt), SOFT_PROMPT_TIMEOUT_SECS),
+        cf::display_alert(
+            DIALOG_HEADER,
+            &dialog_body(prompt),
+            SOFT_PROMPT_TIMEOUT_SECS,
+        ),
     )
+}
+
+pub(crate) const STRONG_DIALOG_HEADER: &str = "Orcel approval STRONG";
+
+/// What the STRONG summary's answer means: only Approve goes on to Touch ID.
+pub(crate) fn summary_decision(outcome: DialogOutcome) -> Result<(), crate::PresenceError> {
+    match outcome {
+        DialogOutcome::Response(flags) if flags & RESPONSE_MASK == ALTERNATE_RESPONSE => Ok(()),
+        DialogOutcome::Response(_) => Err(crate::PresenceError::denied(
+            "the STRONG request was declined at its summary; nothing was asked of Touch ID",
+        )),
+        DialogOutcome::NotShown(status) => Err(crate::PresenceError::unavailable(format!(
+            "the STRONG summary could not be shown (status {status}); STRONG approval fails closed"
+        ))),
+    }
+}
+
+/// Shows the STRONG summary on macOS and waits for the answer.
+#[cfg(target_os = "macos")]
+pub(crate) fn strong_summary(body: &str) -> Result<(), crate::PresenceError> {
+    summary_decision(cf::display_alert(
+        STRONG_DIALOG_HEADER,
+        body,
+        SOFT_PROMPT_TIMEOUT_SECS,
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -181,7 +134,7 @@ mod cf {
     use std::ffi::c_void;
     use std::ptr;
 
-    use super::{DialogOutcome, APPROVE_BUTTON, DENY_BUTTON, DIALOG_HEADER};
+    use super::{DialogOutcome, APPROVE_BUTTON, DENY_BUTTON};
 
     type CFTypeRef = *const c_void;
     type CFStringRef = *const c_void;
@@ -250,9 +203,9 @@ mod cf {
 
     /// Shows the caution alert and blocks until the person answers or the
     /// timeout passes.
-    pub(super) fn display_alert(body: &str, timeout_secs: f64) -> DialogOutcome {
+    pub(super) fn display_alert(title: &str, body: &str, timeout_secs: f64) -> DialogOutcome {
         let (Some(header), Some(message), Some(deny), Some(approve)) = (
-            CfString::new(DIALOG_HEADER),
+            CfString::new(title),
             CfString::new(body),
             CfString::new(DENY_BUTTON),
             CfString::new(APPROVE_BUTTON),
@@ -356,7 +309,9 @@ mod tests {
             "Approval: SOFT {} (single use",
             &prompt.nonce[..8]
         )));
-        assert!(body.starts_with("Orcel requests a local action.\n\nWorkspace: default\n"));
+        assert!(body.starts_with(
+            "Orcel requests a local action.\n\nOrigin: this computer\nWorkspace: default\n"
+        ));
         assert!(body.ends_with("\n\nApprove this exact operation?"));
     }
 

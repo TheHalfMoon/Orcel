@@ -2,7 +2,7 @@
 //! store, load and delete the device key, migrate a legacy plaintext record,
 //! and prove the value never reaches stderr, the audit log or a failure.
 //!
-//! Windows always runs it (DPAPI, with `LOCALAPPDATA` pointed at a fresh
+//! Windows always runs it (DPAPI, with `USERPROFILE` pointed at a fresh
 //! directory). macOS and Linux run it when `ORCEL_REQUIRE_XP19_KEYRING` is
 //! set (CI, with a temporary keychain or a headless gnome-keyring), because
 //! it writes the real `device.key` item of the current user. On Linux with
@@ -56,7 +56,7 @@ fn run_orceld_lines(state: &Path, workspace: &Path, requests: &[String]) -> Run 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if cfg!(windows) {
-        command.env("LOCALAPPDATA", state);
+        command.env("USERPROFILE", state);
     } else if cfg!(target_os = "linux") {
         command.env("XDG_STATE_HOME", state);
     }
@@ -171,7 +171,7 @@ fn xp19_real_orceld_stores_loads_deletes_and_migrates() {
     // list, so it is covered by the unit tests there.
     if cfg!(any(windows, target_os = "linux")) {
         let root = if cfg!(windows) {
-            state.join("Orcel")
+            state.join(".orcel")
         } else {
             state.join("orcel")
         };

@@ -588,7 +588,16 @@ pub fn build_push_argv(
         "core.askPass=".to_owned(),
         "-c".to_owned(),
         format!("http.curloptResolve={resolve_value}"),
+        // Exactly the one approved ref: no tags the repository asks to follow, no signed
+        // push that would run its gpg.program, and no push options it configures.
+        "-c".to_owned(),
+        "push.followTags=false".to_owned(),
+        "-c".to_owned(),
+        "push.gpgSign=false".to_owned(),
+        "-c".to_owned(),
+        "push.pushOption=".to_owned(),
         "push".to_owned(),
+        "--no-follow-tags".to_owned(),
         "--no-recurse-submodules".to_owned(),
         "--no-verify".to_owned(),
         url.to_owned(),
@@ -1048,6 +1057,7 @@ fn run_push_raw(
         .env("GIT_EDITOR", null_push_device())
         .env("GIT_SEQUENCE_EDITOR", null_push_device())
         .env("GIT_ALLOW_PROTOCOL", "https")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .env("GCM_INTERACTIVE", "Never")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_SSH_COMMAND", null_push_device())
@@ -1484,12 +1494,19 @@ impl GitProvider {
     }
 
     fn reject_unsafe_local_push_config(&self, repo: &Path) -> Result<(), GitProviderError> {
-        let output = self.run_git(repo, &["config", "--local", "--list"])?;
-        for line in output.stdout.lines() {
-            let key = line
-                .split_once('=')
-                .map(|(key, _)| key.trim().to_ascii_lowercase())
-                .unwrap_or_default();
+        let output = self.run_git(repo, &crate::REPOSITORY_CONFIG_ARGS)?;
+        if output.stdout_truncated {
+            return Err(provider_error(
+                "Git configuration exceeded the bounded output limit",
+            ));
+        }
+        for key in crate::repository_config_keys(&output.stdout) {
+            if key.starts_with("include.") || key.starts_with("includeif.") {
+                return Err(GitProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "repository configuration includes another file; push is denied",
+                ));
+            }
             if key.starts_with("url.")
                 && (key.contains("insteadof") || key.contains("pushinsteadof"))
             {
@@ -1498,13 +1515,16 @@ impl GitProvider {
                     "repository-local URL rewrite widens the approved push destination; push is denied",
                 ));
             }
+            // TLS trust, client identity and name resolution are Orcel's: `ssl` covers
+            // sslVerify, sslCAInfo, sslCAPath, sslBackend, sslCert and sslKey; `curlopt` an
+            // extra resolve entry beside the pinned address.
             if key.starts_with("http.")
                 && (key.contains("proxy")
                     || key.contains("extraheader")
                     || key.contains("cookie")
-                    || key.contains("sslverify")
-                    || key.contains("followredirects")
-                    || key == "http.proxy")
+                    || key.contains("ssl")
+                    || key.contains("curlopt")
+                    || key.contains("followredirects"))
             {
                 return Err(GitProviderError::new(
                     FailureCode::CapabilityDenied,
@@ -1515,6 +1535,30 @@ impl GitProvider {
                 return Err(GitProviderError::new(
                     FailureCode::CapabilityDenied,
                     "repository-local credential configuration is denied outside the protected credential-reference path",
+                ));
+            }
+            // Given a URL, Git first looks for a remote named exactly that URL and uses its
+            // url or pushurl instead. A nickname has no '/' or ':'.
+            if let Some(name) = key
+                .strip_prefix("remote.")
+                .and_then(|rest| rest.rsplit_once('.'))
+                .map(|(name, _)| name)
+            {
+                if name.contains(['/', ':']) {
+                    return Err(GitProviderError::new(
+                        FailureCode::CapabilityDenied,
+                        "a repository remote is named like a URL and would replace the approved destination; push is denied",
+                    ));
+                }
+            }
+            // A promisor remote can make Git fetch missing objects from elsewhere mid-push.
+            if key == "extensions.partialclone"
+                || (key.starts_with("remote.")
+                    && (key.ends_with(".promisor") || key.ends_with(".partialclonefilter")))
+            {
+                return Err(GitProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "repository partial-clone configuration can reach another remote; push is denied",
                 ));
             }
             if key == "core.askpass" || key == "core.sshcommand" {
@@ -1850,6 +1894,9 @@ mod tests {
         let rendered = argv.join(" ");
         assert!(rendered.contains("protocol.https.allow=always"));
         assert!(rendered.contains("http.followRedirects=false"));
+        assert!(rendered.contains("push.followTags=false"));
+        assert!(rendered.contains("push.gpgSign=false"));
+        assert!(rendered.contains("--no-follow-tags"));
         assert!(rendered.contains("http.sslVerify=true"));
         assert!(rendered.contains("http.proxy="));
         assert!(rendered.contains("credential.helper="));

@@ -62,6 +62,15 @@ export function stdioServerFactory(
     const kernel = kernelFactory(config);
     tracked.add(kernel);
     const server = buildOrcelServer(kernel, config.defaultWorkspace, config.context);
+    // A local session tells its orceld which client it serves, for the desktop app's list of
+    // connected clients. Remote (tunnel) sessions don't: their kernel ignores it.
+    const previousOnInitialized = server.server.oninitialized;
+    server.server.oninitialized = () => {
+      previousOnInitialized?.();
+      if (config.remote === null) {
+        kernel.hello(config.defaultWorkspace, server.server.getClientVersion() ?? {}, "stdio");
+      }
+    };
     const previousOnClose = server.server.onclose;
     server.server.onclose = () => {
       tracked.delete(kernel);

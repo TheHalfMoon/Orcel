@@ -20,8 +20,8 @@
 //!   `IsPassword` and their values are never read.
 
 use crate::{
-    digest_hex, NativeElement, NativeProcess, NativeWindow, UiaError, ID_HEX_CHARS, MAX_TREE_DEPTH,
-    MAX_TREE_NODES, UIA_SCHEMA,
+    digest_hex, NativeElement, NativeProcess, NativeWindow, ProcessSignature, UiaError,
+    ID_HEX_CHARS, MAX_TREE_DEPTH, MAX_TREE_NODES, UIA_SCHEMA,
 };
 use orcel_contracts::FailureCode;
 use std::ffi::c_void;
@@ -242,6 +242,9 @@ pub(crate) fn process_facts(pid: u32) -> Option<NativeProcess> {
         session_verified: true,
         start_generation: generation.generation,
         generation_source: generation.source,
+        // Listing never reads the file: the check runs when a prompt asks for it, outside
+        // the registry lock (`WindowApplication::signature`).
+        signature: ProcessSignature::ImageFile { path: image },
     })
 }
 

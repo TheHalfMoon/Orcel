@@ -157,6 +157,9 @@ export function attachProfile(request: KernelRequest, profile: string | null): K
   return request;
 }
 
+/** The longest client name or version sent; orceld keeps less. */
+const MAX_HELLO_TEXT = 256;
+
 export class KernelClient {
   readonly sessionId = randomUUID();
   /**
@@ -177,6 +180,8 @@ export class KernelClient {
   private readonly args: readonly string[];
   private exited = false;
   private closed = false;
+  /** This local session's hello, said again to an orceld that replaces a crashed one. */
+  private helloRequest: { workspaceId: string; arguments: Record<string, unknown> } | null = null;
 
   constructor(
     command = process.env.ORCEL_DAEMON ?? "orceld",
@@ -189,6 +194,15 @@ export class KernelClient {
     this.command = command;
     this.args = args;
     this.child = this.spawnDaemon();
+  }
+
+  /**
+   * A new client with its own orceld, carrying this one's remote context and profile. A
+   * request from a remote session must never reach orceld without its remote context:
+   * orceld would take it as local and skip the remote-session lease.
+   */
+  isolated(): KernelClient {
+    return new KernelClient(this.command, this.remote, this.profile, this.args);
   }
 
   private spawnDaemon(): ChildProcessWithoutNullStreams {
@@ -236,6 +250,33 @@ export class KernelClient {
     return child;
   }
 
+  /**
+   * Tells this session's orceld which local client it serves, so the desktop app can show
+   * connected clients. Display only: orceld records it and grants nothing for it. The name
+   * and version are what the client said about itself. Local sessions only, once; errors
+   * are ignored.
+   */
+  hello(workspaceId: string, client: { name?: unknown; version?: unknown }, transport: string): void {
+    if (this.remote !== null || this.helloRequest != null) return;
+    const bounded = (value: unknown) => (typeof value === "string" ? value.slice(0, MAX_HELLO_TEXT) : null);
+    this.helloRequest = {
+      workspaceId,
+      arguments: { client_name: bounded(client.name), client_version: bounded(client.version), transport }
+    };
+    this.sayHello();
+  }
+
+  private sayHello(): void {
+    if (this.helloRequest == null) return;
+    this.call({
+      workspaceId: this.helloRequest.workspaceId,
+      capability: "session",
+      operation: "hello",
+      arguments: this.helloRequest.arguments,
+      timeoutMs: 5_000
+    }).catch(() => undefined);
+  }
+
   async call(input: {
     workspaceId: string;
     capability: string;
@@ -259,6 +300,9 @@ export class KernelClient {
       // Only for a new request: nothing that was in flight is sent again.
       this.exited = false;
       this.child = this.spawnDaemon();
+      // The new orceld learns which client it serves before this request, unless this request
+      // is that hello.
+      if (input.capability !== "session") this.sayHello();
     }
 
     const timeoutMs = input.timeoutMs ?? 30_000;

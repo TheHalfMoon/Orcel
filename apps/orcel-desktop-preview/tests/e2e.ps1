@@ -1,6 +1,6 @@
-# Native Windows end-to-end test of the read-only desktop foundation, driven
+# Native Windows end-to-end test of the desktop foundation (read-only plus the authority-reducing controls), driven
 # through Windows UI Automation (no third-party framework). It launches the
-# real executable with an isolated LOCALAPPDATA for the app process only:
+# real executable with an isolated USERPROFILE for the app process only:
 # -RuntimeRoot points at a per-user runtime install made for testing; without
 # it an empty temporary folder is used, so the user's real install is never
 # queried. It checks what a person would see and performs no computer actions
@@ -59,8 +59,8 @@ function WaitForMessage($window, [string]$needle, [int]$timeoutMs) {
 
 $start = New-Object System.Diagnostics.ProcessStartInfo $app
 $start.UseShellExecute = $false
-$start.EnvironmentVariables["LOCALAPPDATA"] = $(if ($expectInstalled) { $RuntimeRoot } else { $emptyRoot })
-# SG-000127: the app API pipe is per user, not per LOCALAPPDATA. Unless the
+$start.EnvironmentVariables["USERPROFILE"] = $(if ($expectInstalled) { $RuntimeRoot } else { $emptyRoot })
+# SG-000127: the app API pipe is per user, not per USERPROFILE. Unless the
 # caller names an instance served by a test orceld, point the app at an
 # instance nothing serves, so the user's real runtime is never read.
 $appApiInstance = $(if ($env:ORCEL_E2E_APP_API_INSTANCE) { $env:ORCEL_E2E_APP_API_INSTANCE } else { "e2e-" + [guid]::NewGuid().ToString("N").Substring(0, 12) })
@@ -71,7 +71,15 @@ try {
     $window = WaitFor { ById $root "OrcelMainWindow" } 15000
     $startupMs = $clock.ElapsedMilliseconds
     Check "window appears" ($null -ne $window) "startup ${startupMs} ms"
-    if ($null -eq $window) { throw "window not found" }
+    if ($null -eq $window) {
+        # Evidence for a stall seen on CI: slow, hung or gone. The check above has already failed.
+        $process.Refresh()
+        Write-Output "DIAG app process: exited $($process.HasExited), responding $(if (-not $process.HasExited) { $process.Responding }), main window handle $($process.MainWindowHandle), title $($process.MainWindowTitle)"
+        if ($process.HasExited) { Write-Output "DIAG app exit code: $($process.ExitCode)" }
+        $late = WaitFor { ById $root "OrcelMainWindow" } 30000
+        Write-Output "DIAG window $(if ($late) { "appeared late" } else { "still absent" }) at $($clock.ElapsedMilliseconds) ms"
+        throw "window not found"
+    }
     $windowProcess = $window.Current.ProcessId
     Check "window belongs to the launched process" ($windowProcess -eq $process.Id) "pid $windowProcess"
 
@@ -84,7 +92,7 @@ try {
     $runtime = WaitFor { $t = (ById $window "RuntimeState").Current.Name; if ($t -and $t -ne "Checking...") { $t } } 15000
     $readyMs = $clock.ElapsedMilliseconds
     if ($expectInstalled) {
-        Check "runtime panel reports the real install" ($runtime -like "Orcel runtime 0.*" -and $runtime -like "*not running*") "$runtime (after ${readyMs} ms)"
+        Check "runtime panel reports the real install" ($runtime -like "Orcel runtime 0.*" -and $runtime -like "*ChatGPT tunnel*") "$runtime (after ${readyMs} ms)"
     } else {
         Check "runtime panel reports not installed" ($runtime -eq "Not installed") "$runtime"
     }
@@ -94,11 +102,20 @@ try {
 
     SendCommand $window "tasks"
     if ($env:ORCEL_E2E_APP_API_INSTANCE) {
-        $tasks = WaitForMessage $window "Report tasks in this orceld run" 15000
+        $tasks = WaitForMessage $window "Report tasks orceld knows of" 15000
         Check "tasks shows the live orceld's report tasks" ($null -ne $tasks -and $tasks -like "*$($env:ORCEL_E2E_EXPECT_TASK_TITLE)*") "$(($tasks -split "`n") -join ' | ')"
     } else {
         $tasks = WaitForMessage $window "Task timeline unavailable" 15000
         Check "tasks reports an absent app API instead of inventing tasks" ($null -ne $tasks) "$tasks"
+    }
+
+    SendCommand $window "recovery"
+    if ($env:ORCEL_E2E_APP_API_INSTANCE) {
+        $recovery = WaitFor { TranscriptTexts $window | Where-Object { $_.StartsWith("No report was interrupted", [StringComparison]::Ordinal) -or $_ -like "*Reports Orcel was writing when it stopped*" } | Select-Object -First 1 } 20000
+        Check "recovery reads the live orceld's tasks" ($null -ne $recovery) "$(($recovery -split "`n")[0])"
+    } else {
+        $recovery = WaitForMessage $window "Recovery check unavailable" 15000
+        Check "recovery reports an absent app API instead of inventing results" ($null -ne $recovery) "$recovery"
     }
 
     if ($env:ORCEL_E2E_LIVE_SIGNAL) {
@@ -116,7 +133,7 @@ try {
     }
 
     SendCommand $window "status"
-    $status = WaitForMessage $window $(if ($expectInstalled) { "is installed and not running" } else { "is not installed" }) 15000
+    $status = WaitForMessage $window $(if ($expectInstalled) { "is installed. ChatGPT tunnel" } else { "is not installed" }) 15000
     Check "status command shows the runtime's own state" ($null -ne $status) "$status"
 
 
@@ -126,11 +143,43 @@ try {
     SendCommand $window "rm -rf / ; calc.exe"
     $refused = WaitFor { TranscriptTexts $window | Where-Object { $_.StartsWith("Not executed. Orcel AI is not connected.", [StringComparison]::Ordinal) } | Select-Object -First 1 } 5000
     Check "shell-like text is refused, not executed" ($null -ne $refused) "$refused"
+    # The managed UI Automation client can't read LiveSetting ("Unsupported Property"), so
+    # the self-test checks the announcer's setup and this checks only that replies reach it.
+    $announced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Not executed.", [StringComparison]::Ordinal)) { $a } } 3000
+    Check "the reply reaches the live region" ($null -ne $announced) "$announced"
     Start-Sleep -Milliseconds 1500
     # Direct children still alive, plus Calculator (Windows 11 launches it through a broker).
     $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object { $_.CreationDate -ge $refusedAt })
     $calculators = @(Get-Process -Name "calc", "CalculatorApp" -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -ge $refusedAt })
     Check "no process was started by the refused text" ($children.Count -eq 0 -and $calculators.Count -eq 0) ((@($children | ForEach-Object { $_.Name }) + @($calculators | ForEach-Object { $_.Name })) -join ", ")
+
+    # The guided start appears by itself while a step is left, and names the next one.
+    if (-not $expectInstalled) {
+        $setup = WaitForMessage $window "Getting started with Orcel" 10000
+        Check "the guided start appears at launch and names the next step" ($null -ne $setup -and $setup -like "*Next: install Orcel (step 1).*") "$(($setup -split "`n")[-1])"
+    }
+
+    # connect shows setup text only: it runs nothing and edits no client's settings.
+    Start-Sleep -Milliseconds 1500
+    $connectAt = Get-Date
+    SendCommand $window "connect"
+    if ($expectInstalled) {
+        $cli = Join-Path $RuntimeRoot ".orcel\bin\orcel.exe"
+        $editCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "Setup to copy")
+        $setup = WaitFor { (ById $window "Transcript").FindFirst($scope::Descendants, $editCondition) } 5000
+        $setupValue = $(if ($setup) { $setup.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current } else { $null })
+        Check "connect shows read-only setup text to copy" ($null -ne $setupValue -and $setupValue.IsReadOnly) ""
+        $setupText = $(if ($setupValue) { $setupValue.Value } else { "" })
+        Check "the setup names this install's CLI for each client" ($setupText.Contains('"command": "' + $cli.Replace('\', '\\') + '"') -and $setupText.Contains('command = "' + $cli.Replace('\', '\\') + '"') -and $setupText.Contains("'" + $cli.Replace("'", "''") + "' mcp stdio") -and $setupText.Contains("command $cli, arguments mcp stdio")) "$(($setupText -split "`n")[0])"
+        $connectAnnounced = WaitFor { $a = (ById $window "Announcement").Current.Name; if ($a -and $a.StartsWith("Setup for Claude Desktop", [StringComparison]::Ordinal)) { $a } } 3000
+        Check "the setup is announced by where it is, not read out" ($null -ne $connectAnnounced) "$connectAnnounced"
+    } else {
+        $connect = WaitForMessage $window "isn't installed for this Windows user yet" 5000
+        Check "connect without an install says to install first" ($null -ne $connect) "$connect"
+    }
+    Start-Sleep -Milliseconds 1500
+    $connectChildren = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object { $_.CreationDate -ge $connectAt })
+    Check "connect starts no process" ($connectChildren.Count -eq 0) (@($connectChildren | ForEach-Object { $_.Name }) -join ", ")
 
     if ($expectInstalled) {
         SendCommand $window "doctor"
@@ -143,7 +192,8 @@ try {
 
     $box = ById $window "CommandBox"
     Check "command box has an accessible name" ($box.Current.Name -eq "Command") "name '$($box.Current.Name)'"
-    Check "controls are keyboard focusable" ($box.Current.IsKeyboardFocusable -and (ById $window "SendButton").Current.IsKeyboardFocusable) ""
+    Check "controls are keyboard focusable" ($box.Current.IsKeyboardFocusable -and (ById $window "SendButton").Current.IsKeyboardFocusable -and (ById $window "RefreshButton").Current.IsKeyboardFocusable -and (ById $window "StopControlButton").Current.IsKeyboardFocusable) ""
+    Check "the stop button has an accessible name" ((ById $window "StopControlButton").Current.Name -eq "Stop desktop control") "name '$((ById $window "StopControlButton").Current.Name)'"
 
     $process.Refresh()
     $workingSetMb = [math]::Round($process.WorkingSet64 / 1MB, 1)

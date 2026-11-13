@@ -1119,8 +1119,8 @@ fn sg126_the_normal_request_path_refuses_report_requests() {
 }
 
 // ---------------------------------------------------------------------------
-// F4 slice 5, kernel only (prep/F4_TASK_STOP.md). `stop` is compiled for tests
-// only: no surface reaches it until a decision on #446.
+// F4 slice 5 (prep/F4_TASK_STOP.md). The only surface is the local app API's
+// `task.stop` (founder decision of 2026-11-13, #446); see app_api/tests.rs.
 // ---------------------------------------------------------------------------
 
 /// Answers one prompt after running `during`, as if it happened while the

@@ -2,28 +2,64 @@ use orcel_contracts::RequestEnvelope;
 use orcel_platform::paths;
 pub use orcel_platform::PlatformError;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct AuditLogger {
     path: PathBuf,
+    /// Whether the next record first checks for a torn last line: set when the log was torn
+    /// when this logger was made, and after a failed write. The check reads the log, and a read
+    /// that overlaps another writer's append can see it half done, so it runs only when there
+    /// is reason to; checking every record would also add a read open per request.
+    check_tail: Arc<AtomicBool>,
 }
+
+/// The longest client-supplied field a record keeps, and the longest target. The client chooses
+/// these values, so without a bound one request could make one record, and the log, any size.
+pub const MAX_FIELD_CHARS: usize = 256;
+pub const MAX_TARGET_CHARS: usize = 1024;
+const TRUNCATED: &str = "…[truncated]";
 
 #[derive(Debug, Serialize)]
 struct AuditEvent<'a> {
     timestamp_ms: u128,
-    request_id: &'a str,
-    client_session_id: &'a str,
-    workspace_id: &'a str,
-    capability: &'a str,
-    operation: &'a str,
-    target: Option<&'a str>,
+    request_id: Cow<'a, str>,
+    client_session_id: Cow<'a, str>,
+    workspace_id: Cow<'a, str>,
+    capability: Cow<'a, str>,
+    operation: Cow<'a, str>,
+    target: Option<Cow<'a, str>>,
     policy_revision: &'a str,
     outcome: &'a str,
+}
+
+/// `value`, or its first `max` characters marked as cut.
+fn bounded(value: &str, max: usize) -> Cow<'_, str> {
+    match value.char_indices().nth(max) {
+        None => Cow::Borrowed(value),
+        Some((end, _)) => Cow::Owned(format!("{}{TRUNCATED}", &value[..end])),
+    }
+}
+
+/// Whether the log ends in the middle of a line, as a crash or a full disk during an earlier
+/// write can leave it. The next record then starts on a line of its own, so it isn't glued onto
+/// the broken one.
+fn ends_mid_line(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    if file.seek(SeekFrom::End(-1)).is_err() {
+        return false;
+    }
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last).is_ok() && last[0] != b'\n'
 }
 
 impl AuditLogger {
@@ -32,7 +68,12 @@ impl AuditLogger {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        Ok(Self { path })
+        // Made once at start, before this process writes anything.
+        let torn = ends_mid_line(&path);
+        Ok(Self {
+            path,
+            check_tail: Arc::new(AtomicBool::new(torn)),
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -52,23 +93,40 @@ impl AuditLogger {
 
         let event = AuditEvent {
             timestamp_ms,
-            request_id: &request.request_id,
-            client_session_id: &request.client_session_id,
-            workspace_id: &request.workspace_id,
-            capability: &request.capability,
-            operation: &request.operation,
-            target: request.target.as_deref(),
+            request_id: bounded(&request.request_id, MAX_FIELD_CHARS),
+            client_session_id: bounded(&request.client_session_id, MAX_FIELD_CHARS),
+            workspace_id: bounded(&request.workspace_id, MAX_FIELD_CHARS),
+            capability: bounded(&request.capability, MAX_FIELD_CHARS),
+            operation: bounded(&request.operation, MAX_FIELD_CHARS),
+            target: request
+                .target
+                .as_deref()
+                .map(|target| bounded(target, MAX_TARGET_CHARS)),
             policy_revision,
             outcome,
         };
 
-        let mut file = OpenOptions::new()
+        // One whole line in one write. Several orcelds (one per client session) append to the
+        // same log, and an append-mode write lands at the end in one piece; written in parts, as
+        // `to_writer` does, two records could interleave.
+        let mut line = if self.check_tail.swap(false, Ordering::AcqRel) && ends_mid_line(&self.path)
+        {
+            vec![b'\n']
+        } else {
+            Vec::new()
+        };
+        serde_json::to_writer(&mut line, &event)?;
+        line.push(b'\n');
+        let written = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.path)?;
-        serde_json::to_writer(&mut file, &event)?;
-        file.write_all(b"\n")?;
-        file.flush()
+            .open(&self.path)
+            .and_then(|mut file| file.write_all(&line).and_then(|()| file.flush()));
+        if written.is_err() {
+            // A failed write may have left part of the line.
+            self.check_tail.store(true, Ordering::Release);
+        }
+        written
     }
 }
 
@@ -89,7 +147,7 @@ pub fn default_audit_path_from(
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("audit.jsonl"))
+    Ok(orcel_platform::stores::AUDIT.path(&root))
 }
 
 #[cfg(test)]
@@ -133,6 +191,117 @@ mod tests {
         assert!(!text.contains("TOP-SECRET-VALUE"));
         assert!(text.contains("\"capability\":\"fs.search\""));
         let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    /// Writers appending at once, as several orcelds do, never interleave: every line is one
+    /// whole record.
+    #[test]
+    fn concurrent_records_stay_whole_lines() {
+        let base = sandbox("concurrent");
+        let path = base.join("audit.jsonl");
+        // Every logger is made before any writes, as each orceld makes its own at start.
+        let loggers: Vec<AuditLogger> = (0..8)
+            .map(|_| AuditLogger::new(&path).expect("audit"))
+            .collect();
+        let writers: Vec<_> = loggers
+            .into_iter()
+            .enumerate()
+            .map(|(writer, logger)| {
+                std::thread::spawn(move || {
+                    for index in 0..200 {
+                        let req = RequestEnvelope {
+                            version: 1,
+                            request_id: format!("w{writer}-{index}-{}", "x".repeat(300)),
+                            client_session_id: format!("session-{writer}"),
+                            workspace_id: "w".into(),
+                            capability: "fs.search".into(),
+                            operation: "search".into(),
+                            target: Some("some/longer/target/path".into()),
+                            arguments: json!({}),
+                        };
+                        logger.record(&req, "p1", "SUCCESS").expect("record");
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("writer");
+        }
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 8 * 200);
+        for line in lines {
+            let record: serde_json::Value = serde_json::from_str(line).expect("a whole record");
+            assert_eq!(record["outcome"], "SUCCESS");
+        }
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    fn request(request_id: String, target: Option<String>) -> RequestEnvelope {
+        RequestEnvelope {
+            version: 1,
+            request_id,
+            client_session_id: "s".into(),
+            workspace_id: "w".into(),
+            capability: "fs.search".into(),
+            operation: "search".into(),
+            target,
+            arguments: json!({}),
+        }
+    }
+
+    /// A client chooses its ids and target, so a record keeps at most a bounded part of each.
+    #[test]
+    fn client_fields_are_bounded() {
+        let base = sandbox("bounded");
+        let path = base.join("audit.jsonl");
+        let logger = AuditLogger::new(&path).expect("audit");
+        logger
+            .record(
+                &request("é".repeat(100_000), Some("t".repeat(100_000))),
+                "p1",
+                "DENIED",
+            )
+            .expect("record");
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        assert!(text.len() < 8 * 1024, "{} bytes", text.len());
+        let record: serde_json::Value = serde_json::from_str(text.trim()).expect("record");
+        let id = record["request_id"].as_str().unwrap();
+        assert_eq!(
+            id.chars().count(),
+            MAX_FIELD_CHARS + TRUNCATED.chars().count()
+        );
+        assert!(id.ends_with(TRUNCATED));
+        let target = record["target"].as_str().unwrap();
+        assert_eq!(
+            target.chars().count(),
+            MAX_TARGET_CHARS + TRUNCATED.chars().count()
+        );
+        assert_eq!(bounded("short", MAX_FIELD_CHARS), "short");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A log left mid-line by an earlier crash keeps its next record on a line of its own.
+    #[test]
+    fn a_record_never_joins_a_torn_last_line() {
+        let base = sandbox("torn");
+        let path = base.join("audit.jsonl");
+        std::fs::write(&path, "{\"timestamp_ms\":1,\"request_id\":\"torn").expect("torn log");
+        let logger = AuditLogger::new(&path).expect("audit");
+        logger
+            .record(&request("after".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        let record: serde_json::Value = serde_json::from_str(lines[1]).expect("whole record");
+        assert_eq!(record["request_id"], "after");
+        // A whole log gains no blank line.
+        logger
+            .record(&request("next".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     fn lookup(vars: Vec<(&'static str, OsString)>) -> impl Fn(&str) -> Option<OsString> {
@@ -217,7 +386,7 @@ mod tests {
     fn audit_log_is_written_under_the_private_state_root() {
         let base = sandbox("root");
         #[cfg(windows)]
-        let env = vec![("LOCALAPPDATA", base.clone().into_os_string())];
+        let env = vec![("USERPROFILE", base.clone().into_os_string())];
         #[cfg(not(windows))]
         let env = vec![("HOME", base.clone().into_os_string())];
         let lookup = lookup(env);
@@ -226,7 +395,7 @@ mod tests {
         assert_eq!(path, root.join("audit.jsonl"));
         assert!(path.starts_with(&base));
         #[cfg(windows)]
-        assert_eq!(path, base.join("Orcel").join("audit.jsonl"));
+        assert_eq!(path, base.join(".orcel").join("audit.jsonl"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

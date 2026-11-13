@@ -34,7 +34,7 @@ $start.EnvironmentVariables["ORCEL_WORKSPACE_ROOT"] = $workspace
 $start.EnvironmentVariables["ORCEL_WORKSPACE_ID"] = "default"
 $start.EnvironmentVariables["ORCEL_APP_API_INSTANCE"] = $instance
 $start.EnvironmentVariables["ORCEL_AUDIT_PATH"] = (Join-Path $state "audit\audit.jsonl")
-$start.EnvironmentVariables["LOCALAPPDATA"] = $state
+$start.EnvironmentVariables["USERPROFILE"] = $state
 # Only the variables set above reach orceld: every other ORCEL_* setting of
 # the caller is dropped.
 $keep = @("ORCEL_WORKSPACE_ROOT", "ORCEL_WORKSPACE_ID", "ORCEL_APP_API_INSTANCE", "ORCEL_AUDIT_PATH")

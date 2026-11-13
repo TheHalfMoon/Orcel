@@ -336,7 +336,7 @@ pub fn default_registry_path_from(
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
-    Ok(root.join("executable_registry.json"))
+    Ok(orcel_platform::stores::EXECUTABLE_REGISTRY.path(&root))
 }
 
 /// Load the registry. A missing, corrupt, tampered, or oversized registry
