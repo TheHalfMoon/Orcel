@@ -2447,6 +2447,126 @@ fn task_get_shows_another_sessions_task_without_its_session() {
     }
 }
 
+/// F4 slice 5 (`prep/F4_TASK_STOP.md` section 4): every `task.stop` attempt,
+/// accepted or refused, is audited with the task id it named, its outcome and
+/// the caller's pid, start generation and executable; a caller whose
+/// executable cannot be read is recorded as such. Reads are not audited.
+#[test]
+fn f4_every_task_stop_attempt_is_audited_with_its_caller() {
+    use crate::report_task::{tests as journey, TaskRegistry};
+
+    let scene = journey::Scene::new("app-api-stop-audit");
+    let audit_path = scene.dir.join("audit.jsonl");
+    let tasks = Arc::new(TaskRegistry::new());
+    let task = journey::start_q3(&scene, &tasks)["task_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let limits = test_limits();
+    let shared = Shared::new(
+        facts(),
+        Arc::new(EventLog::new(limits.ring_capacity, new_epoch())),
+        Arc::clone(&tasks),
+        None,
+        limits,
+        "test".into(),
+    )
+    .with_audit(Some(
+        orcel_audit::AuditLogger::new(&audit_path).expect("audit"),
+    ));
+    let peer = own_peer();
+    let attempts = [
+        (json!({ "task_id": task }), "SUCCESS", Some(task.as_str())),
+        (json!({ "task_id": task }), "SUCCESS", Some(task.as_str())),
+        (
+            json!({ "task_id": "rpt-0123456789abcdef0123456789abcdef" }),
+            "TARGET_STALE",
+            Some("rpt-0123456789abcdef0123456789abcdef"),
+        ),
+        (
+            json!({ "task_id": task, "approve": true }),
+            "INVALID_REQUEST",
+            Some(task.as_str()),
+        ),
+        (json!({}), "INVALID_REQUEST", None),
+    ];
+    for (params, _, _) in &attempts {
+        reply_frame(handle_frame(
+            &shared,
+            &peer,
+            &request("task.stop", params.clone()),
+        ));
+    }
+    for method in ["task.get", "task.list", "status.get"] {
+        reply_frame(handle_frame(
+            &shared,
+            &peer,
+            &request(method, json!({ "task_id": task })),
+        ));
+    }
+    let read = || -> Vec<Value> {
+        std::fs::read_to_string(&audit_path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    };
+    let records = read();
+    assert_eq!(records.len(), attempts.len(), "{records:?}");
+    let own_exe = std::env::current_exe().unwrap();
+    let own_name = own_exe
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_lowercase();
+    for (record, (_, outcome, target)) in records.iter().zip(&attempts) {
+        assert_eq!(record["capability"], "app_api", "{record}");
+        assert_eq!(record["operation"], "task.stop", "{record}");
+        assert_eq!(record["outcome"], *outcome, "{record}");
+        assert_eq!(record["target"], json!(target), "{record}");
+        assert_eq!(record["policy_revision"], "test-revision", "{record}");
+        let caller = &record["caller"];
+        assert_eq!(caller["pid"], std::process::id(), "{record}");
+        assert_eq!(
+            caller["start_generation"], peer.process.generation,
+            "{record}"
+        );
+        let executable = caller["executable"].as_str().expect("the executable");
+        assert!(
+            executable.to_lowercase().ends_with(&own_name),
+            "{executable} is {own_exe:?}"
+        );
+        assert!(caller.get("executable_unavailable").is_none(), "{record}");
+    }
+    assert_eq!(records[0]["workspace_id"], "default");
+
+    // A caller whose executable cannot be read (here, a pid that names no
+    // process) is still recorded, with why.
+    let gone = PeerInfo {
+        process: ProcessGeneration {
+            pid: 0x7FFF_FFF0,
+            generation: 1,
+            boot_id: None,
+            source: "test",
+        },
+        source: "test",
+    };
+    reply_frame(handle_frame(
+        &shared,
+        &gone,
+        &request("task.stop", json!({ "task_id": task })),
+    ));
+    let records = read();
+    assert_eq!(records.len(), attempts.len() + 1);
+    let last = &records[attempts.len()]["caller"];
+    assert_eq!(last["pid"], 0x7FFF_FFF0_u32);
+    assert!(last.get("executable").is_none(), "{last}");
+    assert!(
+        !last["executable_unavailable"].as_str().unwrap().is_empty(),
+        "{last}"
+    );
+}
+
 /// F4 slice 5: the endpoint holder shows another running session's task,
 /// and `task.stop` refuses it exactly as an unknown id (`TARGET_STALE`); the
 /// task keeps its state in its own session.
@@ -2599,12 +2719,20 @@ fn f4_task_stop_during_a_pending_approval_leaves_nothing_to_approve_after_a_rest
         .unwrap()
         .clone()
         .expect("the approval was consumed once");
+    let reused = broker
+        .inner
+        .consume(&token, &expected, orcel_approval::now_ms())
+        .expect_err("the spent approval cannot be used again");
+    assert_eq!(
+        reused.code,
+        FailureCode::ApprovalDenied,
+        "{}",
+        reused.message
+    );
     assert!(
-        broker
-            .inner
-            .consume(&token, &expected, orcel_approval::now_ms())
-            .is_err(),
-        "the spent approval cannot be used again"
+        reused.message.contains("already consumed"),
+        "{}",
+        reused.message
     );
     let got = reply_frame(handle_frame(
         &shared,
@@ -2651,6 +2779,13 @@ fn f4_task_stop_during_a_pending_approval_leaves_nothing_to_approve_after_a_rest
         );
     }
     assert!(!lines.iter().any(|line| line["event"] == "dispatched"));
+    // The newest snapshot of the task is the stopped one.
+    let newest = lines
+        .iter()
+        .rev()
+        .find(|line| line["event"] == "task" && line["task"]["id"] == task.as_str())
+        .expect("the task is journaled");
+    assert_eq!(newest["task"]["state"], "stopped", "{newest}");
 
     let restarted = Arc::new(TaskRegistry::with_journal(path.clone()));
     let limits = test_limits();
@@ -2669,6 +2804,21 @@ fn f4_task_stop_during_a_pending_approval_leaves_nothing_to_approve_after_a_rest
     ));
     assert_eq!(got["result"]["state"], "stopped", "{got}");
     assert_eq!(got["result"]["owner"], "earlier_run", "{got}");
+    // Restored from the journal as stopped, with the stop's own step: an open
+    // task of an exited run would be shown failed instead.
+    let steps = got["result"]["steps"].as_array().unwrap();
+    assert!(
+        steps
+            .iter()
+            .any(|step| step["kind"] == "stop" && step["outcome"] == "stopped"),
+        "{got}"
+    );
+    assert!(
+        !steps
+            .iter()
+            .any(|step| step["outcome"] == "orceld_run_ended"),
+        "{got}"
+    );
     let again = reply_frame(handle_frame(
         &shared,
         &peer,
@@ -2698,11 +2848,19 @@ fn f4_task_stop_during_a_pending_approval_leaves_nothing_to_approve_after_a_rest
         0,
         "no prompt after the restart"
     );
+    let reused = never
+        .consume(&token, &expected, orcel_approval::now_ms())
+        .expect_err("the spent approval stays spent after a restart");
+    assert_eq!(
+        reused.code,
+        FailureCode::ApprovalDenied,
+        "{}",
+        reused.message
+    );
     assert!(
-        never
-            .consume(&token, &expected, orcel_approval::now_ms())
-            .is_err(),
-        "the spent approval stays spent after a restart"
+        reused.message.contains("already consumed"),
+        "{}",
+        reused.message
     );
     assert_eq!(scene.tree(), before, "nothing was written");
 }

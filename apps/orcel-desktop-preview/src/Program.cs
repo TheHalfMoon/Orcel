@@ -708,7 +708,7 @@ namespace Orcel.DesktopPreview
         {
             string state = Field(task, "state");
             if (state == "stopped")
-                return "Stopped task " + Shown(id) + ". Control is back with you: no agent input is pending, and this added no authority.";
+                return "Stopped task " + Shown(id) + ". Control is back with you: no agent input is pending, and this added no authority. If its approval window is still open, you can close it; answering it does nothing.";
             if (state == null) return "Could not confirm task " + Shown(id) + " stopped: its state could not be read.";
             return "Task " + Shown(id) + " was not stopped. It is: " + Describe(state) + ".";
         }
@@ -2490,7 +2490,8 @@ namespace Orcel.DesktopPreview
             stopped["state"] = "stopped";
             Dictionary<string, object> proposed = new Dictionary<string, object>();
             proposed["state"] = "proposed";
-            expect(Timeline.StopResult("rpt-a", stopped).Contains("Control is back with you"), "control returned only once stopped");
+            expect(Timeline.StopResult("rpt-a", stopped).Contains("Control is back with you") && Timeline.StopResult("rpt-a", stopped).Contains("approval window is still open, you can close it; answering it does nothing"), "control returned only once stopped, and an open approval window is explained");
+            expect(!Timeline.StopResult("rpt-a", proposed).Contains("approval window"), "the approval window note comes only with a stop");
             expect(!Timeline.StopResult("rpt-a", proposed).Contains("Control is back"), "an unstopped task never claims control returned");
             expect(!Timeline.StopResult("rpt-a", null).Contains("Control is back"), "an unread state never claims control returned");
             Dictionary<string, object> open = new Dictionary<string, object>();

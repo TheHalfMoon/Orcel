@@ -122,7 +122,7 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | F4 slice 5 stop and takeover | (1) signing, (2) governed amendment for an authority-reducing task-scoped stop, (3) record as an open F4 gate — see #446 |
 | F4 slice 7: live browser in release builds | Its own governed change and security review |
 | FD-03 (gates CR-03), FD-05, FD-08 | As recorded in the frontier |
-| Activation of SG-000115 (XP-14 launch, network sink, supervision on macOS/Linux) and the other prepared grains | Activation grants authority; only the founder activates |
+| Activation of SG-000115 (XP-14 launch, network sink, supervision on macOS/Linux) and the other prepared grains | Activation grants authority; only the founder activates. Gate (F4 slice 5, #640): before SG-000115 is activated, the Unix browser engine (on Linux it runs in new user and PID namespaces but no new mount namespace, `orcel-browser-host/src/unix_supervise.rs`) must be shown unable to reach orceld's app API socket (`$XDG_RUNTIME_DIR/orcel/app-api.sock`, or the macOS per-user temp directory's), or `task.stop`'s exception to the first-party code rule (`ORCEL_APP_API_1.md` section 2, founder decision of 2026-11-13, #446) is judged again. The exception rests on no confined process being able to reach the endpoint yet not signal orceld |
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |

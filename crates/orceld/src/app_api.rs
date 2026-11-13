@@ -347,6 +347,9 @@ struct Shared {
     /// The live client session records, read for `clients.list`; `None` when this user has no
     /// private folder for them.
     sessions: Option<crate::live_sessions::Registry>,
+    /// orceld's audit log, where every `task.stop` attempt is recorded with its caller (F4
+    /// slice 5); `None` only in tests that do not read it.
+    audit: Option<orcel_audit::AuditLogger>,
     limits: Limits,
     started: Instant,
     started_at_ms: u64,
@@ -380,6 +383,7 @@ impl Shared {
             tasks,
             history,
             sessions: None,
+            audit: None,
             limits,
             started: Instant::now(),
             started_at_ms: now_ms(),
@@ -391,6 +395,11 @@ impl Shared {
 
     fn with_sessions(mut self, sessions: Option<crate::live_sessions::Registry>) -> Self {
         self.sessions = sessions;
+        self
+    }
+
+    fn with_audit(mut self, audit: Option<orcel_audit::AuditLogger>) -> Self {
+        self.audit = audit;
         self
     }
 
@@ -748,7 +757,7 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
             None => Reply::Frame(ok_frame(&id, shared.tasks.list())),
         },
         "task.get" => Reply::Frame(task_get(shared, &id, &params)),
-        "task.stop" => Reply::Frame(task_stop(shared, &id, &params)),
+        "task.stop" => Reply::Frame(task_stop(shared, peer, &id, &params)),
         "approval.history" => Reply::Frame(approval_history(shared, &id, &params)),
         "clients.list" => Reply::Frame(match params.keys().next() {
             Some(key) => error_frame(
@@ -900,7 +909,134 @@ fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>
 }
 
 /// F4 slice 5: ends one task of this run. It never approves, writes or resumes.
-fn task_stop(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
+/// Every attempt, accepted or refused, is audited with its caller
+/// (`prep/F4_TASK_STOP.md` section 4).
+fn task_stop(
+    shared: &Shared,
+    peer: &PeerInfo,
+    id: &Value,
+    params: &serde_json::Map<String, Value>,
+) -> Value {
+    let frame = task_stop_frame(shared, id, params);
+    audit_stop(shared, peer, id, params, &frame);
+    frame
+}
+
+/// Records one `task.stop` attempt in orceld's audit log: the task id it
+/// named, the outcome (`SUCCESS` or the refusal code), and the caller as the
+/// kernel identified the peer. A failed write goes to stderr and never
+/// changes the answer: the stop only takes authority away, so it is not
+/// withheld for want of a record.
+fn audit_stop(
+    shared: &Shared,
+    peer: &PeerInfo,
+    id: &Value,
+    params: &serde_json::Map<String, Value>,
+    frame: &Value,
+) {
+    let Some(audit) = &shared.audit else {
+        return;
+    };
+    let task_id = params
+        .get("task_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let workspace_id = task_id
+        .as_deref()
+        .and_then(|task| shared.tasks.get(task))
+        .and_then(|task| task["workspace_id"].as_str().map(str::to_owned))
+        .unwrap_or_default();
+    let outcome = if frame["ok"] == true {
+        "SUCCESS".to_owned()
+    } else {
+        frame["error"]["code"]
+            .as_str()
+            .unwrap_or("INTERNAL")
+            .to_owned()
+    };
+    let request = orcel_contracts::RequestEnvelope {
+        version: 1,
+        request_id: match id {
+            Value::String(text) => text.clone(),
+            Value::Null => String::new(),
+            other => other.to_string(),
+        },
+        client_session_id: "app_api".into(),
+        workspace_id,
+        capability: "app_api".into(),
+        operation: "task.stop".into(),
+        target: task_id,
+        arguments: Value::Null,
+    };
+    let caller = orcel_audit::AuditCaller {
+        pid: peer.process.pid,
+        start_generation: peer.process.generation,
+        generation_source: peer.process.source.to_owned(),
+        executable: peer_executable(&peer.process),
+    };
+    if let Err(failure) =
+        audit.record_with_caller(&request, &shared.facts.policy_revision, &outcome, &caller)
+    {
+        eprintln!("orceld app api: task.stop audit write failed: {failure}");
+    }
+}
+
+/// The executable of the admitted peer, read now and kept only if the pid
+/// still names the same process instance afterwards; otherwise why not.
+fn peer_executable(process: &ProcessGeneration) -> Result<String, String> {
+    let path = executable_of(process.pid)?;
+    match process::start_generation(process.pid) {
+        Ok(now) if now.generation == process.generation && now.boot_id == process.boot_id => {
+            Ok(path)
+        }
+        Ok(_) => Err("the pid now names another process".into()),
+        Err(failure) => Err(failure.to_string()),
+    }
+}
+
+#[cfg(windows)]
+fn executable_of(pid: u32) -> Result<String, String> {
+    process::image_path_and_generation(pid)
+        .map(|(path, _)| path)
+        .map_err(|failure| failure.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn executable_of(pid: u32) -> Result<String, String> {
+    std::fs::read_link(format!("/proc/{pid}/exe"))
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|failure| format!("/proc/{pid}/exe: {failure}"))
+}
+
+#[cfg(target_os = "macos")]
+fn executable_of(pid: u32) -> Result<String, String> {
+    let raw_pid = libc::c_int::try_from(pid).map_err(|_| format!("pid {pid} is out of range"))?;
+    let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: `buffer` is a live, writable allocation of exactly the size
+    // passed; proc_pidpath writes at most that many bytes into it.
+    let written = unsafe {
+        libc::proc_pidpath(
+            raw_pid,
+            buffer.as_mut_ptr().cast(),
+            u32::try_from(buffer.len()).unwrap_or(0),
+        )
+    };
+    if written <= 0 {
+        return Err(format!(
+            "proc_pidpath({pid}): {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    buffer.truncate(usize::try_from(written).unwrap_or(0));
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn executable_of(_pid: u32) -> Result<String, String> {
+    Err("not read on this OS".into())
+}
+
+fn task_stop_frame(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
     if let Some(key) = params.keys().find(|key| key.as_str() != "task_id") {
         return error_frame(
             id,
@@ -1347,6 +1483,7 @@ pub(crate) fn start(
     tasks: Arc<TaskRegistry>,
     history: Option<Arc<orcel_approval::ApprovalHistoryReader>>,
     sessions: Option<crate::live_sessions::Registry>,
+    audit: orcel_audit::AuditLogger,
 ) -> AppApi {
     if std::env::var_os("ORCEL_APP_API").is_some_and(|value| value == "off") {
         eprintln!("orceld app api: disabled by ORCEL_APP_API=off");
@@ -1382,8 +1519,11 @@ pub(crate) fn start(
         }
     };
     tasks.attach_events(Arc::clone(&log));
-    let shared =
-        Arc::new(Shared::new(facts, log, tasks, history, limits, label).with_sessions(sessions));
+    let shared = Arc::new(
+        Shared::new(facts, log, tasks, history, limits, label)
+            .with_sessions(sessions)
+            .with_audit(Some(audit)),
+    );
     #[cfg(unix)]
     let bound = Arc::clone(&api.bound);
     let spawned = std::thread::Builder::new()
