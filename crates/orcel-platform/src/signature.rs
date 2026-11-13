@@ -35,8 +35,11 @@
 //! Every failure is [`RunningImage::Unconfirmed`], never `Same`: another user's, an elevated
 //! or a protected process (which deny that access), an exited process or reused pid, a
 //! failed query, a zero or all-ones volume serial or file id, volume device names that differ
-//! or cannot be read. A file system without `FILE_ID_INFO` falls back to the 32-bit serial and
-//! 64-bit index, which can show [`RunningImage::Different`] but never `Same`.
+//! or cannot be read, volume serial numbers that differ (one device such as `\Device\Mup`
+//! holds many volumes, and a DFS failover moves a path to a replica). Only another file id on
+//! the same device and serial is [`RunningImage::Different`], which an update that replaced
+//! the file after launch also produces. A file system without `FILE_ID_INFO` falls back to the
+//! 32-bit serial and 64-bit index, which can show `Different` but never `Same`.
 
 use std::path::Path;
 
@@ -84,11 +87,12 @@ pub enum RunningImage {
     /// loader data and image path can produce it falsely.
     Same,
     /// The checked file has another file id than the file the process's image appears to be
-    /// mapped from, on the same volume.
+    /// mapped from, on the same volume device and volume serial number. An update that
+    /// replaced the file after launch reads this way too.
     Different,
     /// Not established: another system, an unreadable file, a process that denies the
     /// access the comparison needs, an exited process or reused pid, a failed query, an
-    /// unusable file id, or volumes that do not match.
+    /// unusable file id, or volume device names or serial numbers that do not match.
     Unconfirmed,
 }
 
@@ -150,8 +154,8 @@ fn same_name(left: &[u16], right: &[u16]) -> bool {
 }
 
 /// Orcel's comparison, from what was read. Only matching full ids, on one volume device, of
-/// a file the kernel names the same way as the mapping, read `Same`; a mismatch of usable
-/// ids on one device reads `Different`; everything else is `Unconfirmed`.
+/// a file the kernel names the same way as the mapping, read `Same`; another usable id on the
+/// same device and volume serial reads `Different`; everything else is `Unconfirmed`.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn compare_identity(
     checked: Option<FileIdentity>,
@@ -169,9 +173,13 @@ fn compare_identity(
         (Some(left), Some(right)) if same_name(left, right) => {}
         _ => return RunningImage::Unconfirmed,
     }
-    if (checked.volume_serial, checked.file_id)
-        != (image.identity.volume_serial, image.identity.file_id)
-    {
+    // One device name can hold many volumes (`\Device\Mup` holds every network share, and a
+    // DFS failover moves a path to a replica), so only another id on the same volume serial
+    // is a different file; another serial is not known to be one.
+    if checked.volume_serial != image.identity.volume_serial {
+        return RunningImage::Unconfirmed;
+    }
+    if checked.file_id != image.identity.file_id {
         return RunningImage::Different;
     }
     if checked.full && same_name(&image.mapped_name, &image.kernel_name) {
@@ -1002,6 +1010,42 @@ mod tests {
         // One full id and one fallback id are not compared.
         assert_eq!(
             compared(id, IMAGE, &facts(fallback, IMAGE, IMAGE)),
+            RunningImage::Unconfirmed
+        );
+    }
+
+    /// `\Device\Mup` holds every network share, so the same device name with another volume
+    /// serial (a DFS failover to a replica, say) is not known to be another file: no warning.
+    /// Another id on the same serial is.
+    #[test]
+    fn identity_compare_reads_different_only_on_the_same_volume_serial() {
+        let share = r"\Device\Mup\server\share\App.exe";
+        let replica = r"\Device\Mup\replica\share\App.exe";
+        let running = full(0x1234, 0xabcd);
+        let image = facts(running, share, share);
+        assert_eq!(
+            compared(full(0x5678, 0xabce), replica, &image),
+            RunningImage::Unconfirmed
+        );
+        assert_eq!(
+            compared(full(0x5678, 0xabcd), share, &image),
+            RunningImage::Unconfirmed
+        );
+        assert_eq!(
+            compared(full(0x1234, 0xabce), replica, &image),
+            RunningImage::Different
+        );
+        let fallback = |volume_serial: u64, file_id: u128| FileIdentity {
+            volume_serial,
+            file_id,
+            full: false,
+        };
+        assert_eq!(
+            compared(
+                fallback(0x5678, 0xabce),
+                share,
+                &facts(fallback(0x1234, 0xabcd), share, share)
+            ),
             RunningImage::Unconfirmed
         );
     }

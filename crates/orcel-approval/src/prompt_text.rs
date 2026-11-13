@@ -245,8 +245,8 @@ fn application_lines(application: Option<&TargetApplication>) -> String {
 /// The signature line, then Orcel's own comparison of that file with the running program on a
 /// line of its own: display only. The signature describes whatever file was at the image's
 /// path when a prompt first named that process instance, and Windows checked it, so the line
-/// names the path. The comparison is Orcel's and one-sided: a different file is a warning,
-/// while a match is worded as a hedged finding, since the process's loader data can mislead
+/// names the path. The comparison is Orcel's and one-sided: a different file is a warning
+/// that also gives the innocent cause (an update replaced the file), while a match is worded as a hedged finding, since the process's loader data can mislead
 /// it and nothing reads the code now running. A file that was not checked shows only the
 /// warning. A certificate subject is text its holder chose, so it is escaped and cut like any
 /// field.
@@ -265,7 +265,8 @@ fn signature_line(signature: &SignatureState, running_image: RunningImage) -> St
     };
     let comparison = match (signature, running_image) {
         (_, RunningImage::Different) => {
-            "Warning: this program was not started from the file at this path (Orcel's check)"
+            "Warning: this program was not started from the file at this path (Orcel's check). \
+             This can happen after an update; if you didn't expect one, don't approve."
         }
         (SignatureState::Unknown, _) => return line,
         (_, RunningImage::Same) => {
@@ -681,8 +682,9 @@ mod tests {
 
     const SAME: &str = "Orcel's check: the program appears to have been started from this \
                         same file; Orcel can't check the code now running";
-    const DIFFERENT: &str =
-        "Warning: this program was not started from the file at this path (Orcel's check)";
+    const DIFFERENT: &str = "Warning: this program was not started from the file at this path \
+                             (Orcel's check). This can happen after an update; if you didn't \
+                             expect one, don't approve.";
     const UNCONFIRMED: &str =
         "Orcel's check: could not confirm the program was started from this file";
 
