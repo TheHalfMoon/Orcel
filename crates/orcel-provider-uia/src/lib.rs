@@ -905,11 +905,13 @@ pub struct WindowApplication {
 const MAX_CACHED_SIGNATURES: usize = 512;
 
 impl WindowApplication {
-    /// The signature of the file at the process's image path, and whether that file is the
-    /// one the process runs. For a native process this may hash and verify the file, and
-    /// query the process, the first time it is asked per (image, pid, start generation), so
-    /// callers ask without holding the registry lock. A state the adapter already knew was
-    /// compared with no process. Display only.
+    /// The signature of the file at the process's image path, and Orcel's comparison of that
+    /// file with the file the process's image appears to be mapped from. For a native process
+    /// this may hash and verify the file, and query the process, the first time it is asked
+    /// per (image, pid, start generation), so callers ask without holding the registry lock.
+    /// The answer is then cached for that process instance: a file swapped at the path later
+    /// is not seen. A state the adapter already knew was compared with no process. Display
+    /// only.
     pub fn signature(&self) -> ImageSignature {
         let path = match &self.signature {
             ProcessSignature::Known(state) => return ImageSignature::unconfirmed(state.clone()),

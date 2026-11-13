@@ -242,31 +242,41 @@ fn application_lines(application: Option<&TargetApplication>) -> String {
     }
 }
 
-/// The signature line: display only. It describes whatever file was at the image's path when
-/// a prompt first named that process instance, so it names the path, and then says whether
-/// that file was found to be the one the process runs, since a rename and replace can leave
-/// another file there. A certificate subject is text its holder chose, so it is escaped and
-/// cut like any field.
+/// The signature line, then Orcel's own comparison of that file with the running program on a
+/// line of its own: display only. The signature describes whatever file was at the image's
+/// path when a prompt first named that process instance, and Windows checked it, so the line
+/// names the path. The comparison is Orcel's and one-sided: a different file is a warning,
+/// while a match is worded as a hedged finding, since the process's loader data can mislead
+/// it and nothing reads the code now running. A file that was not checked shows only the
+/// warning. A certificate subject is text its holder chose, so it is escaped and cut like any
+/// field.
 fn signature_line(signature: &SignatureState, running_image: RunningImage) -> String {
-    let image = match running_image {
-        RunningImage::Same => "it is the running program's file",
-        RunningImage::Different => "it is not the running program's file",
-        RunningImage::Unconfirmed => "not confirmed as the running program's file",
-    };
-    match signature {
+    let line = match signature {
         SignatureState::Verified { subject } if subject.is_empty() => {
-            format!("File at this path signed by: (no name) (checked by Windows; {image})")
+            String::from("File at this path signed by: (no name) (checked by Windows)")
         }
         SignatureState::Verified { subject } => format!(
-            "File at this path signed by: {} (checked by Windows; {image})",
+            "File at this path signed by: {} (checked by Windows)",
             display_field(subject, MAX_SIGNER_CHARS)
         ),
-        SignatureState::Unsigned => format!("File at this path not signed ({image})"),
-        SignatureState::Untrusted => {
-            format!("File at this path: signature not trusted ({image})")
-        }
+        SignatureState::Unsigned => String::from("File at this path not signed"),
+        SignatureState::Untrusted => String::from("File at this path: signature not trusted"),
         SignatureState::Unknown => String::from("Signature: not checked"),
-    }
+    };
+    let comparison = match (signature, running_image) {
+        (_, RunningImage::Different) => {
+            "Warning: this program was not started from the file at this path (Orcel's check)"
+        }
+        (SignatureState::Unknown, _) => return line,
+        (_, RunningImage::Same) => {
+            "Orcel's check: the program appears to have been started from this same file; \
+             Orcel can't check the code now running"
+        }
+        (_, RunningImage::Unconfirmed) => {
+            "Orcel's check: could not confirm the program was started from this file"
+        }
+    };
+    format!("{line}\n{comparison}")
 }
 
 /// The preview lines, with a leading newline, or nothing. Every content line starts with its
@@ -644,23 +654,24 @@ mod tests {
             .for_application(application.clone());
         let body = dialog_body(&prompt);
         assert!(
-            body.contains(
+            body.contains(&format!(
                 "\nTarget: w-1\nApplication: notepad.exe\n\
-                 File at this path signed by: Microsoft Windows \
-                 (checked by Windows; it is the running program's file)\n\
+                 File at this path signed by: Microsoft Windows (checked by Windows)\n\
+                 {SAME}\n\
                  Window title (set by the application): \
-                 Bank login\\u{a}Digest: forged\\u{202e}\nsummary\n"
-            ),
+                 Bank login\\u{{a}}Digest: forged\\u{{202e}}\nsummary\n"
+            )),
             "{body}"
         );
         // The STRONG summary carries the same lines, copied through the presence context.
         let ctx = crate::PresenceContext::new("nonce", "d", "default", "type")
             .with_details("w-1", "summary")
             .with_application(Some(application));
-        assert!(strong_body(&ctx).contains(
-            "\nApplication: notepad.exe\nFile at this path signed by: Microsoft Windows \
-             (checked by Windows; it is the running program's file)\nWindow title"
-        ));
+        assert!(strong_body(&ctx).contains(&format!(
+            "\nApplication: notepad.exe\n\
+             File at this path signed by: Microsoft Windows (checked by Windows)\n\
+             {SAME}\nWindow title"
+        )));
         // No application, no lines.
         let plain = dialog_body(&crate::ApprovalPrompt::new(
             "default", "rev", "write", "a.txt", "summary", "d",
@@ -668,11 +679,24 @@ mod tests {
         assert!(!plain.contains("Application:"), "{plain}");
     }
 
+    const SAME: &str = "Orcel's check: the program appears to have been started from this \
+                        same file; Orcel can't check the code now running";
+    const DIFFERENT: &str =
+        "Warning: this program was not started from the file at this path (Orcel's check)";
+    const UNCONFIRMED: &str =
+        "Orcel's check: could not confirm the program was started from this file";
+
+    /// The signature line alone, whatever Orcel's comparison says after it.
     fn signature_line_of(signature: SignatureState) -> String {
-        signature_and_image_line_of(signature, RunningImage::Unconfirmed)
+        signature_and_image_lines_of(signature, RunningImage::Unconfirmed)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned()
     }
 
-    fn signature_and_image_line_of(
+    /// Every line between the application and the window title.
+    fn signature_and_image_lines_of(
         signature: SignatureState,
         running_image: RunningImage,
     ) -> String {
@@ -684,19 +708,20 @@ mod tests {
                 running_image,
             });
         let body = dialog_body(&prompt);
-        let line = body
+        let lines = body
             .lines()
             .skip_while(|line| !line.starts_with("Application: "))
-            .nth(1)
-            .unwrap_or_default()
-            .to_owned();
+            .skip(1)
+            .take_while(|line| !line.starts_with("Window title (set by the application): "))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             body.contains(&format!(
-                "\nApplication: app.exe\n{line}\nWindow title (set by the application): Title\n"
+                "\nApplication: app.exe\n{lines}\nWindow title (set by the application): Title\n"
             )),
             "{body}"
         );
-        line
+        lines
     }
 
     #[test]
@@ -705,24 +730,21 @@ mod tests {
             signature_line_of(SignatureState::Verified {
                 subject: "Contoso Ltd".into()
             }),
-            "File at this path signed by: Contoso Ltd \
-             (checked by Windows; not confirmed as the running program's file)"
+            "File at this path signed by: Contoso Ltd (checked by Windows)"
         );
         assert_eq!(
             signature_line_of(SignatureState::Verified {
                 subject: String::new()
             }),
-            "File at this path signed by: (no name) \
-             (checked by Windows; not confirmed as the running program's file)"
+            "File at this path signed by: (no name) (checked by Windows)"
         );
         assert_eq!(
             signature_line_of(SignatureState::Unsigned),
-            "File at this path not signed (not confirmed as the running program's file)"
+            "File at this path not signed"
         );
         assert_eq!(
             signature_line_of(SignatureState::Untrusted),
-            "File at this path: signature not trusted \
-             (not confirmed as the running program's file)"
+            "File at this path: signature not trusted"
         );
         assert_eq!(
             signature_line_of(SignatureState::Unknown),
@@ -730,42 +752,49 @@ mod tests {
         );
     }
 
-    /// The comparison with the running image is worded for each answer, after any signature
-    /// state that read a file; a file that was not checked says nothing more.
+    /// Windows checks the signature; Orcel's comparison with the running program follows on
+    /// its own line, attributed to Orcel. A different file is a warning, a match is hedged and
+    /// never an assurance, and a file that was not checked shows only the warning.
     #[test]
-    fn a_desktop_prompt_says_whether_the_file_is_the_running_program() {
-        let verified = || SignatureState::Verified {
-            subject: "Contoso Ltd".into(),
-        };
+    fn a_desktop_prompt_attributes_the_running_program_comparison_to_orcel() {
+        let states = [
+            (
+                SignatureState::Verified {
+                    subject: "Contoso Ltd".into(),
+                },
+                "File at this path signed by: Contoso Ltd (checked by Windows)",
+            ),
+            (SignatureState::Unsigned, "File at this path not signed"),
+            (
+                SignatureState::Untrusted,
+                "File at this path: signature not trusted",
+            ),
+        ];
+        for (state, line) in states {
+            for (image, comparison) in [
+                (RunningImage::Same, SAME),
+                (RunningImage::Different, DIFFERENT),
+                (RunningImage::Unconfirmed, UNCONFIRMED),
+            ] {
+                let shown = signature_and_image_lines_of(state.clone(), image);
+                assert_eq!(
+                    shown,
+                    format!("{line}\n{comparison}"),
+                    "{state:?} {image:?}"
+                );
+                // Orcel's comparison is never folded under "checked by Windows".
+                let second = shown.lines().nth(1).unwrap_or_default();
+                assert!(!second.contains("Windows"), "{second}");
+                assert!(!shown.contains("is the running program"), "{shown}");
+            }
+        }
         assert_eq!(
-            signature_and_image_line_of(verified(), RunningImage::Same),
-            "File at this path signed by: Contoso Ltd \
-             (checked by Windows; it is the running program's file)"
+            signature_and_image_lines_of(SignatureState::Unknown, RunningImage::Different),
+            format!("Signature: not checked\n{DIFFERENT}")
         );
-        assert_eq!(
-            signature_and_image_line_of(verified(), RunningImage::Different),
-            "File at this path signed by: Contoso Ltd \
-             (checked by Windows; it is not the running program's file)"
-        );
-        assert_eq!(
-            signature_and_image_line_of(SignatureState::Unsigned, RunningImage::Same),
-            "File at this path not signed (it is the running program's file)"
-        );
-        assert_eq!(
-            signature_and_image_line_of(SignatureState::Unsigned, RunningImage::Different),
-            "File at this path not signed (it is not the running program's file)"
-        );
-        assert_eq!(
-            signature_and_image_line_of(SignatureState::Untrusted, RunningImage::Different),
-            "File at this path: signature not trusted (it is not the running program's file)"
-        );
-        for image in [
-            RunningImage::Same,
-            RunningImage::Different,
-            RunningImage::Unconfirmed,
-        ] {
+        for image in [RunningImage::Same, RunningImage::Unconfirmed] {
             assert_eq!(
-                signature_and_image_line_of(SignatureState::Unknown, image),
+                signature_and_image_lines_of(SignatureState::Unknown, image),
                 "Signature: not checked"
             );
         }
@@ -783,12 +812,7 @@ mod tests {
             ),
             "{line}"
         );
-        assert!(
-            line.ends_with(
-                "not shown] (checked by Windows; not confirmed as the running program's file)"
-            ),
-            "{line}"
-        );
+        assert!(line.ends_with("not shown] (checked by Windows)"), "{line}");
         assert!(!line.contains('\u{202e}') && !line.contains('\n') && !line.contains('\r'));
         let shown = line
             .trim_start_matches("File at this path signed by: ")
@@ -806,7 +830,10 @@ mod tests {
                 running_image: RunningImage::Unconfirmed,
             }));
         let strong = strong_body(&ctx);
-        assert!(strong.contains(&format!("\n{line}\n")), "{strong}");
+        assert!(
+            strong.contains(&format!("\n{line}\n{UNCONFIRMED}\n")),
+            "{strong}"
+        );
         assert!(!strong.lines().any(|line| line == "Digest: forged"));
     }
 

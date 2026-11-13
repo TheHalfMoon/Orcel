@@ -7,18 +7,36 @@
 //! [`SignatureState::Unknown`].
 //!
 //! The signature describes a file on disk, not the code in memory. [`image_signature_for`]
-//! also says whether the file it checked is the file a running process's image is mapped
-//! from ([`RunningImage`]): a file renamed away and replaced after launch leaves another
-//! file at the path. On Windows it opens the process (`PROCESS_QUERY_INFORMATION` and
-//! `PROCESS_VM_READ`), confirms its creation time is the recorded start generation, takes the
-//! first module `K32EnumProcessModules` lists (the executable), asks `K32GetMappedFileNameW`
-//! for the current name of the file mapped at that base, opens that name, asks again and
-//! requires the same name, then compares the volume serial number and file id
-//! (`FILE_ID_INFO`) of that file and of the checked handle. Where any step fails (another
-//! user's or an elevated process, which deny that access; an exited process; a reused pid;
-//! a file system without file ids) the answer is [`RunningImage::Unconfirmed`], never a
-//! match. The two name queries narrow, but cannot close, the window in which the image could
-//! be renamed away and back while another file holds its name.
+//! also compares the file it checked with the file the process's image appears to be mapped
+//! from ([`RunningImage`]), mainly to warn when a file renamed away and replaced after launch
+//! leaves another file at the path. That comparison is Orcel's, not Windows's. On Windows it
+//! opens the process (`PROCESS_QUERY_INFORMATION` and `PROCESS_VM_READ`), confirms its
+//! creation time is the recorded start generation, takes the first module
+//! `K32EnumProcessModules` lists, asks `K32GetMappedFileNameW` (which answers from the
+//! kernel's view of the mapping) for the current name of the file mapped at that base, opens
+//! that name, asks again and requires the same name, then compares the volume serial number
+//! and file id of that file and of the checked handle, and their volume device names.
+//!
+//! What it cannot show, and so why [`RunningImage::Same`] is worded as a hedged finding and
+//! never as an assurance:
+//! - The module list comes from the target process's own loader data (its PEB), which a
+//!   process can rewrite to point at another mapped image. As a cross-check, `Same` also
+//!   requires the mapped name to equal the image name the kernel reports for the process
+//!   (`QueryFullProcessImageNameW`, `PROCESS_NAME_NATIVE`, the name the process was started
+//!   under, which a later rename does not change; so a renamed image reads `Unconfirmed`). A
+//!   process that controls both its loader data and the files at its own image path can
+//!   still defeat it.
+//! - The same file id does not mean the same contents: a file can be written through a handle
+//!   opened before the image was mapped ("process herpaderping"), and code can be injected or
+//!   changed in memory after launch. Nothing here reads the code that is running.
+//! - The two name queries narrow, but cannot close, the window in which the image could be
+//!   renamed away and back while another file holds its name.
+//!
+//! Every failure is [`RunningImage::Unconfirmed`], never `Same`: another user's, an elevated
+//! or a protected process (which deny that access), an exited process or reused pid, a
+//! failed query, a zero or all-ones volume serial or file id, volume device names that differ
+//! or cannot be read. A file system without `FILE_ID_INFO` falls back to the 32-bit serial and
+//! 64-bit index, which can show [`RunningImage::Different`] but never `Same`.
 
 use std::path::Path;
 
@@ -55,17 +73,112 @@ pub fn image_signature(path: &Path) -> SignatureState {
     }
 }
 
-/// Whether the file a signature check read is the file a running process's image is mapped
-/// from. Display only.
+/// Orcel's comparison of the file a signature check read with the file a running process's
+/// image appears to be mapped from. Display only; see the module documentation for what it
+/// cannot show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunningImage {
-    /// The checked file is the file the process's image is mapped from.
+    /// The checked file has the same volume and 128-bit file id as the file the process's
+    /// image appears to be mapped from, under the name the kernel reports for the process.
+    /// It says nothing about the code now running, and a process that controls its own
+    /// loader data and image path can produce it falsely.
     Same,
-    /// The checked file is another file than the one the process's image is mapped from.
+    /// The checked file has another file id than the file the process's image appears to be
+    /// mapped from, on the same volume.
     Different,
     /// Not established: another system, an unreadable file, a process that denies the
-    /// access the comparison needs, an exited process or reused pid, or a failed query.
+    /// access the comparison needs, an exited process or reused pid, a failed query, an
+    /// unusable file id, or volumes that do not match.
     Unconfirmed,
+}
+
+/// The identity of one open file as Windows reports it.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    volume_serial: u64,
+    file_id: u128,
+    /// `FILE_ID_INFO` (64-bit serial, 128-bit id) rather than the 32-bit serial and 64-bit
+    /// index fallback.
+    full: bool,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl FileIdentity {
+    /// Zero and all-ones serials and ids are what a file system without real ids reports.
+    fn usable(&self) -> bool {
+        let (serial_max, id_max) = if self.full {
+            (u64::MAX, u128::MAX)
+        } else {
+            (u64::from(u32::MAX), u128::from(u64::MAX))
+        };
+        self.volume_serial != 0
+            && self.volume_serial != serial_max
+            && self.file_id != 0
+            && self.file_id != id_max
+    }
+}
+
+/// What was read about the process's image: the identity of the file opened by its mapped
+/// name, that NT name, and the image name the kernel reports for the process.
+#[cfg_attr(not(windows), allow(dead_code))]
+struct ImageFacts {
+    identity: FileIdentity,
+    mapped_name: Vec<u16>,
+    kernel_name: Vec<u16>,
+}
+
+/// The `\Device\<name>` prefix of an NT path, or `None` when it has no file part.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn device_of(nt_path: &[u16]) -> Option<&[u16]> {
+    let prefix: Vec<u16> = r"\Device\".encode_utf16().collect();
+    let rest = nt_path.strip_prefix(prefix.as_slice())?;
+    let end = rest.iter().position(|&unit| unit == u16::from(b'\\'))?;
+    if end == 0 || end + 1 >= rest.len() {
+        return None;
+    }
+    Some(&nt_path[..prefix.len() + end])
+}
+
+/// Two names compared without case; a name that is not valid UTF-16 equals nothing.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn same_name(left: &[u16], right: &[u16]) -> bool {
+    match (String::from_utf16(left), String::from_utf16(right)) {
+        (Ok(left), Ok(right)) => left.to_lowercase() == right.to_lowercase(),
+        _ => false,
+    }
+}
+
+/// Orcel's comparison, from what was read. Only matching full ids, on one volume device, of
+/// a file the kernel names the same way as the mapping, read `Same`; a mismatch of usable
+/// ids on one device reads `Different`; everything else is `Unconfirmed`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn compare_identity(
+    checked: Option<FileIdentity>,
+    checked_nt_path: Option<&[u16]>,
+    image: Option<&ImageFacts>,
+) -> RunningImage {
+    let (Some(checked), Some(checked_nt_path), Some(image)) = (checked, checked_nt_path, image)
+    else {
+        return RunningImage::Unconfirmed;
+    };
+    if !checked.usable() || !image.identity.usable() || checked.full != image.identity.full {
+        return RunningImage::Unconfirmed;
+    }
+    match (device_of(checked_nt_path), device_of(&image.mapped_name)) {
+        (Some(left), Some(right)) if same_name(left, right) => {}
+        _ => return RunningImage::Unconfirmed,
+    }
+    if (checked.volume_serial, checked.file_id)
+        != (image.identity.volume_serial, image.identity.file_id)
+    {
+        return RunningImage::Different;
+    }
+    if checked.full && same_name(&image.mapped_name, &image.kernel_name) {
+        RunningImage::Same
+    } else {
+        RunningImage::Unconfirmed
+    }
 }
 
 /// The signature of the file at a process's image path, and whether that file is the one the
@@ -105,14 +218,17 @@ pub fn image_signature_for(path: &Path, pid: u32, generation: u64) -> ImageSigna
 
 #[cfg(windows)]
 mod imp {
-    use super::{ImageSignature, RunningImage, SignatureState, MAX_SUBJECT_CHARS};
+    use super::{
+        compare_identity, FileIdentity, ImageFacts, ImageSignature, SignatureState,
+        MAX_SUBJECT_CHARS,
+    };
     use std::ffi::c_void;
     use std::fs::File;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
-    use windows::core::{GUID, HRESULT, PCWSTR};
+    use windows::core::{GUID, HRESULT, PCWSTR, PWSTR};
     use windows::Win32::Foundation::{
         CloseHandle, BOOL, CRYPT_E_FILE_ERROR, FILETIME, HANDLE, HMODULE, HWND,
         TRUST_E_ACTION_UNKNOWN, TRUST_E_NOSIGNATURE, TRUST_E_PROVIDER_UNKNOWN,
@@ -135,12 +251,13 @@ mod imp {
     };
     use windows::Win32::Storage::FileSystem::{
         FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
-        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE,
+        GetFinalPathNameByHandleW, BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, VOLUME_NAME_NT,
     };
     use windows::Win32::System::ProcessStatus::{K32EnumProcessModules, K32GetMappedFileNameW};
     use windows::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+        GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_NATIVE,
+        PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
     };
 
     /// One `WinVerifyTrust` outcome: its status, and the signer's name when it succeeded.
@@ -169,11 +286,10 @@ mod imp {
         };
         // One open file: the signature is checked, and the identity read, through this handle.
         let (state, _) = signature_of_open(&file, path);
-        let running_image = match (file_id(&file), image_file_id(pid, generation)) {
-            (Some(checked), Some(running)) if checked == running => RunningImage::Same,
-            (Some(_), Some(_)) => RunningImage::Different,
-            _ => RunningImage::Unconfirmed,
-        };
+        let checked_nt_path = nt_path_of(&file);
+        let image = image_facts(pid, generation);
+        let running_image =
+            compare_identity(file_id(&file), checked_nt_path.as_deref(), image.as_ref());
         ImageSignature {
             state,
             running_image,
@@ -207,9 +323,10 @@ mod imp {
         Some(name)
     }
 
-    /// The identity of the file the image of process `pid` is mapped from, when the process
-    /// still is the instance started at `generation` and every query succeeds.
-    fn image_file_id(pid: u32, generation: u64) -> Option<(u64, u128)> {
+    /// What can be read about the file the image of process `pid` appears to be mapped from,
+    /// when the process still is the instance started at `generation` and every query
+    /// succeeds.
+    fn image_facts(pid: u32, generation: u64) -> Option<ImageFacts> {
         // SAFETY: plain values in; the returned handle is owned by ProcessHandle.
         let process = ProcessHandle(
             unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }.ok()?,
@@ -227,7 +344,27 @@ mod imp {
         if created != generation {
             return None;
         }
-        // The first module listed is the executable.
+        // The image name the kernel reports for the process, read from the process object
+        // rather than from the process's own memory.
+        let mut kernel_name = vec![0u16; MAPPED_NAME_UNITS];
+        let mut kernel_len = kernel_name.len() as u32;
+        // SAFETY: `kernel_name` holds `kernel_len` units, as the call is told; it writes the
+        // length back.
+        unsafe {
+            QueryFullProcessImageNameW(
+                process.0,
+                PROCESS_NAME_NATIVE,
+                PWSTR(kernel_name.as_mut_ptr()),
+                &mut kernel_len,
+            )
+        }
+        .ok()?;
+        if kernel_len == 0 || kernel_len as usize >= kernel_name.len() {
+            return None;
+        }
+        kernel_name.truncate(kernel_len as usize);
+        // The first module listed is the executable, by the process's own loader data, which
+        // the process can rewrite: the kernel name above is the cross-check.
         let mut module = HMODULE::default();
         let mut needed = 0u32;
         // SAFETY: room for exactly one HMODULE, as the call is told; `needed` is written.
@@ -256,13 +393,17 @@ mod imp {
         if mapped_name(&process, base)? != name {
             return None;
         }
-        file_id(&image)
+        Some(ImageFacts {
+            identity: file_id(&image)?,
+            mapped_name: name,
+            kernel_name,
+        })
     }
 
     /// The volume serial number and 128-bit file id of an open file (`FILE_ID_INFO`); a file
     /// system without that class gets the 32-bit serial and 64-bit index, as
-    /// orcel-provider-fs does. One volume always answers the same way.
-    fn file_id(file: &File) -> Option<(u64, u128)> {
+    /// orcel-provider-fs does, marked so it can never read as the same file.
+    fn file_id(file: &File) -> Option<FileIdentity> {
         let handle = HANDLE(file.as_raw_handle());
         let mut info = FILE_ID_INFO::default();
         // SAFETY: the handle is open for this call and `info` is a writable FILE_ID_INFO of
@@ -276,18 +417,35 @@ mod imp {
             )
         };
         if read.is_ok() {
-            return Some((
-                info.VolumeSerialNumber,
-                u128::from_le_bytes(info.FileId.Identifier),
-            ));
+            return Some(FileIdentity {
+                volume_serial: info.VolumeSerialNumber,
+                file_id: u128::from_le_bytes(info.FileId.Identifier),
+                full: true,
+            });
         }
         let mut basic = BY_HANDLE_FILE_INFORMATION::default();
         // SAFETY: the handle is open for this call and `basic` is a writable structure.
         unsafe { GetFileInformationByHandle(handle, &mut basic) }.ok()?;
-        Some((
-            u64::from(basic.dwVolumeSerialNumber),
-            (u128::from(basic.nFileIndexHigh) << 32) | u128::from(basic.nFileIndexLow),
-        ))
+        Some(FileIdentity {
+            volume_serial: u64::from(basic.dwVolumeSerialNumber),
+            file_id: (u128::from(basic.nFileIndexHigh) << 32) | u128::from(basic.nFileIndexLow),
+            full: false,
+        })
+    }
+
+    /// The NT path (`\Device\...`) of an open file, for its volume device name.
+    fn nt_path_of(file: &File) -> Option<Vec<u16>> {
+        let mut name = vec![0u16; MAPPED_NAME_UNITS];
+        // SAFETY: the handle is open for this call; the call writes at most `name.len()`
+        // units and returns the length written, or the length needed when it did not fit.
+        let len = unsafe {
+            GetFinalPathNameByHandleW(HANDLE(file.as_raw_handle()), &mut name, VOLUME_NAME_NT)
+        } as usize;
+        if len == 0 || len >= name.len() {
+            return None;
+        }
+        name.truncate(len);
+        Some(name)
     }
 
     fn signature_of_open(file: &File, path: &Path) -> (SignatureState, Checked) {
@@ -639,8 +797,9 @@ mod tests {
     }
 
     /// The case the comparison exists for: a running program's file is renamed away and
-    /// another file put at its path. The path then names a different file, and the renamed
-    /// file is still the running image.
+    /// another file put at its path. The path then names a different file; the renamed file
+    /// is still the mapped image, but under another name than the kernel reports, so it is
+    /// not confirmed.
     #[cfg(windows)]
     #[test]
     fn running_image_follows_a_rename_and_replace() {
@@ -697,10 +856,153 @@ mod tests {
             RunningImage::Different,
             "{at_path:?}"
         );
+        // The renamed file is still the mapped image, but the kernel keeps reporting the name
+        // the process was started under, so the new name is not claimed as the same file.
         assert_eq!(
             at_new_name.running_image,
-            RunningImage::Same,
+            RunningImage::Unconfirmed,
             "{at_new_name:?}"
+        );
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    const IMAGE: &str = r"\Device\HarddiskVolume3\Apps\App.exe";
+
+    fn full(volume_serial: u64, file_id: u128) -> FileIdentity {
+        FileIdentity {
+            volume_serial,
+            file_id,
+            full: true,
+        }
+    }
+
+    fn facts(identity: FileIdentity, mapped: &str, kernel: &str) -> ImageFacts {
+        ImageFacts {
+            identity,
+            mapped_name: wide(mapped),
+            kernel_name: wide(kernel),
+        }
+    }
+
+    fn compared(checked: FileIdentity, checked_path: &str, image: &ImageFacts) -> RunningImage {
+        compare_identity(Some(checked), Some(&wide(checked_path)), Some(image))
+    }
+
+    #[test]
+    fn identity_compare_reads_same_only_for_matching_full_ids_under_the_kernel_name() {
+        let id = full(0x1234, 0xabcd);
+        let image = facts(id, IMAGE, &IMAGE.to_uppercase());
+        // Another name for the same file (a hard link) on the same device.
+        assert_eq!(
+            compared(id, r"\Device\HarddiskVolume3\Other\Link.exe", &image),
+            RunningImage::Same
+        );
+        assert_eq!(
+            compared(full(0x1234, 0xabce), IMAGE, &image),
+            RunningImage::Different
+        );
+        // The mapping's name is not the one the kernel reports for the process: the loader
+        // data may point elsewhere, so a matching id is not enough.
+        let elsewhere = facts(id, IMAGE, r"\Device\HarddiskVolume3\Apps\Launched.exe");
+        assert_eq!(compared(id, IMAGE, &elsewhere), RunningImage::Unconfirmed);
+        // Missing facts.
+        assert_eq!(
+            compare_identity(None, Some(&wide(IMAGE)), Some(&image)),
+            RunningImage::Unconfirmed
+        );
+        assert_eq!(
+            compare_identity(Some(id), None, Some(&image)),
+            RunningImage::Unconfirmed
+        );
+        assert_eq!(
+            compare_identity(Some(id), Some(&wide(IMAGE)), None),
+            RunningImage::Unconfirmed
+        );
+    }
+
+    #[test]
+    fn identity_compare_treats_zero_and_all_ones_ids_as_unconfirmed() {
+        for unusable in [
+            full(0, 0xabcd),
+            full(u64::MAX, 0xabcd),
+            full(0x1234, 0),
+            full(0x1234, u128::MAX),
+        ] {
+            let image = facts(unusable, IMAGE, IMAGE);
+            assert_eq!(
+                compared(unusable, IMAGE, &image),
+                RunningImage::Unconfirmed,
+                "{unusable:?}"
+            );
+            let good = full(0x1234, 0xabcd);
+            assert_eq!(
+                compared(good, IMAGE, &image),
+                RunningImage::Unconfirmed,
+                "{unusable:?}"
+            );
+            assert_eq!(
+                compared(unusable, IMAGE, &facts(good, IMAGE, IMAGE)),
+                RunningImage::Unconfirmed,
+                "{unusable:?}"
+            );
+        }
+        let fallback = |volume_serial: u64, file_id: u128| FileIdentity {
+            volume_serial,
+            file_id,
+            full: false,
+        };
+        for unusable in [
+            fallback(u64::from(u32::MAX), 7),
+            fallback(9, u128::from(u64::MAX)),
+        ] {
+            assert_eq!(
+                compared(unusable, IMAGE, &facts(unusable, IMAGE, IMAGE)),
+                RunningImage::Unconfirmed,
+                "{unusable:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn identity_compare_needs_one_volume_device_and_never_matches_on_the_fallback() {
+        let id = full(0x1234, 0xabcd);
+        let image = facts(id, IMAGE, IMAGE);
+        assert_eq!(
+            compared(id, r"\Device\HarddiskVolume4\Apps\App.exe", &image),
+            RunningImage::Unconfirmed
+        );
+        assert_eq!(
+            compared(id, r"C:\Apps\App.exe", &image),
+            RunningImage::Unconfirmed
+        );
+        assert_eq!(
+            compared(id, r"\Device\HarddiskVolume3", &image),
+            RunningImage::Unconfirmed
+        );
+        let fallback = FileIdentity {
+            volume_serial: 0x1234,
+            file_id: 0xabcd,
+            full: false,
+        };
+        assert_eq!(
+            compared(fallback, IMAGE, &facts(fallback, IMAGE, IMAGE)),
+            RunningImage::Unconfirmed
+        );
+        let other = FileIdentity {
+            file_id: 0xabce,
+            ..fallback
+        };
+        assert_eq!(
+            compared(other, IMAGE, &facts(fallback, IMAGE, IMAGE)),
+            RunningImage::Different
+        );
+        // One full id and one fallback id are not compared.
+        assert_eq!(
+            compared(id, IMAGE, &facts(fallback, IMAGE, IMAGE)),
+            RunningImage::Unconfirmed
         );
     }
 }

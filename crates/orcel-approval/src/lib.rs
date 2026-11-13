@@ -119,8 +119,10 @@ pub struct TargetApplication {
     /// only: it is not part of the approval digest and no policy decision reads it, and it
     /// describes the file, not the code running in memory.
     pub signature: SignatureState,
-    /// Whether that file is the one the process's image is mapped from, compared with the
-    /// signature check. Display only, like the signature.
+    /// Orcel's own comparison of that file with the file the process's image appears to be
+    /// mapped from (not part of the Windows check). Display only, like the signature; the
+    /// prompt words a match as a hedged finding and a mismatch as a warning, since the
+    /// process's loader data can mislead it and nothing reads the code now running.
     pub running_image: RunningImage,
 }
 
