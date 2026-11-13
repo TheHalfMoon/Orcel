@@ -794,8 +794,16 @@ fn an_image_path_is_checked_only_when_the_signature_is_asked_for() {
             matches!(&state.state, SignatureState::Verified { subject } if subject.contains("Microsoft")),
             "{state:?}"
         );
-        // kernel32.dll is mapped into this process, but it is not its executable.
-        assert_eq!(state.running_image, RunningImage::Different, "{state:?}");
+        // kernel32.dll is mapped into this process, but it is not its executable: never Same.
+        // On the executable's volume it is Different; when the test binary is on another
+        // volume (CI builds on D:, Windows is on C:) the comparison is not confirmed.
+        assert!(
+            matches!(
+                state.running_image,
+                RunningImage::Different | RunningImage::Unconfirmed
+            ),
+            "{state:?}"
+        );
     } else {
         assert_eq!(state, ImageSignature::unconfirmed(SignatureState::Unknown));
     }
