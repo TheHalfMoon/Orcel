@@ -82,6 +82,7 @@ export const capabilitiesResult = {
     "events.subscribe",
     "task.list",
     "task.get",
+    "task.stop",
     "approval.history",
     "clients.list",
   ],

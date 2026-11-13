@@ -126,6 +126,12 @@ try {
         Check "a task update appears with nothing typed" ($null -ne $live) "$live"
     }
 
+    if ($env:ORCEL_E2E_EXPECT_STOP) {
+        (ById $window "StopTaskButton").GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $stopped = WaitForMessage $window $env:ORCEL_E2E_EXPECT_STOP 15000
+        Check "Stop ends the newest task and says control is back" ($null -ne $stopped -and $stopped -like "*Control is back with you*") "$stopped"
+    }
+
     SendCommand $window "status"
     $status = WaitForMessage $window $(if ($expectInstalled) { "is installed. ChatGPT tunnel" } else { "is not installed" }) 15000
     Check "status command shows the runtime's own state" ($null -ne $status) "$status"

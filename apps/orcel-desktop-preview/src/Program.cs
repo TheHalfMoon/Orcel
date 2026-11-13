@@ -25,7 +25,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Setup, Recovery, Settings, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, StopTask, History, Clients, Previews, PreviewsSizes, PreviewsContent, Control, StopControl, RevokeAll, Workspaces, Connect, Setup, Recovery, Settings, Unsupported }
 
     internal static class CommandRouter
     {
@@ -49,6 +49,7 @@ namespace Orcel.DesktopPreview
             if (value == "previews content") return SafeCommand.PreviewsContent;
             if (value == "control") return SafeCommand.Control;
             if (value == "stop control") return SafeCommand.StopControl;
+            if (value == "stop task") return SafeCommand.StopTask;
             if (value == "revoke all") return SafeCommand.RevokeAll;
             if (value == "workspaces") return SafeCommand.Workspaces;
             if (value == "connect") return SafeCommand.Connect;
@@ -361,12 +362,12 @@ namespace Orcel.DesktopPreview
         }
     }
 
-    /// SG-000127 slice 5 (timeline): a read-only client of orceld's local app
-    /// API (`orcel-app-api/1`, ORCEL_APP_API_1.md). It sends only `task.list`
-    /// and `task.get`, one request per connection, and `events.subscribe`
-    /// (see TaskWatcher) to this user's pipe
-    /// `\\.\pipe\orcel-<user SID>-app` as an identification-only client; it
-    /// never sends anything that submits, approves, stops or writes. Frames
+    /// SG-000127 slice 5: a client of orceld's local app API (`orcel-app-api/1`,
+    /// ORCEL_APP_API_1.md). It sends only `task.list`, `task.get`, `task.stop`,
+    /// `approval.history` and `clients.list`, one request per connection, and
+    /// `events.subscribe` (see TaskWatcher) to
+    /// this user's pipe `\\.\pipe\orcel-<user SID>-app` as an identification-only
+    /// client; it never sends anything that submits, approves or writes. Frames
     /// are bounded to the protocol's 65,536 bytes and every call has a
     /// timeout. Task titles and paths come from the planner and the
     /// workspace: they are shown as data, never acted on.
@@ -375,8 +376,9 @@ namespace Orcel.DesktopPreview
         internal const string Protocol = "orcel-app-api/1";
         internal const int MaxFrameBytes = 65536;
         internal const int TimeoutMs = 4000;
-        /// The only methods this client sends; all are read-only in orceld.
-        internal static readonly string[] Methods = { "task.list", "task.get", "events.subscribe", "approval.history", "clients.list" };
+        /// The only methods this client sends. All read, except `task.stop`, which
+        /// can only end a task.
+        internal static readonly string[] Methods = { "task.list", "task.get", "task.stop", "events.subscribe", "approval.history", "clients.list" };
 
         /// This user's pipe name, or null when ORCEL_APP_API_INSTANCE is set
         /// but invalid (refused, never replaced by the default pipe).
@@ -401,13 +403,13 @@ namespace Orcel.DesktopPreview
 
         internal static string RequestFrame(string method, string taskId)
         {
-            if (Array.IndexOf(Methods, method) < 0) throw new ArgumentException("not a read-only app API method");
+            if (Array.IndexOf(Methods, method) < 0) throw new ArgumentException("not a method this app sends");
             Dictionary<string, object> request = new Dictionary<string, object>();
             request["v"] = Protocol;
             request["id"] = "desktop";
             request["method"] = method;
             Dictionary<string, object> parameters = new Dictionary<string, object>();
-            if (method == "task.get") parameters["task_id"] = taskId ?? "";
+            if (method == "task.get" || method == "task.stop") parameters["task_id"] = taskId ?? "";
             if (method == "approval.history") parameters["limit"] = ApprovalHistory.MaxShown;
             request["params"] = parameters;
             return new JavaScriptSerializer().Serialize(request) + "\n";
@@ -679,8 +681,46 @@ namespace Orcel.DesktopPreview
                     if (outcomes.Count > 0) text.Append("\n   steps: " + string.Join(" · ", outcomes));
                 }
             }
-            text.Append("\nThis app reads tasks only; it cannot start, approve or stop them.");
+            text.Append("\nThis app reads tasks and can stop one; it cannot start or approve them.");
             return text.ToString();
+        }
+
+        /// The newest task that can still be stopped, or null. A committing task
+        /// finishes on its own, and orceld would refuse it; so would a task of
+        /// another running session or an earlier run, which it only shows.
+        internal static string NewestOpenTask(Dictionary<string, object> list)
+        {
+            object tasks;
+            if (list == null || !list.TryGetValue("tasks", out tasks) || !(tasks is IEnumerable)) return null;
+            foreach (object task in (IEnumerable)tasks)
+            {
+                Dictionary<string, object> map = task as Dictionary<string, object>;
+                string state = Field(map, "state");
+                if (Field(map, "owner") != "this_session") continue;
+                if (state == "observed" || state == "proposed" || state == "approval_denied") return Field(map, "task_id");
+            }
+            return null;
+        }
+
+        /// What to tell the user, from orceld's own record of the task after the
+        /// stop and never from what was asked for.
+        internal static string StopResult(string id, Dictionary<string, object> task)
+        {
+            string state = Field(task, "state");
+            if (state == "stopped")
+                return "Stopped task " + Shown(id) + ". Control is back with you: no agent input is pending, and this added no authority. If its approval window is still open, you can close it; answering it does nothing.";
+            if (state == null) return "Could not confirm task " + Shown(id) + " stopped: its state could not be read.";
+            return "Task " + Shown(id) + " was not stopped. It is: " + Describe(state) + ".";
+        }
+
+        internal static string Stop()
+        {
+            Dictionary<string, object> list = AppApi.Call("task.list", null);
+            if (list == null) return "Nothing was stopped: this user's app API pipe did not answer.";
+            string id = NewestOpenTask(list);
+            if (id == null) return "No open task to stop. Nothing was changed.";
+            AppApi.Call("task.stop", id);
+            return StopResult(id, AppApi.Call("task.get", id));
         }
 
         internal static string Read()
@@ -1845,7 +1885,7 @@ namespace Orcel.DesktopPreview
             Border transcriptCard = Card(conversation, Colors.Sidebar, new Thickness(14));
             Grid.SetRow(transcriptCard, 1);
             center.Children.Add(transcriptCard);
-            AddMessage(false, "Welcome to Orcel. Type setup for a guided start, connect to set up an AI client, or help to see the commands, such as status, tasks, history, control or stop control. Other requests are not executed or sent anywhere.");
+            AddMessage(false, "Welcome to Orcel. Type setup for a guided start, connect to set up an AI client, or help to see the commands, such as status, tasks, history, control, stop control or stop task. Other requests are not executed or sent anywhere.");
 
             Grid composer = new Grid { Margin = new Thickness(0, 12, 0, 0) };
             composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1858,10 +1898,10 @@ namespace Orcel.DesktopPreview
             commandBox.FontSize = 14;
             commandBox.Padding = new Thickness(14, 12, 14, 12);
             commandBox.MaxLength = 1024;
-            commandBox.ToolTip = "Commands: help, setup, settings, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, revoke all";
+            commandBox.ToolTip = "Commands: help, setup, settings, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, stop task, revoke all";
             AutomationProperties.SetAutomationId(commandBox, "CommandBox");
             AutomationProperties.SetName(commandBox, "Command");
-            AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control and revoke all, which only take authority away");
+            AutomationProperties.SetHelpText(commandBox, "Type a command and press Enter; all are read-only except previews sizes, stop control, stop task and revoke all, which only take authority away");
             commandBox.KeyDown += delegate(object sender, System.Windows.Input.KeyEventArgs e) {
                 if (e.Key == Key.Enter) { e.Handled = true; Send(); }
             };
@@ -1909,6 +1949,11 @@ namespace Orcel.DesktopPreview
             AutomationProperties.SetHelpText(stopControl, "Ends Orcel's Full User desktop control at once; it never grants control");
             stopControl.Click += delegate { AddMessage(true, "stop control"); QueryHost(SafeCommand.StopControl); };
             runtime.Children.Add(stopControl);
+            System.Windows.Controls.Button stopTask = StopButton("Stop newest task", "StopTaskButton");
+            stopTask.Margin = new Thickness(0, 10, 0, 0);
+            AutomationProperties.SetHelpText(stopTask, "Ends the newest open report task of this orceld run so it can never write; it never approves or starts anything");
+            stopTask.Click += delegate { AddMessage(true, "stop task"); StopTask(); };
+            runtime.Children.Add(stopTask);
             Border runtimeCard = Card(runtime, Colors.Sidebar, new Thickness(16));
             runtimeCard.Margin = new Thickness(0, 0, 0, 14);
             right.Children.Add(runtimeCard);
@@ -2028,13 +2073,15 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: setup, settings, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, revoke all, help. These operations are read-only, except three that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: setup, settings, status, version, doctor, devices, files, tasks, recovery, history, clients, workspaces, connect, previews, control, stop control, stop task, revoke all, help. These operations are read-only, except four that only take authority away: previews sizes (prompts show sizes only), stop control (ends desktop control), stop task (ends the newest open report task, so it can never write) and revoke all (with Windows Hello, invalidates every pending approval, desktop control and remote session lease). Task updates appear here as they happen. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
                 InspectFolder();
             else if (kind == SafeCommand.Tasks)
                 ShowTasks();
+            else if (kind == SafeCommand.StopTask)
+                StopTask();
             else if (kind == SafeCommand.History)
                 ShowHistory();
             else if (kind == SafeCommand.Clients)
@@ -2162,6 +2209,21 @@ namespace Orcel.DesktopPreview
             AddMessage(false, "Reading report tasks from the local runtime...");
             try { AddMessage(false, await Task.Run(delegate { return Timeline.Read(); })); }
             catch (Exception) { AddMessage(false, "The read-only task query failed unexpectedly. No action was performed."); }
+        }
+
+        /// One stop at a time: a double click or a repeated command waits for the first answer.
+        private async void StopTask()
+        {
+            if (running.Contains(SafeCommand.StopTask))
+            {
+                AddMessage(false, "That is already running; wait for its answer.");
+                return;
+            }
+            running.Add(SafeCommand.StopTask);
+            AddMessage(false, "Stopping the newest open report task...");
+            try { AddMessage(false, await Task.Run(delegate { return Timeline.Stop(); })); }
+            catch (Exception) { AddMessage(false, "The stop request failed unexpectedly. Check the task with: tasks"); }
+            finally { running.Remove(SafeCommand.StopTask); }
         }
 
         private async void ShowHistory()
@@ -2319,7 +2381,7 @@ namespace Orcel.DesktopPreview
             Environment.SetEnvironmentVariable("ORCEL_APP_API_INSTANCE", savedInstance);
             expect(AppApi.InstanceSuffix("ci-1") == "ci-1" && AppApi.InstanceSuffix("..\\x") == null && AppApi.InstanceSuffix("A") == null && AppApi.InstanceSuffix(new string('a', 33)) == null, "instance suffix is validated");
             bool refused = false;
-            try { AppApi.RequestFrame("task.stop", "rpt-1"); } catch (ArgumentException) { refused = true; }
+            try { AppApi.RequestFrame("task.commit", "rpt-1"); } catch (ArgumentException) { refused = true; }
             expect(refused, "only read-only app API methods are sent");
             expect(AppApi.RequestFrame("task.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"task.list\",\"params\":{}}\n", "task.list frame");
             expect(AppApi.RequestFrame("task.get", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.get frame");
@@ -2420,7 +2482,33 @@ namespace Orcel.DesktopPreview
             expect(timeline.Contains("• verified by the independent checker: \"Q3 summary\" → out/q3.md"), "a verified task is shown with its report, state first");
             expect(timeline.Contains("steps: observe ok · approval approved · check pass"), "steps are shown in order");
             expect(timeline.Contains("rpt-1: details unavailable"), "a missing detail is reported");
-            expect(timeline.Contains("cannot start, approve or stop"), "the timeline states it is read-only");
+            expect(timeline.Contains("cannot start or approve"), "the timeline states what it can't do");
+            expect(AppApi.RequestFrame("task.stop", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.stop frame");
+            expect(CommandRouter.Classify(" Stop Task ") == SafeCommand.StopTask && CommandRouter.Classify("stop") == SafeCommand.Unsupported && CommandRouter.Classify("stop  task") == SafeCommand.Unsupported, "only the exact stop task routes; bare stop is never guessed");
+            expect(CommandRouter.CliArguments(SafeCommand.StopTask) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.StopTask), "stop never reaches the CLI");
+            Dictionary<string, object> stopped = new Dictionary<string, object>();
+            stopped["state"] = "stopped";
+            Dictionary<string, object> proposed = new Dictionary<string, object>();
+            proposed["state"] = "proposed";
+            expect(Timeline.StopResult("rpt-a", stopped).Contains("Control is back with you") && Timeline.StopResult("rpt-a", stopped).Contains("approval window is still open, you can close it; answering it does nothing"), "control returned only once stopped, and an open approval window is explained");
+            expect(!Timeline.StopResult("rpt-a", proposed).Contains("approval window"), "the approval window note comes only with a stop");
+            expect(!Timeline.StopResult("rpt-a", proposed).Contains("Control is back"), "an unstopped task never claims control returned");
+            expect(!Timeline.StopResult("rpt-a", null).Contains("Control is back"), "an unread state never claims control returned");
+            Dictionary<string, object> open = new Dictionary<string, object>();
+            open["task_id"] = "rpt-open"; open["state"] = "proposed"; open["owner"] = "this_session";
+            Dictionary<string, object> done = new Dictionary<string, object>();
+            done["task_id"] = "rpt-done"; done["state"] = "verified"; done["owner"] = "this_session";
+            Dictionary<string, object> committing = new Dictionary<string, object>();
+            committing["task_id"] = "rpt-writing"; committing["state"] = "committing"; committing["owner"] = "this_session";
+            Dictionary<string, object> otherSession = new Dictionary<string, object>();
+            otherSession["task_id"] = "rpt-theirs"; otherSession["state"] = "proposed"; otherSession["owner"] = "other_session";
+            Dictionary<string, object> unowned = new Dictionary<string, object>();
+            unowned["task_id"] = "rpt-unowned"; unowned["state"] = "observed";
+            Dictionary<string, object> rows = new Dictionary<string, object>();
+            rows["tasks"] = new object[] { done, otherSession, unowned, committing, open };
+            expect(Timeline.NewestOpenTask(rows) == "rpt-open", "stop picks the newest task of this run it can end");
+            rows["tasks"] = new object[] { done, otherSession, unowned, committing };
+            expect(Timeline.NewestOpenTask(rows) == null, "no open task, nothing to stop");
             expect(Timeline.Describe("proposed").Contains("waiting for approval") && Timeline.Describe("surprise") == "unknown state", "states are described truthfully");
             expect(Timeline.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[]}}"), new List<Dictionary<string, object>>()).StartsWith("No report tasks"), "an empty run says so");
             expect(!CommandRouter.CanInvokeInstalledHost(SafeCommand.Unsupported), "unsupported never runs");

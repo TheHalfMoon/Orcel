@@ -22,8 +22,9 @@ const repoRoot = path.resolve(here, "..", "..", "..", "..");
 
 /**
  * Every method orceld serves: the client's own READ_METHODS plus the
- * SG-000126 report task reads and the approval history, which this client
- * does not send. Test support only, so the shipped bundle names no approval
+ * SG-000126 report task reads, F4's `task.stop` (it can only end a task),
+ * the approval history and the connected clients, none of which this client
+ * sends. Test support only, so the shipped bundle names no approval or stop
  * method (no-authority.test.ts).
  */
 export const ORCELD_METHODS = [
@@ -32,6 +33,7 @@ export const ORCELD_METHODS = [
   "events.subscribe",
   "task.list",
   "task.get",
+  "task.stop",
   "approval.history",
   "clients.list",
 ] as const;

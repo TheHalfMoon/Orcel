@@ -101,9 +101,9 @@ pub(crate) enum TaskState {
     VerificationFailed,
     Stale,
     Failed,
-    /// F4 slice 5 (kernel only, `prep/F4_TASK_STOP.md`): the task can never
-    /// write. No surface reaches this outside tests yet; which surface may
-    /// is a founder decision on #446.
+    /// F4 slice 5 (`prep/F4_TASK_STOP.md`): the task can never write. Its
+    /// only surface is the local app API's `task.stop` (founder decision of
+    /// 2026-11-13, #446); never MCP or the stdio channel.
     Stopped,
 }
 
@@ -289,6 +289,12 @@ pub(crate) struct TaskRegistry {
     /// SG-000120 RJ-03: the key of session and input fingerprints; `None`
     /// refuses resume summaries.
     fingerprints: Option<crate::resume_key::FingerprintKey>,
+    /// Held from a task change until its journal snapshot and `task.updated`
+    /// event are written, so they land in the order the changes were made: a
+    /// preview or denial that raced a stop can never journal its older state
+    /// after the stop's, which a restart would then restore. Only writers take
+    /// it; `task.list` and `task.get` take the tasks lock alone.
+    journal_order: Mutex<()>,
 }
 
 impl TaskRegistry {
@@ -316,6 +322,7 @@ impl TaskRegistry {
             busy_journal: Mutex::new(None),
             journal_faulted: AtomicBool::new(false),
             fingerprints: crate::resume_key::FingerprintKey::ephemeral().ok(),
+            journal_order: Mutex::new(()),
         }
     }
 
@@ -415,6 +422,9 @@ impl TaskRegistry {
         };
         match report_journal.restore() {
             Ok(restored) => {
+                // No task change journals in between: one that waits here is snapshotted
+                // once the journal is set, so after these copies.
+                let _order = self.order();
                 // This run's tasks were not journaled while it was busy: record them now,
                 // so a commit that follows has its task in the journal. Copied first, so
                 // the file writes (each may wait for the journal lock) happen without the
@@ -464,6 +474,13 @@ impl TaskRegistry {
     /// The app API's event log, which `task.updated` events go to.
     pub(crate) fn attach_events(&self, log: Arc<EventLog>) {
         let _ = self.events.set(log);
+    }
+
+    /// See `journal_order`. Taken before the tasks lock, never while holding it.
+    fn order(&self) -> MutexGuard<'_, ()> {
+        self.journal_order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn lock(&self) -> MutexGuard<'_, Vec<ReportTask>> {
@@ -700,6 +717,7 @@ impl TaskRegistry {
         allowed: impl FnOnce(&ReportTask) -> bool,
         change: impl FnOnce(&mut ReportTask),
     ) -> Transition {
+        let _order = self.order();
         let now = orcel_approval::now_ms();
         let event = {
             let mut tasks = self.lock();
@@ -737,11 +755,27 @@ impl TaskRegistry {
         Transition::Applied
     }
 
-    /// F4 slice 5, kernel only (`prep/F4_TASK_STOP.md`): ends one task of this
+    /// F4 slice 5: stops a task of this run in its own workspace. The app API has no
+    /// workspace scope, so a task of an earlier run or an unknown id is refused here.
+    pub(crate) fn stop_in_this_run(&self, task_id: &str) -> Result<Value, ProviderError> {
+        let workspace = self
+            .lock()
+            .iter()
+            .find(|task| task.id == task_id && task.run == self.seed)
+            .map(|task| task.workspace_id.clone());
+        match workspace {
+            Some(workspace) => self.stop(task_id, &workspace),
+            None => Err(error(
+                FailureCode::TargetStale,
+                "this orceld run has no such report task",
+            )),
+        }
+    }
+
+    /// F4 slice 5 (`prep/F4_TASK_STOP.md`): ends one task of this
     /// run so that it can never write. Authority-reducing: it grants, approves
     /// and writes nothing. Final and idempotent; refused while a commit is
-    /// writing. Compiled for tests only until a surface is decided on #446.
-    #[cfg(test)]
+    /// writing. Its only surface is the local app API's `task.stop`.
     pub(crate) fn stop(&self, task_id: &str, workspace_id: &str) -> Result<Value, ProviderError> {
         let run = self.seed.clone();
         let workspace = workspace_id.to_owned();

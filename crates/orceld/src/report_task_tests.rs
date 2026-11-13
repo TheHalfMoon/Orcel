@@ -1119,8 +1119,8 @@ fn sg126_the_normal_request_path_refuses_report_requests() {
 }
 
 // ---------------------------------------------------------------------------
-// F4 slice 5, kernel only (prep/F4_TASK_STOP.md). `stop` is compiled for tests
-// only: no surface reaches it until a decision on #446.
+// F4 slice 5 (prep/F4_TASK_STOP.md). The only surface is the local app API's
+// `task.stop` (founder decision of 2026-11-13, #446); see app_api/tests.rs.
 // ---------------------------------------------------------------------------
 
 /// Answers one prompt after running `during`, as if it happened while the
@@ -1263,6 +1263,39 @@ fn f4_stop_is_refused_while_a_commit_writes_and_the_commit_finishes() {
     assert_eq!(failure.code, FailureCode::InvalidRequest);
     assert!(failure.message.contains("verified"), "{}", failure.message);
     assert_eq!(state(&tasks, &task), "verified");
+}
+
+#[test]
+fn f4_stop_in_this_run_uses_the_tasks_own_workspace() {
+    let scene = Scene::new("stop-own-workspace");
+    let tasks = TaskRegistry::new();
+    let started = start_q3(&scene, &tasks);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        tasks.stop_in_this_run(&task).expect("stop")["state"],
+        "stopped"
+    );
+    assert_eq!(state(&tasks, &task), "stopped");
+    let unknown = tasks.stop_in_this_run("report_unknown").unwrap_err();
+    assert_eq!(unknown.code, FailureCode::TargetStale);
+}
+
+#[test]
+fn f4_stop_isnt_a_report_operation() {
+    let scene = Scene::new("stop-not-dispatched");
+    let approval = consent(&scene, &[]);
+    let tasks = TaskRegistry::new();
+    let started = start_q3(&scene, &tasks);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    let refused = dispatch(
+        &scene.workspace,
+        &approval.broker,
+        &tasks,
+        &request("stop", json!({"task_id": task})),
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::CapabilityDenied);
+    assert_ne!(state(&tasks, &task), "stopped");
 }
 
 #[test]

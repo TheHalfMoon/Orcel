@@ -174,6 +174,8 @@ fn run() -> Result<(), String> {
             }
         },
         sessions.clone(),
+        // F4 slice 5: every task.stop attempt is audited with its caller.
+        audit.clone(),
     );
 
     let mut hello = live_sessions::Hello::new(sessions.clone());

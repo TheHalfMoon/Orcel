@@ -38,6 +38,52 @@ struct AuditEvent<'a> {
     target: Option<Cow<'a, str>>,
     policy_revision: &'a str,
     outcome: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    caller: Option<CallerEvent<'a>>,
+}
+
+/// The local process that called a method outside the kernel request path (F4 slice 5: the
+/// app API's `task.stop`), as the kernel identified its peer. The audit log keeps it so every
+/// stop attempt names who asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditCaller {
+    pub pid: u32,
+    /// The process start generation the kernel read for the peer, and how it was read.
+    pub start_generation: u64,
+    pub generation_source: String,
+    /// The caller's executable path, or why it could not be read.
+    pub executable: Result<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CallerEvent<'a> {
+    pid: u32,
+    start_generation: u64,
+    generation_source: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    executable: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    executable_unavailable: Option<Cow<'a, str>>,
+}
+
+impl<'a> CallerEvent<'a> {
+    fn of(caller: &'a AuditCaller) -> Self {
+        Self {
+            pid: caller.pid,
+            start_generation: caller.start_generation,
+            generation_source: bounded(&caller.generation_source, MAX_FIELD_CHARS),
+            executable: caller
+                .executable
+                .as_deref()
+                .ok()
+                .map(|path| bounded(path, MAX_TARGET_CHARS)),
+            executable_unavailable: caller
+                .executable
+                .as_ref()
+                .err()
+                .map(|reason| bounded(reason, MAX_FIELD_CHARS)),
+        }
+    }
 }
 
 /// `value`, or its first `max` characters marked as cut.
@@ -86,6 +132,27 @@ impl AuditLogger {
         policy_revision: &str,
         outcome: &str,
     ) -> io::Result<()> {
+        self.write(request, policy_revision, outcome, None)
+    }
+
+    /// [`Self::record`], naming the local process that called (F4 slice 5).
+    pub fn record_with_caller(
+        &self,
+        request: &RequestEnvelope,
+        policy_revision: &str,
+        outcome: &str,
+        caller: &AuditCaller,
+    ) -> io::Result<()> {
+        self.write(request, policy_revision, outcome, Some(caller))
+    }
+
+    fn write(
+        &self,
+        request: &RequestEnvelope,
+        policy_revision: &str,
+        outcome: &str,
+        caller: Option<&AuditCaller>,
+    ) -> io::Result<()> {
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -104,6 +171,7 @@ impl AuditLogger {
                 .map(|target| bounded(target, MAX_TARGET_CHARS)),
             policy_revision,
             outcome,
+            caller: caller.map(CallerEvent::of),
         };
 
         // One whole line in one write. Several orcelds (one per client session) append to the
@@ -248,6 +316,64 @@ mod tests {
             target,
             arguments: json!({}),
         }
+    }
+
+    /// F4 slice 5: a record can name its caller; the executable path or the reason it is
+    /// unavailable is bounded like the client's fields, and a plain record has no caller.
+    #[test]
+    fn a_caller_is_recorded_bounded_and_only_when_given() {
+        let base = sandbox("caller");
+        let path = base.join("audit.jsonl");
+        let logger = AuditLogger::new(&path).expect("audit");
+        let read = AuditCaller {
+            pid: 42,
+            start_generation: 7,
+            generation_source: "test".into(),
+            executable: Ok("p".repeat(100_000)),
+        };
+        let unreadable = AuditCaller {
+            executable: Err("r".repeat(100_000)),
+            ..read.clone()
+        };
+        logger
+            .record_with_caller(&request("a".into(), None), "p1", "SUCCESS", &read)
+            .expect("record");
+        logger
+            .record_with_caller(
+                &request("b".into(), None),
+                "p1",
+                "TARGET_STALE",
+                &unreadable,
+            )
+            .expect("record");
+        logger
+            .record(&request("c".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        let records: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("a record"))
+            .collect();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0]["caller"]["pid"], 42);
+        assert_eq!(records[0]["caller"]["start_generation"], 7);
+        let executable = records[0]["caller"]["executable"].as_str().unwrap();
+        assert!(executable.ends_with(TRUNCATED));
+        assert_eq!(
+            executable.chars().count(),
+            MAX_TARGET_CHARS + TRUNCATED.chars().count()
+        );
+        assert!(records[0]["caller"].get("executable_unavailable").is_none());
+        let reason = records[1]["caller"]["executable_unavailable"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            reason.chars().count(),
+            MAX_FIELD_CHARS + TRUNCATED.chars().count()
+        );
+        assert!(records[1]["caller"].get("executable").is_none());
+        assert!(records[2].get("caller").is_none());
+        let _ = std::fs::remove_dir_all(base);
     }
 
     /// A client chooses its ids and target, so a record keeps at most a bounded part of each.
