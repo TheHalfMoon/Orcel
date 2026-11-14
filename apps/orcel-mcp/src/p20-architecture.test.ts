@@ -194,9 +194,48 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // (ORCEL-F4) follows them by founder sequencing (issue #446). SG-000128
   // (ORCEL-UIA, scoped UIA subtree observation) runs beside them by founder
   // decision (issue #515). SG-000129 (ORCEL-AGENT, the Orcel Agent planner
-  // client) ran beside them by founder decision (issue #536) and is closed;
-  // no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127", "SG-000128"]);
+  // client) ran beside them by founder decision (issue #536) and is closed.
+  // SG-000122 (ORCEL-BR, browser form actions, narrow scope) runs beside
+  // them by founder decision (issue #753); no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000122", "SG-000127", "SG-000128"]);
+  const sg122 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    dependencies: string[];
+    authority_delta: {
+      activation: string;
+      browser: string;
+      observation: string;
+      mcp: string;
+      approval: string;
+      network: string;
+      process: string;
+      release: string;
+      remote: string;
+      privileged: string;
+    };
+  }>(".specgrain/specs/SG-000122.json");
+  assert.equal(sg122.program, "ORCEL-BR");
+  assert.equal(sg122.state, "GRAIN");
+  assert.equal(sg122.planning_issue, 753);
+  assert.equal(sg122.base, "30c08d502e881f1b52eb215263f7d63f8db79c91");
+  assert.deepEqual(sg122.dependencies, ["SG-000077", "SG-000079", "SG-000108"]);
+  // The activation grants nothing; each widening stays a proposal until its
+  // slice is qualified, release builds and remote mapping stay unavailable,
+  // and an added key must not go unnoticed.
+  assert.deepEqual(
+    Object.keys(sg122.authority_delta).sort(),
+    ["activation", "approval", "browser", "mcp", "network", "observation", "privileged", "process", "release", "remote"]
+  );
+  for (const key of ["activation", "network", "process", "release", "remote", "privileged"] as const) {
+    assert.ok(sg122.authority_delta[key].startsWith("None."), key);
+  }
+  for (const key of ["browser", "observation", "mcp"] as const) {
+    assert.ok(sg122.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg122.authority_delta.approval.startsWith("Unchanged rules"));
   const sg120 = readJson<{
     program: string;
     state: string;

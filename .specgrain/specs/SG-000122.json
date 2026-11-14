@@ -1,0 +1,151 @@
+{
+  "id": "SG-000122",
+  "title": "Browser form actions, narrow scope (fill, select, check, Enter, text waits and the verifier on admitted pages)",
+  "program": "ORCEL-BR",
+  "state": "GRAIN",
+  "risk": "high",
+  "created": "2026-11-14",
+  "base": "30c08d502e881f1b52eb215263f7d63f8db79c91",
+  "dependencies": [
+    "SG-000077",
+    "SG-000079",
+    "SG-000108"
+  ],
+  "planning_issue": 753,
+  "objective": "Let an agent fill in an ordinary form on a page the live isolated browser (SG-000108) has already admitted: fill a single-line text field, choose an option of a native select, set a checkbox or radio, press Enter in a single-line field to submit, wait for a text to appear or disappear, and check its own result with the postcondition verifier. orceld stays the sole approval and execution authority; every action is approved one at a time by the person, bound to the page generation, the element and the value. The host and worker halves already exist (BR-02 #472 and #473, BR-07 #471) but are not exposed. Development builds on Windows only; release builds stay unavailable and remote mapping stays off. This is the narrow first scope of the preparation packet docs/orcel/implementation-readiness/prep/SG-000122.md, chosen by the founder on 2026-11-14 (issue #753).",
+  "scope": {
+    "include": [
+      "Activate the SG-000122 contract only (slice A0). Every slice below needs its own exact-head qualified implementation PR with the review gates and a fresh-context security judge.",
+      "Prep packet E1a, fill: promotion of the existing qualified shape browser.dom/fill from model-only to live, on a single-line text field of the main frame's committed document of an admitted page: an input element whose type state is exactly text, search, email, url or tel (a missing or unknown type attribute is the text state); never a textarea or contenteditable. Fields that look secret by type, autocomplete, name or id stay refused (isSecretField).",
+      "Prep packet E1b, narrowed: select (one option of a native select element, named by its exact label), check (set a checkbox or radio to a stated state), Enter (the Enter key only, on a single-line text field as fill defines it) and text waits (wait until a bounded single-line literal text appears or disappears on the main frame's committed document, within MAX_WAIT_MS). Hover and every other key of PRESS_KEYS are out.",
+      "Prep packet E5, the verifier: the BR-07 postcondition verifier as a read-only tool over the element, text, value, checked-state and URL checks, under its existing caps (MAX_POSTCONDITIONS, MAX_VERIFY_TEXT_BYTES, MAX_VALUE_GUESSES); its live text checks look only at the main frame's committed document, the same as text waits.",
+      "Slice A1, host and worker-mode channel: the BR-02 and BR-07 host calls reachable through the host's worker mode, inert (no orceld dispatch, no policy, no tool).",
+      "Slice A2, policy and orceld dispatch: the live argument forms in orcel-policy (live_browser.rs), the profile gate, orceld's live dispatch and the broker prompts, with the value shown in the prompt (the rule changes below).",
+      "Slice A3, MCP for fill, text waits and the verifier: local-only tools under the browser_structured profile; the exposure profile, discovery, documentation and OAuth scope tables change together (A7).",
+      "Slice A4, MCP for select, check and Enter, under the same table rule.",
+      "Slice A5, form-control names in observations: observe returns the accessible names of form controls only, bounded and marked untrusted (rule change below).",
+      "Slice A6, the Windows native run and closeout: a native Windows journey on a controlled fixture that fills, selects, checks, submits with Enter, waits and verifies through orceld with recorded broker decisions, then canonical closeout."
+    ],
+    "exclude": [
+      "E2, uploads (browser.upload/preview and browser.upload/submit stay model-only).",
+      "E3, dialog accept (confirm and prompt); the default dismiss is unchanged.",
+      "E4, frame observation, same-origin or cross-origin; SG-000108 A4 is untouched.",
+      "E6, tabs and popups; popups stay closed as today.",
+      "E7, the BR-04 step 1 interactivity flag; the observation contract changes only as slice A5 states.",
+      "Every key other than Enter, Enter on a multi-line field (textarea, contenteditable) or on any non-text element, and hover.",
+      "Fill or Enter on a textarea, a contenteditable, an input of any type other than text, search, email, url or tel (password, number, date, datetime-local, month, week, time, color, range, file, hidden, checkbox, radio, submit, button, reset and image are all out), a field that looks secret, or with a value the prompt cannot show in full.",
+      "Any probe of a child frame or of cross-origin content by text waits or verifier text checks.",
+      "Page text, node values, option labels and the names of anything that is not a form control in any reply.",
+      "Release builds (the live path stays only in live-browser-dev builds), remote, tunnel and public profiles, and macOS and Linux (browser launch there waits for SG-000115).",
+      "Any new destination, route, listener or relaxation of the SG-000075 navigation rules."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None. This packet authorizes implementing and proving SG-000122; it adds no shape, argument, tool, dependency, listener or authority.",
+    "browser": "Proposed only (slices A1, A2 and A4): new SOFT-approved browser form actions on the committed document of a page whose origin the lifetime already admitted: fill and Enter on a single-line text field, select one option of a native select, set a checkbox or radio. Development builds (live-browser-dev) on Windows only.",
+    "observation": "Proposed only (slices A3 and A5): read-only text waits and verifier text checks on the main frame's committed document only (bounded, per-lifetime capped), the rest of the read-only postcondition verifier, and the accessible names of form controls in observe replies, computed without the contributions of embedded or referenced controls, bounded in length and marked untrusted. No other page text crosses.",
+    "mcp": "Proposed only (slices A3 and A4): local-only tools under the browser_structured profile for fill, text waits, the verifier, select, check and Enter; exposure, discovery, documentation and OAuth scope tables change together; remote, tunnel and public profiles unchanged.",
+    "approval": "Unchanged rules: every form action needs its own fresh SOFT approval from the local broker with exact digest binding (page id, store generation, node identity with its role and name, and the value, option label, checked state or key), single use and expiry. Showing the value in the prompt is new prompt content (today's live browser prompts show a digest, not a value), as is the field's role and name labelled as page-supplied; it changes what the person is shown, not how approvals are minted, bound or consumed. Enter is approved as possibly submitting or sending what the page holds. Waits, the verifier and observation need no approval and create none.",
+    "network": "None. No new destination, route or listener: the lifetime's single admitted origin and the SG-000075 layers bound where anything a page holds can go.",
+    "process": "None. The host and worker processes are the existing SG-000108 ones.",
+    "release": "None. Release builds stay unavailable; the live path exists only in live-browser-dev builds (SG-000108 decision 7).",
+    "remote": "None. Remote mapping stays disabled for every tool of this grain.",
+    "privileged": "None. SG-000096 Full User shell remains unarmed."
+  },
+  "decisions": [
+    {
+      "question": "Open the governed change",
+      "status": "DECIDED (founder, 2026-11-14)",
+      "decision": "Founder decision of 2026-11-14, given in the Claude Code session and recorded on issue #753. The founder asked Claude to choose the recommended option for each pending decision (\"chose the best for me\"), then chose the follow-ups directly. \"Decision 5\" is item 5 of the founder decision packet of 2026-11-14 as recorded on #753, not item 5 of the SG-000122 prep packet's \"Founder decisions needed\" list. Decision 5, as recorded on #753: \"activate forms in the browser, narrow first scope: fill, select, check, Enter to submit, text waits, the verifier. One approval per action, bound to page, element and value. Local only, Windows only, development builds only.\" The founder then confirmed it literally, given directly in the Claude Code session and posted on #753 at the founder's request: \"Confirmed: activate SG-000122, narrow scope, as recorded above.\""
+    },
+    {
+      "question": "Verifier text checks",
+      "status": "DECIDED (founder, 2026-11-14)",
+      "decision": "Recorded on issue #753 with the confirmation: \"live text checks look only at the main frame's committed document, the same as text waits. No frame or cross-origin content is probed.\" SG-000108 A4 (frames, popups and workers obey SG-000075; mediate_frame admits the exact same origin only) stays untouched: neither waits nor verifier text checks reach a child frame, same-origin or not."
+    },
+    {
+      "question": "Accepted limits",
+      "status": "DECIDED (founder, 2026-11-14)",
+      "decision": "Recorded on issue #753 as accepted: \"a secret typed into an ordinary field isn't detected;\" \"a page's script can read a filled value and send it to its admitted origin without a submit;\" \"the effect of pressing Enter can't be known in advance, so the limit is the one admitted destination.\" A fourth, recorded on #753 with the confirmation: \"a page can put any text it likes, up to 256 bytes per form control, into that control's accessible name. The agent reads it marked untrusted, and a name never carries authority.\" This settles the prep packet's open question on secrets: the person is shown the value in the prompt and is told that a value typed into an ordinary field is not classified."
+    },
+    {
+      "question": "Sequencing",
+      "status": "DECIDED (founder, 2026-11-14)",
+      "decision": "Recorded on issue #753: \"open SG-000122 now, as a fourth open grain beside SG-000096, SG-000127 and SG-000128. SG-000119 (Tauri) opens after forms reach their Windows run.\""
+    },
+    {
+      "question": "Rule change: the lawful open-grain set",
+      "status": "RECORDED (before implementation)",
+      "decision": "The canonical open-grain rule (apps/orcel-mcp/src/openai-plugin.test.ts and p20-architecture.test.ts) allowed SG-000096, SG-000127 and SG-000128 together. It now allows SG-000096, SG-000122, SG-000127 and SG-000128 together, only while CURRENT.md records SG-000122's founder decision, the parallel grains SG-000108, SG-000120, SG-000126 and SG-000129 stay closed, and no other grain beyond SG-000096 exists. This follows the SG-000128 and SG-000129 precedents (issues #515 and #536). SG-000122 is numbered below SG-000126 because the number was reserved for it in the backlog (BR-03, BR-05, BR-06) before later grains were activated; the rule pins the set, not the order."
+    },
+    {
+      "question": "Rule change: SG-000108 decision 4 (fill model-only)",
+      "status": "RECORDED (before implementation)",
+      "decision": "SG-000108 decision 4 (docs/security/SG-000108_PRODUCT_CALLER.md; orceld profile_gate.rs and orcel-browser-host exposure.rs) holds browser.dom/fill model-only. For this grain only, it is amended: browser.dom/fill may become a live shape under browser_structured, on a single-line text field of an admitted page, in live-browser-dev builds on Windows, with a fresh SOFT approval whose prompt shows the value. The value must be shown in full and exactly: the bound is measured on the escaped display text the prompt renders (orcel-approval prompt_text.rs display_field, at most MAX_SUMMARY_CHARS = 1024 displayed characters), so a value whose display would be cut is refused, never truncated; and a value holding any character the prompt would escape (C0 and C1 controls, line and paragraph separators, bidi embeddings, overrides, isolates and marks, format, zero-width, default-ignorable, tag, filler and blank-looking characters, and a combining mark past the second in a row) is refused. A backslash, which the prompt shows doubled, is allowed and counts double toward the bound. A2 must test that the prompt shows exactly the bound value (backslashes doubled, nothing else changed or omitted) for a value at the bound, and that one displayed character past it, and each escaped character class, is refused. The prompt also shows the target field's role and accessible name, each labelled as page-supplied, the name through display_field at most 256 bytes as observation returns it. When two or more form controls of the same role in the observation share the same shown name (two long names with one shown prefix, or equal names), the prompt also shows the target's ordinal among them in document order (\"2 of 3\"); the ordinal is part of the approval digest, and the host refuses the action when the target's ordinal at dispatch differs from the observed one. The uploads, browser.profile/status, browser.destination/validate and browser.navigation/preview stay model-only as decision 4 says. SG-000108 A13 (every live tool is one of the twelve SG-000079 shapes) is amended for this grain in the same way: the live shapes of the next decision are admitted beside the twelve, and A7 (the four tables agree mechanically, remote mapping disabled) applies to each."
+    },
+    {
+      "question": "Rule change: names leaving the isolated browser",
+      "status": "RECORDED (before implementation of slice A5)",
+      "decision": "SG-000108's rule that names never leave the isolated browser (orceld live_dispatch.rs: \"names and values never leave the isolated browser; nodes carry identities and keyed digests only\"; docs/security/SG-000108_PRODUCT_CALLER.md slice 3c) is amended for the accessible names of form controls only (roles textbox, searchbox, combobox, listbox, checkbox and radio on an input or select element of the main frame's committed document). Each name is computed without the contributions of embedded or referenced controls: a control inside the labelling content (a label that wraps a textbox or a select as well as a checkbox) or a control that aria-labelledby or aria-describedby points at contributes nothing, never its value, selected option label or text; when the name cannot be computed that way, the control carries no name. A5 must test a checkbox whose label wraps a textbox holding a value, a checkbox whose label wraps a select (no option label appears), and a field whose aria-labelledby points at a password field (no value appears). Each name is bounded (at most 256 bytes, cut on a character boundary and marked as cut), control characters are replaced, the reply marks every name as untrusted page content that grants nothing, and secret-looking fields are named but never valued. Values, page text, option labels and the names of every other node keep the rule unchanged. A name is never authority: actions still bind node identities, and the approval binds the role and name the host itself observed."
+    },
+    {
+      "question": "Rule change: the closed-grain press and select denials",
+      "status": "RECORDED (before implementation; no code change in A0)",
+      "decision": "The closed-grain pins that deny (\"browser.dom\", \"press\") and (\"browser.dom\", \"select\") (DENIED_BROWSER_SHAPES in crates/orcel-provider-browser/src/lib.rs, and the STRONG-mapping denial test in crates/orcel-policy/src/sg000024.rs) are not amended; they stay byte for byte, and those two shapes stay denied and STRONG on the model-only path. The live shapes of this grain use non-colliding names: browser.dom/fill (the existing qualified shape, promoted), browser.form/select, browser.form/check, browser.form/enter, browser.wait/text and browser.verify/check. Under the existing prefix rule (is_denied_browser_shape) every browser.form, browser.wait and browser.verify shape stays denied and STRONG on the model-only path; the new names are reachable only through orceld's profile gate (LIVE_BROWSER_SHAPES), the live argument forms in live_browser.rs and the live dispatch. A2 adds a test that the closed-grain pins still deny the two dom shapes and that no live name collides with DENIED_BROWSER_SHAPES. A later rename needs a recorded amendment of this spec."
+    },
+    {
+      "question": "Rule change: a cap on distinct awaited texts",
+      "status": "RECORDED (before implementation)",
+      "decision": "A text wait answers whether a chosen text is on the page, so it is a guessing oracle for page text that observation never returns, as the verifier's value check is for values (verify.rs, MAX_VALUE_GUESSES). Each browser lifetime therefore admits at most 16 distinct awaited texts across text waits and the verifier's text checks together, counted by the host on the exact text; repeating a text already counted is free; beyond the cap a new text is refused with a typed error and the page is not probed. The existing per-wait bounds stay: non-empty, at most MAX_VERIFY_TEXT_BYTES, no control character, at most MAX_WAIT_MS, and the main frame's committed document only. MAX_VALUE_GUESSES is unchanged. Known limit: both caps reset when a browser lifetime ends, as MAX_VALUE_GUESSES already does per worker lifetime; A1 keeps the text budget beside the value budget so they reset together. Lifetime starts are gated: orceld opens a new lifetime only through a broker-approved navigation (navigate_live in crates/orceld/src/live_browser.rs; browser.page/open ends a lifetime without approval but opens none). So each reset costs one SOFT approval from the person, but the navigation prompt does not say that it renews the budgets, and a person who keeps approving navigations lets the guessing continue."
+    },
+    {
+      "question": "Rule change: Enter only, single-line fields only, where and in which builds",
+      "status": "RECORDED (before implementation)",
+      "decision": "The live press is Enter only: today's host press accepts any key of PRESS_KEYS on any element and refuses Enter only in a multi-line field, so the live form adds new checks: the key is exactly Enter and the target is a single-line text field, else refused before any worker frame. For both fill and Enter, a single-line text field is an input element whose type state is exactly text, search, email, url or tel (a missing or unknown type attribute is the text state). The prep packet names no input types; today's worker FILLABLE selector admits every input type it does not exclude (number and the date and time types among them), so this allowlist is a new check in the host and the worker. Excluded: password, number, date, datetime-local, month, week, time, color, range, file, hidden, checkbox, radio, submit, button, reset and image, and every textarea and contenteditable. Enter is approved as possibly submitting or sending what the page holds; any origin the prompt shows is an unbound snapshot, and enforcement is the route rule (the lifetime's one admitted destination). Every tool of this grain is Windows-only (macOS and Linux launch stays refused until SG-000115), exists only in live-browser-dev development builds (release builds answer ProviderUnavailable), and is local-only: remote mapping stays off and no remote, tunnel or public profile lists it."
+    },
+    {
+      "question": "Uploads, dialogs, frames, tabs and the interactivity flag in this grain",
+      "status": "REJECTED (deferred)",
+      "decision": "Not needed for a form on one admitted page. E2 is egress, E3 answers page dialogs, E4 and E6 relax SG-000108 A4, E7 changes the observation contract; each needs its own decision."
+    }
+  ],
+  "invariants": [
+    "orceld remains the sole approval and execution authority; the MCP edge and clients only forward requests.",
+    "Every fill, select, check and Enter needs its own fresh SOFT approval bound to the page id, store generation, node identity (role and name as the host observed them) and the value, option label, checked state or key; approvals are single use and expire; a stale page, generation or element is refused, never retargeted.",
+    "The prompt shows the value of a fill exactly and in full, measured on its escaped display text; a value it cannot show in full, or holding a character it would escape, is refused. It shows the target's role and name labelled as page-supplied, and the target's ordinal when its shown name and role are shared.",
+    "Fields that look secret by type, autocomplete, name or id are never filled and never read.",
+    "Navigation, redirects, frames and popups obey SG-000075 and SG-000108 A4 unchanged; the lifetime's single admitted origin is the only destination anything a page holds can reach.",
+    "Observation returns node identities, roles and keyed digests, plus the bounded, untrusted-marked accessible names of form controls only, computed without the contributions of embedded or referenced controls (or no name); no value, page text or option label crosses.",
+    "Text waits and verifier text checks probe only the main frame's committed document; SG-000108 A4 stays untouched.",
+    "Fill and Enter act only on an input whose type state is text, search, email, url or tel.",
+    "At most 16 distinct awaited texts per browser lifetime across waits and verifier text checks; at most MAX_VALUE_GUESSES distinct values per field; both reset only when a lifetime ends, and a new lifetime opens only through a broker-approved navigation.",
+    "The closed-grain DENIED_BROWSER_SHAPES and sg000024 pins are unchanged; the live names never collide with them.",
+    "Windows only, live-browser-dev builds only, local only; release builds and remote mapping stay unavailable."
+  ],
+  "acceptance": [
+    "Activation (A0): this spec, CURRENT.md's record of the founder decision and the open-grain pins land together; no shape, argument, tool, policy or dispatch changes.",
+    "Policy tests (A2): each live form accepts exactly its fields; caller selectors and every AUTHORITY_FIELDS field are refused; a fill value whose escaped display exceeds MAX_SUMMARY_CHARS, or that holds any character the prompt would escape (each class tested), is refused; fill and Enter on every input type outside text, search, email, url and tel are refused; a press key other than Enter is refused; the closed-grain pins still deny browser.dom/press and browser.dom/select and no live name collides with them.",
+    "Approval tests (A2): an approval replayed on another page, generation, element, value, option, state or key is refused; a fill prompt shows exactly the bound value (backslashes doubled, nothing else changed or omitted) at the bound; the prompt labels the role and name as page-supplied and shows the ordinal when two targets share a shown name and role, and a changed ordinal at dispatch is refused; an approval is single use.",
+    "Host and dispatch tests (A1, A2): Enter on a textarea, contenteditable or non-text element is refused before any worker frame; a secret-looking field is refused; the 17th distinct awaited text in a lifetime is refused without probing; a text present only in a child frame is not found by a wait or a verifier text check; a stale page fails closed.",
+    "Observation tests (A5): only form controls carry names; each name is bounded, cut and marked; names are computed without embedded or referenced controls: a checkbox whose label wraps a textbox holding a value, a checkbox whose label wraps a select, and a field whose aria-labelledby points at a password field each yield a name with no value or option label in it, or no name; values, page text and option labels never appear in a reply.",
+    "Exposure tests (A3, A4): each tool is in the exposure profile, discovery, documentation and OAuth scope tables together or in none (A7); remote, tunnel and public profiles list none; release builds answer ProviderUnavailable.",
+    "Native Windows run (A6): a controlled fixture form is filled, selected, checked, submitted with Enter, waited on and verified through orceld with recorded broker decisions; the SG-000108 native suite still passes.",
+    "Exact-head CI (Windows, macOS and Linux legs), Review Gates (Jev Semantic Review, Alibaba OpenCodeReview delegation) and a fresh-context security judge pass on each slice."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on every slice and on closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "deferred_slices": "Uploads (E2), dialog accept (E3), frame observation (E4), tabs and popups (E6), the interactivity flag (E7), other keys and hover each need their own founder decision.",
+    "release_builds": "The live browser in release builds is SG-000127 slice 7's decision; this grain does not change it.",
+    "macos_linux": "Browser launch on macOS and Linux waits for SG-000115.",
+    "sg_000119": "SG-000119 (Tauri) opens after this grain's Windows run (founder sequencing, #753)."
+  },
+  "activation_note": "No shape, argument, tool, dependency, policy, dispatch or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about form actions.",
+  "done_when": "On Windows, in a development build, an agent through the local MCP edge fills, selects, checks, submits with Enter, waits for a text and verifies the result on an admitted page, each action approved by the person in orceld's broker with the value shown, every replay, stale target, secret field, non-Enter key, multi-line Enter and over-cap wait refused, and remote, release and the deferred slices still absent."
+}
