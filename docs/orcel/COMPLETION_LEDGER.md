@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-14, main at `f5390c0e` (#750). Open PRs: #342 and #328 (other work).
+Last updated: 2026-11-14, main at `a7f999bf` (#751). Open PRs: #342 and #328 (other work).
 
 ## Approval and security UX
 
@@ -70,7 +70,7 @@ Last updated: 2026-11-14, main at `f5390c0e` (#750). Open PRs: #342 and #328 (ot
 
 | Component | State | Evidence | Tests | Known limitations | Remaining work | Blockers |
 |---|---|---|---|---|---|---|
-| A real client drives a real approval to a verified report | Not started | Release qualification reaches the prompt with a test client | `release_qualification.rs` | No person has answered a real prompt in a journey | F4 slice 4 | Class 3: the founder at the prompt |
+| A real client drives a real approval to a verified report | Done (qualified) for Claude Code 2.1.291 on an unsigned build | F4 slice 4 run 2026-11-14 (founder decision 1): the founder answered every Orcel box while Claude Code 2.1.291, driven headless in one session, ran the runbook against the installed release candidate from `a7f999bf` (manual CI run 43551160719); evidence posted on #446 | `f4_journey evidence` all PASS: approved and verified, denied, changed source stale, existing destination refused, a task interrupted by ending `orceld` read back, the user's file untouched, no approval material in the transcript; release qualification reaches the prompt with a test client (`release_qualification.rs`) | One client version only; unsigned development build; the Windows app's task view (step G) was not checked by eye, the journal history matched; the redacted transcript was read by the founder and kept private | Other clients (Codex) when wanted; a release-build run once signing exists | Signing (founder) for F4 closeout |
 | AI model integration | Not started | Harness only (`model_eval.py`, `model_run.py`) | stub runs | No model has been run | Run a candidate | Founder decision 3 (download) |
 | Passkey test environment | Not started | — | — | — | A disposable environment and protocol | Never the founder's personal desktop or accounts |
 
