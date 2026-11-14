@@ -119,7 +119,8 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | Decision | Options recorded |
 |---|---|
 | Code signing (Windows Authenticode, macOS identity) | Gates F4 closeout, slice 5 (option 1), FD-05 / XP-16 macOS packaging |
-| F4 slice 5 stop and takeover | (1) signing, (2) governed amendment for an authority-reducing task-scoped stop, (3) record as an open F4 gate — see #446 |
+| F4 slice 5 stop and takeover | Decided 2026-11-13: (2), the amendment for `task.stop` only; shipped as #640. Pause/resume would be another state-changing method — see #446 |
+| Filesystem race residuals (#670–#680, #740) | Accepted for development builds by founder decision 8 of 2026-11-14; decided again before any release build (see `COMPLETION_LEDGER.md`) |
 | F4 slice 7: live browser in release builds | Its own governed change and security review |
 | FD-03 (gates CR-03), FD-05, FD-08 | As recorded in the frontier |
 | Activation of SG-000115 (XP-14 launch, network sink, supervision on macOS/Linux) and the other prepared grains | Activation grants authority; only the founder activates. Gate (F4 slice 5, #640): before SG-000115 is activated, the Unix browser engine (on Linux it runs in new user and PID namespaces but no new mount namespace, `orcel-browser-host/src/unix_supervise.rs`) must be shown unable to reach orceld's app API socket (`$XDG_RUNTIME_DIR/orcel/app-api.sock`, or the macOS per-user temp directory's), or `task.stop`'s exception to the first-party code rule (`ORCEL_APP_API_1.md` section 2, founder decision of 2026-11-13, #446) is judged again. The exception rests on no confined process being able to reach the endpoint yet not signal orceld |
