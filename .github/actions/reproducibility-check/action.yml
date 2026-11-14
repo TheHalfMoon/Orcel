@@ -43,6 +43,14 @@ runs:
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        # From the parser's own folder, as the first build runs it, so rustup
+        # picks the same rust-toolchain.toml (apps/orcel-doc-parser) for both.
+        Push-Location apps/orcel-doc-parser
+        rustc -V
+        cargo build --release --locked --bin orcel-doc-parser
+        $built = $LASTEXITCODE
+        Pop-Location
+        if ($built -ne 0) { exit $built }
         node scripts/package-release.mjs --out $second
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         node scripts/archive-release.mjs --release $second --out "$second.zip"
@@ -59,7 +67,7 @@ runs:
         New-Item -ItemType Directory -Force $out | Out-Null
         $identical = $true
         $binaries = [ordered]@{}
-        foreach ($name in "orcel.exe", "orcel-mcp-host.exe", "orceld.exe", "orcel-contain.exe", "Orcel.Desktop.exe") {
+        foreach ($name in "orcel.exe", "orcel-mcp-host.exe", "orceld.exe", "orcel-contain.exe", "orcel-doc-parser.exe", "Orcel.Desktop.exe") {
           $a = (Get-FileHash (Join-Path $first $name) -Algorithm SHA256).Hash.ToLower()
           $b = (Get-FileHash (Join-Path $second $name) -Algorithm SHA256).Hash.ToLower()
           $binaries[$name] = [ordered]@{ first = $a; second = $b; identical = ($a -eq $b) }

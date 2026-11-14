@@ -47,8 +47,27 @@ format and formula. So a report can name the cell each figure came from.
 Apache POI's samples of Excel 12.0 files (`tests/fixtures/WORKBOOKS.md`).** That Excel saved
 those samples is well-founded but not proved, and no file from a current Excel is a
 committed test. Comments, charts
-and other parts aren't read. This reader is not yet wired to a task: the spreadsheet journey
-(roadmap Journey 2) still needs its own grain.
+and other parts aren't read. This reader is not yet wired to a task. Founder decision 7 of
+2026-11-14 chose it for the spreadsheet journey (roadmap Journey 2), slice by slice
+(`docs/orcel/implementation-readiness/prep/F5_SPREADSHEET_JOURNEY.md`); a client can reach
+it only from slice 3, which needs its own grain.
+
+## In the release
+
+Since F5 slice 1, the Windows release ships `orcel-doc-parser.exe` beside `orceld.exe`,
+pinned by `orcel-doc-parser.sha256` (`scripts/package-release.mjs`; both are manifest files,
+so the installer verifies them). **No release build calls it.** Its only callers are the live
+browser's committed downloads, compiled only into `live-browser-*` development builds, and the
+workbook source, compiled only into tests. If that changes, the `expect(dead_code)` on the
+entry points in `crates/orceld/src/document_parse.rs` fails CI's clippy, and
+`release_blocker_sweep.rs` (`the_shipped_document_parser_has_no_release_caller`) scans
+production Rust and the shipped MCP and Windows app sources for callers. The executable
+registry refuses anything in an Orcel install directory, so it can't be registered and started
+unconfined either. Known consequence: the registry treats any folder holding an `orceld`
+executable as an install directory, so `cargo install orceld`, for example, makes every tool in
+`~/.cargo/bin` unregistrable (and stops a registered one there from launching). Its crates are in
+the release's `THIRD_PARTY_NOTICES.txt` and SBOM, with the lopdf and Firecrawl notices. The
+Linux and macOS packages don't carry it yet.
 
 ## How orceld runs it
 

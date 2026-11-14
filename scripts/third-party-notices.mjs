@@ -21,12 +21,18 @@ if (!TARGET || TARGET.startsWith("--")) fail("--target <triple> needs a value");
 // Each Cargo workspace that ships a binary, with its shipped root packages.
 // XP-13b: the orcel-contain helper is its own workspace (AD-16).
 // #369/#373: the XP-10 approval helper (GTK 4) ships in the Linux packages
-// only.
+// only. F5 slice 1 (founder decision 7 of 2026-11-14): the confined document
+// parser ships in the Windows release only; the Linux and macOS packages
+// don't carry it yet.
+const WINDOWS = TARGET.includes("-windows-");
 const WORKSPACES = [
   { dir: ".", roots: ["orceld", "orcel-lifecycle"] },
   { dir: "apps/orcel-contain", roots: ["orcel-contain"] },
+  { dir: "apps/orcel-doc-parser", roots: ["orcel-doc-parser"], windowsOnly: true },
   { dir: "apps/orcel-approval-helper-linux", roots: ["orcel-approval-helper-linux"], linuxOnly: true }
-].filter((workspace) => !workspace.linuxOnly || TARGET.includes("-linux-"));
+].filter(
+  (workspace) => (!workspace.linuxOnly || TARGET.includes("-linux-")) && (!workspace.windowsOnly || WINDOWS)
+);
 const NOTICE_FILE = /^(licen[cs]e|copying|notice|unlicense)([-_.].*)?$/i;
 // Source vendored or ported into this repository rather than resolved from
 // a registry. Its notice is maintained in-repo, and the upstream copyright
@@ -51,8 +57,35 @@ const VENDORED_NOTICES = [
     license: "Apache-2.0",
     file: "docs/orcel/notices/playwright-Apache-2.0.txt",
     copyright: "Copyright (c) Microsoft Corporation"
+  },
+  // F5 slice 1: in the confined document parser, so only where it ships.
+  // lopdf is a path dependency ([patch.crates-io]), so the crate walk below,
+  // which lists registry crates only, never reaches it.
+  {
+    name: "lopdf 0.45.0 (J-F-Liu/lopdf, vendored source with Orcel's patch queue)",
+    license: "MIT",
+    file: "docs/orcel/notices/lopdf-MIT.txt",
+    copyright: "Copyright (c) 2016 Junfeng Liu",
+    windowsOnly: true
+  },
+  {
+    name: "Firecrawl (firecrawl/firecrawl@f84845c864b6e2af22791c18fcf89ac2a21f1434, adapted document converters)",
+    license: "AGPL-3.0 upstream; redistributed under the founder authorization the notice names",
+    file: "docs/orcel/notices/firecrawl-AGPL-3.0.txt",
+    copyright: "Upstream license: GNU Affero General Public License v3.0",
+    windowsOnly: true
   }
-];
+].filter((notice) => !notice.windowsOnly || WINDOWS);
+// Registry crates published without any license file, keyed by exact
+// version: the in-repo notice holds the license their repository carries,
+// and must contain its copyright line verbatim. Used only when the package
+// itself ships no notice file.
+const PUBLISHED_WITHOUT_NOTICE = new Map([
+  [
+    "alloc-stdlib@0.2.4",
+    { file: "docs/orcel/notices/alloc-stdlib-BSD-3-Clause.txt", copyright: "Copyright (c) 2016 Dropbox, Inc." }
+  ]
+]);
 
 function fail(message) {
   console.error(`third-party-notices: ${message}`);
@@ -181,6 +214,12 @@ let text =
   "includes the following third-party components, each under its own license.\n";
 for (const entry of entries) {
   const files = noticeFiles(entry.dir, entry.licenseFile);
+  const fallback = entry.kind === "crate" ? PUBLISHED_WITHOUT_NOTICE.get(`${entry.name}@${entry.version}`) : undefined;
+  if (files.length === 0 && fallback) {
+    const notice = readFileSync(join(repo, fallback.file), "utf8").replace(/\r\n/g, "\n").trimEnd();
+    if (!notice.includes(fallback.copyright)) fail(`${fallback.file} lacks "${fallback.copyright}"`);
+    files.push({ name: fallback.file, text: notice });
+  }
   if (!entry.license || files.length === 0) missing.push(`${entry.kind} ${entry.name}@${entry.version}`);
   text += `\n${"=".repeat(78)}\n${entry.name} ${entry.version} (${entry.kind})\nLicense: ${entry.license ?? "UNDECLARED"}\n`;
   for (const file of files) {
@@ -192,7 +231,17 @@ for (const vendored of VENDORED_NOTICES) {
   if (!notice.includes(vendored.copyright)) fail(`${vendored.file} lacks "${vendored.copyright}"`);
   text += `\n${"=".repeat(78)}\n${vendored.name}\nLicense: ${vendored.license}\n\n--- ${vendored.file} ---\n${notice}\n`;
 }
+// SG-000045: no shipped component may lack a declared license or its text.
+// A crate published without a license file needs an entry in
+// PUBLISHED_WITHOUT_NOTICE. The Windows release fails on a gap. The Unix
+// development packages still list theirs (on macOS, objc2 0.6.5 and
+// objc2-local-authentication 0.3.2 are published without license files) and
+// warn, until those have their entries.
+if (missing.length && WINDOWS) {
+  fail(`components without a declared license or shipped license file:\n${missing.join("\n")}`);
+}
 if (missing.length) {
+  console.error(`third-party-notices: warning: ${missing.length} components without a shipped license file`);
   text += `\n${"=".repeat(78)}\nComponents without a declared license or shipped license file:\n${missing.join("\n")}\n`;
 }
 writeFileSync(out, text);

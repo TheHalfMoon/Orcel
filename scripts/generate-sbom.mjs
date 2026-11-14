@@ -5,8 +5,9 @@
 //   node scripts/generate-sbom.mjs --release <release-dir> --out <sbom.cdx.json>
 //
 // The Rust components are the crates actually linked into the shipped
-// binaries (orceld, orcel, orcel-mcp-host, and the orcel-contain helper from
-// its own workspace, XP-13b) for x86_64-pc-windows-msvc, taken
+// binaries (orceld, orcel, orcel-mcp-host, the orcel-contain helper from
+// its own workspace, XP-13b, and the confined document parser from its own,
+// F5 slice 1) for x86_64-pc-windows-msvc, taken
 // from `cargo metadata` and following only normal (non-dev, non-build)
 // dependency edges. The npm components are the packages present in the
 // release's app/orcel-mcp/node_modules. Every payload file listed in the
@@ -21,10 +22,44 @@ import { fileURLToPath } from "node:url";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = "x86_64-pc-windows-msvc";
 // Each Cargo workspace that ships a binary, with its shipped root packages.
+// F5 slice 1 (founder decision 7 of 2026-11-14): the confined document parser.
 const WORKSPACES = [
   { dir: ".", roots: ["orceld", "orcel-lifecycle"] },
-  { dir: "apps/orcel-contain", roots: ["orcel-contain"] }
+  { dir: "apps/orcel-contain", roots: ["orcel-contain"] },
+  { dir: "apps/orcel-doc-parser", roots: ["orcel-doc-parser"] }
 ];
+
+// Orcel crates that carry adapted donor source: a CycloneDX pedigree records
+// the ancestor, its upstream license and the basis for redistributing it.
+// It claims only what the notice and the founder attestation record.
+const PEDIGREES = new Map([
+  [
+    "orcel-doc-parser",
+    {
+      ancestors: [
+        {
+          type: "library",
+          "bom-ref": "donor:firecrawl/firecrawl@f84845c864b6e2af22791c18fcf89ac2a21f1434",
+          name: "firecrawl",
+          version: "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+          // Named, not an SPDX id: the upstream LICENSE is the AGPL v3, and
+          // whether it is "-only" or "-or-later" isn't recorded here.
+          licenses: [{ license: { name: "AGPL-3.0 (firecrawl/firecrawl LICENSE at this commit)" } }],
+          externalReferences: [
+            { type: "vcs", url: "https://github.com/firecrawl/firecrawl/tree/f84845c864b6e2af22791c18fcf89ac2a21f1434" }
+          ]
+        }
+      ],
+      notes:
+        "src/pdf.rs and src/document.rs adapt apps/api/native/src/pdf.rs and document.rs of " +
+        "firecrawl/firecrawl at f84845c864b6e2af22791c18fcf89ac2a21f1434 (AGPL-3.0 upstream). They are " +
+        "redistributed inside Apache-2.0 Orcel under the founder's attestation of 2026-10-18 (FD-06, " +
+        "docs/orcel/grants/2026-10-18-founder-attestation.md); the permission documents are confidential " +
+        "and are not part of the repository. Notice: docs/orcel/notices/firecrawl-AGPL-3.0.txt. The crate's " +
+        "other sources, including the XLSX reader src/workbook.rs, are Orcel's own."
+    }
+  ]
+]);
 
 function fail(message) {
   console.error(`generate-sbom: ${message}`);
@@ -122,8 +157,18 @@ function workspaceComponents({ dir, roots: rootNames }) {
       name: p.name,
       version: p.version,
       licenses: p.license ? [{ expression: p.license }] : [],
-      ...(p.source ? { purl: ref(p) } : { description: "Orcel workspace crate" })
+      // A path crate under third_party/ is vendored upstream source (lopdf,
+      // in the document parser), not Orcel's own.
+      ...(p.source
+        ? { purl: ref(p) }
+        : {
+            description: p.manifest_path.split(sep).join("/").includes("/third_party/")
+              ? "Vendored third-party crate (see THIRD_PARTY_NOTICES.txt)"
+              : "Orcel workspace crate"
+          })
     };
+    const pedigree = p.source ? undefined : PEDIGREES.get(p.name);
+    if (pedigree) component.pedigree = pedigree;
     const checksum = checksums.get(`${p.name}@${p.version}`);
     if (checksum) component.hashes = [{ alg: "SHA-256", content: checksum }];
     if (p.repository) component.externalReferences = [{ type: "vcs", url: p.repository }];
