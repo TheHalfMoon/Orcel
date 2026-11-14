@@ -42,13 +42,20 @@ runs:
       run: cargo build --release --locked -p orcel-lifecycle --example fake_tunnel_client
     - name: Package release
       shell: pwsh
-      run: node scripts/package-release.mjs --out "${{ inputs.release-dir }}"
+      # Inputs reach scripts only through the environment, never written into the script text.
+      env:
+        RELEASE_DIR: ${{ inputs.release-dir }}
+      run: node scripts/package-release.mjs --out "${env:RELEASE_DIR}"
     - name: Write the deterministic archive
       shell: pwsh
-      run: node scripts/archive-release.mjs --release "${{ inputs.release-dir }}" --out "${{ inputs.release-dir }}.zip"
+      env:
+        RELEASE_DIR: ${{ inputs.release-dir }}
+      run: node scripts/archive-release.mjs --release "${env:RELEASE_DIR}" --out "${env:RELEASE_DIR}.zip"
     - name: Extract the archive for qualification
       shell: pwsh
-      run: Expand-Archive -Path "${{ inputs.release-dir }}.zip" -DestinationPath "${{ inputs.release-dir }}-from-archive"
+      env:
+        RELEASE_DIR: ${{ inputs.release-dir }}
+      run: Expand-Archive -Path "${env:RELEASE_DIR}.zip" -DestinationPath "${env:RELEASE_DIR}-from-archive"
     - name: Qualify the release extracted from the archive
       shell: pwsh
       env:

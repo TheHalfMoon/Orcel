@@ -1259,65 +1259,283 @@ fn the_store_guard_catches_the_shapes_it_claims() {
     ));
 }
 
-/// The release workflow keeps building and publishing apart: jobs that run repository and
-/// dependency code hold only `contents: read`, so nothing they run holds release write access
-/// or an OIDC token. The publish job runs no repository code and waits for the `release`
-/// environment's approval. No workflow expression is written into a script.
-#[test]
-fn the_release_workflow_separates_building_from_publishing() {
-    // A Windows checkout may have CRLF line endings.
-    let text = std::fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
-        .unwrap()
-        .replace("\r\n", "\n");
-    let jobs = text.split_once("\njobs:\n").expect("a jobs section").1;
-    let lines: Vec<&str> = jobs.lines().collect();
-    let is_job = |line: &str| {
-        line.starts_with("  ")
-            && !line.starts_with("   ")
-            && line
-                .split('#')
-                .next()
-                .unwrap_or("")
-                .trim_end()
-                .ends_with(':')
-            && !line.trim_start().starts_with('#')
-    };
-    let mut sections: Vec<(String, String)> = Vec::new();
-    for line in &lines {
-        if is_job(line) {
-            let name = line.split('#').next().unwrap().trim().trim_end_matches(':');
-            sections.push((name.to_owned(), String::new()));
-        } else if let Some((_, body)) = sections.last_mut() {
-            // Comments say what a job doesn't do; only its keys count.
-            if !line.trim_start().starts_with('#') {
-                body.push_str(line);
-                body.push('\n');
-            }
+/// A workflow line without its YAML comment (a `#` at the start or after whitespace) and
+/// without trailing whitespace.
+fn yaml_code(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let cut = line
+        .char_indices()
+        .find(|&(i, c)| c == '#' && (i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t'))
+        .map_or(line.len(), |(i, _)| i);
+    line[..cut].trim_end()
+}
+
+/// A YAML scalar without surrounding whitespace and one layer of matching quotes.
+fn unquote(value: &str) -> &str {
+    let value = value.trim();
+    for quote in ['"', '\''] {
+        if let Some(inner) = value
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
+            return inner.trim();
         }
     }
-    let body =
-        |name: &str| -> &str { &sections.iter().find(|(job, _)| job == name).expect(name).1 };
+    value
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// Every permission the lines grant, as (scope, level), whatever the spelling: `write-all`
+/// and `read-all` (scope `*`), flow style `{contents: write}`, block style, quoted keys or
+/// values, extra spaces. A `permissions` key is matched only as a key, never inside a value.
+fn permission_grants(lines: &[&str]) -> Vec<(String, String)> {
+    let mut grants = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let code = yaml_code(lines[i]);
+        let indent = indent_of(code);
+        i += 1;
+        let entry = code.trim_start().trim_start_matches("- ");
+        let Some((key, value)) = entry.split_once(':') else {
+            continue;
+        };
+        if unquote(key) != "permissions" {
+            continue;
+        }
+        let value = value.trim();
+        if value.is_empty() {
+            while i < lines.len() {
+                let item = yaml_code(lines[i]);
+                if !item.trim().is_empty() {
+                    if indent_of(item) <= indent {
+                        break;
+                    }
+                    let (scope, level) = item.trim().split_once(':').unwrap_or((item, ""));
+                    grants.push((unquote(scope).to_owned(), unquote(level).to_owned()));
+                }
+                i += 1;
+            }
+        } else if let Some(inner) = value.strip_prefix('{') {
+            let inner = inner.trim_end().strip_suffix('}');
+            assert!(
+                inner.is_some(),
+                "a flow-style permissions mapping is closed on its line: {code}"
+            );
+            for pair in inner.unwrap_or("").split(',') {
+                if !pair.trim().is_empty() {
+                    let (scope, level) = pair.split_once(':').unwrap_or((pair, ""));
+                    grants.push((unquote(scope).to_owned(), unquote(level).to_owned()));
+                }
+            }
+        } else {
+            let level = match unquote(value) {
+                "write-all" => "write",
+                "read-all" => "read",
+                other => other,
+            };
+            grants.push(("*".to_owned(), level.to_owned()));
+        }
+    }
+    grants
+}
+
+/// Whether a `uses:` value is a local action or a remote one pinned by a full commit SHA.
+fn pinned_action(value: &str) -> bool {
+    if let Some(local) = value.strip_prefix("./") {
+        return !local.contains("..");
+    }
+    let Some((action, sha)) = value.split_once('@') else {
+        return false;
+    };
+    action.contains('/')
+        && !action.contains(':')
+        && sha.len() == 40
+        && sha
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Every `uses:` value in a workflow or action file.
+fn uses_values(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| {
+            let entry = yaml_code(line).trim_start().trim_start_matches("- ");
+            entry.strip_prefix("uses:").map(|v| unquote(v).to_owned())
+        })
+        .collect()
+}
+
+/// Lines where a `${{ }}` expression reaches a `run:` script, on its first line or below it:
+/// a script block runs until a line indented no deeper than its `run:` key.
+fn expressions_in_scripts(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut script: Option<usize> = None;
+    for line in text.lines() {
+        let indent = indent_of(line);
+        if let Some(depth) = script {
+            if line.trim().is_empty() || indent > depth {
+                if line.contains("${{") {
+                    found.push(line.to_owned());
+                }
+                continue;
+            }
+            script = None;
+        }
+        // The key's own column: `- run:` puts it two past the dash.
+        let trimmed = line.trim_start().trim_start_matches("- ");
+        if let Some(rest) = trimmed.strip_prefix("run:") {
+            if rest.contains("${{") {
+                found.push(line.to_owned());
+            }
+            script = Some(line.len() - trimmed.len());
+        }
+    }
+    found
+}
+
+/// Whether text names a secret or the workflow token.
+fn names_a_secret(text: &str) -> bool {
+    text.lines().map(yaml_code).any(|code| {
+        code.contains("secrets.") || code.contains("secrets[") || code.contains("github.token")
+    })
+}
+
+fn read_lf(path: &Path) -> String {
+    // A Windows checkout may have CRLF line endings.
+    assert!(path.is_file(), "{}", path.display());
+    fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+}
+
+/// The release workflow keeps building and publishing apart: jobs that run repository and
+/// dependency code hold only `contents: read` and name no secret, so nothing they run holds
+/// release write access or an OIDC token. The publish job runs no repository code and waits
+/// for the `release` environment's approval. Only a `v*` tag push starts it, every action is
+/// pinned by commit, and no workflow expression is written into a script, here or in the
+/// composite actions.
+#[test]
+fn the_release_workflow_separates_building_from_publishing() {
+    let root = repo_root();
+    let text = read_lf(&root.join(".github/workflows/release.yml"));
+    let (head, jobs) = text.split_once("\njobs:\n").expect("a jobs section");
+
+    // Top level: only a `v*` tag push triggers it, and the default token reads only.
+    let top_keys: Vec<&str> = text
+        .lines()
+        .map(yaml_code)
+        .filter(|code| !code.is_empty() && indent_of(code) == 0)
+        .map(|code| unquote(code.split_once(':').map_or(code, |(key, _)| key)))
+        .collect();
+    assert_eq!(
+        top_keys,
+        ["name", "on", "permissions", "jobs"],
+        "{top_keys:?}"
+    );
+    let head_lines: Vec<&str> = head.lines().collect();
+    let on_start = head_lines
+        .iter()
+        .position(|line| unquote(yaml_code(line).trim_end_matches(':')) == "on")
+        .expect("an on: key");
+    let triggers: Vec<String> = head_lines[on_start + 1..]
+        .iter()
+        .copied()
+        .map(yaml_code)
+        .filter(|code| !code.is_empty())
+        .take_while(|code| indent_of(code) > 0)
+        .map(|code| code.trim().replace(['"', '\''], ""))
+        .collect();
+    assert_eq!(triggers, ["push:", "tags:", "- v*"], "{triggers:?}");
+    for trigger in [
+        "pull_request",
+        "workflow_dispatch",
+        "workflow_run",
+        "workflow_call",
+        "schedule",
+        "repository_dispatch",
+    ] {
+        assert!(
+            !text
+                .lines()
+                .map(yaml_code)
+                .any(|code| code.contains(trigger)),
+            "release.yml must not mention {trigger}"
+        );
+    }
+    let read_only = vec![("contents".to_owned(), "read".to_owned())];
+    assert_eq!(
+        permission_grants(&head_lines),
+        read_only,
+        "workflow default"
+    );
+
+    // Jobs, split at two-space keys; comments say what a job doesn't do, only its keys count.
+    let mut sections: Vec<(String, Vec<&str>)> = Vec::new();
+    for line in jobs.lines() {
+        let code = yaml_code(line);
+        if code.is_empty() {
+            continue;
+        }
+        if indent_of(code) == 2 && code.ends_with(':') {
+            sections.push((code.trim().trim_end_matches(':').to_owned(), Vec::new()));
+        } else if let Some((_, body)) = sections.last_mut() {
+            body.push(code);
+        }
+    }
+    fn job<'a>(sections: &'a [(String, Vec<&'a str>)], name: &str) -> &'a [&'a str] {
+        &sections
+            .iter()
+            .find(|(job, _)| job == name)
+            .expect("a job")
+            .1
+    }
+    let body = |name: &str| job(&sections, name);
     let names: Vec<&str> = sections.iter().map(|(name, _)| name.as_str()).collect();
     assert_eq!(
         names,
         ["build-windows", "build-linux", "publish"],
         "{names:?}"
     );
+    let mut local_actions: Vec<String> = Vec::new();
     for build in ["build-windows", "build-linux"] {
         let job = body(build);
-        assert!(job.contains("contents: read"), "{build} reads only");
-        for write in [
-            "contents: write",
-            "id-token: write",
-            "attestations: write",
-            "environment:",
-        ] {
-            assert!(!job.contains(write), "{build} must not hold {write}");
-        }
+        let grants = permission_grants(job);
+        assert_eq!(grants, read_only, "{build} reads only");
+        assert!(
+            grants.iter().all(|(_, level)| !level.contains("write")),
+            "{build} must hold no write permission"
+        );
+        let joined = job.join("\n");
+        assert!(!names_a_secret(&joined), "{build} must name no secret");
+        assert!(
+            !job.iter()
+                .any(|code| unquote(code.trim().split(':').next().unwrap_or("")) == "environment"),
+            "{build} must not use an environment"
+        );
+        local_actions.extend(
+            uses_values(&joined)
+                .into_iter()
+                .filter(|value| value.starts_with("./")),
+        );
     }
     let publish = body("publish");
+    let mut grants = permission_grants(publish);
+    grants.sort();
+    assert_eq!(
+        grants,
+        [
+            ("attestations".to_owned(), "write".to_owned()),
+            ("contents".to_owned(), "write".to_owned()),
+            ("id-token".to_owned(), "write".to_owned()),
+        ],
+        "publish holds exactly what attesting and uploading need"
+    );
+    let publish = publish.join("\n");
     assert!(
-        publish.contains("environment: release"),
+        publish
+            .lines()
+            .any(|code| code.trim().replace(['"', '\''], "") == "environment: release"),
         "publish waits for approval"
     );
     assert!(
@@ -1325,7 +1543,7 @@ fn the_release_workflow_separates_building_from_publishing() {
         "publish runs no repository code"
     );
     assert!(
-        !publish.contains("uses: ./"),
+        uses_values(&publish).iter().all(|v| !v.starts_with("./")),
         "publish runs no local action"
     );
     assert!(
@@ -1336,28 +1554,110 @@ fn the_release_workflow_separates_building_from_publishing() {
         publish.contains("attest-build-provenance"),
         "publish attests the assets"
     );
-    // No `${{ }}` inside any `run:` script, on its first line or below it: a script block runs
-    // until a line indented no deeper than its `run:` key.
-    let mut script: Option<usize> = None;
-    for line in text.lines() {
-        let indent = line.len() - line.trim_start().len();
-        if let Some(depth) = script {
-            if line.trim().is_empty() || indent > depth {
-                assert!(
-                    !line.contains("${{"),
-                    "an expression reaches a script: {line}"
-                );
-                continue;
-            }
-            script = None;
-        }
-        let trimmed = line.trim_start().trim_start_matches("- ");
-        if let Some(rest) = trimmed.strip_prefix("run:") {
+    assert!(
+        publish.contains("[A-Za-z0-9._+-]") && publish.contains("uniq -d"),
+        "publish admits only plain names each build's checksum list names, and none twice"
+    );
+    assert!(
+        !publish.contains("|| true") && !publish.contains("2>/dev/null"),
+        "publish hides no failure"
+    );
+
+    // The build jobs' composite actions, and every other one, follow the same script rule
+    // and name no secret.
+    local_actions.sort();
+    local_actions.dedup();
+    assert!(
+        !local_actions.is_empty(),
+        "the Windows build uses its actions"
+    );
+    let mut files = vec![(".github/workflows/release.yml".to_owned(), text.clone())];
+    let mut action_dirs: Vec<String> = fs::read_dir(root.join(".github/actions"))
+        .expect("the composite actions")
+        .map(|entry| {
+            format!(
+                "./.github/actions/{}",
+                entry.unwrap().file_name().to_string_lossy()
+            )
+        })
+        .collect();
+    action_dirs.sort();
+    for action in &local_actions {
+        assert!(
+            action_dirs.contains(action),
+            "{action} is a composite action"
+        );
+    }
+    for action in &action_dirs {
+        let path = format!("{}/action.yml", action.trim_start_matches("./"));
+        let action_text = read_lf(&root.join(&path));
+        assert!(
+            action_text.contains("using: composite"),
+            "{path} is a composite action"
+        );
+        assert!(!names_a_secret(&action_text), "{path} must name no secret");
+        files.push((path, action_text));
+    }
+    for (path, file) in &files {
+        let reached = expressions_in_scripts(file);
+        assert!(
+            reached.is_empty(),
+            "{path}: an expression reaches a script; pass it through env: {reached:?}"
+        );
+        for value in uses_values(file) {
             assert!(
-                !rest.contains("${{"),
-                "an expression reaches a script: {line}"
+                pinned_action(&value),
+                "{path}: {value} is not pinned by a full commit SHA"
             );
-            script = Some(indent);
         }
     }
+}
+
+/// The release workflow sweep's parsers catch the spellings they claim, and a script that
+/// merely mentions a permission is not a grant.
+#[test]
+fn the_release_sweep_parsers_catch_the_spellings_they_claim() {
+    let grants = |text: &str| permission_grants(&text.lines().collect::<Vec<_>>());
+    let pair = |scope: &str, level: &str| (scope.to_owned(), level.to_owned());
+    assert_eq!(grants("    permissions: write-all"), [pair("*", "write")]);
+    assert_eq!(grants("    permissions: 'read-all'"), [pair("*", "read")]);
+    assert_eq!(
+        grants("    permissions: { contents : write , \"id-token\": 'write' }"),
+        [pair("contents", "write"), pair("id-token", "write")]
+    );
+    assert_eq!(
+        grants("    permissions:\n      \"contents\" :  \"read\"  # x\n      packages: write\n    steps:"),
+        [pair("contents", "read"), pair("packages", "write")]
+    );
+    let none: Vec<(String, String)> = Vec::new();
+    assert_eq!(
+        grants("      - run: echo contents: read\n      - run: echo permissions-less"),
+        none
+    );
+    assert_eq!(grants("    permissions: {}"), none);
+    assert!(pinned_action(
+        "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+    ));
+    assert!(pinned_action("./.github/actions/build-package-qualify"));
+    assert!(!pinned_action("actions/checkout@v4"));
+    assert!(!pinned_action(
+        "actions/checkout@11D5960A326750D5838078E36CF38B85AF677262"
+    ));
+    assert!(!pinned_action("docker://alpine@sha256:abc"));
+    assert!(!pinned_action("./../elsewhere"));
+    assert_eq!(
+        uses_values("      - uses: \"a/b@c\" # v1\n        uses: d/e@f"),
+        ["a/b@c", "d/e@f"]
+    );
+    assert_eq!(
+        expressions_in_scripts(
+            "      - run: |\n          echo ${{ inputs.x }}\n        env:\n          X: ${{ inputs.x }}\n"
+        ),
+        ["          echo ${{ inputs.x }}"]
+    );
+    assert!(names_a_secret("        token: ${{ secrets.X }}"));
+    assert!(names_a_secret("        GH_TOKEN: ${{ github.token }}"));
+    assert!(!names_a_secret("        # secrets.X is never used"));
+    assert_eq!(yaml_code("  a: b # c"), "  a: b");
+    assert_eq!(yaml_code("  a: b#c"), "  a: b#c");
 }

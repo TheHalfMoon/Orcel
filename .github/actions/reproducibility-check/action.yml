@@ -28,10 +28,13 @@ runs:
     - name: Rebuild, package, and archive from the second checkout
       shell: pwsh
       working-directory: second-checkout
+      # Inputs reach scripts only through the environment, never written into the script text.
+      env:
+        RELEASE_DIR: ${{ inputs.release-dir }}
       run: |
         $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME ".cargo" }
         $env:RUSTFLAGS = "-C link-arg=/Brepro --remap-path-prefix=$PWD=C:\orcel --remap-path-prefix=$cargoHome=C:\cargo"
-        $second = "${{ inputs.release-dir }}-second"
+        $second = "${env:RELEASE_DIR}-second"
         npm ci --ignore-scripts
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         npm run build
@@ -46,10 +49,13 @@ runs:
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     - name: Compare the independent builds
       shell: pwsh
+      env:
+        RELEASE_DIR: ${{ inputs.release-dir }}
+        OUT_DIR: ${{ inputs.out-dir }}
       run: |
-        $first = "${{ inputs.release-dir }}"
-        $second = "${{ inputs.release-dir }}-second"
-        $out = "${{ inputs.out-dir }}"
+        $first = $env:RELEASE_DIR
+        $second = "${env:RELEASE_DIR}-second"
+        $out = $env:OUT_DIR
         New-Item -ItemType Directory -Force $out | Out-Null
         $identical = $true
         $binaries = [ordered]@{}

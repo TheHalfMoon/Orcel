@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-13, main at `5f69308f` (#640). Open PRs: #673 (draft waiting on a founder decision), #342 and #328 (other work).
+Last updated: 2026-11-14, main at `eb18eeeb` (#673). Open PRs: #342 and #328 (other work).
 
 ## Approval and security UX
 
@@ -64,7 +64,7 @@ Last updated: 2026-11-13, main at `5f69308f` (#640). Open PRs: #673 (draft waiti
 | Windows install, start, update, rollback, uninstall | Partial | #654 → `e0e3fa41`, #659 → `93f33b25`, #661 → `e8fd1692`, #665 | release qualification on Windows CI | Unsigned; a real install under the new state root has run only in CI's release qualification | A founder-present install, upgrade and uninstall journey on a disposable machine (#655, uninstall missing stores, was closed by #659 and #661) | Signing (founder) for a release build |
 | macOS package | Blocked | — | — | — | XP-16 packaging | FD-05, signing identity |
 | Linux packages | Partial | Linux packages job | dev tarball journeys | — | — | none recorded |
-| Release workflow separation | Blocked | #673 (draft) | — | — | Merge once the `release` environment exists | Founder creates the environment; no settings changed by agents |
+| Release workflow separation | Done (qualified) | #673 → `eb18eeeb`: read-only build jobs, and a `publish` job in the `release` environment, which the founder created on 2026-11-14 (decision 9) with the founder as the only reviewer and `v*` tags only. This row's PR hardens it: each build may supply exactly the files its checksum list names, plain names only, none shared between the builds; a failed release lookup is told apart from a missing release; a release published during the upload is reported; composite-action inputs reach scripts only through `env:` | `the_release_workflow_separates_building_from_publishing` (permissions in every spelling, no secret in the build jobs or their actions, `v*` tag push only, every action pinned by full SHA, no expression in any script) and `the_release_sweep_parsers_catch_the_spellings_they_claim`. The publish scripts were run by hand against good and bad layouts and a fake `gh` | Checksums prove transport integrity only, not what a build put in. The attestation proves an asset was built in this workflow, not that the build was clean. The approval shows no asset contents. GitHub has no conditional upload, so a release published between the draft check and the upload is reported afterwards, not prevented. Build artifacts are kept 30 days | none in engineering | Founder-only recommendations, not settings agents change: immutable releases, and a tag ruleset limiting who may push `v*` tags |
 
 ## Product end to end
 

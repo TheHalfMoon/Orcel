@@ -9,9 +9,12 @@ name: Release
 # The build jobs run repository and dependency code (cargo build scripts, proc-macros, npm
 # devDependencies) and so hold only `contents: read`: nothing they run holds release write
 # access or an OIDC token. The attestation proves this workflow built and published the assets,
-# not that the build was clean: whatever a build job produces is what gets attested. The publish job runs no repository code at all. It downloads the built
-# assets, attests every one of them, and creates or refreshes the draft release, and it runs
-# only in the `release` environment, which must require the founder's approval before it starts.
+# not that the build was clean: whatever a build job produces is what gets attested. The
+# publish job runs no repository code at all. It downloads the built assets, admits only the
+# files each build's checksum list names, attests every one of them, and creates or refreshes
+# the draft release, and it runs only in the `release` environment, which requires the
+# founder's approval before it starts. Artifacts are kept 30 days: a publish approved later
+# than that needs a full re-run of the workflow.
 
 on:
   push:
@@ -160,10 +163,59 @@ jobs:
         with:
           name: release-linux
           path: ${{ runner.temp }}/linux
-      - name: Verify each build's checksums before attesting
+      # Each build may supply exactly the files its own checksum list names, plus that list: no
+      # extra or missing file, no subdirectory, no symlink, only plain names (no `#`, which gh
+      # reads as a label separator), and no name the other build also supplies, so neither
+      # build can add or replace the other's assets.
+      - name: Admit only the files each build's checksum list names
+        shell: bash
         run: |
-          (cd "$RUNNER_TEMP/windows" && sha256sum -c SHA256SUMS.txt)
-          (cd "$RUNNER_TEMP/linux" && sha256sum -c SHA256SUMS-linux.txt)
+          set -euo pipefail
+          export LC_ALL=C
+          fail() {
+            echo "release assets refused: $*" >&2
+            exit 1
+          }
+          work=$(mktemp -d)
+          admit() {
+            dir=$1
+            sums=$2
+            side=$3
+            if [ -L "$dir" ] || [ ! -d "$dir" ]; then fail "$dir is not a plain directory"; fi
+            if [ -L "$dir/$sums" ] || [ ! -f "$dir/$sums" ]; then fail "$side has no regular $sums"; fi
+            if [ ! -s "$dir/$sums" ]; then fail "$side $sums lists no asset"; fi
+            # Each line is a lowercase SHA-256, two spaces and a plain file name.
+            if grep -Evn '^[0-9a-f]{64}  [A-Za-z0-9._+-]+$' "$dir/$sums" >&2; then
+              fail "$side $sums has a line that is not '<sha256>  <plain name>'"
+            fi
+            cut -c 67- "$dir/$sums" > "$work/$side.listed"
+            printf '%s\n' "$sums" >> "$work/$side.listed"
+            : > "$work/$side.present"
+            for path in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+              if [ ! -e "$path" ] && [ ! -L "$path" ]; then continue; fi
+              name=${path##*/}
+              case $name in
+                '' | .* | -* | *[!A-Za-z0-9._+-]*) fail "$side asset name not allowed: '$name'" ;;
+              esac
+              if [ -L "$path" ]; then fail "$side asset $name is a symlink"; fi
+              if [ ! -f "$path" ]; then fail "$side asset $name is not a regular file"; fi
+              printf '%s\n' "$name" >> "$work/$side.present"
+            done
+            sort "$work/$side.listed" > "$work/$side.listed.sorted"
+            sort "$work/$side.present" > "$work/$side.present.sorted"
+            if [ -n "$(uniq -d "$work/$side.listed.sorted")" ]; then
+              fail "$side $sums names a file twice or names itself"
+            fi
+            if ! diff "$work/$side.listed.sorted" "$work/$side.present.sorted" >&2; then
+              fail "$side files differ from $sums (< listed only, > present only)"
+            fi
+            (cd "$dir" && sha256sum -c "$sums")
+          }
+          admit "$RUNNER_TEMP/windows" SHA256SUMS.txt windows
+          admit "$RUNNER_TEMP/linux" SHA256SUMS-linux.txt linux
+          # Case-insensitively, in case the release compares asset names that way.
+          shared=$(sort -f "$work/windows.present" "$work/linux.present" | uniq -di)
+          if [ -n "$shared" ]; then fail "both builds supply: $shared"; fi
       - name: Attest build provenance for every asset
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -174,18 +226,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${TAG#v}"
-          draft=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft 2>/dev/null || true)
-          if [ "$draft" = "false" ]; then
-            # Publishing is a deliberate, final maintainer action.
-            echo "release $TAG is already published; its assets are not replaced" >&2
+          set -eu
+          fail() {
+            echo "draft release refused: $*" >&2
             exit 1
-          fi
-          if [ "$draft" = "true" ]; then
+          }
+          version="${TAG#v}"
+          # One line per release carrying the tag, drafts included: "draft" or "published". Any
+          # API error (network, auth, rate limit) fails; only an empty, successful listing means
+          # the release does not exist yet.
+          release_states() {
+            gh api --paginate "repos/$REPO/releases?per_page=100" \
+              --jq '.[] | select(.tag_name == env.TAG) | if .draft then "draft" else "published" end'
+          }
+          states=$(release_states) || fail "could not list the releases of $REPO; nothing was changed"
+          # Publishing is the maintainer's deliberate, final act: a published release is left alone.
+          case $states in
+            '') state=absent ;;
+            draft) state=draft ;;
+            *published*) fail "release $TAG is already published; its assets are not replaced" ;;
+            *) fail "more than one draft release carries $TAG; resolve that by hand first" ;;
+          esac
+          if [ "$state" = draft ]; then
             # A re-run after a partial upload refreshes the draft's assets.
             gh release upload "$TAG" "$RUNNER_TEMP"/windows/* "$RUNNER_TEMP"/linux/* --clobber --repo "$REPO"
           else
             gh release create "$TAG" "$RUNNER_TEMP"/windows/* "$RUNNER_TEMP"/linux/* --draft --verify-tag --repo "$REPO" \
               --title "Orcel $version" \
               --notes "Unsigned Windows x64 build and Linux packages of Orcel $version from $SHA. Verify the assets against SHA256SUMS.txt and SHA256SUMS-linux.txt and with 'gh attestation verify <file> --repo $REPO'; every asset carries a build-provenance attestation, and the installer verifies every payload file against manifest.json. SBOM (CycloneDX 1.5), provenance record, and third-party notices are attached."
+          fi
+          # GitHub has no conditional upload: a release published between the check above and
+          # the upload is not prevented, only reported here.
+          after=$(release_states) || fail "could not re-read release $TAG after the upload; inspect it by hand"
+          if [ "$after" != draft ]; then
+            fail "release $TAG is now '$after' instead of exactly one draft; inspect its assets by hand"
           fi
