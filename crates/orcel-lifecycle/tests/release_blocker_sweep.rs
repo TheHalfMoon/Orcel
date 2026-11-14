@@ -669,6 +669,110 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
     }
 }
 
+/// Whether `code` names `identifier` as a whole identifier (not as part of a
+/// longer one, such as `document_parser` for `document_parse`).
+fn names_identifier(code: &str, identifier: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    code.match_indices(identifier).any(|(at, _)| {
+        !code[..at].ends_with(ident) && !code[at + identifier.len()..].starts_with(ident)
+    })
+}
+
+/// The production lines of one file that reach the confined document parser:
+/// any use of orceld's `document_parse` or `report_workbook` modules, or the
+/// parser's installed file names. The parser's own module and the live
+/// browser (its development-build caller) are not scanned; comments and items
+/// compiled only into tests are skipped. orceld's entry declares
+/// `mod document_parse;`, and that one line is allowed.
+fn document_parser_callers(relative: &str, text: &str) -> Vec<String> {
+    if relative == "crates/orceld/src/document_parse.rs"
+        || relative == "crates/orceld/src/live_browser.rs"
+    {
+        return Vec::new();
+    }
+    non_test_lines(text)
+        .into_iter()
+        .filter(|(_, line)| {
+            let code = line.trim();
+            !code.starts_with("//")
+                && !(relative == "crates/orceld/src/sg000039_main.rs"
+                    && code == "mod document_parse;")
+                && (names_identifier(code, "document_parse")
+                    || names_identifier(code, "report_workbook")
+                    || code.contains("orcel-doc-parser.exe")
+                    || code.contains("orcel-doc-parser.sha256"))
+        })
+        .map(|(number, line)| format!("{relative}:{number}: {}", line.trim()))
+        .collect()
+}
+
+/// F5 slice 1 (founder decision 7 of 2026-11-14,
+/// `docs/orcel/implementation-readiness/prep/F5_SPREADSHEET_JOURNEY.md`): the
+/// Windows release ships the confined document parser and its pin, and no
+/// release build calls it. Its callers are the live browser's committed
+/// downloads (`live_browser.rs`, compiled only with the `live-browser-*`
+/// features, which the two tests above keep out of release builds) and the
+/// workbook source (`report_workbook.rs`, compiled only into tests). A later
+/// slice adds a release caller only by changing this test, under its own
+/// review; until slice 3 nothing a client can reach changes.
+#[test]
+fn the_shipped_document_parser_has_no_release_caller() {
+    let root = repo_root();
+    let files = text_files(&root);
+    let test_modules = test_only_modules(&files);
+    assert!(
+        test_modules
+            .iter()
+            .any(|module| module == "crates/orceld/src/report_workbook.rs"),
+        "report_workbook.rs must stay compiled only into tests until a later F5 slice"
+    );
+    let main = fs::read_to_string(root.join("crates/orceld/src/sg000039_main.rs"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert!(
+        main.contains(
+            "#[cfg(all(\n    windows,\n    any(feature = \"live-browser-test\", feature = \"live-browser-dev\")\n))]\nmod live_browser;"
+        ),
+        "live_browser.rs, the parser's development-build caller, must stay behind the live-browser features"
+    );
+    let callers: Vec<String> = files
+        .iter()
+        .filter(|(relative, _)| is_production_rust(relative, &test_modules))
+        .flat_map(|(relative, text)| document_parser_callers(relative, text))
+        .collect();
+    assert!(
+        callers.is_empty(),
+        "a release build compiles a caller of the shipped document parser:\n{}",
+        callers.join("\n")
+    );
+}
+
+#[test]
+fn the_parser_caller_scan_catches_the_shapes_it_claims() {
+    let text = "use crate::document_parse::run_parser;\n\
+        fn a() { crate::report_workbook::observe(); }\n\
+        use crate::{contained_tier, document_parse as parse};\n\
+        const P: &str = \"orcel-doc-parser.exe\";\n\
+        // crate::document_parse::parse_download, in a comment\n\
+        use orcel_provider_process::document_parser::decode_frame;\n\
+        #[cfg(test)]\n\
+        fn t() {\n    crate::document_parse::parse_download();\n}\n\
+        fn b() {\n    #[cfg(test)]\n    let x = crate::report_workbook::digest(a, b);\n}\n";
+    let hits = document_parser_callers("crates/orceld/src/x.rs", text);
+    assert_eq!(hits.len(), 4, "{hits:?}");
+    assert!(hits[0].starts_with("crates/orceld/src/x.rs:1: use crate::document_parse"));
+    assert!(document_parser_callers("crates/orceld/src/document_parse.rs", text).is_empty());
+    assert!(document_parser_callers(
+        "crates/orceld/src/sg000039_main.rs",
+        "mod document_parse;\n"
+    )
+    .is_empty());
+    assert_eq!(
+        document_parser_callers("crates/orceld/src/other.rs", "mod document_parse;\n").len(),
+        1
+    );
+}
+
 #[test]
 fn workflow_set_is_exactly_the_governed_quartet() {
     let root = repo_root();

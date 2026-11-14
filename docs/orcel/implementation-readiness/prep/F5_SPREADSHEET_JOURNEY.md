@@ -1,6 +1,6 @@
 # F5 Journey 2: proposal for a workbook in the report task
 
-**Status: PROPOSAL, NOT ACTIVE.** Nothing here takes effect until the founder decides. No grain is activated by this document, and it grants no authority. It's the smallest decision needed to continue roadmap Journey 2 (`docs/orcel/IMPLEMENTATION_ROADMAP.md`), "Desktop spreadsheet -> approved report".
+**Status: DECIDED, option A (founder decision 7 of 2026-11-14): a workbook may be read in the report task through the confined parser, slice by slice.** The decision admits the slices below, each under its own review. It activates no grain and grants no authority by itself: the exposure in slice 3 still needs its grain, and the approval question in slice 2 its security review. Slice 1 is the first to land. It's the smallest decision needed to continue roadmap Journey 2 (`docs/orcel/IMPLEMENTATION_ROADMAP.md`), "Desktop spreadsheet -> approved report".
 
 ## The decision
 
@@ -19,10 +19,10 @@ The roadmap allows A or B: "an audited document parser plus UIA opening". This p
 | Piece | State |
 |---|---|
 | Confined parser, with no network, no process creation, a read-only input and CPU, memory and time limits | Exists, and qualified under containment on three OSes |
-| XLSX reader with cell references, formulas, limits and refusals | **Pending:** #617, in review when this was written |
-| The steps below, as test-only code: **compiled only for tests**, so no release build holds them | **Pending:** branch `f5/parse-verified-bytes`, which follows #617 |
+| XLSX reader with cell references, formulas, limits and refusals | Merged (#617) |
+| The steps below, as test-only code: **compiled only for tests**, so no release build holds them | Merged (#623, `crates/orceld/src/report_workbook.rs`) |
 | Report task: observe, preview, approved create-only commit, independent checker | Closed under SG-000126 |
-| Parser in the release package | **Missing.** `scripts/package-release.mjs` doesn't ship it |
+| Parser in the release package | **Slice 1:** the Windows release ships it and its pin, with no caller in a release build (`release_blocker_sweep.rs`, `the_shipped_document_parser_has_no_release_caller`). The Linux and macOS packages don't carry it |
 | A route from a workspace file to the parser | **Missing.** `parse_download` accepts only a file the live browser committed |
 | Report sources that aren't text | **Missing.** `report_task.rs` reads each source with `read_text` |
 
@@ -30,7 +30,7 @@ The roadmap allows A or B: "an audited document parser plus UIA opening". This p
 
 Each has its own review, and **all of them need this decision.** Slice 1 adds no behaviour a client can reach, but it ships the parser and its zip advisory exceptions, which is the cost this decision weighs.
 
-1. **Package the parser, unreachable.** Ship `orcel-doc-parser` and its pin, inside the 400 MB budget, with no caller in a release build. This brings the zip advisory exceptions (`apps/orcel-doc-parser/.cargo/audit.toml`) into shipped code. They're recorded as unreachable, and they're not accepted risk.
+1. **Package the parser, unreachable.** Ship `orcel-doc-parser` and its pin, inside the 400 MB budget, with no caller in a release build. This brings the zip advisory exceptions (`apps/orcel-doc-parser/.cargo/audit.toml`) into shipped code. They're recorded as unreachable, and they're not accepted risk. As built: `scripts/package-release.mjs` ships `orcel-doc-parser.exe` and `orcel-doc-parser.sha256` in the Windows release, built by the shared build and reproducibility actions; release qualification checks the pin and the manifest, and the installed-size test counts it against the budget; `release_blocker_sweep.rs` fails if a release build compiles a caller. The Linux and macOS packages are left for later.
 2. **Parse a workspace file.** The same steps as `parse_download`, starting from a workspace path instead of a committed download: plain directories only, size and SHA-256 re-read, one private input, the pinned parser. **Whether reading a workspace file through the parser needs its own approval** is a question for the grain's security review. `read_text` needs none today, but the parser is a larger surface.
 3. **Workbook sources in `report_start`.** A source records the **file's** SHA-256, so a changed workbook is stale at preview and at commit, as a text source is. Its parsed text is untrusted content, as now.
 4. **Checked figures.** A report states figures as `Sheet!Cell = value`. The independent checker parses the workbook **again, in a separate contained run**, and verifies each stated figure against the cell, the report's hash and the unchanged workbook.
@@ -53,7 +53,7 @@ An independent review listed these. **Each must be done before any exposure:**
 - **New exposure:** `report_start`'s `sources` would accept a binary format. It's a local-only tool: the core and tunnel profiles never list it, and that wouldn't change. This is the reason it needs a grain.
 - **Hostile workbooks** are the realistic threat. Macros are refused, nothing is calculated, links are never followed, and a crash stays inside the contained process.
 - **Saved values can be stale.** Nothing recalculates. The report can name its source cell, but only as the file last saved it, and formulas that may reach outside are marked.
-- **Licensing:** no new dependency. The reader is Orcel's own, on crates already in the graph. Test fixtures from Apache POI carry their notice.
+- **Licensing:** no new dependency. The reader is Orcel's own, on crates already in the graph. Test fixtures from Apache POI carry their notice, and aren't shipped. Since slice 1 the Windows release carries the parser's crates in `THIRD_PARTY_NOTICES.txt` and the SBOM, with the lopdf notice and the Firecrawl notice (its adapted converters, redistributed under FD-06, `docs/orcel/grants/2026-10-18-founder-attestation.md`). alloc-stdlib 0.2.4 (BSD-3-Clause, reached through lopdf) is published without a license file, so its repository's license is kept in `docs/orcel/notices/alloc-stdlib-BSD-3-Clause.txt`.
 
 ## What stays unqualified
 

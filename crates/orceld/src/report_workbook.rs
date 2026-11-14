@@ -1,6 +1,7 @@
 //! F5 Journey 2: a workbook as a report source. **Inert: compiled only for
-//! tests.** No release build holds this module, and no client can reach it, until
-//! founder decision 7 and its grain (`prep/F5_SPREADSHEET_JOURNEY.md`).
+//! tests.** Founder decision 7 of 2026-11-14 chose this path, slice by slice
+//! (`prep/F5_SPREADSHEET_JOURNEY.md`). No release build holds this module, and no
+//! client can reach it, until slice 3 and its grain.
 //!
 //! A workbook source differs from a text source in three ways:
 //!

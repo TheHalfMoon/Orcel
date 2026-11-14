@@ -4,13 +4,20 @@
 // Usage:
 //   node scripts/package-release.mjs --out <empty-or-new-dir> [--target-dir target/release]
 //     [--contain-target-dir apps/orcel-contain/target/release]
+//     [--doc-parser-target-dir apps/orcel-doc-parser/target/release]
 //
 // Prerequisites: `cargo build --release -p orceld -p orcel-lifecycle` on
 // Windows, `cargo build --release --locked --bin orcel-contain` in
 // apps/orcel-contain (its own workspace, XP-13b), and `npm run build` for the
 // MCP app. The helper ships beside orceld.exe with its pin,
 // orcel-contain.sha256, which orceld reads to pin it (both are manifest
-// files, so the installer verifies them too). The script copies only runtime
+// files, so the installer verifies them too). F5 slice 1 (founder decision 7
+// of 2026-11-14, prep/F5_SPREADSHEET_JOURNEY.md): the confined document
+// parser ships the same way, built by `cargo build --release --locked --bin
+// orcel-doc-parser` in apps/orcel-doc-parser (its own workspace), beside
+// orceld.exe with its pin, orcel-doc-parser.sha256. No release build calls
+// it yet (release_blocker_sweep.rs,
+// the_shipped_document_parser_has_no_release_caller). The script copies only runtime
 // payload (no tests, type declarations, or source maps), installs the MCP
 // app's production dependencies, and writes a manifest whose paths satisfy
 // the same rules the installer enforces.
@@ -94,6 +101,7 @@ const out = resolve(arg("--out", ""));
 if (!process.argv.includes("--out")) fail("--out <dir> is required");
 const targetDir = resolve(repo, arg("--target-dir", "target/release"));
 const containTargetDir = resolve(repo, arg("--contain-target-dir", "apps/orcel-contain/target/release"));
+const docParserTargetDir = resolve(repo, arg("--doc-parser-target-dir", "apps/orcel-doc-parser/target/release"));
 const version = workspaceVersion();
 
 if (existsSync(out) && readdirSync(out).length > 0) fail(`${out} must be empty or absent`);
@@ -112,6 +120,15 @@ if (!existsSync(containHelper)) {
 }
 copyFileSync(containHelper, join(out, "orcel-contain.exe"));
 writeFileSync(join(out, "orcel-contain.sha256"), `${sha256(join(out, "orcel-contain.exe"))}\n`);
+// F5 slice 1: the confined document parser and its pin. orceld resolves both
+// only beside its own executable (document_parse.rs, parser_pin_in), and
+// nothing in a release build calls it yet.
+const docParser = join(docParserTargetDir, "orcel-doc-parser.exe");
+if (!existsSync(docParser)) {
+  fail(`missing ${docParser}; run cargo build --release --locked --bin orcel-doc-parser in apps/orcel-doc-parser first`);
+}
+copyFileSync(docParser, join(out, "orcel-doc-parser.exe"));
+writeFileSync(join(out, "orcel-doc-parser.sha256"), `${sha256(join(out, "orcel-doc-parser.exe"))}\n`);
 // SG-000127: the Windows app, built deterministically by build.ps1. It only starts
 // `orcel` from the install and reads the local app API.
 const appBuild = join(targetDir, "windows-app");

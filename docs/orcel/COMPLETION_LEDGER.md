@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-14, main at `a7f999bf` (#751). Open PRs: #342 and #328 (other work).
+Last updated: 2026-11-14, main at `30c08d50` (#752), plus F5 slice 1 on branch `f5/workbook-slice-1` (not merged). Open PRs: #342 and #328 (other work).
 
 ## Approval and security UX
 
@@ -41,7 +41,7 @@ Last updated: 2026-11-14, main at `a7f999bf` (#751). Open PRs: #342 and #328 (ot
 | Clipboard privacy (content its app marks private) | Partial | #672 → `4893bcc5` (Windows), #681 → `cbae3987` (Linux, macOS) | `xp15_*` tests in CI only (they touch a real clipboard) | Linux check-then-read gap; forged X11 TARGETS with property NONE; unmarked content; Wayland and macOS untested with a marked copy | Runtime evidence on Wayland and macOS | Disposable desktop for marked-copy runs |
 | Contained parser scratch and run directories | Done (qualified) | #671 → `7300fbb9`, #674 → `5f82044c`, #675 → `dd91822c` | doc-parser and contained-tier tests | — | none | none |
 | macOS contained memory sampler | Done (qualified) | #688 → `74489605` | `a_zombie_is_recognised_as_exited_at_once` | macOS has no memory rlimit; the ceiling is sampled | none | none |
-| Doc parser zip advisories | Partial | `apps/orcel-doc-parser/.cargo/audit.toml` | supply-chain audit job | Recorded exceptions, not accepted risk | Remove when anydoc accepts zip ≥ 9 | Upstream anydoc |
+| Doc parser zip advisories | Partial | `apps/orcel-doc-parser/.cargo/audit.toml` | supply-chain audit job | Recorded exceptions, not accepted risk. F5 slice 1 (branch `f5/workbook-slice-1`, not merged) ships the parser in the Windows release with no caller in a release build, so the exceptions would be in shipped code, still recorded as unreachable | Remove when anydoc accepts zip ≥ 9 | Upstream anydoc |
 
 ## Computer-use capabilities
 
@@ -71,6 +71,7 @@ Last updated: 2026-11-14, main at `a7f999bf` (#751). Open PRs: #342 and #328 (ot
 | Component | State | Evidence | Tests | Known limitations | Remaining work | Blockers |
 |---|---|---|---|---|---|---|
 | A real client drives a real approval to a verified report | Done (qualified) for Claude Code 2.1.291 on an unsigned build | F4 slice 4 run 2026-11-14 (founder decision 1): the founder answered every Orcel box while Claude Code 2.1.291, driven headless in one session, ran the runbook against the installed release candidate from `a7f999bf` (manual CI run 43551160719); evidence posted on #446 | `f4_journey evidence` all PASS: approved and verified, denied, changed source stale, existing destination refused, a task interrupted by ending `orceld` read back, the user's file untouched, no approval material in the transcript; release qualification reaches the prompt with a test client (`release_qualification.rs`) | One client version only; unsigned development build; the Windows app's task view (step G) was not checked by eye, the journal history matched; the redacted transcript was read by the founder and kept private | Other clients (Codex) when wanted; a release-build run once signing exists | Signing (founder) for F4 closeout |
+| A workbook to a verified report (roadmap Journey 2, F5) | Partial | Founder decision 7 of 2026-11-14: option A of `prep/F5_SPREADSHEET_JOURNEY.md`, the confined parser, slice by slice. Merged before the decision: the XLSX reader #617 and the test-only workbook source #623. Slice 1 (the parser and its pin in the Windows release, no caller in a release build): branch `f5/workbook-slice-1`, not merged, no PR yet | `the_shipped_document_parser_has_no_release_caller` and `the_parser_caller_scan_catches_the_shapes_it_claims` (`release_blocker_sweep.rs`), passed locally; release qualification checks the parser's pin and manifest entries and counts it in the 400 MB budget, CI only, not yet run on this branch; the reproducibility check compares `orcel-doc-parser.exe` across two builds, CI only, not yet run | Nothing a client can reach changes until slice 3. Windows release only; the Linux and macOS packages don't carry the parser. The zip advisory exceptions would ship in code, recorded as unreachable, not accepted. Unqualified: a current Excel's files, `.xls`/`.xlsb`, anything recalculated | Slice 1: PR, exact-head CI and independent review. Slice 2: a workspace path to the parser (plain directories, size and SHA-256 re-read, one private input). Slice 3: workbook sources in `report_start`, after the checker's size limit, figures inside verification, the prompt's notices and several-workbook figures are fixed. Slices 4 and 5 | Slice 2's approval question (its security review); slice 3's grain (founder activates) |
 | AI model integration | Not started | Harness only (`model_eval.py`, `model_run.py`) | stub runs | No model has been run | Run a candidate | Founder decision 3 (download) |
 | Passkey test environment | Not started | — | — | — | A disposable environment and protocol | Never the founder's personal desktop or accounts |
 

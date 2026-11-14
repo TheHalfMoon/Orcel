@@ -5,8 +5,9 @@
 //   node scripts/generate-sbom.mjs --release <release-dir> --out <sbom.cdx.json>
 //
 // The Rust components are the crates actually linked into the shipped
-// binaries (orceld, orcel, orcel-mcp-host, and the orcel-contain helper from
-// its own workspace, XP-13b) for x86_64-pc-windows-msvc, taken
+// binaries (orceld, orcel, orcel-mcp-host, the orcel-contain helper from
+// its own workspace, XP-13b, and the confined document parser from its own,
+// F5 slice 1) for x86_64-pc-windows-msvc, taken
 // from `cargo metadata` and following only normal (non-dev, non-build)
 // dependency edges. The npm components are the packages present in the
 // release's app/orcel-mcp/node_modules. Every payload file listed in the
@@ -21,9 +22,11 @@ import { fileURLToPath } from "node:url";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = "x86_64-pc-windows-msvc";
 // Each Cargo workspace that ships a binary, with its shipped root packages.
+// F5 slice 1 (founder decision 7 of 2026-11-14): the confined document parser.
 const WORKSPACES = [
   { dir: ".", roots: ["orceld", "orcel-lifecycle"] },
-  { dir: "apps/orcel-contain", roots: ["orcel-contain"] }
+  { dir: "apps/orcel-contain", roots: ["orcel-contain"] },
+  { dir: "apps/orcel-doc-parser", roots: ["orcel-doc-parser"] }
 ];
 
 function fail(message) {
@@ -122,7 +125,15 @@ function workspaceComponents({ dir, roots: rootNames }) {
       name: p.name,
       version: p.version,
       licenses: p.license ? [{ expression: p.license }] : [],
-      ...(p.source ? { purl: ref(p) } : { description: "Orcel workspace crate" })
+      // A path crate under third_party/ is vendored upstream source (lopdf,
+      // in the document parser), not Orcel's own.
+      ...(p.source
+        ? { purl: ref(p) }
+        : {
+            description: p.manifest_path.split(sep).join("/").includes("/third_party/")
+              ? "Vendored third-party crate (see THIRD_PARTY_NOTICES.txt)"
+              : "Orcel workspace crate"
+          })
     };
     const checksum = checksums.get(`${p.name}@${p.version}`);
     if (checksum) component.hashes = [{ alg: "SHA-256", content: checksum }];
