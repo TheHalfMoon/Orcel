@@ -40,9 +40,13 @@ runs:
     - name: Build the confined document parser (its own workspace)
       shell: pwsh
       working-directory: apps/orcel-doc-parser
-      # F5 slice 1 (founder decision 7): shipped beside orceld.exe with its
-      # pin, with no caller in a release build yet.
-      run: cargo build --release --locked --bin orcel-doc-parser
+      # F5 slice 1 (founder decision 7 of the 2026-11-14 packet): shipped
+      # beside orceld.exe with its pin, with no caller in a release build yet.
+      # Run from this folder so its rust-toolchain.toml picks the toolchain,
+      # as the reproducibility check's second build does.
+      run: |
+        rustc -V
+        cargo build --release --locked --bin orcel-doc-parser
     - name: Build the tunnel test fixture separately
       shell: pwsh
       run: cargo build --release --locked -p orcel-lifecycle --example fake_tunnel_client

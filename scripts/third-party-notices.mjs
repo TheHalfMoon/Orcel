@@ -231,7 +231,17 @@ for (const vendored of VENDORED_NOTICES) {
   if (!notice.includes(vendored.copyright)) fail(`${vendored.file} lacks "${vendored.copyright}"`);
   text += `\n${"=".repeat(78)}\n${vendored.name}\nLicense: ${vendored.license}\n\n--- ${vendored.file} ---\n${notice}\n`;
 }
+// SG-000045: no shipped component may lack a declared license or its text.
+// A crate published without a license file needs an entry in
+// PUBLISHED_WITHOUT_NOTICE. The Windows release fails on a gap. The Unix
+// development packages still list theirs (on macOS, objc2 0.6.5 and
+// objc2-local-authentication 0.3.2 are published without license files) and
+// warn, until those have their entries.
+if (missing.length && WINDOWS) {
+  fail(`components without a declared license or shipped license file:\n${missing.join("\n")}`);
+}
 if (missing.length) {
+  console.error(`third-party-notices: warning: ${missing.length} components without a shipped license file`);
   text += `\n${"=".repeat(78)}\nComponents without a declared license or shipped license file:\n${missing.join("\n")}\n`;
 }
 writeFileSync(out, text);

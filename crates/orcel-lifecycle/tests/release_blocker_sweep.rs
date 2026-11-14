@@ -497,6 +497,9 @@ fn the_live_browser_test_feature_never_reaches_a_release_build() {
             || relative == "crates/orceld/Cargo.toml"
             || relative == "crates/orceld/src/live_browser.rs"
             || relative == "crates/orceld/src/sg000039_main.rs"
+            // F5 slice 1: only in cfg_attr(.., expect(dead_code)), which
+            // enables nothing.
+            || relative == "crates/orceld/src/document_parse.rs"
             || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
             || relative.starts_with("docs/");
         if !allowed {
@@ -587,6 +590,9 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
             || relative == "crates/orcel-browser-host/tests/sg000108_dev_host.rs"
             || relative == "crates/orceld/Cargo.toml"
             || relative == "crates/orceld/src/sg000039_main.rs"
+            // F5 slice 1: only in cfg_attr(.., expect(dead_code)), which
+            // enables nothing.
+            || relative == "crates/orceld/src/document_parse.rs"
             || relative == "crates/orceld/src/live_browser.rs"
             || relative == "crates/orceld/src/live_dispatch.rs"
             || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
@@ -678,47 +684,95 @@ fn names_identifier(code: &str, identifier: &str) -> bool {
     })
 }
 
-/// The production lines of one file that reach the confined document parser:
-/// any use of orceld's `document_parse` or `report_workbook` modules, or the
-/// parser's installed file names. The parser's own module and the live
-/// browser (its development-build caller) are not scanned; comments and items
-/// compiled only into tests are skipped. orceld's entry declares
-/// `mod document_parse;`, and that one line is allowed.
-fn document_parser_callers(relative: &str, text: &str) -> Vec<String> {
-    if relative == "crates/orceld/src/document_parse.rs"
+/// Rust files allowed to reach the confined document parser: orceld's parser
+/// module, the live browser (its development-build caller), the frame contract
+/// in `orcel-provider-process`, and the parser itself.
+fn may_reach_the_document_parser(relative: &str) -> bool {
+    relative == "crates/orceld/src/document_parse.rs"
         || relative == "crates/orceld/src/live_browser.rs"
-    {
+        || relative == "crates/orcel-provider-process/src/document_parser.rs"
+        || relative.starts_with("apps/orcel-doc-parser/")
+}
+
+/// Whether a line names the parser's executable in any spelling that builds
+/// it (`"orcel-doc-parser"`, `.exe`, `.sha256`, or with a suffix appended).
+fn names_the_parser_file(line: &str) -> bool {
+    line.to_ascii_lowercase().contains("orcel-doc-parser")
+}
+
+/// The production lines of one Rust file that reach the confined document
+/// parser: any use of orceld's `document_parse` or `report_workbook` modules,
+/// of `orcel_provider_process::document_parser` (whose `spec` and frame,
+/// with `run_contained`, can launch any path), of `PARSER_NAME` or
+/// `PARSER_PIN_NAME`, or the parser's file name in any spelling. Files that may
+/// reach it are not scanned; comments and items compiled only into tests are
+/// skipped. Two declarations are allowed: orceld's `mod document_parse;` and
+/// the provider crate's `pub mod document_parser;`.
+fn document_parser_callers(relative: &str, text: &str) -> Vec<String> {
+    if may_reach_the_document_parser(relative) {
         return Vec::new();
     }
     non_test_lines(text)
         .into_iter()
         .filter(|(_, line)| {
             let code = line.trim();
+            let declaration = (relative == "crates/orceld/src/sg000039_main.rs"
+                && code == "mod document_parse;")
+                || (relative == "crates/orcel-provider-process/src/lib.rs"
+                    && code == "pub mod document_parser;");
             !code.starts_with("//")
-                && !(relative == "crates/orceld/src/sg000039_main.rs"
-                    && code == "mod document_parse;")
+                && !declaration
                 && (names_identifier(code, "document_parse")
+                    || names_identifier(code, "document_parser")
                     || names_identifier(code, "report_workbook")
-                    || code.contains("orcel-doc-parser.exe")
-                    || code.contains("orcel-doc-parser.sha256"))
+                    || names_identifier(code, "PARSER_NAME")
+                    || names_identifier(code, "PARSER_PIN_NAME")
+                    || names_the_parser_file(code))
         })
         .map(|(number, line)| format!("{relative}:{number}: {}", line.trim()))
         .collect()
 }
 
-/// F5 slice 1 (founder decision 7 of 2026-11-14,
-/// `docs/orcel/implementation-readiness/prep/F5_SPREADSHEET_JOURNEY.md`): the
+/// Shipped sources that aren't Rust: the MCP app's TypeScript (compiled into
+/// the release's `app/orcel-mcp/dist`) and the Windows app's C# and its build
+/// script. Tests are not shipped.
+fn shipped_non_rust_source(relative: &str) -> bool {
+    let mcp = relative.starts_with("apps/orcel-mcp/src/")
+        && [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"]
+            .iter()
+            .any(|extension| relative.ends_with(extension))
+        && !relative.contains(".test.");
+    let desktop = relative.starts_with("apps/orcel-desktop-preview/")
+        && !relative.starts_with("apps/orcel-desktop-preview/tests/")
+        && (relative.ends_with(".cs") || relative.ends_with(".ps1"));
+    mcp || desktop
+}
+
+/// F5 slice 1 (founder decision 7 of 2026-11-14, the founder's decision
+/// packet; not SG-000108's decision 7):
+/// `docs/orcel/implementation-readiness/prep/F5_SPREADSHEET_JOURNEY.md`. The
 /// Windows release ships the confined document parser and its pin, and no
 /// release build calls it. Its callers are the live browser's committed
 /// downloads (`live_browser.rs`, compiled only with the `live-browser-*`
 /// features, which the two tests above keep out of release builds) and the
-/// workbook source (`report_workbook.rs`, compiled only into tests). A later
-/// slice adds a release caller only by changing this test, under its own
-/// review; until slice 3 nothing a client can reach changes.
+/// workbook source (`report_workbook.rs`, compiled only into tests). This scan
+/// is a guard, not a proof: the stronger gates are the `expect(dead_code)`
+/// on the parser's entry points in `document_parse.rs`, which clippy's
+/// `-D warnings` turns into a failure once a release build calls one, and the
+/// executable registry's refusal of anything in an Orcel install directory.
+/// A later slice adds a release caller only by changing this test, under its
+/// own review; until slice 3 nothing a client can reach changes.
 #[test]
 fn the_shipped_document_parser_has_no_release_caller() {
     let root = repo_root();
     let files = text_files(&root);
+    let file = |relative: &str| {
+        files
+            .iter()
+            .find(|(path, _)| path == relative)
+            .map(|(_, text)| text.replace("\r\n", "\n"))
+            .unwrap_or_else(|| panic!("{relative} is missing"))
+    };
     let test_modules = test_only_modules(&files);
     assert!(
         test_modules
@@ -726,15 +780,53 @@ fn the_shipped_document_parser_has_no_release_caller() {
             .any(|module| module == "crates/orceld/src/report_workbook.rs"),
         "report_workbook.rs must stay compiled only into tests until a later F5 slice"
     );
-    let main = fs::read_to_string(root.join("crates/orceld/src/sg000039_main.rs"))
-        .unwrap()
-        .replace("\r\n", "\n");
+
+    // Positive controls: what the scan relies on still exists, so it can't
+    // pass because a name moved.
+    let main = file("crates/orceld/src/sg000039_main.rs");
     assert!(
         main.contains(
             "#[cfg(all(\n    windows,\n    any(feature = \"live-browser-test\", feature = \"live-browser-dev\")\n))]\nmod live_browser;"
         ),
         "live_browser.rs, the parser's development-build caller, must stay behind the live-browser features"
     );
+    assert!(
+        main.lines()
+            .any(|line| line.trim() == "mod document_parse;"),
+        "orceld no longer declares mod document_parse; this scan's names are stale"
+    );
+    let parse = file("crates/orceld/src/document_parse.rs");
+    assert!(
+        parse.contains(
+            "pub const PARSER_NAME: &str = if cfg!(windows) {\n    \"orcel-doc-parser.exe\""
+        ),
+        "document_parse.rs no longer names the parser as this scan expects"
+    );
+    for entry in [
+        "pub fn installed_pins(",
+        "pub fn parser_pin_in(",
+        "pub fn parse_download(",
+        "pub fn parse_committed(",
+        "pub(crate) fn run_parser(",
+    ] {
+        let at = parse
+            .find(entry)
+            .unwrap_or_else(|| panic!("document_parse.rs no longer has {entry}"));
+        let before = &parse[..at];
+        let attribute = before.rfind("#[cfg_attr(").unwrap_or(0);
+        assert!(
+            before[attribute..].contains("expect(dead_code)")
+                && !before[attribute..].contains("\nfn ")
+                && !before[attribute..].contains("\npub fn "),
+            "{entry} must carry the release-build expect(dead_code)"
+        );
+    }
+    let live = file("crates/orceld/src/live_browser.rs");
+    assert!(
+        !document_parser_callers("crates/orceld/src/stand-in.rs", &live).is_empty(),
+        "the scan no longer sees the live browser's call; it would miss a release caller"
+    );
+
     let callers: Vec<String> = files
         .iter()
         .filter(|(relative, _)| is_production_rust(relative, &test_modules))
@@ -744,6 +836,34 @@ fn the_shipped_document_parser_has_no_release_caller() {
         callers.is_empty(),
         "a release build compiles a caller of the shipped document parser:\n{}",
         callers.join("\n")
+    );
+
+    let shipped: Vec<&(String, String)> = files
+        .iter()
+        .filter(|(relative, _)| shipped_non_rust_source(relative))
+        .collect();
+    for expected in [
+        "apps/orcel-mcp/src/index.ts",
+        "apps/orcel-desktop-preview/src/Program.cs",
+    ] {
+        assert!(
+            shipped.iter().any(|(relative, _)| relative == expected),
+            "{expected} is not among the shipped sources this scan reads"
+        );
+    }
+    let named: Vec<String> = shipped
+        .iter()
+        .flat_map(|(relative, text)| {
+            text.lines()
+                .enumerate()
+                .filter(|(_, line)| names_the_parser_file(line))
+                .map(move |(index, line)| format!("{relative}:{}: {}", index + 1, line.trim()))
+        })
+        .collect();
+    assert!(
+        named.is_empty(),
+        "shipped non-Rust code names the document parser:\n{}",
+        named.join("\n")
     );
 }
 
@@ -755,22 +875,59 @@ fn the_parser_caller_scan_catches_the_shapes_it_claims() {
         const P: &str = \"orcel-doc-parser.exe\";\n\
         // crate::document_parse::parse_download, in a comment\n\
         use orcel_provider_process::document_parser::decode_frame;\n\
+        let spec = document_parser::spec(&input);\n\
+        let path = format!(\"Orcel-Doc-Parser{}\", EXE_SUFFIX);\n\
+        let name = PARSER_NAME;\n\
+        let pin = dir.join(PARSER_PIN_NAME);\n\
+        let other = MY_PARSER_NAME_TOO;\n\
         #[cfg(test)]\n\
         fn t() {\n    crate::document_parse::parse_download();\n}\n\
         fn b() {\n    #[cfg(test)]\n    let x = crate::report_workbook::digest(a, b);\n}\n";
     let hits = document_parser_callers("crates/orceld/src/x.rs", text);
-    assert_eq!(hits.len(), 4, "{hits:?}");
+    assert_eq!(hits.len(), 9, "{hits:?}");
     assert!(hits[0].starts_with("crates/orceld/src/x.rs:1: use crate::document_parse"));
-    assert!(document_parser_callers("crates/orceld/src/document_parse.rs", text).is_empty());
+    assert!(hits[4].contains("document_parser::decode_frame"));
+    assert!(hits[6].contains("format!"));
+    for allowed in [
+        "crates/orceld/src/document_parse.rs",
+        "crates/orceld/src/live_browser.rs",
+        "crates/orcel-provider-process/src/document_parser.rs",
+        "apps/orcel-doc-parser/src/main.rs",
+    ] {
+        assert!(
+            document_parser_callers(allowed, text).is_empty(),
+            "{allowed}"
+        );
+    }
     assert!(document_parser_callers(
         "crates/orceld/src/sg000039_main.rs",
         "mod document_parse;\n"
+    )
+    .is_empty());
+    assert!(document_parser_callers(
+        "crates/orcel-provider-process/src/lib.rs",
+        "pub mod document_parser;\n"
     )
     .is_empty());
     assert_eq!(
         document_parser_callers("crates/orceld/src/other.rs", "mod document_parse;\n").len(),
         1
     );
+    assert!(shipped_non_rust_source(
+        "apps/orcel-mcp/src/entrypoints/stdio.ts"
+    ));
+    assert!(!shipped_non_rust_source(
+        "apps/orcel-mcp/src/kernel.test.ts"
+    ));
+    assert!(shipped_non_rust_source(
+        "apps/orcel-desktop-preview/build.ps1"
+    ));
+    assert!(!shipped_non_rust_source(
+        "apps/orcel-desktop-preview/tests/e2e.ps1"
+    ));
+    assert!(names_the_parser_file(
+        "spawn(join(dir, 'orcel-doc-parser.exe'))"
+    ));
 }
 
 #[test]

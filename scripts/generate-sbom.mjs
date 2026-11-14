@@ -29,6 +29,38 @@ const WORKSPACES = [
   { dir: "apps/orcel-doc-parser", roots: ["orcel-doc-parser"] }
 ];
 
+// Orcel crates that carry adapted donor source: a CycloneDX pedigree records
+// the ancestor, its upstream license and the basis for redistributing it.
+// It claims only what the notice and the founder attestation record.
+const PEDIGREES = new Map([
+  [
+    "orcel-doc-parser",
+    {
+      ancestors: [
+        {
+          type: "library",
+          "bom-ref": "donor:firecrawl/firecrawl@f84845c864b6e2af22791c18fcf89ac2a21f1434",
+          name: "firecrawl",
+          version: "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+          // Named, not an SPDX id: the upstream LICENSE is the AGPL v3, and
+          // whether it is "-only" or "-or-later" isn't recorded here.
+          licenses: [{ license: { name: "AGPL-3.0 (firecrawl/firecrawl LICENSE at this commit)" } }],
+          externalReferences: [
+            { type: "vcs", url: "https://github.com/firecrawl/firecrawl/tree/f84845c864b6e2af22791c18fcf89ac2a21f1434" }
+          ]
+        }
+      ],
+      notes:
+        "src/pdf.rs and src/document.rs adapt apps/api/native/src/pdf.rs and document.rs of " +
+        "firecrawl/firecrawl at f84845c864b6e2af22791c18fcf89ac2a21f1434 (AGPL-3.0 upstream). They are " +
+        "redistributed inside Apache-2.0 Orcel under the founder's attestation of 2026-10-18 (FD-06, " +
+        "docs/orcel/grants/2026-10-18-founder-attestation.md); the permission documents are confidential " +
+        "and are not part of the repository. Notice: docs/orcel/notices/firecrawl-AGPL-3.0.txt. The crate's " +
+        "other sources, including the XLSX reader src/workbook.rs, are Orcel's own."
+    }
+  ]
+]);
+
 function fail(message) {
   console.error(`generate-sbom: ${message}`);
   process.exit(1);
@@ -135,6 +167,8 @@ function workspaceComponents({ dir, roots: rootNames }) {
               : "Orcel workspace crate"
           })
     };
+    const pedigree = p.source ? undefined : PEDIGREES.get(p.name);
+    if (pedigree) component.pedigree = pedigree;
     const checksum = checksums.get(`${p.name}@${p.version}`);
     if (checksum) component.hashes = [{ alg: "SHA-256", content: checksum }];
     if (p.repository) component.externalReferences = [{ type: "vcs", url: p.repository }];

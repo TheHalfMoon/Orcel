@@ -442,6 +442,42 @@ fn check_location(path: &Path) -> Result<(), PolicyError> {
 /// XP-13b: compare a canonical path with a registered one: exact on Linux,
 /// ASCII case-insensitive where the file system usually is (Windows, macOS).
 /// The registered digest is re-checked either way.
+/// orceld's executable, as an install or build directory names it.
+const ORCELD_FILE: &str = if cfg!(windows) {
+    "orceld.exe"
+} else {
+    "orceld"
+};
+
+/// F5 slice 1 review (M3): Orcel's own install ships helpers beside orceld
+/// (`orcel-contain`, the confined `orcel-doc-parser`) that must run only
+/// through orceld's contained tier. Registering one would let the Safe tier
+/// start it unconfined, so an executable is refused when its directory is the
+/// running orceld's, or holds an orceld executable (another installed
+/// version, or a build directory). Checked at registration and again before
+/// every launch, so an entry made before this rule fails closed. This only
+/// narrows what can be registered.
+fn check_not_in_orcel_install(canonical: &Path) -> Result<(), PolicyError> {
+    let Some(dir) = canonical.parent() else {
+        return Ok(());
+    };
+    let beside_running_orceld = std::env::current_exe()
+        .ok()
+        .and_then(|exe| std::fs::canonicalize(exe).ok())
+        .filter(|exe| {
+            exe.file_name()
+                .is_some_and(|name| same_path(&name.to_string_lossy(), ORCELD_FILE))
+        })
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .is_some_and(|running| same_path(&running.to_string_lossy(), &dir.to_string_lossy()));
+    if beside_running_orceld || dir.join(ORCELD_FILE).exists() {
+        return Err(denied(
+            "executables in an Orcel install directory (beside orceld) are Orcel's own helpers; they run only through orceld and cannot be registered",
+        ));
+    }
+    Ok(())
+}
+
 fn same_path(left: &str, right: &str) -> bool {
     if cfg!(target_os = "linux") {
         left == right
@@ -566,6 +602,7 @@ pub fn build_entry(
     if max_args > MAX_ARGS_CEILING {
         return Err(invalid("max_args must be at most 64"));
     }
+    check_not_in_orcel_install(&canonical)?;
     check_native_image(&canonical)?;
     check_location(&canonical)?;
     let (sha256, size) = file_identity(&canonical)?;
@@ -645,6 +682,7 @@ pub fn verify_identity(
     if !same_path(&canonical.to_string_lossy(), &entry.path) {
         return Err(denied("registered executable path changed"));
     }
+    check_not_in_orcel_install(&canonical)?;
     check_location(&canonical)?;
     let (sha256, size) = file_identity(&canonical)?;
     if size != entry.size || sha256 != entry.sha256 {
@@ -1003,5 +1041,46 @@ mod tests {
             registration_digest(&entry, "p")
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// F5 slice 1 review (M3): a helper Orcel ships beside orceld (the
+    /// confined document parser, the contained-tier helper) can't be
+    /// registered, and an entry made before orceld was there fails before
+    /// launch. The refusal is typed, and the rule only narrows registration.
+    #[test]
+    fn executables_in_an_orcel_install_directory_are_never_registrable() {
+        let exe = |stem: &str| {
+            if cfg!(windows) {
+                format!("{stem}.exe")
+            } else {
+                stem.to_owned()
+            }
+        };
+        let install = temp("install");
+        let parser = fake_exe(&install, &exe("orcel-doc-parser"), b" parser");
+        let helper = fake_exe(&install, &exe("orcel-contain"), b" helper");
+        let early = build_entry("parser", &parser, vec![], vec![], 0, &[], 1)
+            .expect("no orceld beside it yet");
+        assert!(verify_identity(&early, &parser).is_ok());
+
+        fake_exe(&install, ORCELD_FILE, b" orceld");
+        for path in [&parser, &helper] {
+            let error = build_entry("helper", path, vec![], vec![], 0, &[], 1)
+                .expect_err("an Orcel install's helper is refused");
+            assert_eq!(error.code, FailureCode::CapabilityDenied);
+            assert!(
+                error.message.contains("Orcel install directory"),
+                "{error:?}"
+            );
+        }
+        let error = verify_identity(&early, &parser).expect_err("refused before launch");
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+
+        // The same file elsewhere, with no orceld beside it, is unaffected.
+        let elsewhere = temp("not-install");
+        let copy = fake_exe(&elsewhere, &exe("orcel-doc-parser"), b" parser");
+        assert!(build_entry("parser", &copy, vec![], vec![], 0, &[], 1).is_ok());
+        let _ = std::fs::remove_dir_all(install);
+        let _ = std::fs::remove_dir_all(elsewhere);
     }
 }

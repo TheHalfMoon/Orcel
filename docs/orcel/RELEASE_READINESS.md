@@ -121,7 +121,7 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | Code signing (Windows Authenticode, macOS identity) | Gates F4 closeout, slice 5 (option 1), FD-05 / XP-16 macOS packaging |
 | F4 slice 5 stop and takeover | Decided 2026-11-13: (2), the amendment for `task.stop` only; shipped as #640. Pause/resume would be another state-changing method — see #446 |
 | Filesystem race residuals (#670–#680, #740) | Accepted for development builds by founder decision 8 of 2026-11-14; decided again before any release build (see `COMPLETION_LEDGER.md`) |
-| A workbook in the report task (F5 Journey 2) | Decided 2026-11-14 (founder decision 7): option A of `prep/F5_SPREADSHEET_JOURNEY.md`, the confined parser, slice by slice. Activates no grain: slice 2's approval question needs its security review and slice 3's exposure its grain. Slice 1 ships the parser in the Windows release with no caller (see `COMPLETION_LEDGER.md`) |
+| A workbook in the report task (F5 Journey 2) | Decided 2026-11-14 (founder decision 7 (the founder's 2026-11-14 decision packet, `docs/orcel/FOUNDER_DECISION_PACKET.md`; not SG-000108's decision 7)): option A of `prep/F5_SPREADSHEET_JOURNEY.md`, the confined parser, slice by slice. Activates no grain: slice 2's approval question needs its security review and slice 3's exposure its grain. Slice 1 ships the parser in the Windows release with no caller (see `COMPLETION_LEDGER.md`) |
 | F4 slice 7: live browser in release builds | Its own governed change and security review |
 | FD-03 (gates CR-03), FD-05, FD-08 | As recorded in the frontier |
 | Activation of SG-000115 (XP-14 launch, network sink, supervision on macOS/Linux) and the other prepared grains | Activation grants authority; only the founder activates. Gate (F4 slice 5, #640): before SG-000115 is activated, the Unix browser engine (on Linux it runs in new user and PID namespaces but no new mount namespace, `orcel-browser-host/src/unix_supervise.rs`) must be shown unable to reach orceld's app API socket (`$XDG_RUNTIME_DIR/orcel/app-api.sock`, or the macOS per-user temp directory's), or `task.stop`'s exception to the first-party code rule (`ORCEL_APP_API_1.md` section 2, founder decision of 2026-11-13, #446) is judged again. The exception rests on no confined process being able to reach the endpoint yet not signal orceld |
@@ -184,7 +184,7 @@ Plans and the founder decision documents are kept privately, at the same paths, 
 files here are short notes (founder decision, 2026-11-06). Read the private copies for
 those. Orcel itself stays public.
 
-1. Merged since the last checkpoint: #617 (XLSX reader, decision 7 still open),
+1. Merged since the last checkpoint: #617 (XLSX reader, decision 7 still open then; decided 2026-11-14, see section 4),
    #621 (MCP from the dev tarballs), #622 (live task timeline in the Windows app),
    #623 (workbook source, test-only), #624 (browser tasks on the controlled site),
    #625 (native host memory) and #626 (a broken pipe to `orceld` no longer ends the

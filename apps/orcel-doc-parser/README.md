@@ -58,8 +58,12 @@ Since F5 slice 1, the Windows release ships `orcel-doc-parser.exe` beside `orcel
 pinned by `orcel-doc-parser.sha256` (`scripts/package-release.mjs`; both are manifest files,
 so the installer verifies them). **No release build calls it.** Its only callers are the live
 browser's committed downloads, compiled only into `live-browser-*` development builds, and the
-workbook source, compiled only into tests; `release_blocker_sweep.rs`
-(`the_shipped_document_parser_has_no_release_caller`) fails if that changes. Its crates are in
+workbook source, compiled only into tests. If that changes, the `expect(dead_code)` on the
+entry points in `crates/orceld/src/document_parse.rs` fails CI's clippy, and
+`release_blocker_sweep.rs` (`the_shipped_document_parser_has_no_release_caller`) scans
+production Rust and the shipped MCP and Windows app sources for callers. The executable
+registry refuses anything in an Orcel install directory, so it can't be registered and started
+unconfined either. Its crates are in
 the release's `THIRD_PARTY_NOTICES.txt` and SBOM, with the lopdf and Firecrawl notices. The
 Linux and macOS packages don't carry it yet.
 
