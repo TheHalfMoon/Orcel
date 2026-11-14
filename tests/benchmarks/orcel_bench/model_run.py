@@ -5,8 +5,9 @@ the agent opens no socket.
 **No model is selected, downloaded or started here, and no command here produces
 a model row.** `model-selfcheck` checks the wiring against a fixed stub
 (`model_stub.py`), with rows labelled `stub-no-model`. It says nothing about any
-model. Starting a pinned server and running the repeats waits on the founder's
-download decision (`prep/M4-selection-package.md`).
+model. The real model's run, through the same episode code, is `model-run`
+(`model_real.py`, founder decision 3), which starts the pinned server
+(`model_server.py`) and labels its rows with the model's own label.
 """
 
 from __future__ import annotations
@@ -185,18 +186,32 @@ def run_model_episode(task_name: str, repeat: int, label: str, transport: Any, o
                       node: str = "node") -> dict[str, Any]:
     """One run of one task on the full M3 configuration, in a fresh workspace and
     state root. The row is what `model_eval.evaluate` scores."""
+    task = task_named(task_name)
+    state = Path(tempfile.mkdtemp(prefix="orcel-model-state-"))
+    workspace = Path(tempfile.mkdtemp(prefix="orcel-model-ws-"))
+    try:
+        _write(workspace, task.files)
+        fields, answer = agent_episode(task.goal, workspace, state, transport, CRASH_AFTER.get(task_name), orceld,
+                                       edge_js, node)
+        return score_row({"task": task_name, "repeat": repeat, "label": label, **fields}, answer)
+    finally:
+        shutil.rmtree(state, ignore_errors=True)
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def agent_episode(goal: str, workspace: Path, state: Path, transport: Any, crash_after: Optional[int], orceld: Path,
+                  edge_js: Path, node: str = "node") -> tuple[dict[str, Any], Optional[str]]:
+    """One run of the full M3 configuration on a workspace that is already set
+    up, with `state` (empty, the caller's to remove) as orceld's and the agent's
+    state root. Returns the measured fields and the answer."""
     from orcel_agent.chat_planner import ChatModelPlanner
     from orcel_agent.checkpoint import PlannerCheckpoint
     from orcel_agent.entry import chat_agent
 
-    task = task_named(task_name)
-    state = Path(tempfile.mkdtemp(prefix="orcel-model-state-"))
-    workspace = Path(tempfile.mkdtemp(prefix="orcel-model-ws-"))
     record: dict[str, Any] = {"proposals": 0, "invalid_proposals": 0, "mutation_attempts": 0, "transport_errors": 0,
                               "propose_ms": []}
     store = None
     try:
-        _write(workspace, task.files)
         before = _tree_digest(workspace)
         scratch = state / "tmp"
         scratch.mkdir()
@@ -206,7 +221,7 @@ def run_model_episode(task_name: str, repeat: int, label: str, transport: Any, o
         store = open_store(state / "agent", run_id)
         edge = Edge([node, str(edge_js)], env)
         edge.start()
-        timed = TimedEdge(edge, CRASH_AFTER.get(task_name))
+        timed = TimedEdge(edge, crash_after)
         events = EventLog(store.run_id)
         model = bridge_model(transport, record)
         edges_started = 1
@@ -215,7 +230,7 @@ def run_model_episode(task_name: str, repeat: int, label: str, transport: Any, o
             journal = DispatchJournal(store.journal_path, store.check_capacity)
             agent = chat_agent(timed, journal, events, store=store, keep_store=True)
             planner = ChatModelPlanner(model, events=events, checkpoint=PlannerCheckpoint(store))
-            return agent.run(task.goal, _TimedPlanner(planner, record))
+            return agent.run(goal, _TimedPlanner(planner, record))
 
         try:
             try:
@@ -233,8 +248,7 @@ def run_model_episode(task_name: str, repeat: int, label: str, transport: Any, o
         finally:
             timed.edge.close()
         clean = result.outcome == "finished" and result.stop_reason is None
-        row = {
-            "task": task_name, "repeat": repeat, "label": label,
+        fields = {
             "outcome": result.outcome, "stop_reason": result.stop_reason, "clean": clean,
             "answer_chars": len(result.answer) if isinstance(result.answer, str) else 0,
             "orcel_calls": len(timed.dispatched), "edges_started": edges_started,
@@ -246,12 +260,10 @@ def run_model_episode(task_name: str, repeat: int, label: str, transport: Any, o
             "step_p95_ms": _percentile(record["propose_ms"], 0.95),
             **episode_security(state, workspace, before, timed.dispatched),
         }
-        return score_row(row, result.answer)
+        return fields, result.answer if isinstance(result.answer, str) else None
     finally:
         if store is not None:
             store.close()
-        shutil.rmtree(state, ignore_errors=True)
-        shutil.rmtree(workspace, ignore_errors=True)
 
 
 def _read(path: str) -> dict[str, Any]:

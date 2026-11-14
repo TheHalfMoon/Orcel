@@ -6,6 +6,7 @@ Usage (from tests/benchmarks):
     python3 -m orcel_bench fetch-taskpack <name> --into <new dir> [--from <git URL or local clone>]
     python3 -m orcel_bench tierc-noop --pack <verified taskpack> --commit <40-hex> --out <file.report.json>
     python3 -m orcel_bench agent --orceld <orceld binary> --edge <apps/orcel-mcp/dist/index.js> --commit <40-hex> --out <file.report.json> [TASK_DIR ...]
+    python -m orcel_bench model-run --weights <Qwen3.5-4B-Q4_K_M.gguf> --runner-zip <llama-b11567-bin-win-cpu-x64.zip> --orceld <orceld> --edge <dist/index.js> --out <file.json>
     python3 -m orcel_bench orcel --orceld <orceld binary> --commit <40-hex> --out <file.report.json> [--trace <file.jsonl>] [--repeat N] [--temp-root DIR] [TASK_DIR ...]
 
 `orcel` solves the Orcel tasks under orcel-tasks/<group>/ through the real
@@ -85,6 +86,16 @@ def main(argv: list[str]) -> int:
     selfcheck.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
     selfcheck.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
     selfcheck.add_argument("--out", required=True, type=Path, help="where to write the rows")
+    model_run = sub.add_parser("model-run", help="M4a: the one pinned model against the bar (Windows reference "
+                                                 "machine; founder decision 3)")
+    model_run.add_argument("--weights", required=True, type=Path, help="the pinned Qwen3.5-4B-Q4_K_M.gguf (hashed first)")
+    model_run.add_argument("--runner-zip", required=True, type=Path,
+                           help="the pinned llama-b11567-bin-win-cpu-x64.zip (hashed first)")
+    model_run.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
+    model_run.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
+    model_run.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
+    model_run.add_argument("--tier-a-repeats", type=int, default=10, help="runs of each Tier A variant (the bar: 10)")
+    model_run.add_argument("--out", required=True, type=Path, help="where to write the report")
     tierc = sub.add_parser("tierc-noop", help="Tier C C1: the no-op baseline over a verified taskpack")
     tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched by fetch-taskpack (verified again before it runs)")
     tierc.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
@@ -156,6 +167,10 @@ def main(argv: list[str]) -> int:
         from .model_run import main as model_selfcheck
 
         return model_selfcheck(args)
+    if args.command == "model-run":
+        from .model_real import main as model_run
+
+        return model_run(args)
     if args.command == "agent":
         from .agent_client import LABELS, AgentOrcel
 
