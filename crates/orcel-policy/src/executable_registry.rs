@@ -456,7 +456,11 @@ const ORCELD_FILE: &str = if cfg!(windows) {
 /// running orceld's, or holds an orceld executable (another installed
 /// version, or a build directory). Checked at registration and again before
 /// every launch, so an entry made before this rule fails closed. This only
-/// narrows what can be registered.
+/// narrows what can be registered. Known consequence: any folder that holds
+/// an `orceld` executable becomes unregistrable as a whole, so for example
+/// `cargo install orceld` makes every tool in `~/.cargo/bin` unregistrable
+/// (and a registered one there stops launching) while orceld is installed
+/// there.
 fn check_not_in_orcel_install(canonical: &Path) -> Result<(), PolicyError> {
     let Some(dir) = canonical.parent() else {
         return Ok(());

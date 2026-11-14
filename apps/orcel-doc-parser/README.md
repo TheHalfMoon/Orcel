@@ -63,7 +63,9 @@ entry points in `crates/orceld/src/document_parse.rs` fails CI's clippy, and
 `release_blocker_sweep.rs` (`the_shipped_document_parser_has_no_release_caller`) scans
 production Rust and the shipped MCP and Windows app sources for callers. The executable
 registry refuses anything in an Orcel install directory, so it can't be registered and started
-unconfined either. Its crates are in
+unconfined either. Known consequence: the registry treats any folder holding an `orceld`
+executable as an install directory, so `cargo install orceld`, for example, makes every tool in
+`~/.cargo/bin` unregistrable (and stops a registered one there from launching). Its crates are in
 the release's `THIRD_PARTY_NOTICES.txt` and SBOM, with the lopdf and Firecrawl notices. The
 Linux and macOS packages don't carry it yet.
 

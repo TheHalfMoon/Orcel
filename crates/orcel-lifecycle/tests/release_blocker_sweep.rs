@@ -812,13 +812,13 @@ fn the_shipped_document_parser_has_no_release_caller() {
         let at = parse
             .find(entry)
             .unwrap_or_else(|| panic!("document_parse.rs no longer has {entry}"));
-        let before = &parse[..at];
-        let attribute = before.rfind("#[cfg_attr(").unwrap_or(0);
+        // Exactly this attribute, directly on the entry point: a weaker
+        // predicate (`cfg_attr(any(), ..)`, or one without `not(..)`) would
+        // never expect anything in a release build.
+        const RELEASE_EXPECT: &str = "#[cfg_attr(\n    not(any(\n        test,\n        all(\n            windows,\n            any(feature = \"live-browser-test\", feature = \"live-browser-dev\")\n        )\n    )),\n    expect(dead_code)\n)]\n";
         assert!(
-            before[attribute..].contains("expect(dead_code)")
-                && !before[attribute..].contains("\nfn ")
-                && !before[attribute..].contains("\npub fn "),
-            "{entry} must carry the release-build expect(dead_code)"
+            parse[..at].ends_with(RELEASE_EXPECT),
+            "{entry} must carry exactly the release-build expect(dead_code):\n{RELEASE_EXPECT}"
         );
     }
     let live = file("crates/orceld/src/live_browser.rs");
