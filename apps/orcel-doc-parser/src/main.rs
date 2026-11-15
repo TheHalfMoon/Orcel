@@ -23,9 +23,12 @@
 //! With `--expect <format>` (SG-000130 W1) the caller names the one format it
 //! accepts, and [`sniff`] refuses any other from the bytes before any of the
 //! above reads them: `%PDF-` for a PDF; for an Office format, a zip whose
-//! directory names no macro or ActiveX part and whose `[Content_Types].xml`
-//! declares that format's main part and no other's, nor any active content.
-//! The converted format must then equal it too.
+//! directory, `[Content_Types].xml` and relationship parts name no macro or
+//! ActiveX content and no other Office format, and whose one main part (the
+//! root `officeDocument` relationship) has exactly that format's main content
+//! type ([`document::sniff_package`]). The converter then refuses a package
+//! it would read as another format before converting it, and the converted
+//! format must equal it too.
 //!
 //! Every bound fails closed except the Markdown length: past
 //! [`MAX_CHARS`] the text is cut at a character boundary and flagged
@@ -96,7 +99,7 @@ fn run() -> Result<ParsedDocument, ParseRefusal> {
         pdf::inspect_without_preflight(pdf)?;
         return Err(ParseRefusal::Usage);
     }
-    let document = convert(&bytes)?;
+    let document = convert_with(&bytes, expected)?;
     if expected.is_some_and(|expected| expected != document.format) {
         return Err(ParseRefusal::UnsupportedFormat);
     }
@@ -145,7 +148,7 @@ pub(crate) fn convert_expecting(
     expected: DocumentFormat,
 ) -> Result<ParsedDocument, ParseRefusal> {
     sniff(bytes, expected)?;
-    let document = convert(bytes)?;
+    let document = convert_with(bytes, Some(expected))?;
     if document.format != expected {
         return Err(ParseRefusal::UnsupportedFormat);
     }
@@ -187,16 +190,30 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, ParseRefusal> {
     Ok(bytes)
 }
 
-/// Convert one input held in memory.
+/// Convert one input held in memory, with no expected format.
+#[cfg(test)]
 pub(crate) fn convert(bytes: &[u8]) -> Result<ParsedDocument, ParseRefusal> {
+    convert_with(bytes, None)
+}
+
+/// Convert one input held in memory; with `expected`, any other format is refused before its
+/// converter reads it.
+fn convert_with(
+    bytes: &[u8],
+    expected: Option<DocumentFormat>,
+) -> Result<ParsedDocument, ParseRefusal> {
     if bytes.len() as u64 > MAX_INPUT_BYTES {
         return Err(ParseRefusal::InputTooLarge);
     }
-    let (format, markdown, pages) = if bytes.starts_with(b"%PDF-") {
+    let pdf = bytes.starts_with(b"%PDF-");
+    if expected.is_some_and(|expected| (expected == DocumentFormat::Pdf) != pdf) {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
+    let (format, markdown, pages) = if pdf {
         let text = pdf::convert(bytes)?;
         (DocumentFormat::Pdf, text.markdown, text.pages)
     } else if document::is_office_container(bytes) {
-        let text = document::convert(bytes)?;
+        let text = document::convert_expecting(bytes, expected)?;
         (text.format, text.markdown, text.pages)
     } else {
         return Err(ParseRefusal::UnsupportedFormat);

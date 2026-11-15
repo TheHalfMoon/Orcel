@@ -46,6 +46,22 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
 const SCHEMA: &str = "orcel-report-task/1";
+/// SG-000130: the schema of a task or pending line that names a workbook
+/// source. An orceld built before workbook sources reads only [`SCHEMA`]: its
+/// restore refuses a journal holding any other line (so it refuses report
+/// commits until the journal is repaired, and never reconciles a workbook
+/// source as a text source, without its type's limit or its figures), and its
+/// peek skips the line. Fail closed on a downgrade.
+const WORKBOOK_SCHEMA: &str = "orcel-report-task/2";
+
+/// The schema a line naming these sources must carry.
+fn schema_for(sources: &[SourceLine]) -> &'static str {
+    if sources.iter().any(|source| source.workbook) {
+        WORKBOOK_SCHEMA
+    } else {
+        SCHEMA
+    }
+}
 /// How long one append waits for another orceld's line.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// Most tasks of earlier runs a starting orceld shows and keeps.
@@ -182,6 +198,16 @@ impl Line {
             | Line::Dispatched { schema, .. }
             | Line::Settled { schema, .. }
             | Line::Abandoned { schema, .. } => schema,
+        }
+    }
+
+    /// The schema this line must carry: [`WORKBOOK_SCHEMA`] exactly when it
+    /// names a workbook source. Any other is an unreadable line.
+    fn expected_schema(&self) -> &'static str {
+        match self {
+            Line::Task { task, .. } => schema_for(&task.sources),
+            Line::Pending { commit, .. } => schema_for(&commit.sources),
+            _ => SCHEMA,
         }
     }
 
@@ -574,7 +600,7 @@ impl ReportJournal {
                     schema,
                     owner,
                     task,
-                }) if schema == SCHEMA && owner.run != self.owner.run => {
+                }) if schema == schema_for(&task.sources) && owner.run != self.owner.run => {
                     match index.get(&task.id) {
                         Some(&slot) => snapshots[slot] = (owner, task),
                         None => {
@@ -597,10 +623,11 @@ impl ReportJournal {
 
     /// Best effort: a lost snapshot loses history, never safety.
     pub(super) fn snapshot(&self, task: &ReportTask) {
+        let task = task_line(task);
         let _ = self.line(&Line::Task {
-            schema: SCHEMA.to_owned(),
+            schema: schema_for(&task.sources).to_owned(),
             owner: self.owner.clone(),
-            task: task_line(task),
+            task,
         });
     }
 
@@ -610,7 +637,7 @@ impl ReportJournal {
         orcel_journal::append_opening_shared(
             &self.path,
             &Line::Pending {
-                schema: SCHEMA.to_owned(),
+                schema: schema_for(&commit.sources).to_owned(),
                 owner: self.owner.clone(),
                 intent: intent.to_owned(),
                 commit,
@@ -657,7 +684,11 @@ impl ReportJournal {
     pub(super) fn restore(&self) -> Result<Restored, JournalError> {
         orcel_journal::with_lock(&self.path, LOCK_WAIT, || {
             let read = orcel_journal::read_lines::<Line>(&self.path)?;
-            if read.lines.iter().any(|line| line.schema() != SCHEMA) {
+            if read
+                .lines
+                .iter()
+                .any(|line| line.schema() != line.expected_schema())
+            {
                 return Err(JournalError::Unreadable);
             }
             let open = orcel_journal::recover(read.lines.iter().filter_map(Line::intent_event))?;
@@ -713,7 +744,7 @@ impl ReportJournal {
                     // A live run's open commit is kept exactly: pending,
                     // and dispatched when its create may have started.
                     let mut group = vec![Line::Pending {
-                        schema: SCHEMA.to_owned(),
+                        schema: schema_for(&commit.sources).to_owned(),
                         owner,
                         intent: intent.clone(),
                         commit,
@@ -800,7 +831,7 @@ impl ReportJournal {
             let mut kept: Vec<Line> = earlier
                 .iter()
                 .map(|(owner, task)| Line::Task {
-                    schema: SCHEMA.to_owned(),
+                    schema: schema_for(&task.sources).to_owned(),
                     owner: owner.clone(),
                     task: task.clone(),
                 })
@@ -818,7 +849,7 @@ impl ReportJournal {
                 }
             }
             kept.extend(live_tasks.into_iter().map(|(owner, task)| Line::Task {
-                schema: SCHEMA.to_owned(),
+                schema: schema_for(&task.sources).to_owned(),
                 owner,
                 task,
             }));

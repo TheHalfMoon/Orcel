@@ -1411,6 +1411,69 @@ fn sg130_reconcile_applies_the_type_dependent_limit_and_the_figure_check() {
     assert_eq!(workbook.record().kind, SourceKind::Workbook);
 }
 
+/// #762 L1: a line naming a workbook source carries a schema an orceld built
+/// before workbook sources refuses (its restore requires `SCHEMA` on every
+/// line), so a downgrade fails closed instead of reconciling a workbook as a
+/// text source. Text-only lines keep the old schema; a workbook line under the
+/// old schema is unreadable here too.
+#[test]
+fn sg130_a_workbook_source_journals_under_a_schema_older_builds_refuse() {
+    let scene = Scene::new("sg130-schema");
+    let path = journal_path(&scene);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let book = b"PK not really".to_vec();
+    std::fs::write(scene.workspace.root.join("data").join("w.xlsx"), &book).unwrap();
+    let workbook = SourceRecord {
+        path: "data/w.xlsx".into(),
+        sha256: sha256_bytes(&book),
+        bytes: book.len() as u64,
+        kind: SourceKind::Workbook,
+    };
+    let text = SourceRecord {
+        path: "data/w.xlsx".into(),
+        kind: SourceKind::Text,
+        ..workbook.clone()
+    };
+    let with_workbook = pending_commit(&scene, "[data/w.xlsx]S!A1 = 1\n", &[workbook]);
+    let text_only = pending_commit(&scene, "x\n", &[text]);
+    let journal = ReportJournal::new(path.clone(), exited_owner("crashed"));
+    journal.pending("i1", with_workbook.clone()).unwrap();
+    journal.pending("i2", text_only).unwrap();
+    let raw: Vec<Value> = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(raw[0]["schema"], WORKBOOK_SCHEMA);
+    assert_ne!(raw[0]["schema"], SCHEMA, "an older orceld refuses it");
+    assert_eq!(raw[0]["commit"]["sources"][0]["workbook"], true);
+    assert_eq!(raw[1]["schema"], SCHEMA);
+    assert!(raw[1]["commit"]["sources"][0].get("workbook").is_none());
+    // This build reads both: the exited run's pending commits are reconciled.
+    let restored = ReportJournal::new(path.clone(), exited_owner("next"))
+        .restore()
+        .unwrap();
+    assert_eq!(restored.reconciled, 2);
+
+    // A workbook line under the old schema is refused, not read as text.
+    let other = scene.dir.join("state").join("mislabelled.jsonl");
+    std::fs::write(&other, b"").unwrap();
+    let mut line = serde_json::to_vec(&Line::Pending {
+        schema: SCHEMA.to_owned(),
+        owner: exited_owner("crashed"),
+        intent: "i3".into(),
+        commit: with_workbook,
+    })
+    .unwrap();
+    line.push(b'\n');
+    append_raw(&other, &line);
+    let refused = ReportJournal::new(other, exited_owner("next")).restore();
+    assert!(
+        matches!(refused, Err(orcel_journal::JournalError::Unreadable)),
+        "a workbook line under the text schema must be unreadable"
+    );
+}
+
 /// The same, with the real pinned parser (`wi05_`): a workbook over 1 MiB
 /// verifies with a true figure and stays unknown with a false one.
 #[test]

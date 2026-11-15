@@ -284,3 +284,150 @@ fn the_arguments_are_the_input_or_an_expected_format_and_the_input() {
         );
     }
 }
+
+const XLSX_MAIN: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";
+
+/// The openpyxl workbook with one part's text replaced.
+fn openpyxl_with(part: &str, from: &str, to: &str) -> Vec<u8> {
+    let mut parts = fixtures::unpacked_parts("written-by-openpyxl");
+    let found = parts
+        .iter_mut()
+        .find(|(name, _)| name == part)
+        .expect("the part");
+    let text = String::from_utf8(found.1.clone()).unwrap();
+    assert!(text.contains(from), "{text}");
+    found.1 = text.replacen(from, to, 1).into_bytes();
+    fixtures::zip_parts(&parts)
+}
+
+/// #762 H1: a document whose content types claim a workbook main part that the
+/// package never designates. Its root relationship names `word/document.xml`, so
+/// anydoc would read it as a DOCX.
+fn document_claiming_a_workbook() -> Vec<u8> {
+    let types = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+         <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+         <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+         <Override PartName=\"/xl/workbook.xml\" ContentType=\"{XLSX_MAIN}\"/></Types>"
+    );
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";
+    let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:body><w:p><w:r><w:t>Not a workbook</w:t></w:r></w:p></w:body></w:document>";
+    fixtures::zip(&[
+        ("[Content_Types].xml", types.into_bytes()),
+        ("_rels/.rels", rels.as_bytes().to_vec()),
+        ("word/document.xml", body.as_bytes().to_vec()),
+    ])
+}
+
+/// #762 H1: the sniff follows the package's own designation of its main part,
+/// as the converter does, and the converter refuses a package it reads as
+/// another format before converting it.
+#[test]
+fn a_document_claiming_a_workbook_is_refused_before_any_parse() {
+    let xlsx = DocumentFormat::Xlsx;
+    let crafted = document_claiming_a_workbook();
+    // Unexpected, it converts as the document it is.
+    assert_eq!(
+        convert(&crafted).expect("a DOCX").format,
+        DocumentFormat::Docx
+    );
+    assert_eq!(sniff(&crafted, xlsx), Err(ParseRefusal::UnsupportedFormat));
+    assert_eq!(
+        convert_expecting(&crafted, xlsx),
+        Err(ParseRefusal::UnsupportedFormat)
+    );
+    // Past the sniff, the converter still refuses it before converting.
+    assert_eq!(
+        convert_with(&crafted, Some(xlsx)),
+        Err(ParseRefusal::UnsupportedFormat)
+    );
+
+    // Main types that aren't exactly the workbook's, and another format's family.
+    for (from, to) in [
+        (XLSX_MAIN, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml; charset=utf-8"),
+        (XLSX_MAIN, "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml"),
+        (XLSX_MAIN, "Application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"),
+        (
+            "<Default Extension=\"xml\"",
+            "<Default Extension=\"docx\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document\" /><Default Extension=\"xml\"",
+        ),
+        (
+            "<Default Extension=\"xml\"",
+            "<Default Extension=\"pptx\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.presentation\" /><Default Extension=\"xml\"",
+        ),
+    ] {
+        let package = openpyxl_with("[Content_Types].xml", from, to);
+        assert_eq!(sniff(&package, xlsx), Err(ParseRefusal::UnsupportedFormat), "{to}");
+    }
+    // Exactly one internal main part, present in the zip.
+    let office = "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\" Id=\"rId1\" /";
+    for to in [
+        format!("{office}><Relationship {office}"),
+        office.replace(
+            "Target=\"xl/workbook.xml\"",
+            "Target=\"xl/workbook.xml\" TargetMode=\"External\"",
+        ),
+        office.replace("xl/workbook.xml", "xl/missing.xml"),
+        office.replace("officeDocument\"", "officeDocumentx\""),
+    ] {
+        let package = openpyxl_with("_rels/.rels", office, &to);
+        assert_eq!(
+            sniff(&package, xlsx),
+            Err(ParseRefusal::UnsupportedFormat),
+            "{to}"
+        );
+    }
+    // The unchanged workbook still passes.
+    assert_eq!(
+        sniff(&fixtures::unpacked("written-by-openpyxl"), xlsx),
+        Ok(())
+    );
+}
+
+/// #762 M1: a macro part under a neutral name and type is refused by the sniff
+/// through its relationship type, not only later by the pre-flight.
+#[test]
+fn a_macro_part_named_neutrally_is_refused_by_its_relationship() {
+    let xlsx = DocumentFormat::Xlsx;
+    for kind in [
+        "vbaProject",
+        "activeXControl",
+        "xlMacrosheet",
+        "wordVbaData",
+    ] {
+        let mut parts = fixtures::unpacked_parts("written-by-openpyxl");
+        for (name, bytes) in parts.iter_mut() {
+            let text = String::from_utf8(bytes.clone()).unwrap();
+            if name == "[Content_Types].xml" {
+                *bytes = text
+                    .replacen(
+                        "<Default Extension=\"xml\"",
+                        "<Default Extension=\"bin\" ContentType=\"application/octet-stream\" /><Default Extension=\"xml\"",
+                        1,
+                    )
+                    .into_bytes();
+            } else if name == "xl/_rels/workbook.xml.rels" {
+                *bytes = text
+                    .replacen(
+                        "</Relationships>",
+                        &format!("<Relationship Type=\"http://schemas.microsoft.com/office/2006/relationships/{kind}\" Target=\"payload.bin\" Id=\"rId99\" /></Relationships>"),
+                        1,
+                    )
+                    .into_bytes();
+            }
+        }
+        parts.push(("xl/payload.bin".into(), b"neutral".to_vec()));
+        let package = fixtures::zip_parts(&parts);
+        assert_eq!(
+            sniff(&package, xlsx),
+            Err(ParseRefusal::ActiveContent),
+            "{kind}"
+        );
+    }
+}
