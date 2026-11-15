@@ -52,6 +52,13 @@ test("BR-02: form actions are closed, bounded and exact", () => {
     ref: "e4",
     act: { action: "check", checked: false }
   });
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 4, action: "enter", ref: "e5", role: "searchbox", name: "Search" }), {
+    frame: "form_action",
+    form_id: 4,
+    ref: "e5",
+    act: { action: "enter" },
+    target: { role: "searchbox", name: "Search" }
+  });
   for (const bad of [
     { frame: "form_action", form_id: 3, action: "type", ref: "e4", value: "x" },
     { frame: "form_action", form_id: 3, action: "fill", ref: "e4" },
@@ -64,6 +71,13 @@ test("BR-02: form actions are closed, bounded and exact", () => {
     { frame: "form_action", form_id: 3, action: "select", ref: "e4", values: [] },
     { frame: "form_action", form_id: 3, action: "select", ref: "e4", values: [""] },
     { frame: "form_action", form_id: 3, action: "select", ref: "e4", values: Array.from({ length: 17 }, () => "a") },
+    // SG-000122: one option of a native select; Enter carries no key and
+    // is never inside a frame.
+    { frame: "form_action", form_id: 3, action: "select", ref: "e4", values: ["Lisbon", "Porto"] },
+    { frame: "form_action", form_id: 3, action: "enter", ref: "e4", key: "Enter" },
+    { frame: "form_action", form_id: 3, action: "enter", ref: "e4", key: "Tab" },
+    { frame: "form_action", form_id: 3, action: "enter", ref: "e4", value: "x" },
+    { frame: "form_action", form_id: 3, action: "enter", ref: "f1e4" },
     { frame: "form_action", form_id: 3, action: "check", ref: "e4", checked: "true" },
     { frame: "form_action", form_id: 3, action: "check", ref: "e4", checked: true, role: "checkbox" },
     { frame: "form_action", form_id: 0, action: "check", ref: "e4", checked: true }
@@ -171,7 +185,7 @@ test("BR-07: verify probes are closed, bounded and exact", () => {
 });
 
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 15 }), { frame: "hello", generation: 15 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 16 }), { frame: "hello", generation: 16 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -179,11 +193,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 15 },
+    { generation: 16 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 15, extra: true },
+    { frame: "hello", generation: 16, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },

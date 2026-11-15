@@ -16,11 +16,16 @@ export const MAX_LINK_URL_BYTES = 2048;
 /// Leaves room under the 64 KiB frame bound for the frame envelope.
 export const MAX_SNAPSHOT_JSON_BYTES = 56 * 1024;
 
+/// SG-000122: what a main-frame form control is, for the host's checks
+/// before any form action (see `classifyControls`).
+export type FormControl = "line" | "select" | "toggle";
+
 export interface SnapshotNode {
   ref: string;
   role: string;
   name: string;
   url?: string;
+  control?: FormControl;
   children: SnapshotNode[];
 }
 
