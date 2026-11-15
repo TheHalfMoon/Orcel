@@ -41,26 +41,10 @@ fn omitted(rest: usize) -> String {
 
 /// Shows `value` exactly when it is printable and short; otherwise escapes the characters that
 /// could change the dialog's layout or reading order, and stops before the escaped text would
-/// exceed `max_chars`, saying how many input characters were left out.
+/// exceed `max_chars`, saying how many input characters were left out. The rule is
+/// `orcel_contracts::prompt_display::display`, which SG-000122's browser prompts share.
 pub(crate) fn display_field(value: &str, max_chars: usize) -> String {
-    let pieces = pieces(value);
-    let mut out = String::new();
-    let mut out_chars = 0usize;
-    let mut taken = 0usize;
-    for piece in &pieces {
-        let len = piece.chars().count();
-        if out_chars + len > max_chars {
-            break;
-        }
-        out.push_str(piece);
-        out_chars += len;
-        taken += 1;
-    }
-    let rest = pieces.len() - taken;
-    if rest > 0 {
-        out.push_str(&omitted(rest));
-    }
-    out
+    orcel_contracts::prompt_display::display(value, max_chars)
 }
 
 /// The target, escaped as [`display_field`] does, and kept to [`MAX_TARGET_CHARS`] by leaving
@@ -134,7 +118,7 @@ fn target_lines(kind: TargetKind, target: &str, destination: Option<&str>) -> St
         None => typed("Target", target, target_is_file),
     }
 }
-const MAX_PREVIEW_LINE_CHARS: usize = 100;
+const MAX_PREVIEW_LINE_CHARS: usize = orcel_contracts::prompt_display::MAX_PREVIEW_LINE_CHARS;
 const MAX_EXECUTABLE_CHARS: usize = 64;
 const MAX_SIGNER_CHARS: usize = 64;
 
