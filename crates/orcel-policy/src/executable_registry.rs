@@ -458,7 +458,7 @@ const ORCELD_FILE: &str = if cfg!(windows) {
 /// every launch, so an entry made before this rule fails closed. This only
 /// narrows what can be registered. Known consequence: any folder that holds
 /// an `orceld` executable becomes unregistrable as a whole, so for example
-/// `cargo install orceld` makes every tool in `~/.cargo/bin` unregistrable
+/// installing `orceld` into `~/.cargo/bin` with cargo makes every tool there unregistrable
 /// (and a registered one there stops launching) while orceld is installed
 /// there.
 fn check_not_in_orcel_install(canonical: &Path) -> Result<(), PolicyError> {
