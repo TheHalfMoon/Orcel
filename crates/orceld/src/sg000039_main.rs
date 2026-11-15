@@ -2756,7 +2756,11 @@ mod sg000055_envelope_tests {
                 json!({"page_id": "pg-a1", "node_id": "d1-e2", "file_name": "r.pdf", "expected_generation": 1}),
             ),
         ];
-        assert_eq!(shapes.len(), profile_gate::LIVE_BROWSER_SHAPES.len());
+        // Slice 3c's six; SG-000122 slice A3's three are covered below.
+        assert_eq!(
+            shapes.len(),
+            profile_gate::LIVE_BROWSER_SHAPES.len() - profile_gate::SG122_MCP_SHAPES.len()
+        );
         for (capability, operation, arguments) in shapes {
             let shape = || live(capability, operation, "default", arguments.clone());
             // No profile, another profile, or a remote request: refused at the gate.
@@ -2879,7 +2883,10 @@ mod sg000055_envelope_tests {
                 json!({"page_id": "pg-a1", "checks": [{"kind": "text_visible", "text": "Saved"}], "expected_generation": 1}),
             ),
         ];
-        assert_eq!(shapes.len(), profile_gate::LIVE_FORM_SHAPES.len());
+        assert_eq!(
+            shapes.len(),
+            orcel_policy::live_browser::LIVE_FORM_SHAPES.len()
+        );
         for (capability, operation, arguments) in shapes {
             let shape = || live(capability, operation, "default", arguments.clone());
             for profile in [None, Some("desktop_structured"), Some("core")] {
@@ -2941,6 +2948,86 @@ mod sg000055_envelope_tests {
                 FailureCode::InvalidRequest
             );
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// SG-000122 slice A3: the three shapes that have MCP tools now
+    /// (`browser_fill`, `browser_wait_text`, `browser_verify`) are in the
+    /// gate's MCP table and, with exactly the arguments those tools send
+    /// (`apps/orcel-mcp/src/browser-live.test.ts`), pass the gate and the live
+    /// policy and reach A2's live dispatch: in every build without the live
+    /// browser, its own typed answer, before any approval is asked for (the
+    /// broker here would deny anything it were asked).
+    #[test]
+    fn sg122_a3_mcp_shapes_route_to_the_live_dispatch() {
+        let (policy, audit, root) = fixture();
+        let workspaces =
+            remote_lease::WorkspaceSet::from_pairs(&[("default".into(), root.join("workspace"))]);
+        let approval = FixedApprovalBroker(ApprovalDecision::Denied);
+        let shapes = [
+            (
+                "browser.dom",
+                "fill",
+                json!({"page_id": "pg-a1", "node_id": "d1-e2", "value": "Ada Lovelace", "expected_generation": 1}),
+            ),
+            (
+                "browser.wait",
+                "text",
+                json!({"page_id": "pg-a1", "text": "Saved", "appear": true, "timeout_ms": 5000, "expected_generation": 1}),
+            ),
+            (
+                "browser.verify",
+                "check",
+                json!({"page_id": "pg-a1", "checks": [
+                    {"kind": "element_visible", "node_id": "d1-e2"},
+                    {"kind": "text_visible", "text": "Saved"},
+                    {"kind": "value_equals", "node_id": "d1-e2", "value": "Ada Lovelace"},
+                    {"kind": "checked", "node_id": "d1-e4", "checked": true},
+                    {"kind": "url_is", "url": "https://example.org/done"}
+                ], "expected_generation": 1}),
+            ),
+        ];
+        assert_eq!(shapes.len(), profile_gate::SG122_MCP_SHAPES.len());
+        for (capability, operation, arguments) in shapes {
+            assert!(profile_gate::SG122_MCP_SHAPES.contains(&(capability, operation)));
+            assert!(profile_gate::LIVE_BROWSER_SHAPES.contains(&(capability, operation)));
+            assert!(!profile_gate::LIVE_FORM_SHAPES.contains(&(capability, operation)));
+            let mut live = request(capability, operation, "default");
+            live.target = None;
+            live.arguments = arguments;
+            assert!(profile_gate::is_live_shape(&live));
+            assert_eq!(
+                profile_gate::gate(&live, Some("browser_structured"), None),
+                Ok(())
+            );
+            // The live policy authorizes the MCP tool's arguments as they are.
+            assert!(
+                policy.authorize_live_browser(&live).is_ok(),
+                "{capability}/{operation}"
+            );
+            #[cfg(not(all(windows, feature = "live-browser-dev")))]
+            {
+                let response = handle_envelope(
+                    &policy,
+                    &audit,
+                    &approval,
+                    &workspaces,
+                    RemoteRequestEnvelope {
+                        request: live,
+                        remote: None,
+                        profile: Some("browser_structured".into()),
+                    },
+                );
+                let expected = live_dispatch::unavailable();
+                assert_eq!(code(&response), expected.code, "{capability}/{operation}");
+                assert_eq!(
+                    response.error.as_ref().map(|error| error.message.as_str()),
+                    Some(expected.message.as_str()),
+                    "{capability}/{operation}"
+                );
+            }
+        }
+        let _ = (&workspaces, &approval, &audit);
         let _ = std::fs::remove_dir_all(root);
     }
 

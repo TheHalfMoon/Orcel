@@ -298,7 +298,7 @@ fn profile_parity_is_exact_with_no_implicit_widening() {
 }
 
 #[test]
-fn tool_parity_live_set_is_six_qualified_shapes() {
+fn tool_parity_live_set_is_nine_admissible_shapes() {
     for (capability, operation) in QUALIFIED_BROWSER_SHAPES {
         let tool = format!("{capability}/{operation}");
         assert!(
@@ -307,23 +307,33 @@ fn tool_parity_live_set_is_six_qualified_shapes() {
         );
         assert!(!is_denied_shape(&tool), "{tool} is qualified, not denied");
     }
-    // SG-000108 slice 3c: each live tool forwards one qualified shape, and
-    // fill and the uploads are not among them.
+    // SG-000108 slice 3c: six live tools, each forwarding one qualified
+    // shape. SG-000122 slice A3 adds fill (one of the twelve) and the text
+    // wait and the verifier (admitted beside the twelve); the uploads and
+    // the other model-only shapes are not among them.
     let live: HashSet<(&str, &str)> = orcel_browser_host::LIVE_BROWSER_TOOL_SHAPES
         .iter()
         .map(|(_, capability, operation)| (*capability, *operation))
         .collect();
-    assert_eq!(live.len(), 6);
+    assert_eq!(live.len(), 9);
     for shape in &live {
-        assert!(QUALIFIED_BROWSER_SHAPES.contains(shape), "{shape:?}");
+        assert!(
+            QUALIFIED_BROWSER_SHAPES.contains(shape)
+                || orcel_browser_host::SG122_ADMITTED_SHAPES.contains(shape),
+            "{shape:?}"
+        );
     }
+    assert!(live.contains(&("browser.dom", "fill")));
     for model_only in [
-        ("browser.dom", "fill"),
         ("browser.upload", "preview"),
         ("browser.upload", "submit"),
         ("browser.profile", "status"),
         ("browser.destination", "validate"),
         ("browser.navigation", "preview"),
+        // SG-000122 slice A4's shapes have no tool yet.
+        ("browser.form", "select"),
+        ("browser.form", "check"),
+        ("browser.form", "enter"),
     ] {
         assert!(!live.contains(&model_only), "{model_only:?}");
     }

@@ -45,15 +45,18 @@ const LOCAL_ONLY = [
   "web_fetch",
   "web_search"
 ];
-// SG-000108 slice 3c: the live browser tools, local-only and served only
-// under browser_structured.
+// SG-000108 slice 3c and SG-000122 slice A3: the live browser tools,
+// local-only and served only under browser_structured.
 const LIVE = [
   "browser_click",
   "browser_download",
   "browser_download_preview",
+  "browser_fill",
   "browser_navigate",
   "browser_observe",
-  "browser_page_open"
+  "browser_page_open",
+  "browser_verify",
+  "browser_wait_text"
 ];
 
 function fakeKernel(): KernelClient {

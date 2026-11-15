@@ -15,20 +15,24 @@
 //! (`apps/orcel-mcp/src/browser-exposure.test.ts`) fails if they differ.
 //! Slice 3c exposes six shapes, in development builds only (decision 7).
 //!
-//! SG-000122 slice A2 adds the live form shapes (`LIVE_FORM_SHAPES`), gated
-//! the same way: local only, `browser_structured` only, dispatched only in
-//! development builds (decision 7). They have no MCP tool yet (slices A3 and A4
-//! add them, and move each into the cross-language agreement then), so only
-//! a local kernel request that names the profile reaches them.
+//! SG-000122 slice A2 added the live form shapes, gated the same way: local
+//! only, `browser_structured` only, dispatched only in development builds on
+//! Windows (decision 7). Slice A3 gives fill, the text wait and the verifier
+//! MCP tools, so they move into `LIVE_BROWSER_SHAPES` and the cross-language
+//! agreement. `LIVE_FORM_SHAPES` keeps the shapes with no MCP tool yet
+//! (select, check and Enter, slice A4): only a local kernel request that
+//! names the profile reaches them.
 
 use orcel_contracts::{FailureCode, RemoteContext, RequestEnvelope};
 
 /// The profile that alone may reach a live browser shape.
 pub const BROWSER_STRUCTURED_PROFILE: &str = "browser_structured";
 
-/// The live browser shapes (capability, operation): slice 3c's six, each
-/// one of SG-000079's qualified browser shapes. The uploads stay model-only
-/// (decision 4); SG-000122 promotes `browser.dom/fill` in `LIVE_FORM_SHAPES`.
+/// The live browser shapes with an MCP tool (capability, operation): slice
+/// 3c's six, each one of SG-000079's qualified browser shapes, and SG-000122
+/// slice A3's three: `browser.dom/fill` (promoted by the SG-000108 decision
+/// 4 amendment), `browser.wait/text` and `browser.verify/check` (admitted
+/// beside the twelve by the A13 amendment). The uploads stay model-only.
 pub const LIVE_BROWSER_SHAPES: &[(&str, &str)] = &[
     ("browser.page", "open"),
     ("browser.navigation", "navigate"),
@@ -36,17 +40,28 @@ pub const LIVE_BROWSER_SHAPES: &[(&str, &str)] = &[
     ("browser.dom", "click"),
     ("browser.download", "preview"),
     ("browser.download", "download"),
+    ("browser.dom", "fill"),
+    ("browser.wait", "text"),
+    ("browser.verify", "check"),
 ];
 
-/// SG-000122 slice A2: the live form shapes, beside slice 3c's six (the
-/// SG-000108 decision 4 amendment promotes `browser.dom/fill`). Their names
-/// never collide with the closed-grain denials (`browser.dom/press` and
-/// `browser.dom/select` stay denied and STRONG on the model-only path).
+/// SG-000122: the live form shapes with no MCP tool yet (slice A4 adds
+/// them, and moves each into `LIVE_BROWSER_SHAPES` then). With slice A3's
+/// three in `LIVE_BROWSER_SHAPES` they are exactly the policy's
+/// `LIVE_FORM_SHAPES`. Their names never collide with the closed-grain
+/// denials (`browser.dom/press` and `browser.dom/select` stay denied and
+/// STRONG on the model-only path).
 pub const LIVE_FORM_SHAPES: &[(&str, &str)] = &[
-    ("browser.dom", "fill"),
     ("browser.form", "select"),
     ("browser.form", "check"),
     ("browser.form", "enter"),
+];
+
+/// SG-000122 slice A3: the grain's shapes that have MCP tools now, all in
+/// `LIVE_BROWSER_SHAPES` (the tests check the tables against it).
+#[cfg(test)]
+pub const SG122_MCP_SHAPES: &[(&str, &str)] = &[
+    ("browser.dom", "fill"),
     ("browser.wait", "text"),
     ("browser.verify", "check"),
 ];
@@ -166,10 +181,11 @@ mod tests {
         }
     }
 
-    /// Slice 3c: exactly the six live shapes, and the real table gates them.
+    /// Slice 3c's six and SG-000122 slice A3's three: exactly the live
+    /// shapes with an MCP tool, and the real table gates them.
     #[test]
-    fn the_six_live_shapes_are_gated() {
-        assert_eq!(LIVE_BROWSER_SHAPES.len(), 6);
+    fn the_live_mcp_shapes_are_gated() {
+        assert_eq!(LIVE_BROWSER_SHAPES.len(), 9);
         for (capability, operation) in LIVE_BROWSER_SHAPES {
             let live = request(capability, operation);
             assert!(is_live_shape(&live));
@@ -190,20 +206,37 @@ mod tests {
         }
     }
 
-    /// SG-000122 slice A2: the form shapes are live and gated like the six:
-    /// local `browser_structured` only, never remote; the gate's table is
-    /// the policy's, and no name collides with a closed-grain denial.
+    /// SG-000122: the form shapes are live and gated like the six: local
+    /// `browser_structured` only, never remote. Slice A3's three sit in the
+    /// MCP table and A4's three in `LIVE_FORM_SHAPES`, each in exactly one;
+    /// together they are the policy's table, and no name collides with a
+    /// closed-grain denial.
     #[test]
     fn sg122_the_form_shapes_are_gated_like_the_six() {
+        let policy = orcel_policy::live_browser::LIVE_FORM_SHAPES;
         assert_eq!(
-            LIVE_FORM_SHAPES,
-            orcel_policy::live_browser::LIVE_FORM_SHAPES
+            SG122_MCP_SHAPES.len() + LIVE_FORM_SHAPES.len(),
+            policy.len()
         );
+        for shape in policy {
+            let in_mcp = LIVE_BROWSER_SHAPES.contains(shape);
+            let in_forms = LIVE_FORM_SHAPES.contains(shape);
+            assert!(in_mcp != in_forms, "{shape:?} is in exactly one table");
+            assert_eq!(in_mcp, SG122_MCP_SHAPES.contains(shape), "{shape:?}");
+        }
+        for shape in SG122_MCP_SHAPES.iter().chain(LIVE_FORM_SHAPES) {
+            assert!(policy.contains(shape), "{shape:?} is a policy live form");
+        }
+        // Fill needs a fresh SOFT approval; the wait and the verifier none.
+        for (capability, operation) in SG122_MCP_SHAPES {
+            let class = orcel_policy::live_browser::live_approval_class(capability, operation);
+            let expected = (*operation == "fill").then_some(orcel_policy::ApprovalClass::Soft);
+            assert_eq!(class, Some(expected), "{capability}/{operation}");
+        }
         let remote = remote();
-        for (capability, operation) in LIVE_FORM_SHAPES {
+        for (capability, operation) in policy {
             let live = request(capability, operation);
             assert!(is_live_shape(&live));
-            assert!(!LIVE_BROWSER_SHAPES.contains(&(*capability, *operation)));
             assert!(
                 !orcel_provider_browser::DENIED_BROWSER_SHAPES.contains(&(*capability, *operation)),
                 "{capability}/{operation}"

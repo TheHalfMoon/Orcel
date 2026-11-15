@@ -301,6 +301,22 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
     capability: "browser.download", operation: "download", effect: "network", approval: "SOFT", remote: "local_only",
     outputBound: "the committed file's name, SHA-256 and size; at most the transfer bound written, create-only",
     annotations: change("Download from isolated browser page", { destructive: false, idempotent: false, openWorld: true })
+  },
+  // SG-000122 slice A3: fill, the text wait and the verifier, `browser_structured` only.
+  browser_fill: {
+    capability: "browser.dom", operation: "fill", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the page id, generation, node id, the committed URL and the record id; never the value",
+    annotations: change("Fill a text field on isolated browser page", { destructive: false, idempotent: false, openWorld: true })
+  },
+  browser_wait_text: {
+    capability: "browser.wait", operation: "text", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "whether the text appeared or disappeared in time; no page text",
+    annotations: read("Wait for text on isolated browser page")
+  },
+  browser_verify: {
+    capability: "browser.verify", operation: "check", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "at most 16 pass or fail results with fixed evidence words and counts, the committed URL and a report digest; no page text, name or value",
+    annotations: read("Verify isolated browser page")
   }
 };
 
@@ -335,8 +351,9 @@ export const LOCAL_ONLY_TOOL_NAMES: readonly string[] = Object.keys(TOOL_CONTRAC
  * `browser_structured`. They must equal `LIVE_BROWSER_SHAPES` in
  * `crates/orceld/src/profile_gate.rs` and `LIVE_BROWSER_MCP_TOOLS` in
  * `crates/orcel-browser-host/src/exposure.rs` (browser-exposure.test.ts).
- * Slice 3c: six of SG-000079's qualified shapes; fill and uploads stay
- * model-only.
+ * Slice 3c: six of SG-000079's qualified shapes. SG-000122 slice A3: fill
+ * (promoted from model-only), the text wait and the verifier. The uploads
+ * stay model-only; select, check and Enter wait for slice A4.
  */
 export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([
   "browser_page_open",
@@ -344,7 +361,10 @@ export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([
   "browser_observe",
   "browser_click",
   "browser_download_preview",
-  "browser_download"
+  "browser_download",
+  "browser_fill",
+  "browser_wait_text",
+  "browser_verify"
 ]);
 
 /**

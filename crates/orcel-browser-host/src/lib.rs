@@ -99,10 +99,10 @@ pub use crawl_scope::PatternKind;
 pub use discovery::{discover_engine, Engine, EngineKind, SearchConfig};
 pub use error::{DownloadFailure, HostError, UnavailableReason};
 pub use exposure::{
-    is_denied_shape, is_live_exposed, is_qualified_shape, profile_tools,
+    is_admissible_live_shape, is_denied_shape, is_live_exposed, is_qualified_shape, profile_tools,
     remote_browser_mapping_enabled, BROWSER_STRUCTURED_PROFILE, DENIED_BROWSER_SHAPES,
     LIVE_BROWSER_MCP_TOOLS, LIVE_BROWSER_TOOL_SHAPES, PREEXISTING_PROFILES,
-    QUALIFIED_BROWSER_SHAPES,
+    QUALIFIED_BROWSER_SHAPES, SG122_ADMITTED_SHAPES,
 };
 pub use extraction::{
     ExtractOptions, PageExtraction, MAX_EXTRACT_CHARS, MAX_EXTRACT_PIECES, MAX_PIECE_CHARS,

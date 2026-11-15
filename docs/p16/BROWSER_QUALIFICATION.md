@@ -38,11 +38,22 @@ implementation does not have.
 | `browser.navigation/navigate` | live (SG-000108) | `browser_navigate`, under `browser_structured` only |
 | `browser.snapshot/observe` | live (SG-000108) | `browser_observe`, under `browser_structured` only |
 | `browser.dom/click` | live (SG-000108) | `browser_click`, under `browser_structured` only |
-| `browser.dom/fill` | model-only | not exposed |
+| `browser.dom/fill` | live (SG-000122) | `browser_fill`, under `browser_structured` only |
 | `browser.download/preview` | live (SG-000108) | `browser_download_preview`, under `browser_structured` only |
 | `browser.download/download` | live (SG-000108) | `browser_download`, under `browser_structured` only |
 | `browser.upload/preview` | model-only | not exposed |
 | `browser.upload/submit` | model-only | not exposed |
+
+SG-000122 admits five shapes beside the twelve (its amendment of SG-000108 A13). They have no model-only form: on
+the model-only path every `browser.form`, `browser.wait` and `browser.verify` shape stays denied.
+
+| Shape | Engine | Decision |
+| --- | --- | --- |
+| `browser.wait/text` | live (SG-000122) | `browser_wait_text`, under `browser_structured` only |
+| `browser.verify/check` | live (SG-000122) | `browser_verify`, under `browser_structured` only |
+| `browser.form/select` | live dispatch only (SG-000122 slice A2) | no MCP tool until slice A4 |
+| `browser.form/check` | live dispatch only (SG-000122 slice A2) | no MCP tool until slice A4 |
+| `browser.form/enter` | live dispatch only (SG-000122 slice A2) | no MCP tool until slice A4 |
 
 SG-000062 found that no shape qualified against a live engine, so no browser tool was exposed then; SG-000108 later qualified the six live shapes below.
 Exposing these shapes would let an AI client believe it browsed a page when
@@ -50,8 +61,22 @@ it only exercised policy bookkeeping.
 
 SG-000108 slice 3c (docs/security/SG-000108_PRODUCT_CALLER.md) makes six shapes live MCP tools on the qualified
 isolated engine, under the `browser_structured` profile only, which local configuration alone selects. They reach a
-real browser only in `live-browser-dev` builds; every other build answers typed unavailable. `browser.dom/fill` and
-the uploads stay model-only, and the model-only forms of the live shapes are unreachable through the MCP edge.
+real browser only in `live-browser-dev` builds; every other build answers typed unavailable. The uploads stay
+model-only, and the model-only forms of the live shapes are unreachable through the MCP edge.
+
+SG-000122 slice A3 (`.specgrain/specs/SG-000122.json`, issue #753) adds three live MCP tools under the same profile
+and rules, on Windows `live-browser-dev` builds only (release builds, macOS and Linux answer typed unavailable), never
+remote:
+- `browser_fill` fills one observed single-line text field (an input of type text, search, email, url or tel; never
+  a secret-looking field) after a fresh SOFT approval bound to the page generation, the field and the value. The
+  prompt shows the value exactly and in full, or the value is refused; it shows the field's role and name labelled
+  page-supplied.
+- `browser_wait_text` waits up to 8 s for a literal one-line text to appear or disappear, and `browser_verify` checks
+  element, text, value, checked-state and URL postconditions. Both are read-only and need no approval; their text
+  probes look only at the main frame's committed document, and each lifetime admits at most 16 distinct awaited
+  texts across them.
+
+No native Windows run of these tools has been recorded yet (slice A6).
 
 ## What remains true
 

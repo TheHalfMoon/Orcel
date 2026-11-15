@@ -5,7 +5,11 @@
 //! shapes, nothing more. SG-000108 slice 3c makes six of them live MCP
 //! tools under that profile only (decision 4: navigate, observe, link
 //! activation and staged download, with the page and the download preview
-//! they need); `browser.dom/fill` and the uploads stay model-only. Existing
+//! they need); the uploads stay model-only. SG-000122 slice A3 adds three
+//! live tools under the same profile: fill (`browser.dom/fill`, promoted by
+//! the SG-000108 decision 4 amendment), the text wait and the verifier
+//! (`browser.wait/text` and `browser.verify/check`, admitted beside the
+//! twelve by the A13 amendment, `SG122_ADMITTED_SHAPES`). Existing
 //! profiles are not widened, remote browser mapping stays disabled, and the
 //! denied set (evaluation, arbitrary JavaScript, generic CDP, personal
 //! profiles, raw process control, generic filesystem authority) stays
@@ -56,9 +60,22 @@ pub const DENIED_BROWSER_SHAPES: &[&str] = &[
     "browser.remote.map",
 ];
 
-/// Live MCP tools (slice 3c), served only under `browser_structured` and
-/// reaching a real host only in `live-browser-dev` builds. The host's own
-/// worker-mode vocabulary stays a private piped channel, not an MCP surface.
+/// SG-000122 (the amendment of SG-000108 A13): the form-grain shapes
+/// admitted beside the twelve. Admission is not exposure: slice A3 exposes
+/// the text wait and the verifier; select, check and Enter wait for slice
+/// A4. Every one stays local-only, development builds only, Windows only.
+pub const SG122_ADMITTED_SHAPES: &[(&str, &str)] = &[
+    ("browser.form", "select"),
+    ("browser.form", "check"),
+    ("browser.form", "enter"),
+    ("browser.wait", "text"),
+    ("browser.verify", "check"),
+];
+
+/// Live MCP tools (SG-000108 slice 3c's six and SG-000122 slice A3's
+/// three), served only under `browser_structured` and reaching a real host
+/// only in `live-browser-dev` builds on Windows. The host's own worker-mode
+/// vocabulary stays a private piped channel, not an MCP surface.
 pub const LIVE_BROWSER_MCP_TOOLS: &[&str] = &[
     "browser_page_open",
     "browser_navigate",
@@ -66,9 +83,12 @@ pub const LIVE_BROWSER_MCP_TOOLS: &[&str] = &[
     "browser_click",
     "browser_download_preview",
     "browser_download",
+    "browser_fill",
+    "browser_wait_text",
+    "browser_verify",
 ];
 
-/// The qualified shape each live tool forwards (tool, capability, operation).
+/// The shape each live tool forwards (tool, capability, operation).
 pub const LIVE_BROWSER_TOOL_SHAPES: &[(&str, &str, &str)] = &[
     ("browser_page_open", "browser.page", "open"),
     ("browser_navigate", "browser.navigation", "navigate"),
@@ -76,6 +96,9 @@ pub const LIVE_BROWSER_TOOL_SHAPES: &[(&str, &str, &str)] = &[
     ("browser_click", "browser.dom", "click"),
     ("browser_download_preview", "browser.download", "preview"),
     ("browser_download", "browser.download", "download"),
+    ("browser_fill", "browser.dom", "fill"),
+    ("browser_wait_text", "browser.wait", "text"),
+    ("browser_verify", "browser.verify", "check"),
 ];
 
 /// Whether a capability and operation pair is within the maximum
@@ -85,6 +108,15 @@ pub fn is_qualified_shape(capability: &str, operation: &str) -> bool {
     QUALIFIED_BROWSER_SHAPES
         .iter()
         .any(|(cap, op)| *cap == capability && *op == operation)
+}
+
+/// Whether a shape may be live: one of the twelve, or one SG-000122
+/// admitted beside them.
+pub fn is_admissible_live_shape(capability: &str, operation: &str) -> bool {
+    is_qualified_shape(capability, operation)
+        || SG122_ADMITTED_SHAPES
+            .iter()
+            .any(|(cap, op)| *cap == capability && *op == operation)
 }
 
 /// Whether a tool name is denied under every profile.
@@ -131,8 +163,8 @@ mod tests {
     }
 
     #[test]
-    fn the_live_set_is_six_qualified_shapes_and_denied_shapes_stay_absent() {
-        assert_eq!(LIVE_BROWSER_MCP_TOOLS.len(), 6);
+    fn the_live_set_is_nine_admissible_shapes_and_denied_shapes_stay_absent() {
+        assert_eq!(LIVE_BROWSER_MCP_TOOLS.len(), 9);
         let tools: Vec<&str> = LIVE_BROWSER_TOOL_SHAPES
             .iter()
             .map(|(t, _, _)| *t)
@@ -140,13 +172,25 @@ mod tests {
         assert_eq!(tools, LIVE_BROWSER_MCP_TOOLS);
         for (tool, capability, operation) in LIVE_BROWSER_TOOL_SHAPES {
             assert!(is_live_exposed(tool));
+            assert!(is_admissible_live_shape(capability, operation), "{tool}");
+        }
+        // Slice 3c's six are qualified shapes; of SG-000122's, fill is one
+        // of the twelve and the wait and the verifier are admitted beside.
+        for (tool, capability, operation) in &LIVE_BROWSER_TOOL_SHAPES[..7] {
             assert!(is_qualified_shape(capability, operation), "{tool}");
         }
-        // Fill and uploads stay model-only (decision 4).
+        for (tool, capability, operation) in &LIVE_BROWSER_TOOL_SHAPES[7..] {
+            assert!(!is_qualified_shape(capability, operation), "{tool}");
+            assert!(SG122_ADMITTED_SHAPES.contains(&(*capability, *operation)));
+        }
+        // The uploads stay model-only (decision 4), and select, check and
+        // Enter have no tool until slice A4.
         for (capability, operation) in [
-            ("browser.dom", "fill"),
             ("browser.upload", "preview"),
             ("browser.upload", "submit"),
+            ("browser.form", "select"),
+            ("browser.form", "check"),
+            ("browser.form", "enter"),
         ] {
             assert!(!LIVE_BROWSER_TOOL_SHAPES
                 .iter()
@@ -160,6 +204,10 @@ mod tests {
             assert!(!is_live_exposed(&tool), "{tool}");
         }
         assert!(!is_live_exposed("browser_evaluate"));
+        // SG-000122's admitted shapes are new names, none of the twelve.
+        for (capability, operation) in SG122_ADMITTED_SHAPES {
+            assert!(!is_qualified_shape(capability, operation));
+        }
     }
 
     #[test]
