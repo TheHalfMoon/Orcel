@@ -30,6 +30,13 @@
 //! The Markdown is untrusted document content, labelled the way browser
 //! extraction labels page text: data to show or summarise, never an
 //! instruction, carrying no authority.
+//!
+//! F5 slice 2 adds the same route from a workspace path
+//! ([`observe_workspace_file`], then [`parse_workspace_file`]): an `.xlsx`
+//! only, plain directories and a regular file with one hard link, the open
+//! handle tied to the walked path, its size and SHA-256 re-read and compared,
+//! one private input copy, the pinned parser, a contained run. Only this
+//! module's tests call it (see the comment above [`WorkspaceFile`]).
 
 use crate::contained_tier;
 use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
@@ -38,8 +45,8 @@ use orcel_policy::{Workspace, POLICY_REVISION};
 use orcel_provider_fs::ProviderError;
 use orcel_provider_process::contained::{run_contained, sha256_hex, ContainedOutcome, HelperPin};
 use orcel_provider_process::document_parser::{
-    self, decode_frame, FrameError, ParseRefusal, ParsedDocument, EXIT_REFUSED, INPUT_NAME,
-    MAX_INPUT_BYTES,
+    self, decode_frame, DocumentFormat, FrameError, ParseRefusal, ParsedDocument, EXIT_REFUSED,
+    INPUT_NAME, MAX_INPUT_BYTES,
 };
 use serde_json::{json, Value};
 use std::io::Read as _;
@@ -326,6 +333,318 @@ pub(crate) fn run_parser(
         )),
         ContainedOutcome::Exited(_) | ContainedOutcome::Signaled(_) => Err(crashed()),
     }
+}
+
+// F5 slice 2 (founder decision 7 of 2026-11-14,
+// `prep/F5_SPREADSHEET_JOURNEY.md`): a workspace file to the parser, by
+// `parse_download`'s steps from a workspace path. No client can reach it.
+// Only this module's tests call it, and each item below expects to be dead
+// code in every build that isn't a test. A caller in a default build fails
+// CI's clippy `-D warnings`. CI lints default features only, so a caller
+// compiled only into the live-browser builds would show as a warning there,
+// never as a failure. `release_blocker_sweep.rs` covers that: it checks
+// these attributes, that no code in this module outside these items and
+// its tests names one of them, and that no other non-test Rust names the
+// route. Slice 3 adds a caller only by changing both, under its own review
+// and its grain.
+//
+// It asks for no approval. Whether a person must approve this read is the
+// security review's question for slice 3 (`read_text` needs none; the parser
+// is a larger surface). If one is required, it goes between the two steps
+// and binds the observed record: workspace, the canonical path, size,
+// SHA-256 and the parser's own digest, as `approval_digest` does for a
+// download.
+
+/// A workspace file observed for the parser: its path below the workspace
+/// root and the size and SHA-256 read through plain directories.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) struct WorkspaceFile {
+    relative: String,
+    bytes: u64,
+    sha256: String,
+}
+
+/// Observe an `.xlsx` in the workspace: refuse any other name, any path that
+/// isn't plain directories and a regular file with one hard link below the
+/// workspace root, and any file over the parser's input bound; record its
+/// size and SHA-256.
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn observe_workspace_file(
+    workspace: &Workspace,
+    relative: &str,
+) -> Result<WorkspaceFile, ProviderError> {
+    let bytes = read_workspace_plain(workspace, relative)?;
+    Ok(WorkspaceFile {
+        relative: relative.to_owned(),
+        bytes: bytes.len() as u64,
+        sha256: sha256_hex(&bytes),
+    })
+}
+
+/// Parse an observed workspace file with the given pins. The file is read
+/// again by the same checks, and refused unless its size and SHA-256 still
+/// equal the observed ones; only those verified bytes are staged, as the one
+/// file in a fresh private input, for the pinned parser's contained run. A
+/// document that isn't a workbook, whatever its name, is refused.
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn parse_workspace_file(
+    workspace: &Workspace,
+    observed: &WorkspaceFile,
+    helper: &HelperPin,
+    parser: &ParserPin,
+) -> Result<ParsedDocument, ProviderError> {
+    if observed.bytes > MAX_INPUT_BYTES {
+        return Err(refusal_error(ParseRefusal::InputTooLarge));
+    }
+    let bytes = read_workspace_plain(workspace, &observed.relative)?;
+    if bytes.len() as u64 != observed.bytes || sha256_hex(&bytes) != observed.sha256 {
+        return Err(ProviderError::new(
+            FailureCode::TargetStale,
+            "the workspace file changed since it was observed (size or SHA-256); nothing was parsed",
+        ));
+    }
+    let document = run_parser(&bytes, &observed.sha256, helper, parser)?;
+    if document.format != DocumentFormat::Xlsx {
+        return Err(not_a_workbook());
+    }
+    Ok(document)
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn not_a_workbook() -> ProviderError {
+    ProviderError::new(
+        FailureCode::InvalidRequest,
+        "document_parse_refused:unsupported_format: only an .xlsx workbook is parsed from the workspace",
+    )
+}
+
+/// A workspace file's bytes. The name must end in `.xlsx`; the path must be
+/// relative, in plain segments (no `..`, `.`, empty segment, drive, stream
+/// or trailing dot or space); every segment below the canonical workspace
+/// root must be a plain directory and the last a regular file (no link,
+/// junction or other reparse point), checked before the open and again after
+/// the read. The open doesn't follow a link at the last name, and the open
+/// handle must be a regular file with one hard link whose real path, read
+/// from the handle, is the walked path ([`opened_as`]). After the second
+/// walk, the last name is opened again and must be the same file (volume or
+/// device, and file index or inode). The read is bounded by the parser's
+/// input limit.
+#[cfg_attr(not(test), expect(dead_code))]
+fn read_workspace_plain(workspace: &Workspace, relative: &str) -> Result<Vec<u8>, ProviderError> {
+    if !relative.to_ascii_lowercase().ends_with(".xlsx") {
+        return Err(not_a_workbook());
+    }
+    let segments: Vec<&str> = relative.split(['/', '\\']).collect();
+    let plain = |segment: &&str| {
+        !segment.is_empty()
+            && *segment != "."
+            && *segment != ".."
+            && !segment.ends_with(['.', ' '])
+            && !segment.contains(|c: char| c == ':' || c.is_control())
+    };
+    if !segments.iter().all(plain) {
+        return Err(ProviderError::new(
+            FailureCode::PathEscape,
+            "the workspace path is not plain relative segments",
+        ));
+    }
+    let root = std::fs::canonicalize(&workspace.root).map_err(|error| {
+        ProviderError::new(
+            FailureCode::WorkspaceDenied,
+            format!("the workspace root cannot be resolved: {error}"),
+        )
+    })?;
+    let walk = || -> Result<PathBuf, ProviderError> {
+        let mut path = root.clone();
+        for (index, segment) in segments.iter().enumerate() {
+            path.push(segment);
+            let metadata = std::fs::symlink_metadata(&path).map_err(|_| {
+                ProviderError::new(
+                    FailureCode::TargetStale,
+                    "there is no file at the workspace path",
+                )
+            })?;
+            let last = index + 1 == segments.len();
+            if is_link(&metadata) || (last && !metadata.is_file()) || (!last && !metadata.is_dir())
+            {
+                return Err(not_plain());
+            }
+        }
+        Ok(path)
+    };
+    let stale = |message: &str| ProviderError::new(FailureCode::TargetStale, message.to_owned());
+    let open = |path: &Path| {
+        open_no_follow(path).map_err(|_| stale("the workspace file cannot be opened"))
+    };
+    let path = walk()?;
+    let file = open(&path)?;
+    let identity = opened_as(&file, &path)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_INPUT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| stale("the workspace file cannot be read"))?;
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        return Err(refusal_error(ParseRefusal::InputTooLarge));
+    }
+    walk()?;
+    if opened_as(&open(&path)?, &path)? != identity {
+        return Err(raced());
+    }
+    Ok(bytes)
+}
+
+/// What identifies an open file: its volume or device, its file index or
+/// inode (128 bits on Windows, from `FILE_ID_INFO`), and its hard-link count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
+struct FileIdentity {
+    volume: u64,
+    index: u128,
+    links: u64,
+}
+
+/// The checks on an open handle that must be the regular file at `path`: not
+/// a link or reparse point, a regular file within the input bound, exactly
+/// one hard link (another name may lie outside the workspace), and a real
+/// path, read from the handle, equal to `path`. A directory swapped for a
+/// link while the file was opened and back before a walk (an oplock can hold
+/// the open, which makes that deterministic) leaves a handle whose real path
+/// is under the link's target, so it's refused here.
+#[cfg_attr(not(test), expect(dead_code))]
+fn opened_as(file: &std::fs::File, path: &Path) -> Result<FileIdentity, ProviderError> {
+    let unreadable = || {
+        ProviderError::new(
+            FailureCode::TargetStale,
+            "the workspace file cannot be read",
+        )
+    };
+    let metadata = file.metadata().map_err(|_| unreadable())?;
+    if is_link(&metadata) || !metadata.is_file() {
+        return Err(not_plain());
+    }
+    if metadata.len() > MAX_INPUT_BYTES {
+        return Err(refusal_error(ParseRefusal::InputTooLarge));
+    }
+    let identity = file_identity(file, &metadata).map_err(|_| unreadable())?;
+    if identity.links != 1 {
+        return Err(ProviderError::new(
+            FailureCode::PathEscape,
+            "the workspace file has more than one hard link (another name may lie outside the workspace)",
+        ));
+    }
+    let real = orcel_provider_fs::open_file_final_path(file, path).map_err(|_| unreadable())?;
+    // The handle's path comes without Windows' `\\?\` prefix, which the
+    // canonical root has. Windows and macOS compare names without regard to
+    // case by default; a short (8.3) name in the path is refused, not
+    // resolved.
+    let key = |path: &Path| {
+        let text = path.to_string_lossy();
+        let text = text
+            .strip_prefix(r"\\?\UNC\")
+            .map(|rest| format!(r"\\{rest}"))
+            .or_else(|| text.strip_prefix(r"\\?\").map(str::to_owned))
+            .unwrap_or_else(|| text.clone().into_owned());
+        if cfg!(any(windows, target_os = "macos")) {
+            text.to_ascii_lowercase()
+        } else {
+            text
+        }
+    };
+    if key(&real) != key(path) {
+        return Err(raced());
+    }
+    Ok(identity)
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn raced() -> ProviderError {
+    ProviderError::new(
+        FailureCode::PathRaceDetected,
+        "the workspace file opened isn't the one at the walked path (a link came and went)",
+    )
+}
+
+#[cfg(unix)]
+#[cfg_attr(not(test), expect(dead_code))]
+fn file_identity(
+    _file: &std::fs::File,
+    metadata: &std::fs::Metadata,
+) -> std::io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt as _;
+    Ok(FileIdentity {
+        volume: metadata.dev(),
+        index: u128::from(metadata.ino()),
+        links: metadata.nlink(),
+    })
+}
+
+#[cfg(windows)]
+#[cfg_attr(not(test), expect(dead_code))]
+fn file_identity(
+    file: &std::fs::File,
+    _metadata: &std::fs::Metadata,
+) -> std::io::Result<FileIdentity> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO,
+    };
+    let handle = file.as_raw_handle() as HANDLE;
+    // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is a valid initial value.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is open for the lifetime of `file`; `info` is writable.
+    if unsafe { GetFileInformationByHandle(handle, &mut info) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: an all-zero FILE_ID_INFO is a valid initial value.
+    let mut id: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is open; `id` is a writable FILE_ID_INFO of the size given.
+    let filled = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            std::ptr::addr_of_mut!(id).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if filled == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(FileIdentity {
+        volume: id.VolumeSerialNumber,
+        index: u128::from_le_bytes(id.FileId.Identifier),
+        links: u64::from(info.nNumberOfLinks),
+    })
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn not_plain() -> ProviderError {
+    ProviderError::new(
+        FailureCode::PathEscape,
+        "the workspace path is not plain directories and a regular file",
+    )
+}
+
+/// Open `path` itself for reading: a link or reparse point at the last name
+/// is opened as itself and then fails the regular-file check, and on Unix a
+/// FIFO can't block the open.
+#[cfg_attr(not(test), expect(dead_code))]
+fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path)
 }
 
 fn result(download: &CommittedDownload, parser: &ParserPin, document: &ParsedDocument) -> Value {
