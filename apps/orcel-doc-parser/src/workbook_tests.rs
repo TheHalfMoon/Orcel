@@ -88,6 +88,12 @@ fn a_url_target_never_shows_its_credentials_query_or_fragment() {
             "ftp://u@files.example",
             format!("ftp://files.example{NOTE}"),
         ),
+        // Userinfo no parser agrees on: everything up to the last `@` goes.
+        (
+            "https://u:p?x@host/path",
+            format!("https://host/path{NOTE}"),
+        ),
+        ("https:user:pw@host", format!("https:host{NOTE}")),
         (
             "https://data.example/rates.xlsx",
             "https://data.example/rates.xlsx".to_owned(),

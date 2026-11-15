@@ -457,23 +457,20 @@ fn shown_target(target: &str) -> String {
     if !is_scheme {
         return target.to_owned();
     }
+    // Everything up to the last `@` anywhere in the URL goes first, so a user
+    // name or password in a form no parser agrees on (`https://u:p?x@host`,
+    // `https:user:pw@host`) can't show. A path holding `@` loses its start
+    // too: more is left out, never less.
+    let (rest, mut omitted) = match rest.rsplit_once('@') {
+        Some((before, after)) if before.starts_with("//") => (format!("//{after}"), true),
+        Some((_, after)) => (after.to_owned(), true),
+        None => (rest.to_owned(), false),
+    };
     let kept_end = rest.find(['?', '#']).unwrap_or(rest.len());
-    let mut omitted = kept_end < rest.len();
+    omitted |= kept_end < rest.len();
     let kept = &rest[..kept_end];
     let shown = match kept.strip_prefix("//") {
-        Some(after) => {
-            let (authority, path) = after
-                .find('/')
-                .map_or((after, ""), |at| (&after[..at], &after[at..]));
-            let host = match authority.rsplit_once('@') {
-                Some((_, host)) => {
-                    omitted = true;
-                    host
-                }
-                None => authority,
-            };
-            format!("{scheme}://{host}{path}")
-        }
+        Some(after) => format!("{scheme}://{after}"),
         None => format!("{scheme}:{kept}"),
     };
     if omitted {
