@@ -736,6 +736,28 @@ fn document_parser_callers(relative: &str, text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The non-test lines of one Rust file that name F5 slice 2's workspace route
+/// (`observe_workspace_file`, `parse_workspace_file`, `WorkspaceFile`). Unlike
+/// `document_parser_callers`, no file is exempt: `document_parse.rs`, its
+/// only home, is checked separately.
+fn workspace_route_callers(relative: &str, text: &str) -> Vec<String> {
+    non_test_lines(text)
+        .into_iter()
+        .filter(|(_, line)| {
+            let code = line.trim();
+            !code.starts_with("//")
+                && [
+                    "observe_workspace_file",
+                    "parse_workspace_file",
+                    "WorkspaceFile",
+                ]
+                .iter()
+                .any(|name| names_identifier(code, name))
+        })
+        .map(|(number, line)| format!("{relative}:{number}: {}", line.trim()))
+        .collect()
+}
+
 /// Shipped sources that aren't Rust: the MCP app's TypeScript (compiled into
 /// the release's `app/orcel-mcp/dist`) and the Windows app's C# and its build
 /// script. Tests are not shipped.
@@ -765,6 +787,13 @@ fn shipped_non_rust_source(relative: &str) -> bool {
 /// executable registry's refusal of anything in an Orcel install directory.
 /// A later slice adds a release caller only by changing this test, under its
 /// own review; until slice 3 nothing a client can reach changes.
+///
+/// F5 slice 2 adds a route from a workspace file (`observe_workspace_file`,
+/// then `parse_workspace_file`) inside `document_parse.rs`. It has no caller
+/// but that module's tests: each of its items expects to be dead code in
+/// every build that isn't a test, the live-browser builds included, and no
+/// non-test Rust anywhere else, the files allowed to reach the parser
+/// included, names it (`workspace_route_callers`).
 #[test]
 fn the_shipped_document_parser_has_no_release_caller() {
     let root = repo_root();
@@ -824,6 +853,49 @@ fn the_shipped_document_parser_has_no_release_caller() {
             "{entry} must carry exactly the release-build expect(dead_code):\n{RELEASE_EXPECT}"
         );
     }
+    // F5 slice 2: the workspace route expects to be dead in every non-test
+    // build. Exactly this attribute, directly on each item.
+    const TEST_ONLY_EXPECT: &str = "#[cfg_attr(not(test), expect(dead_code))]\n";
+    for item in [
+        "pub(crate) struct WorkspaceFile {",
+        "pub(crate) fn observe_workspace_file(",
+        "pub(crate) fn parse_workspace_file(",
+        "fn read_workspace_plain(",
+        "fn not_a_workbook(",
+        "fn not_plain(",
+        "fn open_no_follow(",
+    ] {
+        assert_eq!(
+            parse.matches(item).count(),
+            1,
+            "document_parse.rs no longer has exactly one {item}"
+        );
+        let at = parse.find(item).unwrap_or_default();
+        assert!(
+            parse[..at].ends_with(TEST_ONLY_EXPECT),
+            "{item} must carry exactly the non-test expect(dead_code):\n{TEST_ONLY_EXPECT}"
+        );
+    }
+    // In its own module, the two entry points are named only where they're
+    // defined: nothing outside the tests calls them.
+    let defined: Vec<String> = non_test_lines(&parse)
+        .into_iter()
+        .map(|(_, line)| line.trim())
+        .filter(|code| {
+            !code.starts_with("//")
+                && (names_identifier(code, "observe_workspace_file")
+                    || names_identifier(code, "parse_workspace_file"))
+        })
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        defined,
+        [
+            "pub(crate) fn observe_workspace_file(",
+            "pub(crate) fn parse_workspace_file(",
+        ],
+        "document_parse.rs calls its workspace route outside its tests"
+    );
     let live = file("crates/orceld/src/live_browser.rs");
     assert!(
         !document_parser_callers("crates/orceld/src/stand-in.rs", &live).is_empty(),
@@ -839,6 +911,19 @@ fn the_shipped_document_parser_has_no_release_caller() {
         callers.is_empty(),
         "a release build compiles a caller of the shipped document parser:\n{}",
         callers.join("\n")
+    );
+    let route: Vec<String> = files
+        .iter()
+        .filter(|(relative, _)| {
+            is_production_rust(relative, &test_modules)
+                && relative != "crates/orceld/src/document_parse.rs"
+        })
+        .flat_map(|(relative, text)| workspace_route_callers(relative, text))
+        .collect();
+    assert!(
+        route.is_empty(),
+        "non-test code names the F5 slice 2 workspace route:\n{}",
+        route.join("\n")
     );
 
     let shipped: Vec<&(String, String)> = files
@@ -931,6 +1016,24 @@ fn the_parser_caller_scan_catches_the_shapes_it_claims() {
     assert!(names_the_parser_file(
         "spawn(join(dir, 'orcel-doc-parser.exe'))"
     ));
+
+    // F5 slice 2's route: seen in any file, the parser's allowed callers
+    // included; comments and test items are not.
+    let route = "let seen = observe_workspace_file(&workspace, path)?;\n\
+        use crate::document_parse::{parse_workspace_file as p, WorkspaceFile};\n\
+        // parse_workspace_file, in a comment\n\
+        let x = reparse_workspace_files();\n\
+        #[cfg(test)]\n\
+        fn t() {\n    parse_workspace_file(&w, &o, &h, &p);\n}\n";
+    for relative in [
+        "crates/orceld/src/live_browser.rs",
+        "crates/orceld/src/report_task.rs",
+    ] {
+        let hits = workspace_route_callers(relative, route);
+        assert_eq!(hits.len(), 2, "{relative}: {hits:?}");
+        assert!(hits[0].contains(":1: let seen"), "{hits:?}");
+        assert!(hits[1].contains(":2: use crate"), "{hits:?}");
+    }
 }
 
 #[test]

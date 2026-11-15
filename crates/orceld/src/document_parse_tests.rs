@@ -266,46 +266,10 @@ fn text_pdf(text: &str, trailer_extra: &str, extra_object: Option<&str>) -> Vec<
 /// failure instead of a skip.
 #[test]
 fn wi05_orceld_parses_a_committed_download_under_the_contained_tier() {
-    let (Some(contain), Some(parser_dir)) = (
-        std::env::var_os("ORCEL_TEST_CONTAIN_DIR"),
-        std::env::var_os("ORCEL_TEST_DOC_PARSER_DIR"),
-    ) else {
-        assert!(
-            std::env::var_os("ORCEL_REQUIRE_CONTAINED_PARSER").is_none(),
-            "ORCEL_TEST_CONTAIN_DIR and ORCEL_TEST_DOC_PARSER_DIR are required"
-        );
+    let Some((helper, parser, bin)) = contained_pins() else {
         return;
     };
-    let helper_path = std::fs::canonicalize(contain)
-        .unwrap()
-        .join(contained_tier::HELPER_NAME);
-    let helper = HelperPin::new(
-        &helper_path,
-        &sha256_hex(&std::fs::read(&helper_path).expect("read the helper")),
-    )
-    .unwrap();
-    // Cargo hard-links its outputs, and a granted file must have one link:
-    // the parser runs from a plain copy, as an install would hold it.
-    let bin = temp_dir("e2e-bin");
-    let parser_path = bin.join(PARSER_NAME);
-    std::fs::copy(
-        std::path::Path::new(&parser_dir).join(PARSER_NAME),
-        &parser_path,
-    )
-    .unwrap();
-    let started = std::time::Instant::now();
-    while std::process::Command::new(&parser_path)
-        .stdout(std::process::Stdio::null())
-        .status()
-        .is_err()
-    {
-        assert!(started.elapsed() < std::time::Duration::from_secs(10));
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let parser = ParserPin::for_test(
-        parser_path.clone(),
-        sha256_hex(&std::fs::read(&parser_path).unwrap()),
-    );
+    let parser_path = parser.path.clone();
     let folder = temp_dir("e2e-downloads");
     let approved = FixedApprovalBroker(ApprovalDecision::Approved);
 
@@ -382,6 +346,54 @@ fn wi05_orceld_parses_a_committed_download_under_the_contained_tier() {
 
     let _ = std::fs::remove_dir_all(bin);
     let _ = std::fs::remove_dir_all(folder);
+}
+
+/// The real, pinned helper and parser, and the private directory holding
+/// the parser's copy. `ORCEL_TEST_CONTAIN_DIR` names the helper's target
+/// directory and `ORCEL_TEST_DOC_PARSER_DIR` the parser's; with neither,
+/// `None`, unless `ORCEL_REQUIRE_CONTAINED_PARSER` makes that a failure.
+fn contained_pins() -> Option<(HelperPin, ParserPin, PathBuf)> {
+    let (Some(contain), Some(parser_dir)) = (
+        std::env::var_os("ORCEL_TEST_CONTAIN_DIR"),
+        std::env::var_os("ORCEL_TEST_DOC_PARSER_DIR"),
+    ) else {
+        assert!(
+            std::env::var_os("ORCEL_REQUIRE_CONTAINED_PARSER").is_none(),
+            "ORCEL_TEST_CONTAIN_DIR and ORCEL_TEST_DOC_PARSER_DIR are required"
+        );
+        return None;
+    };
+    let helper_path = std::fs::canonicalize(contain)
+        .unwrap()
+        .join(contained_tier::HELPER_NAME);
+    let helper = HelperPin::new(
+        &helper_path,
+        &sha256_hex(&std::fs::read(&helper_path).expect("read the helper")),
+    )
+    .unwrap();
+    // Cargo hard-links its outputs, and a granted file must have one link:
+    // the parser runs from a plain copy, as an install would hold it.
+    let bin = temp_dir("e2e-bin");
+    let parser_path = bin.join(PARSER_NAME);
+    std::fs::copy(
+        std::path::Path::new(&parser_dir).join(PARSER_NAME),
+        &parser_path,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    while std::process::Command::new(&parser_path)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let parser = ParserPin::for_test(
+        parser_path.clone(),
+        sha256_hex(&std::fs::read(&parser_path).unwrap()),
+    );
+    Some((helper, parser, bin))
 }
 
 #[test]
@@ -581,4 +593,306 @@ fn only_names_orcel_writes_carry_a_run_pid() {
     ] {
         assert_eq!(contained_tier::run_pid(&name), None, "{name}");
     }
+}
+
+// F5 slice 2: a workspace file to the parser. Nothing below asks for an
+// approval; the route asks for none (see `document_parse.rs`).
+
+/// A workspace with `relative` holding `bytes`.
+fn workspace_with(label: &str, relative: &str, bytes: &[u8]) -> (PathBuf, Workspace) {
+    let root = temp_dir(label);
+    let path = root.join(relative);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, bytes).unwrap();
+    let workspace = workspace(&root);
+    (root, workspace)
+}
+
+#[cfg(windows)]
+fn junction(link: &Path, target: &Path) {
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+}
+
+#[test]
+fn f5_only_an_xlsx_name_reaches_the_workspace_route() {
+    let (root, workspace) = workspace_with("ws-names", "data/q3.csv", b"a,b\n1,2\n");
+    for name in [
+        "data/q3.csv",
+        "data/report.pdf",
+        "data/book.xlsm",
+        "data/book.xlsb",
+        "data/book.xls",
+        "data/book.xlsx.txt",
+        "data/absent.docx",
+    ] {
+        let error = observe_workspace_file(&workspace, name).unwrap_err();
+        assert_eq!(error.code, FailureCode::InvalidRequest, "{name}");
+        assert!(
+            error
+                .message
+                .starts_with("document_parse_refused:unsupported_format"),
+            "{name}: {}",
+            error.message
+        );
+    }
+    std::fs::write(root.join("data").join("Book.XLSX"), b"PK").unwrap();
+    let observed = observe_workspace_file(&workspace, "data/Book.XLSX").expect("any case");
+    assert_eq!(observed.bytes, 2);
+    assert_eq!(observed.sha256, sha256_hex(b"PK"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn f5_a_workspace_path_must_be_plain_segments_below_the_root() {
+    let (root, workspace) = workspace_with("ws-shapes", "data/a.xlsx", b"PK");
+    let outside = temp_dir("ws-shapes-outside");
+    std::fs::write(outside.join("a.xlsx"), b"PK").unwrap();
+    let absolute = outside.join("a.xlsx").to_string_lossy().into_owned();
+    for name in [
+        "../outside.xlsx",
+        "data/../data/a.xlsx",
+        "./data/a.xlsx",
+        "data//a.xlsx",
+        "/data/a.xlsx",
+        "\\data\\a.xlsx",
+        "C:/data/a.xlsx",
+        absolute.as_str(),
+        "data/a.xlsx:stream.xlsx",
+        "data./a.xlsx",
+        "data /a.xlsx",
+        "data/\u{1}a.xlsx",
+    ] {
+        let error = observe_workspace_file(&workspace, name).unwrap_err();
+        assert_eq!(
+            error.code,
+            FailureCode::PathEscape,
+            "{name}: {}",
+            error.message
+        );
+    }
+    // A directory with a workbook's name isn't a regular file.
+    std::fs::create_dir_all(root.join("data").join("folder.xlsx")).unwrap();
+    let error = observe_workspace_file(&workspace, "data/folder.xlsx").unwrap_err();
+    assert_eq!(error.code, FailureCode::PathEscape, "{}", error.message);
+    let error = observe_workspace_file(&workspace, "data/absent.xlsx").unwrap_err();
+    assert_eq!(error.code, FailureCode::TargetStale, "{}", error.message);
+    // Either separator names the same plain path.
+    assert_eq!(
+        observe_workspace_file(&workspace, "data\\a.xlsx")
+            .unwrap()
+            .sha256,
+        sha256_hex(b"PK")
+    );
+    let _ = std::fs::remove_dir_all(outside);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn f5_a_workspace_file_through_a_junction_or_link_is_refused() {
+    let (root, workspace) = workspace_with("ws-junction", "real/a.xlsx", b"PK inside");
+    let outside = temp_dir("ws-junction-outside");
+    std::fs::write(outside.join("a.xlsx"), b"PK outside").unwrap();
+    // A junction to a folder inside the workspace, and to one outside it.
+    junction(&root.join("inner"), &root.join("real"));
+    junction(&root.join("away"), &outside);
+    for name in ["inner/a.xlsx", "away/a.xlsx"] {
+        let error = observe_workspace_file(&workspace, name).unwrap_err();
+        assert_eq!(
+            error.code,
+            FailureCode::PathEscape,
+            "{name}: {}",
+            error.message
+        );
+    }
+    // A file symbolic link needs a privilege a test account may lack; where
+    // it can be made, it's refused too.
+    if std::os::windows::fs::symlink_file(root.join("real").join("a.xlsx"), root.join("l.xlsx"))
+        .is_ok()
+    {
+        let error = observe_workspace_file(&workspace, "l.xlsx").unwrap_err();
+        assert_eq!(error.code, FailureCode::PathEscape, "{}", error.message);
+    }
+    assert!(observe_workspace_file(&workspace, "real/a.xlsx").is_ok());
+    std::fs::remove_dir(root.join("inner")).unwrap();
+    std::fs::remove_dir(root.join("away")).unwrap();
+    let _ = std::fs::remove_dir_all(outside);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn f5_a_workspace_file_through_a_link_is_refused() {
+    let (root, workspace) = workspace_with("ws-link", "real/a.xlsx", b"PK inside");
+    let outside = temp_dir("ws-link-outside");
+    std::fs::write(outside.join("a.xlsx"), b"PK outside").unwrap();
+    std::os::unix::fs::symlink(root.join("real"), root.join("inner")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("away")).unwrap();
+    std::os::unix::fs::symlink(root.join("real").join("a.xlsx"), root.join("l.xlsx")).unwrap();
+    for name in ["inner/a.xlsx", "away/a.xlsx", "l.xlsx"] {
+        let error = observe_workspace_file(&workspace, name).unwrap_err();
+        assert_eq!(
+            error.code,
+            FailureCode::PathEscape,
+            "{name}: {}",
+            error.message
+        );
+    }
+    assert!(observe_workspace_file(&workspace, "real/a.xlsx").is_ok());
+    let _ = std::fs::remove_dir_all(outside);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn f5_an_oversized_workspace_file_is_refused_before_it_is_read() {
+    let (root, workspace) = workspace_with("ws-large", "big.xlsx", b"");
+    std::fs::File::options()
+        .write(true)
+        .open(root.join("big.xlsx"))
+        .unwrap()
+        .set_len(MAX_INPUT_BYTES + 1)
+        .unwrap();
+    let error = observe_workspace_file(&workspace, "big.xlsx").unwrap_err();
+    assert!(
+        error
+            .message
+            .starts_with("document_parse_refused:input_too_large"),
+        "{}",
+        error.message
+    );
+    // A record claiming more than the bound is refused before any read.
+    let (helper, parser) = dummy_pins(&root);
+    let forged = WorkspaceFile {
+        relative: "big.xlsx".into(),
+        bytes: MAX_INPUT_BYTES + 1,
+        sha256: DIGEST.into(),
+    };
+    let error = parse_workspace_file(&workspace, &forged, &helper, &parser).unwrap_err();
+    assert!(
+        error
+            .message
+            .starts_with("document_parse_refused:input_too_large"),
+        "{}",
+        error.message
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Between observing and parsing, a changed, grown, removed or relinked
+/// file is refused before anything is staged or launched: the dummy pins
+/// name no helper or parser, so reaching the run would fail differently.
+#[test]
+fn f5_a_workspace_file_changed_after_it_was_observed_is_refused() {
+    let (root, workspace) = workspace_with("ws-stale", "data/a.xlsx", b"PK observed");
+    let (helper, parser) = dummy_pins(&root);
+    let observed = observe_workspace_file(&workspace, "data/a.xlsx").unwrap();
+    let path = root.join("data").join("a.xlsx");
+
+    // Same size, other bytes.
+    std::fs::write(&path, b"PK replaced").unwrap();
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(error.code, FailureCode::TargetStale, "{}", error.message);
+
+    std::fs::write(&path, b"PK observed, then grown").unwrap();
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(error.code, FailureCode::TargetStale, "{}", error.message);
+
+    std::fs::remove_file(&path).unwrap();
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(error.code, FailureCode::TargetStale, "{}", error.message);
+
+    // The same bytes, now behind a link: refused although the digest matches.
+    let real = root.join("real");
+    std::fs::create_dir_all(&real).unwrap();
+    std::fs::write(real.join("a.xlsx"), b"PK observed").unwrap();
+    std::fs::remove_dir(root.join("data")).unwrap();
+    #[cfg(windows)]
+    junction(&root.join("data"), &real);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real, root.join("data")).unwrap();
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(error.code, FailureCode::PathEscape, "{}", error.message);
+
+    // Put back as plain directories, the unchanged file passes every check
+    // and reaches the run, which the dummy pins can't start.
+    #[cfg(windows)]
+    std::fs::remove_dir(root.join("data")).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(root.join("data")).unwrap();
+    std::fs::rename(&real, root.join("data")).unwrap();
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(
+        error.code,
+        FailureCode::ProviderUnavailable,
+        "{}",
+        error.message
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// F5 slice 2 end to end: a committed workbook fixture in a workspace, through
+/// the route and the real, pinned helper and parser under the contained tier
+/// (`wi05_`, so the Document parser CI job runs it with them).
+#[test]
+fn wi05_f5_a_workspace_workbook_is_parsed_under_the_contained_tier() {
+    use crate::report_workbook::tests::{fixture, fixture_parts, stored_zip};
+    let Some((helper, parser, bin)) = contained_pins() else {
+        return;
+    };
+    let (root, workspace) = workspace_with(
+        "ws-e2e",
+        "data/sales.xlsx",
+        &fixture("written-by-xlsxwriter"),
+    );
+    let observed = observe_workspace_file(&workspace, "data/sales.xlsx").unwrap();
+    let document =
+        parse_workspace_file(&workspace, &observed, &helper, &parser).expect("a parsed workbook");
+    assert_eq!(document.format, DocumentFormat::Xlsx);
+    assert!(!document.truncated);
+    assert_eq!(
+        crate::report_workbook::cell_value(&document.markdown, "Sales", "B2"),
+        Some("1250.5"),
+        "{}",
+        document.markdown
+    );
+
+    // Another document under a workbook's name is refused after the parse.
+    std::fs::write(
+        root.join("data").join("fake.xlsx"),
+        text_pdf("not a workbook", "", None),
+    )
+    .unwrap();
+    let observed = observe_workspace_file(&workspace, "data/fake.xlsx").unwrap();
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(error.code, FailureCode::InvalidRequest, "{}", error.message);
+    assert!(
+        error
+            .message
+            .starts_with("document_parse_refused:unsupported_format"),
+        "{}",
+        error.message
+    );
+
+    // A macro workbook is refused with its type, through the frame.
+    let mut macros = fixture_parts("written-by-openpyxl");
+    macros.push(("xl/vbaProject.bin".into(), b"not really".to_vec()));
+    std::fs::write(root.join("data").join("macros.xlsx"), stored_zip(macros)).unwrap();
+    let observed = observe_workspace_file(&workspace, "data/macros.xlsx").unwrap();
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert!(
+        error
+            .message
+            .starts_with("document_parse_refused:active_content"),
+        "{}",
+        error.message
+    );
+
+    let _ = std::fs::remove_dir_all(bin);
+    let _ = std::fs::remove_dir_all(root);
 }
