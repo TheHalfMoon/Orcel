@@ -368,6 +368,61 @@ pub fn live_fill_value(value: &str) -> Result<(), HostError> {
     }
 }
 
+/// SG-000122 slice A2: where an observed node stands in page order. The
+/// worker numbers main-frame nodes `e1`, `e2`, ... as it walks the
+/// accessibility tree; anything else (a frame's node) comes after, by its
+/// reference.
+#[cfg(any(windows, test))]
+fn page_order(reference: &str) -> (u8, u64, &str) {
+    match reference
+        .strip_prefix('e')
+        .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|digits| digits.parse::<u64>().ok())
+    {
+        Some(number) => (0, number, ""),
+        None => (1, 0, reference),
+    }
+}
+
+/// One observed node, as [`shared_name_ordinal`] reads it: its node id,
+/// worker reference, role and accessible name.
+#[cfg(any(windows, test))]
+pub struct OrdinalNode<'a> {
+    pub node_id: &'a str,
+    pub reference: &'a str,
+    pub role: &'a str,
+    pub name: &'a str,
+}
+
+/// SG-000122 slice A2: when two or more observed nodes of the target's role
+/// show the same name in the approval prompt
+/// (`prompt_display::shown_field_name`: equal names, or long names with one
+/// shown prefix), the target's position among them in page order and how
+/// many there are ("2 of 3"); `None` when its shown name is its own (or the
+/// target is not among `nodes`). The approval binds it, so a page that adds,
+/// removes or reorders such a field between the prompt and the action is
+/// refused.
+#[cfg(any(windows, test))]
+pub fn shared_name_ordinal(nodes: &[OrdinalNode<'_>], node_id: &str) -> Option<(usize, usize)> {
+    use orcel_contracts::prompt_display::shown_field_name;
+    let target = nodes.iter().find(|node| node.node_id == node_id)?;
+    let shown = shown_field_name(target.name);
+    let mut same: Vec<&OrdinalNode<'_>> = nodes
+        .iter()
+        .filter(|node| node.role == target.role && shown_field_name(node.name) == shown)
+        .collect();
+    if same.len() < 2 {
+        return None;
+    }
+    same.sort_by(|a, b| {
+        page_order(a.reference)
+            .cmp(&page_order(b.reference))
+            .then_with(|| a.node_id.cmp(b.node_id))
+    });
+    let position = same.iter().position(|node| node.node_id == node_id)? + 1;
+    Some((position, same.len()))
+}
+
 /// Exact pre-dispatch target binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActuationTarget {
@@ -770,6 +825,49 @@ Enter"
             SupportedAction::parse("enter").unwrap(),
             SupportedAction::Enter
         );
+    }
+
+    /// SG-000122 slice A2: the ordinal is shown only when another node of
+    /// the same role shows the same name, counts in page order, and moves
+    /// when such a field is added before the target.
+    #[test]
+    fn sg122_a_shared_shown_name_gets_an_ordinal_in_page_order() {
+        let long = "Shipping address line ".repeat(10);
+        fn node<'a>(
+            node_id: &'a str,
+            reference: &'a str,
+            role: &'a str,
+            name: &'a str,
+        ) -> OrdinalNode<'a> {
+            OrdinalNode {
+                node_id,
+                reference,
+                role,
+                name,
+            }
+        }
+        let a = format!("{long}A");
+        let b = format!("{long}B");
+        let nodes = vec![
+            node("d1-e9", "e9", "textbox", "Email"),
+            node("d1-e12", "e12", "textbox", b.as_str()),
+            node("d1-e3", "e3", "textbox", a.as_str()),
+            node("d1-e4", "e4", "checkbox", a.as_str()),
+            node("d1-e5", "e5", "textbox", "Phone"),
+            node("d1-e20", "e20", "textbox", "Email"),
+        ];
+        assert_eq!(shared_name_ordinal(&nodes, "d1-e5"), None);
+        assert_eq!(shared_name_ordinal(&nodes, "d1-e4"), None, "another role");
+        assert_eq!(shared_name_ordinal(&nodes, "d1-e9"), Some((1, 2)));
+        assert_eq!(shared_name_ordinal(&nodes, "d1-e20"), Some((2, 2)));
+        // e3 comes before e12 in page order, though listed after it.
+        assert_eq!(shared_name_ordinal(&nodes, "d1-e3"), Some((1, 2)));
+        assert_eq!(shared_name_ordinal(&nodes, "d1-e12"), Some((2, 2)));
+        assert_eq!(shared_name_ordinal(&nodes, "d1-e99"), None);
+        // A third "Email" added before the target changes its ordinal.
+        let mut more = nodes;
+        more.push(node("d1-e1", "e1", "textbox", "Email"));
+        assert_eq!(shared_name_ordinal(&more, "d1-e20"), Some((3, 3)));
     }
 
     fn target() -> ActuationTarget {

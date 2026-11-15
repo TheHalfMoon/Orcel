@@ -2802,13 +2802,144 @@ mod sg000055_envelope_tests {
             }
         }
         // The model-only shapes are not live and keep their own route.
-        for (capability, operation) in [("browser.dom", "fill"), ("browser.upload", "submit")] {
+        for (capability, operation) in [("browser.upload", "submit"), ("browser.dom", "press")] {
             assert!(!profile_gate::is_live_shape(&request(
                 capability, operation, "default"
             )));
         }
         let audited = std::fs::read_to_string(audit.path()).unwrap_or_default();
         assert!(audited.contains("PROFILE_DENIED"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// SG-000122 slice A2: the live form shapes take the same route. Only a
+    /// local `browser_structured` request reaches them; policy refuses an
+    /// unknown workspace, an authority field and a value the prompt could not
+    /// show exactly; and every build without the live browser (release
+    /// builds, and macOS and Linux) answers typed unavailable, before any
+    /// approval is asked for.
+    #[test]
+    fn sg122_live_form_shapes_reach_the_live_route_only_through_the_gate() {
+        let (policy, audit, root) = fixture();
+        let workspaces =
+            remote_lease::WorkspaceSet::from_pairs(&[("default".into(), root.join("workspace"))]);
+        // A broker that would approve anything: no approval is asked for in
+        // these builds, so nothing reaches it.
+        let approval = FixedApprovalBroker(ApprovalDecision::Approved);
+        let live = |capability: &str, operation: &str, workspace: &str, arguments: Value| {
+            let mut request = request(capability, operation, workspace);
+            request.target = None;
+            request.arguments = arguments;
+            request
+        };
+        let send =
+            |request: RequestEnvelope, profile: Option<&str>, remote: Option<RemoteContext>| {
+                handle_envelope(
+                    &policy,
+                    &audit,
+                    &approval,
+                    &workspaces,
+                    RemoteRequestEnvelope {
+                        request,
+                        remote,
+                        profile: profile.map(str::to_owned),
+                    },
+                )
+            };
+        let shapes = [
+            (
+                "browser.dom",
+                "fill",
+                json!({"page_id": "pg-a1", "node_id": "d1-e2", "value": "Ada", "expected_generation": 1}),
+            ),
+            (
+                "browser.form",
+                "select",
+                json!({"page_id": "pg-a1", "node_id": "d1-e3", "option": "Porto", "expected_generation": 1}),
+            ),
+            (
+                "browser.form",
+                "check",
+                json!({"page_id": "pg-a1", "node_id": "d1-e4", "checked": true, "expected_generation": 1}),
+            ),
+            (
+                "browser.form",
+                "enter",
+                json!({"page_id": "pg-a1", "node_id": "d1-e2", "expected_generation": 1}),
+            ),
+            (
+                "browser.wait",
+                "text",
+                json!({"page_id": "pg-a1", "text": "Saved", "appear": true, "timeout_ms": 1000, "expected_generation": 1}),
+            ),
+            (
+                "browser.verify",
+                "check",
+                json!({"page_id": "pg-a1", "checks": [{"kind": "text_visible", "text": "Saved"}], "expected_generation": 1}),
+            ),
+        ];
+        assert_eq!(shapes.len(), profile_gate::LIVE_FORM_SHAPES.len());
+        for (capability, operation, arguments) in shapes {
+            let shape = || live(capability, operation, "default", arguments.clone());
+            for profile in [None, Some("desktop_structured"), Some("core")] {
+                assert_eq!(
+                    code(&send(shape(), profile, None)),
+                    FailureCode::CapabilityDenied,
+                    "{capability}/{operation} {profile:?}"
+                );
+            }
+            assert_eq!(
+                code(&send(shape(), Some("browser_structured"), Some(remote()))),
+                FailureCode::CapabilityDenied
+            );
+            assert_eq!(
+                code(&send(
+                    live(capability, operation, "missing", arguments.clone()),
+                    Some("browser_structured"),
+                    None
+                )),
+                FailureCode::WorkspaceDenied
+            );
+            for field in ["selector", "record_id", "binding", "digest"] {
+                let mut widened = arguments.clone();
+                widened[field] = json!("x");
+                assert_eq!(
+                    code(&send(
+                        live(capability, operation, "default", widened),
+                        Some("browser_structured"),
+                        None
+                    )),
+                    FailureCode::CapabilityDenied,
+                    "{capability}/{operation} {field}"
+                );
+            }
+            #[cfg(not(all(windows, feature = "live-browser-dev")))]
+            {
+                let response = send(shape(), Some("browser_structured"), None);
+                assert_eq!(code(&response), FailureCode::ProviderUnavailable);
+                assert!(response
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.message.contains("live-browser-dev")));
+            }
+        }
+        // A value the prompt would cut or escape is refused by policy, before
+        // any dispatch.
+        for value in ["a".repeat(1025), "a\u{202e}b".into(), "tab\there".into()] {
+            assert_eq!(
+                code(&send(
+                    live(
+                        "browser.dom",
+                        "fill",
+                        "default",
+                        json!({"page_id": "pg-a1", "node_id": "d1-e2", "value": value, "expected_generation": 1})
+                    ),
+                    Some("browser_structured"),
+                    None
+                )),
+                FailureCode::InvalidRequest
+            );
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -2319,17 +2319,19 @@ mod platform {
             }
         }
 
-        /// SG-000122 slice A1: the state and the observed accessible name a
-        /// live form approval binds, for an observed main-frame node whose
-        /// role is `role` and whose kind suits the action
-        /// (`actuation::live_form_check`): everything is decided from the
-        /// host's own record of the observation, before any worker frame.
+        /// SG-000122 slices A1 and A2: the state, the observed accessible
+        /// name and (when another observed node of its role shows the same
+        /// name in the prompt) the ordinal a live form approval binds, for an
+        /// observed main-frame node whose role is `role` and whose kind suits
+        /// the action (`actuation::live_form_check`): everything is decided
+        /// from the host's own record of the observation, before any worker
+        /// frame.
         pub fn live_form_binding(
             &self,
             node_id: &str,
             role: &str,
             input: &crate::actuation::FormInput,
-        ) -> Result<(String, String), HostError> {
+        ) -> Result<(String, String, Option<(usize, usize)>), HostError> {
             let node = self
                 .host_nodes
                 .get(node_id)
@@ -2342,7 +2344,18 @@ mod platform {
                 input,
             )?;
             let state = self.form_binding(node_id, input, None)?;
-            Ok((state, node.name.clone()))
+            let nodes: Vec<crate::actuation::OrdinalNode<'_>> = self
+                .host_nodes
+                .iter()
+                .map(|(id, node)| crate::actuation::OrdinalNode {
+                    node_id: id,
+                    reference: &node.reference,
+                    role: &node.role,
+                    name: &node.name,
+                })
+                .collect();
+            let ordinal = crate::actuation::shared_name_ordinal(&nodes, node_id);
+            Ok((state, node.name.clone(), ordinal))
         }
 
         /// SG-000122 slice A1: perform one approved live form action. The

@@ -607,6 +607,13 @@ fn default_presence_verifier() -> Arc<dyn PresenceVerifier> {
     Arc::new(DefaultPresenceVerifier::default())
 }
 
+/// The text of the SOFT approval dialog for `prompt`, exactly as every OS shows it (the
+/// Windows dialog, the macOS alert and the Linux helper). Read-only: callers use it to check
+/// what a person will be shown (SG-000122's browser form prompts).
+pub fn soft_dialog_text(prompt: &ApprovalPrompt) -> String {
+    prompt_text::dialog_body(prompt)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovalPrompt {
     pub workspace_id: String,

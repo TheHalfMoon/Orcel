@@ -25,7 +25,9 @@
 )]
 
 use orcel_approval::{now_ms, ApprovalBroker, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
-use orcel_browser_host::worker_host::{BindAction, WireNode, WorkerHostReply, WorkerHostRequest};
+use orcel_browser_host::worker_host::{
+    BindAction, BoundForm, WireCheck, WireNode, WorkerHostReply, WorkerHostRequest,
+};
 use orcel_browser_host::{Supervisor, WorkerHostLaunch};
 use orcel_contracts::FailureCode;
 use orcel_policy::{Workspace, POLICY_REVISION};
@@ -35,8 +37,11 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// Domain separation for the combined approval digest. Version 2 binds
-/// the page store's page id, generation and origin (slice 2b).
-const LIVE_APPROVAL_DOMAIN: &str = "orcel-sg108-live-approval/2";
+/// the page store's page id, generation and origin (slice 2b); version 3
+/// (SG-000122 slice A2) also binds what a form prompt names about its field:
+/// the role, the digest of the name the host observed, whether the prompt's
+/// name was cut, and the ordinal (`-` for every other action).
+const LIVE_APPROVAL_DOMAIN: &str = "orcel-sg108-live-approval/3";
 
 /// Schema of one intent journal line.
 const INTENT_SCHEMA: &str = "orcel-sg108-intent/1";
@@ -63,6 +68,16 @@ pub struct LiveDownload {
     pub source_url: String,
     /// The broker record the approval was consumed under.
     pub record_id: String,
+}
+
+/// SG-000122 slice A2: the verifier's report, as the host gave it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveVerification {
+    pub url: String,
+    pub document_generation: u64,
+    pub results: Vec<WireCheck>,
+    pub verified: bool,
+    pub evidence_sha256: String,
 }
 
 /// What became of a consumed approval (slice 2: the "consumed, not
@@ -430,6 +445,9 @@ pub struct LiveBrowser {
     /// WI-05: the downloads the host committed in this lifetime, the only
     /// files `parse_download` will hand to the confined document parser.
     committed: Vec<crate::document_parse::CommittedDownload>,
+    /// SG-000122 slice A2: each node of the latest observation and its role
+    /// (the role a form action binds; the host checks it again).
+    observed_roles: std::collections::HashMap<String, String>,
     /// None while the host is (or may be) running; once ended, whether the
     /// whole family was confirmed gone. Set once, never revised: a later
     /// shutdown finds no host and would report a vacuous success.
@@ -457,6 +475,9 @@ pub fn failure_for(code: &str) -> FailureCode {
         // BR-04: another element covers it; nothing was clicked. Like a
         // stale target, the page must be observed again.
         "unavailable:targetoccluded" => FailureCode::TargetStale,
+        // SG-000122: the lifetime's cap on distinct awaited texts; the page
+        // was not probed.
+        "unavailable:textlimitreached" => FailureCode::OutputLimit,
         code if code.starts_with("unavailable:") => FailureCode::ProviderUnavailable,
         _ => FailureCode::InternalError,
     }
@@ -493,19 +514,187 @@ pub(crate) fn sha256_hex(text: &str) -> String {
 
 /// The combined approval digest: orceld's material (workspace, policy
 /// revision, lifetime, the page store's page id, generation and origin,
-/// the action) and the host binding.
+/// the action with its node, value, option, state or key, and for a form
+/// action the field facts its prompt shows) and the host binding.
 pub(crate) fn approval_digest(
     workspace_id: &str,
     lifetime: &str,
     page: &PageRecord,
     action: &BindAction,
+    form: Option<&BoundForm>,
     host_binding: &str,
 ) -> String {
-    let action = serde_json::to_string(action).expect("a bind action always serializes");
+    // A bind action is plain strings and booleans, so it always serializes;
+    // an empty material would still differ from every real one.
+    let action = serde_json::to_string(action).unwrap_or_default();
+    let form = match form {
+        None => "-".to_owned(),
+        Some(form) => format!(
+            "{}\n{}\n{}\n{}",
+            form.role,
+            sha256_hex(&form.name),
+            form.name_cut,
+            form.ordinal
+                .map(|ordinal| format!("{}/{}", ordinal.position, ordinal.count))
+                .unwrap_or_else(|| "-".to_owned())
+        ),
+    };
     sha256_hex(&format!(
-        "{LIVE_APPROVAL_DOMAIN}\n{workspace_id}\n{POLICY_REVISION}\n{lifetime}\n{}\n{}\n{}\n{action}\n{host_binding}",
+        "{LIVE_APPROVAL_DOMAIN}\n{workspace_id}\n{POLICY_REVISION}\n{lifetime}\n{}\n{}\n{}\n{action}\n{form}\n{host_binding}",
         page.page_id, page.generation, page.current_origin
     ))
+}
+
+/// SG-000122 slice A2: the approval prompt of one live form action, from
+/// the host's facts about its field. Refused, before anything is asked, when
+/// the field's name looks secret (fill and Enter), when the bind facts are
+/// for another role, or when a fill value or option label is one the prompt
+/// would cut or escape: the person sees the value exactly and in full, or no
+/// prompt at all.
+///
+/// The value (or option label) is the whole summary line, so its bound is
+/// the summary's own (`MAX_SUMMARY_CHARS` displayed characters). The field's
+/// role and name are preview lines labelled as page-supplied; when another
+/// field of its role shows the same name, its ordinal ("2 of 3") too. Enter
+/// says that the page may submit or send what it holds.
+pub(crate) fn form_prompt(
+    workspace_id: &str,
+    target: &str,
+    action: &BindAction,
+    form: &BoundForm,
+    digest: &str,
+) -> Result<ApprovalPrompt, ProviderError> {
+    let refused = |message: &str| ProviderError::new(FailureCode::InvalidRequest, message);
+    let role = match action {
+        BindAction::Fill { role, .. }
+        | BindAction::Select { role, .. }
+        | BindAction::Check { role, .. }
+        | BindAction::PressEnter { role, .. } => role,
+        _ => return Err(refused("not a live form action")),
+    };
+    if *role != form.role {
+        return Err(ProviderError::new(
+            FailureCode::TargetStale,
+            "the browser host bound another field; observe the page again",
+        ));
+    }
+    if matches!(
+        action,
+        BindAction::Fill { .. } | BindAction::PressEnter { .. }
+    ) && orcel_browser_host::name_looks_secret(&form.name)
+    {
+        return Err(ProviderError::new(
+            FailureCode::CapabilityDenied,
+            "the field looks like a password, PIN or other secret; it is never filled or typed into",
+        ));
+    }
+    let shown = |text: &str, field: &str| {
+        orcel_policy::live_browser::shown_in_full(text, field)
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    };
+    let mut lines = vec![
+        format!("Field role (page-supplied): {}", form.role),
+        // The host already bounded the name and said whether it cut it.
+        match orcel_contracts::prompt_display::bounded_field_name(&form.name) {
+            (name, false) if !form.name_cut => {
+                format!(
+                    "{}{name}",
+                    orcel_contracts::prompt_display::FIELD_NAME_LABEL
+                )
+            }
+            (name, _) => format!(
+                "{}{name}",
+                orcel_contracts::prompt_display::FIELD_NAME_CUT_LABEL
+            ),
+        },
+    ];
+    if let Some(ordinal) = form.ordinal {
+        lines.push(format!(
+            "Field position: {} of {} fields with this role and shown name, in page order",
+            ordinal.position, ordinal.count
+        ));
+    }
+    let (title, summary) = match action {
+        BindAction::Fill { value, .. } => {
+            shown(value, "value")?;
+            lines.push("Value: the line after Target, exactly (a backslash shows doubled)".into());
+            if value.is_empty() {
+                lines.push("The value is empty: the field is cleared".into());
+            }
+            lines.push("A value typed into an ordinary field is not checked for secrets".into());
+            (
+                "type the value on the line after Target into a field of an isolated browser page",
+                value.clone(),
+            )
+        }
+        BindAction::Select { label, .. } => {
+            shown(label, "option")?;
+            lines.push("Option: the line after Target, exactly as the page labels it".into());
+            (
+                "choose the option on the line after Target in a list of an isolated browser page",
+                label.clone(),
+            )
+        }
+        BindAction::Check { checked, .. } => (
+            if *checked {
+                "check a box or option on an isolated browser page"
+            } else {
+                "uncheck a box or option on an isolated browser page"
+            },
+            format!("set to {}", if *checked { "checked" } else { "unchecked" }),
+        ),
+        BindAction::PressEnter { .. } => {
+            lines.push(
+                "Enter may submit or send what the page holds, to the page's admitted origin"
+                    .into(),
+            );
+            (
+                "press Enter in a field of an isolated browser page",
+                "press Enter (the page may submit or send what it holds)".to_owned(),
+            )
+        }
+        _ => return Err(refused("not a live form action")),
+    };
+    Ok(ApprovalPrompt::new(
+        workspace_id.to_owned(),
+        POLICY_REVISION,
+        title,
+        target.to_owned(),
+        summary,
+        digest.to_owned(),
+    )
+    .with_preview(orcel_approval::Preview::Content {
+        lines: lines.into_iter().map(|line| ('>', line)).collect(),
+        more_lines: 0,
+    }))
+}
+
+/// SG-000120 RJ-02: how a dispatched form action's journal intent closes.
+/// Executed is `done`; a refusal the host gives before the worker could act
+/// (a changed binding, a replayed record, the wrong control, a stale or
+/// covered target, a busy worker) is `failed`, nothing done; anything else
+/// (a lost reply, a timeout, an outcome the worker could not confirm) is
+/// `unknown`, and nothing is ever retried in its place.
+pub(crate) fn form_outcome(outcome: &DispatchOutcome) -> &'static str {
+    match outcome {
+        DispatchOutcome::Executed => "done",
+        DispatchOutcome::Refused(code)
+            if matches!(
+                code.as_str(),
+                "binding_mismatch"
+                    | "approval_replay"
+                    | "no_lifetime"
+                    | "no_observation"
+                    | "invalid"
+                    | "unavailable:targetstale"
+                    | "unavailable:targetoccluded"
+                    | "unavailable:actionfailed"
+            ) =>
+        {
+            "failed"
+        }
+        DispatchOutcome::Refused(_) | DispatchOutcome::Lost => "unknown",
+    }
 }
 
 impl LiveBrowser {
@@ -548,6 +737,7 @@ impl LiveBrowser {
             outcomes: Vec::new(),
             pending_download: None,
             committed: Vec::new(),
+            observed_roles: std::collections::HashMap::new(),
             host_ended: None,
             #[cfg(test)]
             reply_timeout: None,
@@ -635,9 +825,16 @@ impl LiveBrowser {
     /// registry cannot record it, the page is still dropped here, so this
     /// browser never acts on it again.
     fn close_page(&mut self) {
+        self.observed_roles.clear();
         if let Some(page) = self.page.take() {
             let _ = self.pages.close_page(&page.page_id);
         }
+    }
+
+    /// SG-000122 slice A2: the role the latest observation reported for
+    /// `node_id`, if it holds that node.
+    pub fn observed_role(&self, node_id: &str) -> Option<String> {
+        self.observed_roles.get(node_id).cloned()
     }
 
     /// The page-store record of the lifetime's page, if a lifetime is open.
@@ -790,6 +987,7 @@ impl LiveBrowser {
     /// and its next navigation advances its generation, so every node id
     /// and approval of the old lifetime is stale for good.
     fn end_lifetime(&mut self) {
+        self.observed_roles.clear();
         if self.lifetime.take().is_some() {
             self.lifetime_origin = None;
             let closed = self.request(&WorkerHostRequest::Close {});
@@ -963,7 +1161,9 @@ impl LiveBrowser {
                 relative: relative.into(),
             },
         })? {
-            WorkerHostReply::Bound { binding, target } => Ok((binding, target)),
+            WorkerHostReply::Bound {
+                binding, target, ..
+            } => Ok((binding, target)),
             _ => Err(ProviderError::new(
                 FailureCode::InternalError,
                 "unexpected browser host reply",
@@ -1027,7 +1227,9 @@ impl LiveBrowser {
         let (binding, target) = match self.request(&WorkerHostRequest::Bind {
             action: action.clone(),
         })? {
-            WorkerHostReply::Bound { binding, target } => (binding, target),
+            WorkerHostReply::Bound {
+                binding, target, ..
+            } => (binding, target),
             _ => {
                 return Err(ProviderError::new(
                     FailureCode::InternalError,
@@ -1035,7 +1237,7 @@ impl LiveBrowser {
                 ))
             }
         };
-        let digest = approval_digest(&workspace.id, &lifetime, &page, action, &binding);
+        let digest = approval_digest(&workspace.id, &lifetime, &page, action, None, &binding);
         let summary = match action {
             BindAction::Download {
                 folder, relative, ..
@@ -1120,10 +1322,202 @@ impl LiveBrowser {
         }
     }
 
+    /// SG-000122 slice A2: one approved form action (fill, select, check or
+    /// Enter) on an observed node of the live page. The host binds it from
+    /// its own observation (refusing the wrong kind of control or a secret
+    /// field before any prompt); orceld prompts with the value, the field's
+    /// page-supplied role and name and, when shared, its ordinal, all bound
+    /// into one single-use digest with the page, its generation, the
+    /// lifetime and the host binding; the step is journaled before the
+    /// prompt and closed `done`, `failed` or `unknown`, never retried.
+    /// Returns the committed URL (the same document) and the broker record.
+    pub fn form_action(
+        &mut self,
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        request: &orcel_contracts::RequestEnvelope,
+        page_id: &str,
+        expected_generation: u64,
+        action: BindAction,
+    ) -> Result<(String, String), ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        let lifetime = self.lifetime.clone().ok_or_else(|| {
+            ProviderError::new(
+                FailureCode::TargetStale,
+                "the live page has no document yet; navigate it first",
+            )
+        })?;
+        let page = self
+            .page
+            .clone()
+            .filter(|page| page.state != PageState::Closed)
+            .ok_or_else(|| ProviderError::new(FailureCode::TargetStale, "no live browser page"))?;
+        let (binding, target, form) = match self.request(&WorkerHostRequest::Bind {
+            action: action.clone(),
+        })? {
+            WorkerHostReply::Bound {
+                binding,
+                target,
+                form: Some(form),
+            } => (binding, target, form),
+            _ => {
+                return Err(ProviderError::new(
+                    FailureCode::InternalError,
+                    "unexpected browser host reply",
+                ))
+            }
+        };
+        let digest = approval_digest(
+            &workspace.id,
+            &lifetime,
+            &page,
+            &action,
+            Some(&form),
+            &binding,
+        );
+        let prompt = form_prompt(&workspace.id, &target, &action, &form, &digest)?;
+        // SG-000120 RJ-02: journaled before the prompt, against the page
+        // (Enter's effect is the page's): an effect orceld cannot read back.
+        let mut intent = crate::mutation_journal::pending(
+            crate::mutation_journal::global(),
+            crate::mutation_journal::opaque(
+                workspace,
+                request,
+                &digest,
+                &format!("browser-page:{page_id}"),
+            ),
+        )?;
+        let approved = approval
+            .request_token(&prompt)
+            .map_err(|error| ProviderError::new(error.code, error.message))
+            .and_then(|token| Self::consume(workspace, approval, &token, digest).map(|()| token));
+        let token = match approved {
+            Ok(token) => token,
+            Err(refusal) => {
+                intent.abandon(match refusal.code {
+                    FailureCode::ApprovalDenied => "approval_denied",
+                    _ => "approval_unavailable",
+                });
+                return Err(refusal);
+            }
+        };
+        // If this line cannot be written, nothing is sent: the approval is
+        // spent and the step closes `not_dispatched`.
+        intent.dispatched()?;
+        let record_id = token.record_id;
+        let reply = self.dispatch(
+            &record_id,
+            &WorkerHostRequest::FormAction {
+                action,
+                record_id: record_id.clone(),
+                binding,
+            },
+        );
+        let outcome = self
+            .outcomes
+            .last()
+            .filter(|last| last.record_id == record_id)
+            .map(|last| form_outcome(&last.outcome))
+            .unwrap_or("unknown");
+        intent.settle(outcome);
+        match reply? {
+            WorkerHostReply::FormDone { url } => Ok((url, record_id)),
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// SG-000122 slice A2: wait, read-only and without approval, until
+    /// `text` appears (or no copy is left) in the live page's committed main
+    /// document, for at most `timeout_ms`. The host counts distinct awaited
+    /// texts per lifetime and refuses a new one past its cap unprobed.
+    pub fn wait_text(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+        text: &str,
+        appear: bool,
+        timeout_ms: u64,
+    ) -> Result<bool, ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        self.require_lifetime()?;
+        match self.request(&WorkerHostRequest::WaitText {
+            text: text.into(),
+            appear,
+            timeout_ms,
+        })? {
+            WorkerHostReply::Waited { met } => Ok(met),
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// SG-000122 slice A2: the BR-07 verifier, read-only and without
+    /// approval, over the live page's committed main document. Its text
+    /// checks share the waits' cap; its evidence is a fixed vocabulary and
+    /// counts, never page text, a name or a value.
+    pub fn verify(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+        checks: Vec<orcel_browser_host::Postcondition>,
+    ) -> Result<LiveVerification, ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        self.require_lifetime()?;
+        orcel_browser_host::check_postconditions(&checks)
+            .map_err(|_| ProviderError::new(FailureCode::InvalidRequest, "malformed checks"))?;
+        match self.request(&WorkerHostRequest::Verify { checks })? {
+            WorkerHostReply::Verified {
+                url,
+                document_generation,
+                results,
+                verified,
+                evidence_sha256,
+            } => Ok(LiveVerification {
+                url,
+                document_generation,
+                results,
+                verified,
+                evidence_sha256,
+            }),
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    fn require_lifetime(&self) -> Result<(), ProviderError> {
+        if self.lifetime.is_none() {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "the live page has no document yet; navigate it first",
+            ));
+        }
+        Ok(())
+    }
+
     /// A bounded observation: identities and digests only.
     pub fn observe(&mut self) -> Result<Vec<WireNode>, ProviderError> {
         match self.request(&WorkerHostRequest::Observe {})? {
-            WorkerHostReply::Observed { nodes, .. } => Ok(nodes),
+            WorkerHostReply::Observed { nodes, .. } => {
+                // SG-000122: the roles a form action may bind, from this
+                // observation only.
+                self.observed_roles.clear();
+                let mut stack: Vec<&WireNode> = nodes.iter().collect();
+                while let Some(node) = stack.pop() {
+                    self.observed_roles
+                        .insert(node.node_id.clone(), node.role.clone());
+                    stack.extend(node.children.iter());
+                }
+                Ok(nodes)
+            }
             _ => Err(ProviderError::new(
                 FailureCode::InternalError,
                 "unexpected browser host reply",
@@ -1395,6 +1789,7 @@ mod tests {
                 relative: "a.pdf".into(),
             }),
             committed: Vec::new(),
+            observed_roles: std::collections::HashMap::new(),
             host_ended,
             reply_timeout: None,
             after_consume: None,
@@ -1704,6 +2099,7 @@ mod tests {
             ("unavailable:timedout", FailureCode::ProcessTimeout),
             ("unavailable:targetstale", FailureCode::TargetStale),
             ("unavailable:targetoccluded", FailureCode::TargetStale),
+            ("unavailable:textlimitreached", FailureCode::OutputLimit),
             (
                 "unavailable:managedpolicy",
                 FailureCode::ProviderUnavailable,
@@ -1732,19 +2128,20 @@ mod tests {
             url: "https://fixture.test/".into(),
         };
         let fresh = page("page-1", 0, "");
-        let base = approval_digest("w", "l1", &fresh, &action, "h1");
+        let base = approval_digest("w", "l1", &fresh, &action, None, "h1");
         for other in [
-            approval_digest("v", "l1", &fresh, &action, "h1"),
-            approval_digest("w", "l2", &fresh, &action, "h1"),
-            approval_digest("w", "l1", &fresh, &action, "h2"),
+            approval_digest("v", "l1", &fresh, &action, None, "h1"),
+            approval_digest("w", "l2", &fresh, &action, None, "h1"),
+            approval_digest("w", "l1", &fresh, &action, None, "h2"),
             // The page store's half: another page, generation or origin.
-            approval_digest("w", "l1", &page("page-2", 0, ""), &action, "h1"),
-            approval_digest("w", "l1", &page("page-1", 1, ""), &action, "h1"),
+            approval_digest("w", "l1", &page("page-2", 0, ""), &action, None, "h1"),
+            approval_digest("w", "l1", &page("page-1", 1, ""), &action, None, "h1"),
             approval_digest(
                 "w",
                 "l1",
                 &page("page-1", 0, "https://fixture.test:443"),
                 &action,
+                None,
                 "h1",
             ),
             approval_digest(
@@ -1754,6 +2151,7 @@ mod tests {
                 &BindAction::Navigate {
                     url: "https://fixture.test/x".into(),
                 },
+                None,
                 "h1",
             ),
         ] {
@@ -1761,11 +2159,496 @@ mod tests {
         }
         assert_eq!(base.len(), 64);
         // Fixed vector, computed independently (Python sha256) over the
-        // documented framing, with the live policy revision sg-000040-v1.
+        // documented framing (version 3: a `-` line where a form action's
+        // field facts go), with the live policy revision sg-000040-v1.
         assert_eq!(
             base,
-            "5d64a78f39150b5fa8821082a0e3cb53dd8f9af9aaa0d6701605b3158e3127eb"
+            "94364788a9592592fd82c79a94199b2b82cbb9a13448d48e7916ba8a34dd7232"
         );
+    }
+
+    fn fill(value: &str) -> BindAction {
+        BindAction::Fill {
+            node_id: "d3-e7".into(),
+            role: "textbox".into(),
+            value: value.into(),
+        }
+    }
+
+    fn field(name: &str, ordinal: Option<(usize, usize)>) -> BoundForm {
+        let (bounded, name_cut) = orcel_contracts::prompt_display::bounded_field_name(name);
+        BoundForm {
+            role: "textbox".into(),
+            name: bounded.into(),
+            name_cut,
+            ordinal: ordinal.map(|(position, count)| {
+                orcel_browser_host::worker_host::FieldOrdinal { position, count }
+            }),
+        }
+    }
+
+    /// The dialog text every OS shows for `prompt`, one line each.
+    fn shown(prompt: &ApprovalPrompt) -> Vec<String> {
+        orcel_approval::soft_dialog_text(prompt)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The line the prompt shows right after its Target line.
+    fn after_target(lines: &[String]) -> String {
+        let at = lines
+            .iter()
+            .position(|line| line.starts_with("Target: "))
+            .expect("a Target line");
+        lines[at + 1].clone()
+    }
+
+    /// SG-000122 slice A2: a fill prompt shows exactly the bound value at
+    /// the bound: every character as itself, each backslash doubled, nothing
+    /// changed, cut or omitted; and the value is the approval's.
+    #[test]
+    fn sg122_a_fill_prompt_shows_exactly_the_bound_value_at_the_bound() {
+        use orcel_contracts::prompt_display::MAX_SUMMARY_CHARS;
+        // 100 backslashes count 200; the rest fills the bound exactly.
+        let value = format!(
+            "{}{}Zoë 日本 e\u{301}\u{302}",
+            "\\".repeat(100),
+            "a".repeat(MAX_SUMMARY_CHARS - 200 - 10)
+        );
+        assert_eq!(
+            orcel_contracts::prompt_display::shown_exactly(&value, MAX_SUMMARY_CHARS),
+            Ok(MAX_SUMMARY_CHARS)
+        );
+        let prompt = form_prompt(
+            "default",
+            "https://fixture.test:443",
+            &fill(&value),
+            &field("Full name", None),
+            "d",
+        )
+        .expect("a value at the bound is shown");
+        assert_eq!(prompt.summary, value);
+        let lines = shown(&prompt);
+        let line = after_target(&lines);
+        assert_eq!(line, value.replace('\\', "\\\\"));
+        assert_eq!(line.chars().count(), MAX_SUMMARY_CHARS);
+        assert!(!line.contains("not shown"));
+        // An ordinary value and an empty one (which clears the field).
+        for value in ["Ada Lovelace", "C:\\temp\\x", ""] {
+            let prompt = form_prompt(
+                "default",
+                "https://fixture.test:443",
+                &fill(value),
+                &field("Full name", None),
+                "d",
+            )
+            .unwrap();
+            assert_eq!(after_target(&shown(&prompt)), value.replace('\\', "\\\\"));
+        }
+        // A select shows its option label the same way.
+        let select = BindAction::Select {
+            node_id: "d3-e8".into(),
+            role: "combobox".into(),
+            label: "Porto \\ Norte".into(),
+        };
+        let mut city = field("City", None);
+        city.role = "combobox".into();
+        let prompt =
+            form_prompt("default", "https://fixture.test:443", &select, &city, "d").unwrap();
+        assert_eq!(after_target(&shown(&prompt)), "Porto \\\\ Norte");
+    }
+
+    /// SG-000122 slice A2: one displayed character past the bound, and each
+    /// character class the prompt would escape, is refused before any prompt
+    /// exists; never cut, never shown altered.
+    #[test]
+    fn sg122_a_value_past_the_bound_or_with_an_escaped_character_gets_no_prompt() {
+        use orcel_contracts::prompt_display::MAX_SUMMARY_CHARS;
+        let ask = |value: &str| {
+            form_prompt(
+                "default",
+                "https://fixture.test:443",
+                &fill(value),
+                &field("Full name", None),
+                "d",
+            )
+        };
+        let past = [
+            "a".repeat(MAX_SUMMARY_CHARS + 1),
+            format!("{}a", "\\".repeat(MAX_SUMMARY_CHARS / 2)),
+            format!("{}\\", "a".repeat(MAX_SUMMARY_CHARS - 1)),
+        ];
+        for value in &past {
+            assert_eq!(ask(value).unwrap_err().code, FailureCode::InvalidRequest);
+        }
+        // One of each escaped class: C0 and C1 controls, line and paragraph
+        // separators, bidi embeddings, overrides, isolates and marks, format
+        // and zero-width, default-ignorable, variation selectors, tags,
+        // interlinear annotations, fillers and blank-looking spaces, and a
+        // third combining mark in a row.
+        for ch in [
+            '\u{0}',
+            '\u{9}',
+            '\u{a}',
+            '\u{d}',
+            '\u{1b}',
+            '\u{7f}',
+            '\u{85}',
+            '\u{9f}',
+            '\u{2028}',
+            '\u{2029}',
+            '\u{202a}',
+            '\u{202e}',
+            '\u{2066}',
+            '\u{2069}',
+            '\u{200e}',
+            '\u{200f}',
+            '\u{061c}',
+            '\u{200b}',
+            '\u{200d}',
+            '\u{2060}',
+            '\u{2064}',
+            '\u{206f}',
+            '\u{feff}',
+            '\u{00ad}',
+            '\u{034f}',
+            '\u{17b4}',
+            '\u{180b}',
+            '\u{fe00}',
+            '\u{e0100}',
+            '\u{1bca0}',
+            '\u{13430}',
+            '\u{1d173}',
+            '\u{fff9}',
+            '\u{e0001}',
+            '\u{e007f}',
+            '\u{115f}',
+            '\u{1160}',
+            '\u{3164}',
+            '\u{ffa0}',
+            '\u{00a0}',
+            '\u{1680}',
+            '\u{2000}',
+            '\u{200a}',
+            '\u{202f}',
+            '\u{205f}',
+            '\u{2800}',
+            '\u{3000}',
+        ] {
+            let refused = ask(&format!("a{ch}b")).unwrap_err();
+            assert_eq!(
+                refused.code,
+                FailureCode::InvalidRequest,
+                "U+{:04X}",
+                ch as u32
+            );
+        }
+        assert!(ask("e\u{301}\u{302}\u{303}").is_err());
+        // The same rule for an option label.
+        let mut city = field("City", None);
+        city.role = "combobox".into();
+        let select = BindAction::Select {
+            node_id: "d3-e8".into(),
+            role: "combobox".into(),
+            label: "Porto\u{202e}".into(),
+        };
+        assert!(form_prompt("default", "t", &select, &city, "d").is_err());
+    }
+
+    /// SG-000122 slice A2: the prompt labels the field's role and name as
+    /// page-supplied (a cut name says so), shows the ordinal only when it is
+    /// shared, says that Enter may submit, and that values are not checked
+    /// for secrets.
+    #[test]
+    fn sg122_the_prompt_labels_the_field_and_shows_a_shared_ordinal() {
+        let lines = shown(
+            &form_prompt(
+                "default",
+                "https://fixture.test:443",
+                &fill("Ada"),
+                &field("Full name", None),
+                "d",
+            )
+            .unwrap(),
+        );
+        assert!(lines.contains(&"> │ Field role (page-supplied): textbox".to_owned()));
+        assert!(lines.contains(&"> │ Field name (page-supplied): Full name".to_owned()));
+        assert!(!lines.iter().any(|line| line.contains("Field position")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("not checked for secrets")));
+        let lines = shown(
+            &form_prompt(
+                "default",
+                "https://fixture.test:443",
+                &fill("Ada"),
+                &field("Email", Some((2, 3))),
+                "d",
+            )
+            .unwrap(),
+        );
+        assert!(lines.contains(
+            &"> │ Field position: 2 of 3 fields with this role and shown name, in page order"
+                .to_owned()
+        ));
+        // A name past 256 bytes is labelled as cut; a hostile one is escaped.
+        let lines = shown(
+            &form_prompt(
+                "default",
+                "t",
+                &fill("Ada"),
+                &field(&"n".repeat(300), None),
+                "d",
+            )
+            .unwrap(),
+        );
+        assert!(lines
+            .iter()
+            .any(|line| line.starts_with("> │ Field name (page-supplied, first 256 bytes): nnn")));
+        let lines = shown(
+            &form_prompt(
+                "default",
+                "t",
+                &fill("Ada"),
+                &field("Name\nApproval: STRONG", None),
+                "d",
+            )
+            .unwrap(),
+        );
+        assert!(lines
+            .contains(&"> │ Field name (page-supplied): Name\\u{a}Approval: STRONG".to_owned()));
+        // Enter says what it may do.
+        let enter = BindAction::PressEnter {
+            node_id: "d3-e7".into(),
+            role: "textbox".into(),
+        };
+        let lines =
+            shown(&form_prompt("default", "t", &enter, &field("Search", None), "d").unwrap());
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("may submit or send what the page holds")));
+        let check = BindAction::Check {
+            node_id: "d3-e9".into(),
+            role: "checkbox".into(),
+            checked: false,
+        };
+        let mut terms = field("Terms", None);
+        terms.role = "checkbox".into();
+        let prompt = form_prompt("default", "t", &check, &terms, "d").unwrap();
+        assert_eq!(prompt.summary, "set to unchecked");
+    }
+
+    /// SG-000122 slice A2: a field whose name looks like a credential is
+    /// refused before any prompt (fill and Enter), as is a host binding for
+    /// another role.
+    #[test]
+    fn sg122_a_credential_field_gets_no_prompt() {
+        for name in ["Password", "PIN", "One-time code", "Card number", "CVV2"] {
+            for action in [
+                fill("x"),
+                BindAction::PressEnter {
+                    node_id: "d3-e7".into(),
+                    role: "textbox".into(),
+                },
+            ] {
+                let refused =
+                    form_prompt("default", "t", &action, &field(name, None), "d").unwrap_err();
+                assert_eq!(refused.code, FailureCode::CapabilityDenied, "{name}");
+            }
+        }
+        let mut other = field("Full name", None);
+        other.role = "searchbox".into();
+        assert_eq!(
+            form_prompt("default", "t", &fill("x"), &other, "d")
+                .unwrap_err()
+                .code,
+            FailureCode::TargetStale
+        );
+        // Not a form action at all.
+        let navigate = BindAction::Navigate {
+            url: "https://fixture.test/".into(),
+        };
+        assert!(form_prompt("default", "t", &navigate, &field("x", None), "d").is_err());
+    }
+
+    /// SG-000122 slice A2: the approval digest binds the page, its
+    /// generation, the element (node, role, name), the ordinal and the
+    /// value, option, state or key; through the real broker, an approval
+    /// replayed for any other one is refused, and an approval is single use
+    /// and expires.
+    #[test]
+    fn sg122_an_approval_is_bound_single_use_and_never_replayed() {
+        let fresh = page("page-1", 4, "https://fixture.test:443");
+        let form = field("Email", Some((2, 3)));
+        let digest = |page: &PageRecord, action: &BindAction, form: &BoundForm| {
+            approval_digest("default", "l1", page, action, Some(form), "h1")
+        };
+        let base = digest(&fresh, &fill("Ada"), &form);
+        let mut renamed = form.clone();
+        renamed.name = "Email address".into();
+        let mut cut = form.clone();
+        cut.name_cut = true;
+        let mut alone = form.clone();
+        alone.ordinal = None;
+        let mut moved = form.clone();
+        moved.ordinal = Some(orcel_browser_host::worker_host::FieldOrdinal {
+            position: 3,
+            count: 3,
+        });
+        let mut role = form.clone();
+        role.role = "searchbox".into();
+        let others = [
+            (
+                "page",
+                digest(
+                    &page("page-2", 4, "https://fixture.test:443"),
+                    &fill("Ada"),
+                    &form,
+                ),
+            ),
+            (
+                "generation",
+                digest(
+                    &page("page-1", 5, "https://fixture.test:443"),
+                    &fill("Ada"),
+                    &form,
+                ),
+            ),
+            ("value", digest(&fresh, &fill("Ada "), &form)),
+            (
+                "element",
+                digest(
+                    &fresh,
+                    &BindAction::Fill {
+                        node_id: "d3-e8".into(),
+                        role: "textbox".into(),
+                        value: "Ada".into(),
+                    },
+                    &form,
+                ),
+            ),
+            ("name", digest(&fresh, &fill("Ada"), &renamed)),
+            ("cut", digest(&fresh, &fill("Ada"), &cut)),
+            ("ordinal", digest(&fresh, &fill("Ada"), &moved)),
+            ("no ordinal", digest(&fresh, &fill("Ada"), &alone)),
+            ("role", digest(&fresh, &fill("Ada"), &role)),
+            (
+                "key",
+                digest(
+                    &fresh,
+                    &BindAction::PressEnter {
+                        node_id: "d3-e7".into(),
+                        role: "textbox".into(),
+                    },
+                    &form,
+                ),
+            ),
+            (
+                "host",
+                approval_digest("default", "l1", &fresh, &fill("Ada"), Some(&form), "h2"),
+            ),
+            (
+                "lifetime",
+                approval_digest("default", "l2", &fresh, &fill("Ada"), Some(&form), "h1"),
+            ),
+            (
+                "no facts",
+                approval_digest("default", "l1", &fresh, &fill("Ada"), None, "h1"),
+            ),
+        ];
+        let select = |label: &str| BindAction::Select {
+            node_id: "d3-e8".into(),
+            role: "combobox".into(),
+            label: label.into(),
+        };
+        let check = |checked: bool| BindAction::Check {
+            node_id: "d3-e9".into(),
+            role: "checkbox".into(),
+            checked,
+        };
+        assert_ne!(
+            digest(&fresh, &select("Porto"), &form),
+            digest(&fresh, &select("Lisbon"), &form)
+        );
+        assert_ne!(
+            digest(&fresh, &check(true), &form),
+            digest(&fresh, &check(false), &form)
+        );
+        for (what, other) in &others {
+            assert_ne!(&base, other, "{what}");
+        }
+        // The real broker: the approval is minted for `base` only.
+        let dir = scratch("sg122-broker");
+        let broker = orcel_approval::LocalApprovalBroker::with_path_and_soft_decider(
+            dir.join("approvals.json"),
+            std::sync::Arc::new(orcel_approval::NoPresenceVerifier),
+            std::sync::Arc::new(|_| orcel_approval::ApprovalDecision::Approved),
+        );
+        let prompt = form_prompt(
+            "default",
+            "https://fixture.test:443",
+            &fill("Ada"),
+            &form,
+            &base,
+        )
+        .unwrap();
+        let token = broker.request_token(&prompt).expect("approved");
+        let expect = |digest: &str| ConsumeExpectation::new(digest, "default", POLICY_REVISION);
+        for (what, other) in &others {
+            assert!(
+                broker.consume(&token, &expect(other), now_ms()).is_err(),
+                "a replay on another {what} is refused"
+            );
+        }
+        // Expired: refused, whatever the digest.
+        assert!(broker
+            .consume(&token, &expect(&base), now_ms() + 24 * 60 * 60 * 1000)
+            .is_err());
+        broker
+            .consume(&token, &expect(&base), now_ms())
+            .expect("the bound approval is consumed once");
+        assert!(
+            broker.consume(&token, &expect(&base), now_ms()).is_err(),
+            "single use"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// SG-000120 RJ-02 for form actions: a refusal before the worker could
+    /// act closes `failed`; a lost reply or an unconfirmed outcome closes
+    /// `unknown` (never retried).
+    #[test]
+    fn sg122_a_form_action_closes_its_journal_intent_by_what_is_known() {
+        assert_eq!(form_outcome(&DispatchOutcome::Executed), "done");
+        for code in [
+            "binding_mismatch",
+            "approval_replay",
+            "no_lifetime",
+            "no_observation",
+            "invalid",
+            "unavailable:targetstale",
+            "unavailable:targetoccluded",
+            "unavailable:actionfailed",
+        ] {
+            assert_eq!(
+                form_outcome(&DispatchOutcome::Refused(code.into())),
+                "failed",
+                "{code}"
+            );
+        }
+        for code in [
+            "unavailable:outcomeunknown",
+            "unavailable:timedout",
+            "anything",
+        ] {
+            assert_eq!(
+                form_outcome(&DispatchOutcome::Refused(code.into())),
+                "unknown",
+                "{code}"
+            );
+        }
+        assert_eq!(form_outcome(&DispatchOutcome::Lost), "unknown");
     }
 }
 

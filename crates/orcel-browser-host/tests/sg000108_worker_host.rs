@@ -184,7 +184,9 @@ fn bind(host: &mut LiveWorkerHost, action: BindAction) -> (String, String) {
         .request(&WorkerHostRequest::Bind { action })
         .expect("bind")
     {
-        WorkerHostReply::Bound { binding, target } => {
+        WorkerHostReply::Bound {
+            binding, target, ..
+        } => {
             assert_eq!(binding.len(), 64);
             (binding, target)
         }
