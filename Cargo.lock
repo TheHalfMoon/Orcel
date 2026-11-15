@@ -965,6 +965,7 @@ name = "orcel-browser-host"
 version = "0.2.0"
 dependencies = [
  "libc",
+ "orcel-contracts",
  "regex",
  "serde",
  "serde_json",

@@ -38,8 +38,10 @@ pub struct JobProcess {
 /// Worker protocol generation (apps/orcel-browser-worker/src/protocol.ts).
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
-/// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 15;
+/// downloads; generation 16 is SG-000122 slice A1 (the `enter` form action,
+/// one select option, single-line fills, and form-control kinds in
+/// observed nodes).
+pub const WORKER_PROTOCOL_GENERATION: u32 = 16;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -70,8 +72,9 @@ pub const WORKER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// are already computed and take `WORKER_REPLY_TIMEOUT` each.
 pub const WORKER_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// One node of a worker snapshot: ref, role, accessible name and (links
-/// only) the link URL. The worker never sends field values.
+/// One node of a worker snapshot: ref, role, accessible name, (links
+/// only) the link URL and (main-frame form controls only, SG-000122) the
+/// control's kind. The worker never sends field values.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotNode {
@@ -81,6 +84,8 @@ pub struct SnapshotNode {
     pub name: String,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub control: Option<String>,
     pub children: Vec<SnapshotNode>,
 }
 
@@ -92,6 +97,9 @@ pub struct HostNode {
     pub role: String,
     pub name: String,
     pub url: Option<String>,
+    /// SG-000122: the form-control kind the worker reported for a
+    /// main-frame node (`actuation::CONTROL_*`), or none.
+    pub control: Option<String>,
 }
 
 /// BR-05: dialogs remembered between two reads, and the longest message
@@ -675,6 +683,7 @@ pub(crate) fn input_node(
             role: node.role.clone(),
             name: node.name.clone(),
             url: node.url.clone(),
+            control: control_kind(node),
         },
     );
     crate::observation::InputNode {
@@ -692,6 +701,27 @@ pub(crate) fn input_node(
             .map(|child| input_node(child, generation, key, index))
             .collect(),
     }
+}
+
+/// SG-000122: a reported control kind, kept only when it is one of the
+/// closed kinds and the node is in the main frame (`e12`, not `f1e12`);
+/// anything else is no kind, which no live form action accepts.
+#[cfg(any(windows, test))]
+fn control_kind(node: &SnapshotNode) -> Option<String> {
+    let main_frame = node
+        .reference
+        .strip_prefix('e')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
+    node.control.as_deref().and_then(|kind| {
+        [
+            crate::actuation::CONTROL_LINE,
+            crate::actuation::CONTROL_SELECT,
+            crate::actuation::CONTROL_TOGGLE,
+        ]
+        .contains(&kind)
+        .then(|| kind.to_owned())
+        .filter(|_| main_frame)
+    })
 }
 
 /// SHA-256 over this lifetime's key and the name (hex).
@@ -1394,6 +1424,10 @@ mod platform {
         /// BR-07: distinct values each field (page, role, name) was checked
         /// against in this lifetime.
         value_budget: crate::verify::GuessBudget,
+        /// SG-000122: distinct texts awaited or checked visible in this
+        /// lifetime (waits and verifier text checks together); it resets
+        /// with the value budget, when the lifetime ends.
+        text_budget: crate::verify::TextBudget,
         /// BR-07: the digest of the last download committed in this
         /// lifetime, for download postconditions.
         last_download_sha256: Option<String>,
@@ -1523,6 +1557,7 @@ mod platform {
             next_upload_request: 0,
             uploads: std::collections::HashMap::new(),
             value_budget: crate::verify::GuessBudget::default(),
+            text_budget: crate::verify::TextBudget::default(),
             last_download_sha256: None,
             next_disc: 0,
             next_ext: 0,
@@ -2120,6 +2155,7 @@ mod platform {
                 input,
                 crate::actuation::FormInput::Fill { .. }
                     | crate::actuation::FormInput::Press { .. }
+                    | crate::actuation::FormInput::Enter
             ) && crate::actuation::name_looks_secret(&node.name)
             {
                 return Err(HostError::Invalid("password-field filling denied".into()));
@@ -2178,6 +2214,7 @@ mod platform {
                 input,
                 crate::actuation::FormInput::Fill { .. }
                     | crate::actuation::FormInput::Press { .. }
+                    | crate::actuation::FormInput::Enter
             ) && crate::actuation::name_looks_secret(&approved_name)
             {
                 return Err(HostError::Invalid("password-field filling denied".into()));
@@ -2209,7 +2246,9 @@ mod platform {
                 crate::actuation::FormInput::Press { key } => {
                     (None, None, None, Some(key.as_str()))
                 }
-                crate::actuation::FormInput::Hover => (None, None, None, None),
+                crate::actuation::FormInput::Hover | crate::actuation::FormInput::Enter => {
+                    (None, None, None, None)
+                }
             };
             let named = !approved_name.is_empty();
             let sent = self.send(&WorkerRequest::FormAction {
@@ -2278,6 +2317,49 @@ mod platform {
                 // worker may still be acting, so the lifetime ends.
                 _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             }
+        }
+
+        /// SG-000122 slice A1: the state and the observed accessible name a
+        /// live form approval binds, for an observed main-frame node whose
+        /// role is `role` and whose kind suits the action
+        /// (`actuation::live_form_check`): everything is decided from the
+        /// host's own record of the observation, before any worker frame.
+        pub fn live_form_binding(
+            &self,
+            node_id: &str,
+            role: &str,
+            input: &crate::actuation::FormInput,
+        ) -> Result<(String, String), HostError> {
+            let node = self
+                .host_nodes
+                .get(node_id)
+                .filter(|node| node.role == role)
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            crate::actuation::live_form_check(
+                &node.role,
+                node.control.as_deref(),
+                &node.name,
+                input,
+            )?;
+            let state = self.form_binding(node_id, input, None)?;
+            Ok((state, node.name.clone()))
+        }
+
+        /// SG-000122 slice A1: perform one approved live form action. The
+        /// host's live checks run again on its current record of the node
+        /// before the approval is spent, then `form_action` dispatches it
+        /// (no confirm is ever accepted), and the worker checks the element
+        /// itself when it acts.
+        pub fn live_form_action(
+            &mut self,
+            target: &crate::actuation::ActuationTarget,
+            approval: &mut crate::actuation::ApprovalToken,
+            input: &crate::actuation::FormInput,
+            policy_revision: u64,
+            workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
+            self.live_form_binding(&target.node_id, &target.role, input)?;
+            self.form_action(target, approval, input, None, policy_revision, workspace)
         }
 
         /// BR-05: the JavaScript dialogs (alert, confirm, prompt,
@@ -2621,6 +2703,11 @@ mod platform {
                 .committed
                 .clone()
                 .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
+            // SG-000122: a new text past the lifetime's cap is refused, and
+            // the page is not probed.
+            if !self.text_budget.admit(&[text]) {
+                return Err(HostError::Unavailable(UnavailableReason::TextLimitReached));
+            }
             self.next_wait += 1;
             let wait_id = self.next_wait;
             self.send(&WorkerRequest::WaitFor {
@@ -2668,6 +2755,19 @@ mod platform {
                 .committed
                 .clone()
                 .ok_or_else(|| HostError::Invalid("no committed document to verify".into()))?;
+            // SG-000122: text checks share the waits' cap on distinct texts;
+            // a verification naming a new text past it is refused whole,
+            // before anything is probed.
+            let texts: Vec<&str> = checks
+                .iter()
+                .filter_map(|check| match check {
+                    crate::verify::Postcondition::TextVisible { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if !self.text_budget.admit(&texts) {
+                return Err(HostError::Unavailable(UnavailableReason::TextLimitReached));
+            }
             let mut needs: Vec<crate::verify::Need> = checks
                 .iter()
                 .map(|check| {
@@ -4090,6 +4190,35 @@ mod tests {
         assert_eq!(keyed_name(&[1u8; 32], "x").len(), 64);
     }
 
+    /// SG-000122: a control kind is kept host-side only when it is one of
+    /// the closed kinds and the node is in the main frame; it never reaches
+    /// the SG-000076 observation.
+    #[test]
+    fn sg122_control_kinds_are_closed_and_main_frame_only() {
+        let nodes: Vec<SnapshotNode> = serde_json::from_str(
+            r#"[{"ref":"e1","role":"textbox","name":"Full name","control":"line","children":[]},
+                {"ref":"e2","role":"combobox","name":"City","control":"select","children":[]},
+                {"ref":"e3","role":"checkbox","name":"Terms","control":"toggle","children":[]},
+                {"ref":"e4","role":"textbox","name":"Notes","control":"multiline","children":[]},
+                {"ref":"f1e5","role":"textbox","name":"Framed","control":"line","children":[]},
+                {"ref":"e6","role":"textbox","name":"Bare","children":[]}]"#,
+        )
+        .unwrap();
+        let mut index = std::collections::HashMap::new();
+        let roots: Vec<_> = nodes
+            .iter()
+            .map(|node| input_node(node, 3, &[1u8; 32], &mut index))
+            .collect();
+        let kind = |id: &str| index[id].control.clone();
+        assert_eq!(kind("d3-e1").as_deref(), Some("line"));
+        assert_eq!(kind("d3-e2").as_deref(), Some("select"));
+        assert_eq!(kind("d3-e3").as_deref(), Some("toggle"));
+        assert_eq!(kind("d3-e4"), None, "not a closed kind");
+        assert_eq!(kind("d3-f1e5"), None, "inside a frame");
+        assert_eq!(kind("d3-e6"), None);
+        assert!(!format!("{roots:?}").contains("line"));
+    }
+
     #[test]
     fn dates_in_non_ascii_names_never_panic() {
         let link = |name: &str| HostNode {
@@ -4097,6 +4226,7 @@ mod tests {
             role: "link".into(),
             name: name.into(),
             url: None,
+            control: None,
         };
         let mut nodes = std::collections::HashMap::new();
         nodes.insert("d1-e1".to_string(), link("Rapport — 2026-09-30"));
@@ -4112,6 +4242,7 @@ mod tests {
             role: "link".into(),
             name: name.into(),
             url: None,
+            control: None,
         };
         let mut nodes = std::collections::HashMap::new();
         nodes.insert("d1-e1".to_string(), link("Quarterly report 2026-06-30"));

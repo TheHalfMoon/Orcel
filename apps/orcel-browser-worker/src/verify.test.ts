@@ -52,8 +52,15 @@ function page(frames: Element[][], refs: Record<string, Element[]> = {}) {
       if (selector.startsWith("aria-ref=")) return located(refs[selector.slice("aria-ref=".length)] ?? []);
       return { css: selector };
     },
-    frames: () =>
-      frames.map((elements) => ({
+    mainFrame: () => {
+      queries.push("main frame");
+      return frameOf(frames[0] ?? []);
+    },
+    frames: () => frames.map(frameOf)
+  };
+  return { stub: stub as unknown as VerifyPage, queries };
+  function frameOf(elements: Element[]) {
+    return {
         getByRole: (role: string, options: { name: string; exact: boolean }) => {
           queries.push(`role ${role} ${JSON.stringify(options.name)} exact=${options.exact}`);
           return located(elements.filter((e) => e.role === role && e.name === options.name));
@@ -62,9 +69,8 @@ function page(frames: Element[][], refs: Record<string, Element[]> = {}) {
           queries.push(`text ${pattern.source} flags=${pattern.flags}`);
           return located(elements.filter((e) => e.text !== undefined && pattern.test(e.text)));
         }
-      }))
-  };
-  return { stub: stub as unknown as VerifyPage, queries };
+    };
+  }
 }
 
 test("BR-07 visible role and name: exact, across frames, visible only", async () => {
@@ -96,6 +102,18 @@ test("BR-07 visible text: case-sensitive literal substring, white space normalis
   assert.deepEqual(await runProbes(stub, [{ probe: "visible_text", text: "$1x50" }]), [{ result: "visible", count: 0 }]);
   assert.ok(queries.every((query) => !query.startsWith("text") || query.endsWith("flags=")), "no case-insensitive flag");
   assert.equal(textPattern("  a.b   c ").source, "a\\.b\\s+c");
+});
+
+test("SG-000122 a text check looks only at the main frame: text only a child frame holds is not found", async () => {
+  const { stub, queries } = page([
+    [{ text: "Embedded report", visible: true }],
+    [{ text: "Outer frame", visible: true }],
+    [{ text: "Foreign secret", visible: true }]
+  ]);
+  assert.deepEqual(await runProbes(stub, [{ probe: "visible_text", text: "Embedded report" }]), [{ result: "visible", count: 1 }]);
+  assert.deepEqual(await runProbes(stub, [{ probe: "visible_text", text: "Outer frame" }]), [{ result: "visible", count: 0 }]);
+  assert.deepEqual(await runProbes(stub, [{ probe: "visible_text", text: "Foreign secret" }]), [{ result: "visible", count: 0 }]);
+  assert.equal(queries.filter((query) => query.startsWith("text ")).length, 3, "one main-frame query per check");
 });
 
 test("BR-07 counts are capped", async () => {
@@ -169,7 +187,8 @@ test("BR-07 checked state only from a checkbox or radio the ref names", async ()
 test("BR-07 all probes share one time budget", async () => {
   const slow = {
     locator: () => ({ count: () => new Promise<number>(() => {}) }),
-    frames: () => []
+    frames: () => [],
+    mainFrame: () => ({})
   } as unknown as VerifyPage;
   const started = Date.now();
   await assert.rejects(runProbes(slow, [{ probe: "value", ref: "e1" }], 50), /budget/);

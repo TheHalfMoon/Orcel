@@ -22,7 +22,9 @@
 //! against at most `MAX_VALUE_GUESSES` distinct values per worker lifetime,
 //! so verification cannot be used to guess a value the observation hides; URL and download-digest checks use the host's
 //! own record (the committed URL, the last committed download) and need no
-//! worker; the list check is not ported.
+//! worker; the list check is not ported. SG-000122: text checks look only at
+//! the main frame's committed document (never a child frame), and they share
+//! the text waits' cap of `MAX_AWAITED_TEXTS` distinct texts per lifetime.
 //! Evidence is a fixed vocabulary plus counts, and the report carries a
 //! SHA-256 digest of itself that a journey result can reference.
 
@@ -308,6 +310,40 @@ impl GuessBudget {
     }
 }
 
+/// SG-000122: distinct texts one browser lifetime may await or check
+/// visible, text waits and the verifier's text checks together. A text wait
+/// answers whether a chosen text is on the page, so it is a guessing oracle
+/// for page text observation never returns; repeating a counted text is free.
+pub const MAX_AWAITED_TEXTS: usize = 16;
+
+/// SG-000122: the texts awaited or checked visible in this lifetime, by
+/// SHA-256 of the exact text. It lives beside the value budget, so both
+/// reset together when the lifetime ends.
+#[derive(Debug, Default)]
+pub(crate) struct TextBudget {
+    seen: Vec<[u8; 32]>,
+}
+
+impl TextBudget {
+    /// Whether `texts` may be probed: true, and counted, when every new one
+    /// among them fits under `MAX_AWAITED_TEXTS`; false, counting nothing,
+    /// otherwise (the caller then refuses without probing anything).
+    pub(crate) fn admit(&mut self, texts: &[&str]) -> bool {
+        let mut new: Vec<[u8; 32]> = Vec::new();
+        for text in texts {
+            let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+            if !self.seen.contains(&digest) && !new.contains(&digest) {
+                new.push(digest);
+            }
+        }
+        if self.seen.len() + new.len() > MAX_AWAITED_TEXTS {
+            return false;
+        }
+        self.seen.extend(new);
+        true
+    }
+}
+
 /// The budget's key for a field: its page (origin and path, without the
 /// query or fragment), role and name.
 pub(crate) fn field_key(url: &str, role: &str, name: &str) -> String {
@@ -485,6 +521,42 @@ mod tests {
     use super::*;
 
     const URL: &str = "https://shop.test/order/42";
+
+    /// SG-000122: at most 16 distinct texts per lifetime; repeats are free;
+    /// a call that would pass the cap is refused whole and counts nothing.
+    #[test]
+    fn sg122_the_text_cap_counts_distinct_texts_and_refuses_the_17th() {
+        let mut budget = TextBudget::default();
+        let texts: Vec<String> = (0..MAX_AWAITED_TEXTS)
+            .map(|n| format!("text {n}"))
+            .collect();
+        for text in &texts {
+            assert!(budget.admit(&[text]));
+        }
+        // Repeats, alone or together, are free.
+        assert!(budget.admit(&[&texts[0]]));
+        assert!(budget.admit(&[&texts[3], &texts[3], &texts[15]]));
+        // The 17th distinct text is refused, and so is a call that carries
+        // one new text beside known ones; nothing of it is counted.
+        assert!(!budget.admit(&["text 16"]));
+        assert!(!budget.admit(&[&texts[1], "text 17"]));
+        assert!(budget.admit(&[&texts[1]]));
+        assert_eq!(budget.seen.len(), MAX_AWAITED_TEXTS);
+        // Exact text: a different spacing is a different text.
+        assert!(!budget.admit(&["text  0"]));
+        // A fresh lifetime starts again.
+        let mut fresh = TextBudget::default();
+        assert!(fresh.admit(&["text 16"]));
+        // Duplicates inside one call count once.
+        let mut once = TextBudget::default();
+        let same = vec!["same"; MAX_AWAITED_TEXTS + 4];
+        assert!(once.admit(&same));
+        assert_eq!(once.seen.len(), 1);
+        let many: Vec<String> = (0..=MAX_AWAITED_TEXTS).map(|n| n.to_string()).collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        assert!(!once.admit(&many), "one call cannot pass the cap either");
+        assert_eq!(once.seen.len(), 1);
+    }
     const SHA: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     fn facts() -> HostFacts<'static> {

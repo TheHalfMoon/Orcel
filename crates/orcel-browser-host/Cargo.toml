@@ -24,6 +24,9 @@ live-browser-test = []
 live-browser-dev = []
 
 [dependencies]
+# SG-000122: the approval prompt's own per-character display rules
+# (prompt_display), so a fill value is bounded on exactly what the prompt shows.
+orcel-contracts = { path = "../orcel-contracts" }
 # WI-01: crawl include/exclude regular expressions (no backtracking; Unicode
 # tables off, as the patterns compile with Unicode disabled). MIT OR Apache-2.0.
 regex = { version = "1", default-features = false, features = ["std", "perf"] }

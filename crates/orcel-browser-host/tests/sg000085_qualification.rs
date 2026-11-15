@@ -607,6 +607,7 @@ fn error_vocabulary_is_typed_and_secret_free() {
         orcel_browser_host::UnavailableReason::TargetStale,
         orcel_browser_host::UnavailableReason::OutcomeUnknown,
         orcel_browser_host::UnavailableReason::TargetOccluded,
+        orcel_browser_host::UnavailableReason::TextLimitReached,
     ] {
         let text = format!(
             "{:?} {}",

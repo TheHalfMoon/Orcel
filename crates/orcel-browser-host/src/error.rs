@@ -53,6 +53,9 @@ pub enum UnavailableReason {
     /// banner), so the engine never performed the pointer action; observe
     /// again (after a download attempt, navigate again: its page is closed).
     TargetOccluded,
+    /// SG-000122: the browser lifetime already awaited or checked its cap of
+    /// distinct texts; a new text is refused and the page is not probed.
+    TextLimitReached,
 }
 
 impl fmt::Display for UnavailableReason {
@@ -75,6 +78,10 @@ impl fmt::Display for UnavailableReason {
             Self::Cancelled => write!(f, "the browser operation was cancelled"),
             Self::TargetStale => write!(f, "the approved element is no longer on the page"),
             Self::TargetOccluded => write!(f, "another element covers the approved element"),
+            Self::TextLimitReached => write!(
+                f,
+                "this browser lifetime's limit of distinct awaited texts is reached"
+            ),
             Self::OutcomeUnknown => write!(
                 f,
                 "the approved action was dispatched and its outcome is unknown"

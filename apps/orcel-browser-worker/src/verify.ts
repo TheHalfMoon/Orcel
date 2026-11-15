@@ -14,7 +14,9 @@
 // any match, then asserts visibility separately); text is a case-sensitive
 // substring of an element's text with runs of white space matching any
 // white space, counted only when visible (the donor matches
-// case-insensitively); a value or checked state is read only from the
+// case-insensitively), and only in the main frame's committed document, never
+// a child frame of any origin (SG-000122, the same as text waits); a value or
+// checked state is read only from the
 // element a main-frame ref names, and only when that element is itself a
 // form control (Playwright's value and checked reads otherwise follow a
 // label to its control, which could be a password field); never from a
@@ -53,7 +55,7 @@ export type VerifyResult =
   | { result: "unavailable"; reason: VerifyUnavailable };
 
 /// The page surface the probes use (a Playwright `Page`, or a test stub).
-export type VerifyPage = Pick<Page, "locator" | "frames">;
+export type VerifyPage = Pick<Page, "locator" | "frames" | "mainFrame">;
 
 /// Elements whose own value can be read (no label is followed).
 const VALUE_FIELD = "input, textarea, select";
@@ -130,7 +132,9 @@ async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyRes
     }
     case "visible_text": {
       const pattern = textPattern(probe.text);
-      const count = await countVisible(page.frames().map((frame) => frame.getByText(pattern)));
+      // SG-000122: the main frame only; a text that only a child frame
+      // holds is not found.
+      const count = await countVisible([page.mainFrame().getByText(pattern)]);
       return { result: "visible", count };
     }
     case "value": {
