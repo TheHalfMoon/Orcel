@@ -37,13 +37,16 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 
 | Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `browser_check` | `browser.form/check` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id |
 | `browser_click` | `browser.dom/click` | network | SOFT | local-only | no | no | no | yes | the opened URL, status and generation |
 | `browser_download` | `browser.download/download` | network | SOFT | local-only | no | no | no | yes | the committed file's name, SHA-256 and size; at most the transfer bound written, create-only |
 | `browser_download_preview` | `browser.download/preview` | preview | none | local-only | yes | no | yes | no | the link's origin, file name and digest, the folder and the file name; writes nothing |
+| `browser_enter` | `browser.form/enter` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id |
 | `browser_fill` | `browser.dom/fill` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id; never the value |
 | `browser_navigate` | `browser.navigation/navigate` | network | SOFT | local-only | no | no | no | yes | the committed URL, status and generation |
 | `browser_observe` | `browser.snapshot/observe` | read | none | local-only | yes | no | yes | no | one frame of node identities and keyed digests; no page text |
 | `browser_page_open` | `browser.page/open` | read | none | local-only | yes | no | no | no | one page id and its generation |
+| `browser_select` | `browser.form/select` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id; never the option label |
 | `browser_verify` | `browser.verify/check` | read | none | local-only | yes | no | yes | no | at most 16 pass or fail results with fixed evidence words and counts, the committed URL and a report digest; no page text, name or value |
 | `browser_wait_text` | `browser.wait/text` | read | none | local-only | yes | no | yes | no | whether the text appeared or disappeared in time; no page text |
 | `clipboard_read` | `clipboard/read` | clipboard | SOFT | local-only | yes | no | yes | no | one text sample of at most 64 KiB |

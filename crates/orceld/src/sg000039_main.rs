@@ -2755,7 +2755,7 @@ mod sg000055_envelope_tests {
                 json!({"page_id": "pg-a1", "node_id": "d1-e2", "file_name": "r.pdf", "expected_generation": 1}),
             ),
         ];
-        // Slice 3c's six; SG-000122 slice A3's three are covered below.
+        // Slice 3c's six; SG-000122's six (slices A3 and A4) are covered below.
         assert_eq!(
             shapes.len(),
             profile_gate::LIVE_BROWSER_SHAPES.len() - profile_gate::SG122_MCP_SHAPES.len()
@@ -2950,15 +2950,16 @@ mod sg000055_envelope_tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// SG-000122 slice A3: the three shapes that have MCP tools now
-    /// (`browser_fill`, `browser_wait_text`, `browser_verify`) are in the
+    /// SG-000122 slices A3 and A4: the grain's six shapes, each with an MCP
+    /// tool (`browser_fill`, `browser_wait_text`, `browser_verify`, then
+    /// `browser_select`, `browser_check` and `browser_enter`), are in the
     /// gate's MCP table and, with exactly the arguments those tools send
     /// (`apps/orcel-mcp/src/browser-live.test.ts`), pass the gate and the live
     /// policy and reach A2's live dispatch: in every build without the live
     /// browser, its own typed answer, before any approval is asked for (the
     /// broker here would deny anything it were asked).
     #[test]
-    fn sg122_a3_mcp_shapes_route_to_the_live_dispatch() {
+    fn sg122_mcp_shapes_route_to_the_live_dispatch() {
         let (policy, audit, root) = fixture();
         let workspaces =
             remote_lease::WorkspaceSet::from_pairs(&[("default".into(), root.join("workspace"))]);
@@ -2985,12 +2986,27 @@ mod sg000055_envelope_tests {
                     {"kind": "url_is", "url": "https://example.org/done"}
                 ], "expected_generation": 1}),
             ),
+            // Slice A4: one option label, a checked state, and Enter with no key.
+            (
+                "browser.form",
+                "select",
+                json!({"page_id": "pg-a1", "node_id": "d1-e3", "option": "Porto", "expected_generation": 1}),
+            ),
+            (
+                "browser.form",
+                "check",
+                json!({"page_id": "pg-a1", "node_id": "d1-e4", "checked": true, "expected_generation": 1}),
+            ),
+            (
+                "browser.form",
+                "enter",
+                json!({"page_id": "pg-a1", "node_id": "d1-e2", "expected_generation": 1}),
+            ),
         ];
         assert_eq!(shapes.len(), profile_gate::SG122_MCP_SHAPES.len());
         for (capability, operation, arguments) in shapes {
             assert!(profile_gate::SG122_MCP_SHAPES.contains(&(capability, operation)));
             assert!(profile_gate::LIVE_BROWSER_SHAPES.contains(&(capability, operation)));
-            assert!(!profile_gate::LIVE_FORM_SHAPES.contains(&(capability, operation)));
             let mut live = request(capability, operation, "default");
             live.target = None;
             live.arguments = arguments;

@@ -918,13 +918,16 @@ test("scope to tool matrix covers exactly the canonical catalog with default den
     CANONICAL_TOOL_NAMES.filter((tool) => !LOCAL_ONLY_TOOL_NAMES.includes(tool)).sort()
   );
   assert.deepEqual([...LOCAL_ONLY_TOOL_NAMES].sort(), [
+    "browser_check",
     "browser_click",
     "browser_download",
     "browser_download_preview",
+    "browser_enter",
     "browser_fill",
     "browser_navigate",
     "browser_observe",
     "browser_page_open",
+    "browser_select",
     "browser_verify",
     "browser_wait_text",
     "clipboard_read",

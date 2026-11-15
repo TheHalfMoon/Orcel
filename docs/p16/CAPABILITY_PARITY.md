@@ -32,7 +32,7 @@ Totals: implemented_exposed: 24, implemented_hidden: 0, missing: 1, intentionall
 | `git_read` | implemented_exposed | `git_status`, `git_diff`, `git_log` |
 | `git_local_mutation` | implemented_exposed | `git_branch_create`, `git_stage`, `git_unstage`, `git_commit` |
 | `git_remote` | implemented_exposed | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` |
-| `browser_structured` | implemented_exposed | `browser_click`, `browser_download`, `browser_download_preview`, `browser_fill`, `browser_navigate`, `browser_observe`, `browser_page_open`, `browser_verify`, `browser_wait_text` (nine live isolated-browser tools under the browser_structured profile, selected by local configuration only: SG-000108's six and SG-000122 slice A3's fill, text wait and verifier; a real browser only in live-browser-dev builds on Windows, release builds answer typed unavailable until SG-000106 (docs/security/SG-000108_PRODUCT_CALLER.md)) |
+| `browser_structured` | implemented_exposed | `browser_check`, `browser_click`, `browser_download`, `browser_download_preview`, `browser_enter`, `browser_fill`, `browser_navigate`, `browser_observe`, `browser_page_open`, `browser_select`, `browser_verify`, `browser_wait_text` (twelve live isolated-browser tools under the browser_structured profile, selected by local configuration only: SG-000108's six, SG-000122 slice A3's fill, text wait and verifier, and slice A4's select, check and Enter; a real browser only in live-browser-dev builds on Windows, release builds answer typed unavailable until SG-000106 (docs/security/SG-000108_PRODUCT_CALLER.md)) |
 | `desktop_observe` | implemented_exposed | `desktop_window_list`, `desktop_window_tree` (read-only window listing and bounded UI Automation trees in the caller's interactive session (SG-000063)) |
 | `desktop_act` | implemented_exposed | `desktop_element_invoke`, `desktop_element_set_value`, `desktop_element_select`, `desktop_element_toggle`, `desktop_element_scroll`, `desktop_input_execute`, `desktop_window_action` (SG-000095 Full User desktop control: semantic UIA is preferred, raw input is bounded and approval/lease/freshness/human-interruption gated, and no remote/admin widening is introduced.) |
 | `screenshots` | implemented_exposed | `desktop_window_capture` (SG-000095 exact-window capture through the private Computer Host; no whole-desktop, monitor, region, recording, or ffmpeg widening.) |
@@ -54,7 +54,7 @@ Totals: implemented_exposed: 24, implemented_hidden: 0, missing: 1, intentionall
 
 ## Capability shapes
 
-Totals: implemented_exposed: 54, implemented_hidden: 4, missing: 0, intentionally_denied: 21.
+Totals: implemented_exposed: 57, implemented_hidden: 4, missing: 0, intentionally_denied: 21.
 
 | Shape | Status | MCP tool, owner, or reason |
 | --- | --- | --- |
@@ -94,6 +94,9 @@ Totals: implemented_exposed: 54, implemented_hidden: 4, missing: 0, intentionall
 | `browser.dom/fill` | implemented_exposed | `browser_fill` |
 | `browser.wait/text` | implemented_exposed | `browser_wait_text` |
 | `browser.verify/check` | implemented_exposed | `browser_verify` |
+| `browser.form/select` | implemented_exposed | `browser_select` |
+| `browser.form/check` | implemented_exposed | `browser_check` |
+| `browser.form/enter` | implemented_exposed | `browser_enter` |
 | `browser.download/preview` | implemented_exposed | `browser_download_preview` |
 | `browser.download/download` | implemented_exposed | `browser_download` |
 | `browser.upload/preview` | intentionally_denied | not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4) |

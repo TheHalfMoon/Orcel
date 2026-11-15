@@ -225,6 +225,24 @@
       "mcp_tool": "browser_verify"
     },
     {
+      "capability": "browser.form",
+      "operation": "select",
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_select"
+    },
+    {
+      "capability": "browser.form",
+      "operation": "check",
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_check"
+    },
+    {
+      "capability": "browser.form",
+      "operation": "enter",
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_enter"
+    },
+    {
       "capability": "browser.download",
       "operation": "preview",
       "status": "implemented_exposed",
@@ -648,15 +666,18 @@
       "id": "browser_structured",
       "status": "implemented_exposed",
       "owner_grain": "SG-000108",
-      "note": "nine live isolated-browser tools under the browser_structured profile, selected by local configuration only: SG-000108's six and SG-000122 slice A3's fill, text wait and verifier; a real browser only in live-browser-dev builds on Windows, release builds answer typed unavailable until SG-000106 (docs/security/SG-000108_PRODUCT_CALLER.md)",
+      "note": "twelve live isolated-browser tools under the browser_structured profile, selected by local configuration only: SG-000108's six, SG-000122 slice A3's fill, text wait and verifier, and slice A4's select, check and Enter; a real browser only in live-browser-dev builds on Windows, release builds answer typed unavailable until SG-000106 (docs/security/SG-000108_PRODUCT_CALLER.md)",
       "via": [
+        "browser_check",
         "browser_click",
         "browser_download",
         "browser_download_preview",
+        "browser_enter",
         "browser_fill",
         "browser_navigate",
         "browser_observe",
         "browser_page_open",
+        "browser_select",
         "browser_verify",
         "browser_wait_text"
       ]

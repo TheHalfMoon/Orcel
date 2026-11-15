@@ -79,7 +79,7 @@ Local MCP clients get the default `desktop_structured` profile: exactly the 45 t
 | Git (network) | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` | local approval; see limitations |
 | Processes | `process_spawn` | local approval; see limitations |
 
-Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: every desktop, clipboard, network, search and report task tool is local-only and cannot be reached remotely. The nine live browser tools (open, navigate, observe, link click, download preview and download, and, from SG-000122, form fill, text wait and verify) are served only under the separate `browser_structured` profile of a Windows development build; release builds serve no browser automation.
+Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: every desktop, clipboard, network, search and report task tool is local-only and cannot be reached remotely. The twelve live browser tools (open, navigate, observe, link click, download preview and download, and, from SG-000122, form fill, option select, checkbox or radio check, Enter, text wait and verify) are served only under the separate `browser_structured` profile of a Windows development build; release builds serve no browser automation.
 
 ### Current limitations
 

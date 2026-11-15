@@ -298,7 +298,7 @@ fn profile_parity_is_exact_with_no_implicit_widening() {
 }
 
 #[test]
-fn tool_parity_live_set_is_nine_admissible_shapes() {
+fn tool_parity_live_set_is_twelve_admissible_shapes() {
     for (capability, operation) in QUALIFIED_BROWSER_SHAPES {
         let tool = format!("{capability}/{operation}");
         assert!(
@@ -309,13 +309,14 @@ fn tool_parity_live_set_is_nine_admissible_shapes() {
     }
     // SG-000108 slice 3c: six live tools, each forwarding one qualified
     // shape. SG-000122 slice A3 adds fill (one of the twelve) and the text
-    // wait and the verifier (admitted beside the twelve); the uploads and
+    // wait and the verifier (admitted beside the twelve), and slice A4
+    // select, check and Enter (admitted beside them too); the uploads and
     // the other model-only shapes are not among them.
     let live: HashSet<(&str, &str)> = orcel_browser_host::LIVE_BROWSER_TOOL_SHAPES
         .iter()
         .map(|(_, capability, operation)| (*capability, *operation))
         .collect();
-    assert_eq!(live.len(), 9);
+    assert_eq!(live.len(), 12);
     for shape in &live {
         assert!(
             QUALIFIED_BROWSER_SHAPES.contains(shape)
@@ -324,16 +325,19 @@ fn tool_parity_live_set_is_nine_admissible_shapes() {
         );
     }
     assert!(live.contains(&("browser.dom", "fill")));
+    // Every shape SG-000122 admitted beside the twelve is live since A4.
+    for admitted in orcel_browser_host::SG122_ADMITTED_SHAPES {
+        assert!(live.contains(admitted), "{admitted:?}");
+    }
     for model_only in [
         ("browser.upload", "preview"),
         ("browser.upload", "submit"),
         ("browser.profile", "status"),
         ("browser.destination", "validate"),
         ("browser.navigation", "preview"),
-        // SG-000122 slice A4's shapes have no tool yet.
-        ("browser.form", "select"),
-        ("browser.form", "check"),
-        ("browser.form", "enter"),
+        // The closed-grain press and select stay denied.
+        ("browser.dom", "press"),
+        ("browser.dom", "select"),
     ] {
         assert!(!live.contains(&model_only), "{model_only:?}");
     }
