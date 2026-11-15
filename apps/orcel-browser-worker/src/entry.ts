@@ -26,6 +26,7 @@ import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structure
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
 import { approvedElement, isOcclusion } from "./actions/targets.js";
 import { clickAndLoad } from "./actions/click-load.js";
+import { enterAndSettle } from "./actions/enter-load.js";
 import { classifyControls, formAction } from "./actions/form.js";
 import { nameControls } from "./actions/names.js";
 import { waitForText } from "./actions/wait.js";
@@ -303,6 +304,9 @@ const playwrightLauncher: Launcher = {
       async formAction(ref, act, target, acceptConfirm) {
         if (acceptConfirm !== undefined) dialogs.arm(acceptConfirm, primary);
         try {
+          // SG-000122 slice A6: an Enter may submit; what the main frame did
+          // after the key is reported (the host decided every request).
+          if (act.action === "enter") return await enterAndSettle(primary, () => formAction(primary, ref, act, target));
           await formAction(primary, ref, act, target);
         } finally {
           dialogs.disarm();

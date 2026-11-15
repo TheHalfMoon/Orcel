@@ -214,7 +214,7 @@ export type WorkerFrame =
   | { frame: "downloaded"; dl_id: number; url: string; name: string; media: string; bytes: number }
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
   | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
-  | { frame: "form_done"; form_id: number; url: string }
+  | { frame: "form_done"; form_id: number; url: string; navigated?: boolean }
   | { frame: "waited"; wait_id: number; url: string; met: boolean }
   | { frame: "uploaded"; up_id: number; url: string }
   | { frame: "dialogs_seen"; dlg_id: number; dialogs: DismissedDialog[]; truncated: boolean }

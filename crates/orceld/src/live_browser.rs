@@ -26,7 +26,7 @@
 
 use orcel_approval::{now_ms, ApprovalBroker, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
 use orcel_browser_host::worker_host::{
-    BindAction, BoundForm, WireCheck, WireNode, WorkerHostReply, WorkerHostRequest,
+    BindAction, BoundForm, FormNavigation, WireCheck, WireNode, WorkerHostReply, WorkerHostRequest,
 };
 use orcel_browser_host::{Supervisor, WorkerHostLaunch};
 use orcel_contracts::FailureCode;
@@ -478,6 +478,10 @@ pub fn failure_for(code: &str) -> FailureCode {
         // SG-000122: the lifetime's cap on distinct awaited texts; the page
         // was not probed.
         "unavailable:textlimitreached" => FailureCode::OutputLimit,
+        // SG-000122 slice A6: an Enter's page tried to open a document off
+        // the Enter route rule (another origin, a redirect off it, a frame
+        // or a popup); the route rule refused it before it left.
+        "unavailable:submissionrefused" => FailureCode::CapabilityDenied,
         code if code.starts_with("unavailable:") => FailureCode::ProviderUnavailable,
         _ => FailureCode::InternalError,
     }
@@ -705,6 +709,9 @@ pub(crate) fn form_outcome(outcome: &DispatchOutcome) -> &'static str {
                     | "unavailable:targetstale"
                     | "unavailable:targetoccluded"
                     | "unavailable:actionfailed"
+                    // SG-000122 slice A6: the submission's document was
+                    // refused at the route before it left.
+                    | "unavailable:submissionrefused"
             ) =>
         {
             "failed"
@@ -940,6 +947,9 @@ impl LiveBrowser {
                         return Err(from_page(error));
                     }
                 }
+                // The page belongs to the workspace that opened it, as an
+                // `open_page` page does (the form actions check it).
+                self.page_workspace = Some(workspace.id.clone());
                 self.lifetime = Some(lifetime.clone());
                 Ok(lifetime)
             }
@@ -1346,7 +1356,10 @@ impl LiveBrowser {
     /// into one single-use digest with the page, its generation, the
     /// lifetime and the host binding; the step is journaled before the
     /// prompt and closed `done`, `failed` or `unknown`, never retried.
-    /// Returns the committed URL (the same document) and the broker record.
+    /// Returns the committed URL, the broker record and what happened to
+    /// the document: the same document, or (slice A6, Enter only) the one
+    /// same-origin document its submission committed, which the page store
+    /// follows as a new generation.
     pub fn form_action(
         &mut self,
         workspace: &Workspace,
@@ -1355,7 +1368,7 @@ impl LiveBrowser {
         page_id: &str,
         expected_generation: u64,
         action: BindAction,
-    ) -> Result<(String, String), ProviderError> {
+    ) -> Result<(String, String, FormNavigation), ProviderError> {
         self.live_page(workspace, page_id, expected_generation)?;
         let lifetime = self.lifetime.clone().ok_or_else(|| {
             ProviderError::new(
@@ -1444,8 +1457,30 @@ impl LiveBrowser {
             .map(|last| form_outcome(&last.outcome))
             .unwrap_or("unknown");
         intent.settle(outcome);
-        match reply? {
-            WorkerHostReply::FormDone { url } => Ok((url, record_id)),
+        let reply = match reply {
+            Ok(reply) => reply,
+            Err(error) => {
+                // A refused or unknown step leaves nothing observed to act on.
+                self.observed_roles.clear();
+                return Err(error);
+            }
+        };
+        match reply {
+            WorkerHostReply::FormDone {
+                url,
+                navigation: FormNavigation::None,
+            } => Ok((url, record_id, FormNavigation::None)),
+            WorkerHostReply::FormDone {
+                url,
+                navigation: FormNavigation::DocumentCommitted,
+            } => {
+                // SG-000122 slice A6: the page store follows the committed
+                // document (a new generation), so every earlier approval and
+                // observation of the page goes stale.
+                self.observed_roles.clear();
+                self.follow(&url)?;
+                Ok((url, record_id, FormNavigation::DocumentCommitted))
+            }
             _ => Err(ProviderError::new(
                 FailureCode::InternalError,
                 "unexpected browser host reply",
@@ -2125,6 +2160,10 @@ mod tests {
             ("unavailable:targetstale", FailureCode::TargetStale),
             ("unavailable:targetoccluded", FailureCode::TargetStale),
             ("unavailable:textlimitreached", FailureCode::OutputLimit),
+            (
+                "unavailable:submissionrefused",
+                FailureCode::CapabilityDenied,
+            ),
             (
                 "unavailable:managedpolicy",
                 FailureCode::ProviderUnavailable,
@@ -2809,6 +2848,7 @@ mod tests {
             "unavailable:targetstale",
             "unavailable:targetoccluded",
             "unavailable:actionfailed",
+            "unavailable:submissionrefused",
         ] {
             assert_eq!(
                 form_outcome(&DispatchOutcome::Refused(code.into())),
@@ -3144,6 +3184,264 @@ mod native {
             stored.get(&page.page_id).map(|page| page.state),
             Some(PageState::Closed)
         );
+    }
+
+    /// The node of `role` whose untrusted name (observation contract 2) is
+    /// exactly `name` (else a marker id no host knows, which the next
+    /// action refuses as stale: the sweep keeps panics out of this module).
+    fn form_node(nodes: &[WireNode], role: &str, name: &str) -> String {
+        let mut stack: Vec<&WireNode> = nodes.iter().collect();
+        let mut found = None;
+        while let Some(node) = stack.pop() {
+            let named = node
+                .untrusted_name
+                .as_ref()
+                .is_some_and(|shown| shown.text == name);
+            if node.role == role && named {
+                found = Some(node.node_id.clone());
+                break;
+            }
+            stack.extend(node.children.iter());
+        }
+        found.unwrap_or_else(|| format!("no {role} named {name}"))
+    }
+
+    fn form_request(operation: &str) -> orcel_contracts::RequestEnvelope {
+        orcel_contracts::RequestEnvelope {
+            version: 1,
+            request_id: format!("sg122-native-{operation}"),
+            client_session_id: "sg122-native".into(),
+            workspace_id: "ws-sg108-live".into(),
+            capability: if operation == "fill" {
+                "browser.dom"
+            } else {
+                "browser.form"
+            }
+            .into(),
+            operation: operation.into(),
+            target: None,
+            arguments: serde_json::Value::Null,
+        }
+    }
+
+    /// SG-000122 slice A6, the native run: on the controlled HTTPS fixture,
+    /// orceld drives the worker-mode host through observe (form-control
+    /// names), fill, select, check and an Enter that submits the form to its
+    /// own origin, then waits for and verifies the result page; a stale
+    /// generation is refused before any prompt, and a form whose action
+    /// leaves the origin is refused typed. Every action is approved through
+    /// the real broker over its own ledger; the person's SOFT consent at the
+    /// Windows prompt is SCRIPTED here (approve, and record what the prompt
+    /// showed). The founder-present run with real prompts is separate
+    /// (docs/orcel/implementation-readiness/prep/SG-000122.md, "Founder-present
+    /// run"), pending.
+    #[test]
+    #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+    fn sg122_the_form_journey_runs_under_the_broker_with_recorded_decisions() {
+        let fixture = Fixture::start();
+        let scene = Scene::new("form");
+        let mut browser = scene.browser();
+        if open(&mut browser, &scene, &fixture).is_none() {
+            assert!(browser.shutdown());
+            return;
+        }
+        let ledger = scene.root.join("approvals.json");
+        let prompts: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let seen = prompts.clone();
+        // SCRIPTED consent: every prompt approved, its dialog text kept.
+        let approve = LocalApprovalBroker::with_path_and_soft_decider(
+            &ledger,
+            Arc::new(NoPresenceVerifier),
+            Arc::new(move |prompt: &ApprovalPrompt| {
+                if let Ok(mut seen) = seen.lock() {
+                    seen.push(orcel_approval::soft_dialog_text(prompt));
+                }
+                ApprovalDecision::Approved
+            }),
+        );
+        let form_url = "https://fixture.test/enter-form";
+        browser
+            .navigate(&scene.workspace, &approve, form_url)
+            .expect("approved navigation");
+        let page = browser.page().expect("page").clone();
+        assert_eq!(page.generation, 1);
+        let nodes = browser.observe().expect("observe");
+        let full_name = form_node(&nodes, "textbox", "Full name");
+        let city = form_node(&nodes, "combobox", "City");
+        let gift = form_node(&nodes, "checkbox", "Gift wrap");
+        let email = form_node(&nodes, "textbox", "Email");
+        let act = |browser: &mut LiveBrowser, generation: u64, action: BindAction| {
+            let operation = match &action {
+                BindAction::Fill { .. } => "fill",
+                BindAction::Select { .. } => "select",
+                BindAction::Check { .. } => "check",
+                _ => "enter",
+            };
+            browser.form_action(
+                &scene.workspace,
+                &approve,
+                &form_request(operation),
+                &page.page_id,
+                generation,
+                action,
+            )
+        };
+        for action in [
+            BindAction::Fill {
+                node_id: full_name.clone(),
+                role: "textbox".into(),
+                value: "Ada Lovelace".into(),
+            },
+            BindAction::Select {
+                node_id: city.clone(),
+                role: "combobox".into(),
+                label: "Porto".into(),
+            },
+            BindAction::Check {
+                node_id: gift.clone(),
+                role: "checkbox".into(),
+                checked: true,
+            },
+            BindAction::Fill {
+                node_id: email.clone(),
+                role: "textbox".into(),
+                value: "ada@example.test".into(),
+            },
+        ] {
+            let (url, _, navigation) = act(&mut browser, 1, action).expect("form action");
+            assert_eq!((url.as_str(), navigation), (form_url, FormNavigation::None));
+        }
+        assert_eq!(browser.page().expect("page").generation, 1);
+        // Enter submits the order form to its own origin: the page store
+        // follows the committed document.
+        let (url, enter_record, navigation) = act(
+            &mut browser,
+            1,
+            BindAction::PressEnter {
+                node_id: email.clone(),
+                role: "textbox".into(),
+            },
+        )
+        .expect("approved Enter");
+        assert_eq!(url, "https://fixture.test/order");
+        assert_eq!(navigation, FormNavigation::DocumentCommitted);
+        let placed = browser.page().expect("page").clone();
+        assert_eq!(placed.generation, 2);
+        assert_eq!(placed.current_origin, "https://fixture.test:443");
+        // The old generation is stale: refused before any prompt.
+        let asked = prompts.lock().expect("prompts").len();
+        let stale = act(
+            &mut browser,
+            1,
+            BindAction::Fill {
+                node_id: full_name.clone(),
+                role: "textbox".into(),
+                value: "Eve".into(),
+            },
+        )
+        .expect_err("stale generation");
+        assert_eq!(stale.code, FailureCode::TargetStale);
+        assert_eq!(prompts.lock().expect("prompts").len(), asked);
+        // Wait for, then verify, the result page (read-only, no approval).
+        let summary = "Order placed for Ada Lovelace in Porto, gift wrap yes";
+        assert!(browser
+            .wait_text(&scene.workspace, &page.page_id, 2, summary, true, 5_000)
+            .expect("wait"));
+        let verified = browser
+            .verify(
+                &scene.workspace,
+                &page.page_id,
+                2,
+                vec![
+                    orcel_browser_host::Postcondition::UrlIs {
+                        url: "https://fixture.test/order".into(),
+                    },
+                    orcel_browser_host::Postcondition::TextVisible {
+                        text: summary.into(),
+                    },
+                ],
+            )
+            .expect("verify");
+        assert!(verified.verified, "{:?}", verified.results);
+        // A form whose action is another origin: refused typed at the route.
+        browser
+            .navigate(&scene.workspace, &approve, form_url)
+            .expect("approved navigation");
+        assert_eq!(browser.page().expect("page").generation, 3);
+        let nodes = browser.observe().expect("observe");
+        let coupon = form_node(&nodes, "textbox", "Coupon");
+        act(
+            &mut browser,
+            3,
+            BindAction::Fill {
+                node_id: coupon.clone(),
+                role: "textbox".into(),
+                value: "SAVE10".into(),
+            },
+        )
+        .expect("fill");
+        let refused = act(
+            &mut browser,
+            3,
+            BindAction::PressEnter {
+                node_id: coupon,
+                role: "textbox".into(),
+            },
+        )
+        .expect_err("a submission off the origin");
+        assert_eq!(refused.code, FailureCode::CapabilityDenied);
+        assert!(
+            refused.message.contains("unavailable:submissionrefused"),
+            "{}",
+            refused.message
+        );
+        // What the person was shown: the values and the option exactly, the
+        // field names labelled page-supplied, and Enter's warning.
+        let prompts = prompts.lock().expect("prompts").clone();
+        assert_eq!(prompts.len(), 9, "two navigations, seven form actions");
+        let enter_prompts: Vec<&String> = prompts
+            .iter()
+            .filter(|text| text.contains("press Enter"))
+            .collect();
+        assert_eq!(enter_prompts.len(), 2);
+        assert!(enter_prompts.iter().all(|text| text.contains(
+            "Enter may submit or send what the page holds, to the page's admitted origin"
+        )));
+        for shown in ["Ada Lovelace", "Porto", "ada@example.test", "SAVE10"] {
+            assert!(
+                prompts
+                    .iter()
+                    .any(|text| text.lines().any(|line| line == shown)),
+                "{shown} was not shown on its own line"
+            );
+        }
+        assert!(prompts
+            .iter()
+            .any(|text| text.contains("(page-supplied)") && text.contains("Gift wrap")));
+        // The ledger recorded each decision, each consumed once; the host
+        // executed every one but the refused submission.
+        let records = approve.history(20);
+        assert_eq!(records.len(), 9, "{records:?}");
+        assert!(records
+            .iter()
+            .all(|record| record.consumed && record.decision == RecordedDecision::Approved));
+        let outcomes = browser.outcomes();
+        assert!(outcomes
+            .iter()
+            .any(|o| o.record_id == enter_record && o.outcome == DispatchOutcome::Executed));
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|o| matches!(&o.outcome, DispatchOutcome::Refused(code) if code == "unavailable:submissionrefused"))
+                .count(),
+            1
+        );
+        println!(
+            "SG122-EVIDENCE orceld live form journey: observe, fill, select, check and Enter approved through the broker (consent scripted), submission committed generation 2 on the origin, waited and verified (evidence {}); stale generation and cross-origin action refused; {} decisions recorded",
+            verified.evidence_sha256,
+            records.len()
+        );
+        assert!(browser.shutdown(), "the host family stayed");
     }
 
     #[test]

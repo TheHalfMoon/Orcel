@@ -105,8 +105,8 @@ class FakeEngine implements EngineSession {
     return this.waitBehavior();
   }
   formActions: Array<{ ref: string; act: FormAction; acceptConfirm?: string }> = [];
-  formBehavior: () => Promise<{ url: string }> = async () => ({ url: "https://fixture.test/form" });
-  formAction(ref: string, act: FormAction, _target?: unknown, acceptConfirm?: string): Promise<{ url: string }> {
+  formBehavior: () => Promise<{ url: string; navigated?: boolean }> = async () => ({ url: "https://fixture.test/form" });
+  formAction(ref: string, act: FormAction, _target?: unknown, acceptConfirm?: string): Promise<{ url: string; navigated?: boolean }> {
     this.formActions.push(acceptConfirm === undefined ? { ref, act } : { ref, act, acceptConfirm });
     return this.formBehavior();
   }
@@ -475,6 +475,26 @@ test("BR-02: a form action runs outside the queue, is busy during a navigation, 
   await worker.receive({ frame: "form_action", form_id: 4, action: "select", ref: "e6", values: ["Lisbon"] });
   assert.deepEqual(sent.at(-1), { frame: "form_failed", form_id: 4, reason: "busy" });
   release();
+});
+
+test("SG-000122 A6: an Enter says whether its submission committed a document; other actions never do", async () => {
+  const engine = new FakeEngine();
+  const { worker, sent } = harness(async () => engine);
+  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive(validLaunch());
+  engine.formBehavior = async () => ({ url: "https://fixture.test/order", navigated: true });
+  await worker.receive({ frame: "form_action", form_id: 1, action: "enter", ref: "e4" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 1, url: "https://fixture.test/order", navigated: true });
+  engine.formBehavior = async () => ({ url: "https://fixture.test/form" });
+  await worker.receive({ frame: "form_action", form_id: 2, action: "enter", ref: "e4" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 2, url: "https://fixture.test/form", navigated: false });
+  // A fill's reply carries no navigation, whatever the engine claims.
+  engine.formBehavior = async () => ({ url: "https://fixture.test/form", navigated: true });
+  await worker.receive({ frame: "form_action", form_id: 3, action: "fill", ref: "e4", value: "Ada" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 3, url: "https://fixture.test/form" });
 });
 
 test("BR-02: a bounded wait runs outside the queue, one at a time, and reports whether it was met", async () => {

@@ -52,8 +52,9 @@ use std::path::{Path, PathBuf};
 /// and download, and binds navigation; 4 adds `open_public` (slice 3b-ii);
 /// 5 adds SG-000122 slice A1's form actions, text waits and verification;
 /// 6 is observation contract 2 (SG-000122 slice A5): an observed node may
-/// carry `untrusted_name`.
-pub const WORKER_HOST_GENERATION: u32 = 6;
+/// carry `untrusted_name`; 7 (SG-000122 slice A6): `form_done` says whether
+/// an Enter's submission committed a new document (`navigation`).
+pub const WORKER_HOST_GENERATION: u32 = 7;
 
 /// The observation contract an `observed` reply follows. 1 (SG-000108 slice
 /// 1a): node identities, roles and keyed digests only; no name, value or
@@ -414,10 +415,14 @@ pub enum WorkerHostReply {
         bytes: u64,
         source_url: String,
     },
-    /// SG-000122: an approved form action ran; the page is still this
-    /// committed document (its observation stays valid).
+    /// SG-000122: an approved form action ran. With `navigation: none` the
+    /// page is still this committed document (its observation stays
+    /// valid); with `document_committed` (slice A6, Enter only) its
+    /// submission committed exactly one new document on the lifetime's
+    /// origin, `url`: every earlier observation is stale.
     FormDone {
         url: String,
+        navigation: FormNavigation,
     },
     /// SG-000122: whether the awaited text appeared (or went) in time.
     Waited {
@@ -440,6 +445,17 @@ pub enum WorkerHostReply {
     Error {
         code: String,
     },
+}
+
+/// SG-000122 slice A6: what an approved form action did to the page's
+/// document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FormNavigation {
+    /// The page stayed on its committed document.
+    None,
+    /// An Enter's submission committed one new same-origin document.
+    DocumentCommitted,
 }
 
 /// What Orcel supervision passes the host in worker mode. Never caller
@@ -769,7 +785,19 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
                 .live_form_action(&target, &mut approval, &input, revision, &workspace)
             {
                 // The same document: its node identities stay valid.
-                Ok(outcome) => WorkerHostReply::FormDone { url: outcome.url },
+                Ok(outcome) if outcome.committed.is_none() => WorkerHostReply::FormDone {
+                    url: outcome.url,
+                    navigation: FormNavigation::None,
+                },
+                // SG-000122 slice A6: an Enter's submission committed a new
+                // document; nothing observed before is valid.
+                Ok(outcome) => {
+                    live.observed = None;
+                    WorkerHostReply::FormDone {
+                        url: outcome.url,
+                        navigation: FormNavigation::DocumentCommitted,
+                    }
+                }
                 Err(err) => {
                     // Nothing observed is trusted until the page is observed
                     // again.
@@ -1408,8 +1436,36 @@ mod tests {
     /// other key; each round-trips.
     #[test]
     fn sg122_the_form_vocabulary_is_closed_and_round_trips() {
-        assert_eq!(WORKER_HOST_GENERATION, 6);
+        assert_eq!(WORKER_HOST_GENERATION, 7);
         assert_eq!(OBSERVATION_CONTRACT, 2);
+        // SG-000122 slice A6: the reply names what happened to the document,
+        // from a closed vocabulary.
+        for (text, navigation) in [
+            (
+                r#"{"frame":"form_done","url":"https://fixture.test/form","navigation":"none"}"#,
+                FormNavigation::None,
+            ),
+            (
+                r#"{"frame":"form_done","url":"https://fixture.test/order","navigation":"document_committed"}"#,
+                FormNavigation::DocumentCommitted,
+            ),
+        ] {
+            let reply: WorkerHostReply = serde_json::from_str(text).expect(text);
+            assert!(
+                matches!(reply, WorkerHostReply::FormDone { navigation: n, .. } if n == navigation),
+                "{text}"
+            );
+            assert_eq!(serde_json::to_string(&reply).expect("json"), text);
+        }
+        for text in [
+            r#"{"frame":"form_done","url":"u"}"#,
+            r#"{"frame":"form_done","url":"u","navigation":"elsewhere"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<WorkerHostReply>(text).is_err(),
+                "{text}"
+            );
+        }
         for frame in [
             r#"{"frame":"form_action","action":{"kind":"press_enter","node_id":"d1-e2","role":"textbox","key":"Tab"},"record_id":"r","binding":"b"}"#,
             r#"{"frame":"form_action","action":{"kind":"press","node_id":"d1-e2","role":"textbox","key":"Enter"},"record_id":"r","binding":"b"}"#,
@@ -1684,6 +1740,13 @@ mod tests {
         assert_eq!(
             error_code(&HostError::Unavailable(UnavailableReason::TextLimitReached)),
             "unavailable:textlimitreached"
+        );
+        // SG-000122 slice A6: and so does a refused Enter submission.
+        assert_eq!(
+            error_code(&HostError::Unavailable(
+                UnavailableReason::SubmissionRefused
+            )),
+            "unavailable:submissionrefused"
         );
     }
 

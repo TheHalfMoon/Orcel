@@ -335,9 +335,12 @@ test("sg122 the A4 tool descriptions state the approval, the control and what En
     "may submit or send whatever the page's form holds",
     "the approval prompt warns of it",
     "the page's one admitted site",
-    "A submit that would open a new document is blocked (BR-02, until A6)",
-    "the reply may still say done",
-    "check the page with browser_verify"
+    // SG-000122 slice A6: the Enter route rule and what the reply says.
+    "exactly one new document may open, and only on the page's own origin",
+    "navigation document_committed with the page's new generation",
+    "navigation none means the page stayed on its document",
+    "check what the page did with browser_verify",
+    "is refused, never sent, and answers CAPABILITY_DENIED"
   ]) {
     assert.ok(enter.includes(phrase), `browser_enter: ${phrase}`);
   }

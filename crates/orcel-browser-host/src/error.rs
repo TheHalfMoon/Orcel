@@ -56,6 +56,12 @@ pub enum UnavailableReason {
     /// SG-000122: the browser lifetime already awaited or checked its cap of
     /// distinct texts; a new text is refused and the page is not probed.
     TextLimitReached,
+    /// SG-000122 slice A6: an approved Enter's page tried to open a document
+    /// the Enter route rule refuses (another origin, a redirect off the
+    /// origin, a second document, a frame or a popup). The request never
+    /// left; the page is no longer its observed document, so it must be
+    /// navigated again (approved) before anything else.
+    SubmissionRefused,
 }
 
 impl fmt::Display for UnavailableReason {
@@ -78,6 +84,10 @@ impl fmt::Display for UnavailableReason {
             Self::Cancelled => write!(f, "the browser operation was cancelled"),
             Self::TargetStale => write!(f, "the approved element is no longer on the page"),
             Self::TargetOccluded => write!(f, "another element covers the approved element"),
+            Self::SubmissionRefused => write!(
+                f,
+                "the page's submission left the admitted origin and was refused"
+            ),
             Self::TextLimitReached => write!(
                 f,
                 "this browser lifetime's limit of distinct awaited texts is reached"

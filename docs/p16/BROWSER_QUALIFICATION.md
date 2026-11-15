@@ -85,16 +85,24 @@ to the page generation, the control and the stated option, state or key, used on
 - `browser_check` sets one observed checkbox or radio input to a stated state (checked or unchecked).
 - `browser_enter` presses Enter, and only Enter (it takes no key), in one observed single-line text field as
   `browser_fill` defines it. Its prompt says that the page may submit or send what it holds; the lifetime's one
-  admitted site is the only place it can go. A submit that would open a new document is blocked (BR-02's
-  no-new-document rule for form actions, until slice A6 settles Enter's route); the reply may still say done with
-  an unchanged URL, so check the page with `browser_verify`.
+  admitted site is the only place it can go. Since slice A6 that is enforced by the Enter route rule: the page may
+  open one new top-level document, a GET or POST on its own origin, once, with redirects that stay on it. The reply
+  says `navigation: document_committed` with the page's new generation (observe again before acting), or
+  `navigation: none` when the page stayed on its document (check what it did with `browser_verify`). A submission
+  that would leave the origin, by its form's action, a redirect or a page script, is refused before it leaves and
+  answers `CAPABILITY_DENIED`; the page must then be navigated again. Fill, select and check still open no document.
 
 Each prompt shows the control's role and name labelled page-supplied. A radio can only be selected: `checked: false`
 on a radio is refused before any approval (the host's live check, and orceld's prompt builder again); to clear a
 radio, select another in its group. A checkbox may be set either way. Every SG-000122 schema, A3's three and A4's three, is strict: an unknown field (a key
 for Enter, a list of options for select, a selector or frame) is refused, never dropped.
 
-No native Windows run of these tools has been recorded yet (slice A6).
+The native Windows run (slice A6) is part of `npm run browser-launcher:native`, which Windows CI requires: on the
+loopback HTTPS fixture, orceld drives the worker-mode host through observe, fill, select, check, an Enter that submits
+to the page's own origin, a text wait and the verifier, under the real broker and ledger with a **scripted** consent,
+and a stale generation and a cross-origin form are refused; a host-level test covers the GET, a field outside any form,
+and the redirect and script exits. A person answering the real prompt through a real MCP client is the founder-present
+run in `docs/orcel/implementation-readiness/prep/SG-000122.md`, which is pending.
 
 ## What remains true
 

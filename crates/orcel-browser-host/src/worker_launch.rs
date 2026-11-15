@@ -210,10 +210,39 @@ struct HeldUpload {
 /// BR-02: the longest bounded wait for text (mirrors the worker).
 pub const MAX_WAIT_MS: u64 = 8_000;
 
-/// BR-02: the document after an approved form action (the same document).
+/// BR-02: the document after an approved form action: the same document,
+/// or (SG-000122 slice A6, Enter only) the one same-origin document its
+/// submission committed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormOutcome {
     pub url: String,
+    /// SG-000122 slice A6: the document generation an Enter's submission
+    /// committed; `None` when the page stayed on its document.
+    pub committed: Option<u64>,
+}
+
+/// SG-000122 slice A6: what an approved Enter did, from the host's own
+/// record of the Enter route rule (`opened`), what the worker reports
+/// (`navigated`: the main frame committed a new document) and the URL before
+/// and after. Anything the two sides do not agree on is unknown.
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnterVerdict {
+    /// No document was requested and the page is where it was.
+    Unchanged,
+    /// The one admitted same-origin document was requested and committed.
+    Committed,
+    /// The page moved without the rule's document, or the sides disagree.
+    Unknown,
+}
+
+#[cfg(any(windows, test))]
+pub fn enter_verdict(opened: bool, navigated: bool, before: &str, after: &str) -> EnterVerdict {
+    match (opened, navigated) {
+        (true, true) => EnterVerdict::Committed,
+        (false, false) if before == after => EnterVerdict::Unchanged,
+        _ => EnterVerdict::Unknown,
+    }
 }
 
 /// A live observation: SG-000076 identities and the redacted, digested
@@ -560,6 +589,10 @@ pub(crate) enum WorkerReply {
     FormDone {
         form_id: u64,
         url: String,
+        /// SG-000122 slice A6, Enter only: the main frame committed a new
+        /// document after the key.
+        #[serde(default)]
+        navigated: bool,
     },
     Waited {
         wait_id: u64,
@@ -2232,6 +2265,15 @@ mod platform {
         /// document stays the same generation, so its node identities stay
         /// valid for verification (BR-07); a page whose URL changed is
         /// unverified.
+        ///
+        /// SG-000122 slice A6: an Enter instead runs under the Enter route
+        /// rule (`NavigationPolicy::expect_enter`): its page may open one
+        /// top-level document, a GET or POST on the committed origin, once.
+        /// That document is committed as the next generation (every node
+        /// observed before is forgotten) and `FormOutcome::committed` says
+        /// so; an Enter that opened nothing leaves the document as it was;
+        /// a refused document answers `SubmissionRefused`, and the page has
+        /// no committed document until it is navigated again.
         pub fn form_action(
             &mut self,
             target: &crate::actuation::ActuationTarget,
@@ -2277,7 +2319,12 @@ mod platform {
             {
                 return Err(HostError::Invalid("password-field filling denied".into()));
             }
-            self.policy.expect_no_document();
+            let entering = matches!(input, crate::actuation::FormInput::Enter);
+            if entering {
+                self.policy.expect_enter()?;
+            } else {
+                self.policy.expect_no_document();
+            }
             if let Err(error) = crate::actuation::dispatch(
                 target,
                 approval,
@@ -2286,7 +2333,7 @@ mod platform {
                 policy_revision,
                 workspace,
             ) {
-                self.policy.finish_activation();
+                self.finish_form_route(entering);
                 return Err(error);
             }
             self.next_form += 1;
@@ -2322,7 +2369,7 @@ mod platform {
                 name: named.then_some(approved_name.as_str()),
             });
             if let Err(error) = sent {
-                self.policy.finish_activation();
+                self.finish_form_route(entering);
                 return Err(error);
             }
             // The worker may now accept this confirm, once.
@@ -2330,13 +2377,73 @@ mod platform {
                 self.approved_confirms.push(message.to_owned());
             }
             let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
-            self.policy.finish_activation();
-            match reply? {
+            let route = self.finish_form_route(entering);
+            let reply = reply?;
+            let ours = matches!(
+                &reply,
+                WorkerReply::FormDone { form_id: done, .. }
+                    | WorkerReply::FormFailed { form_id: done, .. } if *done == form_id
+            );
+            if !ours {
+                // A reply for another request, or of another kind: the
+                // worker may still be acting, so the lifetime ends.
+                return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+            }
+            if route.refused {
+                // SG-000122 slice A6: the page tried to leave the rule; the
+                // request never left, but the page is no longer the
+                // observed document (the engine shows its error page), so
+                // nothing observed holds and nothing is committed.
+                self.host_nodes.clear();
+                self.host_tools.clear();
+                self.committed = None;
+                return Err(HostError::Unavailable(UnavailableReason::SubmissionRefused));
+            }
+            if entering && route.opened {
+                if let WorkerReply::FormFailed { .. } = reply {
+                    // The admitted document was requested, so the key acted:
+                    // whatever the worker saw after, the outcome is unknown.
+                    self.host_nodes.clear();
+                    self.host_tools.clear();
+                    return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
+                }
+            }
+            match reply {
                 WorkerReply::FormDone {
-                    form_id: done,
                     url: after,
-                } if done == form_id => {
-                    if after != url {
+                    navigated,
+                    ..
+                } if entering => match enter_verdict(route.opened, navigated, &url, &after) {
+                    EnterVerdict::Unchanged => Ok(FormOutcome {
+                        url: after,
+                        committed: None,
+                    }),
+                    EnterVerdict::Committed => {
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        if let Err(error) = self.policy.commit_page_initiated(&after) {
+                            self.committed = None;
+                            return Err(error);
+                        }
+                        let next = generation + 1;
+                        self.committed = Some((after.clone(), next));
+                        Ok(FormOutcome {
+                            url: after,
+                            committed: Some(next),
+                        })
+                    }
+                    EnterVerdict::Unknown => {
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown))
+                    }
+                },
+                WorkerReply::FormDone {
+                    url: after,
+                    navigated,
+                    ..
+                } => {
+                    if after != url || navigated {
                         // Applied, but the page moved itself (no document
                         // was allowed, so a history change): the outcome is
                         // unverified and nothing observed holds.
@@ -2344,12 +2451,12 @@ mod platform {
                         self.host_tools.clear();
                         return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
                     }
-                    Ok(FormOutcome { url: after })
+                    Ok(FormOutcome {
+                        url: after,
+                        committed: None,
+                    })
                 }
-                WorkerReply::FormFailed {
-                    form_id: done,
-                    reason,
-                } if done == form_id => Err(match reason.as_str() {
+                WorkerReply::FormFailed { reason, .. } => Err(match reason.as_str() {
                     // Refused before anything changed.
                     "denied" => HostError::Invalid(
                         "form action refused: not the right kind of control, or a secret field"
@@ -2374,6 +2481,17 @@ mod platform {
                 // A reply for another request, or of another kind: the
                 // worker may still be acting, so the lifetime ends.
                 _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// End a form action's route rule: for Enter, the Enter route
+        /// rule's record; for every other action, the no-document rule.
+        fn finish_form_route(&mut self, entering: bool) -> crate::worker_navigation::EnterRoute {
+            if entering {
+                self.policy.finish_enter()
+            } else {
+                self.policy.finish_activation();
+                crate::worker_navigation::EnterRoute::default()
             }
         }
 
@@ -2741,7 +2859,10 @@ mod platform {
                         self.host_tools.clear();
                         return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
                     }
-                    Ok(FormOutcome { url: after })
+                    Ok(FormOutcome {
+                        url: after,
+                        committed: None,
+                    })
                 }
                 WorkerReply::UploadFailed {
                     up_id: done,
@@ -4440,6 +4561,40 @@ mod tests {
         assert!(reply(r#"{"frame":"activated","act_id":2,"url":"u","status":200,"x":1}"#).is_err());
     }
 
+    /// SG-000122 slice A6: an Enter is committed only when the host's route
+    /// record and the worker agree that the one admitted document opened;
+    /// unchanged only when neither saw one and the URL stayed.
+    #[test]
+    fn sg122_an_enter_is_committed_only_when_both_sides_agree() {
+        let page = "https://fixture.test/enter-form";
+        let order = "https://fixture.test/order";
+        assert_eq!(
+            enter_verdict(true, true, page, order),
+            EnterVerdict::Committed
+        );
+        assert_eq!(
+            enter_verdict(true, true, page, page),
+            EnterVerdict::Committed
+        );
+        assert_eq!(
+            enter_verdict(false, false, page, page),
+            EnterVerdict::Unchanged
+        );
+        for (opened, navigated, after) in [
+            (false, false, order),
+            (true, false, page),
+            (true, false, order),
+            (false, true, order),
+            (false, true, page),
+        ] {
+            assert_eq!(
+                enter_verdict(opened, navigated, page, after),
+                EnterVerdict::Unknown,
+                "{opened} {navigated} {after}"
+            );
+        }
+    }
+
     #[test]
     fn a_submission_names_exactly_the_approved_fields() {
         use crate::webmcp::{ControlKind, ExecField};
@@ -4756,9 +4911,22 @@ mod tests {
                 .unwrap(),
             WorkerReply::FormDone {
                 form_id: 2,
-                url: "https://fixture.test/form".into()
+                url: "https://fixture.test/form".into(),
+                navigated: false
             }
         );
+        // SG-000122 slice A6: an Enter's reply says whether the main frame
+        // committed a new document.
+        assert_eq!(
+            reply(r#"{"frame":"form_done","form_id":3,"url":"https://fixture.test/order","navigated":true}"#)
+                .unwrap(),
+            WorkerReply::FormDone {
+                form_id: 3,
+                url: "https://fixture.test/order".into(),
+                navigated: true
+            }
+        );
+        assert!(reply(r#"{"frame":"form_done","form_id":3,"url":"u","navigated":"yes"}"#).is_err());
         assert!(reply(r#"{"frame":"form_failed","form_id":2,"reason":"denied"}"#).is_ok());
         assert_eq!(
             json(&WorkerRequest::FormAction {
