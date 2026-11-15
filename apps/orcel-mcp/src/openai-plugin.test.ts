@@ -215,12 +215,33 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 
   // SG-000096, SG-000127 and SG-000128 by founder decision of 2026-11-14
   // (issue #753), which CURRENT.md records. Its number was reserved in the
   // backlog before SG-000126 to SG-000129 were activated.
-  // SG-000130 (ORCEL-F5, workbook sources in the report task) runs beside
+  // SG-000130 (ORCEL-F5, workbook sources in the report task) ran beside
   // SG-000096, SG-000122, SG-000127 and SG-000128 by founder go-ahead of
-  // 2026-11-15, posted on issue #760, which CURRENT.md records.
+  // 2026-11-15, posted on issue #760, and is closed (CURRENT.md).
   // Update this pin when any of the others closes.
-  // The current lawful state: SG-000096, SG-000122, SG-000127, SG-000128 and
-  // SG-000130 open, SG-000129 closed.
+  // The current lawful state: SG-000096, SG-000122, SG-000127 and SG-000128
+  // open, SG-000129 and SG-000130 closed.
+  if (active.length === 4 && specs.includes("SG-000130.json")) {
+    assert.deepEqual(active, ["SG-000096.json", "SG-000122.json", "SG-000127.json", "SG-000128.json"], `parallel active grains: ${active.join(", ")}`);
+    const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");
+    assert.ok(current.includes("SG-000127 runs with SG-000096 as the open pair by founder sequencing of 2026-10-22 (issue #446)"), "SG-000127 requires its recorded founder sequencing");
+    assert.ok(current.includes("SG-000128 runs beside SG-000096 and SG-000127 as an additional active grain by founder decision of 2026-10-29"), "SG-000128 requires its recorded founder decision");
+    assert.ok(current.includes("SG-000122 runs beside SG-000096, SG-000127 and SG-000128 as an additional active grain by founder decision of 2026-11-14"), "SG-000122 requires its recorded founder decision");
+    assert.ok(current.includes("SG-000129 closed canonically on implementation PR `#554`"), "SG-000129's closeout is recorded");
+    assert.ok(current.includes("SG-000130 closed canonically on implementation PR `#766`"), "SG-000130's closeout is recorded");
+    for (const closed of ["SG-000108.json", "SG-000120.json", "SG-000126.json", "SG-000129.json", "SG-000130.json"]) {
+      const spec = JSON.parse(readFileSync(join(dir, closed), "utf8")) as { state: string };
+      assert.equal(spec.state, "CLOSED", `the open set follows the closed ${closed}`);
+    }
+    assert.deepEqual(
+      specs.filter((name) => name > "SG-000096.json"),
+      ["SG-000108.json", "SG-000120.json", "SG-000122.json", "SG-000126.json", "SG-000127.json", "SG-000128.json", "SG-000129.json", "SG-000130.json"],
+      "no other grain beyond SG-000096 exists"
+    );
+    return;
+  }
+  // The lawful state while SG-000130 was open: SG-000096, SG-000122,
+  // SG-000127, SG-000128 and SG-000130 open, SG-000129 closed.
   if (active.length === 5 && specs.includes("SG-000130.json")) {
     assert.deepEqual(active, ["SG-000096.json", "SG-000122.json", "SG-000127.json", "SG-000128.json", "SG-000130.json"], `parallel active grains: ${active.join(", ")}`);
     const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");
@@ -241,7 +262,8 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 
     return;
   }
   // The lawful state before SG-000130: SG-000096, SG-000122, SG-000127 and
-  // SG-000128 open, SG-000129 closed.
+  // SG-000128 open, SG-000129 closed. While SG-000130.json exists the branch
+  // above takes this open set, so this one is kept as the precedent only.
   if (active.length === 4 && specs.includes("SG-000122.json")) {
     assert.deepEqual(active, ["SG-000096.json", "SG-000122.json", "SG-000127.json", "SG-000128.json"], `parallel active grains: ${active.join(", ")}`);
     const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");
