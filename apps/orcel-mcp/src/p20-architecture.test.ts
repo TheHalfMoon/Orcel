@@ -195,11 +195,11 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // (ORCEL-UIA, scoped UIA subtree observation) runs beside them by founder
   // decision (issue #515). SG-000129 (ORCEL-AGENT, the Orcel Agent planner
   // client) ran beside them by founder decision (issue #536) and is closed.
-  // SG-000122 (ORCEL-BR, browser form actions, narrow scope) runs beside
-  // them by founder decision (issue #753). SG-000130 (ORCEL-F5, workbook
-  // sources in the report task) ran beside them by founder go-ahead (issue
-  // #760) and is closed; no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000122", "SG-000127", "SG-000128"]);
+  // SG-000122 (ORCEL-BR, browser form actions, narrow scope) ran beside
+  // them by founder decision (issue #753) and is closed. SG-000130 (ORCEL-F5,
+  // workbook sources in the report task) ran beside them by founder go-ahead
+  // (issue #760) and is closed; no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127", "SG-000128"]);
   const sg130 = readJson<{
     program: string;
     state: string;
@@ -253,6 +253,10 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     base: string;
     planning_issue: number;
     dependencies: string[];
+    implementation_pr: number;
+    qualified_head: string;
+    qualified_tree: string;
+    implementation_merge: string;
     authority_delta: {
       activation: string;
       browser: string;
@@ -267,10 +271,14 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     };
   }>(".specgrain/specs/SG-000122.json");
   assert.equal(sg122.program, "ORCEL-BR");
-  assert.equal(sg122.state, "GRAIN");
+  assert.equal(sg122.state, "CLOSED");
   assert.equal(sg122.planning_issue, 753);
   assert.equal(sg122.base, "30c08d502e881f1b52eb215263f7d63f8db79c91");
   assert.deepEqual(sg122.dependencies, ["SG-000077", "SG-000079", "SG-000108"]);
+  assert.equal(sg122.implementation_pr, 769);
+  assert.equal(sg122.qualified_head, "bfa492065ec64719bb63efc930e302f73193de46");
+  assert.equal(sg122.qualified_tree, "c710c21e61e05da6f995b9a5d9f5931dbcf5280c");
+  assert.equal(sg122.implementation_merge, "da046b821c771fa780e0e10b446f9ad376437f30");
   // The activation grants nothing; each widening stays a proposal until its
   // slice is qualified, release builds and remote mapping stay unavailable,
   // and an added key must not go unnoticed.
