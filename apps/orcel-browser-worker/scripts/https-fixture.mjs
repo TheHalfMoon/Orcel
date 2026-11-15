@@ -232,6 +232,15 @@ const FORM_NAMES = `<!doctype html><meta charset="utf-8"><title>Names</title>
 <label>Password <input type="password" name="secret" value="SECRETPW"></label>
 <input type="text" name="long" aria-label="a${"\u00e9".repeat(200)}">
 <input type="text" name="ctl" aria-label="Line&#x85;break&#x202e;flip">
+<label><input type="checkbox" name="terms"> Accept <b>terms</b></label>
+<label><input type="checkbox" name="case_a"> CaseA <span aria-labelledby="acct-pw">x</span></label>
+<label aria-labelledby="acct-pw"><input type="checkbox" name="case_b"> CaseB</label>
+<x-lab><template shadowrootmode="open"><label>CaseC <slot></slot> <input type="checkbox" name="case_c"></label></template><input type="password" value="HUNTER2SLOT"></x-lab>
+<label><input type="checkbox" name="case_c2"> CaseC2 <span><template shadowrootmode="open">Shadow <slot></slot></template><input type="password" value="HUNTER2SLOTTED"></span></label>
+<label><input type="checkbox" name="case_d"> CaseD <button type="button" id="named-button">B</button></label><label for="named-button">Btn <input type="password" value="HUNTER2BTN"></label>
+<label><input type="checkbox" name="case_output"> CaseOutput <output>OUTVAL</output></label>
+<label><input type="checkbox" name="case_edit"> CaseEditable <span contenteditable>EDITVAL</span></label>
+<label>CaseOuter <label>CaseInner <input type="checkbox" name="case_nested"></label></label>
 <a href="/x">A link</a> <button type="button">A button</button>
 <iframe src="/frame-names"></iframe>`;
 const FRAME_NAMES = `<!doctype html><meta charset="utf-8"><label>Inner <input type="text" name="inner"></label>`;

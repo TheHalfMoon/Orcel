@@ -2561,7 +2561,10 @@ fn br06_admitted_frames_are_observed_and_foreign_frames_are_not() {
 /// wraps only its own select or field, and a password field are named; a
 /// long name is cut by the host on a character boundary and control
 /// characters are replaced; links, buttons and a control inside a frame
-/// get none. No value or option label is ever in a recorded name.
+/// get none. Anything but text and text-level elements in a label (an
+/// element with aria-labelledby, a slot or shadow host, a button, an output,
+/// an editable region, a nested label) or on it (aria-labelledby) withholds
+/// the name. No value or option label is ever in a recorded name.
 #[test]
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn sg122_a5_form_control_names_exclude_embedded_and_referenced_controls() {
@@ -2636,12 +2639,38 @@ fn sg122_a5_form_control_names_exclude_embedded_and_referenced_controls() {
     let inner = find("textbox", "Inner");
     assert!(inner.3.starts_with('f'), "{inner:?}");
     assert_eq!(inner.2, None, "a control inside a frame");
+    // Deny by default (judge, #767): of the checkboxes only the one whose
+    // label holds text and a text-level element is named. Withheld: an
+    // element inside the label naming a password field (a), a label with
+    // aria-labelledby (b), a label in a shadow tree with a slotted password
+    // field and a label holding a shadow host with one (c), a button whose
+    // own label holds a password field (d), an output, an editable region
+    // and a nested label.
+    let checkboxes: Vec<_> = seen
+        .iter()
+        .filter(|(role, ..)| role == "checkbox")
+        .collect();
+    assert!(checkboxes.len() >= 11, "{checkboxes:?}");
+    let named: Vec<_> = checkboxes
+        .iter()
+        .filter_map(|(_, _, name, _)| name.clone())
+        .collect();
+    assert_eq!(named, ["Accept terms"], "{checkboxes:?}");
+    assert!(
+        checkboxes
+            .iter()
+            .any(|(_, raw, ..)| raw.contains("HUNTER2BTN")),
+        "case (d) carries the value in its raw name: {checkboxes:?}"
+    );
+    assert!(!format!("{:?}", live.observation).contains("HUNTER2"));
     for (_, _, name, _) in &seen {
         let name = name.as_deref().unwrap_or("");
         for value in [
             "TYPEDVALUE",
             "OPTIONLABEL",
-            "HUNTER2PW",
+            "HUNTER2",
+            "OUTVAL",
+            "EDITVAL",
             "SECRETPW",
             "Old Name",
             "Lisbon",

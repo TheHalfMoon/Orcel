@@ -3,18 +3,22 @@
 //
 // The name itself is the one Playwright's accessibility snapshot computed
 // for the node, in Playwright's isolated (utility) world, never by page
-// script. That computation follows the accessible-name rules, which add an
-// embedded or referenced control's value, selected option label or text to
-// the name: a label that wraps a checkbox and a textbox names the checkbox
-// with the textbox's value, and aria-labelledby (or aria-owns) can point at a
-// password field (measured on Edge with Playwright 1.63). So a name is passed
-// on only when nothing of that kind can contribute: every labelling element
-// (a wrapping label, a label for the control's id, each element
-// aria-labelledby names) is checked, again only with Playwright's own
-// isolated-world locators (CSS, XPath and attribute reads), to hold no
-// control other than the named control itself and to own nothing through
-// aria-owns. A control whose name cannot be shown that way carries no name.
-// aria-describedby never adds to a name, and descriptions are not sent.
+// script. That computation follows the accessible-name rules, which pull in
+// much more than text: an embedded control's value or selected option label,
+// whatever an element inside a label names through aria-labelledby, a label's
+// own aria-labelledby, content slotted into a shadow tree, a button's own
+// label (each measured on Edge with Playwright 1.63 to carry a password
+// field's value). So the check is deny-by-default: a name is passed on only
+// when every element that can contribute to it (each wrapping label, each
+// label for the control's id, each element aria-labelledby names) is in the
+// document's own tree and holds nothing but text and a small allowlist of
+// text-level elements (`TEXT_ELEMENTS`), none of which carries an attribute
+// that can name, own, label, slot or edit, and none of which hosts a shadow
+// tree. A wrapping label may also hold the named control itself (and a select
+// its own options); a referenced element may not. A control inside a shadow
+// tree, or one that owns elements, is never named. Every check uses only
+// Playwright's own isolated-world locators (XPath, CSS and attribute reads).
+// A control whose name cannot be shown that way carries no name.
 //
 // A page can still put any text it likes into a name (an aria-label, a
 // label's text): the host bounds it and marks it untrusted, and a name never
@@ -36,44 +40,27 @@ const READ_TIMEOUT_MS = 500;
 
 /// The elements a name may belong to: an input or a native select.
 const NAMEABLE = "input, select";
-const WIDGET_ROLES = [
-  "textbox",
-  "searchbox",
-  "combobox",
-  "listbox",
-  "option",
-  "spinbutton",
-  "slider",
-  "scrollbar",
-  "progressbar",
-  "meter",
-  "checkbox",
-  "radio",
-  "switch",
-  "menuitemcheckbox",
-  "menuitemradio",
-  "treeitem"
-];
-/// Anything whose value, selection or text an accessible name could carry,
-/// and anything that pulls other elements into one (aria-owns).
-export const CONTRIBUTING = [
-  "input",
-  "select",
-  "textarea",
-  "option",
-  "datalist",
-  "meter",
-  "progress",
-  '[contenteditable]:not([contenteditable="false" i])',
-  "[aria-owns]",
-  ...WIDGET_ROLES.map((role) => `[role~="${role}" i]`)
-].join(", ");
+/// The only elements a contributing subtree may hold besides text.
+export const TEXT_ELEMENTS = ["span", "b", "i", "em", "strong", "small", "abbr", "br", "sup", "sub", "mark"];
+/// What a contributing element may be itself: a label, a text element, or a
+/// plain block of text that aria-labelledby names.
+const ROOT_ELEMENTS = [...TEXT_ELEMENTS, "label", "div", "p", "legend", "li", "td", "th", "dt", "dd", "h1", "h2", "h3", "h4", "h5", "h6"];
+/// Attributes that let an element name, label, own, slot or edit anything.
+const NAMING_ATTRIBUTES = ["aria-labelledby", "aria-label", "aria-owns", "aria-describedby", "aria-details", "role", "slot", "contenteditable"];
 
-/// A CSS string literal for an id, or null when the id holds a character
-/// a selector should not carry.
-function cssString(value: string): string | null {
+const isAny = (tags: string[]) => tags.map((tag) => `self::${tag}`).join(" or ");
+const hasAny = NAMING_ATTRIBUTES.map((name) => `@${name}`).join(" or ");
+/// Relative to a contributing element: itself when it is not allowed, and
+/// every element under it that is not allowed (light tree only).
+export const DISALLOWED = `xpath=self::*[not(${isAny(ROOT_ELEMENTS)}) or ${hasAny}] | .//*[not(${isAny(TEXT_ELEMENTS)}) or ${hasAny}]`;
+
+/// An XPath string literal, or null when the text holds both quote kinds or
+/// a character a selector should not carry.
+function xpathString(value: string): string | null {
   if (value.length === 0 || value.length > 256 || /[\u0000-\u001f\u007f-\u009f]/.test(value)) return null;
-  return `"${value.replace(/[\\"]/g, (ch) => `\\${ch}`)}"`;
+  if (!value.includes('"')) return `"${value}"`;
+  if (!value.includes("'")) return `'${value}'`;
+  return null;
 }
 
 async function attribute(element: Locator, name: string): Promise<string | null | undefined> {
@@ -84,38 +71,48 @@ async function attribute(element: Locator, name: string): Promise<string | null 
   }
 }
 
-/// Whether `element`'s computed name can carry nothing but text: no
-/// labelling element holds another control or owns anything, and no element
-/// aria-labelledby names is or holds a control. Any failed read is "no".
+/// Whether the elements of `roots` hold only allowed content: nothing
+/// disallowed but what `own` matches, and no shadow tree (Playwright's CSS
+/// sees into open shadow trees, XPath does not, so the two counts differ
+/// when one is there).
+async function textOnly(roots: Locator, own: Locator | null): Promise<boolean> {
+  const disallowed = roots.locator(DISALLOWED);
+  const total = await disallowed.count();
+  const allowed = own === null ? 0 : await disallowed.and(own).count();
+  if (total !== allowed) return false;
+  return (await roots.locator("css=*").count()) === (await roots.locator("xpath=.//*").count());
+}
+
+/// Whether `element`'s computed name can carry nothing but text (see the
+/// module comment). Any failed read is "no".
 export async function nameIsTextOnly(page: Pick<Page, "locator">, element: Locator): Promise<boolean> {
-  const contributing = page.locator(CONTRIBUTING);
+  // In the document's own tree (not inside a shadow tree), owning nothing.
+  if ((await element.locator("xpath=ancestor::html").count()) !== 1) return false;
+  const owns = await attribute(element, "aria-owns");
+  if (owns !== null) return false;
+  // A select's own options never join its own name; anything else inside a
+  // select (a customizable select's content) withholds it.
+  if ((await element.locator("xpath=.//*[not(self::option or self::optgroup)]").count()) !== 0) return false;
   const labelledby = await attribute(element, "aria-labelledby");
   if (labelledby === undefined) return false;
   const ids = (labelledby ?? "").split(/[\t\n\f\r ]+/).filter((id) => id.length > 0);
   if (ids.length > MAX_LABELLEDBY_IDS) return false;
   for (const id of ids) {
-    const literal = cssString(id);
+    const literal = xpathString(id);
     if (literal === null) return false;
-    // Every element with that id, in any tree: the referenced element and
-    // what it holds contribute to the name.
-    const referenced = page.locator(`[id=${literal}]`);
-    if ((await referenced.and(contributing).or(referenced.locator(CONTRIBUTING)).count()) > 0) return false;
+    // Every element of the document's tree with that id; what aria-labelledby
+    // names may not hold the control itself either.
+    if (!(await textOnly(page.locator(`xpath=//*[@id=${literal}]`), null))) return false;
   }
   const id = await attribute(element, "id");
   if (id === undefined) return false;
   let labels = element.locator("xpath=ancestor::label");
   if (id !== null && id.length > 0) {
-    const literal = cssString(id);
+    const literal = xpathString(id);
     if (literal === null) return false;
-    labels = labels.or(page.locator(`label[for=${literal}]`));
+    labels = labels.or(page.locator(`xpath=//label[@for=${literal}]`));
   }
-  if ((await labels.and(page.locator("[aria-owns]")).count()) > 0) return false;
-  // A label holds the control it labels (and a select its own options,
-  // which never join the select's own name); it may hold nothing else that
-  // contributes.
-  const inside = labels.locator(CONTRIBUTING);
-  const total = await inside.count();
-  return total === (await inside.and(element.or(element.locator(CONTRIBUTING))).count());
+  return textOnly(labels, element.or(element.locator("xpath=.//option | .//optgroup")));
 }
 
 /// SG-000122 slice A5: marks each main-frame node of a named role whose

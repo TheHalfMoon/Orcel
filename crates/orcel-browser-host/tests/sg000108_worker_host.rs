@@ -1042,6 +1042,36 @@ fn sg122_form_actions_go_through_bound_approvals_and_the_host_refuses_the_rest()
         wait_text(host, "Searched", true, 3_000),
         WorkerHostReply::Waited { met: true }
     );
+    // SG-000122 slice A5 (judge, #767): on the names page no value, option
+    // label or password reaches the observation through any name, and only
+    // the text-only checkbox label crosses among the checkboxes.
+    assert!(matches!(
+        navigate(host, "https://fixture.test/form-names", "rec-names"),
+        WorkerHostReply::Navigated { status: 200, .. }
+    ));
+    let names = observe(host);
+    let reply = serde_json::to_string(&names).expect("reply text");
+    for value in [
+        "HUNTER2",
+        "TYPEDVALUE",
+        "OPTIONLABEL",
+        "OUTVAL",
+        "EDITVAL",
+        "SECRETPW",
+        "Old Name",
+        "Lisbon",
+    ] {
+        assert!(!reply.contains(value), "{value} crossed: {reply}");
+    }
+    let crossed: Vec<String> = match &names {
+        WorkerHostReply::Observed { nodes, .. } => all_nodes(nodes)
+            .into_iter()
+            .filter(|node| node.role == "checkbox")
+            .filter_map(|node| node.untrusted_name.clone().map(|name| name.text))
+            .collect(),
+        other => panic!("observation refused: {other:?}"),
+    };
+    assert_eq!(crossed, ["Accept terms"]);
     println!("SG122-EVIDENCE worker host form: fill, select, check and Enter bound once each; refusals before any worker frame; verified");
     assert!(supervisor.shutdown().expect("shutdown"));
     assert!(entries(&launch.profile_root).is_empty());
