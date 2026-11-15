@@ -666,13 +666,7 @@ impl<B: orcel_approval::ApprovalBroker> orcel_approval::ApprovalBroker for Unkno
         &self,
         prompt: &orcel_approval::ApprovalPrompt,
     ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
-        let earlier = match self.sink {
-            Sink::Journal(journal) => {
-                journal.surfaced_unknown(&prompt.workspace_id, &prompt.target)
-            }
-            Sink::None | Sink::Faulted => None,
-        };
-        match earlier {
+        match surfaced_unknown(self.sink, &prompt.workspace_id, &prompt.target) {
             Some(operation) => {
                 let mut noticed = prompt.clone();
                 noticed.summary = format!(
@@ -743,6 +737,22 @@ fn note_unknown_to(sink: Sink, workspace_id: &str, target: &str, intent: &str, o
     );
 }
 
+/// SG-000122: the journal target of a live browser page's form actions is
+/// this prefix and the page id.
+pub(crate) const BROWSER_PAGE_TARGET: &str = "browser-page:";
+
+/// SG-000122: the operation of the latest step on `target` whose outcome is
+/// unknown and whose refusal was already returned once, if any: what the next
+/// approval prompt for that target must name first (as [`UnknownNotice`]
+/// does in the summary of other prompts; a live form prompt's summary is the
+/// value itself, so it goes in its first preview line instead).
+pub(crate) fn surfaced_unknown(sink: Sink, workspace_id: &str, target: &str) -> Option<String> {
+    match sink {
+        Sink::Journal(journal) => journal.surfaced_unknown(workspace_id, target),
+        Sink::None | Sink::Faulted => None,
+    }
+}
+
 /// This orceld's sink.
 pub(crate) fn global() -> Sink {
     match JOURNAL.get() {
@@ -781,6 +791,20 @@ pub(crate) fn pending(sink: Sink, mutation: Mutation) -> Result<Intent, Provider
         if let Some(earlier) = unknown.get_mut(&key) {
             if !earlier.surfaced {
                 earlier.surfaced = true;
+                // SG-000122: a live browser page is the target of its form
+                // actions; its prompt names the unknown as its first line.
+                if let Some(page) = mutation.target.strip_prefix(BROWSER_PAGE_TARGET) {
+                    return Err(ProviderError::new(
+                        FailureCode::TargetStale,
+                        format!(
+                            "an earlier approved browser {} on live page {page} ({}) has an \
+                             unknown outcome and was not retried; observe the page to check \
+                             what it holds now, then request again: the person is then asked \
+                             for a new approval whose prompt first names the unknown outcome",
+                            earlier.operation, earlier.intent
+                        ),
+                    ));
+                }
                 return Err(ProviderError::new(
                     FailureCode::TargetStale,
                     format!(

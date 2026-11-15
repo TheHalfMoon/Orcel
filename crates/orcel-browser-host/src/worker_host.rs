@@ -234,6 +234,61 @@ pub struct WireCheck {
     pub evidence: String,
 }
 
+/// SG-000122 slice A2: what a form action's approval prompt shows about its
+/// field, from the host's own record of the observation: the role and the
+/// accessible name (both page-supplied; the name at most
+/// `prompt_display::MAX_FIELD_NAME_BYTES`, cut on a character boundary) and,
+/// when another observed node of that role would have the same name line
+/// drawn in the prompt, the target's ordinal among them in page order. It
+/// crosses only to orceld, for the prompt, never to a caller. The host
+/// binding covers each part and is derived again at dispatch from the host's
+/// record of its latest observation (the page is not observed again for
+/// it): a caller that observed again in between, with a changed name or
+/// ordinal, is refused. In the page, the worker then acts on the exact
+/// observed reference and falls back to role and name only when exactly one
+/// element has them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoundForm {
+    pub role: String,
+    pub name: String,
+    pub name_cut: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ordinal: Option<FieldOrdinal>,
+}
+
+/// SG-000122 slice A2: "position of count" among the observed nodes of one
+/// role that show the same name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldOrdinal {
+    pub position: usize,
+    pub count: usize,
+}
+
+impl BoundForm {
+    /// The facts for `role`, the full observed `name` and its ordinal.
+    pub(crate) fn new(role: &str, name: &str, ordinal: Option<(usize, usize)>) -> Self {
+        let (bounded, name_cut) = orcel_contracts::prompt_display::bounded_field_name(name);
+        Self {
+            role: role.to_owned(),
+            name: bounded.to_owned(),
+            name_cut,
+            ordinal: ordinal.map(|(position, count)| FieldOrdinal { position, count }),
+        }
+    }
+
+    /// The host binding's material for these facts: the full name's digest
+    /// and the ordinal (`-` when there is none).
+    fn material(&self, full_name: &str) -> String {
+        let ordinal = self
+            .ordinal
+            .map(|ordinal| format!("{}/{}", ordinal.position, ordinal.count))
+            .unwrap_or_else(|| "-".to_owned());
+        format!("{}\n{ordinal}", sha256_hex(full_name))
+    }
+}
+
 /// One observed node as it crosses to Orcel: identities and digests only.
 /// Raw names and values never leave the host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +335,10 @@ pub enum WorkerHostReply {
     Bound {
         binding: String,
         target: String,
+        /// SG-000122 slice A2: for a form action only, what the approval
+        /// prompt names about the field (all of it bound into `binding`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        form: Option<BoundForm>,
     },
     /// The committed URL: on the lifetime's single origin (the policy
     /// refuses anything else), which Orcel's page store records.
@@ -539,6 +598,7 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
             Ok(derived) => WorkerHostReply::Bound {
                 binding: derived.binding,
                 target: derived.target,
+                form: derived.form,
             },
             Err(err) => refusal(&err),
         },
@@ -760,10 +820,13 @@ struct Derived {
     binding: String,
     target: String,
     state: String,
+    /// SG-000122: a form action's prompt facts.
+    form: Option<BoundForm>,
 }
 
 /// The host's half of an approval, from its own state now.
 fn host_binding(live: &Lifetime, action: &BindAction) -> Result<Derived, HostError> {
+    let mut form_facts = None;
     let (material, target, state) = match action {
         BindAction::Navigate { url } => {
             crate::navigation::parse_navigation_url(url)?;
@@ -814,18 +877,23 @@ fn host_binding(live: &Lifetime, action: &BindAction) -> Result<Derived, HostErr
             let (page, document) = observed(live)?;
             // The host's own checks of the observed target, before any
             // worker frame; the binding names the name the host observed.
-            let (state, name) = live.worker.live_form_binding(node_id, role, &input)?;
-            (
-                format!(
-                    "form\n{}\n{}\n{}\n{node_id}\n{role}\n{}\n{state}",
-                    page.page_id,
-                    page.origin,
-                    document.document_generation,
-                    sha256_hex(&name)
-                ),
-                page.origin.clone(),
+            let crate::actuation::LiveFormBinding {
                 state,
-            )
+                name,
+                ordinal,
+            } = live.worker.live_form_binding(node_id, role, &input)?;
+            // SG-000122 slice A2: the role, the name and the ordinal the
+            // prompt shows are bound too (the name by its full digest).
+            let facts = BoundForm::new(role, &name, ordinal);
+            let material = format!(
+                "form\n{}\n{}\n{}\n{node_id}\n{role}\n{}\n{state}",
+                page.page_id,
+                page.origin,
+                document.document_generation,
+                facts.material(&name)
+            );
+            form_facts = Some(facts);
+            (material, page.origin.clone(), state)
         }
     };
     Ok(Derived {
@@ -837,6 +905,7 @@ fn host_binding(live: &Lifetime, action: &BindAction) -> Result<Derived, HostErr
         ),
         target,
         state,
+        form: form_facts,
     })
 }
 
@@ -1499,6 +1568,48 @@ mod tests {
             decode_frame::<WorkerHostReply, _>(&mut replies).unwrap(),
             WorkerHostReply::Bye {}
         );
+    }
+
+    /// SG-000122 slice A2: a form bind reply carries the prompt's facts
+    /// (role, bounded name, ordinal) and the binding material covers the full
+    /// name and the ordinal; other binds carry none, unchanged on the wire.
+    #[test]
+    fn sg122_form_binds_carry_bound_prompt_facts() {
+        let plain = WorkerHostReply::Bound {
+            binding: "b".into(),
+            target: "https://fixture.test/".into(),
+            form: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&plain).unwrap(),
+            r#"{"frame":"bound","binding":"b","target":"https://fixture.test/"}"#
+        );
+        let long = "n".repeat(300);
+        let facts = BoundForm::new("textbox", &long, Some((2, 3)));
+        assert_eq!(facts.name.len(), 256);
+        assert!(facts.name_cut);
+        let reply = WorkerHostReply::Bound {
+            binding: "b".into(),
+            target: "https://fixture.test/".into(),
+            form: Some(facts.clone()),
+        };
+        let text = serde_json::to_string(&reply).unwrap();
+        assert_eq!(
+            serde_json::from_str::<WorkerHostReply>(&text).unwrap(),
+            reply
+        );
+        // The material moves with the full name and with the ordinal.
+        let other_name = format!("{long}x");
+        assert_ne!(facts.material(&long), facts.material(&other_name));
+        let moved = BoundForm::new("textbox", &long, Some((3, 3)));
+        assert_ne!(facts.material(&long), moved.material(&long));
+        let alone = BoundForm::new("textbox", &long, None);
+        assert_ne!(facts.material(&long), alone.material(&long));
+        assert!(alone.material(&long).ends_with("\n-"));
+        assert!(serde_json::from_str::<BoundForm>(
+            r#"{"role":"textbox","name":"x","name_cut":false,"value":"y"}"#
+        )
+        .is_err());
     }
 
     #[test]

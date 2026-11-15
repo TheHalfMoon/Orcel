@@ -397,7 +397,7 @@ So a denied, unavailable or mismatched approval never reaches the host. Host ref
 - A lost reply or a shutdown closes the page. A closed page is stale for good, including after a reload from disk (`PageStore::close_page`).
 - If the store cannot follow the host (a write fails, or the committed URL does not parse), orceld ends the lifetime rather than act on a page record that no longer matches.
 
-**The page store's half of the digest.** `orceld`'s approval digest is now `orcel-sg108-live-approval/2`. It binds the page id, the generation and the origin, as well as the workspace, policy revision, lifetime, action and host binding. An approval prompted for one document cannot be spent on the next.
+**The page store's half of the digest.** `orceld`'s approval digest is now `orcel-sg108-live-approval/3`. It binds the page id, the generation and the origin, as well as the workspace, policy revision, lifetime, action and host binding. An approval prompted for one document cannot be spent on the next. (Version 2 introduced the page store's half; version 3, SG-000122 slice A2, also binds what a form action's prompt names about its field: the role, the digest of the observed name, whether the shown name was cut, and the ordinal; `-` for every other action.)
 
 **Registry writes fail closed.** `PageStore::persist` used to drop write errors silently, so the in-memory registry could claim a state its file did not hold. A failed or unsynced append now fails the transition with `ProviderUnavailable` before the in-memory state changes. This applies to every page-store caller, not only the live browser.
 

@@ -278,7 +278,9 @@ fn a_development_host_runs_only_its_pinned_runtime_on_one_public_destination() {
         })
         .expect("bind")
     {
-        WorkerHostReply::Bound { binding, target } => (binding, target),
+        WorkerHostReply::Bound {
+            binding, target, ..
+        } => (binding, target),
         other => panic!("bind refused: {other:?}"),
     };
     assert_eq!(target, PUBLIC_URL);
@@ -319,7 +321,9 @@ fn a_development_host_runs_only_its_pinned_runtime_on_one_public_destination() {
         })
         .expect("bind")
     {
-        WorkerHostReply::Bound { binding, target } => (binding, target),
+        WorkerHostReply::Bound {
+            binding, target, ..
+        } => (binding, target),
         other => panic!("bind refused: {other:?}"),
     };
     assert_eq!(

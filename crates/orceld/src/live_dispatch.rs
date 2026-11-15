@@ -24,6 +24,20 @@
 //! - `browser.download/download {...the same}`: a broker-approved,
 //!   create-only download into the workspace's approved download root,
 //!   verified by the host and journaled first.
+//!
+//! SG-000122 slice A2 (no MCP tool yet; slices A3 and A4 add them):
+//! - `browser.dom/fill {page_id, node_id, value, expected_generation}`,
+//!   `browser.form/select {.., option, ..}`, `browser.form/check {..,
+//!   checked, ..}` and `browser.form/enter {page_id, node_id,
+//!   expected_generation}`: one SOFT approval each, whose prompt shows the
+//!   value or option exactly, the field's page-supplied role and name and,
+//!   when shared, its ordinal; journaled (SG-000120 RJ-02) and never
+//!   retried. The node's role is the one the latest observation reported.
+//! - `browser.wait/text {page_id, text, appear, timeout_ms,
+//!   expected_generation}` and `browser.verify/check {page_id, checks,
+//!   expected_generation}`: read-only, no approval, over the committed main
+//!   document; replies carry booleans, a fixed evidence vocabulary and
+//!   counts, never page text, a name or a value.
 
 use orcel_approval::ApprovalBroker;
 use orcel_contracts::{FailureCode, RequestEnvelope};
@@ -334,11 +348,159 @@ mod live {
                     }))
                 })
             }
+            // SG-000122 slice A2: the form actions, each SOFT-approved with
+            // its value, field and ordinal shown and bound.
+            ("browser.dom", "fill") | ("browser.form", "select" | "check" | "enter") => {
+                let (page_id, node_id, expected) = (
+                    string(request, "page_id")?,
+                    string(request, "node_id")?,
+                    generation(request)?,
+                );
+                let kind = request.operation.clone();
+                with_browser(|browser| {
+                    // The caller names only the node; its role is the one
+                    // the host reported in this page's latest observation
+                    // (the host checks it against its own record again).
+                    let role = browser.observed_role(node_id).ok_or_else(|| {
+                        ProviderError::new(
+                            FailureCode::TargetStale,
+                            "that node is not in the live page's latest observation; observe it again",
+                        )
+                    })?;
+                    let action = form_action(request, node_id, &role)?;
+                    let (url, record_id) = browser
+                        .form_action(workspace, approval, request, page_id, expected, action)?;
+                    let page = browser.page().cloned().ok_or_else(stale)?;
+                    Ok(json!({
+                        "page_id": page.page_id,
+                        "generation": page.generation,
+                        "node_id": node_id,
+                        "action": kind,
+                        "url": url,
+                        "record_id": record_id,
+                        "approval": "SOFT",
+                    }))
+                })
+            }
+            // SG-000122 slice A2: read-only, no approval.
+            ("browser.wait", "text") => {
+                let (page_id, text, expected) = (
+                    string(request, "page_id")?,
+                    string(request, "text")?,
+                    generation(request)?,
+                );
+                let appear = boolean(request, "appear")?;
+                let timeout_ms = request
+                    .arguments
+                    .get("timeout_ms")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| missing("timeout_ms"))?;
+                with_browser(|browser| {
+                    let met = browser
+                        .wait_text(workspace, page_id, expected, text, appear, timeout_ms)?;
+                    Ok(json!({
+                        "page_id": page_id,
+                        "generation": expected,
+                        "appear": appear,
+                        "met": met,
+                    }))
+                })
+            }
+            ("browser.verify", "check") => {
+                let (page_id, expected) = (string(request, "page_id")?, generation(request)?);
+                let checks: Vec<orcel_browser_host::Postcondition> = request
+                    .arguments
+                    .get("checks")
+                    .cloned()
+                    .and_then(|checks| serde_json::from_value(checks).ok())
+                    .ok_or_else(|| {
+                        ProviderError::new(
+                            FailureCode::InvalidRequest,
+                            "live browser verification requires well-formed arguments.checks",
+                        )
+                    })?;
+                with_browser(|browser| {
+                    let report = browser.verify(workspace, page_id, expected, checks)?;
+                    let results: Vec<Value> = report
+                        .results
+                        .iter()
+                        .map(|check| {
+                            json!({
+                                "index": check.index,
+                                "kind": check.kind,
+                                "passed": check.passed,
+                                "evidence": check.evidence,
+                            })
+                        })
+                        .collect();
+                    Ok(json!({
+                        "page_id": page_id,
+                        "generation": expected,
+                        "url": report.url,
+                        "document_generation": report.document_generation,
+                        "results": results,
+                        "verified": report.verified,
+                        "evidence_sha256": report.evidence_sha256,
+                    }))
+                })
+            }
             _ => Err(ProviderError::new(
                 FailureCode::CapabilityDenied,
                 "not a live browser shape",
             )),
         }
+    }
+
+    fn missing(name: &str) -> ProviderError {
+        ProviderError::new(
+            FailureCode::InvalidRequest,
+            format!("live browser request requires arguments.{name}"),
+        )
+    }
+
+    fn boolean(request: &RequestEnvelope, name: &str) -> Result<bool, ProviderError> {
+        request
+            .arguments
+            .get(name)
+            .and_then(Value::as_bool)
+            .ok_or_else(|| missing(name))
+    }
+
+    /// SG-000122 slice A2: the host action a form request names, on the
+    /// observed node `node_id` whose role is `role`: a select names one
+    /// option, Enter no key. Whether the node is the kind of control the
+    /// action needs is the host's to decide.
+    fn form_action(
+        request: &RequestEnvelope,
+        node_id: &str,
+        role: &str,
+    ) -> Result<orcel_browser_host::worker_host::BindAction, ProviderError> {
+        use orcel_browser_host::worker_host::BindAction;
+        let (node_id, role) = (node_id.to_owned(), role.to_owned());
+        Ok(match request.operation.as_str() {
+            "fill" => BindAction::Fill {
+                node_id,
+                role,
+                value: string(request, "value")?.into(),
+            },
+            "select" => BindAction::Select {
+                node_id,
+                role,
+                label: string(request, "option")?.into(),
+            },
+            "check" => BindAction::Check {
+                node_id,
+                role,
+                checked: boolean(request, "checked")?,
+            },
+            "enter" => BindAction::PressEnter { node_id, role },
+            _ => {
+                return Err(ProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "not a live form action",
+                ))
+            }
+        })
     }
 
     /// The longest link a preview accepts.
