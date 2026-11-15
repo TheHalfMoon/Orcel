@@ -29,7 +29,9 @@
 //! and never writes. Those tasks are shown, never kept in its registry, so
 //! nothing in this run can act on them.
 
-use super::{error, Proposal, ReportTask, SourceRecord, Step, TaskState, MAX_STEPS, MAX_TASKS};
+use super::{
+    error, Proposal, ReportTask, SourceKind, SourceRecord, Step, TaskState, MAX_STEPS, MAX_TASKS,
+};
 use crate::journal_owner::Owner;
 use crate::report_check;
 use orcel_contracts::FailureCode;
@@ -57,6 +59,35 @@ struct SourceLine {
     path: String,
     sha256: String,
     bytes: u64,
+    /// SG-000130: a workbook source, which the checker re-reads within the
+    /// parser's input bound and whose figures it checks. Absent for a text
+    /// source, so text tasks journal exactly as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    workbook: bool,
+}
+
+impl SourceLine {
+    fn of(source: &SourceRecord) -> Self {
+        Self {
+            path: source.path.clone(),
+            sha256: source.sha256.clone(),
+            bytes: source.bytes,
+            workbook: source.kind == SourceKind::Workbook,
+        }
+    }
+
+    fn record(&self) -> SourceRecord {
+        SourceRecord {
+            path: self.path.clone(),
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+            kind: if self.workbook {
+                SourceKind::Workbook
+            } else {
+                SourceKind::Text
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,11 +197,6 @@ impl Line {
 }
 
 pub(super) fn task_line(task: &ReportTask) -> TaskLine {
-    let source = |source: &SourceRecord| SourceLine {
-        path: source.path.clone(),
-        sha256: source.sha256.clone(),
-        bytes: source.bytes,
-    };
     let proposal = |proposal: &Proposal| ProposalLine {
         name: proposal.name.clone(),
         destination: proposal.destination.clone(),
@@ -182,7 +208,7 @@ pub(super) fn task_line(task: &ReportTask) -> TaskLine {
         workspace_id: task.workspace_id.clone(),
         folder: task.folder.clone(),
         folder_canonical: task.folder_canonical.clone(),
-        sources: task.sources.iter().map(source).collect(),
+        sources: task.sources.iter().map(SourceLine::of).collect(),
         proposal: task.proposal.as_ref().map(proposal),
         report: task.report.as_ref().map(proposal),
         check: task.check.clone(),
@@ -239,11 +265,6 @@ fn live_foreign_task(line: TaskLine, run: &str) -> ReportTask {
             at_ms: step.at_ms,
         })
         .collect();
-    let source = |source: SourceLine| SourceRecord {
-        path: source.path,
-        sha256: source.sha256,
-        bytes: source.bytes,
-    };
     let proposal = |proposal: ProposalLine| Proposal {
         name: proposal.name,
         destination: proposal.destination,
@@ -259,7 +280,10 @@ fn live_foreign_task(line: TaskLine, run: &str) -> ReportTask {
         folder: line.folder,
         folder_resolved: PathBuf::new(),
         folder_canonical: line.folder_canonical,
-        sources: line.sources.into_iter().map(source).collect(),
+        sources: line.sources.iter().map(SourceLine::record).collect(),
+        // The route's records are this run's only: a task of another run is
+        // never acted on.
+        workbooks: Vec::new(),
         stale_reason: None,
         proposal: line.proposal.map(proposal),
         report: line.report.map(proposal),
@@ -290,15 +314,7 @@ pub(super) fn commit_line(
         destination: proposal.destination.clone(),
         sha256: proposal.sha256.clone(),
         bytes: proposal.bytes,
-        sources: task
-            .sources
-            .iter()
-            .map(|source| SourceLine {
-                path: source.path.clone(),
-                sha256: source.sha256.clone(),
-                bytes: source.bytes,
-            })
-            .collect(),
+        sources: task.sources.iter().map(SourceLine::of).collect(),
     }
 }
 
@@ -324,7 +340,10 @@ impl Reconciled {
     }
 }
 
-/// Reconciles one pending commit against its destination only.
+/// Reconciles one pending commit against its destination only, by the same
+/// independent check a commit ends with: each source's type-dependent re-read
+/// limit and, with a workbook source, every figure, by the checker's own
+/// contained run with the pins the report task holds.
 pub(super) fn reconcile(commit: &CommitLine) -> Reconciled {
     let destination = commit.root.join(&commit.destination);
     match std::fs::symlink_metadata(&destination) {
@@ -334,15 +353,7 @@ pub(super) fn reconcile(commit: &CommitLine) -> Reconciled {
         Err(_) => return Reconciled::Unknown("the destination could not be read".to_owned()),
         Ok(_) => {}
     }
-    let sources: Vec<SourceRecord> = commit
-        .sources
-        .iter()
-        .map(|source| SourceRecord {
-            path: source.path.clone(),
-            sha256: source.sha256.clone(),
-            bytes: source.bytes,
-        })
-        .collect();
+    let sources: Vec<SourceRecord> = commit.sources.iter().map(SourceLine::record).collect();
     match report_check::check(&report_check::Expectation {
         root: &commit.root,
         folder_path: &commit.root.join(&commit.folder),
@@ -351,6 +362,7 @@ pub(super) fn reconcile(commit: &CommitLine) -> Reconciled {
         sha256: &commit.sha256,
         bytes: commit.bytes,
         sources: &sources,
+        pins: super::workbook_pins(),
     }) {
         Ok(record) => Reconciled::Verified(record),
         Err(reason) => Reconciled::Unknown(reason),

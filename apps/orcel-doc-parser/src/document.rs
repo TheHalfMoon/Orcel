@@ -73,6 +73,100 @@ pub fn is_office_container(bytes: &[u8]) -> bool {
     bytes.starts_with(ZIP_MAGIC) || bytes.starts_with(OLE_MAGIC)
 }
 
+/// The main part's content type of each Office format the parser reads.
+const MAIN_CONTENT_TYPES: [(DocumentFormat, &str); 3] = [
+    (
+        DocumentFormat::Docx,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+    ),
+    (
+        DocumentFormat::Pptx,
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+    ),
+    (
+        DocumentFormat::Xlsx,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    ),
+];
+/// The most of `[Content_Types].xml` the sniff inflates.
+const MAX_SNIFF_BYTES: u64 = 1024 * 1024;
+
+/// SG-000130 W1: whether the bytes are an `expected` Office package, decided
+/// before any parse (no pre-flight, no converter). An OLE file (a legacy
+/// binary document such as an `.xls`, or an encrypted package) and anything
+/// that isn't a zip are refused. In the zip, only its directory and its
+/// `[Content_Types].xml` are read: a macro or ActiveX part name, an active
+/// content type, or a package that doesn't declare exactly the expected
+/// format's main part (a macro-enabled or template workbook, a document, a
+/// zip that is no package) is refused. Passing proves nothing more: the
+/// pre-flight and the converter still check the whole package.
+pub fn sniff_package(bytes: &[u8], expected: DocumentFormat) -> Result<(), ParseRefusal> {
+    if bytes.starts_with(OLE_MAGIC) {
+        return Err(if contains_utf16(bytes, "EncryptionInfo") {
+            ParseRefusal::Encrypted
+        } else {
+            ParseRefusal::UnsupportedFormat
+        });
+    }
+    if !bytes.starts_with(ZIP_MAGIC) {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| ParseRefusal::Malformed)?;
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(ParseRefusal::ArchiveLimit);
+    }
+    if archive.file_names().any(is_active_part) {
+        return Err(ParseRefusal::ActiveContent);
+    }
+    let index = archive
+        .index_for_name("[Content_Types].xml")
+        .ok_or(ParseRefusal::UnsupportedFormat)?;
+    if archive
+        .by_index_raw(index)
+        .map_err(|_| ParseRefusal::Malformed)?
+        .encrypted()
+    {
+        return Err(ParseRefusal::Encrypted);
+    }
+    let mut types = Vec::new();
+    archive
+        .by_index(index)
+        .map_err(|_| ParseRefusal::Malformed)?
+        .take(MAX_SNIFF_BYTES + 1)
+        .read_to_end(&mut types)
+        .map_err(|_| ParseRefusal::Malformed)?;
+    if types.len() as u64 > MAX_SNIFF_BYTES {
+        return Err(ParseRefusal::ArchiveLimit);
+    }
+    check_xml(&types)?;
+    let types = String::from_utf8(types).map_err(|_| ParseRefusal::Malformed)?;
+    let document = Document::parse(&types).map_err(|_| ParseRefusal::Malformed)?;
+    let mut declared = Vec::new();
+    for node in document.descendants().filter(|node| {
+        node.is_element() && matches!(node.tag_name().name(), "Default" | "Override")
+    }) {
+        let content_type = node.attribute("ContentType").unwrap_or_default();
+        let lower = content_type.to_ascii_lowercase();
+        if ACTIVE_CONTENT_TYPES
+            .iter()
+            .any(|marker| lower.contains(marker))
+        {
+            return Err(ParseRefusal::ActiveContent);
+        }
+        if let Some((format, _)) = MAIN_CONTENT_TYPES
+            .iter()
+            .find(|(_, main)| *main == content_type)
+        {
+            declared.push(*format);
+        }
+    }
+    if declared.is_empty() || declared.iter().any(|format| *format != expected) {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
+    Ok(())
+}
+
 pub fn convert(bytes: &[u8]) -> Result<OfficeText, ParseRefusal> {
     if bytes.starts_with(OLE_MAGIC) {
         return Err(if contains_utf16(bytes, "EncryptionInfo") {

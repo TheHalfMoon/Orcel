@@ -23,6 +23,21 @@
 //! orcel-doc-parser/1 error <code>\n
 //! ```
 //!
+//! # Arguments
+//!
+//! ```text
+//! orcel-doc-parser <input>
+//! orcel-doc-parser --expect <format> <input>
+//! ```
+//!
+//! With [`EXPECT_FLAG`] (SG-000130 W1), the caller says which format it
+//! wants. The parser then sniffs the staged bytes before any parse and
+//! refuses anything else: a PDF, an OLE file (such as a renamed `.xls`), a
+//! zip whose package doesn't declare that format's main part, and a package
+//! that names macros or ActiveX, are refused before any converter or the
+//! archive pre-flight reads them. The format of an `ok` frame must then equal
+//! the expected one, or the parser refuses too.
+//!
 //! `format` is one of [`DocumentFormat`], `truncated` is `0` or `1`, and a
 //! refusal carries only a closed [`ParseRefusal`] code, never text taken from
 //! the document. The parser exits 0 after `ok` and [`EXIT_REFUSED`] after
@@ -39,6 +54,8 @@ pub const FRAME_MAGIC: &str = "orcel-doc-parser/1";
 pub const EXIT_REFUSED: i64 = 2;
 /// The only file in the input directory.
 pub const INPUT_NAME: &str = "input";
+/// The argument that names the one format the caller accepts.
+pub const EXPECT_FLAG: &str = "--expect";
 
 /// Largest input the parser reads.
 pub const MAX_INPUT_BYTES: u64 = 50 * 1024 * 1024;
@@ -79,17 +96,25 @@ pub fn limits() -> ContainedLimits {
 /// The spec for one parse: `parser` reads `input_dir/input` and nothing
 /// else. Every path must be canonical (the helper refuses links).
 /// `parser_sha256` is the parser's pinned digest, which the helper checks
-/// through the descriptor it executes (#384 item 2).
+/// through the descriptor it executes (#384 item 2). With `expected`, the
+/// parser refuses any other format by sniffing before any parse.
 pub fn spec(
     parser: PathBuf,
     parser_sha256: &str,
     input_dir: &Path,
     workdir: PathBuf,
+    expected: Option<DocumentFormat>,
 ) -> ContainedSpec {
+    let mut argv = Vec::new();
+    if let Some(format) = expected {
+        argv.push(EXPECT_FLAG.to_owned());
+        argv.push(format.as_str().to_owned());
+    }
+    argv.push(input_dir.join(INPUT_NAME).to_string_lossy().into_owned());
     ContainedSpec {
         executable: parser,
         executable_sha256: parser_sha256.to_owned(),
-        argv: vec![input_dir.join(INPUT_NAME).to_string_lossy().into_owned()],
+        argv,
         workdir,
         readable: vec![input_dir.to_path_buf()],
         writable: Vec::new(),
@@ -115,7 +140,8 @@ impl DocumentFormat {
         }
     }
 
-    fn parse(text: &str) -> Option<Self> {
+    /// The format a frame or an [`EXPECT_FLAG`] argument names.
+    pub fn parse(text: &str) -> Option<Self> {
         [Self::Pdf, Self::Docx, Self::Pptx, Self::Xlsx]
             .into_iter()
             .find(|format| format.as_str() == text)

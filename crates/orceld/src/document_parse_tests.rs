@@ -931,7 +931,7 @@ fn wi05_f5_a_workspace_workbook_is_parsed_under_the_contained_tier() {
     assert_eq!(document.format, DocumentFormat::Xlsx);
     assert!(!document.truncated);
     assert_eq!(
-        crate::report_workbook::cell_value(&document.markdown, "Sales", "B2"),
+        crate::report_check::cell_value(&document.markdown, "Sales", "B2"),
         Some("1250.5"),
         "{}",
         document.markdown

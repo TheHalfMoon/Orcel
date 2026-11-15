@@ -1330,3 +1330,115 @@ fn xs_a_missing_or_unreadable_journal_is_never_cached_as_empty() {
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].id, task);
 }
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// A pending commit as reconcile reads it, for `reports/r.md` holding `report`.
+fn pending_commit(scene: &Scene, report: &str, sources: &[SourceRecord]) -> CommitLine {
+    let root = scene.workspace.root.clone();
+    std::fs::write(root.join("reports").join("r.md"), report).unwrap();
+    CommitLine {
+        task_id: "task".into(),
+        approval_digest: "digest".into(),
+        workspace_id: "default".into(),
+        policy_revision: orcel_policy::POLICY_REVISION.into(),
+        folder_canonical: std::fs::canonicalize(root.join("reports")).unwrap(),
+        root,
+        folder: "reports".into(),
+        destination: "reports/r.md".into(),
+        sha256: sha256_bytes(report.as_bytes()),
+        bytes: report.len() as u64,
+        sources: sources.iter().map(SourceLine::of).collect(),
+    }
+}
+
+/// SG-000130 W1: reconcile runs the same check as a commit: the re-read limit
+/// follows the source's type, and a workbook's figures are part of it. A text
+/// source's line journals exactly as before.
+#[test]
+fn sg130_reconcile_applies_the_type_dependent_limit_and_the_figure_check() {
+    let scene = Scene::new("sg130-reconcile");
+    let large: Vec<u8> = (0..(1024 * 1024 + 4096))
+        .map(|at| (at % 251) as u8)
+        .collect();
+    std::fs::write(scene.workspace.root.join("data").join("big.xlsx"), &large).unwrap();
+    let record = |kind| SourceRecord {
+        path: "data/big.xlsx".into(),
+        sha256: sha256_bytes(&large),
+        bytes: large.len() as u64,
+        kind,
+    };
+    let report = "[data/big.xlsx]Sales!B2 = 1\n";
+    // As a text source it is past the checker's limit.
+    let found = reconcile(&pending_commit(&scene, report, &[record(SourceKind::Text)]));
+    let Reconciled::Unknown(reason) = found else {
+        panic!("a text source past 1 MiB must not verify: {found:?}");
+    };
+    assert!(reason.contains("larger than"), "{reason}");
+    // As a workbook it is re-read in full; the figure check then decides (these
+    // bytes are no workbook, and with no parser nothing is confirmed either).
+    let found = reconcile(&pending_commit(
+        &scene,
+        report,
+        &[record(SourceKind::Workbook)],
+    ));
+    let Reconciled::Unknown(reason) = found else {
+        panic!("an unconfirmed figure must not verify: {found:?}");
+    };
+    assert!(!reason.contains("larger than"), "{reason}");
+    assert!(reason.contains("data/big.xlsx"), "{reason}");
+    // And with no figure stated.
+    let found = reconcile(&pending_commit(
+        &scene,
+        "no figures\n",
+        &[record(SourceKind::Workbook)],
+    ));
+    let Reconciled::Unknown(reason) = found else {
+        panic!("a workbook report with no figure must not verify: {found:?}");
+    };
+    assert!(reason.contains("states no figure"), "{reason}");
+
+    let text = serde_json::to_value(SourceLine::of(&record(SourceKind::Text))).unwrap();
+    assert!(text.get("workbook").is_none(), "{text}");
+    let workbook = SourceLine::of(&record(SourceKind::Workbook));
+    assert_eq!(serde_json::to_value(&workbook).unwrap()["workbook"], true);
+    assert_eq!(workbook.record().kind, SourceKind::Workbook);
+}
+
+/// The same, with the real pinned parser (`wi05_`): a workbook over 1 MiB
+/// verifies with a true figure and stays unknown with a false one.
+#[test]
+fn wi05_sg130_reconcile_confirms_figures_by_the_checkers_own_run() {
+    use crate::report_workbook::tests::{large_workbook, real_pins, workbook_record};
+    if real_pins().is_none() {
+        return;
+    }
+    let scene = Scene::new("sg130-reconcile-real");
+    let large = large_workbook();
+    std::fs::write(scene.workspace.root.join("data").join("sales.xlsx"), &large).unwrap();
+    let sources = [workbook_record("data/sales.xlsx", &large)];
+    let found = reconcile(&pending_commit(
+        &scene,
+        "[data/sales.xlsx]Sales!B2 = 1250.5\n",
+        &sources,
+    ));
+    let Reconciled::Verified(record) = found else {
+        panic!("{found:?}");
+    };
+    assert_eq!(record["figures_confirmed"], 1);
+    let found = reconcile(&pending_commit(
+        &scene,
+        "[data/sales.xlsx]Sales!B2 = 1250.51\n",
+        &sources,
+    ));
+    let Reconciled::Unknown(reason) = found else {
+        panic!("a false figure must not verify: {found:?}");
+    };
+    assert!(reason.contains("doesn't match"), "{reason}");
+}

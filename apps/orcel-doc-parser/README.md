@@ -37,6 +37,13 @@ format and formula. So a report can name the cell each figure came from.
   labelled. Chart and dialog sheets are listed as `(no cells)`.
 - Binary workbooks (XLSB) are refused: as `active_content` when they declare the
   usual macro-enabled type, and otherwise as `unsupported_format`.
+- **The expected format** (SG-000130 W1): `orcel-doc-parser --expect xlsx <input>` refuses
+  anything but a workbook by sniffing the bytes before any parse. A PDF, an OLE file (such as
+  an `.xls` renamed `.xlsx`) and a zip whose `[Content_Types].xml` doesn't declare exactly a
+  workbook's main part are `unsupported_format`; a macro or ActiveX part name, or an active
+  content type (a macro-enabled workbook), is `active_content`. Only the zip's directory and
+  that one part are read for this. orceld passes it on every report-source run, the writer's
+  and the checker's.
 - A sheet is limited to 200,000 rows and a workbook to 500,000 cells and 500 sheets. One
   part's XML is limited to 2,000,000 nodes, 2,000,000 attributes and 256 attributes per
   element. Past those it's `archive_limit` (`too_many_pages` for sheets). These don't bound everything: a very
@@ -47,10 +54,10 @@ format and formula. So a report can name the cell each figure came from.
 Apache POI's samples of Excel 12.0 files (`tests/fixtures/WORKBOOKS.md`).** That Excel saved
 those samples is well-founded but not proved, and no file from a current Excel is a
 committed test. Comments, charts
-and other parts aren't read. This reader is not yet wired to a task. Founder decision 7 of
-2026-11-14 chose it for the spreadsheet journey (roadmap Journey 2), slice by slice
-(`docs/orcel/implementation-readiness/prep/F5_SPREADSHEET_JOURNEY.md`); a client can reach
-it only from slice 3, which needs its own grain.
+and other parts aren't read. This reader is wired to the report task only in test builds.
+Founder decision 7 of 2026-11-14 chose it for the spreadsheet journey (roadmap Journey 2),
+slice by slice (`docs/orcel/implementation-readiness/prep/F5_SPREADSHEET_JOURNEY.md`); its
+grain is SG-000130, and a client can reach it only from that grain's slice W2.
 
 ## In the release
 

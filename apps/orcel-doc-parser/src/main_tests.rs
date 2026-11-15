@@ -169,3 +169,118 @@ fn bound_chars_cuts_on_a_character_boundary() {
     assert!(!truncated);
     assert_eq!(text, "short");
 }
+
+/// SG-000130 W1: with an expected format, anything else is refused by the sniff, before
+/// any parse. Where the parse would have said something else, that shows the sniff
+/// decided, not the converter.
+#[test]
+fn an_expected_workbook_refuses_any_other_format_before_any_parse() {
+    let xlsx = DocumentFormat::Xlsx;
+    let workbook = convert_expecting(&fixtures::workbook(), xlsx).expect("a workbook");
+    assert_eq!(workbook.format, xlsx);
+    for name in [
+        "written-by-xlsxwriter",
+        "written-by-openpyxl",
+        "excel-12-sample",
+        "excel-12-with-various-data",
+    ] {
+        assert_eq!(sniff(&fixtures::unpacked(name), xlsx), Ok(()), "{name}");
+    }
+
+    // A PDF, even one its parse would call malformed.
+    assert_eq!(refusal(&fixtures::malformed_pdf()), ParseRefusal::Malformed);
+    for pdf in [fixtures::text_pdf(), fixtures::malformed_pdf()] {
+        assert_eq!(sniff(&pdf, xlsx), Err(ParseRefusal::UnsupportedFormat));
+        assert_eq!(
+            convert_expecting(&pdf, xlsx),
+            Err(ParseRefusal::UnsupportedFormat)
+        );
+    }
+    // A zip that isn't a workbook: a document (one the pre-flight would call malformed
+    // too), a deck, and a zip that is no package at all.
+    assert_eq!(refusal(&fixtures::dtd_docx()), ParseRefusal::Malformed);
+    for other in [
+        fixtures::docx(),
+        fixtures::dtd_docx(),
+        fixtures::pptx(1),
+        fixtures::zip(&[("notes.txt", b"Sales!B2 = 1".to_vec())]),
+    ] {
+        assert_eq!(sniff(&other, xlsx), Err(ParseRefusal::UnsupportedFormat));
+    }
+    // A macro-enabled workbook: by its macro part, and by its main part's type.
+    let mut with_macros = fixtures::unpacked_parts("written-by-openpyxl");
+    with_macros.push(("xl/vbaProject.bin".into(), b"not really".to_vec()));
+    let with_macros = fixtures::zip_parts(&with_macros);
+    assert_eq!(sniff(&with_macros, xlsx), Err(ParseRefusal::ActiveContent));
+    let xlsm = fixtures::binary_workbook("application/vnd.ms-excel.sheet.macroEnabled.main+xml");
+    assert_eq!(sniff(&xlsm, xlsx), Err(ParseRefusal::ActiveContent));
+    // A template isn't the workbook either.
+    let template = fixtures::binary_workbook(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+    );
+    assert_eq!(sniff(&template, xlsx), Err(ParseRefusal::UnsupportedFormat));
+    // An .xls renamed .xlsx (an OLE file), and an encrypted package.
+    assert_eq!(
+        sniff(&fixtures::legacy_office(), xlsx),
+        Err(ParseRefusal::UnsupportedFormat)
+    );
+    assert_eq!(
+        sniff(&fixtures::encrypted_office(), xlsx),
+        Err(ParseRefusal::Encrypted)
+    );
+    // Nothing else, the test triggers included.
+    for other in [
+        &b"plain text"[..],
+        b"",
+        fixtures::ABORT_TRIGGER,
+        fixtures::UNCHECKED_TRIGGER,
+    ] {
+        assert_eq!(sniff(other, xlsx), Err(ParseRefusal::UnsupportedFormat));
+    }
+    // Two main parts, one of them not the workbook's.
+    let both = fixtures::binary_workbook(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>\
+         <Override PartName=\"/word/document.xml\" \
+         ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+    );
+    assert_eq!(sniff(&both, xlsx), Err(ParseRefusal::UnsupportedFormat));
+
+    // The other expectations sniff their own formats.
+    assert_eq!(sniff(&fixtures::text_pdf(), DocumentFormat::Pdf), Ok(()));
+    assert_eq!(
+        sniff(&fixtures::workbook(), DocumentFormat::Pdf),
+        Err(ParseRefusal::UnsupportedFormat)
+    );
+    assert_eq!(sniff(&fixtures::docx(), DocumentFormat::Docx), Ok(()));
+    assert_eq!(
+        sniff(&fixtures::workbook(), DocumentFormat::Docx),
+        Err(ParseRefusal::UnsupportedFormat)
+    );
+}
+
+#[test]
+fn the_arguments_are_the_input_or_an_expected_format_and_the_input() {
+    let args = |list: &[&str]| -> Vec<std::ffi::OsString> {
+        list.iter().map(std::ffi::OsString::from).collect()
+    };
+    assert_eq!(arguments(args(&["in"])), Ok((None, "in".into())));
+    assert_eq!(
+        arguments(args(&["--expect", "xlsx", "in"])),
+        Ok((Some(DocumentFormat::Xlsx), "in".into()))
+    );
+    for wrong in [
+        &[][..],
+        &["a", "b"],
+        &["--expect", "xlsm", "in"],
+        &["--expect", "XLSX", "in"],
+        &["--expected", "xlsx", "in"],
+        &["in", "--expect", "xlsx"],
+        &["--expect", "xlsx", "in", "more"],
+    ] {
+        assert_eq!(
+            arguments(args(wrong)),
+            Err(ParseRefusal::Usage),
+            "{wrong:?}"
+        );
+    }
+}
