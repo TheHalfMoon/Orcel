@@ -878,6 +878,30 @@ fn sg122_form_actions_go_through_bound_approvals_and_the_host_refuses_the_rest()
     let city = nodes_of(&observed, "combobox")[0].clone();
     let terms = nodes_of(&observed, "checkbox")[0].clone();
     let search = nodes_of(&observed, "searchbox")[0].clone();
+    // SG-000122 slice A5 (observation contract 2): each form control's
+    // name crosses as untrusted_name, the password field's too (named,
+    // never valued); a link's name, values and option labels never do.
+    let name_of = |node_id: &str| match &observed {
+        WorkerHostReply::Observed { nodes, .. } => all_nodes(nodes)
+            .into_iter()
+            .find(|node| node.node_id == node_id)
+            .and_then(|node| node.untrusted_name.clone())
+            .map(|name| (name.text, name.cut)),
+        other => panic!("observation refused: {other:?}"),
+    };
+    for (node, name) in [
+        (&full_name, "Full name"),
+        (&password, "Password"),
+        (&city, "City"),
+        (&terms, "Accept terms"),
+        (&search, "Search"),
+    ] {
+        assert_eq!(name_of(node), Some((name.to_owned(), false)), "{name}");
+    }
+    assert_eq!(name_of(&nodes_of(&observed, "link")[0]), None);
+    for raw in ["Old Name", "Lisbon", "Porto", "Menu"] {
+        assert!(!text.contains(raw), "{raw} crossed: {text}");
+    }
     let fill = |node_id: &str, value: &str| BindAction::Fill {
         node_id: node_id.into(),
         role: "textbox".into(),

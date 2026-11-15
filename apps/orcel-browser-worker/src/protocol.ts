@@ -37,8 +37,9 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// BR-02 press, hover and bounded waits, generation 13 BR-03 uploads,
 /// generation 14 BR-05 dismissed-dialog reports, generation 15 BR-05 approved
 /// confirm answers, generation 16 SG-000122 slice A1 (the `enter` form action,
-/// one select option, single-line fills, form-control kinds in observations).
-export const WORKER_PROTOCOL_GENERATION = 16;
+/// one select option, single-line fills, form-control kinds in observations),
+/// generation 17 SG-000122 slice A5 (form-control nodes marked `named`).
+export const WORKER_PROTOCOL_GENERATION = 17;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host; SG-000122: one option of a native select).
 export const MAX_FORM_VALUE_BYTES = 1024;

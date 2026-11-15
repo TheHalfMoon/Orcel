@@ -40,8 +40,9 @@ pub struct JobProcess {
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads; generation 16 is SG-000122 slice A1 (the `enter` form action,
 /// one select option, single-line fills, and form-control kinds in
-/// observed nodes).
-pub const WORKER_PROTOCOL_GENERATION: u32 = 16;
+/// observed nodes); generation 17 is SG-000122 slice A5 (form-control nodes
+/// marked `named`).
+pub const WORKER_PROTOCOL_GENERATION: u32 = 17;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -74,7 +75,10 @@ pub const WORKER_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// One node of a worker snapshot: ref, role, accessible name, (links
 /// only) the link URL and (main-frame form controls only, SG-000122) the
-/// control's kind. The worker never sends field values.
+/// control's kind and (slice A5) whether its name is one the worker found no
+/// embedded or referenced control could contribute to (`named`; absent from
+/// an older worker, which is the same as false). The worker never sends
+/// field values.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotNode {
@@ -86,6 +90,8 @@ pub struct SnapshotNode {
     pub url: Option<String>,
     #[serde(default)]
     pub control: Option<String>,
+    #[serde(default)]
+    pub named: bool,
     pub children: Vec<SnapshotNode>,
 }
 
@@ -100,6 +106,9 @@ pub struct HostNode {
     /// SG-000122: the form-control kind the worker reported for a
     /// main-frame node (`actuation::CONTROL_*`), or none.
     pub control: Option<String>,
+    /// SG-000122 slice A5: the name a caller may see (`form_name`), with
+    /// control characters replaced and not yet cut, or none.
+    pub form_name: Option<String>,
 }
 
 /// BR-05: dialogs remembered between two reads, and the longest message
@@ -684,6 +693,7 @@ pub(crate) fn input_node(
             name: node.name.clone(),
             url: node.url.clone(),
             control: control_kind(node),
+            form_name: form_name(node),
         },
     );
     crate::observation::InputNode {
@@ -722,6 +732,54 @@ fn control_kind(node: &SnapshotNode) -> Option<String> {
         .then(|| kind.to_owned())
         .filter(|_| main_frame)
     })
+}
+
+/// SG-000122 slice A5: the roles whose accessible names may reach a caller.
+#[cfg(any(windows, test))]
+pub(crate) const NAMED_ROLES: [&str; 6] = [
+    "textbox",
+    "searchbox",
+    "combobox",
+    "listbox",
+    "checkbox",
+    "radio",
+];
+
+/// SG-000122 slice A5: the name of a main-frame form control a caller may
+/// see: only for a node of a [`NAMED_ROLES`] role in the main frame that the
+/// worker marked `named` (its element is an input or a native select, and no
+/// embedded or referenced control can contribute to its name), and never
+/// empty. Control characters are replaced (`untrusted_text`); the cut to
+/// `prompt_display::MAX_FIELD_NAME_BYTES` is the host's, when it crosses.
+#[cfg(any(windows, test))]
+fn form_name(node: &SnapshotNode) -> Option<String> {
+    let main_frame = node
+        .reference
+        .strip_prefix('e')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
+    let named = node.named && main_frame && !node.name.is_empty();
+    (named && NAMED_ROLES.contains(&node.role.as_str())).then(|| untrusted_text(&node.name))
+}
+
+/// SG-000122 slice A5: page text as a caller sees it: every control
+/// character (C0, DEL, C1), line and paragraph separator and bidi control
+/// replaced by U+FFFD.
+#[cfg(any(windows, test))]
+pub(crate) fn untrusted_text(text: &str) -> String {
+    text.chars()
+        .map(|ch| {
+            let bidi = matches!(
+                ch,
+                '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            );
+            let separator = matches!(ch, '\u{2028}' | '\u{2029}');
+            if ch.is_control() || bidi || separator {
+                '\u{fffd}'
+            } else {
+                ch
+            }
+        })
+        .collect()
 }
 
 /// SHA-256 over this lifetime's key and the name (hex).
@@ -2344,6 +2402,9 @@ mod platform {
                 input,
             )?;
             let state = self.form_binding(node_id, input, None)?;
+            // SG-000122 slice A5: the prompt shows, and the approval binds,
+            // the name the observation returned (none is the empty name),
+            // and the ordinal is counted over those names.
             let nodes: Vec<crate::actuation::OrdinalNode<'_>> = self
                 .host_nodes
                 .iter()
@@ -2351,15 +2412,24 @@ mod platform {
                     node_id: id,
                     reference: &node.reference,
                     role: &node.role,
-                    name: &node.name,
+                    name: node.form_name.as_deref().unwrap_or(""),
                 })
                 .collect();
             let ordinal = crate::actuation::shared_name_ordinal(&nodes, node_id);
             Ok(crate::actuation::LiveFormBinding {
                 state,
-                name: node.name.clone(),
+                name: node.form_name.clone().unwrap_or_default(),
                 ordinal,
             })
+        }
+
+        /// SG-000122 slice A5: the name a caller may see for an observed
+        /// node of the latest observation (`form_name`), or none.
+        #[cfg(any(test, feature = "live-browser-test", feature = "live-browser-dev"))]
+        pub(crate) fn form_name(&self, node_id: &str) -> Option<&str> {
+            self.host_nodes
+                .get(node_id)
+                .and_then(|node| node.form_name.as_deref())
         }
 
         /// SG-000122 slice A1: perform one approved live form action. The
@@ -4207,6 +4277,56 @@ mod tests {
         assert_eq!(keyed_name(&[1u8; 32], "x").len(), 64);
     }
 
+    /// SG-000122 slice A5: the host records a name a caller may see only
+    /// for a main-frame node of a form-control role that the worker marked
+    /// `named`, with control characters replaced; links, buttons, frames,
+    /// unmarked nodes and empty names get none. A generation 16 worker's
+    /// nodes (no `named`) still decode, and name nothing.
+    #[test]
+    fn sg122_a5_only_marked_main_frame_form_controls_are_named() {
+        let nodes: Vec<SnapshotNode> = serde_json::from_str(
+            r#"[{"ref":"e1","role":"textbox","name":"Full name","named":true,"children":[]},
+                {"ref":"e2","role":"combobox","name":"City","control":"select","named":true,"children":[]},
+                {"ref":"e3","role":"checkbox","name":"Remember TYPED","children":[]},
+                {"ref":"e4","role":"link","name":"Reports","named":true,"children":[]},
+                {"ref":"e5","role":"button","name":"Go","named":true,"children":[]},
+                {"ref":"f1e6","role":"textbox","name":"Framed","named":true,"children":[]},
+                {"ref":"e7","role":"radio","name":"","named":true,"children":[]},
+                {"ref":"e8","role":"listbox","name":"Tab\there\u0085next\u2028line\u202eRTL","named":true,"children":[]},
+                {"ref":"e9","role":"searchbox","name":"Find","named":false,"children":[]},
+                {"ref":"e10","role":"textbox","name":"Old worker","children":[]}]"#,
+        )
+        .unwrap();
+        let mut index = std::collections::HashMap::new();
+        let roots: Vec<_> = nodes
+            .iter()
+            .map(|node| input_node(node, 4, &[1u8; 32], &mut index))
+            .collect();
+        let name = |id: &str| index[id].form_name.clone();
+        assert_eq!(name("d4-e1").as_deref(), Some("Full name"));
+        assert_eq!(name("d4-e2").as_deref(), Some("City"));
+        assert_eq!(name("d4-e3"), None, "not marked: a control contributes");
+        assert_eq!(name("d4-e4"), None, "not a form control");
+        assert_eq!(name("d4-e5"), None, "not a form control");
+        assert_eq!(name("d4-f1e6"), None, "inside a frame");
+        assert_eq!(name("d4-e7"), None, "empty");
+        assert_eq!(
+            name("d4-e8").as_deref(),
+            Some("Tab\u{fffd}here\u{fffd}next\u{fffd}line\u{fffd}RTL")
+        );
+        assert_eq!(name("d4-e9"), None);
+        assert_eq!(name("d4-e10"), None, "an older worker names nothing");
+        // The raw name stays the host's; the SG-000076 input is keyed.
+        assert_eq!(index["d4-e3"].name, "Remember TYPED");
+        assert!(!format!("{roots:?}").contains("Full name"));
+        for ch in [
+            '\u{0}', '\u{7f}', '\u{9f}', '\u{2029}', '\u{200e}', '\u{2066}', '\u{61c}',
+        ] {
+            assert_eq!(untrusted_text(&format!("a{ch}b")), "a\u{fffd}b", "{ch:?}");
+        }
+        assert_eq!(untrusted_text("Café — ok"), "Café — ok");
+    }
+
     /// SG-000122: a control kind is kept host-side only when it is one of
     /// the closed kinds and the node is in the main frame; it never reaches
     /// the SG-000076 observation.
@@ -4244,6 +4364,7 @@ mod tests {
             name: name.into(),
             url: None,
             control: None,
+            form_name: None,
         };
         let mut nodes = std::collections::HashMap::new();
         nodes.insert("d1-e1".to_string(), link("Rapport — 2026-09-30"));
@@ -4260,6 +4381,7 @@ mod tests {
             name: name.into(),
             url: None,
             control: None,
+            form_name: None,
         };
         let mut nodes = std::collections::HashMap::new();
         nodes.insert("d1-e1".to_string(), link("Quarterly report 2026-06-30"));

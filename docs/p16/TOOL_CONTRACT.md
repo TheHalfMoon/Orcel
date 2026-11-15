@@ -44,7 +44,7 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `browser_enter` | `browser.form/enter` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id |
 | `browser_fill` | `browser.dom/fill` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id; never the value |
 | `browser_navigate` | `browser.navigation/navigate` | network | SOFT | local-only | no | no | no | yes | the committed URL, status and generation |
-| `browser_observe` | `browser.snapshot/observe` | read | none | local-only | yes | no | yes | no | one frame of node identities and keyed digests; no page text |
+| `browser_observe` | `browser.snapshot/observe` | read | none | local-only | yes | no | yes | no | one frame of node identities and keyed digests, plus form controls' untrusted accessible names of at most 256 bytes each; no other page text |
 | `browser_page_open` | `browser.page/open` | read | none | local-only | yes | no | no | no | one page id and its generation |
 | `browser_select` | `browser.form/select` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id; never the option label |
 | `browser_verify` | `browser.verify/check` | read | none | local-only | yes | no | yes | no | at most 16 pass or fail results with fixed evidence words and counts, the committed URL and a report digest; no page text, name or value |

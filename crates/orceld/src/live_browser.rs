@@ -1527,7 +1527,8 @@ impl LiveBrowser {
         Ok(())
     }
 
-    /// A bounded observation: identities and digests only.
+    /// A bounded observation: identities and digests, and (SG-000122 slice
+    /// A5) the untrusted names of main-frame form controls.
     pub fn observe(&mut self) -> Result<Vec<WireNode>, ProviderError> {
         match self.request(&WorkerHostRequest::Observe {})? {
             WorkerHostReply::Observed { nodes, .. } => {
