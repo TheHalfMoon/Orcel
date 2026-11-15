@@ -263,4 +263,4 @@ fn check_figures_with(
 
 #[cfg(test)]
 #[path = "report_workbook_tests.rs"]
-mod tests;
+pub(crate) mod tests;

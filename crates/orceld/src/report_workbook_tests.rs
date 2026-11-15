@@ -26,7 +26,7 @@ fn crc32(bytes: &[u8]) -> u32 {
 
 /// A zip with no compression, content types first. orceld doesn't link a zip
 /// library, and it shouldn't to run a test.
-fn stored_zip(mut parts: Vec<(String, Vec<u8>)>) -> Vec<u8> {
+pub(crate) fn stored_zip(mut parts: Vec<(String, Vec<u8>)>) -> Vec<u8> {
     parts.sort_by_key(|(name, _)| (name != "[Content_Types].xml", name.clone()));
     let mut out = Vec::new();
     let mut central = Vec::new();
@@ -63,7 +63,7 @@ fn stored_zip(mut parts: Vec<(String, Vec<u8>)>) -> Vec<u8> {
 
 /// A committed workbook from other software, as parts
 /// (`apps/orcel-doc-parser/tests/fixtures/WORKBOOKS.md`).
-fn fixture_parts(name: &str) -> Vec<(String, Vec<u8>)> {
+pub(crate) fn fixture_parts(name: &str) -> Vec<(String, Vec<u8>)> {
     fn walk(dir: &Path, root: &Path, out: &mut Vec<(String, Vec<u8>)>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
@@ -101,7 +101,7 @@ fn with_first_sheet(mut parts: Vec<(String, Vec<u8>)>, cells: &str) -> Vec<u8> {
     stored_zip(parts)
 }
 
-fn fixture(name: &str) -> Vec<u8> {
+pub(crate) fn fixture(name: &str) -> Vec<u8> {
     stored_zip(fixture_parts(name))
 }
 

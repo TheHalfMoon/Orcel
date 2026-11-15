@@ -714,6 +714,13 @@ fn open_verified_file(path: &Path) -> io::Result<(File, PathBuf)> {
     Ok((file, resolved))
 }
 
+/// The real path of an open file, read from its handle (Windows) or descriptor (Linux,
+/// macOS) rather than by resolving a path again, so a link swapped in or out after the
+/// open can't change the answer. Elsewhere it falls back to resolving `path`.
+pub fn open_file_final_path(file: &File, path: &Path) -> io::Result<PathBuf> {
+    final_path_from_open_file(file, path)
+}
+
 fn final_path_from_open_file(_file: &File, _path: &Path) -> io::Result<PathBuf> {
     #[cfg(windows)]
     {
