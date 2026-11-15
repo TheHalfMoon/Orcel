@@ -1464,6 +1464,11 @@ fn wi05_sg130_w3_the_workbook_report_journey_with_every_refusal() {
         failed.message
     );
     assert_eq!(tasks.get(&task).unwrap()["state"], "verification_failed");
+    // The report was written (create-only) before the checker refused it.
+    assert_eq!(
+        std::fs::read_to_string(root.join("reports/linked.md")).unwrap(),
+        linked_report
+    );
     assert_eq!(shown(), 3);
 
     // 5. A macro-enabled workbook: refused by the parser's sniff, no task.

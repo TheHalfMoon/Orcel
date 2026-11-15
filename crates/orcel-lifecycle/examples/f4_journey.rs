@@ -632,10 +632,34 @@ fn history(dir: &Path, journal: &Path) -> Result<bool, String> {
 
 /// What `evidence` checks: F4's journey, or with `workbook` the F5 workbook
 /// journey (SG-000130 W3), which has no orceld-death step and adds its own.
+/// With `workbook`, the denied and existing-destination paths count only for a
+/// task over the prepared workbook, so a text task can't satisfy them.
 fn evidence_checks(dir: &Path, tasks: &[&Value], transcript: &str, workbook: bool) -> Vec<Check> {
     let mut results = checks(dir, tasks, transcript);
     if workbook {
         results.retain(|result| result.name != "an interrupted task read back after orceld died");
+        let over_workbook: Vec<&Value> = tasks
+            .iter()
+            .copied()
+            .filter(|task| read_the_prepared_workbook(task))
+            .collect();
+        let bound = checks(dir, &over_workbook, transcript);
+        for result in &mut results {
+            if !matches!(
+                result.name,
+                "denied approval refused" | "existing destination refused"
+            ) {
+                continue;
+            }
+            if let Some(on_workbook) = bound.iter().find(|each| each.name == result.name) {
+                result.passed = on_workbook.passed;
+                result.detail = if on_workbook.passed {
+                    on_workbook.detail.clone()
+                } else {
+                    format!("{} over the prepared data/sales.xlsx", on_workbook.detail)
+                };
+            }
+        }
         results.extend(workbook_checks(dir, tasks));
     }
     results
@@ -1209,6 +1233,44 @@ mod tests {
         );
         fs::write(dir.join("data").join("sales.xlsx"), b"other bytes").unwrap();
         assert_eq!(run(&tasks), vec!["the workbook holds only the kit's bytes"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn with_workbook_a_csv_only_denial_or_destination_does_not_pass() {
+        let dir = scratch("workbook-csv-only");
+        let mut tasks = complete_workbook(&dir);
+        let transcript = "a transcript\n";
+        // The same paths, recorded by tasks over data/q3.csv instead.
+        tasks[1] = task(
+            "rpt-b",
+            "approval_denied",
+            &[("approval", "denied")],
+            Value::Null,
+        );
+        tasks[3] = task(
+            "rpt-d",
+            "proposed",
+            &[("preview", "destination_exists")],
+            Value::Null,
+        );
+        for at in [1, 3] {
+            tasks[at]["sources"] =
+                json!([{"path": "data/q3.csv", "sha256": sha256(SOURCE.as_bytes()), "bytes": 1}]);
+        }
+        let refs: Vec<&Value> = tasks.iter().collect();
+        let results = evidence_checks(&dir, &refs, transcript, true);
+        assert_eq!(
+            failed(&results),
+            vec!["denied approval refused", "existing destination refused"]
+        );
+        assert!(results
+            .iter()
+            .filter(|result| !result.passed)
+            .all(|result| result.detail.ends_with("over the prepared data/sales.xlsx")));
+        // Without --workbook, F4's journey still accepts them.
+        assert!(!failed(&evidence_checks(&dir, &refs, transcript, false))
+            .contains(&"denied approval refused"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
