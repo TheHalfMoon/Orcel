@@ -19,8 +19,16 @@ format and formula. So a report can name the cell each figure came from.
   `external, not refreshed`. This is a text check: a false positive adds a caution,
   and it can miss a form it doesn't know.
 - External links, data connections, pivot caches, query tables, reaching defined
-  names and manual or on-load calculation are declared at the top. Their targets
-  are never shown.
+  names and manual or on-load calculation are declared at the top. Since SG-000130 W2
+  the targets of external links (and a DDE link's service and topic) and the name and
+  target of each data connection are also listed there, one line each, labelled
+  workbook-supplied and escaped like a cell, so the report task's approval prompt can
+  say where a workbook points. They're read from the package only, never opened,
+  followed or refreshed. A connection string is never shown whole, since it may hold
+  credentials: only its data source (read with its quoting). A URL is shown with its
+  scheme, host and path only: its user name, password, query and fragment, which may
+  carry a credential or a token, are left out, and the line says so. A file path is
+  shown as it is.
 - Macros, including Excel 4 macro sheets, are `active_content`.
 - **A structural element out of its place is refused, not skipped.** Only the
   spreadsheet namespace counts. Sheets, cells, values, shared strings, defined names,
@@ -63,12 +71,15 @@ grain is SG-000130, and a client can reach it only from that grain's slice W2.
 
 Since F5 slice 1, the Windows release ships `orcel-doc-parser.exe` beside `orceld.exe`,
 pinned by `orcel-doc-parser.sha256` (`scripts/package-release.mjs`; both are manifest files,
-so the installer verifies them). **No release build calls it.** Its only callers are the live
-browser's committed downloads, compiled only into `live-browser-*` development builds, and the
-workbook source, compiled only into tests. If that changes, the `expect(dead_code)` on the
-entry points in `crates/orceld/src/document_parse.rs` fails CI's clippy, and
-`release_blocker_sweep.rs` (`the_shipped_document_parser_has_no_release_caller`) scans
-production Rust and the shipped MCP and Windows app sources for callers. The executable
+so the installer verifies them). Its callers are the live browser's committed downloads,
+compiled only into `live-browser-*` development builds, and, since SG-000130 W2, the local-only
+report task's `.xlsx` sources (`report_task.rs` loads the pins, `report_workbook.rs` reads
+through the workspace route, `report_check.rs` re-runs it on its own). The `expect(dead_code)`
+on the live browser's entry points in `crates/orceld/src/document_parse.rs` fails CI's clippy
+if a release build calls one, and `release_blocker_sweep.rs`
+(`the_shipped_document_parser_has_only_the_listed_release_callers`) pins which production Rust
+file may name which of the parser's items, and scans the shipped MCP and Windows app sources
+for its name. The executable
 registry refuses anything in an Orcel install directory, so it can't be registered and started
 unconfined either. Known consequence: the registry treats any folder holding an `orceld`
 executable as an install directory, so installing `orceld` with cargo, for example, makes every tool in

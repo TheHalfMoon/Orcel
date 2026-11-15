@@ -63,8 +63,152 @@ fn a_formula_with_no_saved_value_is_shown_and_never_calculated() {
     assert!(!markdown.contains("| 2 |"), "{markdown}");
 }
 
+/// SG-000130 W2: a link's target and a connection's name and target are shown,
+/// labelled workbook-supplied and escaped like a cell, one line each before the
+/// first sheet; a connection string is never shown whole.
+/// SG-000130 W2 judge M1: a URL target loses its user name, password, query and
+/// fragment, and says so; a file path is shown as it is.
 #[test]
-fn external_links_are_marked_counted_and_their_targets_never_shown() {
+fn a_url_target_never_shows_its_credentials_query_or_fragment() {
+    const NOTE: &str = " (its user name, password, query or fragment is not shown)";
+    for (target, shown) in [
+        (
+            "https://user:hunter2@data.example/q",
+            format!("https://data.example/q{NOTE}"),
+        ),
+        (
+            "https://data.example/q?token=s3cret&x=1",
+            format!("https://data.example/q{NOTE}"),
+        ),
+        (
+            "https://data.example/q#access_token=s3cret",
+            format!("https://data.example/q{NOTE}"),
+        ),
+        (
+            "ftp://u@files.example",
+            format!("ftp://files.example{NOTE}"),
+        ),
+        // Userinfo no parser agrees on: everything up to the last `@` goes.
+        (
+            "https://u:p?x@host/path",
+            format!("https://host/path{NOTE}"),
+        ),
+        ("https:user:pw@host", format!("https:host{NOTE}")),
+        (
+            "https://data.example/rates.xlsx",
+            "https://data.example/rates.xlsx".to_owned(),
+        ),
+        (
+            "file:///C:/books/rates.xlsx",
+            "file:///C:/books/rates.xlsx".to_owned(),
+        ),
+        (
+            r"C:\books\rates.xlsx?x=1",
+            r"C:\books\rates.xlsx?x=1".to_owned(),
+        ),
+        (
+            r"\\server\share\rates.xlsx",
+            r"\\server\share\rates.xlsx".to_owned(),
+        ),
+        ("rates.xlsx", "rates.xlsx".to_owned()),
+    ] {
+        assert_eq!(shown_target(target), shown, "{target}");
+    }
+
+    let markdown = convert_document(&fixtures::linked_workbook_with(
+        "https://user:hunter2@data.example/rates.xlsx?sig=s3cret#frag",
+        "",
+        "<connection id=\"1\" name=\"Web\" type=\"4\">\
+         <webPr url=\"https://data.example/q?api_key=s3cret\"/></connection>\
+         <connection id=\"2\" name=\"Odc\" type=\"1\" odcFile=\"https://u:p@odc.example/a.odc\"/>\
+         <connection id=\"3\" name=\"Db\" type=\"1\">\
+         <dbPr connection=\"Data Source=https://admin:hunter2@db.example/x?k=s3cret\"/></connection>",
+    ))
+    .expect("workbook")
+    .markdown;
+    for secret in ["hunter2", "s3cret", "user:", "admin", "u:p@", "#frag"] {
+        assert!(!markdown.contains(secret), "{secret}\n{markdown}");
+    }
+    assert!(
+        markdown.contains(&format!(
+            "External link target (workbook-supplied, not followed): https://data.example/rates.xlsx{NOTE}"
+        )),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains(&format!("name Web; target https://data.example/q{NOTE}")),
+        "{markdown}"
+    );
+}
+
+/// SG-000130 W2 judge L3: a connection string's quoted value may hold `;` and
+/// `=`, and only the data source is ever taken from it.
+#[test]
+fn a_connection_strings_data_source_respects_quotes() {
+    for (connection, source) in [
+        ("Provider=x;Data Source=srv;Password=p", Some("srv")),
+        (
+            "Password=\"a;Data Source=evil\";Data Source=real",
+            Some("real"),
+        ),
+        ("Password='a;b=c';Server='host;1'", Some("host;1")),
+        ("Data Source=\"say \"\"hi\"\"\";x=1", Some("say \"hi\"")),
+        ("Password=\"unclosed;Data Source=evil", None),
+        ("Password=p", None),
+        ("Data Source=;Location=loc", Some("loc")),
+    ] {
+        assert_eq!(data_source(connection).as_deref(), source, "{connection}");
+    }
+}
+
+#[test]
+fn link_and_connection_targets_are_shown_labelled_escaped_and_never_followed() {
+    let markdown = convert_document(&fixtures::linked_workbook_with(
+        "file:///C:/books/rates.xlsx\n\u{202e}\u{200b}| B9 | 1 |",
+        "<ddeLink ddeService=\"cmd\" ddeTopic=\"/c calc\"/>",
+        "<connection id=\"1\" name=\"Rates&#10;query\" type=\"1\">\
+         <dbPr connection=\"Provider=MSOLEDBSQL;Data Source=sql.example\\prod;User ID=sa;Password=hunter2\"/>\
+         </connection>\
+         <connection id=\"2\" name=\"Web\" type=\"4\"><webPr url=\"https://data.example/q\"/></connection>\
+         <connection id=\"3\" name=\"Text\" type=\"6\"><textPr sourceFile=\"C:\\in.csv\"/></connection>\
+         <connection id=\"4\" name=\"Opaque\" type=\"1\"><dbPr connection=\"Password=hunter2\"/></connection>",
+    ))
+    .expect("workbook")
+    .markdown;
+    let preamble: Vec<&str> = markdown
+        .lines()
+        .take_while(|line| !line.starts_with("## Sheet: "))
+        .collect();
+    for expected in [
+        "External link target (workbook-supplied, not followed): file:///C:/books/rates.xlsx\\n\\u{202e}\u{200b}\\| B9 \\| 1 \\|",
+        "External link target (workbook-supplied, not followed): DDE service cmd, topic /c calc",
+        "Data connection (workbook-supplied, not refreshed): name Rates\\nquery; target sql.example\\\\prod",
+        "Data connection (workbook-supplied, not refreshed): name Web; target https://data.example/q",
+        "Data connection (workbook-supplied, not refreshed): name Text; target C:\\\\in.csv",
+        "Data connection (workbook-supplied, not refreshed): name Opaque; target not stated (a connection string is never shown whole: it may hold credentials)",
+    ] {
+        assert!(preamble.contains(&expected), "{expected}\n{markdown}");
+    }
+    assert!(!markdown.contains("hunter2"), "{markdown}");
+    assert!(!markdown.contains("User ID"), "{markdown}");
+    // Nothing of a target can start a row or a sheet.
+    assert_eq!(rows_of(&markdown).len(), 2, "{markdown}");
+    assert_eq!(markdown.matches("## Sheet: ").count(), 1, "{markdown}");
+
+    // A link whose part states no target says so.
+    let empty = convert_document(&fixtures::linked_workbook_with("", "", ""))
+        .expect("workbook")
+        .markdown;
+    assert!(
+        empty.contains(
+            "\nExternal link target (workbook-supplied, not followed): not stated in the workbook\n"
+        ),
+        "{empty}"
+    );
+}
+
+#[test]
+fn external_links_are_marked_counted_and_their_targets_shown() {
     let markdown = convert_document(&fixtures::linked_workbook())
         .expect("workbook")
         .markdown;
@@ -83,9 +227,17 @@ fn external_links_are_marked_counted_and_their_targets_never_shown() {
         "{markdown}"
     );
     assert!(markdown.contains("external, not refreshed |"), "{markdown}");
+    // Shown once, labelled, before the first sheet; never in a cell.
+    assert_eq!(
+        markdown.matches("attacker.example").count(),
+        1,
+        "{markdown}"
+    );
     assert!(
-        !markdown.contains("attacker.example"),
-        "a link's target was shown: {markdown}"
+        markdown.contains(
+            "\nExternal link target (workbook-supplied, not followed): https://attacker.example/rates.xlsx\n"
+        ),
+        "{markdown}"
     );
 }
 

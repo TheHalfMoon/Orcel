@@ -264,7 +264,14 @@ fn f5_a_workbook_keeps_its_cell_references_under_containment() {
         "{}",
         document.markdown
     );
-    assert!(!document.markdown.contains("attacker.example"));
+    // SG-000130 W2: the link's target is shown, labelled, never followed.
+    assert!(
+        document.markdown.contains(
+            "External link target (workbook-supplied, not followed): https://attacker.example/rates.xlsx"
+        ),
+        "{}",
+        document.markdown
+    );
 
     // Apache POI's sample of an Excel file (tests/fixtures/WORKBOOKS.md).
     let Some(scene) = Scene::new(&fixtures::unpacked("excel-12-sample")) else {

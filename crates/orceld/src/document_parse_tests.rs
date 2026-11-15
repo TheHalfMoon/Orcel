@@ -772,6 +772,8 @@ fn f5_an_oversized_workspace_file_is_refused_before_it_is_read() {
         relative: "big.xlsx".into(),
         bytes: MAX_INPUT_BYTES + 1,
         sha256: DIGEST.into(),
+        canonical: root.join("big.xlsx"),
+        opened: "big.xlsx".into(),
     };
     let error = parse_workspace_file(&workspace, &forged, &helper, &parser).unwrap_err();
     assert!(
@@ -899,16 +901,95 @@ fn f5_a_handle_that_reached_another_file_is_refused() {
     let first = opened_as(&open_no_follow(&inside).unwrap(), &inside).unwrap();
     let again = opened_as(&open_no_follow(&inside).unwrap(), &inside).unwrap();
     assert_eq!(first, again);
-    assert_eq!(first.links, 1);
+    assert_eq!(first.0.links, 1);
+    // SG-000130 W2: and the real path read from the handle, without `\\?\`.
+    assert_eq!(first.1, PathBuf::from(unprefixed(&inside)));
     std::fs::write(root.join("data").join("b.xlsx"), b"PK inside").unwrap();
     let other_path = root.join("data").join("b.xlsx");
     let other = opened_as(&open_no_follow(&other_path).unwrap(), &other_path).unwrap();
-    assert_ne!(first, other);
+    assert_ne!(first.0, other.0);
+    assert_ne!(first.1, other.1);
     drop(raced_handle);
     #[cfg(windows)]
     std::fs::remove_dir(root.join("away")).unwrap();
     let _ = std::fs::remove_dir_all(outside);
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// SG-000130 W2: a workspace root that is a link (a junction on Windows).
+fn root_link(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    junction(link, target);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+fn remove_root_link(link: &Path) {
+    #[cfg(windows)]
+    std::fs::remove_dir(link).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(link).unwrap();
+}
+
+/// SG-000130 W2: the observed file's real path, read from the open handle, is
+/// recorded and must be exactly the same at every later read. The same bytes
+/// at the same relative path somewhere else (the workspace root relinked), or
+/// under another spelling of the path (a folder renamed in case, where names
+/// ignore case), are refused before anything is staged or launched; that is
+/// what the report's commit approval binds instead of the caller's string.
+#[test]
+fn f5_sg130_a_workspace_file_whose_real_path_changed_is_refused() {
+    let base = temp_dir("ws-moved");
+    for side in ["a", "b"] {
+        std::fs::create_dir_all(base.join(side).join("data")).unwrap();
+        std::fs::write(base.join(side).join("data").join("a.xlsx"), b"PK same").unwrap();
+    }
+    let link = base.join("ws");
+    root_link(&link, &base.join("a"));
+    let workspace = workspace(&link);
+    let (helper, parser) = dummy_pins(&base);
+    let observed = observe_workspace_file(&workspace, "data/a.xlsx").unwrap();
+    let real_a = PathBuf::from(unprefixed(&base.join("a").join("data").join("a.xlsx")));
+    assert_eq!(observed.canonical(), real_a.as_path());
+    assert_eq!(observed.opened(), "data/a.xlsx");
+
+    remove_root_link(&link);
+    root_link(&link, &base.join("b"));
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(error.code, FailureCode::TargetStale, "{}", error.message);
+    assert!(
+        error.message.contains("real path changed"),
+        "{}",
+        error.message
+    );
+
+    // Back where it was observed, every check passes and the run is reached,
+    // which the dummy pins can't start.
+    remove_root_link(&link);
+    root_link(&link, &base.join("a"));
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(
+        error.code,
+        FailureCode::ProviderUnavailable,
+        "{}",
+        error.message
+    );
+
+    // A folder renamed only in case: the walk still finds it where names ignore
+    // case, and its real path differs.
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        std::fs::rename(base.join("a").join("data"), base.join("a").join("DATA")).unwrap();
+        let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+        assert_eq!(error.code, FailureCode::TargetStale, "{}", error.message);
+        assert!(
+            error.message.contains("real path changed"),
+            "{}",
+            error.message
+        );
+    }
+    remove_root_link(&link);
+    let _ = std::fs::remove_dir_all(base);
 }
 
 /// F5 slice 2 end to end: a committed workbook fixture in a workspace, through

@@ -33,23 +33,20 @@
 //! yield the same bytes or a refusal, and what remains is a denial of
 //! service bounded by the limit.
 //!
-//! **W1: compiled only into tests.** No build but a test has a workbook
-//! source, so [`Pins`] is uninhabited elsewhere and the contained run is
-//! compiled only for tests, until SG-000130 slice W2 admits this file as a
-//! release caller of the parser.
+//! SG-000130 W2 admits this file as a release caller of the parser, naming
+//! only `run_parser`, `ParserPin`, `HelperPin` and the frame's format, document
+//! and input bound (`release_blocker_sweep.rs` pins that). The pins are absent
+//! where the release doesn't carry the parser (Linux and macOS packages), and
+//! a workbook source is then refused as unavailable.
 
+use crate::document_parse::{run_parser, ParserPin};
 use crate::report_task::{SourceKind, SourceRecord};
+use orcel_provider_process::contained::HelperPin;
+use orcel_provider_process::document_parser::{DocumentFormat, ParsedDocument, MAX_INPUT_BYTES};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-
-#[cfg(test)]
-use crate::document_parse::{run_parser, ParserPin};
-#[cfg(test)]
-use orcel_provider_process::contained::HelperPin;
-#[cfg(test)]
-use orcel_provider_process::document_parser::{DocumentFormat, MAX_INPUT_BYTES};
 
 /// The checker's name and revision in its records.
 pub(crate) const CHECKER: &str = "orcel-report-check/1";
@@ -57,18 +54,18 @@ pub(crate) const CHECKER: &str = "orcel-report-check/1";
 const MAX_TEXT_SOURCE_BYTES: u64 = 1024 * 1024;
 /// The largest workbook source the checker re-reads: the parser's input
 /// bound.
-#[cfg(test)]
 const MAX_WORKBOOK_SOURCE_BYTES: u64 = MAX_INPUT_BYTES;
-/// W1: no build but a test reads a workbook source.
-#[cfg(not(test))]
-const MAX_WORKBOOK_SOURCE_BYTES: u64 = 0;
 
-/// The pinned helper and parser for the checker's own contained runs.
-#[cfg(test)]
+/// The pinned helper and parser for the checker's own contained runs, as the
+/// report task loads them. The report task's own records name this type, never
+/// the parser's or the helper's pin.
 pub(crate) type Pins = (HelperPin, ParserPin);
-/// W1: no build but a test has a workbook source, so there are no pins.
-#[cfg(not(test))]
-pub(crate) type Pins = std::convert::Infallible;
+
+/// The parser's pinned SHA-256, which a report's commit approval binds for
+/// each workbook source.
+pub(crate) fn parser_digest(pins: &Pins) -> &str {
+    pins.1.sha256()
+}
 
 /// What the created report must be.
 pub(crate) struct Expectation<'a> {
@@ -285,11 +282,11 @@ fn check_figures(
 /// pinned parser, which expects a workbook and refuses anything else by
 /// sniffing before any parse. A cut text is refused: a figure must not rest
 /// on part of a workbook.
-#[cfg(test)]
 fn parsed_workbook(bytes: &[u8], sha256: &str, pins: Option<&Pins>) -> Result<String, String> {
     let (helper, parser) = pins.ok_or("workbook sources are not available in this build")?;
-    let document = run_parser(bytes, sha256, Some(DocumentFormat::Xlsx), helper, parser)
-        .map_err(|error| error.message)?;
+    let document: ParsedDocument =
+        run_parser(bytes, sha256, Some(DocumentFormat::Xlsx), helper, parser)
+            .map_err(|error| error.message)?;
     if document.format != DocumentFormat::Xlsx {
         return Err("the file named as a workbook isn't one".into());
     }
@@ -297,15 +294,6 @@ fn parsed_workbook(bytes: &[u8], sha256: &str, pins: Option<&Pins>) -> Result<St
         return Err("the workbook is too large to read in full".into());
     }
     Ok(document.markdown)
-}
-
-/// W1: no build but a test has a workbook source or the pins to read one.
-#[cfg(not(test))]
-fn parsed_workbook(_bytes: &[u8], _sha256: &str, pins: Option<&Pins>) -> Result<String, String> {
-    match pins {
-        Some(never) => match *never {},
-        None => Err("workbook sources are not available in this build".into()),
-    }
 }
 
 /// One stated figure: `[source]Sheet!Cell = value`.

@@ -383,7 +383,7 @@
       "operation": "start",
       "status": "implemented_exposed",
       "mcp_tool": "report_start",
-      "note": "local transports only (MCP report_start): observes and hashes 1..=8 workspace text sources and opens a per-run report task; read-only; source text labelled untrusted (SG-000126, exposed by SG-000127 slice 3)"
+      "note": "local transports only (MCP report_start): observes and hashes 1..=8 workspace sources (text, or .xlsx workbooks read by the confined parser on Windows, SG-000130) and opens a per-run report task; read-only; source text labelled untrusted (SG-000126, exposed by SG-000127 slice 3)"
     },
     {
       "capability": "report",

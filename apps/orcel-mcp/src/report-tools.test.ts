@@ -263,6 +263,47 @@ test("sg127 a local host forwards exactly the admitted fields and nothing else",
 });
 
 /**
+ * SG-000130 W2: report_start accepts an .xlsx workbook beside text sources,
+ * with its argument shape unchanged. The edge forwards the path exactly and
+ * reads nothing; orceld decides (it refuses .xls, .xlsb and macro workbooks,
+ * and any workbook where the release doesn't carry the parser). The tool's
+ * description, its contract row and its discovery entry say so together.
+ */
+test("sg130 report_start forwards an .xlsx source unchanged and says it reads workbooks", async () => {
+  const calls: Forwarded[] = [];
+  const { server, transport } = await session(recordingKernel(calls), localTransportContext({}));
+  const listed = await transport.request(2, "tools/list", {});
+  const tools = (listed.result as { tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }).tools;
+  const start = tools.find((tool) => tool.name === "report_start");
+  assert.ok(start, "report_start is listed locally");
+  assert.match(start.description ?? "", /\.xlsx workbooks/);
+  assert.match(start.description ?? "", /\[path\.xlsx\]Sheet!Cell = value/);
+  assert.match(start.description ?? "", /\.xls, \.xlsb and macro-enabled workbooks are refused/);
+  const sources = ["data/q3.csv", "data/Sales.XLSX", "data/sales.xlsx"];
+  const called = await transport.request(3, "tools/call", {
+    name: "report_start",
+    arguments: { title: "Q3", sources, folder: "reports" }
+  });
+  assert.notEqual((called.result as { isError?: boolean } | undefined)?.isError, true, JSON.stringify(called));
+  await server.close();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.arguments, { title: "Q3", sources, folder: "reports" });
+  assert.equal(calls[0]?.capability, "report");
+  assert.equal(calls[0]?.operation, "start");
+
+  // The contract, its documentation row and the discovery entry agree.
+  assert.match(TOOL_CONTRACT.report_start?.outputBound ?? "", /\.xlsx workbook of at most 50 MiB/);
+  const doc = readFileSync(join(repo, "docs", "p16", "TOOL_CONTRACT.md"), "utf8");
+  assert.ok(doc.includes(TOOL_CONTRACT.report_start?.outputBound ?? "missing"));
+  const manifest = readFileSync(join(repo, "examples", "mcp-clients", "claude-desktop-mcpb-manifest.json"), "utf8");
+  assert.match(manifest, /"Start a local report task over 1 to 8 workspace files, text or \.xlsx workbooks; reads only\."/);
+  const inventory = readFileSync(join(repo, "docs", "p16", "capability_parity_inventory.json"), "utf8");
+  assert.match(inventory, /\.xlsx workbooks read by the confined parser/);
+  // Still local-only: the core profile (the remote ceiling) never lists it.
+  assert.equal(SURFACE_PROFILES.core.includes("report_start"), false);
+});
+
+/**
  * The ChatGPT Secure MCP Tunnel serves `core`: it never lists a report
  * tool, a call is refused before the kernel, and orceld refuses a
  * remote-context report request on its own (report_task.rs).
