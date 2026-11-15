@@ -209,8 +209,20 @@
     {
       "capability": "browser.dom",
       "operation": "fill",
-      "status": "intentionally_denied",
-      "reason": "not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4)"
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_fill"
+    },
+    {
+      "capability": "browser.wait",
+      "operation": "text",
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_wait_text"
+    },
+    {
+      "capability": "browser.verify",
+      "operation": "check",
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_verify"
     },
     {
       "capability": "browser.download",
@@ -636,14 +648,17 @@
       "id": "browser_structured",
       "status": "implemented_exposed",
       "owner_grain": "SG-000108",
-      "note": "six live isolated-browser tools under the browser_structured profile, selected by local configuration only; a real browser only in live-browser-dev builds, release builds answer typed unavailable until SG-000106 (docs/security/SG-000108_PRODUCT_CALLER.md)",
+      "note": "nine live isolated-browser tools under the browser_structured profile, selected by local configuration only: SG-000108's six and SG-000122 slice A3's fill, text wait and verifier; a real browser only in live-browser-dev builds on Windows, release builds answer typed unavailable until SG-000106 (docs/security/SG-000108_PRODUCT_CALLER.md)",
       "via": [
         "browser_click",
         "browser_download",
         "browser_download_preview",
+        "browser_fill",
         "browser_navigate",
         "browser_observe",
-        "browser_page_open"
+        "browser_page_open",
+        "browser_verify",
+        "browser_wait_text"
       ]
     },
     {

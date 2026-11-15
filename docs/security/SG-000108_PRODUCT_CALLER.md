@@ -678,6 +678,8 @@ It also requires every live tool to be local-only.
 - its code names no evaluation, CDP, DevTools, selector or coordinate;
 - `server.ts` only calls its register function.
 
+**SG-000122 slice A3 (amends decision 4 and A13 as `.specgrain/specs/SG-000122.json` records).** Three more tools join the live set under `browser_structured`, with the same guards: `browser_fill` (`browser.dom/fill`, SOFT, the prompt shows the value exactly and in full or the value is refused), `browser_wait_text` (`browser.wait/text`) and `browser_verify` (`browser.verify/check`), both read-only, their text probes on the main frame's committed document only, at most 16 distinct awaited texts per lifetime. The four tables move together: `orceld`'s `LIVE_BROWSER_SHAPES` (the three leave `LIVE_FORM_SHAPES`, which keeps select, check and Enter for slice A4), the host's `LIVE_BROWSER_MCP_TOOLS` (the wait and the verifier are admitted beside the twelve in `SG122_ADMITTED_SHAPES`), the contract's `LIVE_BROWSER_TOOLS`, and the parity inventory and documents. Remote mapping stays disabled; release builds, macOS and Linux answer typed unavailable.
+
 **Release builds.** `orceld`'s `live-browser-dev` feature only enables the host crate's. The release-blocker sweep allows that one line in `orceld`'s manifest, and the feature's name only in `orceld`'s live modules. The release build commands name no feature.
 
 **Slice 3c, judge round 1: APPROVE, with its SHOULD-FIXes taken.**

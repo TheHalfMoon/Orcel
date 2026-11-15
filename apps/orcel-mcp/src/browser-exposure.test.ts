@@ -4,19 +4,34 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { attachProfile, buildRequest } from "./kernel.js";
-import { UNMAPPED_REMOTE_PROFILES } from "./oauth_authorization.js";
-import { localTransportContext } from "./server.js";
+import {
+  LOCAL_ONLY_TOOL_NAMES,
+  OAUTH_PROFILE_TOOL_CEILINGS,
+  OAUTH_SCOPE_TOOL_MATRIX,
+  UNMAPPED_REMOTE_PROFILES,
+  authorizeToolByScopes
+} from "./oauth_authorization.js";
+import { allowedToolsFor, localTransportContext, tunnelTransportContext } from "./server.js";
 import {
   DESKTOP_STRUCTURED_TOOLS,
   LIVE_BROWSER_TOOLS,
   LOCAL_TOOL_SURFACE_PROFILES,
   REMOTE_PROVIDER_PROFILES,
+  REMOTE_TOOL_NAMES,
   SURFACE_PROFILES,
   TOOL_CONTRACT,
   TOOL_SURFACE_PROFILE_ENV,
   localProfileFromConfig,
-  profileTools
+  profileTools,
+  securitySchemesFor
 } from "./tool_contract.js";
+
+/** SG-000122 slice A3's tools and the shapes they forward. */
+const SG122_A3 = {
+  browser_fill: "browser.dom/fill",
+  browser_wait_text: "browser.wait/text",
+  browser_verify: "browser.verify/check"
+} as const;
 
 // SG-000108 decision 6: the live browser exposure tables agree across the
 // MCP contract, orceld's profile gate and the browser host's exposure list.
@@ -65,10 +80,83 @@ test("the live browser tools agree across the contract, orceld's gate and the ho
   for (const tool of LIVE_BROWSER_TOOLS) {
     assert.equal(TOOL_CONTRACT[tool]?.remote, "local_only", tool);
   }
-  // Slice 3c: six of SG-000079's qualified shapes, never fill or uploads.
-  assert.equal(LIVE_BROWSER_TOOLS.length, 6);
+  // Slice 3c's six and SG-000122 slice A3's three; never the uploads, and
+  // select, check and Enter only with slice A4.
+  assert.equal(LIVE_BROWSER_TOOLS.length, 9);
+  for (const [tool, shape] of Object.entries(SG122_A3)) {
+    assert.ok(LIVE_BROWSER_TOOLS.includes(tool), tool);
+    assert.ok(shapes.includes(shape), shape);
+  }
   for (const shape of contractShapes) {
-    assert.ok(!["browser.dom/fill", "browser.upload/preview", "browser.upload/submit"].includes(shape), shape);
+    assert.ok(
+      ![
+        "browser.upload/preview",
+        "browser.upload/submit",
+        "browser.form/select",
+        "browser.form/check",
+        "browser.form/enter",
+        "browser.dom/press",
+        "browser.dom/select"
+      ].includes(shape),
+      shape
+    );
+  }
+  // The form shapes without a tool yet stay in orceld's LIVE_FORM_SHAPES,
+  // never in the MCP table.
+  const forms = rustStrings("crates/orceld/src/profile_gate.rs", "LIVE_FORM_SHAPES", "&[(&str, &str)]");
+  const formShapes: string[] = [];
+  for (let index = 0; index < forms.length; index += 2) {
+    formShapes.push(`${forms[index]}/${forms[index + 1]}`);
+  }
+  assert.deepEqual(formShapes.sort(), ["browser.form/check", "browser.form/enter", "browser.form/select"]);
+  for (const shape of formShapes) {
+    assert.ok(!shapes.includes(shape), shape);
+  }
+});
+
+test("SG-000122 slice A3: fill, the text wait and the verifier are local-only, browser_structured only", () => {
+  const all = ["orcel.read", "orcel.write", "orcel.execute"];
+  for (const [tool, shape] of Object.entries(SG122_A3)) {
+    const entry = TOOL_CONTRACT[tool];
+    assert.equal(`${entry?.capability}/${entry?.operation}`, shape, tool);
+    assert.equal(entry?.remote, "local_only", tool);
+    // Only browser_structured lists it; core and desktop_structured never.
+    assert.ok(profileTools("browser_structured").has(tool), tool);
+    assert.equal(profileTools("core").has(tool), false, tool);
+    assert.equal(profileTools("desktop_structured").has(tool), false, tool);
+    assert.equal(localTransportContext({}).toolSurfaceProfile, "desktop_structured");
+    assert.equal(allowedToolsFor(localTransportContext({})).has(tool), false, tool);
+    // No remote path maps it: the tunnel and the relay for every provider,
+    // the OAuth matrix and ceilings, and the remote tool list.
+    for (const provider of Object.keys(REMOTE_PROVIDER_PROFILES)) {
+      assert.equal(allowedToolsFor(tunnelTransportContext(provider)).has(tool), false, `${tool} tunnel ${provider}`);
+      assert.equal(
+        allowedToolsFor({ transportKind: "relay", providerKind: provider, toolSurfaceProfile: "core" }).has(tool),
+        false,
+        `${tool} relay ${provider}`
+      );
+    }
+    assert.throws(() =>
+      allowedToolsFor({ transportKind: "tunnel", providerKind: "openai", toolSurfaceProfile: "browser_structured" })
+    );
+    assert.ok(LOCAL_ONLY_TOOL_NAMES.includes(tool), tool);
+    assert.equal(REMOTE_TOOL_NAMES.includes(tool), false, tool);
+    assert.equal(Object.hasOwn(OAUTH_SCOPE_TOOL_MATRIX, tool), false, tool);
+    for (const ceiling of Object.values(OAUTH_PROFILE_TOOL_CEILINGS)) {
+      assert.equal(ceiling.includes(tool), false, tool);
+    }
+    assert.equal(securitySchemesFor(tool), null, tool);
+    assert.equal(authorizeToolByScopes(tool, "core", all, all).ok, false, tool);
+    assert.equal(authorizeToolByScopes(tool, "browser_structured", all, all).ok, false, tool);
+  }
+  // Fill is SOFT-approved and reaches the network through the page; the
+  // wait and the verifier are read-only and ask nothing.
+  assert.equal(TOOL_CONTRACT.browser_fill?.approval, "SOFT");
+  assert.equal(TOOL_CONTRACT.browser_fill?.effect, "network");
+  for (const tool of ["browser_wait_text", "browser_verify"]) {
+    assert.equal(TOOL_CONTRACT[tool]?.approval, "none", tool);
+    assert.equal(TOOL_CONTRACT[tool]?.effect, "read", tool);
+    assert.equal(TOOL_CONTRACT[tool]?.annotations.readOnlyHint, true, tool);
   }
 });
 

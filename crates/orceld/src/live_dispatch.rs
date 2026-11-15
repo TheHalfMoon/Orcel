@@ -25,7 +25,9 @@
 //!   create-only download into the workspace's approved download root,
 //!   verified by the host and journaled first.
 //!
-//! SG-000122 slice A2 (no MCP tool yet; slices A3 and A4 add them):
+//! SG-000122 slice A2 (slice A3 gives fill, the text wait and the verifier
+//! MCP tools, `browser_fill`, `browser_wait_text` and `browser_verify`;
+//! select, check and Enter have none until slice A4):
 //! - `browser.dom/fill {page_id, node_id, value, expected_generation}`,
 //!   `browser.form/select {.., option, ..}`, `browser.form/check {..,
 //!   checked, ..}` and `browser.form/enter {page_id, node_id,
