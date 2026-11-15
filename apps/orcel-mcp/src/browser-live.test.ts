@@ -317,12 +317,11 @@ test("sg122 the A4 tool descriptions state the approval, the control and what En
     "checkbox or radio input",
     "checked: true or false",
     "that state",
-    // Playwright's setChecked(false) refuses a selected radio (worker form.ts).
+    // The host (actuation::live_form_check) and orceld's prompt builder
+    // refuse it before any prompt; Playwright would only refuse it later.
     "A radio can only be selected",
-    "select another radio in its group",
-    "checked: false on an unselected radio changes nothing",
-    "the browser refuses to uncheck it, but only after the approval is spent",
-    "outcome unknown"
+    "checked: false on a radio is refused before any approval",
+    "to clear a radio, select another in its group"
   ]) {
     assert.ok(check.includes(phrase), `browser_check: ${phrase}`);
   }

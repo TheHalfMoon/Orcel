@@ -309,6 +309,11 @@ pub const CONTROL_SELECT: &str = "select";
 #[cfg(any(windows, test))]
 pub const CONTROL_TOGGLE: &str = "toggle";
 
+/// SG-000122: the refusal of `checked: false` on a radio, before any prompt
+/// (the host's live check and orceld's prompt builder both use it).
+pub const RADIO_UNCHECK_REFUSED: &str =
+    "checked: false on a radio is refused before any approval; to clear a radio, select another in its group";
+
 /// SG-000122: the host's own checks of a live form action against the
 /// observed target, before any worker frame: fill and Enter only on a
 /// single-line text field whose name does not look secret, with a fill value
@@ -342,6 +347,12 @@ pub fn live_form_check(
     }
     if matches!(input, FormInput::Fill { .. } | FormInput::Enter) && name_looks_secret(name) {
         return Err(HostError::Invalid("password-field filling denied".into()));
+    }
+    // A radio can only be selected: the browser engine refuses to uncheck
+    // one, but only once the action runs (after the approval is spent, an
+    // unknown outcome). Refused here instead, before any prompt.
+    if role == "radio" && matches!(input, FormInput::Check { checked: false }) {
+        return Err(HostError::Invalid(RADIO_UNCHECK_REFUSED.into()));
     }
     if let FormInput::Fill { value } = input {
         live_fill_value(value)?;
@@ -819,6 +830,14 @@ Enter"
         let check = FormInput::Check { checked: true };
         assert!(ok("checkbox", CONTROL_TOGGLE, &check).is_ok());
         assert!(ok("radio", CONTROL_TOGGLE, &check).is_ok());
+        // A checkbox may be cleared; a radio may not (only selected), and
+        // that is refused here, before any prompt, not by the browser later.
+        let clear = FormInput::Check { checked: false };
+        assert!(ok("checkbox", CONTROL_TOGGLE, &clear).is_ok());
+        assert!(matches!(
+            ok("radio", CONTROL_TOGGLE, &clear),
+            Err(HostError::Invalid(message)) if message == RADIO_UNCHECK_REFUSED
+        ));
         assert!(ok("checkbox", CONTROL_LINE, &check).is_err());
         assert!(ok("switch", CONTROL_TOGGLE, &check).is_err());
         // The value: shown exactly and in full, or refused.
