@@ -88,8 +88,10 @@ to the page generation, the control and the stated option, state or key, used on
   admitted site is the only place it can go. An Enter that would open a new document is still refused by BR-02's
   no-new-document rule for form actions until slice A6 settles Enter's route.
 
-Each prompt shows the control's role and name labelled page-supplied. Their schemas are strict: an unknown field (a
-key for Enter, a list of options for select) is refused, never dropped.
+Each prompt shows the control's role and name labelled page-supplied. A radio can only be selected: `checked: false`
+on a selected radio is refused by the browser engine after the approval is spent (outcome unknown), and changes
+nothing on an unselected one. Every SG-000122 schema, A3's three and A4's three, is strict: an unknown field (a key
+for Enter, a list of options for select, a selector or frame) is refused, never dropped.
 
 No native Windows run of these tools has been recorded yet (slice A6).
 

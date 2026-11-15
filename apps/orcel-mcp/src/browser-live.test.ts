@@ -69,12 +69,16 @@ test("each live browser tool forwards exactly its contract shape", async () => {
     assert.equal(`${sent[0]?.capability}/${sent[0]?.operation}`, `${entry?.capability}/${entry?.operation}`, tool);
     assert.deepEqual(sent[0]?.arguments, args[tool], tool);
   }
-  // SG-000122 slice A4: even past the schema, a handler forwards only its
-  // own fields: never a key for Enter, nor a second option for select.
+  // SG-000122 slices A3 and A4: even past the schema, a handler forwards
+  // only its own fields: never a key for Enter, nor a second option for
+  // select, nor a frame, selector or timeout the tool does not take.
   for (const [tool, extra] of [
     ["browser_enter", { key: "Tab" }],
     ["browser_select", { values: ["Porto", "Lisbon"], options: ["Lisbon"] }],
-    ["browser_check", { value: "on", selector: "#x" }]
+    ["browser_check", { value: "on", selector: "#x" }],
+    ["browser_fill", { selector: "#name", frame: "f1", key: "Enter" }],
+    ["browser_wait_text", { frame: "f1", selector: "body" }],
+    ["browser_verify", { frame: "f1", timeout_ms: 8000 }]
   ] as const) {
     sent.length = 0;
     await handlers.get(tool)?.({ workspace_id: "default", ...args[tool], ...extra });
@@ -84,6 +88,28 @@ test("each live browser tool forwards exactly its contract shape", async () => {
 
 // SG-000122 slice A3: the schemas are a first filter (orceld's live policy
 // and the host decide); each takes exactly its fields within the bounds.
+
+test("sg122 the A3 schemas are strict: an unknown top-level field is refused, not dropped", () => {
+  const cases: Array<[string, { safeParse(value: unknown): { success: boolean } }, Record<string, unknown>]> = [
+    ["browser_fill", browserFillSchema("default"), { page_id: "pg-a1", node_id: "d1-e2", value: "Ada", expected_generation: 1 }],
+    [
+      "browser_wait_text",
+      browserWaitTextSchema("default"),
+      { page_id: "pg-a1", text: "Saved", appear: true, timeout_ms: 1000, expected_generation: 1 }
+    ],
+    [
+      "browser_verify",
+      browserVerifySchema("default"),
+      { page_id: "pg-a1", checks: [{ kind: "text_visible", text: "Saved" }], expected_generation: 1 }
+    ]
+  ];
+  for (const [tool, schema, base] of cases) {
+    assert.equal(schema.safeParse(base).success, true, tool);
+    for (const extra of [{ selector: "#x" }, { frame: "f1" }, { key: "Enter" }, { record_id: "r1" }, { unknown: 1 }]) {
+      assert.equal(schema.safeParse({ ...base, ...extra }).success, false, `${tool} ${JSON.stringify(extra)}`);
+    }
+  }
+});
 
 test("sg122 browser_fill's schema takes one bounded, one-line value", () => {
   const schema = browserFillSchema("default");
@@ -286,7 +312,18 @@ test("sg122 the A4 tool descriptions state the approval, the control and what En
     assert.ok(select.includes(phrase), `browser_select: ${phrase}`);
   }
   const check = descriptions.get("browser_check") ?? "";
-  for (const phrase of [...common, "checkbox or radio input", "checked: true or false", "that state"]) {
+  for (const phrase of [
+    ...common,
+    "checkbox or radio input",
+    "checked: true or false",
+    "that state",
+    // Playwright's setChecked(false) refuses a selected radio (worker form.ts).
+    "A radio can only be selected",
+    "select another radio in its group",
+    "checked: false on an unselected radio changes nothing",
+    "the browser refuses to uncheck it, but only after the approval is spent",
+    "outcome unknown"
+  ]) {
     assert.ok(check.includes(phrase), `browser_check: ${phrase}`);
   }
   const enter = descriptions.get("browser_enter") ?? "";
