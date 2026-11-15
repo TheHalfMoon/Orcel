@@ -16,7 +16,9 @@
 //! workbook-supplied and escaped like a cell ([`stated_targets`]), so the report
 //! task's approval prompt can say where a workbook points. They are read from
 //! the package only: never opened, followed or refreshed. A connection string is
-//! never shown whole, since it may hold credentials: only its data source.
+//! never shown whole, since it may hold credentials: only its data source. A URL
+//! is shown without its user name, password, query and fragment, which may carry
+//! a credential or a token ([`shown_target`]); a file path is shown as it is.
 //!
 //! **A structural element out of its place is refused, not skipped.** A value
 //! that's shown must be the value the cell holds, so only elements in the
@@ -302,7 +304,7 @@ fn stated_targets(
         let mut found = Vec::new();
         if link.external {
             if !link.target.is_empty() {
-                found.push(escaped(&link.target));
+                found.push(escaped(&shown_target(&link.target)));
             }
         } else if let Some(name) = resolve_part(main, &link.target) {
             if let Some(xml) = part(&relationship_part_for(&name)) {
@@ -312,7 +314,7 @@ fn stated_targets(
                         .filter(|relationship| {
                             relationship.external && !relationship.target.is_empty()
                         })
-                        .map(|relationship| escaped(&relationship.target)),
+                        .map(|relationship| escaped(&shown_target(&relationship.target))),
                 );
             }
             if let Some(xml) = part(&name) {
@@ -366,37 +368,119 @@ fn stated_targets(
 fn connection_target(connection: Node<'_, '_>) -> String {
     for child in connection.children() {
         let stated = if is_sheet_element(child, "webPr") {
-            child.attribute("url")
+            child.attribute("url").map(str::to_owned)
         } else if is_sheet_element(child, "textPr") {
-            child.attribute("sourceFile")
+            child.attribute("sourceFile").map(str::to_owned)
         } else if is_sheet_element(child, "dbPr") {
             child.attribute("connection").and_then(data_source)
         } else {
             None
         };
         if let Some(target) = stated {
-            return escaped(target);
+            return escaped(&shown_target(&target));
         }
     }
     for attribute in ["sourceFile", "odcFile"] {
         if let Some(target) = connection.attribute(attribute) {
-            return escaped(target);
+            return escaped(&shown_target(target));
         }
     }
     "not stated (a connection string is never shown whole: it may hold credentials)".to_owned()
 }
 
 /// A connection string's data source (`Data Source=...` and its synonyms),
-/// unquoted, and nothing else of it.
-fn data_source(connection: &str) -> Option<&str> {
-    connection.split(';').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        let key = key.trim().to_ascii_lowercase();
-        DATA_SOURCE_KEYS
-            .contains(&key.as_str())
-            .then(|| value.trim().trim_matches('"'))
-            .filter(|value| !value.is_empty())
-    })
+/// and nothing else of it. The string is read as `key=value` pairs separated
+/// by `;`, where a value in double or single quotes may hold `;` and `=` and
+/// a doubled quote stands for one; the quotes are removed.
+fn data_source(connection: &str) -> Option<String> {
+    let mut rest = connection;
+    while !rest.is_empty() {
+        let (key, after) = rest.split_once('=')?;
+        let after = after.trim_start();
+        let (value, next) = match after.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                let mut value = String::new();
+                let mut chars = after[1..].char_indices();
+                let mut end = None;
+                while let Some((at, c)) = chars.next() {
+                    if c != quote {
+                        value.push(c);
+                        continue;
+                    }
+                    if after[1 + at + 1..].starts_with(quote) {
+                        value.push(quote);
+                        chars.next();
+                        continue;
+                    }
+                    end = Some(1 + at + 1);
+                    break;
+                }
+                // An unclosed quote: the string is malformed, so nothing of it
+                // is shown.
+                let end = end?;
+                let next = after[end..].split_once(';').map_or("", |(_, next)| next);
+                (value, next)
+            }
+            _ => {
+                let (value, next) = after.split_once(';').unwrap_or((after, ""));
+                (value.trim().to_owned(), next)
+            }
+        };
+        let key = key
+            .rsplit(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if DATA_SOURCE_KEYS.contains(&key.as_str()) && !value.is_empty() {
+            return Some(value);
+        }
+        rest = next;
+    }
+    None
+}
+
+/// What a target shows (SG-000130 W2, judge M1). A URL (a scheme of two or
+/// more letters, then `:`) keeps its scheme, host and path; its user name and
+/// password, query and fragment, which may carry a credential or a token, are
+/// left out, and the line says so. Anything else, such as a file path, is shown
+/// as it is.
+fn shown_target(target: &str) -> String {
+    let Some((scheme, rest)) = target.split_once(':') else {
+        return target.to_owned();
+    };
+    let is_scheme = scheme.len() >= 2
+        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !is_scheme {
+        return target.to_owned();
+    }
+    let kept_end = rest.find(['?', '#']).unwrap_or(rest.len());
+    let mut omitted = kept_end < rest.len();
+    let kept = &rest[..kept_end];
+    let shown = match kept.strip_prefix("//") {
+        Some(after) => {
+            let (authority, path) = after
+                .find('/')
+                .map_or((after, ""), |at| (&after[..at], &after[at..]));
+            let host = match authority.rsplit_once('@') {
+                Some((_, host)) => {
+                    omitted = true;
+                    host
+                }
+                None => authority,
+            };
+            format!("{scheme}://{host}{path}")
+        }
+        None => format!("{scheme}:{kept}"),
+    };
+    if omitted {
+        format!("{shown} (its user name, password, query or fragment is not shown)")
+    } else {
+        shown
+    }
 }
 
 struct Sheet<'a> {

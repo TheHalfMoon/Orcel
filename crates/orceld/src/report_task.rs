@@ -1512,6 +1512,11 @@ fn displayed_chars(item: &str) -> usize {
 /// at most [`MAX_SUPPLIED_ITEM_CHARS`] each, at most [`MAX_SUPPLIED_CHARS`]
 /// all together. An item or a set past its bound refuses the commit before
 /// any approval; nothing is ever truncated. A name carries no authority.
+///
+/// Each item is shown between `«` and `»` (judge L2), which no item holds: a
+/// `«` or `»` in one is written as `\u{ab}` or `\u{bb}`. So a sheet name or a
+/// link target holding `; notice:` or `] [workbook x.xlsx]` stays inside its
+/// own delimiters and can't pass for the entry's structure.
 pub(crate) fn supplied_text(entries: &[SuppliedEntry]) -> Result<String, ProviderError> {
     if entries.is_empty() {
         return Ok(String::new());
@@ -1538,25 +1543,31 @@ pub(crate) fn supplied_text(entries: &[SuppliedEntry]) -> Result<String, Provide
         }
         Ok(())
     };
+    let mut item = |raw: &str| -> Result<String, ProviderError> {
+        let inner = raw
+            .replace('\u{ab}', "\\u{ab}")
+            .replace('\u{bb}', "\\u{bb}");
+        measure(&inner)?;
+        Ok(format!("\u{ab}{inner}\u{bb}"))
+    };
     let mut parts = Vec::with_capacity(entries.len());
     for entry in entries {
-        measure(&entry.path)?;
-        let mut part = format!("[workbook {}]", entry.path);
+        let mut part = format!("[workbook {}]", item(&entry.path)?);
         for sheet in &entry.hidden_sheets {
-            measure(sheet)?;
-            part.push_str(&format!(" hidden sheet: {sheet};"));
+            part.push_str(&format!(" hidden sheet: {};", item(sheet)?));
         }
         for notice in &entry.notices {
-            measure(notice)?;
-            part.push_str(&format!(" notice: {notice};"));
+            part.push_str(&format!(" notice: {};", item(notice)?));
         }
         if entry.figures.is_empty() {
             part.push_str(" figures from it: none");
         } else {
-            for figure in &entry.figures {
-                measure(figure)?;
-            }
-            part.push_str(&format!(" figures from it: {}", entry.figures.join(", ")));
+            let figures = entry
+                .figures
+                .iter()
+                .map(|figure| item(figure))
+                .collect::<Result<Vec<_>, _>>()?;
+            part.push_str(&format!(" figures from it: {}", figures.join(", ")));
         }
         parts.push(part);
     }

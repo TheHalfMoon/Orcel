@@ -66,6 +66,95 @@ fn a_formula_with_no_saved_value_is_shown_and_never_calculated() {
 /// SG-000130 W2: a link's target and a connection's name and target are shown,
 /// labelled workbook-supplied and escaped like a cell, one line each before the
 /// first sheet; a connection string is never shown whole.
+/// SG-000130 W2 judge M1: a URL target loses its user name, password, query and
+/// fragment, and says so; a file path is shown as it is.
+#[test]
+fn a_url_target_never_shows_its_credentials_query_or_fragment() {
+    const NOTE: &str = " (its user name, password, query or fragment is not shown)";
+    for (target, shown) in [
+        (
+            "https://user:hunter2@data.example/q",
+            format!("https://data.example/q{NOTE}"),
+        ),
+        (
+            "https://data.example/q?token=s3cret&x=1",
+            format!("https://data.example/q{NOTE}"),
+        ),
+        (
+            "https://data.example/q#access_token=s3cret",
+            format!("https://data.example/q{NOTE}"),
+        ),
+        (
+            "ftp://u@files.example",
+            format!("ftp://files.example{NOTE}"),
+        ),
+        (
+            "https://data.example/rates.xlsx",
+            "https://data.example/rates.xlsx".to_owned(),
+        ),
+        (
+            "file:///C:/books/rates.xlsx",
+            "file:///C:/books/rates.xlsx".to_owned(),
+        ),
+        (
+            r"C:\books\rates.xlsx?x=1",
+            r"C:\books\rates.xlsx?x=1".to_owned(),
+        ),
+        (
+            r"\\server\share\rates.xlsx",
+            r"\\server\share\rates.xlsx".to_owned(),
+        ),
+        ("rates.xlsx", "rates.xlsx".to_owned()),
+    ] {
+        assert_eq!(shown_target(target), shown, "{target}");
+    }
+
+    let markdown = convert_document(&fixtures::linked_workbook_with(
+        "https://user:hunter2@data.example/rates.xlsx?sig=s3cret#frag",
+        "",
+        "<connection id=\"1\" name=\"Web\" type=\"4\">\
+         <webPr url=\"https://data.example/q?api_key=s3cret\"/></connection>\
+         <connection id=\"2\" name=\"Odc\" type=\"1\" odcFile=\"https://u:p@odc.example/a.odc\"/>\
+         <connection id=\"3\" name=\"Db\" type=\"1\">\
+         <dbPr connection=\"Data Source=https://admin:hunter2@db.example/x?k=s3cret\"/></connection>",
+    ))
+    .expect("workbook")
+    .markdown;
+    for secret in ["hunter2", "s3cret", "user:", "admin", "u:p@", "#frag"] {
+        assert!(!markdown.contains(secret), "{secret}\n{markdown}");
+    }
+    assert!(
+        markdown.contains(&format!(
+            "External link target (workbook-supplied, not followed): https://data.example/rates.xlsx{NOTE}"
+        )),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains(&format!("name Web; target https://data.example/q{NOTE}")),
+        "{markdown}"
+    );
+}
+
+/// SG-000130 W2 judge L3: a connection string's quoted value may hold `;` and
+/// `=`, and only the data source is ever taken from it.
+#[test]
+fn a_connection_strings_data_source_respects_quotes() {
+    for (connection, source) in [
+        ("Provider=x;Data Source=srv;Password=p", Some("srv")),
+        (
+            "Password=\"a;Data Source=evil\";Data Source=real",
+            Some("real"),
+        ),
+        ("Password='a;b=c';Server='host;1'", Some("host;1")),
+        ("Data Source=\"say \"\"hi\"\"\";x=1", Some("say \"hi\"")),
+        ("Password=\"unclosed;Data Source=evil", None),
+        ("Password=p", None),
+        ("Data Source=;Location=loc", Some("loc")),
+    ] {
+        assert_eq!(data_source(connection).as_deref(), source, "{connection}");
+    }
+}
+
 #[test]
 fn link_and_connection_targets_are_shown_labelled_escaped_and_never_followed() {
     let markdown = convert_document(&fixtures::linked_workbook_with(

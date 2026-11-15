@@ -937,6 +937,43 @@ fn workspace_route_callers(relative: &str, text: &str) -> Vec<String> {
         .collect()
 }
 
+/// SG-000130 W2 (judge L1): the report task's hold on the parser's pins. Its
+/// accessors (`workbook_pins` and the others below) may be named only in
+/// `report_task.rs`, which loads the pins, and `report_journal.rs`, whose
+/// reconcile hands them to the checker. The pins' type, `report_check::Pins`,
+/// may be named only where it is defined (`report_check.rs`) and where the
+/// pins are passed: `report_task.rs`, `report_journal.rs` and
+/// `report_workbook.rs` (the writer side receives them as an argument). Any
+/// other non-test line naming one is a hit.
+fn pin_holder_callers(relative: &str, text: &str) -> Vec<String> {
+    const HOLDER: [&str; 5] = [
+        "workbook_pins",
+        "set_workbook_pins",
+        "workbook_pins_or_refusal",
+        "loaded_workbook_pins",
+        "WORKBOOK_PINS",
+    ];
+    let holder_allowed = matches!(
+        relative,
+        "crates/orceld/src/report_task.rs" | "crates/orceld/src/report_journal.rs"
+    );
+    let type_allowed = holder_allowed
+        || matches!(
+            relative,
+            "crates/orceld/src/report_check.rs" | "crates/orceld/src/report_workbook.rs"
+        );
+    non_test_lines(text)
+        .into_iter()
+        .filter(|(_, line)| {
+            let code = line.trim();
+            !code.starts_with("//")
+                && ((!holder_allowed && HOLDER.iter().any(|name| names_identifier(code, name)))
+                    || (!type_allowed && names_identifier(code, "Pins")))
+        })
+        .map(|(number, line)| format!("{relative}:{number}: {}", line.trim()))
+        .collect()
+}
+
 /// Shipped sources that aren't Rust: the MCP app's TypeScript (compiled into
 /// the release's `app/orcel-mcp/dist`) and the Windows app's C# and its build
 /// script. Tests are not shipped.
@@ -1192,6 +1229,27 @@ fn the_shipped_document_parser_has_only_the_listed_release_callers() {
         "non-test code other than report_workbook.rs names the F5 slice 2 workspace route:\n{}",
         route.join("\n")
     );
+    let holders: Vec<String> = files
+        .iter()
+        .filter(|(relative, _)| is_production_rust(relative, &test_modules))
+        .flat_map(|(relative, text)| pin_holder_callers(relative, text))
+        .collect();
+    assert!(
+        holders.is_empty(),
+        "non-test code outside the report task names its parser pins:\n{}",
+        holders.join("\n")
+    );
+    // Positive control: the holder's users still name it as the scan expects.
+    for (listed, name) in [
+        ("crates/orceld/src/report_task.rs", "workbook_pins"),
+        ("crates/orceld/src/report_journal.rs", "workbook_pins"),
+        ("crates/orceld/src/report_check.rs", "Pins"),
+    ] {
+        assert!(
+            !pin_holder_callers("crates/orceld/src/stand-in.rs", &file(listed)).is_empty(),
+            "{listed} no longer names {name}; the pin scan's names are stale"
+        );
+    }
 
     let shipped: Vec<&(String, String)> = files
         .iter()
@@ -1457,6 +1515,30 @@ fn the_parser_caller_scan_catches_the_shapes_it_claims() {
         assert!(hits[1].contains(":2: use crate"), "{hits:?}");
     }
     assert!(workspace_route_callers("crates/orceld/src/report_workbook.rs", route).is_empty());
+
+    // The report task's pins: the holder only in report_task.rs and reconcile,
+    // the type also where it is defined and where the writer receives it.
+    let pins = "let pins = crate::report_task::workbook_pins();\n\
+        fn f(pins: Option<&report_check::Pins>) {}\n\
+        // workbook_pins, in a comment\n\
+        let x = my_workbook_pins_too();\n\
+        #[cfg(test)]\n\
+        fn t() {\n    set_workbook_pins(p);\n}\n";
+    for (relative, hits) in [
+        ("crates/orceld/src/report_task.rs", 0),
+        ("crates/orceld/src/report_journal.rs", 0),
+        ("crates/orceld/src/report_check.rs", 1),
+        ("crates/orceld/src/report_workbook.rs", 1),
+        ("crates/orceld/src/live_browser.rs", 2),
+        ("crates/orceld/src/app_api.rs", 2),
+    ] {
+        assert_eq!(
+            pin_holder_callers(relative, pins).len(),
+            hits,
+            "{relative}: {:?}",
+            pin_holder_callers(relative, pins)
+        );
+    }
 }
 
 #[test]

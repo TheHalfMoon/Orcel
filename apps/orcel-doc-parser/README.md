@@ -25,7 +25,10 @@ format and formula. So a report can name the cell each figure came from.
   workbook-supplied and escaped like a cell, so the report task's approval prompt can
   say where a workbook points. They're read from the package only, never opened,
   followed or refreshed. A connection string is never shown whole, since it may hold
-  credentials: only its data source.
+  credentials: only its data source (read with its quoting). A URL is shown with its
+  scheme, host and path only: its user name, password, query and fragment, which may
+  carry a credential or a token, are left out, and the line says so. A file path is
+  shown as it is.
 - Macros, including Excel 4 macro sheets, are `active_content`.
 - **A structural element out of its place is refused, not skipped.** Only the
   spreadsheet namespace counts. Sheets, cells, values, shared strings, defined names,
