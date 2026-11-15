@@ -202,7 +202,7 @@
     },
     {
       "name": "report_start",
-      "description": "Start a local report task over 1 to 8 workspace text files; reads only."
+      "description": "Start a local report task over 1 to 8 workspace files, text or .xlsx workbooks; reads only."
     },
     {
       "name": "task_resume_summary",

@@ -37,8 +37,8 @@
 //! handle tied to the walked path, its size and SHA-256 re-read and compared,
 //! one private input copy, the pinned parser, a contained run that expects a
 //! workbook and refuses anything else by sniffing before any parse
-//! (SG-000130 W1). Only tests call it (see the comment above
-//! [`WorkspaceFile`]).
+//! (SG-000130 W1). Its one release caller is the report task's workbook
+//! source (SG-000130 W2; see the comment above [`WorkspaceFile`]).
 
 use crate::contained_tier;
 use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
@@ -117,23 +117,18 @@ pub struct ParserPin {
     sha256: String,
 }
 
-// F5 slice 1: the release ships the parser, and nothing in a release build
-// calls it. Each entry point below expects to be dead code in a build with no
-// test and no live browser, so a new release caller fails the lint (clippy
-// runs with `-D warnings`) instead of passing silently. The module's own
-// `allow(dead_code)` (sg000039_main.rs) still covers the rest.
+// F5 slice 1 shipped the parser with no release caller. SG-000130 W2 gives it
+// its first: the report task loads the pins (`installed_pins`, named only in
+// `report_task.rs`) and runs the parser for workbook sources (`run_parser`,
+// from `report_workbook.rs` through the route below and from
+// `report_check.rs`). The live browser's entry points, `parse_download` and
+// `parse_committed`, still expect to be dead code in a build with no test and
+// no live browser, so a new release caller of them fails the lint (clippy
+// runs with `-D warnings`). `release_blocker_sweep.rs` pins which release file
+// may name which of these items. The module's own `allow(dead_code)`
+// (sg000039_main.rs) still covers the rest.
 
 /// The helper and the parser beside the running orceld.
-#[cfg_attr(
-    not(any(
-        test,
-        all(
-            windows,
-            any(feature = "live-browser-test", feature = "live-browser-dev")
-        )
-    )),
-    expect(dead_code)
-)]
 pub fn installed_pins() -> Result<(HelperPin, ParserPin), ProviderError> {
     let helper = contained_tier::installed_helper_pin()?;
     let exe = std::env::current_exe()
@@ -148,16 +143,6 @@ pub fn installed_pins() -> Result<(HelperPin, ParserPin), ProviderError> {
 /// `dir/orcel-doc-parser[.exe]`, pinned by the single lowercase SHA-256 line
 /// in `dir/orcel-doc-parser.sha256`, under the same ownership rule as the
 /// helper's pin (`contained_tier::helper_pin_in`).
-#[cfg_attr(
-    not(any(
-        test,
-        all(
-            windows,
-            any(feature = "live-browser-test", feature = "live-browser-dev")
-        )
-    )),
-    expect(dead_code)
-)]
 pub fn parser_pin_in(dir: &Path) -> Result<ParserPin, ProviderError> {
     let parser = dir.join(PARSER_NAME);
     for file in [dir.join(PARSER_PIN_NAME), parser.clone()] {
@@ -188,6 +173,12 @@ impl ParserPin {
     #[cfg(test)]
     pub(crate) fn for_test(path: PathBuf, sha256: String) -> Self {
         Self { path, sha256 }
+    }
+
+    /// The SHA-256 the pin names: what a report's commit approval binds for
+    /// each workbook source (SG-000130 W2).
+    pub(crate) fn sha256(&self) -> &str {
+        &self.sha256
     }
 
     /// The parser's bytes must still match the pin right before the launch.
@@ -288,16 +279,6 @@ pub fn parse_committed(
 /// parser refuses any other format by sniffing the staged bytes before any
 /// parse, and a frame of another format is refused here too. The Markdown is
 /// untrusted document content.
-#[cfg_attr(
-    not(any(
-        test,
-        all(
-            windows,
-            any(feature = "live-browser-test", feature = "live-browser-dev")
-        )
-    )),
-    expect(dead_code)
-)]
 pub(crate) fn run_parser(
     bytes: &[u8],
     stage_key: &str,
@@ -351,36 +332,38 @@ pub(crate) fn run_parser(
 
 // F5 slice 2 (founder decision 7 of 2026-11-14,
 // `prep/F5_SPREADSHEET_JOURNEY.md`): a workspace file to the parser, by
-// `parse_download`'s steps from a workspace path. No client can reach it.
-// Only tests call it: this module's, and SG-000130 W1's report task through
-// `report_workbook.rs`, which is compiled only into tests until W2. Each item
-// below expects to be dead code in every build that isn't a test. A caller
-// in a default build fails CI's clippy `-D warnings`. CI lints default features only, so a caller
-// compiled only into the live-browser builds would show as a warning there,
-// never as a failure. `release_blocker_sweep.rs` covers that: it checks
-// these attributes, that no code in this module outside these items and
-// its tests names one of them, and that no other non-test Rust names the
-// route. SG-000130 slice W2 adds a release caller only by changing both,
-// under its own review.
+// `parse_download`'s steps from a workspace path. SG-000130 W2: its one
+// release caller is the report task's writer side, `report_workbook.rs`, for
+// a workbook source of the local-only `report_start`. `release_blocker_sweep.rs`
+// checks that no code in this module outside these items and its tests names
+// one of them, and that no non-test Rust other than `report_workbook.rs`
+// names the route.
 //
 // It asks for no approval: the founder decided on 2026-11-15 (#760) that the
-// report's own commit approval covers reading its workbook sources. W2 binds
-// that approval to the canonical path the route opened, the SHA-256 and the
-// parser's own digest, never the caller's string.
+// report's own commit approval covers reading its workbook sources. That
+// approval binds the real path read from the open handle at observe
+// (`WorkspaceFile::canonical`, compared exactly at every later read), the
+// SHA-256 and the parser's own digest, never the caller's string.
 
 /// A workspace file observed for the parser: its path below the workspace
-/// root and the size and SHA-256 read through plain directories.
+/// root, the size and SHA-256 read through plain directories, and the real
+/// path read from the open handle (SG-000130 W2).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) struct WorkspaceFile {
     relative: String,
     bytes: u64,
     sha256: String,
+    /// The real path of the file the route opened, read from the open handle
+    /// (`open_file_final_path`), without Windows' `\\?\` prefix. Every later
+    /// read must open a file with exactly this real path.
+    canonical: PathBuf,
+    /// That real path below the workspace's canonical root, as the file
+    /// system spells it, with `/` between segments: what the prompt shows.
+    opened: String,
 }
 
 /// What was observed, for the report task's record of a workbook source
-/// (SG-000130 W1). Only `observe_workspace_file` makes one.
-#[cfg_attr(not(test), expect(dead_code))]
+/// (SG-000130). Only `observe_workspace_file` makes one.
 impl WorkspaceFile {
     pub(crate) fn bytes(&self) -> u64 {
         self.bytes
@@ -389,22 +372,33 @@ impl WorkspaceFile {
     pub(crate) fn sha256(&self) -> &str {
         &self.sha256
     }
+
+    /// The handle-derived canonical path the commit approval binds.
+    pub(crate) fn canonical(&self) -> &Path {
+        &self.canonical
+    }
+
+    /// The workspace-relative path as the file system spells it.
+    pub(crate) fn opened(&self) -> &str {
+        &self.opened
+    }
 }
 
 /// Observe an `.xlsx` in the workspace: refuse any other name, any path that
 /// isn't plain directories and a regular file with one hard link below the
 /// workspace root, and any file over the parser's input bound; record its
-/// size and SHA-256.
-#[cfg_attr(not(test), expect(dead_code))]
+/// size, its SHA-256 and the real path read from the open handle.
 pub(crate) fn observe_workspace_file(
     workspace: &Workspace,
     relative: &str,
 ) -> Result<WorkspaceFile, ProviderError> {
-    let bytes = read_workspace_plain(workspace, relative)?;
+    let read = read_workspace_plain(workspace, relative)?;
     Ok(WorkspaceFile {
         relative: relative.to_owned(),
-        bytes: bytes.len() as u64,
-        sha256: sha256_hex(&bytes),
+        bytes: read.bytes.len() as u64,
+        sha256: sha256_hex(&read.bytes),
+        canonical: read.canonical,
+        opened: read.opened,
     })
 }
 
@@ -414,7 +408,6 @@ pub(crate) fn observe_workspace_file(
 /// file in a fresh private input, for the pinned parser's contained run. The
 /// parser is told to expect a workbook, so a document that isn't one,
 /// whatever its name, is refused by its sniff before any parse.
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn parse_workspace_file(
     workspace: &Workspace,
     observed: &WorkspaceFile,
@@ -424,7 +417,17 @@ pub(crate) fn parse_workspace_file(
     if observed.bytes > MAX_INPUT_BYTES {
         return Err(refusal_error(ParseRefusal::InputTooLarge));
     }
-    let bytes = read_workspace_plain(workspace, &observed.relative)?;
+    let read = read_workspace_plain(workspace, &observed.relative)?;
+    // SG-000130 W2: exactly the real path opened at observe. A workspace root
+    // or folder moved, relinked or renamed since (even only in case) is
+    // refused, though the same bytes may be found there.
+    if read.canonical != observed.canonical {
+        return Err(ProviderError::new(
+            FailureCode::TargetStale,
+            "the workspace file's real path changed since it was observed; nothing was parsed",
+        ));
+    }
+    let bytes = read.bytes;
     if bytes.len() as u64 != observed.bytes || sha256_hex(&bytes) != observed.sha256 {
         return Err(ProviderError::new(
             FailureCode::TargetStale,
@@ -446,7 +449,6 @@ pub(crate) fn parse_workspace_file(
     Ok(document)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn not_a_workbook() -> ProviderError {
     ProviderError::new(
         FailureCode::InvalidRequest,
@@ -454,7 +456,16 @@ fn not_a_workbook() -> ProviderError {
     )
 }
 
-/// A workspace file's bytes. The name must end in `.xlsx`; the path must be
+/// What one read through the route found: the bytes, and the real path of the
+/// file it opened, whole and below the workspace's canonical root.
+struct PlainRead {
+    bytes: Vec<u8>,
+    canonical: PathBuf,
+    opened: String,
+}
+
+/// A workspace file's bytes and the real path read from its open handle
+/// (without the `\\?\` prefix). The name must end in `.xlsx`; the path must be
 /// relative, in plain segments (no `..`, `.`, empty segment, drive, stream
 /// or trailing dot or space); every segment below the canonical workspace
 /// root must be a plain directory and the last a regular file (no link,
@@ -465,8 +476,7 @@ fn not_a_workbook() -> ProviderError {
 /// walk, the last name is opened again and must be the same file (volume or
 /// device, and file index or inode). The read is bounded by the parser's
 /// input limit.
-#[cfg_attr(not(test), expect(dead_code))]
-fn read_workspace_plain(workspace: &Workspace, relative: &str) -> Result<Vec<u8>, ProviderError> {
+fn read_workspace_plain(workspace: &Workspace, relative: &str) -> Result<PlainRead, ProviderError> {
     if !relative.to_ascii_lowercase().ends_with(".xlsx") {
         return Err(not_a_workbook());
     }
@@ -514,7 +524,7 @@ fn read_workspace_plain(workspace: &Workspace, relative: &str) -> Result<Vec<u8>
     };
     let path = walk()?;
     let file = open(&path)?;
-    let identity = opened_as(&file, &path)?;
+    let (identity, canonical) = opened_as(&file, &path)?;
     let mut bytes = Vec::new();
     file.take(MAX_INPUT_BYTES + 1)
         .read_to_end(&mut bytes)
@@ -523,16 +533,39 @@ fn read_workspace_plain(workspace: &Workspace, relative: &str) -> Result<Vec<u8>
         return Err(refusal_error(ParseRefusal::InputTooLarge));
     }
     walk()?;
-    if opened_as(&open(&path)?, &path)? != identity {
+    if opened_as(&open(&path)?, &path)? != (identity, canonical.clone()) {
         return Err(raced());
     }
-    Ok(bytes)
+    // `opened_as` matched the real path to the walked one (the root and the
+    // segments), so the root's text, in the same form, ends where the
+    // relative part begins.
+    let base = unprefixed(&root).len();
+    let opened = canonical
+        .to_string_lossy()
+        .get(base..)
+        .map(|rest| rest.trim_start_matches(['/', '\\']).replace('\\', "/"))
+        .filter(|rest| !rest.is_empty())
+        .ok_or_else(raced)?;
+    Ok(PlainRead {
+        bytes,
+        canonical,
+        opened,
+    })
+}
+
+/// A path's text without Windows' `\\?\` (or `\\?\UNC\`) prefix, which the
+/// canonical root has and the handle's real path doesn't.
+fn unprefixed(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    text.strip_prefix(r"\\?\UNC\")
+        .map(|rest| format!(r"\\{rest}"))
+        .or_else(|| text.strip_prefix(r"\\?\").map(str::to_owned))
+        .unwrap_or_else(|| text.clone().into_owned())
 }
 
 /// What identifies an open file: its volume or device, its file index or
 /// inode (128 bits on Windows, from `FILE_ID_INFO`), and its hard-link count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 struct FileIdentity {
     volume: u64,
     index: u128,
@@ -545,9 +578,9 @@ struct FileIdentity {
 /// path, read from the handle, equal to `path`. A directory swapped for a
 /// link while the file was opened and back before a walk (an oplock can hold
 /// the open, which makes that deterministic) leaves a handle whose real path
-/// is under the link's target, so it's refused here.
-#[cfg_attr(not(test), expect(dead_code))]
-fn opened_as(file: &std::fs::File, path: &Path) -> Result<FileIdentity, ProviderError> {
+/// is under the link's target, so it's refused here. Returns the file's
+/// identity and its real path, without the `\\?\` prefix.
+fn opened_as(file: &std::fs::File, path: &Path) -> Result<(FileIdentity, PathBuf), ProviderError> {
     let unreadable = || {
         ProviderError::new(
             FailureCode::TargetStale,
@@ -574,12 +607,7 @@ fn opened_as(file: &std::fs::File, path: &Path) -> Result<FileIdentity, Provider
     // case by default; a short (8.3) name in the path is refused, not
     // resolved.
     let key = |path: &Path| {
-        let text = path.to_string_lossy();
-        let text = text
-            .strip_prefix(r"\\?\UNC\")
-            .map(|rest| format!(r"\\{rest}"))
-            .or_else(|| text.strip_prefix(r"\\?\").map(str::to_owned))
-            .unwrap_or_else(|| text.clone().into_owned());
+        let text = unprefixed(path);
         if cfg!(any(windows, target_os = "macos")) {
             text.to_ascii_lowercase()
         } else {
@@ -589,10 +617,9 @@ fn opened_as(file: &std::fs::File, path: &Path) -> Result<FileIdentity, Provider
     if key(&real) != key(path) {
         return Err(raced());
     }
-    Ok(identity)
+    Ok((identity, PathBuf::from(unprefixed(&real))))
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn raced() -> ProviderError {
     ProviderError::new(
         FailureCode::PathRaceDetected,
@@ -601,7 +628,6 @@ fn raced() -> ProviderError {
 }
 
 #[cfg(unix)]
-#[cfg_attr(not(test), expect(dead_code))]
 fn file_identity(
     _file: &std::fs::File,
     metadata: &std::fs::Metadata,
@@ -615,7 +641,6 @@ fn file_identity(
 }
 
 #[cfg(windows)]
-#[cfg_attr(not(test), expect(dead_code))]
 fn file_identity(
     file: &std::fs::File,
     _metadata: &std::fs::Metadata,
@@ -654,7 +679,6 @@ fn file_identity(
     })
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn not_plain() -> ProviderError {
     ProviderError::new(
         FailureCode::PathEscape,
@@ -665,7 +689,6 @@ fn not_plain() -> ProviderError {
 /// Open `path` itself for reading: a link or reparse point at the last name
 /// is opened as itself and then fails the regular-file check, and on Unix a
 /// FIFO can't block the open.
-#[cfg_attr(not(test), expect(dead_code))]
 fn open_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);

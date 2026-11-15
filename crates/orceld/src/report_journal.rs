@@ -52,6 +52,15 @@ const SCHEMA: &str = "orcel-report-task/1";
 /// commits until the journal is repaired, and never reconciles a workbook
 /// source as a text source, without its type's limit or its figures), and its
 /// peek skips the line. Fail closed on a downgrade.
+///
+/// SG-000130 W2 keeps one journal, not a second file for workbook tasks: a
+/// second store would need its own place in the state-store registry, the
+/// protected-state policy, uninstall and migration, which an older build
+/// knows nothing of either. The cost is the downgrade's repair step, in the
+/// changelog and `prep/F5_SPREADSHEET_JOURNEY.md`: with every Orcel session
+/// closed, move `report-tasks.jsonl` out of the state root (the older build
+/// then starts an empty journal, losing only the earlier runs' task history
+/// it would show), or reinstall a build with workbook sources, which reads it.
 const WORKBOOK_SCHEMA: &str = "orcel-report-task/2";
 
 /// The schema a line naming these sources must carry.

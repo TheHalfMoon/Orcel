@@ -10,8 +10,15 @@
 //! Nothing is calculated and nothing is followed. A value is what the file
 //! says was saved. A formula that may reach outside the workbook is marked
 //! `external`, since its saved value may be stale, and links, connections, pivot
-//! caches and query tables are only counted: their targets are never read, shown
-//! or refreshed. That mark is a text check, so it can only be a caution.
+//! caches and query tables are counted. That mark is a text check, so it can only
+//! be a caution. SG-000130 W2: the targets of external links and the names and
+//! targets of data connections are also shown, each on its own line, labelled
+//! workbook-supplied and escaped like a cell ([`stated_targets`]), so the report
+//! task's approval prompt can say where a workbook points. They are read from
+//! the package only: never opened, followed or refreshed. A connection string is
+//! never shown whole, since it may hold credentials: only its data source. A URL
+//! is shown without its user name, password, query and fragment, which may carry
+//! a credential or a token ([`shown_target`]); a file path is shown as it is.
 //!
 //! **A structural element out of its place is refused, not skipped.** A value
 //! that's shown must be the value the cell holds, so only elements in the
@@ -210,6 +217,8 @@ pub fn convert(bytes: &[u8]) -> Result<(String, usize), ParseRefusal> {
         }
     }
 
+    let targets = stated_targets(&related, &main, &mut part)?;
+
     let mut out = String::from(
         "# Workbook\n\nValues are as last saved. Nothing was calculated, and no link was followed or refreshed.\n",
     );
@@ -244,6 +253,7 @@ pub fn convert(bytes: &[u8]) -> Result<(String, usize), ParseRefusal> {
             );
         }
     }
+    notices.extend(targets);
     for notice in notices {
         out.push('\n');
         out.push_str(&notice);
@@ -266,6 +276,208 @@ pub fn convert(bytes: &[u8]) -> Result<(String, usize), ParseRefusal> {
         out.push_str(&text);
     }
     Ok((out, sheets.len()))
+}
+
+/// The label of a line naming an external link's target.
+const LINK_TARGET: &str = "External link target (workbook-supplied, not followed): ";
+/// The label of a line naming a data connection and its target.
+const CONNECTION: &str = "Data connection (workbook-supplied, not refreshed): ";
+/// Keys of a connection string that name where it reads from; nothing else of
+/// the string is shown.
+const DATA_SOURCE_KEYS: [&str; 6] = ["data source", "location", "server", "dsn", "dbq", "address"];
+
+/// What the package says its external links and data connections point at,
+/// one line each, escaped: each external link's targets (its part's external
+/// relationships, and a DDE link's service and topic), and each data
+/// connection's name and target (a web query's URL, a text import's file, an
+/// `.odc` file, or a connection string's data source). Nothing is opened or
+/// followed. A link whose part states no target says so. Bounded by the
+/// package's read budget and the frame's own limit, past which the whole text
+/// is flagged as cut, never a line of it.
+fn stated_targets(
+    related: &[Relationship],
+    main: &str,
+    part: &mut impl FnMut(&str) -> Option<String>,
+) -> Result<Vec<String>, ParseRefusal> {
+    let mut lines = Vec::new();
+    for link in related.iter().filter(|r| r.kind == "externallink") {
+        let mut found = Vec::new();
+        if link.external {
+            if !link.target.is_empty() {
+                found.push(escaped(&shown_target(&link.target)));
+            }
+        } else if let Some(name) = resolve_part(main, &link.target) {
+            if let Some(xml) = part(&relationship_part_for(&name)) {
+                found.extend(
+                    relationships(&xml)?
+                        .iter()
+                        .filter(|relationship| {
+                            relationship.external && !relationship.target.is_empty()
+                        })
+                        .map(|relationship| escaped(&shown_target(&relationship.target))),
+                );
+            }
+            if let Some(xml) = part(&name) {
+                let document = parse(&xml)?;
+                for dde in document
+                    .root_element()
+                    .descendants()
+                    .filter(|node| is_sheet_element(*node, "ddeLink"))
+                {
+                    found.push(format!(
+                        "DDE service {}, topic {}",
+                        escaped(dde.attribute("ddeService").unwrap_or("")),
+                        escaped(dde.attribute("ddeTopic").unwrap_or(""))
+                    ));
+                }
+            }
+        }
+        if found.is_empty() {
+            found.push("not stated in the workbook".to_owned());
+        }
+        lines.extend(
+            found
+                .into_iter()
+                .map(|target| format!("{LINK_TARGET}{target}")),
+        );
+    }
+    for connections in related
+        .iter()
+        .filter(|r| r.kind == "connections" && !r.external)
+    {
+        let Some(xml) = resolve_part(main, &connections.target).and_then(|name| part(&name)) else {
+            continue;
+        };
+        let document = parse(&xml)?;
+        for connection in document
+            .root_element()
+            .descendants()
+            .filter(|node| is_sheet_element(*node, "connection"))
+        {
+            lines.push(format!(
+                "{CONNECTION}name {}; target {}",
+                escaped(connection.attribute("name").unwrap_or("")),
+                connection_target(connection)
+            ));
+        }
+    }
+    Ok(lines)
+}
+
+/// Where one data connection reads from, escaped, or why that isn't shown.
+fn connection_target(connection: Node<'_, '_>) -> String {
+    for child in connection.children() {
+        let stated = if is_sheet_element(child, "webPr") {
+            child.attribute("url").map(str::to_owned)
+        } else if is_sheet_element(child, "textPr") {
+            child.attribute("sourceFile").map(str::to_owned)
+        } else if is_sheet_element(child, "dbPr") {
+            child.attribute("connection").and_then(data_source)
+        } else {
+            None
+        };
+        if let Some(target) = stated {
+            return escaped(&shown_target(&target));
+        }
+    }
+    for attribute in ["sourceFile", "odcFile"] {
+        if let Some(target) = connection.attribute(attribute) {
+            return escaped(&shown_target(target));
+        }
+    }
+    "not stated (a connection string is never shown whole: it may hold credentials)".to_owned()
+}
+
+/// A connection string's data source (`Data Source=...` and its synonyms),
+/// and nothing else of it. The string is read as `key=value` pairs separated
+/// by `;`, where a value in double or single quotes may hold `;` and `=` and
+/// a doubled quote stands for one; the quotes are removed.
+fn data_source(connection: &str) -> Option<String> {
+    let mut rest = connection;
+    while !rest.is_empty() {
+        let (key, after) = rest.split_once('=')?;
+        let after = after.trim_start();
+        let (value, next) = match after.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                let mut value = String::new();
+                let mut chars = after[1..].char_indices();
+                let mut end = None;
+                while let Some((at, c)) = chars.next() {
+                    if c != quote {
+                        value.push(c);
+                        continue;
+                    }
+                    if after[1 + at + 1..].starts_with(quote) {
+                        value.push(quote);
+                        chars.next();
+                        continue;
+                    }
+                    end = Some(1 + at + 1);
+                    break;
+                }
+                // An unclosed quote: the string is malformed, so nothing of it
+                // is shown.
+                let end = end?;
+                let next = after[end..].split_once(';').map_or("", |(_, next)| next);
+                (value, next)
+            }
+            _ => {
+                let (value, next) = after.split_once(';').unwrap_or((after, ""));
+                (value.trim().to_owned(), next)
+            }
+        };
+        let key = key
+            .rsplit(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if DATA_SOURCE_KEYS.contains(&key.as_str()) && !value.is_empty() {
+            return Some(value);
+        }
+        rest = next;
+    }
+    None
+}
+
+/// What a target shows (SG-000130 W2, judge M1). A URL (a scheme of two or
+/// more letters, then `:`) keeps its scheme, host and path; its user name and
+/// password, query and fragment, which may carry a credential or a token, are
+/// left out, and the line says so. Anything else, such as a file path, is shown
+/// as it is.
+fn shown_target(target: &str) -> String {
+    let Some((scheme, rest)) = target.split_once(':') else {
+        return target.to_owned();
+    };
+    let is_scheme = scheme.len() >= 2
+        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !is_scheme {
+        return target.to_owned();
+    }
+    // Everything up to the last `@` anywhere in the URL goes first, so a user
+    // name or password in a form no parser agrees on (`https://u:p?x@host`,
+    // `https:user:pw@host`) can't show. A path holding `@` loses its start
+    // too: more is left out, never less.
+    let (rest, mut omitted) = match rest.rsplit_once('@') {
+        Some((before, after)) if before.starts_with("//") => (format!("//{after}"), true),
+        Some((_, after)) => (after.to_owned(), true),
+        None => (rest.to_owned(), false),
+    };
+    let kept_end = rest.find(['?', '#']).unwrap_or(rest.len());
+    omitted |= kept_end < rest.len();
+    let kept = &rest[..kept_end];
+    let shown = match kept.strip_prefix("//") {
+        Some(after) => format!("{scheme}://{after}"),
+        None => format!("{scheme}:{kept}"),
+    };
+    if omitted {
+        format!("{shown} (its user name, password, query or fragment is not shown)")
+    } else {
+        shown
+    }
 }
 
 struct Sheet<'a> {
