@@ -591,7 +591,10 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
             || relative == "crates/orceld/src/live_dispatch.rs"
             || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
             || relative == "apps/orcel-browser-worker/scripts/dev-pin.mjs"
-            || relative.starts_with("docs/");
+            || relative.starts_with("docs/")
+            // Grain specs are governance records, not build input: they may name the
+            // feature they confine a grain to (SG-000122). Build surfaces stay guarded above.
+            || relative.starts_with(".specgrain/specs/");
         if !allowed {
             hits.push(relative);
         }
