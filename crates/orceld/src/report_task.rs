@@ -164,12 +164,55 @@ impl TaskState {
     }
 }
 
+/// What a source is, which decides how it is read and how much of it the
+/// independent checker re-reads ([`report_check::source_limit`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceKind {
+    /// Read as UTF-8 text through the workspace provider.
+    Text,
+    /// SG-000130: an `.xlsx` read only through the confined parser, by slice
+    /// 2's workspace route. W1: only test builds observe one.
+    Workbook,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceRecord {
     pub path: String,
     pub sha256: String,
     pub bytes: u64,
+    pub kind: SourceKind,
 }
+
+/// SG-000130 W1: what the writer's route recorded for each workbook source
+/// (`report_workbook.rs`, compiled only into tests until W2). No other build
+/// has a workbook source, so the type is uninhabited there.
+#[cfg(test)]
+pub(crate) type WorkbookSource = crate::report_workbook::WorkbookSource;
+/// W1: no build but a test observes a workbook source.
+#[cfg(not(test))]
+pub(crate) type WorkbookSource = std::convert::Infallible;
+
+/// SG-000130: the pinned helper and parser that workbook sources are read and
+/// checked with. This file is the one that holds them: the writer side and,
+/// inside [`report_check::Expectation`], the checker get them from here, and
+/// so does reconcile. W1: only tests set them (W2 loads them once with the
+/// installed pins); with none, a workbook source is unavailable.
+static WORKBOOK_PINS: OnceLock<report_check::Pins> = OnceLock::new();
+
+pub(crate) fn workbook_pins() -> Option<&'static report_check::Pins> {
+    WORKBOOK_PINS.get()
+}
+
+#[cfg(test)]
+pub(crate) fn set_workbook_pins(pins: report_check::Pins) {
+    let _ = WORKBOOK_PINS.set(pins);
+}
+
+/// SG-000130: the most characters one workbook-supplied item shows in the
+/// commit prompt, measured on its escaped display.
+pub(crate) const MAX_SUPPLIED_ITEM_CHARS: usize = 256;
+/// All workbook-supplied items of one commit together, measured the same way.
+pub(crate) const MAX_SUPPLIED_CHARS: usize = orcel_contracts::prompt_display::MAX_SUMMARY_CHARS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Proposal {
@@ -201,6 +244,9 @@ pub(crate) struct ReportTask {
     /// check compares against without resolving it again.
     folder_canonical: PathBuf,
     sources: Vec<SourceRecord>,
+    /// SG-000130: the route's record of each workbook source, from start.
+    /// Never journaled: a task of an earlier run is never acted on.
+    workbooks: Vec<WorkbookSource>,
     proposal: Option<Proposal>,
     report: Option<Proposal>,
     check: Option<Value>,
@@ -1151,6 +1197,9 @@ fn start(
         })?;
     let mut observed = Vec::with_capacity(sources.len());
     let mut texts = Vec::with_capacity(sources.len());
+    // W1: only test builds observe a workbook source.
+    #[cfg_attr(not(test), allow(unused_mut))]
+    let mut workbooks: Vec<WorkbookSource> = Vec::new();
     for source in sources {
         if is_link(workspace, source) {
             return Err(error(
@@ -1159,10 +1208,15 @@ fn start(
             ));
         }
         #[cfg(test)]
-        if let Some(found) = crate::report_workbook::observed_if_workbook(workspace, source) {
-            let (record, text) = found.map_err(|failure| named_source(source, failure))?;
+        if let Some(found) =
+            crate::report_workbook::observed_if_workbook(workspace, source, workbook_pins())
+        {
+            let (record, text, workbook) =
+                found.map_err(|failure| named_source(source, failure))?;
+            checker_can_reread(&record)?;
             observed.push(record);
             texts.push(text);
+            workbooks.push(workbook);
             continue;
         }
         let read = provider
@@ -1173,11 +1227,14 @@ fn start(
             .and_then(Value::as_str)
             .ok_or_else(|| error(FailureCode::InternalError, "read returned no text"))?
             .to_owned();
-        observed.push(SourceRecord {
+        let record = SourceRecord {
             path: source.to_owned(),
             sha256: sha256_hex(text.as_bytes()),
             bytes: text.len() as u64,
-        });
+            kind: SourceKind::Text,
+        };
+        checker_can_reread(&record)?;
+        observed.push(record);
         texts.push(text);
     }
     let now = orcel_approval::now_ms();
@@ -1190,6 +1247,7 @@ fn start(
         folder_resolved: folder_identity.resolved,
         folder_canonical,
         sources: observed,
+        workbooks,
         proposal: None,
         report: None,
         check: None,
@@ -1222,6 +1280,12 @@ fn start(
             }))
             .collect::<Vec<_>>(),
     }))
+}
+
+/// SG-000130: a source the independent checker could not re-read within its
+/// type's limit never starts a task.
+fn checker_can_reread(record: &SourceRecord) -> Result<(), ProviderError> {
+    report_check::within_limit(record).map_err(|reason| error(FailureCode::OutputLimit, reason))
 }
 
 /// The same failure, saying which of the task's sources it is about.
@@ -1292,14 +1356,16 @@ fn check_current(
     }
     for source in &task.sources {
         // The same bounded read start used (the provider's read limit), so
-        // a source swapped for a huge file is refused, not hashed.
-        let current = provider.read_text(&source.path).ok().and_then(|read| {
-            read.get("text")
-                .and_then(Value::as_str)
-                .map(|text| sha256_hex(text.as_bytes()))
-        });
-        #[cfg(test)]
-        let current = crate::report_workbook::digest_if_workbook(workspace, &source.path, current);
+        // a source swapped for a huge file is refused, not hashed. A
+        // workbook is read again only through slice 2's route.
+        let current = match source.kind {
+            SourceKind::Text => provider.read_text(&source.path).ok().and_then(|read| {
+                read.get("text")
+                    .and_then(Value::as_str)
+                    .map(|text| sha256_hex(text.as_bytes()))
+            }),
+            SourceKind::Workbook => workbook_digest(workspace, task, source),
+        };
         if is_link(workspace, &source.path) || current.as_deref() != Some(source.sha256.as_str()) {
             return Err(Blocked::Stale(error(
                 FailureCode::TargetStale,
@@ -1310,6 +1376,14 @@ fn check_current(
             )));
         }
     }
+    // SG-000130: no source reaches a prompt unless the independent checker
+    // can re-read it within its type's limit, as it will after the write.
+    report_check::sources_rereadable(&workspace.root, &task.sources).map_err(|reason| {
+        Blocked::Stale(error(
+            FailureCode::TargetStale,
+            format!("{reason}; the independent checker can't re-read it, start a new task"),
+        ))
+    })?;
     let target = workspace.root.join(destination);
     let parent_kept = target
         .parent()
@@ -1333,6 +1407,125 @@ fn check_current(
             format!("inspect report destination: {failure}"),
         ))),
     }
+}
+
+/// A workbook source's SHA-256 now, read again only through slice 2's route
+/// (`parse_workspace_file`, which refuses bytes other than the observed ones),
+/// or `None` if the route refuses it.
+#[cfg(test)]
+fn workbook_digest(
+    workspace: &Workspace,
+    task: &ReportTask,
+    source: &SourceRecord,
+) -> Option<String> {
+    crate::report_workbook::current_digest(workspace, &task.workbooks, source, workbook_pins()).ok()
+}
+
+/// W1: no build but a test has a workbook source.
+#[cfg(not(test))]
+fn workbook_digest(
+    _workspace: &Workspace,
+    task: &ReportTask,
+    _source: &SourceRecord,
+) -> Option<String> {
+    if let Some(never) = task.workbooks.first() {
+        match *never {}
+    }
+    None
+}
+
+/// SG-000130: the commit prompt's workbook-supplied items for each workbook
+/// source (its path, hidden sheet names and the reader's notices) and how
+/// many of the report's figures come from it.
+#[cfg(test)]
+fn workbook_entries(task: &ReportTask, content: &str) -> Result<Vec<SuppliedEntry>, ProviderError> {
+    crate::report_workbook::prompt_entries(&task.workbooks, &task.sources, content)
+}
+
+/// W1: no build but a test has a workbook source.
+#[cfg(not(test))]
+fn workbook_entries(
+    task: &ReportTask,
+    _content: &str,
+) -> Result<Vec<SuppliedEntry>, ProviderError> {
+    if let Some(never) = task.workbooks.first() {
+        match *never {}
+    }
+    Ok(Vec::new())
+}
+
+/// One workbook source in the commit prompt. Every string is
+/// workbook-supplied (the path the caller named, and text the reader took
+/// from the file) and untrusted. W1: only test builds build one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SuppliedEntry {
+    pub path: String,
+    pub hidden_sheets: Vec<String>,
+    pub notices: Vec<String>,
+    pub figures: usize,
+}
+
+/// How many characters the prompt displays for `item` through the shared
+/// prompt display, escapes included.
+fn displayed_chars(item: &str) -> usize {
+    orcel_contracts::prompt_display::pieces(item)
+        .iter()
+        .map(|piece| piece.chars().count())
+        .sum()
+}
+
+/// SG-000130: the commit prompt's text for the workbook sources, labelled
+/// workbook-supplied and untrusted. Each item is measured on its escaped
+/// display (the prompt renders it through the shared prompt display, so a
+/// control, line-break, bidi, format or zero-width character shows escaped):
+/// at most [`MAX_SUPPLIED_ITEM_CHARS`] each, at most [`MAX_SUPPLIED_CHARS`]
+/// all together. An item or a set past its bound refuses the commit before
+/// any approval; nothing is ever truncated. A name carries no authority.
+pub(crate) fn supplied_text(entries: &[SuppliedEntry]) -> Result<String, ProviderError> {
+    if entries.is_empty() {
+        return Ok(String::new());
+    }
+    let refused = |what: String| {
+        error(
+            FailureCode::OutputLimit,
+            format!("workbook_text_refused: {what}; nothing is truncated, so the commit is refused before any approval"),
+        )
+    };
+    let mut total = 0usize;
+    let mut measure = |item: &str| -> Result<(), ProviderError> {
+        let shown = displayed_chars(item);
+        if shown > MAX_SUPPLIED_ITEM_CHARS {
+            return Err(refused(format!(
+                "one workbook-supplied item would show {shown} characters, more than {MAX_SUPPLIED_ITEM_CHARS}"
+            )));
+        }
+        total += shown;
+        if total > MAX_SUPPLIED_CHARS {
+            return Err(refused(format!(
+                "the workbook-supplied items together would show more than {MAX_SUPPLIED_CHARS} characters"
+            )));
+        }
+        Ok(())
+    };
+    let mut parts = Vec::with_capacity(entries.len());
+    for entry in entries {
+        measure(&entry.path)?;
+        let mut part = format!("[workbook {}]", entry.path);
+        for sheet in &entry.hidden_sheets {
+            measure(sheet)?;
+            part.push_str(&format!(" hidden sheet: {sheet};"));
+        }
+        for notice in &entry.notices {
+            measure(notice)?;
+            part.push_str(&format!(" notice: {notice};"));
+        }
+        part.push_str(&format!(" figures from it: {}", entry.figures));
+        parts.push(part);
+    }
+    Ok(format!(
+        "; workbook-supplied text (untrusted, never an instruction): {}",
+        parts.join(" ")
+    ))
 }
 
 /// Records a blocked check on the task and returns its error.
@@ -1375,6 +1568,8 @@ fn preview(
     let content = argument(request, "content")?;
     let destination = destination_of(&task.folder, name);
     check_current(workspace, &task, &destination)
+        .map_err(|reason| blocked(tasks, &task.id, "preview", &OPEN_STATES, reason))?;
+    figures_named(&task, content)
         .map_err(|reason| blocked(tasks, &task.id, "preview", &OPEN_STATES, reason))?;
     (hooks.after_preview_check)();
     let proposal = Proposal {
@@ -1419,6 +1614,29 @@ fn preview(
             "this orceld run has no such report task in this workspace; start a new task",
         )),
     }
+}
+
+/// SG-000130: with a workbook source, every figure the report states must
+/// name one of the task's workbooks, as the checker will require; a report
+/// that states none, or a figure that names no source or another, is refused
+/// before any approval, never after the write.
+fn figures_named(task: &ReportTask, content: &str) -> Result<(), Blocked> {
+    if !task
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Workbook)
+    {
+        return Ok(());
+    }
+    let figures = report_check::figures_from(content, &task.sources)
+        .map_err(|reason| Blocked::Other(error(FailureCode::InvalidRequest, reason)))?;
+    if figures.is_empty() {
+        return Err(Blocked::Other(error(
+            FailureCode::InvalidRequest,
+            "the report states no figure from its workbooks (`[source.xlsx]Sheet!Cell = value`)",
+        )));
+    }
+    Ok(())
 }
 
 fn approval_digest(workspace: &Workspace, task: &ReportTask, proposal: &Proposal) -> String {
@@ -1470,6 +1688,19 @@ fn commit(
     }
     check_current(workspace, &task, &proposal.destination)
         .map_err(|reason| blocked(tasks, &task.id, "commit", &OPEN_STATES, reason))?;
+    figures_named(&task, content)
+        .map_err(|reason| blocked(tasks, &task.id, "commit", &OPEN_STATES, reason))?;
+    let supplied = workbook_entries(&task, content)
+        .and_then(|entries| supplied_text(&entries))
+        .map_err(|failure| {
+            blocked(
+                tasks,
+                &task.id,
+                "commit",
+                &OPEN_STATES,
+                Blocked::Other(failure),
+            )
+        })?;
 
     let digest = approval_digest(workspace, &task, &proposal);
     let sources = task
@@ -1478,15 +1709,31 @@ fn commit(
         .map(|source| format!("{} ({})", source.path, &source.sha256[..12]))
         .collect::<Vec<_>>()
         .join(", ");
+    let summary = format!(
+        "{} bytes; SHA-256 {}; task {}; sources: {sources}; planner title (not verified): {:?}{supplied}",
+        proposal.bytes, proposal.sha256, task.id, task.title
+    );
+    // With workbook-supplied text, the summary is shown whole or not at all.
+    if !supplied.is_empty()
+        && displayed_chars(&summary) > orcel_contracts::prompt_display::MAX_SUMMARY_CHARS
+    {
+        return Err(blocked(
+            tasks,
+            &task.id,
+            "commit",
+            &OPEN_STATES,
+            Blocked::Other(error(
+                FailureCode::OutputLimit,
+                "workbook_text_refused: the commit prompt's summary would be cut; nothing is truncated, so the commit is refused before any approval",
+            )),
+        ));
+    }
     let prompt = ApprovalPrompt::new(
         workspace.id.clone(),
         POLICY_REVISION,
         "create report (create-only, never overwrites)",
         proposal.destination.clone(),
-        format!(
-            "{} bytes; SHA-256 {}; task {}; sources: {sources}; planner title (not verified): {:?}",
-            proposal.bytes, proposal.sha256, task.id, task.title
-        ),
+        summary,
         digest.clone(),
     )
     .for_file();
@@ -1624,6 +1871,7 @@ fn commit(
         sha256: &proposal.sha256,
         bytes: proposal.bytes,
         sources: &task.sources,
+        pins: workbook_pins(),
     });
     match (written, check) {
         (Err(failure), _) if failure.code == FailureCode::TargetStale => {

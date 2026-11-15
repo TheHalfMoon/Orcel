@@ -29,7 +29,9 @@
 //! and never writes. Those tasks are shown, never kept in its registry, so
 //! nothing in this run can act on them.
 
-use super::{error, Proposal, ReportTask, SourceRecord, Step, TaskState, MAX_STEPS, MAX_TASKS};
+use super::{
+    error, Proposal, ReportTask, SourceKind, SourceRecord, Step, TaskState, MAX_STEPS, MAX_TASKS,
+};
 use crate::journal_owner::Owner;
 use crate::report_check;
 use orcel_contracts::FailureCode;
@@ -44,6 +46,22 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
 const SCHEMA: &str = "orcel-report-task/1";
+/// SG-000130: the schema of a task or pending line that names a workbook
+/// source. An orceld built before workbook sources reads only [`SCHEMA`]: its
+/// restore refuses a journal holding any other line (so it refuses report
+/// commits until the journal is repaired, and never reconciles a workbook
+/// source as a text source, without its type's limit or its figures), and its
+/// peek skips the line. Fail closed on a downgrade.
+const WORKBOOK_SCHEMA: &str = "orcel-report-task/2";
+
+/// The schema a line naming these sources must carry.
+fn schema_for(sources: &[SourceLine]) -> &'static str {
+    if sources.iter().any(|source| source.workbook) {
+        WORKBOOK_SCHEMA
+    } else {
+        SCHEMA
+    }
+}
 /// How long one append waits for another orceld's line.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// Most tasks of earlier runs a starting orceld shows and keeps.
@@ -57,6 +75,35 @@ struct SourceLine {
     path: String,
     sha256: String,
     bytes: u64,
+    /// SG-000130: a workbook source, which the checker re-reads within the
+    /// parser's input bound and whose figures it checks. Absent for a text
+    /// source, so text tasks journal exactly as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    workbook: bool,
+}
+
+impl SourceLine {
+    fn of(source: &SourceRecord) -> Self {
+        Self {
+            path: source.path.clone(),
+            sha256: source.sha256.clone(),
+            bytes: source.bytes,
+            workbook: source.kind == SourceKind::Workbook,
+        }
+    }
+
+    fn record(&self) -> SourceRecord {
+        SourceRecord {
+            path: self.path.clone(),
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+            kind: if self.workbook {
+                SourceKind::Workbook
+            } else {
+                SourceKind::Text
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +201,16 @@ impl Line {
         }
     }
 
+    /// The schema this line must carry: [`WORKBOOK_SCHEMA`] exactly when it
+    /// names a workbook source. Any other is an unreadable line.
+    fn expected_schema(&self) -> &'static str {
+        match self {
+            Line::Task { task, .. } => schema_for(&task.sources),
+            Line::Pending { commit, .. } => schema_for(&commit.sources),
+            _ => SCHEMA,
+        }
+    }
+
     fn intent_event(&self) -> Option<(&str, IntentState)> {
         match self {
             Line::Task { .. } => None,
@@ -166,11 +223,6 @@ impl Line {
 }
 
 pub(super) fn task_line(task: &ReportTask) -> TaskLine {
-    let source = |source: &SourceRecord| SourceLine {
-        path: source.path.clone(),
-        sha256: source.sha256.clone(),
-        bytes: source.bytes,
-    };
     let proposal = |proposal: &Proposal| ProposalLine {
         name: proposal.name.clone(),
         destination: proposal.destination.clone(),
@@ -182,7 +234,7 @@ pub(super) fn task_line(task: &ReportTask) -> TaskLine {
         workspace_id: task.workspace_id.clone(),
         folder: task.folder.clone(),
         folder_canonical: task.folder_canonical.clone(),
-        sources: task.sources.iter().map(source).collect(),
+        sources: task.sources.iter().map(SourceLine::of).collect(),
         proposal: task.proposal.as_ref().map(proposal),
         report: task.report.as_ref().map(proposal),
         check: task.check.clone(),
@@ -239,11 +291,6 @@ fn live_foreign_task(line: TaskLine, run: &str) -> ReportTask {
             at_ms: step.at_ms,
         })
         .collect();
-    let source = |source: SourceLine| SourceRecord {
-        path: source.path,
-        sha256: source.sha256,
-        bytes: source.bytes,
-    };
     let proposal = |proposal: ProposalLine| Proposal {
         name: proposal.name,
         destination: proposal.destination,
@@ -259,7 +306,10 @@ fn live_foreign_task(line: TaskLine, run: &str) -> ReportTask {
         folder: line.folder,
         folder_resolved: PathBuf::new(),
         folder_canonical: line.folder_canonical,
-        sources: line.sources.into_iter().map(source).collect(),
+        sources: line.sources.iter().map(SourceLine::record).collect(),
+        // The route's records are this run's only: a task of another run is
+        // never acted on.
+        workbooks: Vec::new(),
         stale_reason: None,
         proposal: line.proposal.map(proposal),
         report: line.report.map(proposal),
@@ -290,15 +340,7 @@ pub(super) fn commit_line(
         destination: proposal.destination.clone(),
         sha256: proposal.sha256.clone(),
         bytes: proposal.bytes,
-        sources: task
-            .sources
-            .iter()
-            .map(|source| SourceLine {
-                path: source.path.clone(),
-                sha256: source.sha256.clone(),
-                bytes: source.bytes,
-            })
-            .collect(),
+        sources: task.sources.iter().map(SourceLine::of).collect(),
     }
 }
 
@@ -324,7 +366,10 @@ impl Reconciled {
     }
 }
 
-/// Reconciles one pending commit against its destination only.
+/// Reconciles one pending commit against its destination only, by the same
+/// independent check a commit ends with: each source's type-dependent re-read
+/// limit and, with a workbook source, every figure, by the checker's own
+/// contained run with the pins the report task holds.
 pub(super) fn reconcile(commit: &CommitLine) -> Reconciled {
     let destination = commit.root.join(&commit.destination);
     match std::fs::symlink_metadata(&destination) {
@@ -334,15 +379,7 @@ pub(super) fn reconcile(commit: &CommitLine) -> Reconciled {
         Err(_) => return Reconciled::Unknown("the destination could not be read".to_owned()),
         Ok(_) => {}
     }
-    let sources: Vec<SourceRecord> = commit
-        .sources
-        .iter()
-        .map(|source| SourceRecord {
-            path: source.path.clone(),
-            sha256: source.sha256.clone(),
-            bytes: source.bytes,
-        })
-        .collect();
+    let sources: Vec<SourceRecord> = commit.sources.iter().map(SourceLine::record).collect();
     match report_check::check(&report_check::Expectation {
         root: &commit.root,
         folder_path: &commit.root.join(&commit.folder),
@@ -351,6 +388,7 @@ pub(super) fn reconcile(commit: &CommitLine) -> Reconciled {
         sha256: &commit.sha256,
         bytes: commit.bytes,
         sources: &sources,
+        pins: super::workbook_pins(),
     }) {
         Ok(record) => Reconciled::Verified(record),
         Err(reason) => Reconciled::Unknown(reason),
@@ -562,7 +600,7 @@ impl ReportJournal {
                     schema,
                     owner,
                     task,
-                }) if schema == SCHEMA && owner.run != self.owner.run => {
+                }) if schema == schema_for(&task.sources) && owner.run != self.owner.run => {
                     match index.get(&task.id) {
                         Some(&slot) => snapshots[slot] = (owner, task),
                         None => {
@@ -585,10 +623,11 @@ impl ReportJournal {
 
     /// Best effort: a lost snapshot loses history, never safety.
     pub(super) fn snapshot(&self, task: &ReportTask) {
+        let task = task_line(task);
         let _ = self.line(&Line::Task {
-            schema: SCHEMA.to_owned(),
+            schema: schema_for(&task.sources).to_owned(),
             owner: self.owner.clone(),
-            task: task_line(task),
+            task,
         });
     }
 
@@ -598,7 +637,7 @@ impl ReportJournal {
         orcel_journal::append_opening_shared(
             &self.path,
             &Line::Pending {
-                schema: SCHEMA.to_owned(),
+                schema: schema_for(&commit.sources).to_owned(),
                 owner: self.owner.clone(),
                 intent: intent.to_owned(),
                 commit,
@@ -645,7 +684,11 @@ impl ReportJournal {
     pub(super) fn restore(&self) -> Result<Restored, JournalError> {
         orcel_journal::with_lock(&self.path, LOCK_WAIT, || {
             let read = orcel_journal::read_lines::<Line>(&self.path)?;
-            if read.lines.iter().any(|line| line.schema() != SCHEMA) {
+            if read
+                .lines
+                .iter()
+                .any(|line| line.schema() != line.expected_schema())
+            {
                 return Err(JournalError::Unreadable);
             }
             let open = orcel_journal::recover(read.lines.iter().filter_map(Line::intent_event))?;
@@ -701,7 +744,7 @@ impl ReportJournal {
                     // A live run's open commit is kept exactly: pending,
                     // and dispatched when its create may have started.
                     let mut group = vec![Line::Pending {
-                        schema: SCHEMA.to_owned(),
+                        schema: schema_for(&commit.sources).to_owned(),
                         owner,
                         intent: intent.clone(),
                         commit,
@@ -788,7 +831,7 @@ impl ReportJournal {
             let mut kept: Vec<Line> = earlier
                 .iter()
                 .map(|(owner, task)| Line::Task {
-                    schema: SCHEMA.to_owned(),
+                    schema: schema_for(&task.sources).to_owned(),
                     owner: owner.clone(),
                     task: task.clone(),
                 })
@@ -806,7 +849,7 @@ impl ReportJournal {
                 }
             }
             kept.extend(live_tasks.into_iter().map(|(owner, task)| Line::Task {
-                schema: SCHEMA.to_owned(),
+                schema: schema_for(&task.sources).to_owned(),
                 owner,
                 task,
             }));

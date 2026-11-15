@@ -860,8 +860,10 @@ fn the_shipped_document_parser_has_no_release_caller() {
     // build. Exactly this attribute, directly on each item.
     const TEST_ONLY_EXPECT: &str = "#[cfg_attr(not(test), expect(dead_code))]\n";
     // (definition, its name, how many cfg-chosen definitions it has)
-    const ROUTE_ITEMS: [(&str, &str, usize); 11] = [
+    const ROUTE_ITEMS: [(&str, &str, usize); 12] = [
         ("pub(crate) struct WorkspaceFile {", "WorkspaceFile", 1),
+        // SG-000130 W1: what was observed, for the test-only report task.
+        ("impl WorkspaceFile {", "WorkspaceFile", 1),
         (
             "pub(crate) fn observe_workspace_file(",
             "observe_workspace_file",

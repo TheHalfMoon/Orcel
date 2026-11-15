@@ -35,8 +35,10 @@
 //! ([`observe_workspace_file`], then [`parse_workspace_file`]): an `.xlsx`
 //! only, plain directories and a regular file with one hard link, the open
 //! handle tied to the walked path, its size and SHA-256 re-read and compared,
-//! one private input copy, the pinned parser, a contained run. Only this
-//! module's tests call it (see the comment above [`WorkspaceFile`]).
+//! one private input copy, the pinned parser, a contained run that expects a
+//! workbook and refuses anything else by sniffing before any parse
+//! (SG-000130 W1). Only tests call it (see the comment above
+//! [`WorkspaceFile`]).
 
 use crate::contained_tier;
 use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
@@ -275,13 +277,17 @@ pub fn parse_committed(
         )
         .map_err(|error| ProviderError::new(error.code, error.message))?;
 
-    let document = run_parser(&bytes, &digest, helper, parser)?;
+    // A download may be any format the parser reads; none is expected.
+    let document = run_parser(&bytes, &digest, None, helper, parser)?;
     Ok(result(download, parser, &document))
 }
 
 /// Run the pinned parser under the contained tier over verified bytes, staged
 /// in a fresh private directory named from `stage_key`. The caller has already
-/// decided these bytes may be parsed. The Markdown is untrusted document content.
+/// decided these bytes may be parsed. With `expected` (SG-000130 W1), the
+/// parser refuses any other format by sniffing the staged bytes before any
+/// parse, and a frame of another format is refused here too. The Markdown is
+/// untrusted document content.
 #[cfg_attr(
     not(any(
         test,
@@ -295,6 +301,7 @@ pub fn parse_committed(
 pub(crate) fn run_parser(
     bytes: &[u8],
     stage_key: &str,
+    expected: Option<DocumentFormat>,
     helper: &HelperPin,
     parser: &ParserPin,
 ) -> Result<ParsedDocument, ProviderError> {
@@ -307,10 +314,17 @@ pub(crate) fn run_parser(
         &parser.sha256,
         &stage.input,
         stage.work.clone(),
+        expected,
     );
     let run = run_contained(helper, &spec).map_err(contained_tier::map_contained_error)?;
     match run.outcome {
-        ContainedOutcome::Exited(0) => decode_frame(&run.stdout).map_err(frame_error),
+        ContainedOutcome::Exited(0) => {
+            let document = decode_frame(&run.stdout).map_err(frame_error)?;
+            if expected.is_some_and(|expected| expected != document.format) {
+                return Err(refusal_error(ParseRefusal::UnsupportedFormat));
+            }
+            Ok(document)
+        }
         ContainedOutcome::Exited(code) if code == EXIT_REFUSED => {
             Err(match decode_frame(&run.stdout) {
                 Err(FrameError::Refused(refusal)) => refusal_error(refusal),
@@ -338,22 +352,21 @@ pub(crate) fn run_parser(
 // F5 slice 2 (founder decision 7 of 2026-11-14,
 // `prep/F5_SPREADSHEET_JOURNEY.md`): a workspace file to the parser, by
 // `parse_download`'s steps from a workspace path. No client can reach it.
-// Only this module's tests call it, and each item below expects to be dead
-// code in every build that isn't a test. A caller in a default build fails
-// CI's clippy `-D warnings`. CI lints default features only, so a caller
+// Only tests call it: this module's, and SG-000130 W1's report task through
+// `report_workbook.rs`, which is compiled only into tests until W2. Each item
+// below expects to be dead code in every build that isn't a test. A caller
+// in a default build fails CI's clippy `-D warnings`. CI lints default features only, so a caller
 // compiled only into the live-browser builds would show as a warning there,
 // never as a failure. `release_blocker_sweep.rs` covers that: it checks
 // these attributes, that no code in this module outside these items and
 // its tests names one of them, and that no other non-test Rust names the
-// route. Slice 3 adds a caller only by changing both, under its own review
-// and its grain.
+// route. SG-000130 slice W2 adds a release caller only by changing both,
+// under its own review.
 //
-// It asks for no approval. Whether a person must approve this read is the
-// security review's question for slice 3 (`read_text` needs none; the parser
-// is a larger surface). If one is required, it goes between the two steps
-// and binds the observed record: workspace, the canonical path, size,
-// SHA-256 and the parser's own digest, as `approval_digest` does for a
-// download.
+// It asks for no approval: the founder decided on 2026-11-15 (#760) that the
+// report's own commit approval covers reading its workbook sources. W2 binds
+// that approval to the canonical path the route opened, the SHA-256 and the
+// parser's own digest, never the caller's string.
 
 /// A workspace file observed for the parser: its path below the workspace
 /// root and the size and SHA-256 read through plain directories.
@@ -363,6 +376,19 @@ pub(crate) struct WorkspaceFile {
     relative: String,
     bytes: u64,
     sha256: String,
+}
+
+/// What was observed, for the report task's record of a workbook source
+/// (SG-000130 W1). Only `observe_workspace_file` makes one.
+#[cfg_attr(not(test), expect(dead_code))]
+impl WorkspaceFile {
+    pub(crate) fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    pub(crate) fn sha256(&self) -> &str {
+        &self.sha256
+    }
 }
 
 /// Observe an `.xlsx` in the workspace: refuse any other name, any path that
@@ -385,8 +411,9 @@ pub(crate) fn observe_workspace_file(
 /// Parse an observed workspace file with the given pins. The file is read
 /// again by the same checks, and refused unless its size and SHA-256 still
 /// equal the observed ones; only those verified bytes are staged, as the one
-/// file in a fresh private input, for the pinned parser's contained run. A
-/// document that isn't a workbook, whatever its name, is refused.
+/// file in a fresh private input, for the pinned parser's contained run. The
+/// parser is told to expect a workbook, so a document that isn't one,
+/// whatever its name, is refused by its sniff before any parse.
 #[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn parse_workspace_file(
     workspace: &Workspace,
@@ -404,7 +431,15 @@ pub(crate) fn parse_workspace_file(
             "the workspace file changed since it was observed (size or SHA-256); nothing was parsed",
         ));
     }
-    let document = run_parser(&bytes, &observed.sha256, helper, parser)?;
+    // The parser sniffs the staged bytes and refuses anything but a workbook
+    // before any parse; the frame's format is checked again here.
+    let document = run_parser(
+        &bytes,
+        &observed.sha256,
+        Some(DocumentFormat::Xlsx),
+        helper,
+        parser,
+    )?;
     if document.format != DocumentFormat::Xlsx {
         return Err(not_a_workbook());
     }

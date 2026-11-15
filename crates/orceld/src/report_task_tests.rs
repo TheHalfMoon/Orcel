@@ -606,6 +606,7 @@ fn sg126_the_checker_fails_on_tampered_bytes_size_folder_and_sources() {
         path: "data/q3.csv".into(),
         sha256: sha256_hex(Q3_CSV.as_bytes()),
         bytes: Q3_CSV.len() as u64,
+        kind: SourceKind::Text,
     }];
     let sha = sha256_hex(report.as_bytes());
     let expect = |destination: &'static str, sha256: &str, bytes: u64, folder: &Path| {
@@ -617,6 +618,7 @@ fn sg126_the_checker_fails_on_tampered_bytes_size_folder_and_sources() {
             sha256,
             bytes,
             sources: &sources,
+            pins: None,
         })
     };
     let passed = expect("reports/r.md", &sha, report.len() as u64, &folder).expect("pass");
@@ -973,6 +975,7 @@ fn sg126_linked_folders_are_refused_on_every_os() {
         sha256: &sha256_hex(report.as_bytes()),
         bytes: 1,
         sources: &[],
+        pins: None,
     });
     assert!(checked.is_err());
     assert_eq!(std::fs::read_dir(&inside).unwrap().count(), 1);

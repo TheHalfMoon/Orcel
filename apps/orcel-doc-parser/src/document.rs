@@ -73,7 +73,215 @@ pub fn is_office_container(bytes: &[u8]) -> bool {
     bytes.starts_with(ZIP_MAGIC) || bytes.starts_with(OLE_MAGIC)
 }
 
-pub fn convert(bytes: &[u8]) -> Result<OfficeText, ParseRefusal> {
+/// The main part's content type of each Office format the parser reads.
+const MAIN_CONTENT_TYPES: [(DocumentFormat, &str); 3] = [
+    (
+        DocumentFormat::Docx,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+    ),
+    (
+        DocumentFormat::Pptx,
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+    ),
+    (
+        DocumentFormat::Xlsx,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    ),
+];
+/// The most the sniff inflates of one package part it reads.
+const MAX_SNIFF_PART_BYTES: u64 = 1024 * 1024;
+/// The most the sniff inflates of all the parts it reads together.
+const MAX_SNIFF_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Content type families that mark another Office format's part: a package
+/// expected to be one format holding any of these is refused, even an
+/// embedded document (a refusal more than strictly needed is the safer way to
+/// be wrong).
+fn foreign_families(expected: DocumentFormat) -> &'static [&'static str] {
+    match expected {
+        DocumentFormat::Xlsx => &["wordprocessingml", "presentationml"],
+        DocumentFormat::Docx => &["spreadsheetml", "presentationml", "ms-excel"],
+        DocumentFormat::Pptx => &["wordprocessingml", "spreadsheetml", "ms-excel"],
+        DocumentFormat::Pdf => &[],
+    }
+}
+
+/// One package part for the sniff, within its per-part and total bounds.
+/// `None` if the package has no such part.
+fn sniffed_part<R: Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    name: &str,
+    budget: &mut u64,
+) -> Result<Option<String>, ParseRefusal> {
+    let Some(index) = archive.index_for_name(name) else {
+        return Ok(None);
+    };
+    if archive
+        .by_index_raw(index)
+        .map_err(|_| ParseRefusal::Malformed)?
+        .encrypted()
+    {
+        return Err(ParseRefusal::Encrypted);
+    }
+    let limit = MAX_SNIFF_PART_BYTES.min(*budget);
+    let mut bytes = Vec::new();
+    archive
+        .by_index(index)
+        .map_err(|_| ParseRefusal::Malformed)?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ParseRefusal::Malformed)?;
+    if bytes.len() as u64 > limit {
+        return Err(ParseRefusal::ArchiveLimit);
+    }
+    *budget -= bytes.len() as u64;
+    check_xml(&bytes)?;
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| ParseRefusal::Malformed)
+}
+
+/// A part's content type per OPC, as anydoc reads it: an `Override` for the
+/// part name (case-insensitive) wins, else the `Default` for its extension.
+fn content_type_of<'a>(types: &'a Document<'a>, part: &str) -> Option<&'a str> {
+    let part_name = format!("/{part}");
+    let elements = || types.descendants().filter(|node| node.is_element());
+    if let Some(found) = elements().find(|node| {
+        node.tag_name().name() == "Override"
+            && node
+                .attribute("PartName")
+                .is_some_and(|name| name.eq_ignore_ascii_case(&part_name))
+    }) {
+        return found.attribute("ContentType");
+    }
+    let extension = part.rsplit_once('.').map(|(_, extension)| extension)?;
+    elements()
+        .find(|node| {
+            node.tag_name().name() == "Default"
+                && node
+                    .attribute("Extension")
+                    .is_some_and(|found| found.eq_ignore_ascii_case(extension))
+        })
+        .and_then(|node| node.attribute("ContentType"))
+}
+
+/// SG-000130 W1: whether the bytes are an `expected` Office package, decided
+/// before any parse (no pre-flight, no converter). An OLE file (a legacy
+/// binary document such as an `.xls`, or an encrypted package) and anything
+/// that isn't a zip are refused. In the zip, only its directory,
+/// `[Content_Types].xml` and its relationship parts are read, each bounded:
+///
+/// - a macro or ActiveX part name, an active content type, or an active
+///   relationship type in any relationship part is `active_content`, so a
+///   macro part under a neutral name is refused here too;
+/// - every declared content type must be free of another Office format's
+///   family, and any main-part type must be exactly the expected one (no
+///   template, no parameters);
+/// - the package must name exactly one main part (the root relationship
+///   part's one `officeDocument` relationship, internal), that part must be in
+///   the zip, and its content type, resolved as the converters resolve it,
+///   must be exactly the expected main type.
+///
+/// Passing proves nothing more: the pre-flight and the converter still check
+/// the whole package, and the converter refuses a package it would read as
+/// another format before converting it.
+pub fn sniff_package(bytes: &[u8], expected: DocumentFormat) -> Result<(), ParseRefusal> {
+    if bytes.starts_with(OLE_MAGIC) {
+        return Err(if contains_utf16(bytes, "EncryptionInfo") {
+            ParseRefusal::Encrypted
+        } else {
+            ParseRefusal::UnsupportedFormat
+        });
+    }
+    if !bytes.starts_with(ZIP_MAGIC) {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
+    let expected_main = MAIN_CONTENT_TYPES
+        .iter()
+        .find(|(format, _)| *format == expected)
+        .map(|(_, main)| *main)
+        .ok_or(ParseRefusal::UnsupportedFormat)?;
+    let mut archive =
+        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| ParseRefusal::Malformed)?;
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(ParseRefusal::ArchiveLimit);
+    }
+    if archive.file_names().any(is_active_part) {
+        return Err(ParseRefusal::ActiveContent);
+    }
+    let mut budget = MAX_SNIFF_BYTES;
+    let types = sniffed_part(&mut archive, "[Content_Types].xml", &mut budget)?
+        .ok_or(ParseRefusal::UnsupportedFormat)?;
+    let types = Document::parse(&types).map_err(|_| ParseRefusal::Malformed)?;
+    for node in types.descendants().filter(|node| {
+        node.is_element() && matches!(node.tag_name().name(), "Default" | "Override")
+    }) {
+        let content_type = node.attribute("ContentType").unwrap_or_default();
+        let lower = content_type.to_ascii_lowercase();
+        if ACTIVE_CONTENT_TYPES
+            .iter()
+            .any(|marker| lower.contains(marker))
+        {
+            return Err(ParseRefusal::ActiveContent);
+        }
+        let foreign = foreign_families(expected)
+            .iter()
+            .any(|family| lower.contains(family));
+        let other_main = lower.contains(".main") && content_type != expected_main;
+        if foreign || other_main {
+            return Err(ParseRefusal::UnsupportedFormat);
+        }
+    }
+
+    let relationship_parts: Vec<String> = archive
+        .file_names()
+        .filter(|name| name.to_ascii_lowercase().ends_with(".rels"))
+        .map(str::to_owned)
+        .collect();
+    let mut main_parts = Vec::new();
+    for name in relationship_parts {
+        let Some(xml) = sniffed_part(&mut archive, &name, &mut budget)? else {
+            continue;
+        };
+        let relationships = Document::parse(&xml).map_err(|_| ParseRefusal::Malformed)?;
+        for node in relationships
+            .descendants()
+            .filter(|node| node.is_element() && node.tag_name().name() == "Relationship")
+        {
+            let kind = node
+                .attribute("Type")
+                .and_then(|kind| kind.rsplit('/').next())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if ACTIVE_RELATIONSHIPS.contains(&kind.as_str()) {
+                return Err(ParseRefusal::ActiveContent);
+            }
+            if name == "_rels/.rels" && kind == "officedocument" {
+                let external = node
+                    .attribute("TargetMode")
+                    .is_some_and(|mode| mode.eq_ignore_ascii_case("external"));
+                main_parts.push((node.attribute("Target").map(str::to_owned), external));
+            }
+        }
+    }
+    let [(Some(target), false)] = &main_parts[..] else {
+        return Err(ParseRefusal::UnsupportedFormat);
+    };
+    let main = resolve_part("", target).ok_or(ParseRefusal::UnsupportedFormat)?;
+    if archive.index_for_name(&main).is_none()
+        || content_type_of(&types, &main) != Some(expected_main)
+    {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
+    Ok(())
+}
+
+/// Convert an Office package. With `expected`, a package the converter would
+/// read as any other format is refused before any converter reads it.
+pub fn convert_expecting(
+    bytes: &[u8],
+    expected: Option<DocumentFormat>,
+) -> Result<OfficeText, ParseRefusal> {
     if bytes.starts_with(OLE_MAGIC) {
         return Err(if contains_utf16(bytes, "EncryptionInfo") {
             ParseRefusal::Encrypted
@@ -91,6 +299,9 @@ pub fn convert(bytes: &[u8]) -> Result<OfficeText, ParseRefusal> {
         Some(anydoc::Format::Excel) => (DocumentFormat::Xlsx, anydoc::Format::Excel),
         _ => return Err(ParseRefusal::UnsupportedFormat),
     };
+    if expected.is_some_and(|expected| expected != format) {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
     if format == DocumentFormat::Xlsx {
         let (markdown, sheets) = crate::workbook::convert(bytes)?;
         return Ok(OfficeText {
