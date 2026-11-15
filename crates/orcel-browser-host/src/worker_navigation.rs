@@ -86,7 +86,7 @@ pub struct NavigationPolicy {
 /// (the lifetime's one admitted destination), with a redirect chain that
 /// stays on that origin; every other top-level document, redirect hop,
 /// frame document or popup is refused and recorded here.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnterRoute {
     /// The one admitted document was requested: the submission left, and
     /// the server may have acted on it.
@@ -102,6 +102,12 @@ pub struct EnterRoute {
     /// request of the result page, or of the page being replaced): refused
     /// at the route like any other, but not the submission's own refusal.
     pub refused_later: bool,
+    /// The admitted document's URL as the host last admitted it: the
+    /// document request's URL, then each redirect hop admitted after it (a
+    /// 303 after a POST makes the hop's target the document). An Enter is
+    /// committed only when the worker reports this URL (ignoring a
+    /// fragment), so the host binds what it commits to what it admitted.
+    pub document: Option<String>,
 }
 
 impl std::fmt::Debug for RedirectChain {
@@ -356,8 +362,17 @@ impl NavigationPolicy {
         if self.enter.is_none() {
             return self.decide_ordinary(kind, url, origin, detail);
         }
-        let opened = self.enter.is_some_and(|enter| enter.opened);
+        let opened = self.enter.as_ref().is_some_and(|enter| enter.opened);
         let decided = self.decide_under_enter(kind, url, origin, detail);
+        if decided.is_ok() && opened && matches!(kind, RouteKind::Redirect) {
+            // An admitted hop after the document opened: the document's
+            // URL is now its target. (A result-page request's own redirect
+            // can't be told apart; it then fails the match and the Enter is
+            // unknown, never committed at a URL the host did not admit.)
+            if let Some(enter) = self.enter.as_mut() {
+                enter.document = Some(url.to_owned());
+            }
+        }
         if decided.is_err() {
             if let Some(enter) = self.enter.as_mut() {
                 match (kind, opened) {
@@ -393,7 +408,10 @@ impl NavigationPolicy {
         origin: &str,
         detail: &RequestDetail,
     ) -> Result<(), HostError> {
-        let enter = self.enter.unwrap_or_default();
+        let (opened, refused) = self
+            .enter
+            .as_ref()
+            .map_or((false, false), |enter| (enter.opened, enter.refused));
         match kind {
             // A submission into a frame or a new window is not the page's
             // own document: refused, as during any activation.
@@ -401,7 +419,7 @@ impl NavigationPolicy {
                 "an Enter submission may not open a frame or a popup".into(),
             )),
             RouteKind::Document => {
-                if enter.opened || enter.refused {
+                if opened || refused {
                     return Err(HostError::Invalid(
                         "an Enter submission opens one document, once".into(),
                     ));
@@ -425,6 +443,7 @@ impl NavigationPolicy {
                 self.chain = Some(RedirectChain::start(url)?);
                 if let Some(enter) = self.enter.as_mut() {
                     enter.opened = true;
+                    enter.document = Some(url.to_owned());
                 }
                 Ok(())
             }
@@ -767,7 +786,9 @@ mod tests {
                 EnterRoute {
                     opened: true,
                     refused: false,
-                    refused_later: false
+                    refused_later: false,
+                    // The admitted hop is the document now.
+                    document: Some("https://fixture.test/done".into()),
                 }
             );
         }
@@ -785,7 +806,8 @@ mod tests {
             EnterRoute {
                 opened: true,
                 refused: true,
-                refused_later: false
+                refused_later: false,
+                document: Some("https://fixture.test/a".into()),
             }
         );
         // An Enter that opens nothing reports nothing; ordinary rules apply
@@ -851,7 +873,8 @@ mod tests {
                 EnterRoute {
                     opened: false,
                     refused: true,
-                    refused_later: false
+                    refused_later: false,
+                    document: None,
                 },
                 "{kind:?} {url}"
             );
@@ -875,7 +898,9 @@ mod tests {
             EnterRoute {
                 opened: true,
                 refused: true,
-                refused_later: false
+                refused_later: false,
+                // A refused hop is not the document.
+                document: Some("https://fixture.test/order-away".into()),
             }
         );
         // A subresource refused by its ordinary rule is not a submission.
@@ -922,7 +947,8 @@ mod tests {
                 EnterRoute {
                     opened: true,
                     refused: false,
-                    refused_later: true
+                    refused_later: true,
+                    document: Some("https://fixture.test/order".into()),
                 },
                 "{kind:?} {url}"
             );

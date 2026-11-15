@@ -26,6 +26,8 @@ export const ENTER_LOAD_MS = 30_000;
 /// After a refused request, how long the engine may take to show its error
 /// page before the refusal is reported anyway.
 export const ENTER_REFUSAL_GRACE_MS = 2_000;
+/// How long the Enter waits for the popups it closed to be gone.
+export const ENTER_POPUP_CLOSE_MS = 1_000;
 
 /// The page surface an Enter watches (a Playwright `Page`, or a test stub).
 export type EnterPage = Pick<Page, "on" | "off" | "mainFrame" | "url" | "waitForLoadState">;
@@ -63,6 +65,7 @@ export async function enterAndSettle(
   // A popup before the main frame's navigation began: the key's own
   // effect, not a document of this page.
   let poppedEarly = false;
+  const closing: Array<Promise<void>> = [];
   // Every timer is cleared on the way out, so none outlives the Enter.
   const timers: Array<ReturnType<typeof setTimeout>> = [];
   const delay = (ms: number) => new Promise<"late">((resolve) => timers.push(setTimeout(() => resolve("late"), ms)));
@@ -83,7 +86,7 @@ export async function enterAndSettle(
   // not this page's document.
   const onPopup = (popup: Page) => {
     if (!began) poppedEarly = true;
-    void popup.close().catch(() => {});
+    closing.push(popup.close().catch(() => {}));
   };
   page.on("request", onRequest);
   page.on("requestfailed", onRequestFailed);
@@ -109,6 +112,10 @@ export async function enterAndSettle(
       throw new NavigationError("timeout");
     }
   } finally {
+    // Every popup is closed before the Enter answers, within a short bound
+    // (the host does not rely on it: it keeps the no-document rule held
+    // after an Enter that refused a popup).
+    if (closing.length > 0) await Promise.race([Promise.allSettled(closing), delay(ENTER_POPUP_CLOSE_MS)]);
     for (const timer of timers) clearTimeout(timer);
     page.off("request", onRequest);
     page.off("requestfailed", onRequestFailed);

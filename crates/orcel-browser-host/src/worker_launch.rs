@@ -263,17 +263,27 @@ pub enum EnterVerdict {
 
 #[cfg(any(windows, test))]
 pub fn enter_verdict(
-    route: crate::worker_navigation::EnterRoute,
+    route: &crate::worker_navigation::EnterRoute,
     reply: EnterReply<'_>,
     before: &str,
 ) -> EnterVerdict {
     if route.opened {
         // A frame or popup refused after the document opened is not the
         // submission's refusal (`refused_later`): it does not change this.
+        // The committed URL must be the one the host admitted last for the
+        // document (its last admitted hop), fragment aside.
         return match reply {
             EnterReply::Done {
-                navigated: true, ..
-            } if !route.refused => EnterVerdict::Committed,
+                url,
+                navigated: true,
+            } if !route.refused
+                && route
+                    .document
+                    .as_deref()
+                    .is_some_and(|admitted| same_document(admitted, url)) =>
+            {
+                EnterVerdict::Committed
+            }
             _ => EnterVerdict::Unknown,
         };
     }
@@ -294,6 +304,28 @@ pub fn enter_verdict(
         EnterReply::Done { .. } | EnterReply::Denied => EnterVerdict::Unknown,
         EnterReply::Failed => EnterVerdict::WorkerFailed,
     }
+}
+
+/// SG-000122 slice A6: whether the no-document rule stays held after an
+/// Enter: always unless it committed; and also after a commit when a frame
+/// or popup was refused while it ran (`refused_later`), so a popup that
+/// outlives the Enter (the worker closes it, but the host does not rely on
+/// that) opens nothing under the ordinary rules until the next successful
+/// observation or approved navigation.
+#[cfg(any(windows, test))]
+pub fn holds_after_enter(
+    verdict: EnterVerdict,
+    route: &crate::worker_navigation::EnterRoute,
+) -> bool {
+    verdict != EnterVerdict::Committed || route.refused_later
+}
+
+/// SG-000122 slice A6: whether `reported` is the admitted document `url`,
+/// ignoring a fragment on either (a fragment never reaches the server).
+#[cfg(any(windows, test))]
+fn same_document(admitted: &str, reported: &str) -> bool {
+    let strip = |url: &str| url.split('#').next().unwrap_or_default().to_owned();
+    strip(admitted) == strip(reported)
 }
 
 /// A live observation: SG-000076 identities and the redacted, digested
@@ -2485,12 +2517,14 @@ mod platform {
                     }
                     _ => EnterReply::Failed,
                 };
-                let verdict = enter_verdict(route, answered, &url);
-                if verdict != EnterVerdict::Committed {
+                let verdict = enter_verdict(&route, answered, &url);
+                let hold = holds_after_enter(verdict, &route);
+                if hold {
                     // SG-000122 slice A6: no document committed under the
-                    // rule, so a submission the page starts later is
-                    // refused until the next observation or approved
-                    // navigation, whatever the worker's settle window was.
+                    // rule (or the page tried to open more than it), so a
+                    // document the page opens later is refused until the
+                    // next observation or approved navigation, whatever
+                    // the worker's settle window was or did.
                     self.policy.hold_no_document();
                 }
                 match verdict {
@@ -2515,7 +2549,13 @@ mod platform {
                             self.policy.hold_no_document();
                             return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
                         }
-                        self.policy.release_hold();
+                        // Held when a frame or popup was refused while the
+                        // Enter ran (`holds_after_enter`); otherwise the
+                        // committed document ends any earlier hold. The
+                        // generation advances either way.
+                        if !hold {
+                            self.policy.release_hold();
+                        }
                         let next = generation + 1;
                         self.committed = Some((after.clone(), next));
                         return Ok(FormOutcome {
@@ -4693,10 +4733,12 @@ mod tests {
         use crate::worker_navigation::EnterRoute;
         let page = "https://fixture.test/enter-form";
         let order = "https://fixture.test/order";
-        let route = |opened, refused, refused_later| EnterRoute {
+        // An opened route's admitted document is the order page.
+        let route = |opened: bool, refused, refused_later| EnterRoute {
             opened,
             refused,
             refused_later,
+            document: opened.then(|| order.to_owned()),
         };
         let done = |url, navigated| EnterReply::Done { url, navigated };
         let cases = [
@@ -4707,10 +4749,29 @@ mod tests {
                 done(order, true),
                 EnterVerdict::Committed,
             ),
+            // The worker reports the admitted URL with a fragment: the same
+            // document.
+            (
+                route(true, false, false),
+                done("https://fixture.test/order#thanks", true),
+                EnterVerdict::Committed,
+            ),
+            // A new document at a URL the host did not admit for it (another
+            // same-origin path, or the page it left): never committed.
             (
                 route(true, false, false),
                 done(page, true),
-                EnterVerdict::Committed,
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, false),
+                done("https://fixture.test/order-elsewhere", true),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, false),
+                done("https://fixture.test/order?x=1", true),
+                EnterVerdict::Unknown,
             ),
             (
                 route(true, false, true),
@@ -4821,11 +4882,99 @@ mod tests {
         ];
         for (route, reply, expected) in cases {
             assert_eq!(
-                enter_verdict(route, reply, page),
+                enter_verdict(&route, reply, page),
                 expected,
                 "{route:?} {reply:?}"
             );
         }
+        // A 303 after the POST: the admitted hop's target is the document
+        // compared, not the POST's URL.
+        let redirected = EnterRoute {
+            opened: true,
+            refused: false,
+            refused_later: false,
+            document: Some("https://fixture.test/thanks".into()),
+        };
+        assert_eq!(
+            enter_verdict(&redirected, done("https://fixture.test/thanks", true), page),
+            EnterVerdict::Committed
+        );
+        assert_eq!(
+            enter_verdict(&redirected, done(order, true), page),
+            EnterVerdict::Unknown
+        );
+        // An opened route with no recorded document never commits.
+        let unrecorded = EnterRoute {
+            document: None,
+            ..redirected
+        };
+        assert_eq!(
+            enter_verdict(&unrecorded, done(order, true), page),
+            EnterVerdict::Unknown
+        );
+    }
+
+    /// SG-000122 slice A6 (third judge): after a committed Enter during
+    /// which a frame or popup was refused, the no-document rule stays held
+    /// (a popup that outlives the Enter opens nothing under the ordinary
+    /// rules) until the next successful observation; every other committed
+    /// Enter ends the hold, every uncommitted one keeps it.
+    #[test]
+    fn sg122_a_refused_popup_keeps_the_hold_after_a_committed_enter() {
+        use crate::worker_navigation::{EnterRoute, NavigationPolicy, RouteKind};
+        let route = |refused_later| EnterRoute {
+            opened: true,
+            refused: false,
+            refused_later,
+            document: Some("https://fixture.test/order".into()),
+        };
+        assert!(!holds_after_enter(EnterVerdict::Committed, &route(false)));
+        assert!(holds_after_enter(EnterVerdict::Committed, &route(true)));
+        for verdict in [
+            EnterVerdict::Unchanged,
+            EnterVerdict::Refused,
+            EnterVerdict::Unknown,
+            EnterVerdict::WorkerFailed,
+        ] {
+            assert!(holds_after_enter(verdict, &route(false)), "{verdict:?}");
+        }
+
+        // What the hold does to that popup, in the policy: the Enter
+        // refuses it, the result page commits, and a popup the page opens
+        // again on the origin is still refused until an observation.
+        let mut p = NavigationPolicy::new(&[crate::confinement::AdmittedDestination::fixture(
+            "fixture.test",
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        )
+        .expect("fixture.test")]);
+        p.begin("https://fixture.test/enter-form").expect("begin");
+        p.commit("https://fixture.test/enter-form").expect("commit");
+        let home = "https://fixture.test";
+        let popup = "https://fixture.test/thanks";
+        p.expect_enter().expect("enter");
+        p.decide(RouteKind::Document, "https://fixture.test/order", "")
+            .expect("the submission");
+        assert!(p.decide(RouteKind::Popup, popup, home).is_err());
+        let enter = p.finish_enter();
+        assert!(enter.refused_later);
+        let reported = EnterReply::Done {
+            url: "https://fixture.test/order",
+            navigated: true,
+        };
+        let verdict = enter_verdict(&enter, reported, "https://fixture.test/enter-form");
+        assert_eq!(verdict, EnterVerdict::Committed);
+        let hold = holds_after_enter(verdict, &enter);
+        assert!(hold);
+        p.hold_no_document();
+        p.commit_page_initiated("https://fixture.test/order")
+            .expect("committed on the origin");
+        assert!(p.decide(RouteKind::Popup, popup, home).is_err());
+        assert!(p
+            .decide(RouteKind::Document, "https://fixture.test/again", "")
+            .is_err());
+        // The next successful observation ends it.
+        p.release_hold();
+        assert!(p.decide(RouteKind::Popup, popup, home).is_ok());
     }
 
     #[test]

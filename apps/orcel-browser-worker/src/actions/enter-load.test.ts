@@ -128,6 +128,21 @@ test("SG-000122 A6: a popup the result page opens does not make a committed subm
   );
   assert.deepEqual(raced, { url: "https://fixture.test/order", navigated: true });
   assert.deepEqual(racing.listeners(), [0, 0, 0, 0]);
+
+  // The Enter answers only once the popup it closed is gone.
+  const slow = page("https://fixture.test/enter-form");
+  let gone = false;
+  const lingering = { close: () => new Promise<void>((resolve) => setTimeout(() => ((gone = true), resolve()), 30)) };
+  const answered = await enterAndSettle(
+    slow.stub,
+    async () => {
+      slow.submit("https://fixture.test/order");
+      slow.events.emit("popup", lingering);
+    },
+    1_000
+  );
+  assert.deepEqual(answered, { url: "https://fixture.test/order", navigated: true });
+  assert.equal(gone, true, "the popup was closed before the Enter answered");
 });
 
 test("SG-000122 A6: a same-document navigation is never a committed document", async () => {
