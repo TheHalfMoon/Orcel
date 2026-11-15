@@ -2,7 +2,7 @@
   "id": "SG-000130",
   "title": "Workbook sources in the report task (F5 Journey 2, slice 3: .xlsx sources through the confined parser)",
   "program": "ORCEL-F5",
-  "state": "GRAIN",
+  "state": "CLOSED",
   "risk": "high",
   "created": "2026-11-15",
   "base": "75e1dc299b51e52092707db2b0f6a8c1deb3d1b5",
@@ -143,5 +143,34 @@
     "packages": "Carrying the parser in the Linux and macOS release packages is separate packaging work."
   },
   "activation_note": "No source type, argument, tool, dependency, policy, dispatch or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about workbook sources.",
+  "closed_at": "2026-11-15",
+  "implementation_base": "5804f2d87298388d7d347edcfdcfb4e4adb22834",
+  "implementation_pr": 766,
+  "qualified_head": "f3cc2961127c3915ed2c1207d759f550ccfbead0",
+  "qualified_tree": "1a119305d7d8ed82aab7f8becdc6b5256378c203",
+  "implementation_merge": "790d881f2f2ba9398e90db35aa9f7c67354e1598",
+  "pre_merge_ci": "43730996915",
+  "pre_merge_review_gates": "43730996922",
+  "post_merge_ci": "43734703472",
+  "canonical_evidence": {
+    "slices": "#761 activation (merge 6be8e1119bb3); #762 W1, the review blockers, still compiled only into tests (merge 359db512080b); #764 W2, the exposure: report_start takes .xlsx sources in the local profiles (merge 72cc3ff27a17); #766 W3, the journey test under a scripted, labelled SOFT consent, the founder-present runbook and kit (merge 790d881f2f2b)",
+    "runs": "Exact-head CI / Review Gates / post-merge main CI per PR: #761 eab6cb5 43695896504 / 43695894240 / 43701560059; #762 76b1fcc 43710730325 / 43710728075 / 43713484908; #764 e7519a4 43723071508 / 43723071492 / 43726909412; #766 f3cc296 43730996915 / 43730996922 / 43734703472. Every listed run concluded success on its Windows, macOS and Linux legs; the Document parser job ran the wi05_ workbook journeys on all three with the parser it built.",
+    "acceptance_matrix": "prep/F5_SPREADSHEET_JOURNEY.md, section \"Ledger evidence\" (tests per slice, known limits)",
+    "open_follow_ups": [
+      "Founder-present run, PENDING with the founder: a real approval of a workbook report through a real client, as in F4 slice 4 (runbook and kit: prep/F5_SPREADSHEET_JOURNEY.md, section \"Founder-present run\"). Nothing here claims it.",
+      "A workbook saved by a current Excel on a machine under this project's control (evidence, not a blocker).",
+      "Carrying the parser in the Linux and macOS release packages (separate packaging work); until then those releases refuse a workbook source as PROVIDER_UNAVAILABLE.",
+      ".xls, .xlsb, recalculation and opening the workbook on screen each need their own founder decision."
+    ],
+    "known_residuals": [
+      "Saved values only: nothing recalculates; a cell whose value may be stale (an outside source, a formula reaching outside, or any formula in a manually calculated workbook) confirms no figure.",
+      "OneDrive placeholders, links, junctions, a second hard link and short (8.3) names in the path are refused, not resolved; a same-user writer can still rename the one-linked file into the walked path while it is open.",
+      "The checker's plain read can be slowed or fed a large file by a same-user writer, bounded by SHA-256 equality and the parser's input bound to a denial of service.",
+      "Workbook-supplied prompt text is refused, never cut, past 256 displayed characters an item or MAX_SUMMARY_CHARS for the whole summary, so a large workbook's report may need fewer figures.",
+      "After a downgrade, a journal holding a workbook task's line is refused whole by the older build until it is moved aside (the changelog's repair step).",
+      "The zip advisory exceptions ship in the parser's code, recorded as unreachable, not accepted; the caller scan is a guard, not a proof.",
+      "CI's journey uses a scripted consent; the committed workbook fixtures are hand-written, XlsxWriter, openpyxl and two Apache POI samples."
+    ]
+  },
   "done_when": "In tests on the Windows, macOS and Linux CI legs, and in the Windows release, the local report task turns figures from one or more .xlsx workbooks, read only through the confined parser (the writer through slice 2's route, the checker through its own read and run), into one approved, create-only report whose every figure names its workbook and is confirmed by the independent checker, with the workbook-supplied notices shown escaped and bounded in the approval prompt, every stale, oversized, linked, macro, non-workbook and false-figure case refused, and no separate read approval, recalculation, on-screen opening, .xls or .xlsb, or remote exposure."
 }

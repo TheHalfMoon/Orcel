@@ -197,15 +197,19 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // client) ran beside them by founder decision (issue #536) and is closed.
   // SG-000122 (ORCEL-BR, browser form actions, narrow scope) runs beside
   // them by founder decision (issue #753). SG-000130 (ORCEL-F5, workbook
-  // sources in the report task) runs beside them by founder go-ahead (issue
-  // #760); no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000122", "SG-000127", "SG-000128", "SG-000130"]);
+  // sources in the report task) ran beside them by founder go-ahead (issue
+  // #760) and is closed; no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000122", "SG-000127", "SG-000128"]);
   const sg130 = readJson<{
     program: string;
     state: string;
     base: string;
     planning_issue: number;
     dependencies: string[];
+    implementation_pr: number;
+    qualified_head: string;
+    qualified_tree: string;
+    implementation_merge: string;
     authority_delta: {
       activation: string;
       report_task: string;
@@ -220,10 +224,14 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     };
   }>(".specgrain/specs/SG-000130.json");
   assert.equal(sg130.program, "ORCEL-F5");
-  assert.equal(sg130.state, "GRAIN");
+  assert.equal(sg130.state, "CLOSED");
   assert.equal(sg130.planning_issue, 760);
   assert.equal(sg130.base, "75e1dc299b51e52092707db2b0f6a8c1deb3d1b5");
   assert.deepEqual(sg130.dependencies, ["SG-000120", "SG-000126", "SG-000127"]);
+  assert.equal(sg130.implementation_pr, 766);
+  assert.equal(sg130.qualified_head, "f3cc2961127c3915ed2c1207d759f550ccfbead0");
+  assert.equal(sg130.qualified_tree, "1a119305d7d8ed82aab7f8becdc6b5256378c203");
+  assert.equal(sg130.implementation_merge, "790d881f2f2ba9398e90db35aa9f7c67354e1598");
   // The activation grants nothing; workbook sources, their reads, the
   // report_start change and the parser's release caller stay proposals until
   // their slice is qualified, no approval is added, remote exposure stays
