@@ -797,3 +797,323 @@ fn shutting_the_host_down_mid_lifetime_takes_the_worker_and_profile_with_it() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The observed nodes of one role, in document order.
+fn nodes_of(reply: &WorkerHostReply, role: &str) -> Vec<String> {
+    match reply {
+        WorkerHostReply::Observed { nodes, .. } => all_nodes(nodes)
+            .into_iter()
+            .filter(|node| node.role == role)
+            .map(|node| node.node_id.clone())
+            .collect(),
+        other => panic!("observation refused: {other:?}"),
+    }
+}
+
+fn form_action(
+    host: &mut LiveWorkerHost,
+    action: BindAction,
+    record: &str,
+    binding: &str,
+) -> WorkerHostReply {
+    host.request(&WorkerHostRequest::FormAction {
+        action,
+        record_id: record.into(),
+        binding: binding.into(),
+    })
+    .expect("form action")
+}
+
+fn bind_reply(host: &mut LiveWorkerHost, action: BindAction) -> WorkerHostReply {
+    host.request(&WorkerHostRequest::Bind { action })
+        .expect("bind")
+}
+
+fn wait_text(
+    host: &mut LiveWorkerHost,
+    text: &str,
+    appear: bool,
+    timeout_ms: u64,
+) -> WorkerHostReply {
+    host.request(&WorkerHostRequest::WaitText {
+        text: text.into(),
+        appear,
+        timeout_ms,
+    })
+    .expect("wait")
+}
+
+/// SG-000122 slice A1: the form channel through the real host binary. Each
+/// action is bound and approved like a click; the host refuses, before any
+/// worker frame, a password field, Enter on a checkbox, another kind of
+/// control and a value the prompt could not show; the page holds exactly
+/// the approved values (verified); Enter in the search field reaches the
+/// page; a replay is refused.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn sg122_form_actions_go_through_bound_approvals_and_the_host_refuses_the_rest() {
+    use orcel_browser_host::Postcondition;
+    let fixture = Fixture::start();
+    let (mut supervisor, launch, root) = launch("sg122-form");
+    let host = supervisor.worker_host().expect("live worker host");
+    if open(host, &fixture, &launch.profile_root).is_none() {
+        assert!(supervisor.shutdown().expect("shutdown"));
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    assert!(matches!(
+        navigate(host, "https://fixture.test/form-page", "rec-1"),
+        WorkerHostReply::Navigated { status: 200, .. }
+    ));
+    let observed = observe(host);
+    // The form-control kinds stay in the host.
+    let text = serde_json::to_string(&observed).expect("reply text");
+    assert!(!text.contains("\"control\""), "{text}");
+    // Full name, then Password (both textboxes, in document order).
+    let textboxes = nodes_of(&observed, "textbox");
+    assert_eq!(textboxes.len(), 2, "{textboxes:?}");
+    let (full_name, password) = (textboxes[0].clone(), textboxes[1].clone());
+    let city = nodes_of(&observed, "combobox")[0].clone();
+    let terms = nodes_of(&observed, "checkbox")[0].clone();
+    let search = nodes_of(&observed, "searchbox")[0].clone();
+    let fill = |node_id: &str, value: &str| BindAction::Fill {
+        node_id: node_id.into(),
+        role: "textbox".into(),
+        value: value.into(),
+    };
+    // Refused by the host from its own record of the observation: a
+    // password field, Enter on a checkbox or a password field, a select
+    // on a text field, and a value the prompt would escape.
+    for refused in [
+        fill(&password, "hunter2"),
+        BindAction::PressEnter {
+            node_id: terms.clone(),
+            role: "checkbox".into(),
+        },
+        BindAction::PressEnter {
+            node_id: password.clone(),
+            role: "textbox".into(),
+        },
+        BindAction::Select {
+            node_id: full_name.clone(),
+            role: "textbox".into(),
+            label: "Porto".into(),
+        },
+        fill(&full_name, "Ada\u{202e}Lovelace"),
+        // The role must be the observed one.
+        BindAction::Fill {
+            node_id: full_name.clone(),
+            role: "searchbox".into(),
+            value: "Ada".into(),
+        },
+    ] {
+        assert_eq!(
+            error_code(&bind_reply(host, refused.clone())),
+            "invalid",
+            "{refused:?}"
+        );
+    }
+    // Fill, select and check, each bound and approved once.
+    let mut record = 10;
+    let mut act = |host: &mut LiveWorkerHost, action: BindAction| {
+        let (binding, target) = bind(host, action.clone());
+        assert_eq!(target, "https://fixture.test:443");
+        record += 1;
+        let id = format!("rec-{record}");
+        (
+            form_action(host, action.clone(), &id, &binding),
+            id,
+            binding,
+        )
+    };
+    let (done, fill_record, fill_binding) = act(host, fill(&full_name, "Ada Lovelace"));
+    assert_eq!(
+        done,
+        WorkerHostReply::FormDone {
+            url: "https://fixture.test/form-page".into()
+        }
+    );
+    // The same approval again is refused.
+    assert_eq!(
+        error_code(&form_action(
+            host,
+            fill(&full_name, "Ada Lovelace"),
+            &fill_record,
+            &fill_binding
+        )),
+        "approval_replay"
+    );
+    // A binding for one value does not cover another.
+    assert_eq!(
+        error_code(&form_action(
+            host,
+            fill(&full_name, "Eve"),
+            "rec-other",
+            &fill_binding
+        )),
+        "binding_mismatch"
+    );
+    let (done, _, _) = act(
+        host,
+        BindAction::Select {
+            node_id: city.clone(),
+            role: "combobox".into(),
+            label: "Porto".into(),
+        },
+    );
+    assert!(matches!(done, WorkerHostReply::FormDone { .. }), "{done:?}");
+    let (done, _, _) = act(
+        host,
+        BindAction::Check {
+            node_id: terms.clone(),
+            role: "checkbox".into(),
+            checked: true,
+        },
+    );
+    assert!(matches!(done, WorkerHostReply::FormDone { .. }), "{done:?}");
+    // The verifier: the page holds exactly the approved values.
+    let verified = host
+        .request(&WorkerHostRequest::Verify {
+            checks: vec![
+                Postcondition::ValueEquals {
+                    node_id: full_name.clone(),
+                    value: "Ada Lovelace".into(),
+                },
+                Postcondition::ValueEquals {
+                    node_id: city.clone(),
+                    value: "Porto".into(),
+                },
+                Postcondition::Checked {
+                    node_id: terms.clone(),
+                    checked: true,
+                },
+                Postcondition::UrlIs {
+                    url: "https://fixture.test/form-page".into(),
+                },
+            ],
+        })
+        .expect("verify");
+    match &verified {
+        WorkerHostReply::Verified {
+            verified, results, ..
+        } => assert!(*verified, "{results:?}"),
+        other => panic!("verification refused: {other:?}"),
+    }
+    // Enter in the search field, and the page's response is awaited.
+    assert_eq!(
+        wait_text(host, "Searched", true, 200),
+        WorkerHostReply::Waited { met: false }
+    );
+    let (done, _, _) = act(
+        host,
+        BindAction::PressEnter {
+            node_id: search.clone(),
+            role: "searchbox".into(),
+        },
+    );
+    assert!(matches!(done, WorkerHostReply::FormDone { .. }), "{done:?}");
+    assert_eq!(
+        wait_text(host, "Searched", true, 3_000),
+        WorkerHostReply::Waited { met: true }
+    );
+    println!("SG122-EVIDENCE worker host form: fill, select, check and Enter bound once each; refusals before any worker frame; verified");
+    assert!(supervisor.shutdown().expect("shutdown"));
+    assert!(entries(&launch.profile_root).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// SG-000122 slice A1: text waits and verifier text checks see only the
+/// main frame's committed document, and a lifetime admits at most 16
+/// distinct texts (repeats free); the 17th is refused without probing.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn sg122_text_checks_see_the_main_frame_only_and_the_17th_text_is_refused() {
+    use orcel_browser_host::Postcondition;
+    let fixture = Fixture::start();
+    let (mut supervisor, launch, root) = launch("sg122-text");
+    let host = supervisor.worker_host().expect("live worker host");
+    if open(host, &fixture, &launch.profile_root).is_none() {
+        assert!(supervisor.shutdown().expect("shutdown"));
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    assert!(matches!(
+        navigate(host, "https://fixture.test/frames", "rec-1"),
+        WorkerHostReply::Navigated { status: 200, .. }
+    ));
+    // The main frame's own text is found; a child frame's is not (same
+    // origin or not).
+    assert_eq!(
+        wait_text(host, "Embedded report", true, 3_000),
+        WorkerHostReply::Waited { met: true }
+    );
+    assert_eq!(
+        wait_text(host, "Outer frame", true, 500),
+        WorkerHostReply::Waited { met: false }
+    );
+    let verified = host
+        .request(&WorkerHostRequest::Verify {
+            checks: vec![
+                Postcondition::TextVisible {
+                    text: "Embedded report".into(),
+                },
+                Postcondition::TextVisible {
+                    text: "Inner report".into(),
+                },
+                Postcondition::TextVisible {
+                    text: "Foreign link".into(),
+                },
+            ],
+        })
+        .expect("verify");
+    match &verified {
+        WorkerHostReply::Verified { results, .. } => {
+            let passed: Vec<bool> = results.iter().map(|result| result.passed).collect();
+            assert_eq!(passed, [true, false, false], "{results:?}");
+        }
+        other => panic!("verification refused: {other:?}"),
+    }
+    // Four distinct texts so far; twelve more fit (absent texts are gone at
+    // once), and repeats are free.
+    for n in 0..12 {
+        assert_eq!(
+            wait_text(host, &format!("absent text {n}"), false, 100),
+            WorkerHostReply::Waited { met: true }
+        );
+    }
+    assert_eq!(
+        wait_text(host, "Embedded report", true, 100),
+        WorkerHostReply::Waited { met: true }
+    );
+    // The 17th distinct text: refused, typed, by a wait or a verification.
+    assert_eq!(
+        error_code(&wait_text(host, "one text too many", false, 100)),
+        "unavailable:textlimitreached"
+    );
+    let refused = host
+        .request(&WorkerHostRequest::Verify {
+            checks: vec![Postcondition::TextVisible {
+                text: "another text too many".into(),
+            }],
+        })
+        .expect("verify");
+    assert_eq!(error_code(&refused), "unavailable:textlimitreached");
+    println!("SG122-EVIDENCE worker host text: main frame only; 17th distinct text refused");
+    // A new lifetime starts the count again.
+    assert!(matches!(
+        host.request(&WorkerHostRequest::Close {}).expect("close"),
+        WorkerHostReply::Closed { .. }
+    ));
+    assert!(open(host, &fixture, &launch.profile_root).is_some());
+    assert!(matches!(
+        navigate(host, "https://fixture.test/frames", "rec-2"),
+        WorkerHostReply::Navigated { status: 200, .. }
+    ));
+    assert_eq!(
+        wait_text(host, "one text too many", false, 100),
+        WorkerHostReply::Waited { met: true }
+    );
+    assert!(supervisor.shutdown().expect("shutdown"));
+    assert!(entries(&launch.profile_root).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}

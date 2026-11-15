@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formAction, type FormPage } from "./form.js";
+import { classifyControls, formAction, MAX_CLASSIFIED_CONTROLS, type FormPage } from "./form.js";
+import type { SnapshotNode } from "../snapshot.js";
 import { NavigationError } from "../worker.js";
 
 interface Element {
@@ -128,16 +129,120 @@ function page(refs: Record<string, Element[]>, byRole: Element[] = []) {
 
 const reason = (expected: string) => (error: unknown) => error instanceof NavigationError && error.reason === expected;
 
-test("BR-02 fill types into the approved text control only", async () => {
+test("SG-000122 fill types only into a single-line text field: text, search, email, url, tel, or a missing or unknown type", async () => {
   const { stub, calls } = page({
     e1: [{ tag: "input", attrs: { type: "email", name: "email" } }],
-    e2: [{ tag: "textarea", attrs: { name: "note" } }],
-    e3: [{ tag: "div", attrs: { contenteditable: "true" } }]
+    e2: [{ tag: "input", attrs: { name: "plain" } }],
+    e3: [{ tag: "input", attrs: { type: "SEARCH", name: "q" } }],
+    e4: [{ tag: "input", attrs: { type: "url", name: "site" } }],
+    e5: [{ tag: "input", attrs: { type: "tel", name: "phone" } }],
+    // An unknown type is the text state.
+    e6: [{ tag: "input", attrs: { type: "datetime", name: "when" } }]
   });
-  await formAction(stub, "e1", { action: "fill", value: "ada@example.test" });
-  await formAction(stub, "e2", { action: "fill", value: "" });
-  await formAction(stub, "e3", { action: "fill", value: "Hello" });
-  assert.deepEqual(calls, ['fill "ada@example.test"', 'fill ""', 'fill "Hello"']);
+  for (const [ref, value] of [["e1", "ada@example.test"], ["e2", ""], ["e3", "q"], ["e4", "https://a.test/"], ["e5", "+1 555"], ["e6", "x"]]) {
+    await formAction(stub, ref!, { action: "fill", value: value! });
+  }
+  assert.equal(calls.length, 6);
+});
+
+test("SG-000122 fill and Enter refuse a textarea, a contenteditable and every other input type", async () => {
+  const others = ["password", "number", "date", "datetime-local", "month", "week", "time", "color", "range", "file", "hidden", "checkbox", "radio", "submit", "button", "reset", "image"];
+  const refs: Record<string, Element[]> = {
+    t1: [{ tag: "textarea", attrs: { name: "note" } }],
+    t2: [{ tag: "div", attrs: { contenteditable: "true" } }],
+    t3: [{ tag: "div", attrs: { contenteditable: "" } }]
+  };
+  others.forEach((type, index) => {
+    refs[`e${index + 1}`] = [{ tag: "input", attrs: { type: type.toUpperCase(), name: "field" } }];
+  });
+  const { stub, calls } = page(refs);
+  for (const ref of Object.keys(refs)) {
+    await assert.rejects(formAction(stub, ref, { action: "fill", value: "x" }), reason("denied"), `fill ${ref}`);
+    await assert.rejects(formAction(stub, ref, { action: "enter" }), reason("denied"), `enter ${ref}`);
+  }
+  assert.deepEqual(calls, [], "nothing was typed or pressed");
+});
+
+test("SG-000122 enter presses Enter, and only Enter, in the focused single-line field, never a secret one", async () => {
+  const { stub, calls } = page({
+    e1: [{ tag: "input", attrs: { type: "search", name: "q" } }],
+    e2: [{ tag: "input", attrs: { type: "text", name: "user_pin" } }],
+    e3: [{ tag: "input", attrs: { type: "text", autocomplete: "one-time-code" } }],
+    e4: [{ tag: "input", attrs: { type: "text", name: "city" }, refusesFocus: true }],
+    e5: [{ tag: "button" }],
+    e6: [{ tag: "select", options: ["Porto"] }],
+    e7: [{ tag: "input", attrs: { type: "checkbox" } }],
+    e8: [{ tag: "a", attrs: { href: "/x" } }]
+  });
+  await formAction(stub, "e1", { action: "enter" });
+  for (const ref of ["e2", "e3", "e5", "e6", "e7", "e8"]) {
+    await assert.rejects(formAction(stub, ref, { action: "enter" }), reason("denied"), ref);
+  }
+  await assert.rejects(formAction(stub, "e4", { action: "enter" }), reason("denied"), "focus must take");
+  await assert.rejects(formAction(stub, "e9", { action: "enter" }), reason("stale"));
+  assert.deepEqual(calls, ['press "Enter"']);
+});
+
+test("SG-000122 observation classifies main-frame form controls only, and only as the closed kinds", async () => {
+  const { stub } = page({
+    e1: [{ tag: "input", attrs: { type: "text", name: "full_name" } }],
+    e2: [{ tag: "input", attrs: { type: "password", name: "pw" } }],
+    e3: [{ tag: "textarea", attrs: { name: "note" } }],
+    e4: [{ tag: "select", options: ["Lisbon", "Porto"] }],
+    e5: [{ tag: "input", attrs: { type: "checkbox", name: "terms" } }],
+    e6: [{ tag: "input", attrs: { type: "Radio", name: "plan" } }],
+    e7: [{ tag: "input", attrs: { type: "search", name: "q" } }],
+    e8: [{ tag: "div", attrs: { role: "checkbox" } }],
+    e9: [{ tag: "input", attrs: { type: "number", name: "count" } }],
+    e10: [{ tag: "input", attrs: { type: "text", list: "cities" } }],
+    e11: [{ tag: "a", attrs: { href: "/x" } }],
+    f1e1: [{ tag: "input", attrs: { type: "text" } }]
+  });
+  const node = (ref: string, role: string, children: SnapshotNode[] = []): SnapshotNode => ({ ref, role, name: "", children });
+  const nodes = [
+    node("e20", "form", [
+      node("e1", "textbox"),
+      node("e2", "textbox"),
+      node("e3", "textbox"),
+      node("e4", "combobox"),
+      node("e5", "checkbox"),
+      node("e6", "radio"),
+      node("e7", "searchbox"),
+      node("e8", "checkbox"),
+      node("e9", "spinbutton"),
+      node("e10", "combobox"),
+      node("e11", "link"),
+      node("f1e1", "textbox"),
+      node("e12", "textbox")
+    ])
+  ];
+  await classifyControls(stub, nodes);
+  const kinds = Object.fromEntries(nodes[0]!.children.map((child) => [child.ref, child.control]));
+  assert.deepEqual(kinds, {
+    e1: "line",
+    e2: undefined,
+    e3: undefined,
+    e4: "select",
+    e5: "toggle",
+    e6: "toggle",
+    e7: "line",
+    e8: undefined,
+    e9: undefined,
+    e10: "line",
+    e11: undefined,
+    f1e1: undefined,
+    e12: undefined
+  });
+  assert.equal(nodes[0]!.control, undefined);
+  // Past the bound, nodes carry no kind.
+  const many: Record<string, Element[]> = {};
+  const manyNodes: SnapshotNode[] = [];
+  for (let index = 1; index <= MAX_CLASSIFIED_CONTROLS + 3; index += 1) {
+    many[`e${index}`] = [{ tag: "input", attrs: { type: "text" } }];
+    manyNodes.push(node(`e${index}`, "textbox"));
+  }
+  await classifyControls(page(many).stub, manyNodes);
+  assert.equal(manyNodes.filter((n) => n.control === "line").length, MAX_CLASSIFIED_CONTROLS);
 });
 
 test("BR-02 fill refuses secret fields, non-controls and the wrong kind of input", async () => {
@@ -192,6 +297,9 @@ test("BR-02 select chooses native options by label; a missing option fails; repe
   await formAction(stub, "e1", { action: "select", values: ["Porto"] });
   await assert.rejects(formAction(stub, "e1", { action: "select", values: ["Paris"] }), reason("failed"));
   await assert.rejects(formAction(stub, "e1", { action: "select", values: ["Porto", "Porto"] }), reason("denied"));
+  // SG-000122: exactly one option.
+  await assert.rejects(formAction(stub, "e1", { action: "select", values: ["Lisbon", "Porto"] }), reason("denied"));
+  await assert.rejects(formAction(stub, "e1", { action: "select", values: [] }), reason("denied"));
   await assert.rejects(formAction(stub, "e2", { action: "select", values: ["Porto"] }), reason("denied"));
   assert.deepEqual(calls, ["select Porto", "select Paris"]);
 });

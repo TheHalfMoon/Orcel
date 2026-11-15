@@ -1,14 +1,14 @@
 //! The approval prompt's text, the same on every OS: the Windows `MessageBoxW` prompt, the
 //! macOS alert, the Linux helper and the STRONG bodies all show these lines.
 //!
-//! Every field from the request is shown exactly when it is printable and short. Control,
-//! line-break, bidi, format, zero-width, default-ignorable, tag, filler and blank-looking
-//! characters are escaped as `\u{..}`, so a field can't insert a line break, reorder what is
-//! read or hide characters. Any combining mark past the second on one character is escaped
-//! too, for the combining blocks listed in `is_combining` (the general blocks and the scripts
-//! whose marks stack: Hebrew, Arabic, Devanagari, Thai, Lao, Tibetan, musical notation); a
-//! mark outside them is shown as it is. Each bound applies to the escaped text. A long field can still wrap
-//! onto another visual line; every line the prompt itself adds starts with its own label.
+//! Every field from the request is shown exactly when it is printable and short. Each character
+//! is shown through `orcel_contracts::prompt_display::pieces` (shared with SG-000122's browser
+//! fill value bound, so the two can't drift): control, line-break, bidi, format, zero-width,
+//! default-ignorable, tag, filler and blank-looking characters are escaped as `\u{..}`, so a
+//! field can't insert a line break, reorder what is read or hide characters, and any combining
+//! mark past the second on one character is escaped too. Each bound applies to the escaped
+//! text. A long field can still wrap onto another visual line; every line the prompt itself
+//! adds starts with its own label.
 //!
 //! The target is kept to 120 characters around a middle ellipsis, so its start and its end,
 //! where a file's extension is, both stay visible.
@@ -19,6 +19,8 @@
     allow(dead_code)
 )]
 
+use orcel_contracts::prompt_display::pieces;
+
 use crate::{
     ApprovalPrompt, PresenceContext, Preview, RequestOrigin, RunningImage, SignatureState,
     TargetApplication, TargetKind,
@@ -27,30 +29,8 @@ use crate::{
 pub(crate) const MAX_WORKSPACE_CHARS: usize = 128;
 pub(crate) const MAX_ACTION_CHARS: usize = 512;
 pub(crate) const MAX_TARGET_CHARS: usize = 120;
-pub(crate) const MAX_SUMMARY_CHARS: usize = 1024;
+pub(crate) const MAX_SUMMARY_CHARS: usize = orcel_contracts::prompt_display::MAX_SUMMARY_CHARS;
 pub(crate) const MAX_DIGEST_CHARS: usize = 128;
-/// Combining marks kept on one character before the rest are escaped: enough for real
-/// scripts, too few to stack over the lines above and below.
-const MAX_COMBINING_IN_A_ROW: usize = 2;
-
-/// Each input character as it is shown: itself, or an escape.
-fn pieces(value: &str) -> Vec<String> {
-    let mut marks_in_a_row = 0usize;
-    value
-        .chars()
-        .map(|ch| {
-            let combining = is_combining(ch);
-            marks_in_a_row = if combining { marks_in_a_row + 1 } else { 0 };
-            if ch == '\\' {
-                String::from("\\\\")
-            } else if needs_escape(ch) || (combining && marks_in_a_row > MAX_COMBINING_IN_A_ROW) {
-                format!("\\u{{{:x}}}", ch as u32)
-            } else {
-                ch.to_string()
-            }
-        })
-        .collect()
-}
 
 fn omitted(rest: usize) -> String {
     format!(
@@ -116,75 +96,6 @@ pub(crate) fn display_target(value: &str) -> String {
     tail.reverse();
     let rest = pieces.len() - head.len() - tail.len();
     format!("{}…{}{}", head.concat(), tail.concat(), omitted(rest))
-}
-
-/// Combining marks in the general combining blocks and in the scripts whose marks stack.
-fn is_combining(ch: char) -> bool {
-    matches!(
-        ch,
-        '\u{0300}'..='\u{036f}'
-            | '\u{0483}'..='\u{0489}'
-            | '\u{0591}'..='\u{05bd}'
-            | '\u{05bf}'
-            | '\u{05c1}' | '\u{05c2}' | '\u{05c4}' | '\u{05c5}' | '\u{05c7}'
-            | '\u{0610}'..='\u{061a}'
-            | '\u{064b}'..='\u{065f}'
-            | '\u{0670}'
-            | '\u{06d6}'..='\u{06dc}'
-            | '\u{06df}'..='\u{06e4}'
-            | '\u{0900}'..='\u{0903}'
-            | '\u{093a}'..='\u{094f}'
-            | '\u{0951}'..='\u{0957}'
-            | '\u{0962}' | '\u{0963}'
-            | '\u{0e31}'
-            | '\u{0e34}'..='\u{0e3a}'
-            | '\u{0e47}'..='\u{0e4e}'
-            | '\u{0eb1}'
-            | '\u{0eb4}'..='\u{0ebc}'
-            | '\u{0ec8}'..='\u{0ecd}'
-            | '\u{0f71}'..='\u{0f84}'
-            | '\u{0f86}' | '\u{0f87}'
-            | '\u{1ab0}'..='\u{1aff}'
-            | '\u{1dc0}'..='\u{1dff}'
-            | '\u{20d0}'..='\u{20ff}'
-            | '\u{fe20}'..='\u{fe2f}'
-            | '\u{1d165}'..='\u{1d169}'
-            | '\u{1d16d}'..='\u{1d172}'
-            | '\u{1d17b}'..='\u{1d182}'
-            | '\u{1d185}'..='\u{1d18b}'
-            | '\u{1d1aa}'..='\u{1d1ad}'
-    )
-}
-
-fn needs_escape(ch: char) -> bool {
-    ch.is_control()
-        || matches!(
-            ch,
-            // Line and paragraph separators.
-            '\u{2028}' | '\u{2029}'
-            // Bidi embeddings, overrides, isolates and marks.
-            | '\u{200e}' | '\u{200f}' | '\u{061c}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2066}'..='\u{2069}'
-            // Zero-width, invisible, deprecated formatting and default-ignorable characters.
-            | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{206a}'..='\u{206f}'
-            | '\u{feff}' | '\u{00ad}' | '\u{034f}'
-            | '\u{17b4}' | '\u{17b5}'
-            | '\u{180b}'..='\u{180f}'
-            | '\u{fe00}'..='\u{fe0f}'
-            | '\u{1bca0}'..='\u{1bca3}'
-            | '\u{13430}'..='\u{1343f}'
-            | '\u{1d173}'..='\u{1d17a}'
-            | '\u{e0100}'..='\u{e01ef}'
-            // Interlinear annotation characters.
-            | '\u{fff9}'..='\u{fffb}'
-            // Tag characters.
-            | '\u{e0000}'..='\u{e007f}'
-            // Hangul fillers and blank-looking spaces.
-            | '\u{115f}' | '\u{1160}' | '\u{3164}' | '\u{ffa0}'
-            | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{202f}' | '\u{205f}'
-            | '\u{2800}' | '\u{3000}'
-        )
 }
 
 const MAX_ORIGIN_PART_CHARS: usize = 64;

@@ -26,7 +26,7 @@ import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structure
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
 import { approvedElement, isOcclusion } from "./actions/targets.js";
 import { clickAndLoad } from "./actions/click-load.js";
-import { formAction } from "./actions/form.js";
+import { classifyControls, formAction } from "./actions/form.js";
 import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
@@ -314,7 +314,10 @@ const playwrightLauncher: Launcher = {
       },
       async observe() {
         const raw: unknown = await primary.ariaSnapshotJSON({ mode: "ai", depth: 16, timeout: 2_000 });
-        return { url: primary.url(), snapshot: boundSnapshot(raw) };
+        const snapshot = boundSnapshot(raw);
+        // SG-000122: which main-frame form controls a form action may target.
+        await classifyControls(primary, snapshot.nodes);
+        return { url: primary.url(), snapshot };
       },
       async discover(discId: number) {
         // The engine serialises its own DOM: no page script runs. The whole

@@ -21,8 +21,17 @@
 //! folder or file name) or a record id already used in this lifetime. The
 //! host never mints an approval: Orcel consumed it with the broker before
 //! sending the frame (decision 3 of the design).
+//!
+//! SG-000122 slice A1 (inert: no orceld dispatch, policy or tool yet) adds
+//! the BR-02 form actions and the BR-07 verifier to the vocabulary, narrowed
+//! to the grain: fill and Enter only in a single-line text field, one option
+//! of a native select, a checkbox or radio set, each bound and approved like
+//! a click; read-only text waits and verifications of the main frame's
+//! committed document, with at most `verify::MAX_AWAITED_TEXTS` distinct
+//! texts per lifetime. Every rule the host can decide from its own state is
+//! checked before any worker frame; the worker checks the element again.
 
-use crate::actuation::{target_digest, ActuationTarget, ApprovalToken, SupportedAction};
+use crate::actuation::{target_digest, ActuationTarget, ApprovalToken, FormInput, SupportedAction};
 use crate::confinement::AdmittedDestination;
 use crate::discovery::{discover_engine, SearchConfig};
 use crate::error::{HostError, UnavailableReason};
@@ -40,8 +49,9 @@ use std::path::{Path, PathBuf};
 
 /// Worker-mode protocol generation. 1 is SG-000074's hello/ping/shutdown;
 /// 2 was slice 1a; 3 adds binding (`bind`), the typed selector, activation
-/// and download, and binds navigation; 4 adds `open_public` (slice 3b-ii).
-pub const WORKER_HOST_GENERATION: u32 = 4;
+/// and download, and binds navigation; 4 adds `open_public` (slice 3b-ii);
+/// 5 adds SG-000122 slice A1's form actions, text waits and verification.
+pub const WORKER_HOST_GENERATION: u32 = 5;
 
 /// Domain separation for host bindings.
 const BINDING_DOMAIN: &str = "orcel-sg108-host-binding/1";
@@ -67,6 +77,71 @@ pub enum BindAction {
         folder: String,
         relative: String,
     },
+    /// SG-000122: type `value` into one observed single-line text field,
+    /// replacing its content. The value must be one the approval prompt
+    /// shows exactly and in full.
+    Fill {
+        node_id: String,
+        role: String,
+        value: String,
+    },
+    /// SG-000122: choose the one option labelled exactly `label` of one
+    /// observed native select.
+    Select {
+        node_id: String,
+        role: String,
+        label: String,
+    },
+    /// SG-000122: set one observed checkbox or radio to `checked`.
+    Check {
+        node_id: String,
+        role: String,
+        checked: bool,
+    },
+    /// SG-000122: press Enter, and no other key, in one observed
+    /// single-line text field. It may submit or send what the page holds.
+    PressEnter {
+        node_id: String,
+        role: String,
+    },
+}
+
+/// SG-000122: the form action `action` describes, with its node and role,
+/// or `None` for a navigation, click or download.
+pub(crate) fn form_input(action: &BindAction) -> Option<(&str, &str, FormInput)> {
+    match action {
+        BindAction::Fill {
+            node_id,
+            role,
+            value,
+        } => Some((
+            node_id,
+            role,
+            FormInput::Fill {
+                value: value.clone(),
+            },
+        )),
+        BindAction::Select {
+            node_id,
+            role,
+            label,
+        } => Some((
+            node_id,
+            role,
+            FormInput::Select {
+                labels: vec![label.clone()],
+            },
+        )),
+        BindAction::Check {
+            node_id,
+            role,
+            checked,
+        } => Some((node_id, role, FormInput::Check { checked: *checked })),
+        BindAction::PressEnter { node_id, role } => Some((node_id, role, FormInput::Enter)),
+        BindAction::Navigate { .. } | BindAction::Click { .. } | BindAction::Download { .. } => {
+            None
+        }
+    }
 }
 
 /// Closed worker-mode request vocabulary.
@@ -122,9 +197,41 @@ pub enum WorkerHostRequest {
         record_id: String,
         binding: String,
     },
+    /// SG-000122: one approved form action; `action` is a form kind of
+    /// [`BindAction`] (fill, select, check, press_enter), bound with `bind`.
+    FormAction {
+        action: BindAction,
+        record_id: String,
+        binding: String,
+    },
+    /// SG-000122: wait, read-only and without approval, until a visible copy
+    /// of `text` appears (`appear`) or none is left, in the main frame's
+    /// committed document, for at most `timeout_ms` (1 to `MAX_WAIT_MS`).
+    WaitText {
+        text: String,
+        appear: bool,
+        timeout_ms: u64,
+    },
+    /// SG-000122: the BR-07 postcondition verifier, read-only and without
+    /// approval; text checks look at the main frame's committed document
+    /// only and share the waits' cap on distinct texts.
+    Verify {
+        checks: Vec<crate::verify::Postcondition>,
+    },
     /// End the current lifetime (profile removed); the host keeps serving.
     Close {},
     Shutdown {},
+}
+
+/// SG-000122: one checked postcondition as it crosses (fixed evidence
+/// vocabulary and counts, never page text, a name or a value).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireCheck {
+    pub index: usize,
+    pub kind: String,
+    pub passed: bool,
+    pub evidence: String,
 }
 
 /// One observed node as it crosses to Orcel: identities and digests only.
@@ -202,6 +309,23 @@ pub enum WorkerHostReply {
         sha256: String,
         bytes: u64,
         source_url: String,
+    },
+    /// SG-000122: an approved form action ran; the page is still this
+    /// committed document (its observation stays valid).
+    FormDone {
+        url: String,
+    },
+    /// SG-000122: whether the awaited text appeared (or went) in time.
+    Waited {
+        met: bool,
+    },
+    /// SG-000122: the verifier's report.
+    Verified {
+        url: String,
+        document_generation: u64,
+        results: Vec<WireCheck>,
+        verified: bool,
+        evidence_sha256: String,
     },
     Closed {
         job_empty: bool,
@@ -345,9 +469,14 @@ pub fn serve_worker_mode(
                     }
                 }
             },
-            other => match lifetime.as_mut() {
-                None => error("no_lifetime"),
-                Some(live) => in_lifetime(live, other),
+            // Everything decidable from the request alone is refused first,
+            // with or without a lifetime, and never reaches the worker.
+            other => match precheck(&other) {
+                Err(refused) => refused,
+                Ok(()) => match lifetime.as_mut() {
+                    None => error("no_lifetime"),
+                    Some(live) => in_lifetime(live, other),
+                },
             },
         };
         if send(output, &reply).is_err() {
@@ -358,6 +487,49 @@ pub fn serve_worker_mode(
         let _ = live.worker.kill();
     }
     result
+}
+
+/// SG-000122: the checks a form action, wait or verification needs before
+/// anything else: a form kind with input the host would accept (a fill value
+/// the prompt shows exactly and in full, one bounded option label), a
+/// bounded single-line awaited text and timeout, well-formed postconditions.
+fn precheck(request: &WorkerHostRequest) -> Result<(), WorkerHostReply> {
+    let form = |action: &BindAction| -> Result<(), WorkerHostReply> {
+        let Some((_, _, input)) = form_input(action) else {
+            return Ok(());
+        };
+        input.check().map_err(|err| refusal(&err))?;
+        if let FormInput::Fill { value } = &input {
+            crate::actuation::live_fill_value(value).map_err(|err| refusal(&err))?;
+        }
+        Ok(())
+    };
+    match request {
+        WorkerHostRequest::Bind { action } => form(action),
+        WorkerHostRequest::FormAction { action, .. } => {
+            if form_input(action).is_none() {
+                return Err(error("invalid"));
+            }
+            form(action)
+        }
+        WorkerHostRequest::WaitText {
+            text, timeout_ms, ..
+        } => {
+            if text.is_empty()
+                || text.len() > crate::verify::MAX_VERIFY_TEXT_BYTES
+                || text.chars().any(char::is_control)
+                || *timeout_ms == 0
+                || *timeout_ms > crate::worker_launch::MAX_WAIT_MS
+            {
+                return Err(error("invalid"));
+            }
+            Ok(())
+        }
+        WorkerHostRequest::Verify { checks } => {
+            crate::verify::check_postconditions(checks).map_err(|err| refusal(&err))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Frames that need a live lifetime.
@@ -470,6 +642,68 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
                 Err(err) => refusal(&err),
             }
         }
+        WorkerHostRequest::FormAction {
+            action,
+            record_id,
+            binding,
+        } => {
+            let Some((_, _, input)) = form_input(&action) else {
+                return error("invalid");
+            };
+            let state = match verify(live, &action, &record_id, &binding) {
+                Ok(state) => state,
+                Err(refused) => return refused,
+            };
+            let (target, mut approval) = match approved_target(live, &action, &record_id, state) {
+                Ok(pair) => pair,
+                Err(err) => return refusal(&err),
+            };
+            let (revision, workspace) = (live.policy_revision, live.workspace.clone());
+            match live
+                .worker
+                .live_form_action(&target, &mut approval, &input, revision, &workspace)
+            {
+                // The same document: its node identities stay valid.
+                Ok(outcome) => WorkerHostReply::FormDone { url: outcome.url },
+                Err(err) => {
+                    // Nothing observed is trusted until the page is observed
+                    // again.
+                    live.observed = None;
+                    refusal(&err)
+                }
+            }
+        }
+        WorkerHostRequest::WaitText {
+            text,
+            appear,
+            timeout_ms,
+        } => match live.worker.wait_for_text(
+            &text,
+            appear,
+            std::time::Duration::from_millis(timeout_ms),
+        ) {
+            Ok(met) => WorkerHostReply::Waited { met },
+            Err(err) => refusal(&err),
+        },
+        WorkerHostRequest::Verify { checks } => match live.worker.verify_postconditions(&checks) {
+            Ok(report) => WorkerHostReply::Verified {
+                url: report.url,
+                document_generation: report.document_generation,
+                results: report
+                    .results
+                    .into_iter()
+                    .map(|result| WireCheck {
+                        index: result.index,
+                        kind: result.kind.to_owned(),
+                        passed: result.passed,
+                        evidence: result.evidence,
+                    })
+                    .collect(),
+                verified: report.verified,
+                evidence_sha256: report.evidence_sha256,
+            },
+            Err(err) => refusal(&err),
+        },
         // Handled by the caller; unreachable here by construction.
         #[cfg(feature = "live-browser-test")]
         WorkerHostRequest::Open { .. } => error("invalid"),
@@ -574,6 +808,25 @@ fn host_binding(live: &Lifetime, action: &BindAction) -> Result<Derived, HostErr
                 download,
             )
         }
+        form => {
+            let (node_id, role, input) =
+                form_input(form).ok_or_else(|| HostError::Invalid("not a form action".into()))?;
+            let (page, document) = observed(live)?;
+            // The host's own checks of the observed target, before any
+            // worker frame; the binding names the name the host observed.
+            let (state, name) = live.worker.live_form_binding(node_id, role, &input)?;
+            (
+                format!(
+                    "form\n{}\n{}\n{}\n{node_id}\n{role}\n{}\n{state}",
+                    page.page_id,
+                    page.origin,
+                    document.document_generation,
+                    sha256_hex(&name)
+                ),
+                page.origin.clone(),
+                state,
+            )
+        }
     };
     Ok(Derived {
         binding: binding_digest(
@@ -632,20 +885,28 @@ fn approved_target(
 ) -> Result<(ActuationTarget, ApprovalToken), HostError> {
     let (page, document) = observed(live)?;
     let (node_id, role, kind) = match action {
-        BindAction::Click { node_id, role } => (node_id, role, SupportedAction::Click),
-        BindAction::Download { node_id, role, .. } => (node_id, role, SupportedAction::Download),
+        BindAction::Click { node_id, role } => {
+            (node_id.as_str(), role.as_str(), SupportedAction::Click)
+        }
+        BindAction::Download { node_id, role, .. } => {
+            (node_id.as_str(), role.as_str(), SupportedAction::Download)
+        }
         BindAction::Navigate { .. } => {
             return Err(HostError::Invalid(
                 "navigation takes no actuation target".into(),
             ))
         }
+        form => match form_input(form) {
+            Some((node_id, role, input)) => (node_id, role, input.action()),
+            None => return Err(HostError::Invalid("not a form action".into())),
+        },
     };
     let target = ActuationTarget {
         page_id: page.page_id.clone(),
         origin: page.origin.clone(),
         document_generation: document.document_generation,
-        node_id: node_id.clone(),
-        role: role.clone(),
+        node_id: node_id.to_owned(),
+        role: role.to_owned(),
         state,
         action: kind,
         workspace: live.workspace.clone(),
@@ -1018,6 +1279,228 @@ mod tests {
         }
     }
 
+    /// SG-000122: the form, wait and verify frames are closed: only the four
+    /// form kinds, Enter without a key, one select label, no hover and no
+    /// other key; each round-trips.
+    #[test]
+    fn sg122_the_form_vocabulary_is_closed_and_round_trips() {
+        assert_eq!(WORKER_HOST_GENERATION, 5);
+        for frame in [
+            r#"{"frame":"form_action","action":{"kind":"press_enter","node_id":"d1-e2","role":"textbox","key":"Tab"},"record_id":"r","binding":"b"}"#,
+            r#"{"frame":"form_action","action":{"kind":"press","node_id":"d1-e2","role":"textbox","key":"Enter"},"record_id":"r","binding":"b"}"#,
+            r#"{"frame":"form_action","action":{"kind":"hover","node_id":"d1-e2","role":"link"},"record_id":"r","binding":"b"}"#,
+            r#"{"frame":"form_action","action":{"kind":"select","node_id":"d1-e2","role":"combobox","labels":["a","b"]},"record_id":"r","binding":"b"}"#,
+            r#"{"frame":"form_action","action":{"kind":"fill","node_id":"d1-e2","role":"textbox","value":"x"},"record_id":"r"}"#,
+            r#"{"frame":"form_action","action":{"kind":"check","node_id":"d1-e2","role":"checkbox","checked":"true"},"record_id":"r","binding":"b"}"#,
+            r#"{"frame":"bind","action":{"kind":"fill","node_id":"d1-e2","role":"textbox","value":"x","accept_confirm":"ok"}}"#,
+            r#"{"frame":"wait_text","text":"Saved","appear":true}"#,
+            r#"{"frame":"wait_text","text":"Saved","appear":true,"timeout_ms":100,"frame_id":1}"#,
+            r#"{"frame":"verify","checks":[{"kind":"text_visible","text":"x","frame":"f1"}]}"#,
+            r#"{"frame":"verify","checks":[{"kind":"script","source":"1"}]}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<WorkerHostRequest>(frame).is_err(),
+                "{frame}"
+            );
+        }
+        let actions = [
+            BindAction::Fill {
+                node_id: "d1-e2".into(),
+                role: "textbox".into(),
+                value: "Ada".into(),
+            },
+            BindAction::Select {
+                node_id: "d1-e3".into(),
+                role: "combobox".into(),
+                label: "Porto".into(),
+            },
+            BindAction::Check {
+                node_id: "d1-e4".into(),
+                role: "checkbox".into(),
+                checked: true,
+            },
+            BindAction::PressEnter {
+                node_id: "d1-e5".into(),
+                role: "searchbox".into(),
+            },
+        ];
+        let mut requests: Vec<WorkerHostRequest> = actions
+            .iter()
+            .map(|action| WorkerHostRequest::FormAction {
+                action: action.clone(),
+                record_id: "r1".into(),
+                binding: "b".into(),
+            })
+            .collect();
+        requests.push(WorkerHostRequest::WaitText {
+            text: "Saved".into(),
+            appear: true,
+            timeout_ms: 500,
+        });
+        requests.push(WorkerHostRequest::Verify {
+            checks: vec![crate::verify::Postcondition::TextVisible {
+                text: "Saved".into(),
+            }],
+        });
+        for request in requests {
+            let text = serde_json::to_string(&request).unwrap();
+            assert_eq!(
+                serde_json::from_str::<WorkerHostRequest>(&text).unwrap(),
+                request
+            );
+        }
+        assert_eq!(
+            serde_json::to_string(&actions[3]).unwrap(),
+            r#"{"kind":"press_enter","node_id":"d1-e5","role":"searchbox"}"#
+        );
+        // Each form kind maps to exactly its live input.
+        assert_eq!(
+            form_input(&actions[1]).map(|(_, _, input)| input),
+            Some(FormInput::Select {
+                labels: vec!["Porto".into()]
+            })
+        );
+        assert_eq!(
+            form_input(&actions[3]).map(|(_, _, input)| input),
+            Some(FormInput::Enter)
+        );
+        assert!(form_input(&BindAction::Navigate {
+            url: "https://fixture.test/".into()
+        })
+        .is_none());
+        let reply = WorkerHostReply::Verified {
+            url: "https://fixture.test/form-page".into(),
+            document_generation: 3,
+            results: vec![WireCheck {
+                index: 0,
+                kind: "text_visible".into(),
+                passed: false,
+                evidence: "visible matches: 0".into(),
+            }],
+            verified: false,
+            evidence_sha256: "0".repeat(64),
+        };
+        let text = serde_json::to_string(&reply).unwrap();
+        assert_eq!(
+            serde_json::from_str::<WorkerHostReply>(&text).unwrap(),
+            reply
+        );
+    }
+
+    /// SG-000122: what the host can refuse from the request alone is refused
+    /// before a lifetime is even looked at, so never reaches a worker: an
+    /// escaped or too long fill value, a non-form action in a form frame, an
+    /// empty or multi-line awaited text, a timeout out of range, malformed
+    /// postconditions. Well-formed frames go on (here: no lifetime).
+    #[test]
+    fn sg122_requests_the_host_can_refuse_alone_never_reach_a_worker() {
+        let args = WorkerHostArgs {
+            host_id: "h".into(),
+            runtime: None,
+            profile_root: std::env::temp_dir(),
+            temp_dir: std::env::temp_dir(),
+        };
+        let fill = |value: &str| BindAction::Fill {
+            node_id: "d1-e2".into(),
+            role: "textbox".into(),
+            value: value.into(),
+        };
+        let form = |action: BindAction| WorkerHostRequest::FormAction {
+            action,
+            record_id: "r1".into(),
+            binding: "b".into(),
+        };
+        let wait = |text: &str, timeout_ms: u64| WorkerHostRequest::WaitText {
+            text: text.into(),
+            appear: true,
+            timeout_ms,
+        };
+        let refused = vec![
+            form(fill("a\u{202e}b")),
+            form(fill("a\u{200b}b")),
+            form(fill("tab\there")),
+            form(fill(&"a".repeat(1025))),
+            form(fill(&("\\".repeat(512) + "a"))),
+            form(BindAction::Select {
+                node_id: "d1-e3".into(),
+                role: "combobox".into(),
+                label: String::new(),
+            }),
+            form(BindAction::Click {
+                node_id: "d1-e2".into(),
+                role: "link".into(),
+            }),
+            form(BindAction::Navigate {
+                url: "https://fixture.test/".into(),
+            }),
+            WorkerHostRequest::Bind {
+                action: fill("line\nbreak"),
+            },
+            wait("", 100),
+            wait("two\nlines", 100),
+            wait(&"x".repeat(crate::verify::MAX_VERIFY_TEXT_BYTES + 1), 100),
+            wait("Saved", 0),
+            wait("Saved", crate::worker_launch::MAX_WAIT_MS + 1),
+            WorkerHostRequest::Verify { checks: Vec::new() },
+            WorkerHostRequest::Verify {
+                checks: vec![crate::verify::Postcondition::TextVisible {
+                    text: String::new(),
+                }],
+            },
+        ];
+        let accepted = vec![
+            form(fill("C:\\temp\\notes")),
+            form(fill(&"a".repeat(1024))),
+            form(BindAction::PressEnter {
+                node_id: "d1-e5".into(),
+                role: "searchbox".into(),
+            }),
+            wait("Saved", crate::worker_launch::MAX_WAIT_MS),
+            WorkerHostRequest::Verify {
+                checks: vec![crate::verify::Postcondition::TextVisible {
+                    text: "Saved".into(),
+                }],
+            },
+        ];
+        let mut bytes = crate::proto::encode_frame(&WorkerHostRequest::Hello {
+            generation: WORKER_HOST_GENERATION,
+        })
+        .unwrap();
+        for request in refused.iter().chain(accepted.iter()) {
+            bytes.extend(crate::proto::encode_frame(request).unwrap());
+        }
+        bytes.extend(crate::proto::encode_frame(&WorkerHostRequest::Shutdown {}).unwrap());
+        let mut out = Vec::new();
+        assert!(serve_worker_mode(&args, &mut bytes.as_slice(), &mut out).is_ok());
+        let mut replies = out.as_slice();
+        assert!(matches!(
+            decode_frame::<WorkerHostReply, _>(&mut replies).unwrap(),
+            WorkerHostReply::Hello { .. }
+        ));
+        for request in &refused {
+            assert_eq!(
+                decode_frame::<WorkerHostReply, _>(&mut replies).unwrap(),
+                WorkerHostReply::Error {
+                    code: "invalid".into()
+                },
+                "{request:?}"
+            );
+        }
+        for request in &accepted {
+            assert_eq!(
+                decode_frame::<WorkerHostReply, _>(&mut replies).unwrap(),
+                WorkerHostReply::Error {
+                    code: "no_lifetime".into()
+                },
+                "{request:?}"
+            );
+        }
+        assert_eq!(
+            decode_frame::<WorkerHostReply, _>(&mut replies).unwrap(),
+            WorkerHostReply::Bye {}
+        );
+    }
+
     #[test]
     fn errors_cross_as_closed_codes_without_text() {
         assert_eq!(
@@ -1030,6 +1513,11 @@ mod tests {
             UnavailableReason::UnsupportedEngine
         ))
         .starts_with("unavailable:"));
+        // SG-000122: the text cap has its own closed code.
+        assert_eq!(
+            error_code(&HostError::Unavailable(UnavailableReason::TextLimitReached)),
+            "unavailable:textlimitreached"
+        );
     }
 
     #[test]
@@ -1054,7 +1542,7 @@ mod tests {
         let mut out = Vec::new();
         let early = frames(&[WorkerHostRequest::Observe {}]);
         assert!(serve_worker_mode(&args, &mut early.as_slice(), &mut out).is_err());
-        for old in [1, 2] {
+        for old in [1, 2, 3, 4] {
             let wrong = frames(&[WorkerHostRequest::Hello { generation: old }]);
             assert!(serve_worker_mode(&args, &mut wrong.as_slice(), &mut out).is_err());
         }

@@ -30,6 +30,9 @@ pub enum SupportedAction {
     Press,
     /// BR-02: move the pointer over the element.
     Hover,
+    /// SG-000122: press Enter, and only Enter, in a single-line text field
+    /// (it may submit what the page holds); the target state is `enter`.
+    Enter,
     /// BR-03: set a file input to one host-staged file; the target state
     /// binds the page's origin, the file's digest and its name.
     Upload,
@@ -46,6 +49,7 @@ impl SupportedAction {
             Self::Check => "check",
             Self::Press => "press",
             Self::Hover => "hover",
+            Self::Enter => "enter",
             Self::Upload => "upload",
         }
     }
@@ -60,6 +64,7 @@ impl SupportedAction {
             "check" => Ok(Self::Check),
             "press" => Ok(Self::Press),
             "hover" => Ok(Self::Hover),
+            "enter" => Ok(Self::Enter),
             "upload" => Ok(Self::Upload),
             _ => Err(HostError::Invalid("unsupported actuation action".into())),
         }
@@ -101,6 +106,9 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
             "slider",
         ],
         SupportedAction::Hover => &["button", "link", "menuitem", "tab", "img", "image"],
+        // SG-000122: text fields only (the worker also requires an input
+        // whose type state is text, search, email, url or tel).
+        SupportedAction::Enter => &["textbox", "searchbox", "combobox"],
         // A file input is a button in the accessibility tree; the worker
         // also requires the element itself to be <input type=file>.
         SupportedAction::Upload => &["button"],
@@ -113,6 +121,7 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
             | SupportedAction::Check
             | SupportedAction::Press
             | SupportedAction::Hover
+            | SupportedAction::Enter
             | SupportedAction::Upload
     );
     if allowed.iter().any(|entry| {
@@ -130,9 +139,10 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
 }
 
 /// BR-02: the longest value filled and the most options selected at once
-/// (mirrors the worker).
+/// (mirrors the worker). SG-000122: a select chooses exactly one option of
+/// a native select.
 pub const MAX_FORM_VALUE_BYTES: usize = 1024;
-pub const MAX_FORM_OPTIONS: usize = 16;
+pub const MAX_FORM_OPTIONS: usize = 1;
 /// BR-02: the keys an approved press may send (mirrors the worker):
 /// navigation and editing keys only, no characters (Space aside) and no
 /// modifiers.
@@ -171,6 +181,8 @@ pub enum FormInput {
     Press { key: String },
     /// Move the pointer over the element.
     Hover,
+    /// SG-000122: press Enter in a single-line text field.
+    Enter,
 }
 
 impl FormInput {
@@ -181,6 +193,7 @@ impl FormInput {
             Self::Check { .. } => SupportedAction::Check,
             Self::Press { .. } => SupportedAction::Press,
             Self::Hover => SupportedAction::Hover,
+            Self::Enter => SupportedAction::Enter,
         }
     }
 
@@ -202,7 +215,7 @@ impl FormInput {
                         .iter()
                         .all(|label| !label.is_empty() && bounded(label))
             }
-            Self::Check { .. } | Self::Hover => true,
+            Self::Check { .. } | Self::Hover | Self::Enter => true,
             Self::Press { key } => PRESS_KEYS.contains(&key.as_str()),
         };
         if fits {
@@ -223,6 +236,7 @@ impl FormInput {
             Self::Check { checked } => format!("check\n{checked}"),
             Self::Press { key } => format!("press\n{key}"),
             Self::Hover => "hover".to_owned(),
+            Self::Enter => "enter".to_owned(),
         }
     }
 }
@@ -279,6 +293,78 @@ impl FormInput {
             }
         }
         Ok(())
+    }
+}
+
+/// SG-000122: how the worker classified an observed form control of the
+/// main frame (the host keeps it with the node; it never crosses): a
+/// single-line text field (an input whose type state is text, search,
+/// email, url or tel, a missing or unknown type being text), a native
+/// select, or a checkbox or radio input. Anything else carries no kind.
+/// Only the Windows worker session uses these (tests run them everywhere).
+#[cfg(any(windows, test))]
+pub const CONTROL_LINE: &str = "line";
+#[cfg(any(windows, test))]
+pub const CONTROL_SELECT: &str = "select";
+#[cfg(any(windows, test))]
+pub const CONTROL_TOGGLE: &str = "toggle";
+
+/// SG-000122: the host's own checks of a live form action against the
+/// observed target, before any worker frame: fill and Enter only on a
+/// single-line text field whose name does not look secret, with a fill value
+/// the approval prompt shows exactly and in full; select exactly one option
+/// of a native select; check only a checkbox or radio input. Press with any
+/// other key, and hover, are not live actions. The worker checks the element
+/// again when it acts.
+#[cfg(any(windows, test))]
+pub fn live_form_check(
+    role: &str,
+    control: Option<&str>,
+    name: &str,
+    input: &FormInput,
+) -> Result<(), HostError> {
+    input.check()?;
+    let (roles, kind): (&[&str], &str) = match input {
+        FormInput::Fill { .. } | FormInput::Enter => {
+            (&["textbox", "searchbox", "combobox"], CONTROL_LINE)
+        }
+        FormInput::Select { .. } => (&["combobox", "listbox"], CONTROL_SELECT),
+        FormInput::Check { .. } => (&["checkbox", "radio"], CONTROL_TOGGLE),
+        FormInput::Press { .. } | FormInput::Hover => {
+            return Err(HostError::Invalid("not a live form action".into()))
+        }
+    };
+    role_supports_action(role, input.action())?;
+    if !roles.contains(&role) || control != Some(kind) {
+        return Err(HostError::Invalid(
+            "the target is not the kind of control the action needs".into(),
+        ));
+    }
+    if matches!(input, FormInput::Fill { .. } | FormInput::Enter) && name_looks_secret(name) {
+        return Err(HostError::Invalid("password-field filling denied".into()));
+    }
+    if let FormInput::Fill { value } = input {
+        live_fill_value(value)?;
+    }
+    Ok(())
+}
+
+/// SG-000122 (decision on SG-000108 decision 4): a fill value must be shown
+/// exactly and in full by the approval prompt: no character the prompt would
+/// escape, and a displayed length (a backslash counting double) of at most
+/// the prompt's summary bound. It is refused, never truncated. The rule is
+/// the prompt's own (`orcel_contracts::prompt_display`).
+#[cfg(any(windows, test))]
+pub fn live_fill_value(value: &str) -> Result<(), HostError> {
+    use orcel_contracts::prompt_display::{shown_exactly, NotShownExactly, MAX_SUMMARY_CHARS};
+    match shown_exactly(value, MAX_SUMMARY_CHARS) {
+        Ok(_) => Ok(()),
+        Err(NotShownExactly::Escaped) => Err(HostError::Invalid(
+            "the value holds a character the approval prompt would escape".into(),
+        )),
+        Err(NotShownExactly::TooLong) => Err(HostError::Invalid(
+            "the value is longer than the approval prompt shows in full".into(),
+        )),
     }
 }
 
@@ -447,10 +533,18 @@ mod tests {
         assert_eq!(fill.action(), SupportedAction::Fill);
         assert_eq!(
             FormInput::Select {
-                labels: vec!["Lisbon".into(), "Porto".into()]
+                labels: vec!["Porto".into()]
             }
             .state(),
-            "select\nLisbon\nPorto"
+            "select\nPorto"
+        );
+        assert!(
+            FormInput::Select {
+                labels: vec!["Lisbon".into(), "Porto".into()]
+            }
+            .check()
+            .is_err(),
+            "one option only"
         );
         assert_eq!(FormInput::Check { checked: false }.state(), "check\nfalse");
         assert!(
@@ -581,6 +675,101 @@ Enter"
         ] {
             assert!(!name_looks_secret(plain), "{plain}");
         }
+    }
+
+    /// SG-000122: the host's live checks, before any worker frame.
+    #[test]
+    fn sg122_live_form_actions_need_the_right_control_and_a_showable_value() {
+        let fill = |value: &str| FormInput::Fill {
+            value: value.into(),
+        };
+        let ok = |role: &str, control: &str, input: &FormInput| {
+            live_form_check(role, Some(control), "Full name", input)
+        };
+        assert!(ok("textbox", CONTROL_LINE, &fill("Ada")).is_ok());
+        assert!(ok("searchbox", CONTROL_LINE, &FormInput::Enter).is_ok());
+        assert!(ok("combobox", CONTROL_LINE, &fill("Ada")).is_ok());
+        // A textarea, contenteditable or an input of another type carries
+        // no `line` kind (or none at all): fill and Enter are refused.
+        for control in [
+            None,
+            Some(CONTROL_SELECT),
+            Some(CONTROL_TOGGLE),
+            Some("multiline"),
+        ] {
+            for input in [fill("Ada"), FormInput::Enter] {
+                assert!(
+                    live_form_check("textbox", control, "Notes", &input).is_err(),
+                    "{control:?} {input:?}"
+                );
+            }
+        }
+        // Enter on a non-text element, and other keys or hover anywhere.
+        for role in ["button", "link", "checkbox", "spinbutton", "slider"] {
+            assert!(ok(role, CONTROL_LINE, &FormInput::Enter).is_err(), "{role}");
+        }
+        for key in ["Tab", "Escape", "Space", "ArrowDown", "Enter"] {
+            assert!(
+                ok(
+                    "textbox",
+                    CONTROL_LINE,
+                    &FormInput::Press { key: key.into() }
+                )
+                .is_err(),
+                "{key}"
+            );
+        }
+        assert!(ok("link", CONTROL_LINE, &FormInput::Hover).is_err());
+        // Secret-looking names are never filled or typed into.
+        for input in [fill("x"), FormInput::Enter] {
+            assert!(live_form_check("textbox", Some(CONTROL_LINE), "Password", &input).is_err());
+        }
+        // Select: one option of a native select; check: a checkbox or radio.
+        let one = FormInput::Select {
+            labels: vec!["Porto".into()],
+        };
+        assert!(ok("combobox", CONTROL_SELECT, &one).is_ok());
+        assert!(ok("listbox", CONTROL_SELECT, &one).is_ok());
+        assert!(
+            ok("combobox", CONTROL_LINE, &one).is_err(),
+            "not a native select"
+        );
+        let two = FormInput::Select {
+            labels: vec!["Lisbon".into(), "Porto".into()],
+        };
+        assert!(ok("listbox", CONTROL_SELECT, &two).is_err());
+        let check = FormInput::Check { checked: true };
+        assert!(ok("checkbox", CONTROL_TOGGLE, &check).is_ok());
+        assert!(ok("radio", CONTROL_TOGGLE, &check).is_ok());
+        assert!(ok("checkbox", CONTROL_LINE, &check).is_err());
+        assert!(ok("switch", CONTROL_TOGGLE, &check).is_err());
+        // The value: shown exactly and in full, or refused.
+        let at = "a".repeat(1024);
+        assert!(ok("textbox", CONTROL_LINE, &fill(&at)).is_ok());
+        assert!(ok("textbox", CONTROL_LINE, &fill("C:\\temp\\x")).is_ok());
+        let past = "\\".repeat(512) + "a";
+        assert!(
+            ok("textbox", CONTROL_LINE, &fill(&past)).is_err(),
+            "a backslash counts double"
+        );
+        for escaped in [
+            "a\u{202e}b",
+            "a\u{200b}b",
+            "a\u{a0}b",
+            "a\u{85}b",
+            "e\u{301}\u{302}\u{303}",
+        ] {
+            assert!(
+                ok("textbox", CONTROL_LINE, &fill(escaped)).is_err(),
+                "{escaped:?}"
+            );
+        }
+        assert_eq!(FormInput::Enter.state(), "enter");
+        assert_eq!(FormInput::Enter.action().name(), "enter");
+        assert_eq!(
+            SupportedAction::parse("enter").unwrap(),
+            SupportedAction::Enter
+        );
     }
 
     fn target() -> ActuationTarget {

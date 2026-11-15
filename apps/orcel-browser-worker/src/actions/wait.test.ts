@@ -2,11 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MAX_WAIT_MS, waitForText, type WaitPage } from "./wait.js";
 
-/// A page whose text locator records its query and resolves or times out.
+/// A page whose main-frame text locator records its query and resolves or
+/// times out. It has no other frame: a wait never asks for one.
 function page(outcome: "met" | "timeout") {
   const queries: Array<{ source: string; visible: boolean; state: string; timeout: number }> = [];
   const stub = {
-    getByText: (pattern: RegExp) => ({
+    frames: () => {
+      throw new Error("a wait never looks at child frames");
+    },
+    getByText: () => {
+      throw new Error("a wait asks the main frame itself");
+    },
+    mainFrame: () => ({ getByText: (pattern: RegExp) => ({
       filter: (options: { visible: boolean }) => ({
         first: () => ({
           waitFor: async (wait: { state: string; timeout: number }) => {
@@ -15,7 +22,7 @@ function page(outcome: "met" | "timeout") {
           }
         })
       })
-    })
+    }) })
   };
   return { stub: stub as unknown as WaitPage, queries };
 }
