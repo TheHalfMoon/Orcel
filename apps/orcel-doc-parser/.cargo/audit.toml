@@ -33,9 +33,9 @@ ignore = [
   #   admits only ZIP inputs that anydoc detects as DOCX, PPTX or Excel.
   # - Only anydoc and the parser depend on zip in Cargo.lock.
   # Shipped since F5 slice 1 (founder decision 7 of 2026-11-14): the Windows
-  # release carries this binary beside orceld.exe, with no caller in a release
-  # build (release_blocker_sweep.rs,
-  # the_shipped_document_parser_has_no_release_caller). These exceptions are
+  # release carries this binary beside orceld.exe. Since SG-000130 W2 the
+  # local-only report task runs it for an .xlsx source (release_blocker_sweep.rs,
+  # the_shipped_document_parser_has_only_the_listed_release_callers). These exceptions are
   # therefore in shipped code. They stay recorded as unreachable, and they are
   # not accepted risk (prep/F5_SPREADSHEET_JOURNEY.md).
   # Uncertainty, recorded: this is a source reading of one pinned version,

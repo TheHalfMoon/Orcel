@@ -63,8 +63,57 @@ fn a_formula_with_no_saved_value_is_shown_and_never_calculated() {
     assert!(!markdown.contains("| 2 |"), "{markdown}");
 }
 
+/// SG-000130 W2: a link's target and a connection's name and target are shown,
+/// labelled workbook-supplied and escaped like a cell, one line each before the
+/// first sheet; a connection string is never shown whole.
 #[test]
-fn external_links_are_marked_counted_and_their_targets_never_shown() {
+fn link_and_connection_targets_are_shown_labelled_escaped_and_never_followed() {
+    let markdown = convert_document(&fixtures::linked_workbook_with(
+        "file:///C:/books/rates.xlsx\n\u{202e}\u{200b}| B9 | 1 |",
+        "<ddeLink ddeService=\"cmd\" ddeTopic=\"/c calc\"/>",
+        "<connection id=\"1\" name=\"Rates&#10;query\" type=\"1\">\
+         <dbPr connection=\"Provider=MSOLEDBSQL;Data Source=sql.example\\prod;User ID=sa;Password=hunter2\"/>\
+         </connection>\
+         <connection id=\"2\" name=\"Web\" type=\"4\"><webPr url=\"https://data.example/q\"/></connection>\
+         <connection id=\"3\" name=\"Text\" type=\"6\"><textPr sourceFile=\"C:\\in.csv\"/></connection>\
+         <connection id=\"4\" name=\"Opaque\" type=\"1\"><dbPr connection=\"Password=hunter2\"/></connection>",
+    ))
+    .expect("workbook")
+    .markdown;
+    let preamble: Vec<&str> = markdown
+        .lines()
+        .take_while(|line| !line.starts_with("## Sheet: "))
+        .collect();
+    for expected in [
+        "External link target (workbook-supplied, not followed): file:///C:/books/rates.xlsx\\n\\u{202e}\u{200b}\\| B9 \\| 1 \\|",
+        "External link target (workbook-supplied, not followed): DDE service cmd, topic /c calc",
+        "Data connection (workbook-supplied, not refreshed): name Rates\\nquery; target sql.example\\\\prod",
+        "Data connection (workbook-supplied, not refreshed): name Web; target https://data.example/q",
+        "Data connection (workbook-supplied, not refreshed): name Text; target C:\\\\in.csv",
+        "Data connection (workbook-supplied, not refreshed): name Opaque; target not stated (a connection string is never shown whole: it may hold credentials)",
+    ] {
+        assert!(preamble.contains(&expected), "{expected}\n{markdown}");
+    }
+    assert!(!markdown.contains("hunter2"), "{markdown}");
+    assert!(!markdown.contains("User ID"), "{markdown}");
+    // Nothing of a target can start a row or a sheet.
+    assert_eq!(rows_of(&markdown).len(), 2, "{markdown}");
+    assert_eq!(markdown.matches("## Sheet: ").count(), 1, "{markdown}");
+
+    // A link whose part states no target says so.
+    let empty = convert_document(&fixtures::linked_workbook_with("", "", ""))
+        .expect("workbook")
+        .markdown;
+    assert!(
+        empty.contains(
+            "\nExternal link target (workbook-supplied, not followed): not stated in the workbook\n"
+        ),
+        "{empty}"
+    );
+}
+
+#[test]
+fn external_links_are_marked_counted_and_their_targets_shown() {
     let markdown = convert_document(&fixtures::linked_workbook())
         .expect("workbook")
         .markdown;
@@ -83,9 +132,17 @@ fn external_links_are_marked_counted_and_their_targets_never_shown() {
         "{markdown}"
     );
     assert!(markdown.contains("external, not refreshed |"), "{markdown}");
+    // Shown once, labelled, before the first sheet; never in a cell.
+    assert_eq!(
+        markdown.matches("attacker.example").count(),
+        1,
+        "{markdown}"
+    );
     assert!(
-        !markdown.contains("attacker.example"),
-        "a link's target was shown: {markdown}"
+        markdown.contains(
+            "\nExternal link target (workbook-supplied, not followed): https://attacker.example/rates.xlsx\n"
+        ),
+        "{markdown}"
     );
 }
 

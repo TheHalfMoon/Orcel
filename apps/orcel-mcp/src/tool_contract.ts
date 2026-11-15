@@ -249,9 +249,10 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
     annotations: { title: "Search the web", readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   },
   // SG-000127 slice 3: the SG-000126 report task, local transports only.
+  // SG-000130 W2: a source may be an .xlsx workbook, read by the confined parser.
   report_start: {
     capability: "report", operation: "start", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "one task id and 1..8 labelled untrusted source texts, each within the 1 MiB provider read limit",
+    outputBound: "one task id and 1..8 labelled untrusted source texts: a text file within the 1 MiB provider read limit, an .xlsx workbook of at most 50 MiB as the confined parser's text of at most 1,000,000 characters, refused if cut",
     annotations: { ...read("Start local report task"), idempotentHint: false }
   },
   report_preview: {

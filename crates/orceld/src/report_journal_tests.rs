@@ -1474,6 +1474,55 @@ fn sg130_a_workbook_source_journals_under_a_schema_older_builds_refuse() {
     );
 }
 
+/// SG-000130 W2: the documented repair after a downgrade. A journal holding a
+/// workbook line is one an older build refuses whole (every line must carry
+/// `SCHEMA` there). Moved out of the state root, it leaves an empty journal any
+/// build restores; put back under a build with workbook sources, it is read and
+/// its pending commit reconciled, nothing lost but the time in between.
+#[test]
+fn sg130_the_downgrade_repair_moves_the_journal_aside_and_back() {
+    let scene = Scene::new("sg130-repair");
+    let path = journal_path(&scene);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let book = b"PK not really".to_vec();
+    std::fs::write(scene.workspace.root.join("data").join("w.xlsx"), &book).unwrap();
+    let workbook = SourceRecord {
+        path: "data/w.xlsx".into(),
+        sha256: sha256_bytes(&book),
+        bytes: book.len() as u64,
+        kind: SourceKind::Workbook,
+    };
+    let commit = pending_commit(&scene, "[data/w.xlsx]S!A1 = 1\n", &[workbook]);
+    ReportJournal::new(path.clone(), exited_owner("crashed"))
+        .pending("i1", commit)
+        .unwrap();
+    // What an older build checks of every line before it restores anything.
+    let older_build_reads = |path: &Path| {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .all(|line| serde_json::from_str::<Value>(line).unwrap()["schema"] == SCHEMA)
+    };
+    assert!(!older_build_reads(&path), "an older build refuses it whole");
+
+    let aside = scene.dir.join("report-tasks.jsonl.with-workbooks");
+    std::fs::rename(&path, &aside).unwrap();
+    assert!(
+        older_build_reads(&path),
+        "nothing left for an older build to refuse"
+    );
+    let fresh = ReportJournal::new(path.clone(), exited_owner("older"))
+        .restore()
+        .unwrap();
+    assert_eq!((fresh.tasks.len(), fresh.reconciled), (0, 0));
+
+    // Back under a build with workbook sources: read, and reconciled.
+    let restored = ReportJournal::new(aside, exited_owner("newer"))
+        .restore()
+        .unwrap();
+    assert_eq!(restored.reconciled, 1);
+}
+
 /// The same, with the real pinned parser (`wi05_`): a workbook over 1 MiB
 /// verifies with a true figure and stays unknown with a false one.
 #[test]

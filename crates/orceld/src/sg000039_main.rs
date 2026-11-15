@@ -29,9 +29,10 @@ mod sg000128_dispatch_tests;
 // (`LiveBrowser::parse_download`), which only the Windows `live-browser-test`
 // and `live-browser-dev` builds compile; the module's unit and end-to-end
 // tests run on every OS. F5 slice 1 (founder decision 7 of 2026-11-14): the
-// Windows release ships the parser and its pin beside orceld, and no release
-// build calls this module (release_blocker_sweep.rs,
-// `the_shipped_document_parser_has_no_release_caller`).
+// Windows release ships the parser and its pin beside orceld. SG-000130 W2:
+// its release callers are the report task's workbook sources only
+// (release_blocker_sweep.rs,
+// `the_shipped_document_parser_has_only_the_listed_release_callers`).
 #[cfg_attr(
     not(all(
         windows,
@@ -59,9 +60,9 @@ mod remote_lease;
 mod report_check;
 mod report_task;
 // F5 Journey 2 (prep/F5_SPREADSHEET_JOURNEY.md): founder decision 7 of
-// 2026-11-14 chose the confined parser, slice by slice. Compiled only into
-// tests; nothing a client can reach changes until slice 3.
-#[cfg(test)]
+// 2026-11-14 chose the confined parser, slice by slice. SG-000130 W2: the
+// local-only report task reads an `.xlsx` source through it
+// (release_blocker_sweep.rs pins which files may name it).
 mod report_workbook;
 mod resume_key;
 mod search;

@@ -986,6 +986,13 @@ pub fn workbook_with_stale_sources() -> Vec<u8> {
 
 /// External workbook link, data connections and recalculation on load.
 pub fn linked_workbook() -> Vec<u8> {
+    linked_workbook_with("https://attacker.example/rates.xlsx", "", "")
+}
+
+/// [`linked_workbook`] whose link points at `target` (escaped here), with
+/// `link_body` inside its external link part and `connections` inside its
+/// connections part (both raw XML).
+pub fn linked_workbook_with(target: &str, link_body: &str, connections: &str) -> Vec<u8> {
     let sheet = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><worksheet xmlns=\"{SHEET_NS}\"><sheetData>\
          <row r=\"1\"><c r=\"A1\"><f t=\"shared\" ref=\"A1:A2\" si=\"3\">[1]Rates!A1</f><v>41</v></c></row>\
@@ -1015,18 +1022,19 @@ pub fn linked_workbook() -> Vec<u8> {
         ("xl/worksheets/sheet1.xml", sheet.into_bytes()),
         (
             "xl/externalLinks/externalLink1.xml",
-            format!("<externalLink xmlns=\"{SHEET_NS}\"/>").into_bytes(),
+            format!("<externalLink xmlns=\"{SHEET_NS}\">{link_body}</externalLink>").into_bytes(),
         ),
         (
             "xl/externalLinks/_rels/externalLink1.xml.rels",
             workbook_rels(&format!(
                 "<Relationship Id=\"rId1\" Type=\"{REL_BASE}/externalLinkPath\" \
-                 Target=\"https://attacker.example/rates.xlsx\" TargetMode=\"External\"/>"
+                 Target=\"{}\" TargetMode=\"External\"/>",
+                xml_escape(target)
             )),
         ),
         (
             "xl/connections.xml",
-            format!("<connections xmlns=\"{SHEET_NS}\"/>").into_bytes(),
+            format!("<connections xmlns=\"{SHEET_NS}\">{connections}</connections>").into_bytes(),
         ),
     ])
 }

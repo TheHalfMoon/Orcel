@@ -678,6 +678,127 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
     }
 }
 
+/// Rust files the parser scan doesn't read: orceld's parser module (its
+/// definitions), the frame contract in `orcel-provider-process`, and the
+/// parser itself.
+fn defines_the_document_parser(relative: &str) -> bool {
+    relative == "crates/orceld/src/document_parse.rs"
+        || relative == "crates/orcel-provider-process/src/document_parser.rs"
+        || relative.starts_with("apps/orcel-doc-parser/")
+}
+
+/// The modules the parser scan guards: orceld's parser module and its
+/// workbook source, and the provider crate's frame contract.
+const PARSER_MODULES: [&str; 3] = ["document_parse", "document_parser", "report_workbook"];
+
+/// The items a listed release file may name only if its allowance lists them:
+/// the parser's entry points and pins, the frame's types and limits, the
+/// helper's pin, and F5 slice 2's route.
+const PARSER_ITEMS: [&str; 18] = [
+    "installed_pins",
+    "parser_pin_in",
+    "parse_download",
+    "parse_committed",
+    "CommittedDownload",
+    "run_parser",
+    "ParserPin",
+    "HelperPin",
+    "DocumentFormat",
+    "ParsedDocument",
+    "MAX_INPUT_BYTES",
+    "decode_frame",
+    "EXIT_REFUSED",
+    "INPUT_NAME",
+    "EXPECT_FLAG",
+    "observe_workspace_file",
+    "parse_workspace_file",
+    "WorkspaceFile",
+];
+
+/// F5 slice 2's route, which no release file but `report_workbook.rs` (and
+/// `document_parse.rs`, its home, checked separately) may name.
+const ROUTE_NAMES: [&str; 3] = [
+    "observe_workspace_file",
+    "parse_workspace_file",
+    "WorkspaceFile",
+];
+
+/// What one listed release file may name (SG-000130 W2): the guarded modules
+/// it may reach, the guarded items it may name, the modules of which it may
+/// name any item, and names it must never use at all.
+struct ParserAllowance {
+    modules: &'static [&'static str],
+    items: &'static [&'static str],
+    any_item_of: &'static [&'static str],
+    never: &'static [&'static str],
+}
+
+/// SG-000130 W2: the per-file release set, at module level as the scan matches
+/// it. `live_browser.rs` (compiled only into the live-browser builds) keeps
+/// what it had; `report_workbook.rs` reads through the route and names the
+/// parser's run, pin and frame; `report_check.rs` names the run, pins and frame
+/// and nothing of the writer's side; `report_task.rs` loads the pins and calls
+/// the workbook source. `report_journal.rs` is no listed file: reconcile gets
+/// the pins from `report_task.rs`.
+fn parser_allowance(relative: &str) -> Option<ParserAllowance> {
+    match relative {
+        "crates/orceld/src/live_browser.rs" => Some(ParserAllowance {
+            modules: &["document_parse"],
+            items: &["parse_download", "CommittedDownload"],
+            any_item_of: &[],
+            never: &[],
+        }),
+        "crates/orceld/src/report_workbook.rs" => Some(ParserAllowance {
+            modules: &["document_parse", "document_parser"],
+            items: &[
+                "observe_workspace_file",
+                "parse_workspace_file",
+                "WorkspaceFile",
+                "run_parser",
+                "ParserPin",
+                "DocumentFormat",
+                "ParsedDocument",
+                "MAX_INPUT_BYTES",
+                "HelperPin",
+            ],
+            any_item_of: &[],
+            never: &[],
+        }),
+        "crates/orceld/src/report_check.rs" => Some(ParserAllowance {
+            modules: &["document_parse", "document_parser"],
+            items: &[
+                "run_parser",
+                "ParserPin",
+                "DocumentFormat",
+                "ParsedDocument",
+                "MAX_INPUT_BYTES",
+                "HelperPin",
+            ],
+            any_item_of: &[],
+            never: &["orcel_provider_fs", "TaskRegistry"],
+        }),
+        "crates/orceld/src/report_task.rs" => Some(ParserAllowance {
+            modules: &["document_parse", "report_workbook"],
+            items: &["installed_pins"],
+            any_item_of: &["report_workbook"],
+            never: &[],
+        }),
+        _ => None,
+    }
+}
+
+/// The declarations a file may make of a guarded module, and nothing else of
+/// it: orceld declares its two modules, the provider crate its frame contract.
+fn parser_declaration(relative: &str, code: &str) -> bool {
+    match relative {
+        "crates/orceld/src/sg000039_main.rs" => {
+            code == "mod document_parse;" || code == "mod report_workbook;"
+        }
+        "crates/orcel-provider-process/src/lib.rs" => code == "pub mod document_parser;",
+        _ => false,
+    }
+}
+
 /// Whether `code` names `identifier` as a whole identifier (not as part of a
 /// longer one, such as `document_parser` for `document_parse`).
 fn names_identifier(code: &str, identifier: &str) -> bool {
@@ -687,14 +808,37 @@ fn names_identifier(code: &str, identifier: &str) -> bool {
     })
 }
 
-/// Rust files allowed to reach the confined document parser: orceld's parser
-/// module, the live browser (its development-build caller), the frame contract
-/// in `orcel-provider-process`, and the parser itself.
-fn may_reach_the_document_parser(relative: &str) -> bool {
-    relative == "crates/orceld/src/document_parse.rs"
-        || relative == "crates/orceld/src/live_browser.rs"
-        || relative == "crates/orcel-provider-process/src/document_parser.rs"
-        || relative.starts_with("apps/orcel-doc-parser/")
+/// What follows each whole `module` in `text` (the line, or a `use` group the
+/// line opens, up to its closing brace): `Some(items)` when a path continues
+/// with `::`, each the first identifier of a path or a group's entry, and
+/// `None` when the module is named any other way (`as`, alone, `mod`), which
+/// no allowance admits.
+fn items_after(text: &str, module: &str) -> Option<Vec<String>> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut items = Vec::new();
+    for (at, _) in text.match_indices(module) {
+        if text[..at].ends_with(ident) || text[at + module.len()..].starts_with(ident) {
+            continue;
+        }
+        let rest = text[at + module.len()..].trim_start();
+        let rest = rest.strip_prefix("::")?.trim_start();
+        if let Some(group) = rest.strip_prefix('{') {
+            let group = group.split('}').next().unwrap_or("");
+            for entry in group.split(',') {
+                let name: String = entry.trim().chars().take_while(|c| ident(*c)).collect();
+                if !name.is_empty() {
+                    items.push(name);
+                }
+            }
+        } else {
+            let name: String = rest.chars().take_while(|c| ident(*c)).collect();
+            if name.is_empty() {
+                return None;
+            }
+            items.push(name);
+        }
+    }
+    Some(items)
 }
 
 /// Whether a line names the parser's executable in any spelling that builds
@@ -704,55 +848,90 @@ fn names_the_parser_file(line: &str) -> bool {
 }
 
 /// The production lines of one Rust file that reach the confined document
-/// parser: any use of orceld's `document_parse` or `report_workbook` modules,
-/// of `orcel_provider_process::document_parser` (whose `spec` and frame,
-/// with `run_contained`, can launch any path), of `PARSER_NAME` or
-/// `PARSER_PIN_NAME`, or the parser's file name in any spelling. Files that may
-/// reach it are not scanned; comments and items compiled only into tests are
-/// skipped. Two declarations are allowed: orceld's `mod document_parse;` and
-/// the provider crate's `pub mod document_parser;`.
+/// parser beyond what SG-000130 W2's per-file release set admits. In any file:
+/// a use of orceld's `document_parse` or `report_workbook` modules or of
+/// `orcel_provider_process::document_parser` (whose `spec` and frame, with
+/// `run_contained`, can launch any path), `PARSER_NAME`, `PARSER_PIN_NAME` or
+/// the parser's file name in any spelling. A file in the release set
+/// ([`parser_allowance`]) may name only its listed modules, and of them only
+/// its listed items (any item of a module in `any_item_of`), names no other
+/// item of [`PARSER_ITEMS`] anywhere, and never uses a name in `never`.
+/// `document_parse.rs`, the provider's contract and the parser aren't
+/// scanned; comments and items compiled only into tests are skipped. The
+/// declarations in [`parser_declaration`] are allowed.
 fn document_parser_callers(relative: &str, text: &str) -> Vec<String> {
-    if may_reach_the_document_parser(relative) {
+    if defines_the_document_parser(relative) {
+        return Vec::new();
+    }
+    let allowance = parser_allowance(relative);
+    let lines: Vec<(usize, &str)> = non_test_lines(text);
+    let mut hits = Vec::new();
+    for (index, (number, line)) in lines.iter().enumerate() {
+        let code = line.trim();
+        if code.starts_with("//") || parser_declaration(relative, code) {
+            continue;
+        }
+        // A `use` group opened here ends on a later line: read it whole.
+        let mut statement = code.to_owned();
+        if code.ends_with('{') {
+            for (_, more) in lines.iter().skip(index + 1) {
+                statement.push(' ');
+                statement.push_str(more.trim());
+                if more.contains('}') {
+                    break;
+                }
+            }
+        }
+        let refused = names_identifier(code, "PARSER_NAME")
+            || names_identifier(code, "PARSER_PIN_NAME")
+            || names_the_parser_file(code)
+            || PARSER_MODULES.iter().any(|module| {
+                if !names_identifier(code, module) {
+                    return false;
+                }
+                let Some(allowed) = &allowance else {
+                    return true;
+                };
+                if !allowed.modules.contains(module) {
+                    return true;
+                }
+                match items_after(&statement, module) {
+                    None => true,
+                    Some(_) if allowed.any_item_of.contains(module) => false,
+                    Some(items) => items
+                        .iter()
+                        .any(|item| item != "self" && !allowed.items.contains(&item.as_str())),
+                }
+            })
+            || allowance.as_ref().is_some_and(|allowed| {
+                PARSER_ITEMS
+                    .iter()
+                    .any(|item| names_identifier(code, item) && !allowed.items.contains(item))
+                    || allowed
+                        .never
+                        .iter()
+                        .any(|name| names_identifier(code, name))
+            });
+        if refused {
+            hits.push(format!("{relative}:{number}: {code}"));
+        }
+    }
+    hits
+}
+
+/// The non-test lines of one Rust file that name F5 slice 2's workspace route
+/// ([`ROUTE_NAMES`]). Every release file but `report_workbook.rs`, its one
+/// release caller (SG-000130 W2), is scanned; `document_parse.rs`, its home,
+/// is checked separately.
+fn workspace_route_callers(relative: &str, text: &str) -> Vec<String> {
+    if relative == "crates/orceld/src/report_workbook.rs" {
         return Vec::new();
     }
     non_test_lines(text)
         .into_iter()
         .filter(|(_, line)| {
             let code = line.trim();
-            let declaration = (relative == "crates/orceld/src/sg000039_main.rs"
-                && code == "mod document_parse;")
-                || (relative == "crates/orcel-provider-process/src/lib.rs"
-                    && code == "pub mod document_parser;");
-            !code.starts_with("//")
-                && !declaration
-                && (names_identifier(code, "document_parse")
-                    || names_identifier(code, "document_parser")
-                    || names_identifier(code, "report_workbook")
-                    || names_identifier(code, "PARSER_NAME")
-                    || names_identifier(code, "PARSER_PIN_NAME")
-                    || names_the_parser_file(code))
-        })
-        .map(|(number, line)| format!("{relative}:{number}: {}", line.trim()))
-        .collect()
-}
-
-/// The non-test lines of one Rust file that name F5 slice 2's workspace route
-/// (`observe_workspace_file`, `parse_workspace_file`, `WorkspaceFile`). Unlike
-/// `document_parser_callers`, no file is exempt: `document_parse.rs`, its
-/// only home, is checked separately.
-fn workspace_route_callers(relative: &str, text: &str) -> Vec<String> {
-    non_test_lines(text)
-        .into_iter()
-        .filter(|(_, line)| {
-            let code = line.trim();
-            !code.starts_with("//")
-                && [
-                    "observe_workspace_file",
-                    "parse_workspace_file",
-                    "WorkspaceFile",
-                ]
-                .iter()
-                .any(|name| names_identifier(code, name))
+            !code.starts_with("//") && ROUTE_NAMES.iter().any(|name| names_identifier(code, name))
         })
         .map(|(number, line)| format!("{relative}:{number}: {}", line.trim()))
         .collect()
@@ -776,29 +955,29 @@ fn shipped_non_rust_source(relative: &str) -> bool {
 /// F5 slice 1 (founder decision 7 of 2026-11-14, the founder's decision
 /// packet; not SG-000108's decision 7):
 /// `docs/orcel/implementation-readiness/prep/F5_SPREADSHEET_JOURNEY.md`. The
-/// Windows release ships the confined document parser and its pin, and no
-/// release build calls it. Its callers are the live browser's committed
-/// downloads (`live_browser.rs`, compiled only with the `live-browser-*`
-/// features, which the two tests above keep out of release builds) and the
-/// workbook source (`report_workbook.rs`, compiled only into tests). This scan
-/// is a guard, not a proof: the stronger gates are the `expect(dead_code)`
-/// on the parser's entry points in `document_parse.rs`, which clippy's
+/// Windows release ships the confined document parser and its pin. Its
+/// callers are the live browser's committed downloads (`live_browser.rs`,
+/// compiled only with the `live-browser-*` features, which the two tests
+/// above keep out of release builds) and, since SG-000130 W2 (the rule change
+/// its spec records), the report task's workbook sources: `report_task.rs`
+/// loads the pins, `report_workbook.rs` reads through F5 slice 2's route, and
+/// `report_check.rs` runs the parser on its own. This scan pins that per-file
+/// set at module level, each file with the only items it may name
+/// ([`parser_allowance`]); every other file names none of them. It is a guard,
+/// not a proof: the stronger gates are the `expect(dead_code)` on the live
+/// browser's entry points in `document_parse.rs`, which clippy's
 /// `-D warnings` turns into a failure once a release build calls one, and the
 /// executable registry's refusal of anything in an Orcel install directory.
 /// A later slice adds a release caller only by changing this test, under its
-/// own review; until slice 3 nothing a client can reach changes.
+/// own review.
 ///
-/// F5 slice 2 adds a route from a workspace file (`observe_workspace_file`,
-/// then `parse_workspace_file`) inside `document_parse.rs`. It has no caller
-/// but that module's tests. Each of its items expects to be dead code in
-/// every build that isn't a test, which CI's clippy enforces for default
-/// features only; a live-browser build isn't linted. So this test also
-/// checks that the module names the route's items only inside the route's
-/// own section, which defines nothing else, and that no non-test Rust
-/// anywhere else, the files allowed to reach the parser included, names it
-/// (`workspace_route_callers`).
+/// F5 slice 2's route (`observe_workspace_file`, then `parse_workspace_file`)
+/// lives inside `document_parse.rs`. Its one release caller is
+/// `report_workbook.rs`. This test checks that the module names the route's
+/// items only inside the route's own section, which defines nothing else, and
+/// that no other non-test Rust names it (`workspace_route_callers`).
 #[test]
-fn the_shipped_document_parser_has_no_release_caller() {
+fn the_shipped_document_parser_has_only_the_listed_release_callers() {
     let root = repo_root();
     let files = text_files(&root);
     let file = |relative: &str| {
@@ -809,12 +988,16 @@ fn the_shipped_document_parser_has_no_release_caller() {
             .unwrap_or_else(|| panic!("{relative} is missing"))
     };
     let test_modules = test_only_modules(&files);
-    assert!(
-        test_modules
-            .iter()
-            .any(|module| module == "crates/orceld/src/report_workbook.rs"),
-        "report_workbook.rs must stay compiled only into tests until a later F5 slice"
-    );
+    for listed in [
+        "crates/orceld/src/report_workbook.rs",
+        "crates/orceld/src/report_check.rs",
+        "crates/orceld/src/report_task.rs",
+    ] {
+        assert!(
+            is_production_rust(listed, &test_modules),
+            "{listed} is a release file since SG-000130 W2; the scan must read it"
+        );
+    }
 
     // Positive controls: what the scan relies on still exists, so it can't
     // pass because a name moved.
@@ -825,10 +1008,18 @@ fn the_shipped_document_parser_has_no_release_caller() {
         ),
         "live_browser.rs, the parser's development-build caller, must stay behind the live-browser features"
     );
+    for declaration in ["mod document_parse;", "mod report_workbook;"] {
+        assert_eq!(
+            main.lines()
+                .filter(|line| line.trim() == declaration)
+                .count(),
+            1,
+            "orceld no longer declares {declaration} once; this scan's names are stale"
+        );
+    }
     assert!(
-        main.lines()
-            .any(|line| line.trim() == "mod document_parse;"),
-        "orceld no longer declares mod document_parse; this scan's names are stale"
+        !main.contains("#[cfg(test)]\nmod report_workbook;"),
+        "report_workbook.rs is a release module since SG-000130 W2"
     );
     let parse = file("crates/orceld/src/document_parse.rs");
     assert!(
@@ -837,32 +1028,40 @@ fn the_shipped_document_parser_has_no_release_caller() {
         ),
         "document_parse.rs no longer names the parser as this scan expects"
     );
-    for entry in [
-        "pub fn installed_pins(",
-        "pub fn parser_pin_in(",
-        "pub fn parse_download(",
-        "pub fn parse_committed(",
-        "pub(crate) fn run_parser(",
-    ] {
+    // The live browser's entry points still expect to be dead code in a
+    // release build: exactly this attribute, directly on each. A weaker
+    // predicate (`cfg_attr(any(), ..)`, or one without `not(..)`) would never
+    // expect anything in a release build.
+    const RELEASE_EXPECT: &str = "#[cfg_attr(\n    not(any(\n        test,\n        all(\n            windows,\n            any(feature = \"live-browser-test\", feature = \"live-browser-dev\")\n        )\n    )),\n    expect(dead_code)\n)]\n";
+    for entry in ["pub fn parse_download(", "pub fn parse_committed("] {
         let at = parse
             .find(entry)
             .unwrap_or_else(|| panic!("document_parse.rs no longer has {entry}"));
-        // Exactly this attribute, directly on the entry point: a weaker
-        // predicate (`cfg_attr(any(), ..)`, or one without `not(..)`) would
-        // never expect anything in a release build.
-        const RELEASE_EXPECT: &str = "#[cfg_attr(\n    not(any(\n        test,\n        all(\n            windows,\n            any(feature = \"live-browser-test\", feature = \"live-browser-dev\")\n        )\n    )),\n    expect(dead_code)\n)]\n";
         assert!(
             parse[..at].ends_with(RELEASE_EXPECT),
             "{entry} must carry exactly the release-build expect(dead_code):\n{RELEASE_EXPECT}"
         );
     }
-    // F5 slice 2: the workspace route expects to be dead in every non-test
-    // build. Exactly this attribute, directly on each item.
-    const TEST_ONLY_EXPECT: &str = "#[cfg_attr(not(test), expect(dead_code))]\n";
+    // The report task's entry points have their release callers now, so they
+    // carry no expectation; these two are the module's only ones.
+    for entry in [
+        "pub fn installed_pins(",
+        "pub fn parser_pin_in(",
+        "pub(crate) fn run_parser(",
+    ] {
+        assert!(
+            parse.contains(entry),
+            "document_parse.rs no longer has {entry}"
+        );
+    }
+    assert_eq!(
+        parse.matches("expect(dead_code)").count(),
+        2,
+        "only parse_download and parse_committed expect to be dead in a release build"
+    );
     // (definition, its name, how many cfg-chosen definitions it has)
-    const ROUTE_ITEMS: [(&str, &str, usize); 12] = [
+    const ROUTE_ITEMS: [(&str, &str, usize); 14] = [
         ("pub(crate) struct WorkspaceFile {", "WorkspaceFile", 1),
-        // SG-000130 W1: what was observed, for the test-only report task.
         ("impl WorkspaceFile {", "WorkspaceFile", 1),
         (
             "pub(crate) fn observe_workspace_file(",
@@ -875,7 +1074,9 @@ fn the_shipped_document_parser_has_no_release_caller() {
             1,
         ),
         ("fn not_a_workbook(", "not_a_workbook", 1),
+        ("struct PlainRead {", "PlainRead", 1),
         ("fn read_workspace_plain(", "read_workspace_plain", 1),
+        ("fn unprefixed(", "unprefixed", 1),
         ("struct FileIdentity {", "FileIdentity", 1),
         ("fn opened_as(", "opened_as", 1),
         ("fn raced(", "raced", 1),
@@ -884,18 +1085,11 @@ fn the_shipped_document_parser_has_no_release_caller() {
         ("fn open_no_follow(", "open_no_follow", 1),
     ];
     for (item, _, count) in ROUTE_ITEMS {
-        let at: Vec<usize> = parse.match_indices(item).map(|(at, _)| at).collect();
         assert_eq!(
-            at.len(),
+            parse.matches(item).count(),
             count,
             "document_parse.rs no longer has exactly {count} {item}"
         );
-        for at in at {
-            assert!(
-                parse[..at].ends_with(TEST_ONLY_EXPECT),
-                "{item} must carry exactly the non-test expect(dead_code):\n{TEST_ONLY_EXPECT}"
-            );
-        }
     }
     // In its own module, the route's items are named only inside the route's
     // section (from its opening comment to `fn result(`), and that section
@@ -950,20 +1144,39 @@ fn the_shipped_document_parser_has_no_release_caller() {
         "the workspace route's section defines something else:\n{}",
         strays.join("\n")
     );
-    let live = file("crates/orceld/src/live_browser.rs");
-    assert!(
-        !document_parser_callers("crates/orceld/src/stand-in.rs", &live).is_empty(),
-        "the scan no longer sees the live browser's call; it would miss a release caller"
-    );
+    // Each listed file still names what its allowance admits, so the scan
+    // reads live code: in a file with no allowance, every one would be a hit.
+    for (listed, admitted) in [
+        ("crates/orceld/src/live_browser.rs", "parse_download"),
+        (
+            "crates/orceld/src/report_workbook.rs",
+            "parse_workspace_file",
+        ),
+        ("crates/orceld/src/report_check.rs", "run_parser"),
+        ("crates/orceld/src/report_task.rs", "installed_pins"),
+    ] {
+        let text = file(listed);
+        let stand_in = document_parser_callers("crates/orceld/src/stand-in.rs", &text);
+        assert!(
+            !stand_in.is_empty(),
+            "the scan no longer sees {listed}'s calls; it would miss a release caller"
+        );
+        assert!(
+            non_test_lines(&text)
+                .iter()
+                .any(|(_, line)| !line.trim().starts_with("//") && names_identifier(line, admitted)),
+            "{listed} no longer names {admitted}; its allowance is stale"
+        );
+    }
 
     let callers: Vec<String> = files
         .iter()
         .filter(|(relative, _)| is_production_rust(relative, &test_modules))
-        .flat_map(|(relative, text)| document_parser_callers(relative, text))
+        .flat_map(|(relative, text)| document_parser_callers(relative, &text.replace("\r\n", "\n")))
         .collect();
     assert!(
         callers.is_empty(),
-        "a release build compiles a caller of the shipped document parser:\n{}",
+        "a release build reaches the shipped document parser outside SG-000130 W2's per-file set:\n{}",
         callers.join("\n")
     );
     let route: Vec<String> = files
@@ -976,7 +1189,7 @@ fn the_shipped_document_parser_has_no_release_caller() {
         .collect();
     assert!(
         route.is_empty(),
-        "non-test code names the F5 slice 2 workspace route:\n{}",
+        "non-test code other than report_workbook.rs names the F5 slice 2 workspace route:\n{}",
         route.join("\n")
     );
 
@@ -1025,36 +1238,189 @@ fn the_parser_caller_scan_catches_the_shapes_it_claims() {
         #[cfg(test)]\n\
         fn t() {\n    crate::document_parse::parse_download();\n}\n\
         fn b() {\n    #[cfg(test)]\n    let x = crate::report_workbook::digest(a, b);\n}\n";
-    let hits = document_parser_callers("crates/orceld/src/x.rs", text);
-    assert_eq!(hits.len(), 9, "{hits:?}");
-    assert!(hits[0].starts_with("crates/orceld/src/x.rs:1: use crate::document_parse"));
-    assert!(hits[4].contains("document_parser::decode_frame"));
-    assert!(hits[6].contains("format!"));
-    for allowed in [
+    // Any file outside the release set, report_journal.rs among them.
+    for relative in [
+        "crates/orceld/src/x.rs",
+        "crates/orceld/src/report_journal.rs",
+    ] {
+        let hits = document_parser_callers(relative, text);
+        assert_eq!(hits.len(), 9, "{hits:?}");
+        assert!(hits[0].starts_with(&format!("{relative}:1: use crate::document_parse")));
+        assert!(hits[4].contains("document_parser::decode_frame"));
+        assert!(hits[6].contains("format!"));
+    }
+    for name in [
+        "use super::super::document_parse::installed_pins;\n",
+        "let pins = crate::document_parse::installed_pins();\n",
+        "use crate::report_workbook;\n",
+        "use orcel_provider_process::document_parser::ParsedDocument;\n",
+    ] {
+        assert_eq!(
+            document_parser_callers("crates/orceld/src/report_journal.rs", name).len(),
+            1,
+            "report_journal.rs names none of them: {name}"
+        );
+    }
+    // The files that define the parser aren't scanned.
+    for defining in [
         "crates/orceld/src/document_parse.rs",
-        "crates/orceld/src/live_browser.rs",
         "crates/orcel-provider-process/src/document_parser.rs",
         "apps/orcel-doc-parser/src/main.rs",
     ] {
         assert!(
-            document_parser_callers(allowed, text).is_empty(),
-            "{allowed}"
+            document_parser_callers(defining, text).is_empty(),
+            "{defining}"
         );
     }
+    // The declarations, only where they belong.
     assert!(document_parser_callers(
         "crates/orceld/src/sg000039_main.rs",
-        "mod document_parse;\n"
+        "mod document_parse;\nmod report_workbook;\n"
     )
     .is_empty());
+    assert_eq!(
+        document_parser_callers(
+            "crates/orceld/src/sg000039_main.rs",
+            "use crate::report_workbook::observe;\n"
+        )
+        .len(),
+        1
+    );
     assert!(document_parser_callers(
         "crates/orcel-provider-process/src/lib.rs",
         "pub mod document_parser;\n"
     )
     .is_empty());
-    assert_eq!(
-        document_parser_callers("crates/orceld/src/other.rs", "mod document_parse;\n").len(),
-        1
-    );
+    for declaration in ["mod document_parse;\n", "mod report_workbook;\n"] {
+        assert_eq!(
+            document_parser_callers("crates/orceld/src/other.rs", declaration).len(),
+            1,
+            "{declaration}"
+        );
+    }
+
+    // SG-000130 W2: each listed file passes with exactly its own items...
+    let admitted = [
+        (
+            "crates/orceld/src/live_browser.rs",
+            "committed: Vec<crate::document_parse::CommittedDownload>,\n\
+             crate::document_parse::parse_download(workspace, approval, download)\n",
+        ),
+        (
+            "crates/orceld/src/report_workbook.rs",
+            "use crate::document_parse::{observe_workspace_file, parse_workspace_file, WorkspaceFile};\n\
+             use crate::document_parse::{run_parser, ParserPin};\n\
+             use orcel_provider_process::document_parser::{\n    DocumentFormat,\n    ParsedDocument,\n    MAX_INPUT_BYTES,\n};\n\
+             use orcel_provider_process::contained::HelperPin;\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "use crate::document_parse::{run_parser, ParserPin};\n\
+             use orcel_provider_process::contained::HelperPin;\n\
+             use orcel_provider_process::document_parser::{DocumentFormat, ParsedDocument, MAX_INPUT_BYTES};\n",
+        ),
+        (
+            "crates/orceld/src/report_task.rs",
+            "load(crate::document_parse::installed_pins)\n\
+             pub(crate) type WorkbookSource = crate::report_workbook::WorkbookSource;\n\
+             crate::report_workbook::observe(workspace, source, Some(pins))\n",
+        ),
+    ];
+    for (relative, code) in admitted {
+        assert!(
+            document_parser_callers(relative, code).is_empty(),
+            "{relative}: {:?}",
+            document_parser_callers(relative, code)
+        );
+    }
+    // ...and fails on any item outside its list, a module it may not reach,
+    // an alias, or a name it must never use.
+    let refused = [
+        (
+            "crates/orceld/src/live_browser.rs",
+            "use crate::document_parse::run_parser;\n",
+        ),
+        (
+            "crates/orceld/src/live_browser.rs",
+            "let pins = installed_pins();\n",
+        ),
+        (
+            "crates/orceld/src/live_browser.rs",
+            "use crate::report_workbook::observe;\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "crate::report_workbook::prompt_entries(a, b, c)\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "use crate::document_parse::parse_workspace_file;\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "let seen: WorkspaceFile = todo;\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "use orcel_provider_fs::FsProvider;\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "fn f(tasks: &TaskRegistry) {}\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "use crate::document_parse::installed_pins;\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "use orcel_provider_process::document_parser::decode_frame;\n",
+        ),
+        (
+            "crates/orceld/src/report_check.rs",
+            "use orcel_provider_process::document_parser::{\n    DocumentFormat,\n    spec,\n};\n",
+        ),
+        (
+            "crates/orceld/src/report_task.rs",
+            "crate::document_parse::run_parser(a, b, None, h, p)\n",
+        ),
+        (
+            "crates/orceld/src/report_task.rs",
+            "use crate::document_parse::{installed_pins, run_parser};\n",
+        ),
+        (
+            "crates/orceld/src/report_task.rs",
+            "let pin: ParserPin = pins.1;\n",
+        ),
+        (
+            "crates/orceld/src/report_task.rs",
+            "use crate::document_parse as parse;\n",
+        ),
+        (
+            "crates/orceld/src/report_task.rs",
+            "use orcel_provider_process::document_parser::ParsedDocument;\n",
+        ),
+        (
+            "crates/orceld/src/report_workbook.rs",
+            "crate::document_parse::installed_pins()\n",
+        ),
+        (
+            "crates/orceld/src/report_workbook.rs",
+            "crate::document_parse::parse_download(w, a, d)\n",
+        ),
+        (
+            "crates/orceld/src/report_workbook.rs",
+            "let name = PARSER_NAME;\n",
+        ),
+    ];
+    for (relative, code) in refused {
+        assert_eq!(
+            document_parser_callers(relative, code).len(),
+            1,
+            "{relative} must refuse: {code}"
+        );
+    }
+
     assert!(shipped_non_rust_source(
         "apps/orcel-mcp/src/entrypoints/stdio.ts"
     ));
@@ -1071,8 +1437,8 @@ fn the_parser_caller_scan_catches_the_shapes_it_claims() {
         "spawn(join(dir, 'orcel-doc-parser.exe'))"
     ));
 
-    // F5 slice 2's route: seen in any file, the parser's allowed callers
-    // included; comments and test items are not.
+    // F5 slice 2's route: seen in any file but report_workbook.rs, the
+    // parser's other listed files included; comments and test items are not.
     let route = "let seen = observe_workspace_file(&workspace, path)?;\n\
         use crate::document_parse::{parse_workspace_file as p, WorkspaceFile};\n\
         // parse_workspace_file, in a comment\n\
@@ -1082,12 +1448,15 @@ fn the_parser_caller_scan_catches_the_shapes_it_claims() {
     for relative in [
         "crates/orceld/src/live_browser.rs",
         "crates/orceld/src/report_task.rs",
+        "crates/orceld/src/report_check.rs",
+        "crates/orceld/src/report_journal.rs",
     ] {
         let hits = workspace_route_callers(relative, route);
         assert_eq!(hits.len(), 2, "{relative}: {hits:?}");
         assert!(hits[0].contains(":1: let seen"), "{hits:?}");
         assert!(hits[1].contains(":2: use crate"), "{hits:?}");
     }
+    assert!(workspace_route_callers("crates/orceld/src/report_workbook.rs", route).is_empty());
 }
 
 #[test]

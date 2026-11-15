@@ -1520,3 +1520,73 @@ impl ApprovalBroker for NeverAsked {
         panic!("this request must not consume")
     }
 }
+
+/// SG-000130 W2: a release whose package doesn't carry the parser (Linux and
+/// macOS) never looks for one and refuses with a typed reason; a Windows
+/// release that can't load it says why.
+#[test]
+fn sg130_only_a_release_carrying_the_parser_loads_its_pins() {
+    let refused = load_workbook_pins(false, || -> Result<report_check::Pins, ProviderError> {
+        panic!("a release without the parser never looks for it")
+    })
+    .unwrap_err();
+    assert_eq!(refused, NO_PARSER_ON_THIS_PLATFORM);
+    let missing = load_workbook_pins(true, || {
+        Err(error(
+            FailureCode::ProviderUnavailable,
+            "the document parser is not installed",
+        ))
+    })
+    .unwrap_err();
+    assert!(
+        missing.starts_with(
+            "workbook sources are not available: the document parser is not installed"
+        ),
+        "{missing}"
+    );
+}
+
+/// SG-000130 W2: the commit digest of a text-only task is what it was; a
+/// workbook's bound fields (its handle-derived canonical path, SHA-256 and the
+/// parser's digest) change it, each of them.
+#[test]
+fn sg130_the_commit_digest_binds_each_workbook_field() {
+    let scene = Scene::new("digest-fields");
+    let tasks = TaskRegistry::new();
+    let task_id = proposed_task(&scene, &tasks);
+    let task = tasks
+        .lock()
+        .iter()
+        .find(|task| task.id == task_id)
+        .cloned()
+        .unwrap();
+    let proposal = task.proposal.clone().unwrap();
+    let text_only = approval_digest(&scene.workspace, &task, &proposal, &[]);
+    let fields = |canonical: &str, sha: &str, parser: &str| {
+        vec![
+            "workbook".to_owned(),
+            canonical.to_owned(),
+            sha.to_owned(),
+            parser.to_owned(),
+        ]
+    };
+    let base = fields(r"C:\ws\data\a.xlsx", &"a".repeat(64), &"b".repeat(64));
+    let bound = approval_digest(&scene.workspace, &task, &proposal, &base);
+    assert_ne!(bound, text_only);
+    for changed in [
+        fields(
+            r"C:\elsewhere\data\a.xlsx",
+            &"a".repeat(64),
+            &"b".repeat(64),
+        ),
+        fields(r"C:\ws\DATA\a.xlsx", &"a".repeat(64), &"b".repeat(64)),
+        fields(r"C:\ws\data\a.xlsx", &"c".repeat(64), &"b".repeat(64)),
+        fields(r"C:\ws\data\a.xlsx", &"a".repeat(64), &"d".repeat(64)),
+    ] {
+        assert_ne!(
+            approval_digest(&scene.workspace, &task, &proposal, &changed),
+            bound,
+            "{changed:?}"
+        );
+    }
+}

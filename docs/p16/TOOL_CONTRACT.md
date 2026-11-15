@@ -82,7 +82,7 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `process_spawn` | `process.spawn/spawn` | execute | SOFT | orcel.execute | no | yes | no | yes | requested stdout of at most 16 MiB and stderr of at most 4 MiB |
 | `report_commit` | `report/commit` | write | SOFT | local-only | no | no | no | no | evidence only; creates one UTF-8 report of at most 256 KiB, never overwriting |
 | `report_preview` | `report/preview` | preview | none | local-only | yes | no | no | no | the destination, size and SHA-256 of one proposed report |
-| `report_start` | `report/start` | read | none | local-only | yes | no | no | no | one task id and 1..8 labelled untrusted source texts, each within the 1 MiB provider read limit |
+| `report_start` | `report/start` | read | none | local-only | yes | no | no | no | one task id and 1..8 labelled untrusted source texts: a text file within the 1 MiB provider read limit, an .xlsx workbook of at most 50 MiB as the confined parser's text of at most 1,000,000 characters, refused if cut |
 | `system_status` | `system.status/get` | read | none | orcel.read | yes | no | yes | no | fixed-size daemon status object |
 | `task_resume_summary` | `report/resume_summary` | read | none | local-only | yes | no | yes | no | the task's bounded steps as kinds, outcomes and keyed fingerprints, the checks for unknown steps, and a note of at most 4 KiB; never source or report text |
 | `web_fetch` | `network/fetch` | network | SOFT | local-only | yes | no | yes | yes | one response body of at most 1 MiB |

@@ -5,14 +5,20 @@
 //! alone decides:
 //!
 //! 1. `report/start` (read-only): the folder must be an existing plain
-//!    directory in the workspace; each source is read through the workspace
-//!    file provider and its SHA-256 and size are recorded in a new task;
+//!    directory in the workspace; each text source is read through the
+//!    workspace file provider, and each `.xlsx` workbook source (SG-000130)
+//!    through the confined parser by F5 slice 2's route
+//!    ([`crate::report_workbook`]); the file's SHA-256 and size are recorded
+//!    in a new task. Other spreadsheet formats (`.xls`, `.xlsb`, macro
+//!    workbooks, templates, add-ins) are refused;
 //! 2. `report/preview` (no effect): the sources still hash as recorded, the
 //!    folder keeps its identity and the destination does not exist; the
 //!    proposal's exact bytes are recorded;
 //! 3. `report/commit`: the same checks, then one SOFT approval whose digest
 //!    binds the task, the folder, the destination, the bytes and every source
-//!    hash; the checks again after the approval; then one create-only write
+//!    hash, and for each workbook its handle-derived canonical path, its
+//!    SHA-256 and the parser's pinned digest; the checks again after the
+//!    approval; then one create-only write
 //!    through the provider's create-new path, which never opens an existing
 //!    file for writing;
 //! 4. after the write, the independent checker in [`crate::report_check`]
@@ -171,7 +177,7 @@ pub(crate) enum SourceKind {
     /// Read as UTF-8 text through the workspace provider.
     Text,
     /// SG-000130: an `.xlsx` read only through the confined parser, by slice
-    /// 2's workspace route. W1: only test builds observe one.
+    /// 2's workspace route.
     Workbook,
 }
 
@@ -183,29 +189,74 @@ pub(crate) struct SourceRecord {
     pub kind: SourceKind,
 }
 
-/// SG-000130 W1: what the writer's route recorded for each workbook source
-/// (`report_workbook.rs`, compiled only into tests until W2). No other build
-/// has a workbook source, so the type is uninhabited there.
-#[cfg(test)]
+/// SG-000130: what the writer's route recorded for each workbook source.
 pub(crate) type WorkbookSource = crate::report_workbook::WorkbookSource;
-/// W1: no build but a test observes a workbook source.
-#[cfg(not(test))]
-pub(crate) type WorkbookSource = std::convert::Infallible;
 
 /// SG-000130: the pinned helper and parser that workbook sources are read and
-/// checked with. This file is the one that holds them: the writer side and,
-/// inside [`report_check::Expectation`], the checker get them from here, and
-/// so does reconcile. W1: only tests set them (W2 loads them once with the
-/// installed pins); with none, a workbook source is unavailable.
-static WORKBOOK_PINS: OnceLock<report_check::Pins> = OnceLock::new();
+/// checked with, or why there are none. This file is the one that loads them,
+/// once per run: the writer side and, inside [`report_check::Expectation`],
+/// the checker get them from here, and so does reconcile. Tests set them.
+static WORKBOOK_PINS: OnceLock<Result<report_check::Pins, String>> = OnceLock::new();
+
+/// Why a release without the parser refuses workbook sources.
+const NO_PARSER_ON_THIS_PLATFORM: &str = "workbook sources are not available on this platform: its Orcel package doesn't carry the document parser";
+
+/// The pins for this run. Only a Windows release carries the parser (F5 slice
+/// 1); the Linux and macOS packages don't yet, so a build for them refuses a
+/// workbook source as unavailable without looking for one (SG-000130).
+fn load_workbook_pins(
+    carries_parser: bool,
+    load: impl FnOnce() -> Result<report_check::Pins, ProviderError>,
+) -> Result<report_check::Pins, String> {
+    if !carries_parser {
+        return Err(NO_PARSER_ON_THIS_PLATFORM.to_owned());
+    }
+    load().map_err(|failure| format!("workbook sources are not available: {}", failure.message))
+}
+
+#[cfg(not(test))]
+fn loaded_workbook_pins() -> &'static Result<report_check::Pins, String> {
+    WORKBOOK_PINS
+        .get_or_init(|| load_workbook_pins(cfg!(windows), crate::document_parse::installed_pins))
+}
+
+/// Tests set the pins themselves; none set means none.
+#[cfg(test)]
+fn loaded_workbook_pins() -> &'static Result<report_check::Pins, String> {
+    static NONE: OnceLock<Result<report_check::Pins, String>> = OnceLock::new();
+    WORKBOOK_PINS.get().unwrap_or_else(|| {
+        NONE.get_or_init(|| Err("workbook sources are not available in this build".to_owned()))
+    })
+}
 
 pub(crate) fn workbook_pins() -> Option<&'static report_check::Pins> {
-    WORKBOOK_PINS.get()
+    loaded_workbook_pins().as_ref().ok()
+}
+
+/// The pins, or a typed refusal saying why a workbook source can't be read.
+fn workbook_pins_or_refusal() -> Result<&'static report_check::Pins, ProviderError> {
+    loaded_workbook_pins()
+        .as_ref()
+        .map_err(|reason| error(FailureCode::ProviderUnavailable, reason.clone()))
 }
 
 #[cfg(test)]
 pub(crate) fn set_workbook_pins(pins: report_check::Pins) {
-    let _ = WORKBOOK_PINS.set(pins);
+    let _ = WORKBOOK_PINS.set(Ok(pins));
+}
+
+/// Tests: `report/start` with these pins, or with none, as a release without
+/// the parser has none, whatever another test set for the process.
+#[cfg(test)]
+pub(crate) fn start_with_pins(
+    workspace: &Workspace,
+    tasks: &TaskRegistry,
+    request: &RequestEnvelope,
+    pins: Option<&report_check::Pins>,
+) -> Result<Value, ProviderError> {
+    start(workspace, tasks, request, || {
+        pins.ok_or_else(|| error(FailureCode::ProviderUnavailable, NO_PARSER_ON_THIS_PLATFORM))
+    })
 }
 
 /// SG-000130: the most characters one workbook-supplied item shows in the
@@ -987,7 +1038,7 @@ fn dispatch_with(
     hooks: &Hooks<'_>,
 ) -> Result<Value, ProviderError> {
     match request.operation.as_str() {
-        "start" => start(workspace, tasks, request),
+        "start" => start(workspace, tasks, request, workbook_pins_or_refusal),
         "preview" => preview(workspace, tasks, request, hooks),
         "commit" => commit(workspace, approval, tasks, request, hooks),
         "resume_summary" => resume_summary(workspace, tasks, request),
@@ -1167,10 +1218,13 @@ fn destination_of(folder: &str, name: &str) -> String {
     format!("{folder}/{name}")
 }
 
-fn start(
+/// `report/start`. `pins` is asked only for a workbook source, before it's
+/// read: without them it's refused as unavailable.
+fn start<'p>(
     workspace: &Workspace,
     tasks: &TaskRegistry,
     request: &RequestEnvelope,
+    pins: impl Fn() -> Result<&'p report_check::Pins, ProviderError>,
 ) -> Result<Value, ProviderError> {
     let title = argument(request, "title")?;
     let folder = argument(request, "folder")?;
@@ -1197,22 +1251,24 @@ fn start(
         })?;
     let mut observed = Vec::with_capacity(sources.len());
     let mut texts = Vec::with_capacity(sources.len());
-    // W1: only test builds observe a workbook source.
-    #[cfg_attr(not(test), allow(unused_mut))]
     let mut workbooks: Vec<WorkbookSource> = Vec::new();
     for source in sources {
+        if crate::report_workbook::is_other_spreadsheet(source) {
+            return Err(error(
+                FailureCode::InvalidRequest,
+                format!("report source {source}: only an .xlsx workbook is read; .xls, .xlsb, macro-enabled workbooks, templates and add-ins are refused"),
+            ));
+        }
         if is_link(workspace, source) {
             return Err(error(
                 FailureCode::CapabilityDenied,
                 format!("report source {source} is a link; name the file itself"),
             ));
         }
-        #[cfg(test)]
-        if let Some(found) =
-            crate::report_workbook::observed_if_workbook(workspace, source, workbook_pins())
-        {
-            let (record, text, workbook) =
-                found.map_err(|failure| named_source(source, failure))?;
+        if crate::report_workbook::is_workbook(source) {
+            let (record, text, workbook) = pins()
+                .and_then(|pins| crate::report_workbook::observe(workspace, source, Some(pins)))
+                .map_err(|failure| named_source(source, failure))?;
             checker_can_reread(&record)?;
             observed.push(record);
             texts.push(text);
@@ -1410,9 +1466,8 @@ fn check_current(
 }
 
 /// A workbook source's SHA-256 now, read again only through slice 2's route
-/// (`parse_workspace_file`, which refuses bytes other than the observed ones),
-/// or `None` if the route refuses it.
-#[cfg(test)]
+/// (`parse_workspace_file`, which refuses a real path, size or bytes other
+/// than the observed ones), or `None` if the route refuses it.
 fn workbook_digest(
     workspace: &Workspace,
     task: &ReportTask,
@@ -1421,48 +1476,24 @@ fn workbook_digest(
     crate::report_workbook::current_digest(workspace, &task.workbooks, source, workbook_pins()).ok()
 }
 
-/// W1: no build but a test has a workbook source.
-#[cfg(not(test))]
-fn workbook_digest(
-    _workspace: &Workspace,
-    task: &ReportTask,
-    _source: &SourceRecord,
-) -> Option<String> {
-    if let Some(never) = task.workbooks.first() {
-        match *never {}
-    }
-    None
-}
-
 /// SG-000130: the commit prompt's workbook-supplied items for each workbook
-/// source (its path, hidden sheet names and the reader's notices) and how
-/// many of the report's figures come from it.
-#[cfg(test)]
+/// source (its path, hidden sheet names and the reader's notices) and which
+/// of the report's figures come from it.
 fn workbook_entries(task: &ReportTask, content: &str) -> Result<Vec<SuppliedEntry>, ProviderError> {
     crate::report_workbook::prompt_entries(&task.workbooks, &task.sources, content)
 }
 
-/// W1: no build but a test has a workbook source.
-#[cfg(not(test))]
-fn workbook_entries(
-    task: &ReportTask,
-    _content: &str,
-) -> Result<Vec<SuppliedEntry>, ProviderError> {
-    if let Some(never) = task.workbooks.first() {
-        match *never {}
-    }
-    Ok(Vec::new())
-}
-
 /// One workbook source in the commit prompt. Every string is
-/// workbook-supplied (the path the caller named, and text the reader took
-/// from the file) and untrusted. W1: only test builds build one.
+/// workbook-supplied (the path, and text the reader took from the file) or
+/// names a cell of it (the report's figures), and untrusted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SuppliedEntry {
+    /// The workspace-relative path as the file system spells it.
     pub path: String,
     pub hidden_sheets: Vec<String>,
     pub notices: Vec<String>,
-    pub figures: usize,
+    /// The report's figures from this workbook, as `Sheet!Cell`, each once.
+    pub figures: Vec<String>,
 }
 
 /// How many characters the prompt displays for `item` through the shared
@@ -1519,7 +1550,14 @@ pub(crate) fn supplied_text(entries: &[SuppliedEntry]) -> Result<String, Provide
             measure(notice)?;
             part.push_str(&format!(" notice: {notice};"));
         }
-        part.push_str(&format!(" figures from it: {}", entry.figures));
+        if entry.figures.is_empty() {
+            part.push_str(" figures from it: none");
+        } else {
+            for figure in &entry.figures {
+                measure(figure)?;
+            }
+            part.push_str(&format!(" figures from it: {}", entry.figures.join(", ")));
+        }
         parts.push(part);
     }
     Ok(format!(
@@ -1639,7 +1677,16 @@ fn figures_named(task: &ReportTask, content: &str) -> Result<(), Blocked> {
     Ok(())
 }
 
-fn approval_digest(workspace: &Workspace, task: &ReportTask, proposal: &Proposal) -> String {
+/// The commit approval's digest. `workbooks` is what it binds for each
+/// workbook source ([`crate::report_workbook::binding`]): its handle-derived
+/// canonical path, its SHA-256 and the parser's pinned digest. A text-only
+/// task's digest is unchanged.
+fn approval_digest(
+    workspace: &Workspace,
+    task: &ReportTask,
+    proposal: &Proposal,
+    workbooks: &[String],
+) -> String {
     let folder = task.folder_resolved.to_string_lossy();
     let bytes = proposal.bytes.to_string();
     let count = task.sources.len().to_string();
@@ -1659,6 +1706,7 @@ fn approval_digest(workspace: &Workspace, task: &ReportTask, proposal: &Proposal
         fields.push(source.path.as_str());
         fields.push(source.sha256.as_str());
     }
+    fields.extend(workbooks.iter().map(String::as_str));
     digest(&fields)
 }
 
@@ -1702,7 +1750,17 @@ fn commit(
             )
         })?;
 
-    let digest = approval_digest(workspace, &task, &proposal);
+    let bound = crate::report_workbook::binding(&task.workbooks, &task.sources, workbook_pins())
+        .map_err(|failure| {
+            blocked(
+                tasks,
+                &task.id,
+                "commit",
+                &OPEN_STATES,
+                Blocked::Other(failure),
+            )
+        })?;
+    let digest = approval_digest(workspace, &task, &proposal, &bound);
     let sources = task
         .sources
         .iter()
