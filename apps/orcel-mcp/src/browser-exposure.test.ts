@@ -33,6 +33,16 @@ const SG122_A3 = {
   browser_verify: "browser.verify/check"
 } as const;
 
+/** SG-000122 slice A4's tools and the shapes they forward. */
+const SG122_A4 = {
+  browser_select: "browser.form/select",
+  browser_check: "browser.form/check",
+  browser_enter: "browser.form/enter"
+} as const;
+
+/** Every SG-000122 tool: since slice A4, one for each of the grain's shapes. */
+const SG122 = { ...SG122_A3, ...SG122_A4 } as const;
+
 // SG-000108 decision 6: the live browser exposure tables agree across the
 // MCP contract, orceld's profile gate and the browser host's exposure list.
 
@@ -80,43 +90,38 @@ test("the live browser tools agree across the contract, orceld's gate and the ho
   for (const tool of LIVE_BROWSER_TOOLS) {
     assert.equal(TOOL_CONTRACT[tool]?.remote, "local_only", tool);
   }
-  // Slice 3c's six and SG-000122 slice A3's three; never the uploads, and
-  // select, check and Enter only with slice A4.
-  assert.equal(LIVE_BROWSER_TOOLS.length, 9);
-  for (const [tool, shape] of Object.entries(SG122_A3)) {
+  // Slice 3c's six and SG-000122's six (slices A3 and A4); never the
+  // uploads or the closed-grain press and select.
+  assert.equal(LIVE_BROWSER_TOOLS.length, 12);
+  for (const [tool, shape] of Object.entries(SG122)) {
     assert.ok(LIVE_BROWSER_TOOLS.includes(tool), tool);
     assert.ok(shapes.includes(shape), shape);
   }
   for (const shape of contractShapes) {
     assert.ok(
-      ![
-        "browser.upload/preview",
-        "browser.upload/submit",
-        "browser.form/select",
-        "browser.form/check",
-        "browser.form/enter",
-        "browser.dom/press",
-        "browser.dom/select"
-      ].includes(shape),
+      !["browser.upload/preview", "browser.upload/submit", "browser.dom/press", "browser.dom/select"].includes(shape),
       shape
     );
   }
-  // The form shapes without a tool yet stay in orceld's LIVE_FORM_SHAPES,
-  // never in the MCP table.
-  const forms = rustStrings("crates/orceld/src/profile_gate.rs", "LIVE_FORM_SHAPES", "&[(&str, &str)]");
+  // Every live form shape of orceld's policy has its MCP tool now, so no
+  // live shape is reachable without one: orceld's gate keeps no second
+  // table, and the policy's table is exactly the grain's six tools' shapes.
+  const gate = readFileSync(join(repo, "crates/orceld/src/profile_gate.rs"), "utf8");
+  assert.doesNotMatch(gate, /\bconst LIVE_FORM_SHAPES\b/);
+  const forms = rustStrings("crates/orcel-policy/src/live_browser.rs", "LIVE_FORM_SHAPES", "&[(&str, &str)]");
   const formShapes: string[] = [];
   for (let index = 0; index < forms.length; index += 2) {
     formShapes.push(`${forms[index]}/${forms[index + 1]}`);
   }
-  assert.deepEqual(formShapes.sort(), ["browser.form/check", "browser.form/enter", "browser.form/select"]);
+  assert.deepEqual(formShapes.sort(), Object.values(SG122).sort());
   for (const shape of formShapes) {
-    assert.ok(!shapes.includes(shape), shape);
+    assert.ok(shapes.includes(shape), shape);
   }
 });
 
-test("SG-000122 slice A3: fill, the text wait and the verifier are local-only, browser_structured only", () => {
+test("SG-000122 slices A3 and A4: fill, the text wait, the verifier, select, check and Enter are local-only, browser_structured only", () => {
   const all = ["orcel.read", "orcel.write", "orcel.execute"];
-  for (const [tool, shape] of Object.entries(SG122_A3)) {
+  for (const [tool, shape] of Object.entries(SG122)) {
     const entry = TOOL_CONTRACT[tool];
     assert.equal(`${entry?.capability}/${entry?.operation}`, shape, tool);
     assert.equal(entry?.remote, "local_only", tool);
@@ -149,10 +154,16 @@ test("SG-000122 slice A3: fill, the text wait and the verifier are local-only, b
     assert.equal(authorizeToolByScopes(tool, "core", all, all).ok, false, tool);
     assert.equal(authorizeToolByScopes(tool, "browser_structured", all, all).ok, false, tool);
   }
-  // Fill is SOFT-approved and reaches the network through the page; the
+  // Fill, select, check and Enter are each SOFT-approved and reach the
+  // network through the page (Enter may submit what the page holds); the
   // wait and the verifier are read-only and ask nothing.
-  assert.equal(TOOL_CONTRACT.browser_fill?.approval, "SOFT");
-  assert.equal(TOOL_CONTRACT.browser_fill?.effect, "network");
+  for (const tool of ["browser_fill", ...Object.keys(SG122_A4)]) {
+    assert.equal(TOOL_CONTRACT[tool]?.approval, "SOFT", tool);
+    assert.equal(TOOL_CONTRACT[tool]?.effect, "network", tool);
+    assert.equal(TOOL_CONTRACT[tool]?.annotations.readOnlyHint, false, tool);
+    assert.equal(TOOL_CONTRACT[tool]?.annotations.openWorldHint, true, tool);
+    assert.equal(TOOL_CONTRACT[tool]?.annotations.idempotentHint, false, tool);
+  }
   for (const tool of ["browser_wait_text", "browser_verify"]) {
     assert.equal(TOOL_CONTRACT[tool]?.approval, "none", tool);
     assert.equal(TOOL_CONTRACT[tool]?.effect, "read", tool);

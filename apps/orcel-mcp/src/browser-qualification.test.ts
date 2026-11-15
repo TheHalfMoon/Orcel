@@ -33,8 +33,15 @@ const SG122_ADMITTED_SHAPES = [
   "browser.verify/check"
 ];
 
-/** SG-000122 slice A3: the grain's shapes live through MCP so far. */
-const SG122_LIVE_SHAPES = ["browser.dom/fill", "browser.wait/text", "browser.verify/check"];
+/** SG-000122 slices A3 and A4: every one of the grain's shapes is live through MCP. */
+const SG122_LIVE_SHAPES = [
+  "browser.dom/fill",
+  "browser.wait/text",
+  "browser.verify/check",
+  "browser.form/select",
+  "browser.form/check",
+  "browser.form/enter"
+];
 
 function nonTestRust(dir: string): Array<[string, string]> {
   return readdirSync(dir)
@@ -73,7 +80,7 @@ test("every structured browser shape is recorded as live (SG-000108) or model-on
     workflows: Array<{ id: string; status: string; owner_grain?: string }>;
   };
   const liveShapes = new Map(LIVE_BROWSER_TOOLS.map((tool) => [`${TOOL_CONTRACT[tool]?.capability}/${TOOL_CONTRACT[tool]?.operation}`, tool]));
-  assert.equal(liveShapes.size, 9);
+  assert.equal(liveShapes.size, 12);
   for (const shape of [...BROWSER_SHAPES, ...SG122_ADMITTED_SHAPES]) {
     const [capability, operation] = shape.split("/");
     const entry = inventory.capabilities.find((c) => c.capability === capability && c.operation === operation) as
@@ -90,8 +97,7 @@ test("every structured browser shape is recorded as live (SG-000108) or model-on
       assert.equal(entry?.status, "intentionally_denied", shape);
       assert.ok((entry?.reason ?? "").includes("model-only"), shape);
     } else {
-      // SG-000122 shapes without a tool yet (slice A4) are not exposed.
-      assert.notEqual(entry?.status, "implemented_exposed", shape);
+      assert.fail(`${shape}: every shape SG-000122 admitted has an MCP tool since slice A4`);
     }
   }
   // Every live shape is one of the twelve or one SG-000122 admitted beside them.

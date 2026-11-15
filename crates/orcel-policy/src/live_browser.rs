@@ -149,14 +149,16 @@ pub const MAX_WAIT_MS: u64 = 8_000;
 pub const MAX_POSTCONDITIONS: usize = 16;
 const MAX_VERIFY_URL_BYTES: usize = 2048;
 
-/// The verifier's postcondition kinds and the fields each takes.
+/// The verifier's postcondition kinds and the fields each takes: exactly
+/// SG-000122 E5's element, text, value, checked-state and URL checks. The
+/// host's `download_sha256` check is not among them: the grain does not
+/// expose it, so a live verification naming it is refused here.
 const POSTCONDITION_FORMS: &[(&str, &[&str])] = &[
     ("element_visible", &["node_id"]),
     ("text_visible", &["text"]),
     ("value_equals", &["node_id", "value"]),
     ("checked", &["node_id", "checked"]),
     ("url_is", &["url"]),
-    ("download_sha256", &["sha256"]),
 ];
 
 /// Fields that would widen authority if a caller could name them; asking
@@ -494,18 +496,6 @@ fn validate_checks(value: &Value) -> Result<(), PolicyError> {
                         return Err(invalid("a verified URL must be bounded"));
                     }
                 }
-                "sha256" => {
-                    let digest = value
-                        .as_str()
-                        .ok_or_else(|| invalid("sha256 must be a string"))?;
-                    if digest.len() != 64
-                        || !digest
-                            .bytes()
-                            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-                    {
-                        return Err(invalid("a download digest is 64 lower-case hex digits"));
-                    }
-                }
                 _ => return Err(invalid("unknown check field")),
             }
         }
@@ -748,8 +738,7 @@ mod tests {
                     {"kind": "value_equals", "node_id": "d2-e3", "value": "Ada Lovelace"},
                     {"kind": "checked", "node_id": "d2-e5", "checked": true},
                     {"kind": "element_visible", "node_id": "d2-e4"},
-                    {"kind": "url_is", "url": "https://example.org/done"},
-                    {"kind": "download_sha256", "sha256": "0".repeat(64)}
+                    {"kind": "url_is", "url": "https://example.org/done"}
                 ]}),
             ),
         ]
@@ -926,7 +915,7 @@ mod tests {
             (
                 "browser.verify",
                 "check",
-                json!({"page_id": "pg-a1", "checks": [{"kind": "download_sha256", "sha256": "ABC"}], "expected_generation": 2}),
+                json!({"page_id": "pg-a1", "checks": [{"kind": "download_sha256", "sha256": "0".repeat(64)}], "expected_generation": 2}),
             ),
             (
                 "browser.verify",
@@ -1148,5 +1137,40 @@ mod tests {
                 "{capability}/{operation}"
             );
         }
+    }
+
+    /// SG-000122 E5 (A3 judge, low): the live verifier takes the element,
+    /// text, value, checked-state and URL checks only. The host's download
+    /// digest check is not exposed, so a well-formed one is refused as an
+    /// unknown kind, alone or beside an accepted check.
+    #[test]
+    fn sg122_the_live_verifier_refuses_a_download_digest_check() {
+        let digest = json!({"kind": "download_sha256", "sha256": "0".repeat(64)});
+        let accepted = json!({"kind": "text_visible", "text": "Saved"});
+        let ok = request(
+            "browser.verify",
+            "check",
+            json!({"page_id": "pg-a1", "checks": [accepted.clone()], "expected_generation": 2}),
+        );
+        assert!(validate_live_browser(&ok).is_ok());
+        for checks in [json!([digest.clone()]), json!([accepted, digest])] {
+            let refused = validate_live_browser(&request(
+                "browser.verify",
+                "check",
+                json!({"page_id": "pg-a1", "checks": checks, "expected_generation": 2}),
+            ))
+            .unwrap_err();
+            assert_eq!(refused.code, FailureCode::InvalidRequest, "{checks}");
+            assert!(
+                refused
+                    .message
+                    .contains("unknown check kind: download_sha256"),
+                "{}",
+                refused.message
+            );
+        }
+        assert!(!POSTCONDITION_FORMS
+            .iter()
+            .any(|(kind, _)| *kind == "download_sha256"));
     }
 }
