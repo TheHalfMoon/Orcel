@@ -1188,6 +1188,20 @@ pub fn macrosheet_workbook_by_relationship() -> Vec<u8> {
 /// A committed unzipped workbook from other software (`WORKBOOKS.md`), zipped
 /// again with its content types first, as a package must have.
 pub fn unpacked(name: &str) -> Vec<u8> {
+    zip_parts(&unpacked_parts(name))
+}
+
+/// Parts, zipped in their order.
+pub fn zip_parts(parts: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let entries: Vec<(&str, Vec<u8>)> = parts
+        .iter()
+        .map(|(part, bytes)| (part.as_str(), bytes.clone()))
+        .collect();
+    zip(&entries)
+}
+
+/// [`unpacked`]'s parts, content types first.
+pub fn unpacked_parts(name: &str) -> Vec<(String, Vec<u8>)> {
     fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) {
         for entry in std::fs::read_dir(dir).expect("fixture directory") {
             let path = entry.expect("fixture entry").path();
@@ -1210,9 +1224,5 @@ pub fn unpacked(name: &str) -> Vec<u8> {
     walk(&root, &root, &mut parts);
     assert!(!parts.is_empty(), "no fixture named {name}");
     parts.sort_by_key(|(part, _)| (part != "[Content_Types].xml", part.clone()));
-    let entries: Vec<(&str, Vec<u8>)> = parts
-        .iter()
-        .map(|(part, bytes)| (part.as_str(), bytes.clone()))
-        .collect();
-    zip(&entries)
+    parts
 }

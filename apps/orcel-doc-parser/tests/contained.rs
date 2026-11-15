@@ -128,11 +128,17 @@ impl Scene {
     }
 
     fn parser_spec(&self) -> ContainedSpec {
+        self.parser_spec_expecting(None)
+    }
+
+    /// The parser's spec, told which format it may accept.
+    fn parser_spec_expecting(&self, expected: Option<DocumentFormat>) -> ContainedSpec {
         spec(
             self.parser.clone(),
             &sha256_hex(&std::fs::read(&self.parser).unwrap()),
             &self.input_dir,
             self.work.clone(),
+            expected,
         )
     }
 
@@ -143,6 +149,7 @@ impl Scene {
             &sha256_hex(&std::fs::read(&self.probe).unwrap()),
             &self.input_dir,
             self.work.clone(),
+            None,
         );
         spec.argv = args.iter().map(|arg| (*arg).to_owned()).collect();
         spec
@@ -453,6 +460,41 @@ fn wi05_a_parser_crash_is_contained_and_yields_no_frame() {
         run.outcome
     );
     assert!(decode_frame(&run.stdout).is_err());
+}
+
+/// SG-000130 W1: told to expect a workbook, the contained parser refuses
+/// anything else by its sniff, the crash trigger included (so the sniff ran
+/// before anything else read the input), and still converts a workbook.
+#[test]
+fn wi05_an_expected_workbook_is_sniffed_before_any_parse_under_containment() {
+    let expect = Some(DocumentFormat::Xlsx);
+    for (input, refusal) in [
+        (fixtures::text_pdf(), ParseRefusal::UnsupportedFormat),
+        (fixtures::docx(), ParseRefusal::UnsupportedFormat),
+        (fixtures::legacy_office(), ParseRefusal::UnsupportedFormat),
+        (
+            fixtures::ABORT_TRIGGER.to_vec(),
+            ParseRefusal::UnsupportedFormat,
+        ),
+        (
+            fixtures::binary_workbook("application/vnd.ms-excel.sheet.macroEnabled.main+xml"),
+            ParseRefusal::ActiveContent,
+        ),
+    ] {
+        let Some(scene) = Scene::new(&input) else {
+            return;
+        };
+        let run = scene.run(&scene.parser_spec_expecting(expect));
+        assert_eq!(run.outcome, ContainedOutcome::Exited(EXIT_REFUSED));
+        assert_eq!(decode_frame(&run.stdout), Err(FrameError::Refused(refusal)));
+    }
+    let Some(scene) = Scene::new(&fixtures::workbook()) else {
+        return;
+    };
+    let run = scene.run(&scene.parser_spec_expecting(expect));
+    assert_eq!(run.outcome, ContainedOutcome::Exited(0));
+    let document = decode_frame(&run.stdout).expect("a workbook frame");
+    assert_eq!(document.format, DocumentFormat::Xlsx);
 }
 
 #[test]

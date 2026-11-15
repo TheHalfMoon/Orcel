@@ -64,7 +64,7 @@ fn the_spec_grants_only_the_input_directory_read_only() {
     let work = std::env::temp_dir().join("wi05-spec-work");
     let parser = std::env::temp_dir().join("orcel-doc-parser");
     let digest = "cd".repeat(32);
-    let spec = spec(parser.clone(), &digest, &input, work.clone());
+    let spec = spec(parser.clone(), &digest, &input, work.clone(), None);
     assert_eq!(spec.executable, parser);
     assert_eq!(spec.executable_sha256, digest);
     assert_eq!(
@@ -79,4 +79,32 @@ fn the_spec_grants_only_the_input_directory_read_only() {
         .expect("limits within the helper's ranges");
     assert_eq!(spec.limits.timeout, Duration::from_secs(30));
     assert!(spec.limits.stdout_bytes >= MAX_CHARS * 4);
+}
+
+#[test]
+fn an_expected_format_is_passed_before_the_input() {
+    let input = std::env::temp_dir().join("wi05-spec-input");
+    let work = std::env::temp_dir().join("wi05-spec-work");
+    let parser = std::env::temp_dir().join("orcel-doc-parser");
+    let digest = "cd".repeat(32);
+    let spec = spec(parser, &digest, &input, work, Some(DocumentFormat::Xlsx));
+    assert_eq!(
+        spec.argv,
+        vec![
+            EXPECT_FLAG.to_owned(),
+            "xlsx".to_owned(),
+            input.join(INPUT_NAME).to_string_lossy().into_owned()
+        ]
+    );
+    assert_eq!(spec.readable, vec![input]);
+    for format in [
+        DocumentFormat::Pdf,
+        DocumentFormat::Docx,
+        DocumentFormat::Pptx,
+        DocumentFormat::Xlsx,
+    ] {
+        assert_eq!(DocumentFormat::parse(format.as_str()), Some(format));
+    }
+    assert_eq!(DocumentFormat::parse("xlsm"), None);
+    assert_eq!(DocumentFormat::parse("XLSX"), None);
 }

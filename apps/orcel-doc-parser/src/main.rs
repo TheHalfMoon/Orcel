@@ -10,7 +10,7 @@
 //! timeout. A parser bug is therefore contained to a process that can read
 //! one file and write one bounded frame to stdout.
 //!
-//! Usage: `orcel-doc-parser <input>`. The binary reads no environment
+//! Usage: `orcel-doc-parser [--expect <format>] <input>`. The binary reads no environment
 //! variable and no other file. It writes exactly one `orcel-doc-parser/1`
 //! frame on stdout and exits 0 (`ok`) or 2 (`error`, a closed refusal code).
 //! The format is detected from the content only, never from a name:
@@ -19,6 +19,16 @@
 //!   adapted), which admits DOCX, PPTX and XLSX, and reads an XLSX through
 //!   [`workbook`] (Orcel's own, with source cell references);
 //! - anything else is `unsupported_format`.
+//!
+//! With `--expect <format>` (SG-000130 W1) the caller names the one format it
+//! accepts, and [`sniff`] refuses any other from the bytes before any of the
+//! above reads them: `%PDF-` for a PDF; for an Office format, a zip whose
+//! directory, `[Content_Types].xml` and relationship parts name no macro or
+//! ActiveX content and no other Office format, and whose one main part (the
+//! root `officeDocument` relationship) has exactly that format's main content
+//! type ([`document::sniff_package`]). The converter then refuses a package
+//! it would read as another format before converting it, and the converted
+//! format must equal it too.
 //!
 //! Every bound fails closed except the Markdown length: past
 //! [`MAX_CHARS`] the text is cut at a character boundary and flagged
@@ -31,7 +41,7 @@ mod workbook;
 
 use orcel_provider_process::document_parser::{
     encode_ok, encode_refusal, DocumentFormat, ParseRefusal, ParsedDocument, EXIT_REFUSED,
-    MAX_CHARS, MAX_INPUT_BYTES,
+    EXPECT_FLAG, MAX_CHARS, MAX_INPUT_BYTES,
 };
 use std::io::{Read as _, Write as _};
 use std::path::Path;
@@ -75,11 +85,12 @@ fn refuse_archive_limit_now() {
 }
 
 fn run() -> Result<ParsedDocument, ParseRefusal> {
-    let mut args = std::env::args_os().skip(1);
-    let (Some(path), None) = (args.next(), args.next()) else {
-        return Err(ParseRefusal::Usage);
-    };
+    let (expected, path) = arguments(std::env::args_os().skip(1).collect())?;
     let bytes = read_bounded(Path::new(&path))?;
+    // Before anything else looks at the bytes, the test triggers included.
+    if let Some(expected) = expected {
+        sniff(&bytes, expected)?;
+    }
     abort_on_test_trigger(&bytes);
     #[cfg(debug_assertions)]
     if let Some(pdf) = bytes.strip_prefix(UNCHECKED_TEST_TRIGGER) {
@@ -88,7 +99,60 @@ fn run() -> Result<ParsedDocument, ParseRefusal> {
         pdf::inspect_without_preflight(pdf)?;
         return Err(ParseRefusal::Usage);
     }
-    convert(&bytes)
+    let document = convert_with(&bytes, expected)?;
+    if expected.is_some_and(|expected| expected != document.format) {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
+    Ok(document)
+}
+
+/// `<input>`, or `--expect <format> <input>`; anything else is a usage error.
+fn arguments(
+    args: Vec<std::ffi::OsString>,
+) -> Result<(Option<DocumentFormat>, std::ffi::OsString), ParseRefusal> {
+    match <[std::ffi::OsString; 1]>::try_from(args) {
+        Ok([path]) => Ok((None, path)),
+        Err(args) => {
+            let [flag, format, path] =
+                <[std::ffi::OsString; 3]>::try_from(args).map_err(|_| ParseRefusal::Usage)?;
+            if flag != EXPECT_FLAG {
+                return Err(ParseRefusal::Usage);
+            }
+            let format = format
+                .to_str()
+                .and_then(DocumentFormat::parse)
+                .ok_or(ParseRefusal::Usage)?;
+            Ok((Some(format), path))
+        }
+    }
+}
+
+/// Whether the bytes are the expected format, decided before any parse: no
+/// converter and no archive pre-flight has read them yet.
+pub(crate) fn sniff(bytes: &[u8], expected: DocumentFormat) -> Result<(), ParseRefusal> {
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        return Err(ParseRefusal::InputTooLarge);
+    }
+    match expected {
+        DocumentFormat::Pdf if bytes.starts_with(b"%PDF-") => Ok(()),
+        DocumentFormat::Pdf => Err(ParseRefusal::UnsupportedFormat),
+        office => document::sniff_package(bytes, office),
+    }
+}
+
+/// [`convert`], only for the expected format: [`sniff`] first, and the
+/// converted format must be the same, as [`run`] does.
+#[cfg(test)]
+pub(crate) fn convert_expecting(
+    bytes: &[u8],
+    expected: DocumentFormat,
+) -> Result<ParsedDocument, ParseRefusal> {
+    sniff(bytes, expected)?;
+    let document = convert_with(bytes, Some(expected))?;
+    if document.format != expected {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
+    Ok(document)
 }
 
 /// Debug builds only: an input that starts with this trigger runs the rest
@@ -126,16 +190,30 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, ParseRefusal> {
     Ok(bytes)
 }
 
-/// Convert one input held in memory.
+/// Convert one input held in memory, with no expected format.
+#[cfg(test)]
 pub(crate) fn convert(bytes: &[u8]) -> Result<ParsedDocument, ParseRefusal> {
+    convert_with(bytes, None)
+}
+
+/// Convert one input held in memory; with `expected`, any other format is refused before its
+/// converter reads it.
+fn convert_with(
+    bytes: &[u8],
+    expected: Option<DocumentFormat>,
+) -> Result<ParsedDocument, ParseRefusal> {
     if bytes.len() as u64 > MAX_INPUT_BYTES {
         return Err(ParseRefusal::InputTooLarge);
     }
-    let (format, markdown, pages) = if bytes.starts_with(b"%PDF-") {
+    let pdf = bytes.starts_with(b"%PDF-");
+    if expected.is_some_and(|expected| (expected == DocumentFormat::Pdf) != pdf) {
+        return Err(ParseRefusal::UnsupportedFormat);
+    }
+    let (format, markdown, pages) = if pdf {
         let text = pdf::convert(bytes)?;
         (DocumentFormat::Pdf, text.markdown, text.pages)
     } else if document::is_office_container(bytes) {
-        let text = document::convert(bytes)?;
+        let text = document::convert_expecting(bytes, expected)?;
         (text.format, text.markdown, text.pages)
     } else {
         return Err(ParseRefusal::UnsupportedFormat);
