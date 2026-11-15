@@ -836,6 +836,81 @@ fn f5_a_workspace_file_changed_after_it_was_observed_is_refused() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// A file with a second name, inside the workspace or outside it, is refused
+/// at observe, and a second name made after observing is refused at parse.
+#[test]
+fn f5_a_workspace_file_with_another_hard_link_is_refused() {
+    let (root, workspace) = workspace_with("ws-hardlink", "data/a.xlsx", b"PK one name");
+    std::fs::write(root.join("data").join("b.xlsx"), b"PK two names").unwrap();
+    let (helper, parser) = dummy_pins(&root);
+    let observed = observe_workspace_file(&workspace, "data/b.xlsx").unwrap();
+    std::fs::hard_link(root.join("data").join("b.xlsx"), root.join("b-too.xlsx")).unwrap();
+    let error = parse_workspace_file(&workspace, &observed, &helper, &parser).unwrap_err();
+    assert_eq!(error.code, FailureCode::PathEscape, "{}", error.message);
+    assert!(error.message.contains("hard link"), "{}", error.message);
+    for name in ["data/b.xlsx", "b-too.xlsx"] {
+        let error = observe_workspace_file(&workspace, name).unwrap_err();
+        assert_eq!(error.code, FailureCode::PathEscape, "{name}");
+    }
+    // A name in the workspace for a file that lives outside it.
+    let outside = temp_dir("ws-hardlink-outside");
+    std::fs::write(outside.join("secret.xlsx"), b"PK outside").unwrap();
+    std::fs::hard_link(
+        outside.join("secret.xlsx"),
+        root.join("data").join("in.xlsx"),
+    )
+    .unwrap();
+    let error = observe_workspace_file(&workspace, "data/in.xlsx").unwrap_err();
+    assert_eq!(error.code, FailureCode::PathEscape, "{}", error.message);
+    assert!(observe_workspace_file(&workspace, "data/a.xlsx").is_ok());
+    let _ = std::fs::remove_dir_all(outside);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The race the walks alone can't see: a directory swapped for a link while
+/// the file is opened, and back before the next walk (an oplock can hold the
+/// open to make it deterministic). The open handle then reached the link's
+/// target. Simulated by opening through the link directly: the handle isn't
+/// the file at the walked path, by its real path, and by its identity.
+#[test]
+fn f5_a_handle_that_reached_another_file_is_refused() {
+    let (root, _workspace) = workspace_with("ws-raced", "data/a.xlsx", b"PK inside");
+    let outside = temp_dir("ws-raced-outside");
+    std::fs::write(outside.join("a.xlsx"), b"PK outside").unwrap();
+    #[cfg(windows)]
+    junction(&root.join("away"), &outside);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, root.join("away")).unwrap();
+    let walked = root.join("away").join("a.xlsx");
+    // `File::open` follows the link, as an open raced this way would.
+    let raced_handle = std::fs::File::open(&walked).unwrap();
+    let error = opened_as(&raced_handle, &walked).unwrap_err();
+    assert_eq!(
+        error.code,
+        FailureCode::PathRaceDetected,
+        "{}",
+        error.message
+    );
+    // A handle to one plain file isn't another plain file either.
+    let inside = root.join("data").join("a.xlsx");
+    let error = opened_as(&raced_handle, &inside).unwrap_err();
+    assert_eq!(error.code, FailureCode::PathRaceDetected);
+    // Identity: the same file opened twice matches; another file doesn't.
+    let first = opened_as(&open_no_follow(&inside).unwrap(), &inside).unwrap();
+    let again = opened_as(&open_no_follow(&inside).unwrap(), &inside).unwrap();
+    assert_eq!(first, again);
+    assert_eq!(first.links, 1);
+    std::fs::write(root.join("data").join("b.xlsx"), b"PK inside").unwrap();
+    let other_path = root.join("data").join("b.xlsx");
+    let other = opened_as(&open_no_follow(&other_path).unwrap(), &other_path).unwrap();
+    assert_ne!(first, other);
+    drop(raced_handle);
+    #[cfg(windows)]
+    std::fs::remove_dir(root.join("away")).unwrap();
+    let _ = std::fs::remove_dir_all(outside);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// F5 slice 2 end to end: a committed workbook fixture in a workspace, through
 /// the route and the real, pinned helper and parser under the contained tier
 /// (`wi05_`, so the Document parser CI job runs it with them).

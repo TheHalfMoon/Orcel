@@ -790,10 +790,13 @@ fn shipped_non_rust_source(relative: &str) -> bool {
 ///
 /// F5 slice 2 adds a route from a workspace file (`observe_workspace_file`,
 /// then `parse_workspace_file`) inside `document_parse.rs`. It has no caller
-/// but that module's tests: each of its items expects to be dead code in
-/// every build that isn't a test, the live-browser builds included, and no
-/// non-test Rust anywhere else, the files allowed to reach the parser
-/// included, names it (`workspace_route_callers`).
+/// but that module's tests. Each of its items expects to be dead code in
+/// every build that isn't a test, which CI's clippy enforces for default
+/// features only; a live-browser build isn't linted. So this test also
+/// checks that the module names the route's items only inside the route's
+/// own section, which defines nothing else, and that no non-test Rust
+/// anywhere else, the files allowed to reach the parser included, names it
+/// (`workspace_route_callers`).
 #[test]
 fn the_shipped_document_parser_has_no_release_caller() {
     let root = repo_root();
@@ -856,45 +859,94 @@ fn the_shipped_document_parser_has_no_release_caller() {
     // F5 slice 2: the workspace route expects to be dead in every non-test
     // build. Exactly this attribute, directly on each item.
     const TEST_ONLY_EXPECT: &str = "#[cfg_attr(not(test), expect(dead_code))]\n";
-    for item in [
-        "pub(crate) struct WorkspaceFile {",
-        "pub(crate) fn observe_workspace_file(",
-        "pub(crate) fn parse_workspace_file(",
-        "fn read_workspace_plain(",
-        "fn not_a_workbook(",
-        "fn not_plain(",
-        "fn open_no_follow(",
-    ] {
-        assert_eq!(
-            parse.matches(item).count(),
-            1,
-            "document_parse.rs no longer has exactly one {item}"
-        );
-        let at = parse.find(item).unwrap_or_default();
-        assert!(
-            parse[..at].ends_with(TEST_ONLY_EXPECT),
-            "{item} must carry exactly the non-test expect(dead_code):\n{TEST_ONLY_EXPECT}"
-        );
-    }
-    // In its own module, the two entry points are named only where they're
-    // defined: nothing outside the tests calls them.
-    let defined: Vec<String> = non_test_lines(&parse)
-        .into_iter()
-        .map(|(_, line)| line.trim())
-        .filter(|code| {
-            !code.starts_with("//")
-                && (names_identifier(code, "observe_workspace_file")
-                    || names_identifier(code, "parse_workspace_file"))
-        })
-        .map(str::to_owned)
-        .collect();
-    assert_eq!(
-        defined,
-        [
+    // (definition, its name, how many cfg-chosen definitions it has)
+    const ROUTE_ITEMS: [(&str, &str, usize); 11] = [
+        ("pub(crate) struct WorkspaceFile {", "WorkspaceFile", 1),
+        (
             "pub(crate) fn observe_workspace_file(",
+            "observe_workspace_file",
+            1,
+        ),
+        (
             "pub(crate) fn parse_workspace_file(",
-        ],
-        "document_parse.rs calls its workspace route outside its tests"
+            "parse_workspace_file",
+            1,
+        ),
+        ("fn not_a_workbook(", "not_a_workbook", 1),
+        ("fn read_workspace_plain(", "read_workspace_plain", 1),
+        ("struct FileIdentity {", "FileIdentity", 1),
+        ("fn opened_as(", "opened_as", 1),
+        ("fn raced(", "raced", 1),
+        ("fn file_identity(", "file_identity", 2),
+        ("fn not_plain(", "not_plain", 1),
+        ("fn open_no_follow(", "open_no_follow", 1),
+    ];
+    for (item, _, count) in ROUTE_ITEMS {
+        let at: Vec<usize> = parse.match_indices(item).map(|(at, _)| at).collect();
+        assert_eq!(
+            at.len(),
+            count,
+            "document_parse.rs no longer has exactly {count} {item}"
+        );
+        for at in at {
+            assert!(
+                parse[..at].ends_with(TEST_ONLY_EXPECT),
+                "{item} must carry exactly the non-test expect(dead_code):\n{TEST_ONLY_EXPECT}"
+            );
+        }
+    }
+    // In its own module, the route's items are named only inside the route's
+    // section (from its opening comment to `fn result(`), and that section
+    // defines nothing else. So no other code in the module, such as
+    // `parse_committed` or `run_parser` in a live-browser build (which CI
+    // doesn't lint), can call one unnoticed.
+    let lines: Vec<&str> = parse.lines().collect();
+    let line_of = |marker: &str| {
+        lines
+            .iter()
+            .position(|line| line.starts_with(marker))
+            .map(|index| index + 1)
+            .unwrap_or_else(|| panic!("document_parse.rs no longer has {marker}"))
+    };
+    let first = line_of("// F5 slice 2 (founder decision 7 of 2026-11-14,");
+    let last = line_of("fn result(");
+    assert!(first < last, "the route's section is out of order");
+    let outside: Vec<String> = non_test_lines(&parse)
+        .into_iter()
+        .filter(|(number, line)| {
+            let code = line.trim();
+            (*number < first || *number >= last)
+                && !code.starts_with("//")
+                && ROUTE_ITEMS
+                    .iter()
+                    .any(|(_, name, _)| names_identifier(code, name))
+        })
+        .map(|(number, line)| format!("document_parse.rs:{number}: {}", line.trim()))
+        .collect();
+    assert!(
+        outside.is_empty(),
+        "document_parse.rs names its workspace route outside the route:\n{}",
+        outside.join("\n")
+    );
+    let strays: Vec<&str> = lines[first..last - 1]
+        .iter()
+        .copied()
+        .filter(|line| {
+            !line.is_empty()
+                && !line.starts_with(' ')
+                && !line.starts_with("//")
+                && !line.starts_with("#[")
+                && !line.starts_with('}')
+                && !line.starts_with(')')
+                && !ROUTE_ITEMS
+                    .iter()
+                    .any(|(item, _, _)| line.starts_with(item))
+        })
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "the workspace route's section defines something else:\n{}",
+        strays.join("\n")
     );
     let live = file("crates/orceld/src/live_browser.rs");
     assert!(
