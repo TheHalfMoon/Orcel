@@ -216,8 +216,8 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 
   // (issue #753), which CURRENT.md records. Its number was reserved in the
   // backlog before SG-000126 to SG-000129 were activated.
   // SG-000130 (ORCEL-F5, workbook sources in the report task) runs beside
-  // SG-000096, SG-000122, SG-000127 and SG-000128 by founder decision of
-  // 2026-11-14 and 2026-11-15 (issue #760), which CURRENT.md records.
+  // SG-000096, SG-000122, SG-000127 and SG-000128 by founder go-ahead of
+  // 2026-11-15, posted on issue #760, which CURRENT.md records.
   // Update this pin when any of the others closes.
   // The current lawful state: SG-000096, SG-000122, SG-000127, SG-000128 and
   // SG-000130 open, SG-000129 closed.
@@ -227,7 +227,7 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 
     assert.ok(current.includes("SG-000127 runs with SG-000096 as the open pair by founder sequencing of 2026-10-22 (issue #446)"), "SG-000127 requires its recorded founder sequencing");
     assert.ok(current.includes("SG-000128 runs beside SG-000096 and SG-000127 as an additional active grain by founder decision of 2026-10-29"), "SG-000128 requires its recorded founder decision");
     assert.ok(current.includes("SG-000122 runs beside SG-000096, SG-000127 and SG-000128 as an additional active grain by founder decision of 2026-11-14"), "SG-000122 requires its recorded founder decision");
-    assert.ok(current.includes("SG-000130 runs beside SG-000096, SG-000122, SG-000127 and SG-000128 as an additional active grain by founder decision of 2026-11-14 and 2026-11-15"), "SG-000130 requires its recorded founder decision");
+    assert.ok(current.includes("SG-000130 runs beside SG-000096, SG-000122, SG-000127 and SG-000128 as an additional active grain by founder go-ahead of 2026-11-15, posted as a comment on #760"), "SG-000130 requires its recorded founder go-ahead");
     assert.ok(current.includes("SG-000129 closed canonically on implementation PR `#554`"), "SG-000129's closeout is recorded");
     for (const closed of ["SG-000108.json", "SG-000120.json", "SG-000126.json", "SG-000129.json"]) {
       const spec = JSON.parse(readFileSync(join(dir, closed), "utf8")) as { state: string };
