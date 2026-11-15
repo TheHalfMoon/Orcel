@@ -95,6 +95,9 @@ def main(argv: list[str]) -> int:
     model_run.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
     model_run.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
     model_run.add_argument("--tier-a-repeats", type=int, default=10, help="runs of each Tier A variant (the bar: 10)")
+    model_run.add_argument("--temp-root", type=Path,
+                           help="where workspaces, state and the extracted runner go (default: the system temp); "
+                                "the agent store and orceld refuse a folder another account can reach")
     model_run.add_argument("--out", required=True, type=Path, help="where to write the report")
     tierc = sub.add_parser("tierc-noop", help="Tier C C1: the no-op baseline over a verified taskpack")
     tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched by fetch-taskpack (verified again before it runs)")
@@ -169,6 +172,12 @@ def main(argv: list[str]) -> int:
         return model_selfcheck(args)
     if args.command == "model-run":
         from .model_real import main as model_run
+
+        if args.temp_root is not None:
+            import tempfile
+
+            args.temp_root.mkdir(parents=True, exist_ok=True)
+            tempfile.tempdir = str(args.temp_root.resolve())
 
         return model_run(args)
     if args.command == "agent":
