@@ -593,6 +593,12 @@ pub(crate) fn form_prompt(
             "the field looks like a password, PIN or other secret; it is never filled or typed into",
         ));
     }
+    // A radio can only be selected (the browser engine refuses to uncheck
+    // one only after the approval is spent). The host refuses this before
+    // binding; refused here again so no prompt can ever ask for it.
+    if matches!(action, BindAction::Check { checked: false, .. }) && form.role == "radio" {
+        return Err(refused(orcel_browser_host::RADIO_UNCHECK_REFUSED));
+    }
     let shown = |text: &str, field: &str| {
         orcel_policy::live_browser::shown_in_full(text, field)
             .map_err(|error| ProviderError::new(error.code, error.message))
@@ -2593,6 +2599,54 @@ mod tests {
             url: "https://fixture.test/".into(),
         };
         assert!(form_prompt("default", "t", &navigate, &field("x", None), "d", None).is_err());
+    }
+
+    /// SG-000122 slice A4: `checked: false` on a radio is refused before any
+    /// prompt (a radio can only be selected); a checkbox may still be
+    /// cleared, and a radio still selected.
+    #[test]
+    fn sg122_unchecking_a_radio_gets_no_prompt() {
+        let check = |role: &str, checked: bool| BindAction::Check {
+            node_id: "d3-e9".into(),
+            role: role.into(),
+            checked,
+        };
+        let bound = |role: &str| {
+            let mut form = field("Express delivery", None);
+            form.role = role.into();
+            form
+        };
+        let refused = form_prompt(
+            "default",
+            "t",
+            &check("radio", false),
+            &bound("radio"),
+            "d",
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(refused.code, FailureCode::InvalidRequest);
+        assert_eq!(refused.message, orcel_browser_host::RADIO_UNCHECK_REFUSED);
+        let selected = form_prompt(
+            "default",
+            "t",
+            &check("radio", true),
+            &bound("radio"),
+            "d",
+            None,
+        )
+        .unwrap();
+        assert_eq!(selected.summary, "set to checked");
+        let cleared = form_prompt(
+            "default",
+            "t",
+            &check("checkbox", false),
+            &bound("checkbox"),
+            "d",
+            None,
+        )
+        .unwrap();
+        assert_eq!(cleared.summary, "set to unchecked");
     }
 
     /// SG-000122 slice A2: the approval digest binds the page, its

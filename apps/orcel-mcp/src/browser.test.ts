@@ -59,7 +59,7 @@ test("no browser tool is registered on the MCP server surface", () => {
     .replace(/`?browser_structured`?/g, "")
     .replace(/import \{ registerLiveBrowserTools \} from "\.\/browser_live\.js";/g, "")
     .replace(/registerLiveBrowserTools\(server, kernel, defaultWorkspace\);/g, "")
-    // The catalog names the live tools (SG-000108 slice 3c, SG-000122 slice A3).
-    .replace(/"browser_(click|download|download_preview|fill|navigate|observe|page_open|verify|wait_text)",/g, "");
+    // The catalog names the live tools (SG-000108 slice 3c, SG-000122 slices A3 and A4).
+    .replace(/"browser_(check|click|download|download_preview|enter|fill|navigate|observe|page_open|select|verify|wait_text)",/g, "");
   assert.doesNotMatch(withoutGoverned, /browser/i);
 });

@@ -19,13 +19,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
 
 const EXPECTED_TOOLS = [
+  "browser_check",
   "browser_click",
   "browser_download",
   "browser_download_preview",
+  "browser_enter",
   "browser_fill",
   "browser_navigate",
   "browser_observe",
   "browser_page_open",
+  "browser_select",
   "browser_verify",
   "browser_wait_text",
   "clipboard_read",

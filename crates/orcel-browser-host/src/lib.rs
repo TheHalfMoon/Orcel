@@ -67,7 +67,7 @@ pub use actuation::{
     coordinate_fallback, dispatch, name_looks_secret, retry_after_dispatch, role_supports_action,
     target_digest, verify_postcondition, verify_target, ActuationTarget, ApprovalToken,
     DispatchOutcome, FormInput, SupportedAction, MAX_FORM_OPTIONS, MAX_FORM_VALUE_BYTES,
-    PRESS_KEYS,
+    PRESS_KEYS, RADIO_UNCHECK_REFUSED,
 };
 pub use argv::{assert_argv_clean, build_argv};
 pub use capture::{

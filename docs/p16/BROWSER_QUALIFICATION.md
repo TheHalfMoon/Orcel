@@ -51,13 +51,15 @@ the model-only path every `browser.form`, `browser.wait` and `browser.verify` sh
 | --- | --- | --- |
 | `browser.wait/text` | live (SG-000122) | `browser_wait_text`, under `browser_structured` only |
 | `browser.verify/check` | live (SG-000122) | `browser_verify`, under `browser_structured` only |
-| `browser.form/select` | live dispatch only (SG-000122 slice A2) | no MCP tool until slice A4 |
-| `browser.form/check` | live dispatch only (SG-000122 slice A2) | no MCP tool until slice A4 |
-| `browser.form/enter` | live dispatch only (SG-000122 slice A2) | no MCP tool until slice A4 |
+| `browser.form/select` | live (SG-000122) | `browser_select`, under `browser_structured` only |
+| `browser.form/check` | live (SG-000122) | `browser_check`, under `browser_structured` only |
+| `browser.form/enter` | live (SG-000122) | `browser_enter`, under `browser_structured` only |
 
-SG-000062 found that no shape qualified against a live engine, so no browser tool was exposed then; SG-000108 later qualified the six live shapes below.
-Exposing these shapes would let an AI client believe it browsed a page when
-it only exercised policy bookkeeping.
+SG-000062 found that no shape qualified against a live engine, so no browser tool was exposed then. SG-000108 later
+qualified the isolated engine and made six of the twelve shapes live (the first table above); SG-000122 makes six more
+live on the same engine: `browser.dom/fill` from the twelve and the five shapes of the second table. The shapes still
+marked model-only stay unexposed: exposing one would let an AI client believe it browsed a page when it only exercised
+policy bookkeeping.
 
 SG-000108 slice 3c (docs/security/SG-000108_PRODUCT_CALLER.md) makes six shapes live MCP tools on the qualified
 isolated engine, under the `browser_structured` profile only, which local configuration alone selects. They reach a
@@ -75,6 +77,22 @@ remote:
   element, text, value, checked-state and URL postconditions. Both are read-only and need no approval; their text
   probes look only at the main frame's committed document, and each lifetime admits at most 16 distinct awaited
   texts across them.
+
+SG-000122 slice A4 adds the last three under the same profile and rules, each after its own fresh SOFT approval bound
+to the page generation, the control and the stated option, state or key, used once:
+- `browser_select` chooses exactly one option of one observed native select, named by its exact label; the prompt
+  shows the label exactly and in full, or the label is refused.
+- `browser_check` sets one observed checkbox or radio input to a stated state (checked or unchecked).
+- `browser_enter` presses Enter, and only Enter (it takes no key), in one observed single-line text field as
+  `browser_fill` defines it. Its prompt says that the page may submit or send what it holds; the lifetime's one
+  admitted site is the only place it can go. A submit that would open a new document is blocked (BR-02's
+  no-new-document rule for form actions, until slice A6 settles Enter's route); the reply may still say done with
+  an unchanged URL, so check the page with `browser_verify`.
+
+Each prompt shows the control's role and name labelled page-supplied. A radio can only be selected: `checked: false`
+on a radio is refused before any approval (the host's live check, and orceld's prompt builder again); to clear a
+radio, select another in its group. A checkbox may be set either way. Every SG-000122 schema, A3's three and A4's three, is strict: an unknown field (a key
+for Enter, a list of options for select, a selector or frame) is refused, never dropped.
 
 No native Windows run of these tools has been recorded yet (slice A6).
 
