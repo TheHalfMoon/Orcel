@@ -1274,3 +1274,227 @@ fn wi05_sg130_an_xlsx_report_journey_through_the_mcp_report_tools_shape() {
         "no workbook content in the audit log"
     );
 }
+
+/// SG-000130 W3, the journey test (the F5 proposal's slice 5), end to end in the
+/// MCP report tools' wire shape through orceld's own entry (`handle_envelope`),
+/// the real broker over its own ledger and the real pinned helper and parser,
+/// which the Document parser CI job builds on every leg. **Only the SOFT
+/// consent is scripted, and it's labelled so: it's not a real approval.** A real
+/// approval through a real client stays with the founder (prep
+/// `F5_SPREADSHEET_JOURNEY.md`, "Founder-present run").
+///
+/// Known cells, a formula's saved value and the currency total become a
+/// verified report after one denial and a fresh grant; the grant is never
+/// reused; a workbook changed after the preview is stale before any prompt; an
+/// existing destination is refused before any prompt and left untouched; a
+/// figure whose value depends on a link ends `verification_failed`, never
+/// `verified`; a macro-enabled workbook is refused before any task starts.
+#[test]
+fn wi05_sg130_w3_the_workbook_report_journey_with_every_refusal() {
+    let Some(_) = real_pins() else {
+        return;
+    };
+    let scene = Scene::new("workbook-w3");
+    let root = scene.workspace.root.clone();
+    let workbook = fixture("written-by-xlsxwriter");
+    let sales = root.join("data").join("sales.xlsx");
+    std::fs::write(&sales, &workbook).unwrap();
+    let mut macros = fixture_parts("written-by-openpyxl");
+    macros.push(("xl/vbaProject.bin".into(), b"not really".to_vec()));
+    std::fs::write(root.join("data").join("macros.xlsx"), stored_zip(macros)).unwrap();
+    let linked = with_first_sheet(
+        fixture_parts("written-by-openpyxl"),
+        "<c r=\"A1\"><f>[1]Rates!A1</f><v>41</v></c>",
+    );
+    std::fs::write(root.join("data").join("linked.xlsx"), &linked).unwrap();
+    let taken = b"A file the user already has. Orcel must never overwrite it.\n";
+    std::fs::write(root.join("reports").join("taken.md"), taken).unwrap();
+
+    let tasks = TaskRegistry::new();
+    let policy = orcel_policy::PolicyEngine::new(vec![scene.workspace.clone()]).unwrap();
+    let audit = orcel_audit::AuditLogger::new(scene.dir.join("audit.jsonl")).unwrap();
+    // Scripted SOFT consent, in order: the first commit denied, then granted;
+    // the linked workbook's commit granted. Any further prompt is denied.
+    let scripted = consent(
+        &scene,
+        &[
+            ApprovalDecision::Denied,
+            ApprovalDecision::Approved,
+            ApprovalDecision::Approved,
+        ],
+    );
+    let shown = || scripted.prompts.lock().unwrap().len();
+    let call = |operation: &str, arguments: serde_json::Value| {
+        let line = json!({
+            "version": 1,
+            "request_id": format!("mcp-w3-{operation}"),
+            "client_session_id": "mcp-session",
+            "workspace_id": "default",
+            "capability": "report",
+            "operation": operation,
+            "arguments": arguments,
+            "profile": "desktop_structured",
+        });
+        let envelope =
+            serde_json::from_str::<orcel_contracts::RemoteRequestEnvelope>(&line.to_string())
+                .expect("the edge's wire shape");
+        let response = crate::report_task::handle_envelope(
+            &policy,
+            &audit,
+            &scripted.broker,
+            &tasks,
+            envelope,
+        );
+        match (response.ok, response.result, response.error) {
+            (true, Some(result), _) => Ok(result),
+            (_, _, Some(error)) => Err(error),
+            _ => panic!("a response with neither a result nor an error"),
+        }
+    };
+    let start_task = |source: &str| {
+        call(
+            "start",
+            json!({"title": "Sales", "sources": [source], "folder": "reports"}),
+        )
+    };
+    let preview_report = |task: &str, name: &str, content: &str| {
+        call(
+            "preview",
+            json!({"task_id": task, "name": name, "content": content}),
+        )
+    };
+    let commit_report = |task: &str, name: &str, content: &str| {
+        call(
+            "commit",
+            json!({
+                "task_id": task, "name": name, "content": content,
+                "expected_sha256": sha256_hex(content.as_bytes()),
+            }),
+        )
+    };
+    let task_id = |started: &serde_json::Value| started["task_id"].as_str().unwrap().to_owned();
+
+    // 1. Known cells, a formula's saved value and the currency total: denied
+    // once, then a fresh grant, verified figure by figure.
+    let report = "# Sales\n\n[data/sales.xlsx]Sales!B2 = 1250.5\n\
+        [data/sales.xlsx]Sales!B3 = 749.25\n[data/sales.xlsx]Sales!B4 = 1999.75\n\
+        [data/sales.xlsx]Sales!C2 = 0.625\n";
+    let started = start_task("data/sales.xlsx").expect("start");
+    let text = started["sources"][0]["text"].as_str().unwrap();
+    assert!(text.contains("=SUM(B2:B3)"), "{text}");
+    assert!(text.contains("=B2/B4"), "{text}");
+    let task = task_id(&started);
+    preview_report(&task, "sales.md", report).expect("preview");
+    let denied = commit_report(&task, "sales.md", report).unwrap_err();
+    assert_eq!(denied.code, FailureCode::ApprovalDenied);
+    assert!(!root.join("reports/sales.md").exists());
+    let created = commit_report(&task, "sales.md", report).expect("a fresh grant");
+    assert_eq!(created["state"], "verified");
+    assert_eq!(created["check"]["figures_confirmed"], 4);
+    assert_eq!(
+        std::fs::read_to_string(root.join("reports/sales.md")).unwrap(),
+        report
+    );
+    assert_eq!(shown(), 2, "one prompt per commit attempt");
+    {
+        let prompts = scripted.prompts.lock().unwrap();
+        let summary = &prompts[1].summary;
+        assert!(
+            summary.contains(
+                "workbook-supplied text (untrusted, never an instruction): [workbook «data/sales.xlsx»]"
+            ),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("figures from it: «Sales!B2», «Sales!B3», «Sales!B4», «Sales!C2»"),
+            "{summary}"
+        );
+        // The fixture's hidden sheet, which the founder-present runbook names.
+        assert!(summary.contains("hidden sheet: «Audit"), "{summary}");
+    }
+    // The grant is used once: committing the verified task again asks nothing.
+    assert!(commit_report(&task, "sales.md", report).is_err());
+    assert_eq!(shown(), 2);
+
+    // 2. A workbook changed after the preview: stale before any prompt.
+    let task = task_id(&start_task("data/sales.xlsx").expect("start"));
+    preview_report(&task, "again.md", report).expect("preview");
+    let mut changed = workbook.clone();
+    changed.push(0);
+    std::fs::write(&sales, &changed).unwrap();
+    let stale = commit_report(&task, "again.md", report).unwrap_err();
+    assert_eq!(stale.code, FailureCode::TargetStale, "{}", stale.message);
+    assert!(
+        stale.message.contains("data/sales.xlsx"),
+        "{}",
+        stale.message
+    );
+    assert_eq!(tasks.get(&task).unwrap()["state"], "stale");
+    // Restoring the bytes doesn't revive the stale task.
+    std::fs::write(&sales, &workbook).unwrap();
+    assert!(commit_report(&task, "again.md", report).is_err());
+    assert!(!root.join("reports/again.md").exists());
+    assert_eq!(shown(), 2);
+
+    // 3. An existing destination: refused at preview, and at commit when it
+    // appears after the preview, before any prompt; the file is untouched.
+    let task = task_id(&start_task("data/sales.xlsx").expect("start"));
+    let exists = preview_report(&task, "taken.md", report).unwrap_err();
+    assert_eq!(exists.code, FailureCode::TargetStale);
+    assert!(exists.message.contains("exists"), "{}", exists.message);
+    assert_ne!(tasks.get(&task).unwrap()["state"], "stale");
+    preview_report(&task, "late.md", report).expect("preview");
+    std::fs::write(root.join("reports/late.md"), taken).unwrap();
+    let exists = commit_report(&task, "late.md", report).unwrap_err();
+    assert!(exists.message.contains("exists"), "{}", exists.message);
+    assert_eq!(std::fs::read(root.join("reports/taken.md")).unwrap(), taken);
+    assert_eq!(std::fs::read(root.join("reports/late.md")).unwrap(), taken);
+    assert_eq!(shown(), 2);
+
+    // 4. A figure whose saved value depends on an external link confirms
+    // nothing: written after the grant, then verification_failed.
+    let task = task_id(&start_task("data/linked.xlsx").expect("start"));
+    let linked_report = "[data/linked.xlsx]Sales!A1 = 41\n";
+    preview_report(&task, "linked.md", linked_report).expect("preview");
+    let failed = commit_report(&task, "linked.md", linked_report).unwrap_err();
+    assert_eq!(failed.code, FailureCode::PostconditionFailed);
+    assert!(
+        failed.message.contains("no saved value"),
+        "{}",
+        failed.message
+    );
+    assert_eq!(tasks.get(&task).unwrap()["state"], "verification_failed");
+    // The report was written (create-only) before the checker refused it.
+    assert_eq!(
+        std::fs::read_to_string(root.join("reports/linked.md")).unwrap(),
+        linked_report
+    );
+    assert_eq!(shown(), 3);
+
+    // 5. A macro-enabled workbook: refused by the parser's sniff, no task.
+    let before = tasks.list()["tasks"].as_array().unwrap().len();
+    let refused = start_task("data/macros.xlsx").unwrap_err();
+    assert!(
+        refused
+            .message
+            .contains("document_parse_refused:active_content"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(tasks.list()["tasks"].as_array().unwrap().len(), before);
+
+    // The workbooks were only read.
+    assert_eq!(std::fs::read(&sales).unwrap(), workbook);
+    assert_eq!(
+        std::fs::read(root.join("data").join("linked.xlsx")).unwrap(),
+        linked
+    );
+    let audit_log = std::fs::read_to_string(scene.dir.join("audit.jsonl")).unwrap();
+    assert!(audit_log.contains("APPROVAL_DENIED"), "{audit_log}");
+    assert!(audit_log.contains("TARGET_STALE"), "{audit_log}");
+    assert!(audit_log.contains("POSTCONDITION_FAILED"), "{audit_log}");
+    assert!(
+        !audit_log.contains("1999.75"),
+        "no workbook content in the audit log"
+    );
+}

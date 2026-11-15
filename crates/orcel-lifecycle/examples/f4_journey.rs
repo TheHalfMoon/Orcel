@@ -12,12 +12,17 @@
 //! cargo run -p orcel-lifecycle --example f4_journey -- prepare <dir>
 //! cargo run -p orcel-lifecycle --example f4_journey -- ready <dir> [--release-candidate <folder>]
 //! cargo run -p orcel-lifecycle --example f4_journey -- change-source <dir>
+//! cargo run -p orcel-lifecycle --example f4_journey -- change-workbook <dir>
 //! cargo run -p orcel-lifecycle --example f4_journey -- history <dir> [--journal <file>]
 //! cargo run -p orcel-lifecycle --example f4_journey -- evidence <dir> \
-//!     --client "Claude Code 2.x.y" --transcript <file> [--journal <file>]
+//!     --client "Claude Code 2.x.y" --transcript <file> [--journal <file>] [--workbook]
 //! ```
 //!
 //! Runbook: docs/orcel/implementation-readiness/prep/F4_SLICE4_CLIENT_JOURNEY.md
+//!
+//! SG-000130 W3: `prepare` also writes `data/sales.xlsx`, a committed workbook
+//! fixture, for the founder-present workbook journey (runbook: "Founder-present
+//! run" in prep/F5_SPREADSHEET_JOURNEY.md); `evidence --workbook` adds its checks.
 
 use orcel_lifecycle::logs::redact_line;
 use serde_json::{json, Value};
@@ -35,11 +40,100 @@ const TAKEN: &str = "A file the user already has. Orcel must never overwrite it.
 /// approval, a token or a way to approve (SG-000127 acceptance 3).
 const FORBIDDEN_IN_TRANSCRIPT: [&str; 3] = ["approval_id", "approval_token", "approve_url"];
 
+/// The workbook journey's source: the committed XlsxWriter fixture, part by
+/// part (`apps/orcel-doc-parser/tests/fixtures/WORKBOOKS.md`). Sales!B2 and B3
+/// are currency cells, B4 their saved `=SUM(B2:B3)` total, C2 a saved formula.
+macro_rules! workbook_part {
+    ($name:literal) => {
+        (
+            $name,
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../apps/orcel-doc-parser/tests/fixtures/workbooks/written-by-xlsxwriter/",
+                $name
+            ))
+            .as_slice(),
+        )
+    };
+}
+const WORKBOOK_PARTS: [(&str, &[u8]); 14] = [
+    workbook_part!("[Content_Types].xml"),
+    workbook_part!("_rels/.rels"),
+    workbook_part!("docProps/app.xml"),
+    workbook_part!("docProps/core.xml"),
+    workbook_part!("xl/_rels/workbook.xml.rels"),
+    workbook_part!("xl/comments1.xml"),
+    workbook_part!("xl/drawings/vmlDrawing1.vml"),
+    workbook_part!("xl/sharedStrings.xml"),
+    workbook_part!("xl/styles.xml"),
+    workbook_part!("xl/theme/theme1.xml"),
+    workbook_part!("xl/workbook.xml"),
+    workbook_part!("xl/worksheets/_rels/sheet1.xml.rels"),
+    workbook_part!("xl/worksheets/sheet1.xml"),
+    workbook_part!("xl/worksheets/sheet2.xml"),
+];
+/// The report the runbook asks the client for; every figure names its workbook.
+const WORKBOOK_REPORT_FIGURES: &str = "[data/sales.xlsx]Sales!B2 = 1250.5, [data/sales.xlsx]Sales!B3 = 749.25, [data/sales.xlsx]Sales!B4 = 1999.75";
+
 fn sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+        }
+    }
+    !crc
+}
+
+/// The workbook as a zip with no compression, content types first, as orceld's
+/// own workbook tests build it from the same parts. Always the same bytes.
+fn workbook() -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, bytes) in WORKBOOK_PARTS {
+        let offset = out.len() as u32;
+        let header = |out: &mut Vec<u8>| {
+            for value in [crc32(bytes), bytes.len() as u32, bytes.len() as u32] {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0_u16.to_le_bytes());
+        };
+        out.extend_from_slice(b"PK\x03\x04\x14\0\0\0\0\0\0\0\x21\0");
+        header(&mut out);
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(bytes);
+        central.extend_from_slice(b"PK\x01\x02\x14\0\x14\0\0\0\0\0\0\0\x21\0");
+        header(&mut central);
+        central.extend_from_slice(&[0; 10]);
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name.as_bytes());
+    }
+    let start = out.len() as u32;
+    out.extend_from_slice(&central);
+    out.extend_from_slice(b"PK\x05\x06\0\0\0\0");
+    for _ in 0..2 {
+        out.extend_from_slice(&(WORKBOOK_PARTS.len() as u16).to_le_bytes());
+    }
+    out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+    out.extend_from_slice(&start.to_le_bytes());
+    out.extend_from_slice(&0_u16.to_le_bytes());
+    out
+}
+
+/// The workbook with one byte more: another SHA-256, so its task is stale.
+fn changed_workbook() -> Vec<u8> {
+    let mut bytes = workbook();
+    bytes.push(0);
+    bytes
 }
 
 fn prepare(dir: &Path) -> Result<(), String> {
@@ -49,6 +143,7 @@ fn prepare(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir.join("data")).map_err(text)?;
     fs::create_dir_all(dir.join("reports")).map_err(text)?;
     fs::write(dir.join("data").join("q3.csv"), SOURCE).map_err(text)?;
+    fs::write(dir.join("data").join("sales.xlsx"), workbook()).map_err(text)?;
     fs::write(dir.join("reports").join("taken.md"), TAKEN).map_err(text)?;
     fs::write(
         dir.join(".mcp.json"),
@@ -58,6 +153,9 @@ fn prepare(dir: &Path) -> Result<(), String> {
     println!("Prepared {}", dir.display());
     println!("Next: orcel workspace add default \"{}\"", dir.display());
     println!("Then run `ready`, and follow prep/F4_SLICE4_CLIENT_JOURNEY.md.");
+    println!(
+        "For the workbook journey (prep/F5_SPREADSHEET_JOURNEY.md), the report states: {WORKBOOK_REPORT_FIGURES}"
+    );
     Ok(())
 }
 
@@ -90,6 +188,11 @@ fn ready_checks(dir: &Path, workspaces: &str) -> Vec<Check> {
             "the source is unchanged",
             (file(&["data", "q3.csv"]) == SOURCE.as_bytes()).then(|| "data/q3.csv".to_owned()),
             "data/q3.csv isn't the prepared one; prepare a new folder",
+        ),
+        check(
+            "the workbook is unchanged",
+            (file(&["data", "sales.xlsx"]) == workbook()).then(|| "data/sales.xlsx".to_owned()),
+            "data/sales.xlsx isn't the prepared one; prepare a new folder",
         ),
         check(
             "the existing file is in place",
@@ -224,6 +327,12 @@ fn ready(dir: &Path, candidate: Option<&Path>) -> Result<bool, String> {
 fn change_source(dir: &Path) -> Result<(), String> {
     fs::write(dir.join("data").join("q3.csv"), CHANGED_SOURCE).map_err(text)?;
     println!("Changed data/q3.csv. Now ask the client to commit the stale report.");
+    Ok(())
+}
+
+fn change_workbook(dir: &Path) -> Result<(), String> {
+    fs::write(dir.join("data").join("sales.xlsx"), changed_workbook()).map_err(text)?;
+    println!("Changed data/sales.xlsx. Now ask the client to commit the stale workbook report.");
     Ok(())
 }
 
@@ -380,6 +489,69 @@ fn checks(dir: &Path, tasks: &[&Value], transcript: &str) -> Vec<Check> {
     ]
 }
 
+/// Whether the task observed the prepared workbook as a workbook source.
+fn read_the_prepared_workbook(task: &Value) -> bool {
+    let prepared = sha256(&workbook());
+    task["sources"].as_array().is_some_and(|sources| {
+        sources.iter().any(|source| {
+            source["path"] == "data/sales.xlsx"
+                && source["workbook"] == true
+                && source["sha256"] == prepared.as_str()
+        })
+    })
+}
+
+/// SG-000130 W3, the workbook journey's own checks (`evidence --workbook`). The
+/// journal records no prompt text, so what the prompt showed is the person's
+/// note in the runbook, not checked here.
+fn workbook_checks(dir: &Path, tasks: &[&Value]) -> Vec<Check> {
+    let verified = tasks.iter().find_map(|task| {
+        if task["state"] != "verified"
+            || task["check"]["passed"] != true
+            || !read_the_prepared_workbook(task)
+        {
+            return None;
+        }
+        let confirmed = task["check"]["figures_confirmed"].as_u64()?;
+        let name = task["report"]["name"].as_str()?;
+        let bytes = fs::read(dir.join("reports").join(name)).ok()?;
+        (confirmed >= 3 && sha256(&bytes) == task["report"]["sha256"].as_str()?).then(|| {
+            format!(
+                "{}: {name} verified, {confirmed} workbook figures confirmed by the checker's own parser run",
+                task["id"].as_str().unwrap_or_default()
+            )
+        })
+    });
+    let stale = tasks.iter().find_map(|task| {
+        let stale = has_step(task, "commit", "stale") || has_step(task, "preview", "stale");
+        (stale && read_the_prepared_workbook(task)).then(|| {
+            format!(
+                "{}: data/sales.xlsx changed after the task observed it",
+                task["id"].as_str().unwrap_or_default()
+            )
+        })
+    });
+    let now = fs::read(dir.join("data").join("sales.xlsx")).unwrap_or_default();
+    vec![
+        check(
+            "a workbook report verified figure by figure",
+            verified,
+            "no verified task over the prepared data/sales.xlsx with at least 3 confirmed figures and its report on disk",
+        ),
+        check(
+            "a changed workbook refused as stale",
+            stale,
+            "no task over the prepared data/sales.xlsx recorded a stale source",
+        ),
+        check(
+            "the workbook holds only the kit's bytes",
+            (now == workbook() || now == changed_workbook())
+                .then(|| "data/sales.xlsx as prepared or as change-workbook left it".to_owned()),
+            "data/sales.xlsx holds other bytes",
+        ),
+    ]
+}
+
 fn redacted(transcript: &str) -> String {
     let mut out = String::new();
     for line in transcript.lines() {
@@ -458,12 +630,53 @@ fn history(dir: &Path, journal: &Path) -> Result<bool, String> {
     Ok(!tasks.is_empty())
 }
 
-fn evidence(dir: &Path, client: &str, transcript: &Path, journal: &Path) -> Result<bool, String> {
+/// What `evidence` checks: F4's journey, or with `workbook` the F5 workbook
+/// journey (SG-000130 W3), which has no orceld-death step and adds its own.
+/// With `workbook`, the denied and existing-destination paths count only for a
+/// task over the prepared workbook, so a text task can't satisfy them.
+fn evidence_checks(dir: &Path, tasks: &[&Value], transcript: &str, workbook: bool) -> Vec<Check> {
+    let mut results = checks(dir, tasks, transcript);
+    if workbook {
+        results.retain(|result| result.name != "an interrupted task read back after orceld died");
+        let over_workbook: Vec<&Value> = tasks
+            .iter()
+            .copied()
+            .filter(|task| read_the_prepared_workbook(task))
+            .collect();
+        let bound = checks(dir, &over_workbook, transcript);
+        for result in &mut results {
+            if !matches!(
+                result.name,
+                "denied approval refused" | "existing destination refused"
+            ) {
+                continue;
+            }
+            if let Some(on_workbook) = bound.iter().find(|each| each.name == result.name) {
+                result.passed = on_workbook.passed;
+                result.detail = if on_workbook.passed {
+                    on_workbook.detail.clone()
+                } else {
+                    format!("{} over the prepared data/sales.xlsx", on_workbook.detail)
+                };
+            }
+        }
+        results.extend(workbook_checks(dir, tasks));
+    }
+    results
+}
+
+fn evidence(
+    dir: &Path,
+    client: &str,
+    transcript: &Path,
+    journal: &Path,
+    workbook: bool,
+) -> Result<bool, String> {
     let all = journey_tasks(dir, journal)?;
     let transcript_text = fs::read_to_string(transcript)
         .map_err(|error| format!("the transcript {}: {error}", transcript.display()))?;
     let tasks: Vec<&Value> = all.values().collect();
-    let results = checks(dir, &tasks, &transcript_text);
+    let results = evidence_checks(dir, &tasks, &transcript_text, workbook);
     let passed = results.iter().all(|result| result.passed);
     for result in &results {
         println!(
@@ -486,7 +699,7 @@ fn evidence(dir: &Path, client: &str, transcript: &Path, journal: &Path) -> Resu
     )
     .map_err(text)?;
     let summary = json!({
-        "schema": "orcel-f4-slice4-evidence/1",
+        "schema": if workbook { "orcel-f5-workbook-evidence/1" } else { "orcel-f4-slice4-evidence/1" },
         "client": client,
         "passed": passed,
         "tasks": tasks.iter().map(|task| json!({"id": task["id"], "state": task["state"]})).collect::<Vec<_>>(),
@@ -510,7 +723,7 @@ fn value_of(args: &[String], flag: &str) -> Option<String> {
 }
 
 fn run(args: &[String]) -> Result<bool, String> {
-    let usage = "usage: f4_journey prepare <dir> | ready <dir> [--release-candidate <folder>] | change-source <dir> | history <dir> [--journal <file>] | evidence <dir> --client <name version> --transcript <file> [--journal <file>]";
+    let usage = "usage: f4_journey prepare <dir> | ready <dir> [--release-candidate <folder>] | change-source <dir> | change-workbook <dir> | history <dir> [--journal <file>] | evidence <dir> --client <name version> --transcript <file> [--journal <file>] [--workbook]";
     let (Some(command), Some(dir)) = (args.first(), args.get(1)) else {
         return Err(usage.to_owned());
     };
@@ -522,6 +735,7 @@ fn run(args: &[String]) -> Result<bool, String> {
             ready(dir, candidate.as_deref())
         }
         "change-source" => change_source(dir).map(|()| true),
+        "change-workbook" => change_workbook(dir).map(|()| true),
         "history" => {
             let journal = value_of(args, "--journal")
                 .map(PathBuf::from)
@@ -536,7 +750,8 @@ fn run(args: &[String]) -> Result<bool, String> {
                 .map(PathBuf::from)
                 .or_else(default_journal)
                 .ok_or("name the journal with --journal")?;
-            evidence(dir, &client, Path::new(&transcript), &journal)
+            let workbook = args.iter().any(|arg| arg == "--workbook");
+            evidence(dir, &client, Path::new(&transcript), &journal, workbook)
         }
         _ => Err(usage.to_owned()),
     }
@@ -892,6 +1107,171 @@ mod tests {
         let out = redacted("Authorization: Bearer abc123secret\nplain line\n");
         assert!(!out.contains("abc123secret"), "{out}");
         assert!(out.contains("plain line"), "{out}");
+    }
+
+    #[test]
+    fn the_prepared_workbook_is_the_fixture_zipped_and_always_the_same() {
+        let dir = scratch("workbook");
+        prepare(&dir).unwrap();
+        let prepared = fs::read(dir.join("data").join("sales.xlsx")).unwrap();
+        assert_eq!(prepared, workbook());
+        assert!(prepared.starts_with(b"PK\x03\x04"));
+        // Every part is stored whole, so its bytes appear in the zip as committed.
+        let window = |part: &[u8]| prepared.windows(part.len()).any(|at| at == part);
+        for (name, bytes) in WORKBOOK_PARTS {
+            assert!(window(bytes), "{name}");
+        }
+        let sheet = String::from_utf8_lossy(WORKBOOK_PARTS[12].1);
+        assert!(sheet.contains("<f>SUM(B2:B3)</f><v>1999.75</v>"), "{sheet}");
+        assert!(WORKBOOK_REPORT_FIGURES.contains("[data/sales.xlsx]Sales!B4 = 1999.75"));
+        let root = dir.to_str().unwrap();
+        let one = json!({"workspaces": [{"id": "default", "root": root}]}).to_string();
+        change_workbook(&dir).unwrap();
+        assert_ne!(sha256(&changed_workbook()), sha256(&workbook()));
+        assert_eq!(
+            failed(&ready_checks(&dir, &one)),
+            vec!["the workbook is unchanged"]
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn workbook_task(id: &str, state: &str, steps: &[(&str, &str)], report: Value) -> Value {
+        let mut task = task(id, state, steps, report);
+        task["sources"] = json!([{"path": "data/sales.xlsx", "sha256": sha256(&workbook()), "bytes": 1, "workbook": true}]);
+        if state == "verified" {
+            task["check"]["figures_confirmed"] = json!(3);
+        }
+        task
+    }
+
+    /// A complete workbook journey on disk: no orceld-death step.
+    fn complete_workbook(dir: &Path) -> Vec<Value> {
+        prepare(dir).unwrap();
+        fs::write(dir.join("reports").join("sales.md"), "the report").unwrap();
+        change_workbook(dir).unwrap();
+        vec![
+            workbook_task(
+                "rpt-a",
+                "verified",
+                &[("verify", "passed")],
+                json!({"name": "sales.md", "sha256": sha256(b"the report")}),
+            ),
+            workbook_task(
+                "rpt-b",
+                "approval_denied",
+                &[("approval", "denied")],
+                Value::Null,
+            ),
+            workbook_task("rpt-c", "stale", &[("commit", "stale")], Value::Null),
+            workbook_task(
+                "rpt-d",
+                "proposed",
+                &[("preview", "destination_exists")],
+                Value::Null,
+            ),
+        ]
+    }
+
+    #[test]
+    fn a_workbook_journey_passes_its_checks_and_each_missing_path_fails() {
+        let dir = scratch("workbook-journey");
+        let tasks = complete_workbook(&dir);
+        let transcript = "a transcript\n";
+        let run = |tasks: &[Value]| {
+            let refs: Vec<&Value> = tasks.iter().collect();
+            failed(&evidence_checks(&dir, &refs, transcript, true))
+        };
+        assert_eq!(run(&tasks), Vec::<&str>::new());
+        // Without --workbook, the F4 journey's own checks still apply.
+        let refs: Vec<&Value> = tasks.iter().collect();
+        assert_eq!(
+            failed(&evidence_checks(&dir, &refs, transcript, false)),
+            vec!["an interrupted task read back after orceld died"]
+        );
+        for (drop, expected) in [
+            (
+                0,
+                vec![
+                    "approved report written and verified",
+                    "a workbook report verified figure by figure",
+                ],
+            ),
+            (1, vec!["denied approval refused"]),
+            (
+                2,
+                vec![
+                    "changed source refused as stale",
+                    "a changed workbook refused as stale",
+                ],
+            ),
+            (3, vec!["existing destination refused"]),
+        ] {
+            let kept: Vec<Value> = tasks
+                .iter()
+                .enumerate()
+                .filter(|(at, _)| *at != drop)
+                .map(|(_, task)| task.clone())
+                .collect();
+            assert_eq!(run(&kept), expected, "without task {drop}");
+        }
+        // No figure confirmed, or another workbook than the prepared one.
+        let mut other = tasks.clone();
+        other[0]["check"]["figures_confirmed"] = json!(0);
+        assert_eq!(
+            run(&other),
+            vec!["a workbook report verified figure by figure"]
+        );
+        let mut other = tasks.clone();
+        other[0]["sources"][0]["sha256"] = json!(sha256(b"another workbook"));
+        other[2]["sources"][0]["workbook"] = json!(false);
+        assert_eq!(
+            run(&other),
+            vec![
+                "a workbook report verified figure by figure",
+                "a changed workbook refused as stale"
+            ]
+        );
+        fs::write(dir.join("data").join("sales.xlsx"), b"other bytes").unwrap();
+        assert_eq!(run(&tasks), vec!["the workbook holds only the kit's bytes"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn with_workbook_a_csv_only_denial_or_destination_does_not_pass() {
+        let dir = scratch("workbook-csv-only");
+        let mut tasks = complete_workbook(&dir);
+        let transcript = "a transcript\n";
+        // The same paths, recorded by tasks over data/q3.csv instead.
+        tasks[1] = task(
+            "rpt-b",
+            "approval_denied",
+            &[("approval", "denied")],
+            Value::Null,
+        );
+        tasks[3] = task(
+            "rpt-d",
+            "proposed",
+            &[("preview", "destination_exists")],
+            Value::Null,
+        );
+        for at in [1, 3] {
+            tasks[at]["sources"] =
+                json!([{"path": "data/q3.csv", "sha256": sha256(SOURCE.as_bytes()), "bytes": 1}]);
+        }
+        let refs: Vec<&Value> = tasks.iter().collect();
+        let results = evidence_checks(&dir, &refs, transcript, true);
+        assert_eq!(
+            failed(&results),
+            vec!["denied approval refused", "existing destination refused"]
+        );
+        assert!(results
+            .iter()
+            .filter(|result| !result.passed)
+            .all(|result| result.detail.ends_with("over the prepared data/sales.xlsx")));
+        // Without --workbook, F4's journey still accepts them.
+        assert!(!failed(&evidence_checks(&dir, &refs, transcript, false))
+            .contains(&"denied approval refused"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
