@@ -15,7 +15,7 @@ VARIANTS = {
 
 @ob.tasks_config
 def load():
-    return [ob.Task(description="List every .csv file.", task_id=name, metadata={"files": files}) for name, files in VARIANTS.items()]
+    return [ob.Task(description="List every .csv file.", task_id=name, metadata={"files": files, "answer_order": "any"}) for name, files in VARIANTS.items()]
 
 
 @ob.setup_task
