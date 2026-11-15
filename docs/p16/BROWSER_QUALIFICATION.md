@@ -89,8 +89,11 @@ to the page generation, the control and the stated option, state or key, used on
   open one new top-level document, a GET or POST on its own origin, once, with redirects that stay on it. The reply
   says `navigation: document_committed` with the page's new generation (observe again before acting), or
   `navigation: none` when the page stayed on its document (check what it did with `browser_verify`). A submission
-  that would leave the origin, by its form's action, a redirect or a page script, is refused before it leaves and
-  answers `CAPABILITY_DENIED`; the page must then be navigated again. Fill, select and check still open no document.
+  that would leave the origin before anything was sent, by its form's action or a page script, is refused before it
+  leaves and answers `CAPABILITY_DENIED`. Once the same-origin request has been sent, a redirect or second document
+  that would leave the origin is refused too, but the submission was delivered, so the reply is outcome unknown.
+  Either way the page must then be navigated again. Fill, select and check still open no document, and after an
+  Enter that committed no document the page may open none until it is observed or navigated again.
 
 Each prompt shows the control's role and name labelled page-supplied. A radio can only be selected: `checked: false`
 on a radio is refused before any approval (the host's live check, and orceld's prompt builder again); to clear a
@@ -100,8 +103,8 @@ for Enter, a list of options for select, a selector or frame) is refused, never 
 The native Windows run (slice A6) is part of `npm run browser-launcher:native`, which Windows CI requires: on the
 loopback HTTPS fixture, orceld drives the worker-mode host through observe, fill, select, check, an Enter that submits
 to the page's own origin, a text wait and the verifier, under the real broker and ledger with a **scripted** consent,
-and a stale generation and a cross-origin form are refused; a host-level test covers the GET, a field outside any form,
-and the redirect and script exits. A person answering the real prompt through a real MCP client is the founder-present
+a stale generation and a cross-origin form are refused, and a delivered POST whose redirect leaves the origin answers
+outcome unknown; a host-level test covers the GET, a field outside any form, and the redirect and script exits. A person answering the real prompt through a real MCP client is the founder-present
 run in `docs/orcel/implementation-readiness/prep/SG-000122.md`, which is pending.
 
 ## What remains true

@@ -3070,27 +3070,34 @@ fn sg122_an_enter_submits_once_on_its_origin_and_never_leaves_it() {
         Some(live.document.document_generation + 1)
     );
 
-    // Leaving the origin, three ways: each refused typed, and the page has
-    // no committed document afterwards.
-    for (field, value) in [
-        ("Coupon", "SAVE10"),
-        ("Voucher", "V-1"),
-        ("Promo code", "P-1"),
+    // Leaving the origin, three ways, and the page has no committed
+    // document afterwards. A form action off the origin and a submit
+    // handler that moves the page away are refused before anything left
+    // (SubmissionRefused). The Voucher form's same-origin POST is admitted
+    // and delivered (the server acts on it) before its 303 off the origin
+    // is refused: the request left, so the outcome is unknown, never
+    // "refused".
+    for (field, value, delivered) in [
+        ("Coupon", "SAVE10", false),
+        ("Voucher", "V-1", true),
+        ("Promo code", "P-1", false),
     ] {
         let live = open(&mut worker, &scope);
         let node = named(&worker, &live, "textbox", field);
         act(&mut worker, &live, &node, "textbox", fill(value)).expect("fill");
-        let refused = act(&mut worker, &live, &node, "textbox", FormInput::Enter);
+        let left = act(&mut worker, &live, &node, "textbox", FormInput::Enter);
+        let expected = if delivered {
+            UnavailableReason::OutcomeUnknown
+        } else {
+            UnavailableReason::SubmissionRefused
+        };
         assert!(
-            matches!(
-                refused,
-                Err(HostError::Unavailable(UnavailableReason::SubmissionRefused))
-            ),
-            "{field}: {refused:?}"
+            matches!(left, Err(HostError::Unavailable(reason)) if reason == expected),
+            "{field}: {left:?}"
         );
         assert!(
             matches!(worker.observe(&scope), Err(HostError::Invalid(_))),
-            "{field}: the refused page is not observed"
+            "{field}: the page it left is not observed"
         );
     }
     let hits = fixture.hits.lock().expect("hits").clone();
@@ -3101,11 +3108,20 @@ fn sg122_an_enter_submits_once_on_its_origin_and_never_leaves_it() {
         1,
         "{hits:?}"
     );
+    // The Voucher POST reached the origin once (delivered); its redirect
+    // did not leave it.
+    assert_eq!(
+        hits.iter()
+            .filter(|hit| hit.as_str() == "fixture.test /order-away")
+            .count(),
+        1,
+        "{hits:?}"
+    );
     assert!(
         hits.iter().all(|hit| !hit.starts_with("other.test")),
         "a refused submission reached the other origin: {hits:?}"
     );
-    println!("SG122-EVIDENCE enter route: one same-origin POST and one GET committed as new generations; a field outside a form stayed; action, redirect and script exits refused typed, nothing reached other.test");
+    println!("SG122-EVIDENCE enter route: one same-origin POST and one GET committed as new generations; a field outside a form stayed; action and script exits refused typed before leaving; a delivered POST whose redirect left the origin answered outcome unknown; nothing reached other.test");
     assert!(worker.shutdown().job_empty);
 }
 

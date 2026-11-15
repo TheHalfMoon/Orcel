@@ -5,7 +5,9 @@
 // after the key: nothing (no navigation request within the settle window),
 // or a committed new document, awaited to its load like an activation
 // (click-load.ts). A popup is closed at once, and a refused navigation that
-// lands on the engine's error page is reported "denied".
+// lands on the engine's error page is reported "denied"; the host reads that
+// against its own route record (refused before anything opened, or outcome
+// unknown), never as "nothing happened".
 
 import type { Frame, Page, Request } from "playwright-core";
 import { NavigationError } from "../worker.js";
@@ -13,7 +15,10 @@ import { NavigationError } from "../worker.js";
 /// How long after the key a submission's request may start. A form's
 /// implicit submission is queued as the key is handled, so its request
 /// starts well within this; a page script that submits later is not this
-/// Enter's submission (the host's ordinary rules apply to it afterwards).
+/// Enter's submission. The window is the worker's choice, so the host does
+/// not rely on it: after an Enter that committed no document it keeps the
+/// no-document rule until the next observation or approved navigation, and
+/// such a late submission is refused.
 export const ENTER_SETTLE_MS = 1_500;
 /// The commit and load budgets, as an activation's (under the host's
 /// WORKER_ACTIVATION_TIMEOUT).

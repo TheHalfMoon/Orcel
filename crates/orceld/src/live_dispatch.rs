@@ -41,7 +41,9 @@
 //!   or (slice A6, Enter only) `document_committed` when the submission
 //!   committed one new document on the lifetime's origin, which the page
 //!   store follows as a new generation. A submission off that origin is
-//!   refused at the route and answers CAPABILITY_DENIED.
+//!   refused at the route: before anything was sent it answers
+//!   CAPABILITY_DENIED; once its same-origin request was delivered (a
+//!   redirect off the origin refused after it), outcome unknown.
 //! - `browser.wait/text {page_id, text, appear, timeout_ms,
 //!   expected_generation}` and `browser.verify/check {page_id, checks,
 //!   expected_generation}`: read-only, no approval, over the committed main
@@ -387,7 +389,8 @@ mod live {
                     // document answers `document_committed` with the page's
                     // new generation; every other action, and an Enter that
                     // opened nothing, `none`. A refused submission is an
-                    // error (CAPABILITY_DENIED), never done.
+                    // error (CAPABILITY_DENIED, or outcome unknown once it
+                    // was delivered), never done.
                     let navigation = match navigation {
                         orcel_browser_host::worker_host::FormNavigation::None => "none",
                         orcel_browser_host::worker_host::FormNavigation::DocumentCommitted => {

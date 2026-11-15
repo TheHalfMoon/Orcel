@@ -478,9 +478,11 @@ pub fn failure_for(code: &str) -> FailureCode {
         // SG-000122: the lifetime's cap on distinct awaited texts; the page
         // was not probed.
         "unavailable:textlimitreached" => FailureCode::OutputLimit,
-        // SG-000122 slice A6: an Enter's page tried to open a document off
-        // the Enter route rule (another origin, a redirect off it, a frame
-        // or a popup); the route rule refused it before it left.
+        // SG-000122 slice A6: before anything opened, an Enter's page tried
+        // to open a document off the Enter route rule (another origin,
+        // another method, a frame or a popup); the route rule refused it
+        // before it left. (A refusal after the admitted document opened is
+        // `unavailable:outcomeunknown`.)
         "unavailable:submissionrefused" => FailureCode::CapabilityDenied,
         code if code.starts_with("unavailable:") => FailureCode::ProviderUnavailable,
         _ => FailureCode::InternalError,
@@ -710,7 +712,8 @@ pub(crate) fn form_outcome(outcome: &DispatchOutcome) -> &'static str {
                     | "unavailable:targetoccluded"
                     | "unavailable:actionfailed"
                     // SG-000122 slice A6: the submission's document was
-                    // refused at the route before it left.
+                    // refused at the route before anything opened (the
+                    // host answers outcomeunknown once it opened).
                     | "unavailable:submissionrefused"
             ) =>
         {
@@ -2869,6 +2872,31 @@ mod tests {
         }
         assert_eq!(form_outcome(&DispatchOutcome::Lost), "unknown");
     }
+
+    /// SG-000122 slice A6: an Enter the host answers from its route record
+    /// journals by what left. A submission refused before anything opened
+    /// (SubmissionRefused) closes `failed`; one whose admitted document
+    /// opened and then had a redirect off the origin refused (the request
+    /// was delivered, the server may have acted) is OutcomeUnknown and
+    /// closes `unknown`, never `failed`.
+    #[test]
+    fn sg122_an_enter_journals_unknown_once_its_document_opened() {
+        use orcel_browser_host::worker_host::error_code;
+        use orcel_browser_host::{HostError, UnavailableReason};
+        let refused_before_open = error_code(&HostError::Unavailable(
+            UnavailableReason::SubmissionRefused,
+        ));
+        let redirect_after_open =
+            error_code(&HostError::Unavailable(UnavailableReason::OutcomeUnknown));
+        assert_eq!(
+            form_outcome(&DispatchOutcome::Refused(refused_before_open)),
+            "failed"
+        );
+        assert_eq!(
+            form_outcome(&DispatchOutcome::Refused(redirect_after_open)),
+            "unknown"
+        );
+    }
 }
 
 /// Native tests: the real `orcel-browser-host --worker` binary (built with
@@ -3228,8 +3256,10 @@ mod native {
     /// orceld drives the worker-mode host through observe (form-control
     /// names), fill, select, check and an Enter that submits the form to its
     /// own origin, then waits for and verifies the result page; a stale
-    /// generation is refused before any prompt, and a form whose action
-    /// leaves the origin is refused typed. Every action is approved through
+    /// generation is refused before any prompt, a form whose action leaves
+    /// the origin is refused typed (journaled `failed`), and a form whose
+    /// delivered same-origin POST redirects off the origin answers outcome
+    /// unknown (journaled `unknown`). Every action is approved through
     /// the real broker over its own ledger; the person's SOFT consent at the
     /// Windows prompt is SCRIPTED here (approve, and record what the prompt
     /// showed). The founder-present run with real prompts is separate
@@ -3395,15 +3425,48 @@ mod native {
             "{}",
             refused.message
         );
+        // A form whose same-origin POST is admitted and delivered, then
+        // redirected off the origin: the redirect is refused, but the
+        // request left, so the outcome is unknown (journaled `unknown`).
+        browser
+            .navigate(&scene.workspace, &approve, form_url)
+            .expect("approved navigation");
+        let voucher_generation = browser.page().expect("page").generation;
+        let nodes = browser.observe().expect("observe");
+        let voucher = form_node(&nodes, "textbox", "Voucher");
+        act(
+            &mut browser,
+            voucher_generation,
+            BindAction::Fill {
+                node_id: voucher.clone(),
+                role: "textbox".into(),
+                value: "V-1".into(),
+            },
+        )
+        .expect("fill");
+        let unknown = act(
+            &mut browser,
+            voucher_generation,
+            BindAction::PressEnter {
+                node_id: voucher,
+                role: "textbox".into(),
+            },
+        )
+        .expect_err("a delivered submission redirected off the origin");
+        assert!(
+            unknown.message.contains("unavailable:outcomeunknown"),
+            "{}",
+            unknown.message
+        );
         // What the person was shown: the values and the option exactly, the
         // field names labelled page-supplied, and Enter's warning.
         let prompts = prompts.lock().expect("prompts").clone();
-        assert_eq!(prompts.len(), 9, "two navigations, seven form actions");
+        assert_eq!(prompts.len(), 12, "three navigations, nine form actions");
         let enter_prompts: Vec<&String> = prompts
             .iter()
             .filter(|text| text.contains("press Enter"))
             .collect();
-        assert_eq!(enter_prompts.len(), 2);
+        assert_eq!(enter_prompts.len(), 3);
         assert!(enter_prompts.iter().all(|text| text.contains(
             "Enter may submit or send what the page holds, to the page's admitted origin"
         )));
@@ -3419,9 +3482,9 @@ mod native {
             .iter()
             .any(|text| text.contains("(page-supplied)") && text.contains("Gift wrap")));
         // The ledger recorded each decision, each consumed once; the host
-        // executed every one but the refused submission.
+        // executed every one but the refused and the unknown submission.
         let records = approve.history(20);
-        assert_eq!(records.len(), 9, "{records:?}");
+        assert_eq!(records.len(), 12, "{records:?}");
         assert!(records
             .iter()
             .all(|record| record.consumed && record.decision == RecordedDecision::Approved));
@@ -3429,15 +3492,20 @@ mod native {
         assert!(outcomes
             .iter()
             .any(|o| o.record_id == enter_record && o.outcome == DispatchOutcome::Executed));
-        assert_eq!(
+        // Each Enter's journal intent closes by what left: `failed` for the
+        // submission refused before it opened, `unknown` for the delivered
+        // one whose redirect was refused.
+        let closed = |code: &str| -> Vec<&'static str> {
             outcomes
                 .iter()
-                .filter(|o| matches!(&o.outcome, DispatchOutcome::Refused(code) if code == "unavailable:submissionrefused"))
-                .count(),
-            1
-        );
+                .filter(|o| matches!(&o.outcome, DispatchOutcome::Refused(c) if c == code))
+                .map(|o| form_outcome(&o.outcome))
+                .collect()
+        };
+        assert_eq!(closed("unavailable:submissionrefused"), vec!["failed"]);
+        assert_eq!(closed("unavailable:outcomeunknown"), vec!["unknown"]);
         println!(
-            "SG122-EVIDENCE orceld live form journey: observe, fill, select, check and Enter approved through the broker (consent scripted), submission committed generation 2 on the origin, waited and verified (evidence {}); stale generation and cross-origin action refused; {} decisions recorded",
+            "SG122-EVIDENCE orceld live form journey: observe, fill, select, check and Enter approved through the broker (consent scripted), submission committed generation 2 on the origin, waited and verified (evidence {}); stale generation and cross-origin action refused (journaled failed); a delivered submission redirected off the origin journaled unknown; {} decisions recorded",
             verified.evidence_sha256,
             records.len()
         );

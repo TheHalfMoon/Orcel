@@ -56,10 +56,14 @@ pub enum UnavailableReason {
     /// SG-000122: the browser lifetime already awaited or checked its cap of
     /// distinct texts; a new text is refused and the page is not probed.
     TextLimitReached,
-    /// SG-000122 slice A6: an approved Enter's page tried to open a document
-    /// the Enter route rule refuses (another origin, a redirect off the
-    /// origin, a second document, a frame or a popup). The request never
-    /// left; the page is no longer its observed document, so it must be
+    /// SG-000122 slice A6: before the one admitted document opened, an
+    /// approved Enter's page tried to open a document the Enter route rule
+    /// refuses (another origin, another method, a frame or a popup). That
+    /// request never left and nothing was submitted. Once the admitted
+    /// same-origin document has opened, a later refusal (a redirect off the
+    /// origin, a second document) or failure is `OutcomeUnknown` instead:
+    /// the submission was delivered and the server may have acted. Either
+    /// way the page is no longer its observed document, so it must be
     /// navigated again (approved) before anything else.
     SubmissionRefused,
 }

@@ -340,7 +340,8 @@ test("sg122 the A4 tool descriptions state the approval, the control and what En
     "navigation document_committed with the page's new generation",
     "navigation none means the page stayed on its document",
     "check what the page did with browser_verify",
-    "is refused, never sent, and answers CAPABILITY_DENIED"
+    "is refused, never sent, and answers CAPABILITY_DENIED",
+    "the submission was delivered and the server may have acted: the reply is outcome unknown, not a refusal"
   ]) {
     assert.ok(enter.includes(phrase), `browser_enter: ${phrase}`);
   }
