@@ -188,7 +188,9 @@ export class Worker {
         method: detail.method,
         content_type: detail.contentType,
         body: detail.body,
-        body_bytes: detail.bodyBytes
+        body_bytes: detail.bodyBytes,
+        // SG-000122 A6: only on a main-frame document hop.
+        ...(query.mainDocument === true ? { main_document: true as const } : {})
       });
     });
   }

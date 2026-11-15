@@ -93,7 +93,8 @@ to the page generation, the control and the stated option, state or key, used on
   leaves and answers `CAPABILITY_DENIED`. Once the same-origin request has been sent, a redirect or second document
   that would leave the origin is refused too, but the submission was delivered, so the reply is outcome unknown.
   Either way the page must then be navigated again. Fill, select and check still open no document, and after an
-  Enter that committed no document the page may open none until it is observed or navigated again.
+  Enter that committed no document (or saw a frame or popup refused) the page may open none until it is observed or
+  navigated again, or an approved Enter commits cleanly.
 
 Each prompt shows the control's role and name labelled page-supplied. A radio can only be selected: `checked: false`
 on a radio is refused before any approval (the host's live check, and orceld's prompt builder again); to clear a

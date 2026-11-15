@@ -374,6 +374,20 @@ test("route requests are described to the host and only its answer applies", asy
   assert.deepEqual(sent.at(-1), { frame: "error", code: "protocol_violation" });
 });
 
+test("SG-000122 A6: a main-frame document hop is marked on the wire, every other hop is not", async () => {
+  const { worker, sent, policy } = await launched();
+  const main = policy.decide({ kind: "redirect", url: "https://fixture.test/thanks", origin: "https://fixture.test", mainDocument: true });
+  const image = policy.decide({ kind: "redirect", url: "https://fixture.test/img.png", origin: "https://fixture.test" });
+  assert.deepEqual(sent.slice(-2), [
+    { frame: "route_request", request_id: 1, kind: "redirect", url: "https://fixture.test/thanks", origin: "https://fixture.test", method: "GET", content_type: "", body: "", body_bytes: 0, main_document: true },
+    { frame: "route_request", request_id: 2, kind: "redirect", url: "https://fixture.test/img.png", origin: "https://fixture.test", method: "GET", content_type: "", body: "", body_bytes: 0 }
+  ]);
+  await worker.receive({ frame: "route_decision", request_id: 1, allow: true });
+  await worker.receive({ frame: "route_decision", request_id: 2, allow: true });
+  assert.equal(await main, true);
+  assert.equal(await image, true);
+});
+
 test("oversized or control-character requests are refused without asking", async () => {
   const { sent, policy } = await launched();
   const before = sent.length;

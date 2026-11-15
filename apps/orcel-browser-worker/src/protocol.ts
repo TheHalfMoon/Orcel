@@ -196,6 +196,9 @@ export type WorkerFrame =
       content_type: string;
       body: string | null;
       body_bytes: number;
+      /// SG-000122 A6: present (true) only on a redirect hop of the primary
+      /// page's main-frame document.
+      main_document?: true;
     }
   | { frame: "navigated"; nav_id: number; url: string; status: number }
   | { frame: "navigation_failed"; nav_id: number; reason: NavigationFailure }

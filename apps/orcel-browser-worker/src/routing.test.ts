@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyRequest, MAX_ROUTE_BODY_BYTES, originOf, requestDetail, type FrameLike, type RequestLike } from "./routing.js";
+import { classifyRequest, MAX_ROUTE_BODY_BYTES, originOf, redirectHop, requestDetail, type FrameLike, type RequestLike } from "./routing.js";
 
 const PRIMARY = { name: "primary" };
 const POPUP = { name: "popup" };
@@ -35,7 +35,21 @@ test("requests are described, never decided", () => {
   });
   assert.deepEqual(
     classifyRequest(request("https://fixture.test/b", { nav: true, from: "https://fixture.test/a", frame: top }), PRIMARY, primaryUrl),
-    { kind: "redirect", url: "https://fixture.test/b", origin: "https://fixture.test" }
+    { kind: "redirect", url: "https://fixture.test/b", origin: "https://fixture.test", mainDocument: true }
+  );
+  // SG-000122 A6: a child frame's or a popup's redirect is not the main
+  // document.
+  assert.deepEqual(
+    classifyRequest(
+      request("https://fixture.test/c", { nav: true, from: "https://fixture.test/a", frame: frame("about:blank", frame("https://fixture.test/page")) }),
+      PRIMARY,
+      primaryUrl
+    ),
+    { kind: "redirect", url: "https://fixture.test/c", origin: "https://fixture.test" }
+  );
+  assert.deepEqual(
+    classifyRequest(request("https://fixture.test/d", { nav: true, from: "https://fixture.test/a", frame: frame("about:blank", null, POPUP) }), PRIMARY, primaryUrl),
+    { kind: "redirect", url: "https://fixture.test/d", origin: "https://fixture.test" }
   );
   const child = frame("about:blank", frame("https://fixture.test/page"));
   assert.deepEqual(classifyRequest(request("https://other.test/f", { nav: true, frame: child }), PRIMARY, primaryUrl), {
@@ -87,4 +101,31 @@ test("request detail carries the method and only a bounded printable urlencoded 
   assert.equal(requestDetail(req("POST", "application/x-www-form-urlencoded", Buffer.from("a=\n"))).body, null);
   const big = requestDetail(req("POST", "application/x-www-form-urlencoded", Buffer.alloc(MAX_ROUTE_BODY_BYTES + 1, 0x61)));
   assert.deepEqual([big.body, big.bodyBytes], [null, MAX_ROUTE_BODY_BYTES + 1]);
+});
+
+test("SG-000122 A6: only the primary page's main-frame document hop is marked as the main document", () => {
+  const to = "https://fixture.test/thanks";
+  const from = "https://fixture.test/order";
+  assert.deepEqual(redirectHop(to, from, "Document", "F1", "F1", true), {
+    kind: "redirect",
+    url: to,
+    origin: "https://fixture.test",
+    mainDocument: true
+  });
+  for (const [type, frameId, mainFrameId, primary] of [
+    ["Image", "F1", "F1", true],
+    ["Script", "F1", "F1", true],
+    ["Stylesheet", "F1", "F1", true],
+    ["Fetch", "F1", "F1", true],
+    ["XHR", "F1", "F1", true],
+    ["Document", "F2", "F1", true],
+    ["Document", "F1", "F1", false],
+    ["Document", "", "", true]
+  ] as const) {
+    assert.deepEqual(
+      redirectHop(to, from, type, frameId, mainFrameId, primary),
+      { kind: "redirect", url: to, origin: "https://fixture.test" },
+      `${type} ${frameId} ${mainFrameId} ${primary}`
+    );
+  }
 });

@@ -364,11 +364,12 @@ impl NavigationPolicy {
         }
         let opened = self.enter.as_ref().is_some_and(|enter| enter.opened);
         let decided = self.decide_under_enter(kind, url, origin, detail);
-        if decided.is_ok() && opened && matches!(kind, RouteKind::Redirect) {
-            // An admitted hop after the document opened: the document's
-            // URL is now its target. (A result-page request's own redirect
-            // can't be told apart; it then fails the match and the Enter is
-            // unknown, never committed at a URL the host did not admit.)
+        if decided.is_ok() && opened && matches!(kind, RouteKind::Redirect) && detail.main_document
+        {
+            // An admitted main-frame document hop after the document
+            // opened: the document's URL is now its target. A subresource,
+            // frame or popup redirect keeps its ordinary rule (still refused
+            // off the origin) and never moves the document URL.
             if let Some(enter) = self.enter.as_mut() {
                 enter.document = Some(url.to_owned());
             }
@@ -382,11 +383,17 @@ impl NavigationPolicy {
                     (RouteKind::Document | RouteKind::Frame | RouteKind::Popup, false) => {
                         enter.refused = true;
                     }
-                    // After it opened, a refused hop (its chain may be the
-                    // submission's own) or a second top-level document
-                    // changes what the submission did: it already left, so
-                    // the outcome is unknown.
-                    (RouteKind::Document | RouteKind::Redirect, true) => enter.refused = true,
+                    // After it opened, a refused hop of the main-frame
+                    // document (the submission's own chain) or a second
+                    // top-level document changes what the submission did:
+                    // it already left, so the outcome is unknown.
+                    (RouteKind::Document, true) => enter.refused = true,
+                    (RouteKind::Redirect, true) if detail.main_document => enter.refused = true,
+                    // Any other refused hop (a subresource's, a frame's or a
+                    // popup's, unmarked) is recorded apart. Were it in fact
+                    // the document's, the main frame would never commit the
+                    // admitted URL, so the Enter still ends unknown.
+                    (RouteKind::Redirect, true) => enter.refused_later = true,
                     // A frame or popup of the result page (or of the page
                     // being replaced) is refused, and recorded apart.
                     (RouteKind::Frame | RouteKind::Popup, true) => enter.refused_later = true,
@@ -557,6 +564,11 @@ pub struct RequestDetail {
     pub body: Option<String>,
     /// The body's full size in bytes.
     pub body_bytes: u64,
+    /// SG-000122 slice A6: the worker says this redirect hop is the primary
+    /// page's main-frame document (not a subresource, a frame or a popup).
+    /// Only such a hop moves an Enter's recorded document URL; absent means
+    /// not the document, which fails toward an unknown outcome.
+    pub main_document: bool,
 }
 
 /// What one approved field must submit.
@@ -756,6 +768,79 @@ mod tests {
         }
     }
 
+    /// A redirect hop the worker marks as the primary page's main-frame
+    /// document.
+    fn main_hop() -> RequestDetail {
+        RequestDetail {
+            method: "GET".into(),
+            main_document: true,
+            ..RequestDetail::default()
+        }
+    }
+
+    /// SG-000122 slice A6 (fourth judge): only a main-frame document hop
+    /// moves an Enter's recorded document URL. A subresource, frame or
+    /// popup redirect (unmarked) keeps its ordinary rule, refused off the
+    /// origin, and leaves the document URL as it was.
+    #[test]
+    fn sg122_only_a_main_document_hop_moves_the_enter_document() {
+        // A 303 after the POST: the document is the hop's target.
+        let mut p = committed();
+        p.expect_enter().unwrap();
+        p.decide_request(
+            RouteKind::Document,
+            "https://fixture.test/order",
+            "",
+            &post("full_name=Ada"),
+        )
+        .unwrap();
+        p.decide_request(
+            RouteKind::Redirect,
+            "https://fixture.test/thanks",
+            HOME,
+            &main_hop(),
+        )
+        .unwrap();
+        // The result page's image redirects on the origin: allowed, but
+        // not the document.
+        assert!(p
+            .decide(RouteKind::Redirect, "https://fixture.test/img/2.png", HOME)
+            .is_ok());
+        // Off the origin, unmarked: still refused, and not the document
+        // nor the submission's refusal (recorded apart).
+        assert!(p
+            .decide(RouteKind::Redirect, "https://other.test/pixel", HOME)
+            .is_err());
+        let route = p.finish_enter();
+        assert_eq!(
+            route,
+            EnterRoute {
+                opened: true,
+                refused: false,
+                refused_later: true,
+                document: Some("https://fixture.test/thanks".into()),
+            }
+        );
+
+        // Without the flag, a same-origin hop never becomes the document.
+        let mut p = committed();
+        p.expect_enter().unwrap();
+        p.decide_request(
+            RouteKind::Document,
+            "https://fixture.test/order",
+            "",
+            &post("full_name=Ada"),
+        )
+        .unwrap();
+        assert!(p
+            .decide(RouteKind::Redirect, "https://fixture.test/thanks", HOME)
+            .is_ok());
+        assert_eq!(
+            p.finish_enter().document.as_deref(),
+            Some("https://fixture.test/order")
+        );
+    }
+
     /// SG-000122 slice A6, the Enter route rule: one top-level document on
     /// the committed origin, a GET or a POST, once; its redirects stay on
     /// the origin; subresources keep their ordinary rules.
@@ -777,9 +862,15 @@ mod tests {
             assert!(p
                 .decide_request(RouteKind::Document, url, "", &detail)
                 .is_ok());
-            // A same-origin hop of its own chain is followed.
+            // A same-origin hop of its own chain (the main-frame document's,
+            // as the worker says) is followed.
             assert!(p
-                .decide(RouteKind::Redirect, "https://fixture.test/done", HOME)
+                .decide_request(
+                    RouteKind::Redirect,
+                    "https://fixture.test/done",
+                    HOME,
+                    &main_hop()
+                )
                 .is_ok());
             assert_eq!(
                 p.finish_enter(),
@@ -879,7 +970,8 @@ mod tests {
                 "{kind:?} {url}"
             );
         }
-        // A server redirect off the origin is refused and recorded.
+        // A server redirect of the document off the origin is refused and
+        // recorded as the submission's.
         let mut p = committed();
         p.expect_enter().unwrap();
         assert!(p
@@ -891,7 +983,12 @@ mod tests {
             )
             .is_ok());
         assert!(p
-            .decide(RouteKind::Redirect, "https://other.test/stolen", HOME)
+            .decide_request(
+                RouteKind::Redirect,
+                "https://other.test/stolen",
+                HOME,
+                &main_hop()
+            )
             .is_err());
         assert_eq!(
             p.finish_enter(),
@@ -1227,6 +1324,7 @@ mod tests {
             content_type: "application/x-www-form-urlencoded".into(),
             body: Some(body.into()),
             body_bytes: body.len() as u64,
+            main_document: false,
         }
     }
 

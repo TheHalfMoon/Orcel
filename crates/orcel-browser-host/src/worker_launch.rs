@@ -581,6 +581,10 @@ pub(crate) enum WorkerReply {
         content_type: String,
         body: Option<String>,
         body_bytes: u64,
+        /// SG-000122 slice A6: present (true) only on a redirect hop of the
+        /// primary page's main-frame document; absent means false.
+        #[serde(default)]
+        main_document: bool,
     },
     Navigated {
         nav_id: u64,
@@ -1827,12 +1831,14 @@ mod platform {
                         content_type,
                         body,
                         body_bytes,
+                        main_document,
                     } => {
                         let detail = crate::worker_navigation::RequestDetail {
                             method,
                             content_type,
                             body,
                             body_bytes,
+                            main_document,
                         };
                         self.answer_route(request_id, &kind, &url, &origin, &detail)?
                     }
@@ -5484,9 +5490,27 @@ mod tests {
                 method: "GET".into(),
                 content_type: String::new(),
                 body: None,
-                body_bytes: 0
+                body_bytes: 0,
+                main_document: false
             }
         );
+        // SG-000122 slice A6: a main-frame document hop says so; the flag is
+        // a boolean, and absent means false.
+        assert_eq!(
+            reply(r#"{"frame":"route_request","request_id":2,"kind":"redirect","url":"https://fixture.test/thanks","origin":"https://fixture.test","method":"GET","content_type":"","body":null,"body_bytes":0,"main_document":true}"#).unwrap(),
+            WorkerReply::RouteRequest {
+                request_id: 2,
+                kind: "redirect".into(),
+                url: "https://fixture.test/thanks".into(),
+                origin: "https://fixture.test".into(),
+                method: "GET".into(),
+                content_type: String::new(),
+                body: None,
+                body_bytes: 0,
+                main_document: true
+            }
+        );
+        assert!(reply(r#"{"frame":"route_request","request_id":2,"kind":"redirect","url":"u","origin":"","method":"GET","content_type":"","body":null,"body_bytes":0,"main_document":"yes"}"#).is_err());
         assert_eq!(
             reply(
                 r#"{"frame":"navigated","nav_id":3,"url":"https://fixture.test/a","status":200}"#
