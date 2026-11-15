@@ -403,6 +403,13 @@ pub fn shown_in_full(text: &str, field: &str) -> Result<(), PolicyError> {
         Ok(_) if text.len() > MAX_FORM_VALUE_BYTES => Err(invalid(format!(
             "{field} is longer than {MAX_FORM_VALUE_BYTES} bytes"
         ))),
+        // The value is a whole prompt line with no label of its own: a
+        // space it starts or ends with, or two in a row, could not be seen
+        // or counted there (and an all-space value would look blank).
+        Ok(_) if !orcel_contracts::prompt_display::plainly_spaced(text) => Err(invalid(format!(
+            "{field} starts or ends with a space or holds two spaces in a row, which the \
+                 approval prompt could not show visibly; it is refused, never shown altered"
+        ))),
         Ok(_) => Ok(()),
     }
 }
@@ -983,6 +990,14 @@ mod tests {
         for over in [past.as_str(), past_slashes.as_str()] {
             assert_eq!(fill(over).unwrap_err().code, FailureCode::InvalidRequest);
             assert_eq!(select(over).unwrap_err().code, FailureCode::InvalidRequest);
+        }
+        // Spaces the prompt line could not show visibly: leading, trailing,
+        // doubled, or all-space (which would render blank).
+        for spaced in [" ", "   ", " Ada", "Ada ", "Ada  Lovelace", "Digest:  0"] {
+            let refused = fill(spaced).unwrap_err();
+            assert_eq!(refused.code, FailureCode::InvalidRequest, "{spaced:?}");
+            assert!(refused.message.contains("space"), "{}", refused.message);
+            assert!(select(spaced).is_err(), "{spaced:?}");
         }
         // Within the displayed bound but past the host's byte bound.
         let wide = "é".repeat(MAX_FORM_VALUE_BYTES / 2 + 1);

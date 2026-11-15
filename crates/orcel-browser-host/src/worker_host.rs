@@ -238,10 +238,15 @@ pub struct WireCheck {
 /// field, from the host's own record of the observation: the role and the
 /// accessible name (both page-supplied; the name at most
 /// `prompt_display::MAX_FIELD_NAME_BYTES`, cut on a character boundary) and,
-/// when another observed node of that role shows the same name in the
-/// prompt, the target's ordinal among them in page order. It crosses only to
-/// orceld, for the prompt, never to a caller; the host binding covers each
-/// part, so a changed name or ordinal at dispatch is refused.
+/// when another observed node of that role would have the same name line
+/// drawn in the prompt, the target's ordinal among them in page order. It
+/// crosses only to orceld, for the prompt, never to a caller. The host
+/// binding covers each part and is derived again at dispatch from the host's
+/// record of its latest observation (the page is not observed again for
+/// it): a caller that observed again in between, with a changed name or
+/// ordinal, is refused. In the page, the worker then acts on the exact
+/// observed reference and falls back to role and name only when exactly one
+/// element has them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoundForm {
@@ -872,7 +877,11 @@ fn host_binding(live: &Lifetime, action: &BindAction) -> Result<Derived, HostErr
             let (page, document) = observed(live)?;
             // The host's own checks of the observed target, before any
             // worker frame; the binding names the name the host observed.
-            let (state, name, ordinal) = live.worker.live_form_binding(node_id, role, &input)?;
+            let crate::actuation::LiveFormBinding {
+                state,
+                name,
+                ordinal,
+            } = live.worker.live_form_binding(node_id, role, &input)?;
             // SG-000122 slice A2: the role, the name and the ordinal the
             // prompt shows are bound too (the name by its full digest).
             let facts = BoundForm::new(role, &name, ordinal);

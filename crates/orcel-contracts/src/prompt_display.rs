@@ -50,6 +50,16 @@ fn omitted(rest: usize) -> String {
 /// the shown text would exceed `max_chars`, and then saying how many input characters were left
 /// out. The prompt (`orcel-approval`'s `display_field`) is this function.
 pub fn display(value: &str, max_chars: usize) -> String {
+    let (mut out, rest) = display_parts(value, max_chars);
+    if rest > 0 {
+        out.push_str(&omitted(rest));
+    }
+    out
+}
+
+/// What [`display`] draws for `value`, without its closing count: the shown text, and how many
+/// input characters were left out after it.
+pub fn display_parts(value: &str, max_chars: usize) -> (String, usize) {
     let pieces = pieces(value);
     let mut out = String::new();
     let mut out_chars = 0usize;
@@ -63,11 +73,15 @@ pub fn display(value: &str, max_chars: usize) -> String {
         out_chars += len;
         taken += 1;
     }
-    let rest = pieces.len() - taken;
-    if rest > 0 {
-        out.push_str(&omitted(rest));
-    }
-    out
+    (out, pieces.len() - taken)
+}
+
+/// SG-000122: whether `value`'s plain spaces can all be seen and counted on its prompt line:
+/// none leading or trailing (so it can't render blank or pad itself), and never two in a row.
+/// Other spaces are escaped by [`pieces`] anyway. A value that fails this is refused, never
+/// shown altered.
+pub fn plainly_spaced(value: &str) -> bool {
+    !value.starts_with(' ') && !value.ends_with(' ') && !value.contains("  ")
 }
 
 /// SG-000122: the most bytes of a form control's accessible name a prompt line names (the
@@ -77,8 +91,10 @@ pub const MAX_FIELD_NAME_BYTES: usize = 256;
 /// SG-000122: the label of the prompt line that names a form field's accessible name. The name
 /// is the page's own text, so the line says so.
 pub const FIELD_NAME_LABEL: &str = "Field name (page-supplied): ";
-/// The same label when the name was longer than [`MAX_FIELD_NAME_BYTES`].
-pub const FIELD_NAME_CUT_LABEL: &str = "Field name (page-supplied, first 256 bytes): ";
+/// The same label when the name was longer than [`MAX_FIELD_NAME_BYTES`]: the line then shows
+/// only its start, and the prompt's own count of what it left out covers only the first
+/// [`MAX_FIELD_NAME_BYTES`], so the label says the name is longer than what is shown.
+pub const FIELD_NAME_CUT_LABEL: &str = "Field name (page-supplied, longer than shown): ";
 
 /// SG-000122: `name` cut to at most [`MAX_FIELD_NAME_BYTES`] on a character boundary, and
 /// whether it was cut.
@@ -93,24 +109,24 @@ pub fn bounded_field_name(name: &str) -> (&str, bool) {
     (&name[..end], true)
 }
 
-/// SG-000122: the preview line (before the prompt escapes and cuts it) that names a form field's
-/// accessible name, labelled as page-supplied.
-pub fn field_name_line(name: &str) -> String {
-    match bounded_field_name(name) {
-        (bounded, false) => format!("{FIELD_NAME_LABEL}{bounded}"),
-        (bounded, true) => format!("{FIELD_NAME_CUT_LABEL}{bounded}"),
+/// SG-000122: the preview line (before the prompt escapes and cuts it) that names a form
+/// field's accessible name, already bounded, labelled as page-supplied and, when `cut`, as
+/// longer than shown.
+pub fn field_name_line(bounded: &str, cut: bool) -> String {
+    if cut {
+        format!("{FIELD_NAME_CUT_LABEL}{bounded}")
+    } else {
+        format!("{FIELD_NAME_LABEL}{bounded}")
     }
 }
 
-/// SG-000122: what a person can tell two form fields' names apart by: the name line as the
-/// prompt shows it, always under the uncut label, so two names whose shown prefixes match are
-/// the same here even when only one of them was cut. Two fields of one role with the same key
-/// are told apart by their ordinal.
+/// SG-000122: what a person can tell two form fields' names apart by: exactly the name line
+/// the prompt draws for the full `name` (its label, cut or not, and the shown characters),
+/// without the prompt's closing count of characters left out. Two fields of one role whose
+/// prompts would draw the same name line get the same key, and are told apart by their ordinal.
 pub fn shown_field_name(name: &str) -> String {
-    display(
-        &format!("{FIELD_NAME_LABEL}{}", bounded_field_name(name).0),
-        MAX_PREVIEW_LINE_CHARS,
-    )
+    let (bounded, cut) = bounded_field_name(name);
+    display_parts(&field_name_line(bounded, cut), MAX_PREVIEW_LINE_CHARS).0
 }
 
 /// Why a value can't be shown exactly and in full.
@@ -268,18 +284,47 @@ mod tests {
         let odd = format!("a{}", "é".repeat(200));
         let (bounded, cut) = bounded_field_name(&odd);
         assert!(cut && bounded.len() == MAX_FIELD_NAME_BYTES - 1);
-        assert_eq!(field_name_line("City"), "Field name (page-supplied): City");
-        assert!(field_name_line(&long).starts_with(FIELD_NAME_CUT_LABEL));
-        let shared = "x".repeat(MAX_PREVIEW_LINE_CHARS);
         assert_eq!(
-            shown_field_name(&format!("{shared}A")),
-            shown_field_name(&format!("{shared}B"))
+            field_name_line("City", false),
+            "Field name (page-supplied): City"
+        );
+        assert_eq!(
+            field_name_line("City", true),
+            "Field name (page-supplied, longer than shown): City"
+        );
+        // The key is exactly the drawn line, label included, without the
+        // closing count: two long names with one shown prefix share it.
+        let shared = "x".repeat(MAX_PREVIEW_LINE_CHARS);
+        let a = format!("{shared}A");
+        let key = shown_field_name(&a);
+        assert_eq!(key, shown_field_name(&format!("{shared}BBBB")));
+        assert!(key.starts_with(FIELD_NAME_LABEL) && !key.contains("not shown"));
+        assert_eq!(
+            display(&field_name_line(&a, false), MAX_PREVIEW_LINE_CHARS),
+            format!("{key} [29 more characters not shown]")
         );
         assert_ne!(shown_field_name("Home"), shown_field_name("Work"));
+        // Two cut names draw the same line; a cut and an uncut one do not.
         assert_eq!(
             shown_field_name(&"x".repeat(300)),
             shown_field_name(&"x".repeat(299))
         );
+        assert!(shown_field_name(&"x".repeat(300)).starts_with(FIELD_NAME_CUT_LABEL));
+        assert_ne!(
+            shown_field_name(&"x".repeat(300)),
+            shown_field_name(&"x".repeat(200))
+        );
+    }
+
+    /// SG-000122: plain spaces must each be visible and countable.
+    #[test]
+    fn values_with_hidden_or_doubled_spaces_are_not_plainly_spaced() {
+        for fine in ["", "Ada", "Ada Lovelace", "a b c"] {
+            assert!(plainly_spaced(fine), "{fine:?}");
+        }
+        for bad in [" ", "   ", " Ada", "Ada ", "Ada  Lovelace", "Digest:  x"] {
+            assert!(!plainly_spaced(bad), "{bad:?}");
+        }
     }
 
     #[test]

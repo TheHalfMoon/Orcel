@@ -2331,7 +2331,7 @@ mod platform {
             node_id: &str,
             role: &str,
             input: &crate::actuation::FormInput,
-        ) -> Result<(String, String, Option<(usize, usize)>), HostError> {
+        ) -> Result<crate::actuation::LiveFormBinding, HostError> {
             let node = self
                 .host_nodes
                 .get(node_id)
@@ -2355,7 +2355,11 @@ mod platform {
                 })
                 .collect();
             let ordinal = crate::actuation::shared_name_ordinal(&nodes, node_id);
-            Ok((state, node.name.clone(), ordinal))
+            Ok(crate::actuation::LiveFormBinding {
+                state,
+                name: node.name.clone(),
+                ordinal,
+            })
         }
 
         /// SG-000122 slice A1: perform one approved live form action. The

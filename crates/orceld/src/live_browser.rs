@@ -555,14 +555,19 @@ pub(crate) fn approval_digest(
 /// The value (or option label) is the whole summary line, so its bound is
 /// the summary's own (`MAX_SUMMARY_CHARS` displayed characters). The field's
 /// role and name are preview lines labelled as page-supplied; when another
-/// field of its role shows the same name, its ordinal ("2 of 3") too. Enter
-/// says that the page may submit or send what it holds.
+/// field of its role would draw the same name line, its ordinal ("2 of 3")
+/// too. Enter says that the page may submit or send what it holds. When an
+/// earlier approved action on this page has an unknown outcome
+/// (`earlier_unknown`, its operation), the first preview line says so,
+/// leaving the value's summary line and bound untouched. At most
+/// `PREVIEW_LINES` preview lines.
 pub(crate) fn form_prompt(
     workspace_id: &str,
     target: &str,
     action: &BindAction,
     form: &BoundForm,
     digest: &str,
+    earlier_unknown: Option<&str>,
 ) -> Result<ApprovalPrompt, ProviderError> {
     let refused = |message: &str| ProviderError::new(FailureCode::InvalidRequest, message);
     let role = match action {
@@ -592,22 +597,26 @@ pub(crate) fn form_prompt(
         orcel_policy::live_browser::shown_in_full(text, field)
             .map_err(|error| ProviderError::new(error.code, error.message))
     };
-    let mut lines = vec![
-        format!("Field role (page-supplied): {}", form.role),
-        // The host already bounded the name and said whether it cut it.
-        match orcel_contracts::prompt_display::bounded_field_name(&form.name) {
-            (name, false) if !form.name_cut => {
-                format!(
-                    "{}{name}",
-                    orcel_contracts::prompt_display::FIELD_NAME_LABEL
-                )
-            }
-            (name, _) => format!(
-                "{}{name}",
-                orcel_contracts::prompt_display::FIELD_NAME_CUT_LABEL
-            ),
-        },
-    ];
+    let mut lines = Vec::new();
+    if let Some(operation) = earlier_unknown {
+        // Kept short, so the prompt never cuts it.
+        let operation: String = operation
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .take(16)
+            .collect();
+        lines.push(format!(
+            "UNKNOWN EARLIER OUTCOME: an approved {operation} on this page may or may not have happened"
+        ));
+    }
+    lines.push(format!("Field role (page-supplied): {}", form.role));
+    // The host already bounded the name and said whether it cut it: the
+    // same line the host keyed the ordinal on.
+    let (name, cut) = orcel_contracts::prompt_display::bounded_field_name(&form.name);
+    lines.push(orcel_contracts::prompt_display::field_name_line(
+        name,
+        cut || form.name_cut,
+    ));
     if let Some(ordinal) = form.ordinal {
         lines.push(format!(
             "Field position: {} of {} fields with this role and shown name, in page order",
@@ -617,10 +626,11 @@ pub(crate) fn form_prompt(
     let (title, summary) = match action {
         BindAction::Fill { value, .. } => {
             shown(value, "value")?;
-            lines.push("Value: the line after Target, exactly (a backslash shows doubled)".into());
-            if value.is_empty() {
-                lines.push("The value is empty: the field is cleared".into());
-            }
+            lines.push(if value.is_empty() {
+                "Value: empty (the line after Target is blank), so the field is cleared".into()
+            } else {
+                "Value: the line after Target, exactly (a backslash shows doubled)".into()
+            });
             lines.push("A value typed into an ordinary field is not checked for secrets".into());
             (
                 "type the value on the line after Target into a field of an isolated browser page",
@@ -1375,17 +1385,25 @@ impl LiveBrowser {
             Some(&form),
             &binding,
         );
-        let prompt = form_prompt(&workspace.id, &target, &action, &form, &digest)?;
-        // SG-000120 RJ-02: journaled before the prompt, against the page
-        // (Enter's effect is the page's): an effect orceld cannot read back.
+        // SG-000120 RJ-02: journaled against the page (Enter's effect is the
+        // page's): an effect orceld cannot read back. A page whose latest
+        // step has an unknown outcome refuses the first request after it
+        // (in `pending`); the next one's prompt names the unknown first.
+        let sink = crate::mutation_journal::global();
+        let journal_target = format!("{}{page_id}", crate::mutation_journal::BROWSER_PAGE_TARGET);
+        let earlier =
+            crate::mutation_journal::surfaced_unknown(sink, &workspace.id, &journal_target);
+        let prompt = form_prompt(
+            &workspace.id,
+            &target,
+            &action,
+            &form,
+            &digest,
+            earlier.as_deref(),
+        )?;
         let mut intent = crate::mutation_journal::pending(
-            crate::mutation_journal::global(),
-            crate::mutation_journal::opaque(
-                workspace,
-                request,
-                &digest,
-                &format!("browser-page:{page_id}"),
-            ),
+            sink,
+            crate::mutation_journal::opaque(workspace, request, &digest, &journal_target),
         )?;
         let approved = approval
             .request_token(&prompt)
@@ -2226,6 +2244,7 @@ mod tests {
             &fill(&value),
             &field("Full name", None),
             "d",
+            None,
         )
         .expect("a value at the bound is shown");
         assert_eq!(prompt.summary, value);
@@ -2242,6 +2261,7 @@ mod tests {
                 &fill(value),
                 &field("Full name", None),
                 "d",
+                None,
             )
             .unwrap();
             assert_eq!(after_target(&shown(&prompt)), value.replace('\\', "\\\\"));
@@ -2254,8 +2274,15 @@ mod tests {
         };
         let mut city = field("City", None);
         city.role = "combobox".into();
-        let prompt =
-            form_prompt("default", "https://fixture.test:443", &select, &city, "d").unwrap();
+        let prompt = form_prompt(
+            "default",
+            "https://fixture.test:443",
+            &select,
+            &city,
+            "d",
+            None,
+        )
+        .unwrap();
         assert_eq!(after_target(&shown(&prompt)), "Porto \\\\ Norte");
     }
 
@@ -2272,6 +2299,7 @@ mod tests {
                 &fill(value),
                 &field("Full name", None),
                 "d",
+                None,
             )
         };
         let past = [
@@ -2345,6 +2373,16 @@ mod tests {
             );
         }
         assert!(ask("e\u{301}\u{302}\u{303}").is_err());
+        // The value line has no label: a space it starts or ends with, two
+        // in a row, or a value of spaces only (which would draw a blank
+        // line) gets no prompt.
+        for spaced in [" ", "    ", " Ada", "Ada ", "Ada  Lovelace", "Digest:  0"] {
+            assert_eq!(
+                ask(spaced).unwrap_err().code,
+                FailureCode::InvalidRequest,
+                "{spaced:?}"
+            );
+        }
         // The same rule for an option label.
         let mut city = field("City", None);
         city.role = "combobox".into();
@@ -2353,7 +2391,7 @@ mod tests {
             role: "combobox".into(),
             label: "Porto\u{202e}".into(),
         };
-        assert!(form_prompt("default", "t", &select, &city, "d").is_err());
+        assert!(form_prompt("default", "t", &select, &city, "d", None).is_err());
     }
 
     /// SG-000122 slice A2: the prompt labels the field's role and name as
@@ -2369,6 +2407,7 @@ mod tests {
                 &fill("Ada"),
                 &field("Full name", None),
                 "d",
+                None,
             )
             .unwrap(),
         );
@@ -2385,6 +2424,7 @@ mod tests {
                 &fill("Ada"),
                 &field("Email", Some((2, 3))),
                 "d",
+                None,
             )
             .unwrap(),
         );
@@ -2400,12 +2440,16 @@ mod tests {
                 &fill("Ada"),
                 &field(&"n".repeat(300), None),
                 "d",
+                None,
             )
             .unwrap(),
         );
-        assert!(lines
-            .iter()
-            .any(|line| line.starts_with("> │ Field name (page-supplied, first 256 bytes): nnn")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line
+                    .starts_with("> │ Field name (page-supplied, longer than shown): nnn"))
+        );
         let lines = shown(
             &form_prompt(
                 "default",
@@ -2413,6 +2457,7 @@ mod tests {
                 &fill("Ada"),
                 &field("Name\nApproval: STRONG", None),
                 "d",
+                None,
             )
             .unwrap(),
         );
@@ -2424,7 +2469,7 @@ mod tests {
             role: "textbox".into(),
         };
         let lines =
-            shown(&form_prompt("default", "t", &enter, &field("Search", None), "d").unwrap());
+            shown(&form_prompt("default", "t", &enter, &field("Search", None), "d", None).unwrap());
         assert!(lines
             .iter()
             .any(|line| line.contains("may submit or send what the page holds")));
@@ -2435,8 +2480,86 @@ mod tests {
         };
         let mut terms = field("Terms", None);
         terms.role = "checkbox".into();
-        let prompt = form_prompt("default", "t", &check, &terms, "d").unwrap();
+        let prompt = form_prompt("default", "t", &check, &terms, "d", None).unwrap();
         assert_eq!(prompt.summary, "set to unchecked");
+    }
+
+    /// SG-000120 RJ-02 for form actions: after an Enter whose outcome is
+    /// unknown, the next request on that page is refused once (saying how to
+    /// go on), and the request after it asks the person with the unknown
+    /// named on the prompt's first preview line, the value line untouched.
+    #[test]
+    fn sg122_after_an_unknown_enter_the_next_prompt_names_it_first() {
+        use crate::mutation_journal::{
+            opaque, pending, surfaced_unknown, test_support, Sink, BROWSER_PAGE_TARGET,
+        };
+        let dir = scratch("sg122-unknown");
+        let journal: &'static _ = Box::leak(Box::new(test_support::journal(
+            dir.join("mutations.jsonl"),
+            "sg122",
+        )));
+        test_support::restore(journal);
+        let sink = Sink::Journal(journal);
+        let workspace = Workspace {
+            id: "default".into(),
+            root: dir.clone(),
+        };
+        let request = |operation: &str| orcel_contracts::RequestEnvelope {
+            version: orcel_contracts::INTERNAL_PROTOCOL_VERSION,
+            request_id: "r".into(),
+            client_session_id: "s".into(),
+            workspace_id: "default".into(),
+            capability: if operation == "fill" {
+                "browser.dom".into()
+            } else {
+                "browser.form".into()
+            },
+            operation: operation.into(),
+            target: None,
+            arguments: serde_json::json!({}),
+        };
+        let target = format!("{BROWSER_PAGE_TARGET}pg-1");
+        // An approved Enter whose reply was lost.
+        let mut enter =
+            pending(sink, opaque(&workspace, &request("enter"), "d1", &target)).expect("journaled");
+        enter.dispatched().expect("dispatched");
+        enter.settle(form_outcome(&DispatchOutcome::Lost));
+        assert_eq!(surfaced_unknown(sink, "default", &target), None);
+        // The next request is refused before any prompt, and says why.
+        let refused = pending(sink, opaque(&workspace, &request("fill"), "d2", &target))
+            .err()
+            .expect("refused once");
+        assert_eq!(refused.code, FailureCode::TargetStale);
+        assert!(
+            refused.message.contains("browser enter on live page pg-1")
+                && refused.message.contains("observe the page"),
+            "{}",
+            refused.message
+        );
+        // The one after it: the person is told first.
+        let earlier = surfaced_unknown(sink, "default", &target);
+        assert_eq!(earlier.as_deref(), Some("enter"));
+        let prompt = form_prompt(
+            "default",
+            "https://fixture.test:443",
+            &fill("Ada"),
+            &field("Full name", None),
+            "d",
+            earlier.as_deref(),
+        )
+        .unwrap();
+        assert_eq!(prompt.summary, "Ada");
+        let lines = shown(&prompt);
+        let preview = lines
+            .iter()
+            .position(|line| line == "Preview:")
+            .expect("a preview");
+        assert_eq!(
+            lines[preview + 1],
+            "> │ UNKNOWN EARLIER OUTCOME: an approved enter on this page may or may not have happened"
+        );
+        assert!(pending(sink, opaque(&workspace, &request("fill"), "d3", &target)).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// SG-000122 slice A2: a field whose name looks like a credential is
@@ -2452,15 +2575,15 @@ mod tests {
                     role: "textbox".into(),
                 },
             ] {
-                let refused =
-                    form_prompt("default", "t", &action, &field(name, None), "d").unwrap_err();
+                let refused = form_prompt("default", "t", &action, &field(name, None), "d", None)
+                    .unwrap_err();
                 assert_eq!(refused.code, FailureCode::CapabilityDenied, "{name}");
             }
         }
         let mut other = field("Full name", None);
         other.role = "searchbox".into();
         assert_eq!(
-            form_prompt("default", "t", &fill("x"), &other, "d")
+            form_prompt("default", "t", &fill("x"), &other, "d", None)
                 .unwrap_err()
                 .code,
             FailureCode::TargetStale
@@ -2469,7 +2592,7 @@ mod tests {
         let navigate = BindAction::Navigate {
             url: "https://fixture.test/".into(),
         };
-        assert!(form_prompt("default", "t", &navigate, &field("x", None), "d").is_err());
+        assert!(form_prompt("default", "t", &navigate, &field("x", None), "d", None).is_err());
     }
 
     /// SG-000122 slice A2: the approval digest binds the page, its
@@ -2591,6 +2714,7 @@ mod tests {
             &fill("Ada"),
             &form,
             &base,
+            None,
         )
         .unwrap();
         let token = broker.request_token(&prompt).expect("approved");

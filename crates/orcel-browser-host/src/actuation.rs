@@ -356,8 +356,15 @@ pub fn live_form_check(
 /// the prompt's own (`orcel_contracts::prompt_display`).
 #[cfg(any(windows, test))]
 pub fn live_fill_value(value: &str) -> Result<(), HostError> {
-    use orcel_contracts::prompt_display::{shown_exactly, NotShownExactly, MAX_SUMMARY_CHARS};
+    use orcel_contracts::prompt_display::{
+        plainly_spaced, shown_exactly, NotShownExactly, MAX_SUMMARY_CHARS,
+    };
     match shown_exactly(value, MAX_SUMMARY_CHARS) {
+        // SG-000122 slice A2: every plain space visible on the prompt line.
+        Ok(_) if !plainly_spaced(value) => Err(HostError::Invalid(
+            "the value has a leading, trailing or doubled space the approval prompt could not show"
+                .into(),
+        )),
         Ok(_) => Ok(()),
         Err(NotShownExactly::Escaped) => Err(HostError::Invalid(
             "the value holds a character the approval prompt would escape".into(),
@@ -394,14 +401,30 @@ pub struct OrdinalNode<'a> {
     pub name: &'a str,
 }
 
+/// SG-000122 slice A2: what a live form approval binds about its target,
+/// from the host's record of the latest observation: the approval state, the
+/// observed accessible name, and the ordinal (`shared_name_ordinal`). Only
+/// the Windows worker session builds one.
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveFormBinding {
+    pub state: String,
+    pub name: String,
+    pub ordinal: Option<(usize, usize)>,
+}
+
 /// SG-000122 slice A2: when two or more observed nodes of the target's role
-/// show the same name in the approval prompt
-/// (`prompt_display::shown_field_name`: equal names, or long names with one
-/// shown prefix), the target's position among them in page order and how
-/// many there are ("2 of 3"); `None` when its shown name is its own (or the
-/// target is not among `nodes`). The approval binds it, so a page that adds,
-/// removes or reorders such a field between the prompt and the action is
-/// refused.
+/// would have the same name line drawn in the approval prompt
+/// (`prompt_display::shown_field_name`: its label and shown characters), the
+/// target's position among them in page order and how many there are
+/// ("2 of 3"); `None` when its drawn name line is its own (or the target is
+/// not among `nodes`). The ordinal is computed from the host's record of its
+/// latest observation, both when the approval is bound and when the action is
+/// dispatched, and the host binding covers it: if the caller observed the
+/// page again in between and the ordinal changed, the action is refused. It
+/// is not re-measured in the live page at dispatch; there the worker acts on
+/// the exact observed reference, and falls back to role and name only when
+/// exactly one element has them, so a shared name is never retargeted.
 #[cfg(any(windows, test))]
 pub fn shared_name_ordinal(nodes: &[OrdinalNode<'_>], node_id: &str) -> Option<(usize, usize)> {
     use orcel_contracts::prompt_display::shown_field_name;
