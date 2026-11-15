@@ -825,6 +825,9 @@ jobs:
           set -euo pipefail
           contain=$(cd ../orcel-contain/target/debug && (pwd -W 2>/dev/null || pwd))
           ORCEL_TEST_CONTAIN_DIR="$contain" cargo test --locked -- --nocapture
+      # SG-000130 W3: the workbook report journey (scripted, labelled SOFT
+      # consent) runs here on every leg with this job's parser, and the step
+      # fails if that test didn't run and pass.
       - name: orceld parses a committed download under the contained tier (end to end)
         env:
           ORCEL_REQUIRE_CONTAINED_PARSER: "1"
@@ -832,7 +835,8 @@ jobs:
           set -euo pipefail
           contain=$(cd ../orcel-contain/target/debug && (pwd -W 2>/dev/null || pwd))
           parser=$(cd target/debug && (pwd -W 2>/dev/null || pwd))
-          ORCEL_TEST_CONTAIN_DIR="$contain" ORCEL_TEST_DOC_PARSER_DIR="$parser"             cargo test --locked --manifest-path ../../Cargo.toml -p orceld -- wi05_ --nocapture
+          ORCEL_TEST_CONTAIN_DIR="$contain" ORCEL_TEST_DOC_PARSER_DIR="$parser"             cargo test --locked --manifest-path ../../Cargo.toml -p orceld -- wi05_ --nocapture 2>&1 | tee "$RUNNER_TEMP/orceld-wi05.log"
+          grep -F "wi05_sg130_w3_the_workbook_report_journey_with_every_refusal ... ok" "$RUNNER_TEMP/orceld-wi05.log"
       - name: Release build of the parser
         run: |
           set -euo pipefail
