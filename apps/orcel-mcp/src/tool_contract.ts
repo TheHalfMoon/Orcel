@@ -284,7 +284,7 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
   },
   browser_observe: {
     capability: "browser.snapshot", operation: "observe", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "one frame of node identities and keyed digests; no page text",
+    outputBound: "one frame of node identities and keyed digests, plus an untrusted accessible name of at most 256 bytes for main-frame form controls whose name holds only text; no other page text",
     annotations: read("Observe isolated browser page")
   },
   browser_click: {

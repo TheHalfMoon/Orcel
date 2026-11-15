@@ -27,6 +27,7 @@ import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
 import { approvedElement, isOcclusion } from "./actions/targets.js";
 import { clickAndLoad } from "./actions/click-load.js";
 import { classifyControls, formAction } from "./actions/form.js";
+import { nameControls } from "./actions/names.js";
 import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
@@ -317,6 +318,8 @@ const playwrightLauncher: Launcher = {
         const snapshot = boundSnapshot(raw);
         // SG-000122: which main-frame form controls a form action may target.
         await classifyControls(primary, snapshot.nodes);
+        // SG-000122 slice A5: which of their names carry text only.
+        await nameControls(primary, snapshot.nodes);
         return { url: primary.url(), snapshot };
       },
       async discover(discId: number) {

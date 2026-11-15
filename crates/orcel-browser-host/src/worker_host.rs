@@ -50,8 +50,22 @@ use std::path::{Path, PathBuf};
 /// Worker-mode protocol generation. 1 is SG-000074's hello/ping/shutdown;
 /// 2 was slice 1a; 3 adds binding (`bind`), the typed selector, activation
 /// and download, and binds navigation; 4 adds `open_public` (slice 3b-ii);
-/// 5 adds SG-000122 slice A1's form actions, text waits and verification.
-pub const WORKER_HOST_GENERATION: u32 = 5;
+/// 5 adds SG-000122 slice A1's form actions, text waits and verification;
+/// 6 is observation contract 2 (SG-000122 slice A5): an observed node may
+/// carry `untrusted_name`.
+pub const WORKER_HOST_GENERATION: u32 = 6;
+
+/// The observation contract an `observed` reply follows. 1 (SG-000108 slice
+/// 1a): node identities, roles and keyed digests only; no name, value or
+/// page text crosses. 2 (SG-000122 slice A5): the same, plus the accessible
+/// name of each main-frame form control (roles in
+/// `worker_launch::NAMED_ROLES`, on an input or a native select) whose name
+/// no embedded or referenced control contributes to, as `untrusted_name`:
+/// the page's own text, at most `prompt_display::MAX_FIELD_NAME_BYTES`, cut
+/// on a character boundary and marked `cut`, control characters replaced.
+/// It is untrusted and grants nothing. Values, page text, option labels and
+/// every other node's name keep contract 1's rule.
+pub const OBSERVATION_CONTRACT: u32 = 2;
 
 /// Domain separation for host bindings.
 const BINDING_DOMAIN: &str = "orcel-sg108-host-binding/1";
@@ -236,7 +250,9 @@ pub struct WireCheck {
 
 /// SG-000122 slice A2: what a form action's approval prompt shows about its
 /// field, from the host's own record of the observation: the role and the
-/// accessible name (both page-supplied; the name at most
+/// accessible name as the observation returned it (slice A5's
+/// `untrusted_name`, or the empty name when it returned none), both
+/// page-supplied (the name at most
 /// `prompt_display::MAX_FIELD_NAME_BYTES`, cut on a character boundary) and,
 /// when another observed node of that role would have the same name line
 /// drawn in the prompt, the target's ordinal among them in page order. It
@@ -289,8 +305,10 @@ impl BoundForm {
     }
 }
 
-/// One observed node as it crosses to Orcel: identities and digests only.
-/// Raw names and values never leave the host.
+/// One observed node as it crosses to Orcel: identities and digests and,
+/// for a main-frame form control only (observation contract 2), its
+/// untrusted accessible name. Values, page text, option labels and every
+/// other raw name never leave the host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WireNode {
@@ -300,6 +318,32 @@ pub struct WireNode {
     pub value_digest: String,
     pub redacted: bool,
     pub children: Vec<WireNode>,
+    /// Absent under contract 1 and for every node it does not name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untrusted_name: Option<UntrustedName>,
+}
+
+/// SG-000122 slice A5: a form control's accessible name as the page
+/// supplies it: untrusted text that grants nothing, at most
+/// `prompt_display::MAX_FIELD_NAME_BYTES` and cut on a character boundary
+/// (`cut`), with control characters already replaced. The host is the
+/// authority on the cut.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UntrustedName {
+    pub text: String,
+    pub cut: bool,
+}
+
+impl UntrustedName {
+    /// The bounded name for `full`, the host's record of the name.
+    pub fn new(full: &str) -> Self {
+        let (bounded, cut) = orcel_contracts::prompt_display::bounded_field_name(full);
+        Self {
+            text: bounded.to_owned(),
+            cut,
+        }
+    }
 }
 
 impl From<&ObservedNode> for WireNode {
@@ -311,6 +355,7 @@ impl From<&ObservedNode> for WireNode {
             value_digest: node.value_digest.clone(),
             redacted: node.redacted,
             children: node.children.iter().map(WireNode::from).collect(),
+            untrusted_name: None,
         }
     }
 }
@@ -1253,6 +1298,7 @@ fn observe(live: &mut Lifetime) -> WorkerHostReply {
         .iter()
         .map(WireNode::from)
         .collect();
+    attach_names(&mut nodes, &|id| live.worker.form_name(id));
     let mut truncated = observed.observation.truncated;
     loop {
         let reply = WorkerHostReply::Observed {
@@ -1275,6 +1321,15 @@ fn observe(live: &mut Lifetime) -> WorkerHostReply {
         }
         pop_last_leaf(&mut nodes);
         truncated = true;
+    }
+}
+
+/// SG-000122 slice A5: each node `name_of` names (the host's record of a
+/// main-frame form control's name) carries it, bounded.
+fn attach_names<'a>(nodes: &mut [WireNode], name_of: &dyn Fn(&str) -> Option<&'a str>) {
+    for node in nodes {
+        node.untrusted_name = name_of(&node.node_id).map(UntrustedName::new);
+        attach_names(&mut node.children, name_of);
     }
 }
 
@@ -1353,7 +1408,8 @@ mod tests {
     /// other key; each round-trips.
     #[test]
     fn sg122_the_form_vocabulary_is_closed_and_round_trips() {
-        assert_eq!(WORKER_HOST_GENERATION, 5);
+        assert_eq!(WORKER_HOST_GENERATION, 6);
+        assert_eq!(OBSERVATION_CONTRACT, 2);
         for frame in [
             r#"{"frame":"form_action","action":{"kind":"press_enter","node_id":"d1-e2","role":"textbox","key":"Tab"},"record_id":"r","binding":"b"}"#,
             r#"{"frame":"form_action","action":{"kind":"press","node_id":"d1-e2","role":"textbox","key":"Enter"},"record_id":"r","binding":"b"}"#,
@@ -1723,6 +1779,7 @@ mod tests {
             value_digest: String::new(),
             redacted: false,
             children,
+            untrusted_name: None,
         };
         let mut nodes = vec![node(
             "root",
@@ -1746,6 +1803,7 @@ mod tests {
             value_digest: String::new(),
             redacted: false,
             children: Vec::new(),
+            untrusted_name: None,
         };
         let mut parent = leaf("a");
         parent.children.push(leaf("b"));
@@ -1753,6 +1811,65 @@ mod tests {
         collect_ids(&[parent, leaf("c")], &mut ids);
         assert_eq!(ids.len(), 3);
         assert!(ids.contains("b"));
+    }
+
+    /// SG-000122 slice A5: observation contract 2. A node carries the name
+    /// the host recorded for it, cut by the host to 256 bytes on a character
+    /// boundary and marked; every other node carries none, and a contract 1
+    /// node (no `untrusted_name`) still decodes, unchanged on the wire.
+    #[test]
+    fn sg122_a5_names_cross_bounded_and_only_where_the_host_recorded_one() {
+        let leaf = |id: &str| WireNode {
+            node_id: id.into(),
+            role: "textbox".into(),
+            name_digest: "d".into(),
+            value_digest: "v".into(),
+            redacted: false,
+            children: Vec::new(),
+            untrusted_name: None,
+        };
+        let long = format!("a{}", "é".repeat(200));
+        let mut parent = leaf("d1-e1");
+        parent.children.push(leaf("d1-e2"));
+        let mut nodes = vec![parent, leaf("d1-e3")];
+        let names = |id: &str| match id {
+            "d1-e2" => Some("City"),
+            "d1-e3" => Some(long.as_str()),
+            _ => None,
+        };
+        attach_names(&mut nodes, &names);
+        assert_eq!(nodes[0].untrusted_name, None);
+        assert_eq!(
+            nodes[0].children[0].untrusted_name,
+            Some(UntrustedName {
+                text: "City".into(),
+                cut: false
+            })
+        );
+        let cut = nodes[1].untrusted_name.clone().expect("a cut name");
+        assert!(cut.cut && cut.text.len() == 255 && long.starts_with(&cut.text));
+        let at_bound = "x".repeat(256);
+        assert_eq!(
+            UntrustedName::new(&at_bound),
+            UntrustedName {
+                text: at_bound.clone(),
+                cut: false
+            }
+        );
+        assert!(UntrustedName::new(&format!("{at_bound}y")).cut);
+        // Contract 1 and 2 agree on every node without a name.
+        let old = r#"{"node_id":"d1-e3","role":"link","name_digest":"d","value_digest":"v","redacted":false,"children":[]}"#;
+        let decoded: WireNode = serde_json::from_str(old).expect("a contract 1 node");
+        assert_eq!(decoded.untrusted_name, None);
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), old);
+        let named = serde_json::to_value(&nodes[0].children[0]).unwrap();
+        assert_eq!(
+            named["untrusted_name"],
+            serde_json::json!({"text": "City", "cut": false})
+        );
+        // The name is closed: no other field rides along.
+        let extra = r#"{"node_id":"d1-e3","role":"textbox","name_digest":"d","value_digest":"v","redacted":false,"children":[],"untrusted_name":{"text":"x","cut":false,"value":"y"}}"#;
+        assert!(serde_json::from_str::<WireNode>(extra).is_err());
     }
 
     /// A development build's vocabulary: the fixture `open` does not exist

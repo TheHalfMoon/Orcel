@@ -2552,6 +2552,144 @@ fn br06_admitted_frames_are_observed_and_foreign_frames_are_not() {
     );
 }
 
+/// SG-000122 slice A5: on the real engine, the host records a name a
+/// caller may see only for a main-frame form control whose name no embedded
+/// or referenced control contributes to: a checkbox whose label wraps a
+/// textbox holding a value or a select, and a field named by a password
+/// field through aria-labelledby, get none (their raw names carry the value
+/// or option label); a field described by a password field, a label that
+/// wraps only its own select or field, and a password field are named; a
+/// long name is cut by the host on a character boundary and control
+/// characters are replaced; links, buttons and a control inside a frame
+/// get none. Anything but text and text-level elements in a label (an
+/// element with aria-labelledby, a slot or shadow host, a button, an output,
+/// an editable region, a nested label) or on it (aria-labelledby) withholds
+/// the name. No value or option label is ever in a recorded name.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn sg122_a5_form_control_names_exclude_embedded_and_referenced_controls() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("names");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/form-names")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    // (role, raw name, caller-visible name, reference) in page order.
+    let mut seen = Vec::new();
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    while let Some(node) = stack.pop() {
+        if let Some(host) = worker.host_node(&node.node_id) {
+            assert_eq!(worker.form_name(&node.node_id), host.form_name.as_deref());
+            seen.push((
+                host.role.clone(),
+                host.name.clone(),
+                host.form_name.clone(),
+                host.reference.clone(),
+            ));
+        }
+        stack.extend(node.children.iter());
+    }
+    let find = |role: &str, raw_starts: &str| {
+        seen.iter()
+            .find(|(r, name, _, _)| r == role && name.starts_with(raw_starts))
+            .unwrap_or_else(|| panic!("no {role} named {raw_starts:?}: {seen:?}"))
+            .clone()
+    };
+    // Raw names carry the embedded or referenced value; no caller name does.
+    let remember = find("checkbox", "Remember");
+    assert!(remember.1.contains("TYPEDVALUE"), "{remember:?}");
+    assert_eq!(remember.2, None, "a label wrapping a textbox with a value");
+    let region = find("checkbox", "Region");
+    assert!(region.1.contains("OPTIONLABEL"), "{region:?}");
+    assert_eq!(region.2, None, "a label wrapping a select");
+    let account = find("textbox", "Account");
+    assert!(account.1.contains("HUNTER2PW"), "{account:?}");
+    assert_eq!(account.2, None, "aria-labelledby on a password field");
+    // A description never joins a name; a label holding only its own
+    // control names it; a password field is named, never valued.
+    assert_eq!(find("textbox", "Notes").2.as_deref(), Some("Notes"));
+    assert_eq!(find("combobox", "City").2.as_deref(), Some("City"));
+    assert_eq!(find("textbox", "Full name").2.as_deref(), Some("Full name"));
+    assert_eq!(find("textbox", "Password").2.as_deref(), Some("Password"));
+    // Bounded by the host when it crosses: cut on a character boundary.
+    let long = find("textbox", "a\u{e9}").2.expect("the long name");
+    assert_eq!(long.len(), 401);
+    let (bounded, cut) = orcel_contracts::prompt_display::bounded_field_name(&long);
+    assert!(cut && bounded.len() == 255, "{}", bounded.len());
+    // Control characters replaced: a C1 control (U+0081), a bidi override
+    // (U+202E) and a bidi isolate (U+2066), each reaching the host as itself
+    // (line separators, which the name computation folds into a space, are
+    // covered by the host's unit test).
+    let raw = find("textbox", "Line");
+    assert_eq!(raw.1, "Line\u{81}break\u{202e}flip\u{2066}end", "{raw:?}");
+    assert_eq!(
+        raw.2.as_deref(),
+        Some("Line\u{fffd}break\u{fffd}flip\u{fffd}end")
+    );
+    // Not form controls, and a control inside a frame: no name.
+    assert_eq!(find("link", "A link").2, None);
+    assert_eq!(find("button", "A button").2, None);
+    let inner = find("textbox", "Inner");
+    assert!(inner.3.starts_with('f'), "{inner:?}");
+    assert_eq!(inner.2, None, "a control inside a frame");
+    // Deny by default (judge, #767): of the checkboxes only the one whose
+    // label holds text and a text-level element is named. Withheld: an
+    // element inside the label naming a password field (a), a label with
+    // aria-labelledby (b), a label in a shadow tree with a slotted password
+    // field and a label holding a shadow host with one (c), a button whose
+    // own label holds a password field (d), an output, an editable region
+    // and a nested label.
+    let checkboxes: Vec<_> = seen
+        .iter()
+        .filter(|(role, ..)| role == "checkbox")
+        .collect();
+    assert!(checkboxes.len() >= 11, "{checkboxes:?}");
+    let named: Vec<_> = checkboxes
+        .iter()
+        .filter_map(|(_, _, name, _)| name.clone())
+        .collect();
+    assert_eq!(named, ["Accept terms"], "{checkboxes:?}");
+    assert!(
+        checkboxes
+            .iter()
+            .any(|(_, raw, ..)| raw.contains("HUNTER2BTN")),
+        "case (d) carries the value in its raw name: {checkboxes:?}"
+    );
+    assert!(!format!("{:?}", live.observation).contains("HUNTER2"));
+    for (_, _, name, _) in &seen {
+        let name = name.as_deref().unwrap_or("");
+        for value in [
+            "TYPEDVALUE",
+            "OPTIONLABEL",
+            "HUNTER2",
+            "OUTVAL",
+            "EDITVAL",
+            "SECRETPW",
+            "Old Name",
+            "Lisbon",
+            "Porto",
+        ] {
+            assert!(!name.contains(value), "{value} in a caller name: {name}");
+        }
+    }
+    let report = worker.shutdown();
+    assert!(report.job_empty, "the job did not empty");
+    assert_profile_gone(report.profile_removed, &profile);
+    drop(fixture);
+}
+
 /// BR-04: a link covered by an overlay is not clicked; the refusal is typed
 /// (observe again) and the link's document is never requested.
 #[test]

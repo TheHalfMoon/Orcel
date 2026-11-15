@@ -7,7 +7,9 @@
 // redaction alone would leak it. The worker therefore never forwards any
 // field value: a node carries only its ref, role, accessible name, and (for
 // links) the bounded link URL. The host issues node identities, applies
-// SG-000076 redaction, digests and ceilings, and keeps raw names to itself.
+// SG-000076 redaction, digests and ceilings, and keeps raw names to itself,
+// except (SG-000122 slice A5) the names of main-frame form controls the
+// worker marks `named`: those it bounds, marks untrusted and passes on.
 
 export const MAX_SNAPSHOT_NODES = 512;
 export const MAX_SNAPSHOT_DEPTH = 16;
@@ -26,6 +28,9 @@ export interface SnapshotNode {
   name: string;
   url?: string;
   control?: FormControl;
+  /// SG-000122 slice A5: this form control's name carries no embedded or
+  /// referenced control's contribution (`nameControls`).
+  named?: boolean;
   children: SnapshotNode[];
 }
 
