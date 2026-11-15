@@ -67,11 +67,20 @@ def tier_a_goal(task: Task) -> str:
     return f"{view.description}{inputs}{ANSWER_FORMAT}"
 
 
-def answer_candidates(text: Optional[str]) -> list[Any]:
+#: A Tier A task declares that its answer is a set, in any order, with this
+#: metadata entry (withheld from the model like the rest of the ground truth).
+ORDER_FREE = ("answer_order", "any")
+
+
+def order_free(task: Task) -> bool:
+    return task.metadata.get(ORDER_FREE[0]) == ORDER_FREE[1]
+
+
+def answer_candidates(text: Optional[str], any_order: bool = False) -> list[Any]:
     """The readings of a reply that a task's exact check is tried against: the
     JSON value it asked for, the bare text (so `8417` and `"8417"` both read as
-    the string a task may expect), and for a list of strings, the list sorted (a
-    task asking for every match doesn't ask for an order). Nothing else is
+    the string a task may expect), and, only for a task that declares its answer
+    order-free (`ORDER_FREE`), a list of strings sorted. Nothing else is
     loosened: the words must still be exactly right."""
     if not isinstance(text, str):
         return []
@@ -87,7 +96,7 @@ def answer_candidates(text: Optional[str]) -> list[Any]:
         value = _MISSING
     if value is not _MISSING:
         candidates.append(value)
-        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        if any_order and isinstance(value, list) and all(isinstance(item, str) for item in value):
             candidates.append(sorted(value))
     if raw not in candidates:
         candidates.append(raw)
@@ -105,7 +114,7 @@ def tier_a_tasks(root: Path = TIER_A_ROOT) -> list[tuple[str, Any, Task]]:
 
 
 def judge_tier_a(module: Any, task: Task, session: FileSession, answer: Optional[str]) -> bool:
-    for candidate in answer_candidates(answer):
+    for candidate in answer_candidates(answer, order_free(task)):
         session.answer = candidate  # type: ignore[attr-defined]
         try:
             if reward_of(_phase(module.functions["evaluate_task"], task, session, PHASE_TIMEOUT_S)) == 1.0:
@@ -217,6 +226,7 @@ def main(args: Any) -> int:
                         row = run_model_episode(task.name, repeat, MODEL_LABEL, bridge, orceld, edge_js, args.node)
                         synthetic.append(row)
                         server.read_peak()
+                        server.confirm()
                         print(f"model-run: {task.name:<22} #{repeat} outcome={row['outcome']:<20} "
                               f"correct={row['answer_correct']} calls={row['orcel_calls']} "
                               f"invalid={row['invalid_proposals']}/{row['proposals']} "
@@ -228,6 +238,7 @@ def main(args: Any) -> int:
                                                  args.node)
                         tier_a.append(row)
                         server.read_peak()
+                        server.confirm()
                         print(f"model-run: {case:<40} #{repeat} {row['status']} outcome={row['outcome']} "
                               f"calls={row['orcel_calls']} {time.perf_counter() - begun:.0f} s", flush=True)
             finally:

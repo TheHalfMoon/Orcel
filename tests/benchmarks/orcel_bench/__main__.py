@@ -97,7 +97,8 @@ def main(argv: list[str]) -> int:
     model_run.add_argument("--tier-a-repeats", type=int, default=10, help="runs of each Tier A variant (the bar: 10)")
     model_run.add_argument("--temp-root", type=Path,
                            help="where workspaces, state and the extracted runner go (default: the system temp); "
-                                "the agent store and orceld refuse a folder another account can reach")
+                                "made owner-only if new, refused if another account can read or write it, "
+                                "and held (not renamable) for the run")
     model_run.add_argument("--out", required=True, type=Path, help="where to write the report")
     tierc = sub.add_parser("tierc-noop", help="Tier C C1: the no-op baseline over a verified taskpack")
     tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched by fetch-taskpack (verified again before it runs)")
@@ -171,15 +172,31 @@ def main(argv: list[str]) -> int:
 
         return model_selfcheck(args)
     if args.command == "model-run":
+        # 3.12.4 is the first 3.12 whose tempfile.mkdtemp gives a new folder an
+        # owner-only DACL on Windows (CVE-2024-4030); the episodes' workspaces
+        # and state roots are made that way.
+        if sys.version_info < (3, 12, 4):
+            print(f"model-run: needs Python 3.12.4 or later (private temporary folders on Windows), "
+                  f"not {sys.version.split()[0]}", file=sys.stderr)
+            return 2
         from .model_real import main as model_run
+        from .model_hold import prepare_temp_root
 
+        temp_hold = None
         if args.temp_root is not None:
             import tempfile
 
-            args.temp_root.mkdir(parents=True, exist_ok=True)
-            tempfile.tempdir = str(args.temp_root.resolve())
-
-        return model_run(args)
+            try:
+                root, temp_hold = prepare_temp_root(args.temp_root)
+            except OSError as error:
+                print(f"model-run: refusing --temp-root: {error}", file=sys.stderr)
+                return 2
+            tempfile.tempdir = str(root)
+        try:
+            return model_run(args)
+        finally:
+            if temp_hold is not None:
+                temp_hold.close()
     if args.command == "agent":
         from .agent_client import LABELS, AgentOrcel
 
