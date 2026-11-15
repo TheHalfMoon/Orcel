@@ -24,6 +24,18 @@ const BROWSER_SHAPES = [
   "browser.upload/submit"
 ];
 
+/** SG-000122 (the A13 amendment): the shapes admitted beside the twelve. */
+const SG122_ADMITTED_SHAPES = [
+  "browser.form/select",
+  "browser.form/check",
+  "browser.form/enter",
+  "browser.wait/text",
+  "browser.verify/check"
+];
+
+/** SG-000122 slice A3: the grain's shapes live through MCP so far. */
+const SG122_LIVE_SHAPES = ["browser.dom/fill", "browser.wait/text", "browser.verify/check"];
+
 function nonTestRust(dir: string): Array<[string, string]> {
   return readdirSync(dir)
     .filter((name) => name.endsWith(".rs") && !name.includes("test"))
@@ -61,25 +73,36 @@ test("every structured browser shape is recorded as live (SG-000108) or model-on
     workflows: Array<{ id: string; status: string; owner_grain?: string }>;
   };
   const liveShapes = new Map(LIVE_BROWSER_TOOLS.map((tool) => [`${TOOL_CONTRACT[tool]?.capability}/${TOOL_CONTRACT[tool]?.operation}`, tool]));
-  assert.equal(liveShapes.size, 6);
-  for (const shape of BROWSER_SHAPES) {
+  assert.equal(liveShapes.size, 9);
+  for (const shape of [...BROWSER_SHAPES, ...SG122_ADMITTED_SHAPES]) {
     const [capability, operation] = shape.split("/");
     const entry = inventory.capabilities.find((c) => c.capability === capability && c.operation === operation) as
       | { status: string; reason?: string; mcp_tool?: string }
       | undefined;
     const tool = liveShapes.get(shape);
     if (tool !== undefined) {
-      assert.ok(doc.includes(`| \`${shape}\` | live (SG-000108) | \`${tool}\``), shape);
+      const grain = SG122_LIVE_SHAPES.includes(shape) ? "SG-000122" : "SG-000108";
+      assert.ok(doc.includes(`| \`${shape}\` | live (${grain}) | \`${tool}\``), shape);
       assert.equal(entry?.status, "implemented_exposed", shape);
       assert.equal(entry?.mcp_tool, tool, shape);
-    } else {
+    } else if (BROWSER_SHAPES.includes(shape)) {
       assert.ok(doc.includes(`| \`${shape}\` | model-only`), shape);
       assert.equal(entry?.status, "intentionally_denied", shape);
       assert.ok((entry?.reason ?? "").includes("model-only"), shape);
+    } else {
+      // SG-000122 shapes without a tool yet (slice A4) are not exposed.
+      assert.notEqual(entry?.status, "implemented_exposed", shape);
     }
   }
+  // Every live shape is one of the twelve or one SG-000122 admitted beside them.
   for (const shape of liveShapes.keys()) {
-    assert.ok(BROWSER_SHAPES.includes(shape), `${shape} is one of the twelve qualified shapes`);
+    assert.ok(
+      BROWSER_SHAPES.includes(shape) || SG122_ADMITTED_SHAPES.includes(shape),
+      `${shape} is one of the twelve qualified shapes or admitted by SG-000122`
+    );
+  }
+  for (const shape of SG122_LIVE_SHAPES) {
+    assert.ok(liveShapes.has(shape), shape);
   }
   const workflow = inventory.workflows.find((w) => w.id === "browser_structured");
   assert.equal(workflow?.status, "implemented_exposed");
