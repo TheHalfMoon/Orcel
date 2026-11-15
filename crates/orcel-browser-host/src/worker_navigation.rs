@@ -194,9 +194,8 @@ impl NavigationPolicy {
                 "activation leaves the page's origin".into(),
             ));
         }
-        // An approved activation is an approved navigation: it ends a held
-        // no-document rule.
-        self.held = false;
+        // A held no-document rule stays held here: the approval may still be
+        // refused. Only `approved_navigation`, once it was consumed, ends it.
         self.activation = Some((url.to_owned(), false));
         self.activation_any_query = false;
         Ok(())
@@ -259,8 +258,9 @@ impl NavigationPolicy {
     /// SG-000122 slice A6: after an Enter that committed no document, keep
     /// the no-document rule in force (every page-initiated top-level
     /// document and popup refused) until the next observation
-    /// (`release_hold`) or approved navigation (`begin`,
-    /// `expect_activation`). The worker's settle window only bounds how
+    /// (`release_hold`) or approved navigation (`begin`, or
+    /// `approved_navigation` once an activation's approval was consumed).
+    /// The worker's settle window only bounds how
     /// long the Enter waits; a submission the page starts after it is
     /// refused here, not admitted under the ordinary rules.
     pub fn hold_no_document(&mut self) {
@@ -277,6 +277,15 @@ impl NavigationPolicy {
             self.activation_any_query = false;
             self.submission = None;
         }
+    }
+
+    /// An approved activation (a link, a WebMCP submission or a download)
+    /// whose approval was consumed: an approved navigation, so it ends a
+    /// held no-document rule. Its own expectation stays in force until
+    /// `finish_activation`. Called only after the approval is spent; a
+    /// refused approval leaves the rule held.
+    pub fn approved_navigation(&mut self) {
+        self.held = false;
     }
 
     /// Whether a no-document rule is held after an Enter.
@@ -961,16 +970,55 @@ mod tests {
         p.commit("https://fixture.test/form").unwrap();
         assert!(!p.holding());
         assert!(p.decide(RouteKind::Document, late, "").is_ok());
-        // And so does an approved activation, which opens its document.
+        // And so does an approved activation, once its approval was
+        // consumed; it opens its document.
         let mut p = committed();
         p.hold_no_document();
         p.expect_activation(late).unwrap();
+        assert!(p.holding(), "not before the approval is consumed");
+        p.approved_navigation();
         assert!(!p.holding());
         assert!(p.decide(RouteKind::Document, late, "").is_ok());
         assert!(p.finish_activation());
         assert!(p
             .decide(RouteKind::Document, "https://fixture.test/next", "")
             .is_ok());
+    }
+
+    /// SG-000122 slice A6 (re-judge): an activation, a WebMCP submission or
+    /// a download whose approval is then refused at dispatch is not an
+    /// approved navigation: the no-document hold survives it.
+    #[test]
+    fn sg122_activation_dispatch_refused_keeps_the_hold() {
+        let late = "https://fixture.test/order";
+        for submission in [false, true] {
+            let mut p = committed();
+            p.hold_no_document();
+            if submission {
+                p.expect_submission(
+                    "https://fixture.test/order",
+                    false,
+                    Submission {
+                        method: "POST".into(),
+                        fields: Vec::new(),
+                        unsupplied: Vec::new(),
+                        multiline: Vec::new(),
+                        fixed: Vec::new(),
+                    },
+                )
+                .unwrap();
+            } else {
+                p.expect_activation(late).unwrap();
+            }
+            // The dispatch refuses the token: the caller ends the
+            // expectation without `approved_navigation`.
+            assert!(!p.finish_activation());
+            assert!(p.holding(), "submission: {submission}");
+            assert!(p
+                .decide_request(RouteKind::Document, late, "", &post("q=1"))
+                .is_err());
+            assert!(p.decide(RouteKind::Popup, late, HOME).is_err());
+        }
     }
 
     #[test]

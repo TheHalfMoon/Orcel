@@ -3393,6 +3393,9 @@ mod platform {
                 self.policy.finish_activation();
                 return Err(error);
             }
+            // The approval is consumed: an approved navigation, which ends
+            // a no-document rule held after an Enter (SG-000122 slice A6).
+            self.policy.approved_navigation();
             self.next_exec += 1;
             let exec_id = self.next_exec;
             let sent = self.send(&WorkerRequest::Execute {
@@ -3548,6 +3551,9 @@ mod platform {
                 self.policy.finish_activation();
                 return Err(error);
             }
+            // The approval is consumed: an approved navigation, which ends
+            // a no-document rule held after an Enter (SG-000122 slice A6).
+            self.policy.approved_navigation();
             self.next_act += 1;
             let act_id = self.next_act;
             self.send(&WorkerRequest::Activate {
@@ -3664,6 +3670,9 @@ mod platform {
                 self.policy.finish_activation();
                 return Err(error);
             }
+            // The approval is consumed: an approved navigation, which ends
+            // a no-document rule held after an Enter (SG-000122 slice A6).
+            self.policy.approved_navigation();
             self.next_dl += 1;
             let dl_id = self.next_dl;
             let staged = self.staging.join(format!("dl-{dl_id}.part"));
