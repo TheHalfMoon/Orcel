@@ -301,8 +301,12 @@ impl FormInput {
 /// single-line text field (an input whose type state is text, search,
 /// email, url or tel, a missing or unknown type being text), a native
 /// select, or a checkbox or radio input. Anything else carries no kind.
+/// Only the Windows worker session uses these (tests run them everywhere).
+#[cfg(any(windows, test))]
 pub const CONTROL_LINE: &str = "line";
+#[cfg(any(windows, test))]
 pub const CONTROL_SELECT: &str = "select";
+#[cfg(any(windows, test))]
 pub const CONTROL_TOGGLE: &str = "toggle";
 
 /// SG-000122: the host's own checks of a live form action against the
@@ -312,6 +316,7 @@ pub const CONTROL_TOGGLE: &str = "toggle";
 /// of a native select; check only a checkbox or radio input. Press with any
 /// other key, and hover, are not live actions. The worker checks the element
 /// again when it acts.
+#[cfg(any(windows, test))]
 pub fn live_form_check(
     role: &str,
     control: Option<&str>,
@@ -349,6 +354,7 @@ pub fn live_form_check(
 /// escape, and a displayed length (a backslash counting double) of at most
 /// the prompt's summary bound. It is refused, never truncated. The rule is
 /// the prompt's own (`orcel_contracts::prompt_display`).
+#[cfg(any(windows, test))]
 pub fn live_fill_value(value: &str) -> Result<(), HostError> {
     use orcel_contracts::prompt_display::{shown_exactly, NotShownExactly, MAX_SUMMARY_CHARS};
     match shown_exactly(value, MAX_SUMMARY_CHARS) {

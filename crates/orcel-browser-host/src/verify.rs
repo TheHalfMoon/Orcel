@@ -230,6 +230,11 @@ pub(crate) fn need<'a>(
         Postcondition::ElementVisible { node_id } => match node(node_id) {
             None => Need::Unavailable("node is not in the latest observation"),
             // Without a name, a role alone does not identify the element.
+            // SG-000122: no frame is probed; the worker looks in the main
+            // frame only, so an element observed inside a frame is not checked.
+            Some((reference, _, _)) if !main_frame_ref(reference) => {
+                Need::Unavailable("elements inside frames are not checked")
+            }
             Some((_, _, "")) => Need::Unavailable("element has no accessible name to match"),
             // The observation cuts names at the bound: a name at (or near)
             // it may be cut and would never match the real one.
@@ -524,6 +529,27 @@ mod tests {
 
     /// SG-000122: at most 16 distinct texts per lifetime; repeats are free;
     /// a call that would pass the cap is refused whole and counts nothing.
+    #[test]
+    fn sg122_an_element_inside_a_frame_is_never_probed() {
+        let framed = need(
+            &Postcondition::ElementVisible {
+                node_id: "n1".into(),
+            },
+            |_| Some(("f1e3", "button", "Pay")),
+        );
+        assert_eq!(
+            framed,
+            Need::Unavailable("elements inside frames are not checked")
+        );
+        let main = need(
+            &Postcondition::ElementVisible {
+                node_id: "n1".into(),
+            },
+            |_| Some(("e3", "button", "Pay")),
+        );
+        assert!(matches!(main, Need::Probe(Probe::VisibleRole { .. })));
+    }
+
     #[test]
     fn sg122_the_text_cap_counts_distinct_texts_and_refuses_the_17th() {
         let mut budget = TextBudget::default();

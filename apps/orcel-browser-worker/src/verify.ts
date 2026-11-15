@@ -10,8 +10,9 @@
 // 2.0, Copyright (c) Microsoft Corporation. Modifications for Orcel: the
 // probes return observations (a count of visible matches, a value, a
 // checked state) and never a verdict; an element is matched by its exact
-// role and accessible name and counted only when visible (the donor counts
-// any match, then asserts visibility separately); text is a case-sensitive
+// role and accessible name, counted only when visible (the donor counts
+// any match, then asserts visibility separately) and only in the main frame
+// (SG-000122: no frame or cross-origin content is probed); text is a case-sensitive
 // substring of an element's text with runs of white space matching any
 // white space, counted only when visible (the donor matches
 // case-insensitively), and only in the main frame's committed document, never
@@ -55,7 +56,7 @@ export type VerifyResult =
   | { result: "unavailable"; reason: VerifyUnavailable };
 
 /// The page surface the probes use (a Playwright `Page`, or a test stub).
-export type VerifyPage = Pick<Page, "locator" | "frames" | "mainFrame">;
+export type VerifyPage = Pick<Page, "locator" | "mainFrame">;
 
 /// Elements whose own value can be read (no label is followed).
 const VALUE_FIELD = "input, textarea, select";
@@ -127,7 +128,9 @@ async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyRes
   switch (probe.probe) {
     case "visible_role": {
       const role = probe.role as Parameters<Page["getByRole"]>[0];
-      const count = await countVisible(page.frames().map((frame) => frame.getByRole(role, { name: probe.name, exact: true })));
+      // SG-000122 (founder, #753): no frame or cross-origin content is
+      // probed; an element is looked for in the main frame only.
+      const count = await countVisible([page.mainFrame().getByRole(role, { name: probe.name, exact: true })]);
       return { result: "visible", count };
     }
     case "visible_text": {

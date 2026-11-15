@@ -16,7 +16,7 @@ import { runtimePin } from "./dev-pin.mjs";
 // Every native test must run: a filter that matches nothing (for example
 // after a module rename) exits 0 and would otherwise pass vacuously.
 const EXPECTED_TESTS = 36;
-const EXPECTED_WORKER_HOST_TESTS = 8;
+const EXPECTED_WORKER_HOST_TESTS = 10;
 const EXPECTED_ORCELD_LIVE_TESTS = 5;
 const EXPECTED_DEV_HOST_TESTS = 3;
 
@@ -107,10 +107,14 @@ const journeys = [
   "SG108-EVIDENCE worker host journey",
   "SG108-EVIDENCE worker host binding",
   "SG108-EVIDENCE worker host click",
-  "SG108-EVIDENCE worker host trimmed observation"
+  "SG108-EVIDENCE worker host trimmed observation",
+  // SG-000122 slice A1: the form channel, and main-frame text checks with
+  // the per-lifetime text cap.
+  "SG122-EVIDENCE worker host form",
+  "SG122-EVIDENCE worker host text"
 ];
-// Under a managed policy, every test that opens a lifetime (the four
-// journeys and the mid-lifetime shutdown) reports the refusal itself.
+// Under a managed policy, every test that opens a lifetime (the journeys
+// and the mid-lifetime shutdown) reports the refusal itself.
 const policyRefusals = workerOut.split("SG108-EVIDENCE worker host: managed policy present").length - 1;
 const refusedByPolicy = policyRefusals >= journeys.length + 1;
 const journeysSeen = journeys.every((line) => workerOut.includes(line));

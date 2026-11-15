@@ -73,7 +73,7 @@ function page(frames: Element[][], refs: Record<string, Element[]> = {}) {
   }
 }
 
-test("BR-07 visible role and name: exact, across frames, visible only", async () => {
+test("BR-07 visible role and name: exact, main frame only (SG-000122), visible only", async () => {
   const { stub, queries } = page([
     [
       { role: "button", name: "Pay", visible: true },
@@ -82,8 +82,10 @@ test("BR-07 visible role and name: exact, across frames, visible only", async ()
     ],
     [{ role: "button", name: "Pay", visible: true }]
   ]);
-  assert.deepEqual(await runProbes(stub, [{ probe: "visible_role", role: "button", name: "Pay" }]), [{ result: "visible", count: 2 }]);
+  assert.deepEqual(await runProbes(stub, [{ probe: "visible_role", role: "button", name: "Pay" }]), [{ result: "visible", count: 1 }]);
   assert.ok(queries.includes('role button "Pay" exact=true'));
+  // The child frame's visible "Pay" button is never looked at.
+  assert.equal(queries.filter((query) => query.startsWith("role ")).length, 1);
 });
 
 test("BR-07 visible text: case-sensitive literal substring, white space normalised, hidden text excluded", async () => {
