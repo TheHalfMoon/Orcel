@@ -217,8 +217,11 @@ const FORM = `<!doctype html><meta charset="utf-8"><title>Profile</title>
 <p id="out"></p>
 <a href="/menu" onmouseover="document.getElementById('tip').textContent = 'Menu open'">Menu</a>
 <p id="tip"></p>`;
-// SG-000122 slice A5: form-control names. Labels and aria-labelledby that
-// would carry another control's value or option label, a description by a
+// SG-000122 slice A5: form-control names. The control-character name uses
+// U+0081, a C1 control that HTML's numeric-reference rule keeps (&#x85;
+// becomes U+2026 there) and that the accessible-name computation does not
+// fold into a space (it folds U+2028), and two bidi controls. Labels and
+// aria-labelledby that would carry another control's value or option label, a description by a
 // password field, names a page can make long or put control characters in,
 // a link, a button and a control inside a same-origin frame.
 const FORM_NAMES = `<!doctype html><meta charset="utf-8"><title>Names</title>
@@ -231,7 +234,7 @@ const FORM_NAMES = `<!doctype html><meta charset="utf-8"><title>Names</title>
 <label>Full name <input type="text" name="full_name" value="Old Name"></label>
 <label>Password <input type="password" name="secret" value="SECRETPW"></label>
 <input type="text" name="long" aria-label="a${"\u00e9".repeat(200)}">
-<input type="text" name="ctl" aria-label="Line&#x85;break&#x202e;flip">
+<input type="text" name="ctl" aria-label="Line&#x81;break&#x202e;flip&#x2066;end">
 <label><input type="checkbox" name="terms"> Accept <b>terms</b></label>
 <label><input type="checkbox" name="case_a"> CaseA <span aria-labelledby="acct-pw">x</span></label>
 <label aria-labelledby="acct-pw"><input type="checkbox" name="case_b"> CaseB</label>
@@ -508,6 +511,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("reporting-endpoints", 'csp="https://other.test/reports"');
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
+  if (path === "/form-names") response.setHeader("content-type", "text/html; charset=utf-8");
   const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);

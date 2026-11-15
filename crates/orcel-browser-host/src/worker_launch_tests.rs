@@ -2628,10 +2628,15 @@ fn sg122_a5_form_control_names_exclude_embedded_and_referenced_controls() {
     assert_eq!(long.len(), 401);
     let (bounded, cut) = orcel_contracts::prompt_display::bounded_field_name(&long);
     assert!(cut && bounded.len() == 255, "{}", bounded.len());
-    // Control characters (C1, bidi) replaced.
+    // Control characters replaced: a C1 control (U+0081), a bidi override
+    // (U+202E) and a bidi isolate (U+2066), each reaching the host as itself
+    // (line separators, which the name computation folds into a space, are
+    // covered by the host's unit test).
+    let raw = find("textbox", "Line");
+    assert_eq!(raw.1, "Line\u{81}break\u{202e}flip\u{2066}end", "{raw:?}");
     assert_eq!(
-        find("textbox", "Line").2.as_deref(),
-        Some("Line\u{fffd}break\u{fffd}flip")
+        raw.2.as_deref(),
+        Some("Line\u{fffd}break\u{fffd}flip\u{fffd}end")
     );
     // Not form controls, and a control inside a frame: no name.
     assert_eq!(find("link", "A link").2, None);
