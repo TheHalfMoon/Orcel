@@ -331,7 +331,7 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
   },
   browser_enter: {
     capability: "browser.form", operation: "enter", effect: "network", approval: "SOFT", remote: "local_only",
-    outputBound: "the page id, generation, node id, the committed URL and the record id",
+    outputBound: "the page id, generation, node id, the committed URL, the record id and whether one same-origin document was committed (navigation)",
     annotations: change("Press Enter on isolated browser page", { destructive: false, idempotent: false, openWorld: true })
   }
 };

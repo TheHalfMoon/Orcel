@@ -2947,6 +2947,184 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
     assert!(matches!(typed, Err(HostError::Invalid(_))), "{typed:?}");
 }
 
+/// SG-000122 slice A6, the Enter route rule: an approved Enter in a field of
+/// a same-origin form commits exactly that form's one document (POST or GET)
+/// as the next generation; Enter in a field outside any form leaves the
+/// document; a form whose action, server redirect or submit handler leaves
+/// the origin is refused typed before anything reaches the other origin,
+/// and the page then has no committed document until it is navigated again.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn sg122_an_enter_submits_once_on_its_origin_and_never_leaves_it() {
+    use crate::actuation::FormInput;
+    use crate::verify::Postcondition;
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("enter");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    const FORM: &str = "https://fixture.test/enter-form";
+    fn open(
+        worker: &mut BrowserWorker,
+        scope: &crate::observation::ObservationScope,
+    ) -> LiveObservation {
+        worker.navigate(FORM).expect("navigate");
+        worker.observe(scope).expect("observe")
+    }
+    fn named(worker: &BrowserWorker, live: &LiveObservation, role: &str, name: &str) -> String {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.role == role && h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no {role} named {name}");
+    }
+    fn act(
+        worker: &mut BrowserWorker,
+        live: &LiveObservation,
+        node: &str,
+        role: &str,
+        input: FormInput,
+    ) -> Result<crate::worker_launch::FormOutcome, HostError> {
+        let (target, mut approval) = approved_form(worker, live, node, role, &input);
+        worker.live_form_action(&target, &mut approval, &input, 1, "workspace")
+    }
+    let fill = |value: &str| FormInput::Fill {
+        value: value.into(),
+    };
+
+    // The order form: fill, select and check stay on the document.
+    let live = open(&mut worker, &scope);
+    let generation = live.document.document_generation;
+    let full_name = named(&worker, &live, "textbox", "Full name");
+    let city = named(&worker, &live, "combobox", "City");
+    let gift = named(&worker, &live, "checkbox", "Gift wrap");
+    let email = named(&worker, &live, "textbox", "Email");
+    let loose = named(&worker, &live, "textbox", "Loose note");
+    for (node, role, input) in [
+        (&full_name, "textbox", fill("Ada Lovelace")),
+        (
+            &city,
+            "combobox",
+            FormInput::Select {
+                labels: vec!["Porto".into()],
+            },
+        ),
+        (&gift, "checkbox", FormInput::Check { checked: true }),
+        (&email, "textbox", fill("ada@example.test")),
+    ] {
+        let done = act(&mut worker, &live, node, role, input).expect("form action");
+        assert_eq!((done.url.as_str(), done.committed), (FORM, None));
+    }
+    // Enter in a field outside any form: nothing is submitted.
+    let stayed = act(&mut worker, &live, &loose, "textbox", FormInput::Enter).expect("enter");
+    assert_eq!((stayed.url.as_str(), stayed.committed), (FORM, None));
+    // Enter in the order form: its one POST, committed as the next
+    // generation; every node observed before is forgotten.
+    let placed = act(&mut worker, &live, &email, "textbox", FormInput::Enter).expect("submit");
+    assert_eq!(placed.url, "https://fixture.test/order");
+    assert_eq!(placed.committed, Some(generation + 1));
+    let stale = act(&mut worker, &live, &full_name, "textbox", fill("Eve"));
+    assert!(matches!(stale, Err(HostError::Invalid(_))), "{stale:?}");
+    let summary = "Order placed for Ada Lovelace in Porto, gift wrap yes";
+    assert!(worker
+        .wait_for_text(summary, true, Duration::from_secs(5))
+        .expect("wait"));
+    let report = worker
+        .verify_postconditions(&[
+            Postcondition::UrlIs {
+                url: "https://fixture.test/order".into(),
+            },
+            Postcondition::TextVisible {
+                text: summary.into(),
+            },
+        ])
+        .expect("verify");
+    assert!(report.verified, "{report:?}");
+    assert_eq!(report.document_generation, generation + 1);
+
+    // A GET form on the origin: its query is the engine's own.
+    let live = open(&mut worker, &scope);
+    let tracking = named(&worker, &live, "searchbox", "Tracking number");
+    act(&mut worker, &live, &tracking, "searchbox", fill("TRK-7")).expect("fill");
+    let tracked =
+        act(&mut worker, &live, &tracking, "searchbox", FormInput::Enter).expect("submit");
+    assert_eq!(tracked.url, "https://fixture.test/track?number=TRK-7");
+    assert_eq!(
+        tracked.committed,
+        Some(live.document.document_generation + 1)
+    );
+
+    // Leaving the origin, three ways, and the page has no committed
+    // document afterwards. A form action off the origin and a submit
+    // handler that moves the page away are refused before anything left
+    // (SubmissionRefused). The Voucher form's same-origin POST is admitted
+    // and delivered (the server acts on it) before its 303 off the origin
+    // is refused: the request left, so the outcome is unknown, never
+    // "refused".
+    for (field, value, delivered) in [
+        ("Coupon", "SAVE10", false),
+        ("Voucher", "V-1", true),
+        ("Promo code", "P-1", false),
+    ] {
+        let live = open(&mut worker, &scope);
+        let node = named(&worker, &live, "textbox", field);
+        act(&mut worker, &live, &node, "textbox", fill(value)).expect("fill");
+        let left = act(&mut worker, &live, &node, "textbox", FormInput::Enter);
+        let expected = if delivered {
+            UnavailableReason::OutcomeUnknown
+        } else {
+            UnavailableReason::SubmissionRefused
+        };
+        assert!(
+            matches!(left, Err(HostError::Unavailable(reason)) if reason == expected),
+            "{field}: {left:?}"
+        );
+        assert!(
+            matches!(worker.observe(&scope), Err(HostError::Invalid(_))),
+            "{field}: the page it left is not observed"
+        );
+    }
+    let hits = fixture.hits.lock().expect("hits").clone();
+    assert_eq!(
+        hits.iter()
+            .filter(|hit| hit.as_str() == "fixture.test /order")
+            .count(),
+        1,
+        "{hits:?}"
+    );
+    // The Voucher POST reached the origin once (delivered); its redirect
+    // did not leave it.
+    assert_eq!(
+        hits.iter()
+            .filter(|hit| hit.as_str() == "fixture.test /order-away")
+            .count(),
+        1,
+        "{hits:?}"
+    );
+    assert!(
+        hits.iter().all(|hit| !hit.starts_with("other.test")),
+        "a refused submission reached the other origin: {hits:?}"
+    );
+    println!("SG122-EVIDENCE enter route: one same-origin POST and one GET committed as new generations; a field outside a form stayed; action and script exits refused typed before leaving; a delivered POST whose redirect left the origin answered outcome unknown; nothing reached other.test");
+    assert!(worker.shutdown().job_empty);
+}
+
 /// BR-07: postconditions are checked by the host from read-only probes of
 /// the committed page: visible elements and text pass, hidden text fails,
 /// a field's value is compared in the host, a password is never read, and

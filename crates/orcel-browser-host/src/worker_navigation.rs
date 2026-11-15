@@ -70,6 +70,44 @@ pub struct NavigationPolicy {
     /// During an approved form submission: what the submitted request must
     /// carry (method and field values), checked at the request.
     submission: Option<Submission>,
+    /// SG-000122 slice A6: during an approved Enter, the route rule's state
+    /// (`expect_enter`).
+    enter: Option<EnterRoute>,
+    /// SG-000122 slice A6: after an Enter that committed no document, the
+    /// no-document rule stays in force (`hold_no_document`) until the next
+    /// observation or approved navigation, so a submission the page starts
+    /// late is refused, never admitted under the ordinary rules.
+    held: bool,
+}
+
+/// SG-000122 slice A6: what happened to the page's top-level documents
+/// while an approved Enter ran. The Enter route rule admits at most one
+/// page-initiated top-level document, a GET or POST on the committed origin
+/// (the lifetime's one admitted destination), with a redirect chain that
+/// stays on that origin; every other top-level document, redirect hop,
+/// frame document or popup is refused and recorded here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EnterRoute {
+    /// The one admitted document was requested: the submission left, and
+    /// the server may have acted on it.
+    pub opened: bool,
+    /// The submission itself left the rule: before the admitted document
+    /// opened, any top-level document, frame or popup refused (another
+    /// origin, another method, a frame or a popup); after it opened, a
+    /// refused redirect hop (off the origin) or a second top-level
+    /// document. When `opened` is also set the request had already left, so
+    /// the outcome is unknown, never "refused".
+    pub refused: bool,
+    /// After the admitted document opened, a frame or popup was refused (a
+    /// request of the result page, or of the page being replaced): refused
+    /// at the route like any other, but not the submission's own refusal.
+    pub refused_later: bool,
+    /// The admitted document's URL as the host last admitted it: the
+    /// document request's URL, then each redirect hop admitted after it (a
+    /// 303 after a POST makes the hop's target the document). An Enter is
+    /// committed only when the worker reports this URL (ignoring a
+    /// fragment), so the host binds what it commits to what it admitted.
+    pub document: Option<String>,
 }
 
 impl std::fmt::Debug for RedirectChain {
@@ -91,6 +129,8 @@ impl NavigationPolicy {
             activation: None,
             activation_any_query: false,
             submission: None,
+            enter: None,
+            held: false,
         }
     }
 
@@ -109,6 +149,8 @@ impl NavigationPolicy {
     /// Start a host-requested top-level navigation.
     pub fn begin(&mut self, url: &str) -> Result<NavigationTarget, HostError> {
         let target = self.admitted_target(url)?;
+        // An approved navigation ends a held no-document rule.
+        self.release_hold();
         self.chain = Some(RedirectChain::start(url)?);
         self.expected = Some(url.to_owned());
         self.begun_origin = Some(target.origin.clone());
@@ -158,6 +200,8 @@ impl NavigationPolicy {
                 "activation leaves the page's origin".into(),
             ));
         }
+        // A held no-document rule stays held here: the approval may still be
+        // refused. Only `approved_navigation`, once it was consumed, ends it.
         self.activation = Some((url.to_owned(), false));
         self.activation_any_query = false;
         Ok(())
@@ -190,13 +234,83 @@ impl NavigationPolicy {
         self.submission = None;
     }
 
+    /// SG-000122 slice A6, the Enter route rule: while an approved Enter
+    /// runs, the page may open at most one top-level document, a GET or POST
+    /// on the committed origin, once (the submission the key may cause; its
+    /// form's action is page-controlled, so the origin is what binds), and
+    /// its redirects must stay on that origin. Anything else is refused and
+    /// recorded, and spends the rule: nothing opens after a refusal.
+    pub fn expect_enter(&mut self) -> Result<(), HostError> {
+        if self.committed_origin.is_none() {
+            return Err(HostError::Invalid("no page origin is established".into()));
+        }
+        self.activation = None;
+        self.activation_any_query = false;
+        self.submission = None;
+        self.enter = Some(EnterRoute::default());
+        Ok(())
+    }
+
+    /// End the Enter route rule and report what happened under it. A held
+    /// no-document rule (from an earlier Enter) is back in force afterwards.
+    pub fn finish_enter(&mut self) -> EnterRoute {
+        let route = self.enter.take().unwrap_or_default();
+        if self.held {
+            self.expect_no_document();
+        }
+        route
+    }
+
+    /// SG-000122 slice A6: after an Enter that committed no document, keep
+    /// the no-document rule in force (every page-initiated top-level
+    /// document and popup refused) until the next observation
+    /// (`release_hold`) or approved navigation (`begin`, or
+    /// `approved_navigation` once an activation's approval was consumed).
+    /// The worker's settle window only bounds how
+    /// long the Enter waits; a submission the page starts after it is
+    /// refused here, not admitted under the ordinary rules.
+    pub fn hold_no_document(&mut self) {
+        self.held = true;
+        self.expect_no_document();
+    }
+
+    /// End a held no-document rule (an observation, or an approved
+    /// navigation): the ordinary rules apply again.
+    pub fn release_hold(&mut self) {
+        if self.held {
+            self.held = false;
+            self.activation = None;
+            self.activation_any_query = false;
+            self.submission = None;
+        }
+    }
+
+    /// An approved activation (a link, a WebMCP submission or a download)
+    /// whose approval was consumed: an approved navigation, so it ends a
+    /// held no-document rule. Its own expectation stays in force until
+    /// `finish_activation`. Called only after the approval is spent; a
+    /// refused approval leaves the rule held.
+    pub fn approved_navigation(&mut self) {
+        self.held = false;
+    }
+
+    /// Whether a no-document rule is held after an Enter.
+    pub fn holding(&self) -> bool {
+        self.held
+    }
+
     /// End the activation expectation; true if the expected document was
     /// requested (a click that requested no document, such as a pushState
-    /// or a script action, is not a verified activation).
+    /// or a script action, is not a verified activation). A held
+    /// no-document rule is back in force afterwards.
     pub fn finish_activation(&mut self) -> bool {
         self.activation_any_query = false;
         self.submission = None;
-        matches!(self.activation.take(), Some((_, true)))
+        let opened = matches!(self.activation.take(), Some((_, true)));
+        if self.held {
+            self.expect_no_document();
+        }
+        opened
     }
 
     /// Whether the expected document has been requested so far.
@@ -239,6 +353,116 @@ impl NavigationPolicy {
     /// `decide`, with the request's method and (bounded) body: an approved
     /// form submission is checked against exactly what it may send.
     pub fn decide_request(
+        &mut self,
+        kind: RouteKind,
+        url: &str,
+        origin: &str,
+        detail: &RequestDetail,
+    ) -> Result<(), HostError> {
+        if self.enter.is_none() {
+            return self.decide_ordinary(kind, url, origin, detail);
+        }
+        let opened = self.enter.as_ref().is_some_and(|enter| enter.opened);
+        let decided = self.decide_under_enter(kind, url, origin, detail);
+        if decided.is_ok() && opened && matches!(kind, RouteKind::Redirect) && detail.main_document
+        {
+            // An admitted main-frame document hop after the document
+            // opened: the document's URL is now its target. A subresource,
+            // frame or popup redirect keeps its ordinary rule (still refused
+            // off the origin) and never moves the document URL.
+            if let Some(enter) = self.enter.as_mut() {
+                enter.document = Some(url.to_owned());
+            }
+        }
+        if decided.is_err() {
+            if let Some(enter) = self.enter.as_mut() {
+                match (kind, opened) {
+                    // Before the admitted document opened, any refused
+                    // top-level document, frame or popup is the
+                    // submission's: nothing left.
+                    (RouteKind::Document | RouteKind::Frame | RouteKind::Popup, false) => {
+                        enter.refused = true;
+                    }
+                    // After it opened, a refused hop of the main-frame
+                    // document (the submission's own chain) or a second
+                    // top-level document changes what the submission did:
+                    // it already left, so the outcome is unknown.
+                    (RouteKind::Document, true) => enter.refused = true,
+                    (RouteKind::Redirect, true) if detail.main_document => enter.refused = true,
+                    // Any other refused hop (a subresource's, a frame's or a
+                    // popup's, unmarked) is recorded apart. Were it in fact
+                    // the document's, the main frame would never commit the
+                    // admitted URL, so the Enter still ends unknown.
+                    (RouteKind::Redirect, true) => enter.refused_later = true,
+                    // A frame or popup of the result page (or of the page
+                    // being replaced) is refused, and recorded apart.
+                    (RouteKind::Frame | RouteKind::Popup, true) => enter.refused_later = true,
+                    _ => {}
+                }
+            }
+        }
+        decided
+    }
+
+    /// SG-000122 slice A6: one request under the Enter route rule. Top-level
+    /// documents, frame documents and popups are decided here; everything
+    /// else (redirect hops, subresources, service workers) by the ordinary
+    /// rules, whose redirect chain is the admitted document's own.
+    fn decide_under_enter(
+        &mut self,
+        kind: RouteKind,
+        url: &str,
+        origin: &str,
+        detail: &RequestDetail,
+    ) -> Result<(), HostError> {
+        let (opened, refused) = self
+            .enter
+            .as_ref()
+            .map_or((false, false), |enter| (enter.opened, enter.refused));
+        match kind {
+            // A submission into a frame or a new window is not the page's
+            // own document: refused, as during any activation.
+            RouteKind::Frame | RouteKind::Popup => Err(HostError::Invalid(
+                "an Enter submission may not open a frame or a popup".into(),
+            )),
+            RouteKind::Document => {
+                if opened || refused {
+                    return Err(HostError::Invalid(
+                        "an Enter submission opens one document, once".into(),
+                    ));
+                }
+                let target = self.admitted_target(url)?;
+                if self.committed_origin.as_deref() != Some(target.origin.as_str()) {
+                    return Err(HostError::Invalid(
+                        "an Enter submission may not leave the page's origin".into(),
+                    ));
+                }
+                let method = if detail.method.is_empty() {
+                    "GET"
+                } else {
+                    detail.method.as_str()
+                };
+                if !(method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("POST")) {
+                    return Err(HostError::Invalid(
+                        "an Enter submission is a GET or a POST".into(),
+                    ));
+                }
+                self.chain = Some(RedirectChain::start(url)?);
+                if let Some(enter) = self.enter.as_mut() {
+                    enter.opened = true;
+                    enter.document = Some(url.to_owned());
+                }
+                Ok(())
+            }
+            // A hop of the admitted document's chain must stay on its
+            // origin (the chain's own rule); without a chain a redirect
+            // follows the ordinary subresource rule.
+            _ => self.decide_ordinary(kind, url, origin, detail),
+        }
+    }
+
+    /// The rules outside an Enter.
+    fn decide_ordinary(
         &mut self,
         kind: RouteKind,
         url: &str,
@@ -340,6 +564,11 @@ pub struct RequestDetail {
     pub body: Option<String>,
     /// The body's full size in bytes.
     pub body_bytes: u64,
+    /// SG-000122 slice A6: the worker says this redirect hop is the primary
+    /// page's main-frame document (not a subresource, a frame or a popup).
+    /// Only such a hop moves an Enter's recorded document URL; absent means
+    /// not the document, which fails toward an unknown outcome.
+    pub main_document: bool,
 }
 
 /// What one approved field must submit.
@@ -525,6 +754,396 @@ mod tests {
             .is_ok());
     }
 
+    fn committed() -> NavigationPolicy {
+        let mut p = policy();
+        p.begin("https://fixture.test/form").unwrap();
+        p.commit("https://fixture.test/form").unwrap();
+        p
+    }
+
+    fn method(name: &str) -> RequestDetail {
+        RequestDetail {
+            method: name.into(),
+            ..RequestDetail::default()
+        }
+    }
+
+    /// A redirect hop the worker marks as the primary page's main-frame
+    /// document.
+    fn main_hop() -> RequestDetail {
+        RequestDetail {
+            method: "GET".into(),
+            main_document: true,
+            ..RequestDetail::default()
+        }
+    }
+
+    /// SG-000122 slice A6 (fourth judge): only a main-frame document hop
+    /// moves an Enter's recorded document URL. A subresource, frame or
+    /// popup redirect (unmarked) keeps its ordinary rule, refused off the
+    /// origin, and leaves the document URL as it was.
+    #[test]
+    fn sg122_only_a_main_document_hop_moves_the_enter_document() {
+        // A 303 after the POST: the document is the hop's target.
+        let mut p = committed();
+        p.expect_enter().unwrap();
+        p.decide_request(
+            RouteKind::Document,
+            "https://fixture.test/order",
+            "",
+            &post("full_name=Ada"),
+        )
+        .unwrap();
+        p.decide_request(
+            RouteKind::Redirect,
+            "https://fixture.test/thanks",
+            HOME,
+            &main_hop(),
+        )
+        .unwrap();
+        // The result page's image redirects on the origin: allowed, but
+        // not the document.
+        assert!(p
+            .decide(RouteKind::Redirect, "https://fixture.test/img/2.png", HOME)
+            .is_ok());
+        // Off the origin, unmarked: still refused, and not the document
+        // nor the submission's refusal (recorded apart).
+        assert!(p
+            .decide(RouteKind::Redirect, "https://other.test/pixel", HOME)
+            .is_err());
+        let route = p.finish_enter();
+        assert_eq!(
+            route,
+            EnterRoute {
+                opened: true,
+                refused: false,
+                refused_later: true,
+                document: Some("https://fixture.test/thanks".into()),
+            }
+        );
+
+        // Without the flag, a same-origin hop never becomes the document.
+        let mut p = committed();
+        p.expect_enter().unwrap();
+        p.decide_request(
+            RouteKind::Document,
+            "https://fixture.test/order",
+            "",
+            &post("full_name=Ada"),
+        )
+        .unwrap();
+        assert!(p
+            .decide(RouteKind::Redirect, "https://fixture.test/thanks", HOME)
+            .is_ok());
+        assert_eq!(
+            p.finish_enter().document.as_deref(),
+            Some("https://fixture.test/order")
+        );
+    }
+
+    /// SG-000122 slice A6, the Enter route rule: one top-level document on
+    /// the committed origin, a GET or a POST, once; its redirects stay on
+    /// the origin; subresources keep their ordinary rules.
+    #[test]
+    fn sg122_enter_admits_one_same_origin_submission_once() {
+        for (url, detail) in [
+            ("https://fixture.test/order", post("full_name=Ada")),
+            ("https://fixture.test/search?q=rust", method("GET")),
+            (
+                "https://fixture.test/search?q=rust",
+                RequestDetail::default(),
+            ),
+        ] {
+            let mut p = committed();
+            p.expect_enter().unwrap();
+            assert!(p
+                .decide(RouteKind::Fetch, "https://fixture.test/api/lookup", HOME)
+                .is_ok());
+            assert!(p
+                .decide_request(RouteKind::Document, url, "", &detail)
+                .is_ok());
+            // A same-origin hop of its own chain (the main-frame document's,
+            // as the worker says) is followed.
+            assert!(p
+                .decide_request(
+                    RouteKind::Redirect,
+                    "https://fixture.test/done",
+                    HOME,
+                    &main_hop()
+                )
+                .is_ok());
+            assert_eq!(
+                p.finish_enter(),
+                EnterRoute {
+                    opened: true,
+                    refused: false,
+                    refused_later: false,
+                    // The admitted hop is the document now.
+                    document: Some("https://fixture.test/done".into()),
+                }
+            );
+        }
+        // A second document is refused and recorded.
+        let mut p = committed();
+        p.expect_enter().unwrap();
+        assert!(p
+            .decide_request(RouteKind::Document, "https://fixture.test/a", "", &post(""))
+            .is_ok());
+        assert!(p
+            .decide(RouteKind::Document, "https://fixture.test/b", "")
+            .is_err());
+        assert_eq!(
+            p.finish_enter(),
+            EnterRoute {
+                opened: true,
+                refused: true,
+                refused_later: false,
+                document: Some("https://fixture.test/a".into()),
+            }
+        );
+        // An Enter that opens nothing reports nothing; ordinary rules apply
+        // again afterwards.
+        p.expect_enter().unwrap();
+        assert_eq!(p.finish_enter(), EnterRoute::default());
+        assert!(p
+            .decide(RouteKind::Document, "https://fixture.test/next", "")
+            .is_ok());
+    }
+
+    #[test]
+    fn sg122_enter_refuses_leaving_the_origin_and_stays_spent() {
+        // Another origin, admitted or not, plain HTTP, a method other than
+        // GET or POST, a frame and a popup: each refused and recorded, and
+        // nothing opens after the refusal, not even a same-origin document.
+        let leaving: [(RouteKind, &str, RequestDetail); 6] = [
+            (
+                RouteKind::Document,
+                "https://other.test/collect",
+                post("q=1"),
+            ),
+            (
+                RouteKind::Document,
+                "https://example.com/collect",
+                method("GET"),
+            ),
+            (
+                RouteKind::Document,
+                "http://fixture.test/order",
+                method("GET"),
+            ),
+            (
+                RouteKind::Document,
+                "https://fixture.test/order",
+                method("PUT"),
+            ),
+            (
+                RouteKind::Frame,
+                "https://fixture.test/order",
+                method("GET"),
+            ),
+            (
+                RouteKind::Popup,
+                "https://fixture.test/order",
+                method("GET"),
+            ),
+        ];
+        for (kind, url, detail) in leaving {
+            let mut p = committed();
+            p.expect_enter().unwrap();
+            assert!(
+                p.decide_request(kind, url, "", &detail).is_err(),
+                "{kind:?} {url}"
+            );
+            assert!(
+                p.decide(RouteKind::Document, "https://fixture.test/order", "")
+                    .is_err(),
+                "spent after {kind:?} {url}"
+            );
+            assert_eq!(
+                p.finish_enter(),
+                EnterRoute {
+                    opened: false,
+                    refused: true,
+                    refused_later: false,
+                    document: None,
+                },
+                "{kind:?} {url}"
+            );
+        }
+        // A server redirect of the document off the origin is refused and
+        // recorded as the submission's.
+        let mut p = committed();
+        p.expect_enter().unwrap();
+        assert!(p
+            .decide_request(
+                RouteKind::Document,
+                "https://fixture.test/order-away",
+                "",
+                &method("GET")
+            )
+            .is_ok());
+        assert!(p
+            .decide_request(
+                RouteKind::Redirect,
+                "https://other.test/stolen",
+                HOME,
+                &main_hop()
+            )
+            .is_err());
+        assert_eq!(
+            p.finish_enter(),
+            EnterRoute {
+                opened: true,
+                refused: true,
+                refused_later: false,
+                // A refused hop is not the document.
+                document: Some("https://fixture.test/order-away".into()),
+            }
+        );
+        // A subresource refused by its ordinary rule is not a submission.
+        let mut p = committed();
+        p.expect_enter().unwrap();
+        assert!(p
+            .decide(RouteKind::Fetch, "https://other.test/beacon", HOME)
+            .is_err());
+        assert_eq!(p.finish_enter(), EnterRoute::default());
+        // No rule without a committed origin.
+        assert!(policy().expect_enter().is_err());
+    }
+
+    /// SG-000122 slice A6: once the admitted document opened, a frame or a
+    /// popup (of the result page, or of the page it replaces) is still
+    /// refused, on the origin and off it, but recorded apart: it is not the
+    /// submission's refusal. Nothing reaches another origin.
+    #[test]
+    fn sg122_enter_records_refusals_after_the_document_opened_apart() {
+        for (kind, url) in [
+            (RouteKind::Frame, "https://fixture.test/ad"),
+            (RouteKind::Frame, "https://other.test/ad"),
+            (RouteKind::Popup, "https://fixture.test/thanks"),
+            (RouteKind::Popup, "https://other.test/thanks"),
+        ] {
+            let mut p = committed();
+            p.expect_enter().unwrap();
+            assert!(p
+                .decide_request(
+                    RouteKind::Document,
+                    "https://fixture.test/order",
+                    "",
+                    &post("full_name=Ada")
+                )
+                .is_ok());
+            assert!(p.decide(kind, url, HOME).is_err(), "{kind:?} {url}");
+            // A subresource of the result page off the origin is refused by
+            // its ordinary rule and changes nothing.
+            assert!(p
+                .decide(RouteKind::Fetch, "https://other.test/beacon", HOME)
+                .is_err());
+            assert_eq!(
+                p.finish_enter(),
+                EnterRoute {
+                    opened: true,
+                    refused: false,
+                    refused_later: true,
+                    document: Some("https://fixture.test/order".into()),
+                },
+                "{kind:?} {url}"
+            );
+        }
+    }
+
+    /// SG-000122 slice A6: after an Enter that committed no document, the
+    /// no-document rule holds (other form actions and Enters do not end
+    /// it) until the next observation or approved navigation.
+    #[test]
+    fn sg122_the_no_document_rule_holds_after_an_enter_that_opened_nothing() {
+        let late = "https://fixture.test/order";
+        let mut p = committed();
+        p.expect_enter().unwrap();
+        assert_eq!(p.finish_enter(), EnterRoute::default());
+        p.hold_no_document();
+        assert!(p.holding());
+        // A late self-submission, on the origin, and a popup: refused.
+        assert!(p
+            .decide_request(RouteKind::Document, late, "", &post("q=1"))
+            .is_err());
+        assert!(p.decide(RouteKind::Popup, late, HOME).is_err());
+        // Subresources keep their ordinary rules.
+        assert!(p
+            .decide(RouteKind::Fetch, "https://fixture.test/api", HOME)
+            .is_ok());
+        // Another form action, and another Enter that opens nothing, leave
+        // the rule held.
+        p.expect_no_document();
+        p.finish_activation();
+        assert!(p.decide(RouteKind::Document, late, "").is_err());
+        p.expect_enter().unwrap();
+        p.finish_enter();
+        assert!(p.holding());
+        assert!(p.decide(RouteKind::Document, late, "").is_err());
+        // An observation ends it: the ordinary rules apply again.
+        p.release_hold();
+        assert!(!p.holding());
+        assert!(p.decide(RouteKind::Document, late, "").is_ok());
+
+        // An approved navigation ends it too.
+        let mut p = committed();
+        p.hold_no_document();
+        p.begin("https://fixture.test/form").unwrap();
+        p.commit("https://fixture.test/form").unwrap();
+        assert!(!p.holding());
+        assert!(p.decide(RouteKind::Document, late, "").is_ok());
+        // And so does an approved activation, once its approval was
+        // consumed; it opens its document.
+        let mut p = committed();
+        p.hold_no_document();
+        p.expect_activation(late).unwrap();
+        assert!(p.holding(), "not before the approval is consumed");
+        p.approved_navigation();
+        assert!(!p.holding());
+        assert!(p.decide(RouteKind::Document, late, "").is_ok());
+        assert!(p.finish_activation());
+        assert!(p
+            .decide(RouteKind::Document, "https://fixture.test/next", "")
+            .is_ok());
+    }
+
+    /// SG-000122 slice A6 (re-judge): an activation, a WebMCP submission or
+    /// a download whose approval is then refused at dispatch is not an
+    /// approved navigation: the no-document hold survives it.
+    #[test]
+    fn sg122_activation_dispatch_refused_keeps_the_hold() {
+        let late = "https://fixture.test/order";
+        for submission in [false, true] {
+            let mut p = committed();
+            p.hold_no_document();
+            if submission {
+                p.expect_submission(
+                    "https://fixture.test/order",
+                    false,
+                    Submission {
+                        method: "POST".into(),
+                        fields: Vec::new(),
+                        unsupplied: Vec::new(),
+                        multiline: Vec::new(),
+                        fixed: Vec::new(),
+                    },
+                )
+                .unwrap();
+            } else {
+                p.expect_activation(late).unwrap();
+            }
+            // The dispatch refuses the token: the caller ends the
+            // expectation without `approved_navigation`.
+            assert!(!p.finish_activation());
+            assert!(p.holding(), "submission: {submission}");
+            assert!(p
+                .decide_request(RouteKind::Document, late, "", &post("q=1"))
+                .is_err());
+            assert!(p.decide(RouteKind::Popup, late, HOME).is_err());
+        }
+    }
+
     #[test]
     fn only_admitted_https_destinations_can_begin() {
         let mut p = policy();
@@ -705,6 +1324,7 @@ mod tests {
             content_type: "application/x-www-form-urlencoded".into(),
             body: Some(body.into()),
             body_bytes: body.len() as u64,
+            main_document: false,
         }
     }
 

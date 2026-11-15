@@ -4,7 +4,9 @@
 //! engine; run by `npm run browser-launcher:native`.
 #![cfg(all(windows, feature = "live-browser-test"))]
 
-use orcel_browser_host::worker_host::{BindAction, WorkerHostReply, WorkerHostRequest};
+use orcel_browser_host::worker_host::{
+    BindAction, FormNavigation, WorkerHostReply, WorkerHostRequest,
+};
 use orcel_browser_host::{
     assert_no_managed_policy, discover_engine, LiveWorkerHost, RegistryPolicySource, SearchConfig,
     Supervisor, WorkerHostLaunch,
@@ -956,7 +958,8 @@ fn sg122_form_actions_go_through_bound_approvals_and_the_host_refuses_the_rest()
     assert_eq!(
         done,
         WorkerHostReply::FormDone {
-            url: "https://fixture.test/form-page".into()
+            url: "https://fixture.test/form-page".into(),
+            navigation: FormNavigation::None,
         }
     );
     // The same approval again is refused.
@@ -1037,7 +1040,14 @@ fn sg122_form_actions_go_through_bound_approvals_and_the_host_refuses_the_rest()
             role: "searchbox".into(),
         },
     );
-    assert!(matches!(done, WorkerHostReply::FormDone { .. }), "{done:?}");
+    // No form holds the field: nothing is submitted, the document stays.
+    assert_eq!(
+        done,
+        WorkerHostReply::FormDone {
+            url: "https://fixture.test/form-page".into(),
+            navigation: FormNavigation::None,
+        }
+    );
     assert_eq!(
         wait_text(host, "Searched", true, 3_000),
         WorkerHostReply::Waited { met: true }

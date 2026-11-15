@@ -210,10 +210,122 @@ struct HeldUpload {
 /// BR-02: the longest bounded wait for text (mirrors the worker).
 pub const MAX_WAIT_MS: u64 = 8_000;
 
-/// BR-02: the document after an approved form action (the same document).
+/// BR-02: the document after an approved form action: the same document,
+/// or (SG-000122 slice A6, Enter only) the one same-origin document its
+/// submission committed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormOutcome {
     pub url: String,
+    /// SG-000122 slice A6: the document generation an Enter's submission
+    /// committed; `None` when the page stayed on its document.
+    pub committed: Option<u64>,
+}
+
+/// SG-000122 slice A6: what the worker answered an approved Enter, reduced
+/// to what the outcome depends on.
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnterReply<'a> {
+    /// `form_done`: the URL after, and whether the main frame committed a
+    /// new document after the key.
+    Done { url: &'a str, navigated: bool },
+    /// `form_failed` "denied": a popup, the engine's error page after a
+    /// refused or failed navigation, or a key the worker refused. After the
+    /// key it is not "nothing happened".
+    Denied,
+    /// `form_failed` for any other reason.
+    Failed,
+}
+
+/// SG-000122 slice A6: what an approved Enter did, from the host's own
+/// record of the Enter route rule (`route`), the worker's reply and the URL
+/// before. Anything the two sides do not agree on is unknown; once the
+/// admitted document opened (the request left, and the server may have
+/// acted), the Enter is committed or unknown, never refused.
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnterVerdict {
+    /// No document was requested and the page is where it was.
+    Unchanged,
+    /// The one admitted same-origin document was requested and committed.
+    Committed,
+    /// The submission was refused at the route before anything opened:
+    /// nothing left (`SubmissionRefused`, journaled `failed`).
+    Refused,
+    /// The page moved without the rule's document, the sides disagree, or
+    /// the admitted document opened and then something failed or was
+    /// refused (`OutcomeUnknown`, journaled `unknown`).
+    Unknown,
+    /// Nothing opened or was refused and the worker failed for its own
+    /// reason: mapped as for every form action.
+    WorkerFailed,
+}
+
+#[cfg(any(windows, test))]
+pub fn enter_verdict(
+    route: &crate::worker_navigation::EnterRoute,
+    reply: EnterReply<'_>,
+    before: &str,
+) -> EnterVerdict {
+    if route.opened {
+        // A frame or popup refused after the document opened is not the
+        // submission's refusal (`refused_later`): it does not change this.
+        // The committed URL must be the one the host admitted last for the
+        // document (its last admitted hop), fragment aside.
+        return match reply {
+            EnterReply::Done {
+                url,
+                navigated: true,
+            } if !route.refused
+                && route
+                    .document
+                    .as_deref()
+                    .is_some_and(|admitted| same_document(admitted, url)) =>
+            {
+                EnterVerdict::Committed
+            }
+            _ => EnterVerdict::Unknown,
+        };
+    }
+    if route.refused {
+        return match reply {
+            // A document committed that the host never admitted.
+            EnterReply::Done {
+                navigated: true, ..
+            } => EnterVerdict::Unknown,
+            _ => EnterVerdict::Refused,
+        };
+    }
+    match reply {
+        EnterReply::Done {
+            url,
+            navigated: false,
+        } if url == before => EnterVerdict::Unchanged,
+        EnterReply::Done { .. } | EnterReply::Denied => EnterVerdict::Unknown,
+        EnterReply::Failed => EnterVerdict::WorkerFailed,
+    }
+}
+
+/// SG-000122 slice A6: whether the no-document rule stays held after an
+/// Enter: always unless it committed; and also after a commit when a frame
+/// or popup was refused while it ran (`refused_later`), so a popup that
+/// outlives the Enter (the worker closes it, but the host does not rely on
+/// that) opens nothing under the ordinary rules until the next successful
+/// observation or approved navigation.
+#[cfg(any(windows, test))]
+pub fn holds_after_enter(
+    verdict: EnterVerdict,
+    route: &crate::worker_navigation::EnterRoute,
+) -> bool {
+    verdict != EnterVerdict::Committed || route.refused_later
+}
+
+/// SG-000122 slice A6: whether `reported` is the admitted document `url`,
+/// ignoring a fragment on either (a fragment never reaches the server).
+#[cfg(any(windows, test))]
+fn same_document(admitted: &str, reported: &str) -> bool {
+    let strip = |url: &str| url.split('#').next().unwrap_or_default().to_owned();
+    strip(admitted) == strip(reported)
 }
 
 /// A live observation: SG-000076 identities and the redacted, digested
@@ -469,6 +581,10 @@ pub(crate) enum WorkerReply {
         content_type: String,
         body: Option<String>,
         body_bytes: u64,
+        /// SG-000122 slice A6: present (true) only on a redirect hop of the
+        /// primary page's main-frame document; absent means false.
+        #[serde(default)]
+        main_document: bool,
     },
     Navigated {
         nav_id: u64,
@@ -560,6 +676,10 @@ pub(crate) enum WorkerReply {
     FormDone {
         form_id: u64,
         url: String,
+        /// SG-000122 slice A6, Enter only: the main frame committed a new
+        /// document after the key.
+        #[serde(default)]
+        navigated: bool,
     },
     Waited {
         wait_id: u64,
@@ -1711,12 +1831,14 @@ mod platform {
                         content_type,
                         body,
                         body_bytes,
+                        main_document,
                     } => {
                         let detail = crate::worker_navigation::RequestDetail {
                             method,
                             content_type,
                             body,
                             body_bytes,
+                            main_document,
                         };
                         self.answer_route(request_id, &kind, &url, &origin, &detail)?
                     }
@@ -2183,11 +2305,23 @@ mod platform {
             }
             index.retain(|id, _| kept.contains(id));
             self.host_nodes = index;
+            // SG-000122 slice A6: an observation of the committed document
+            // ends a no-document rule held after an Enter.
+            self.policy.release_hold();
             Ok(LiveObservation {
                 page,
                 document,
                 observation,
             })
+        }
+
+        /// SG-000122 slice A6: the page is no longer a known document:
+        /// nothing observed holds and nothing is committed, so the next
+        /// action needs an approved navigation and a fresh observation.
+        fn forget_page(&mut self) {
+            self.host_nodes.clear();
+            self.host_tools.clear();
+            self.committed = None;
         }
 
         /// BR-02: the state a form-action approval must name: the action and
@@ -2232,6 +2366,21 @@ mod platform {
         /// document stays the same generation, so its node identities stay
         /// valid for verification (BR-07); a page whose URL changed is
         /// unverified.
+        ///
+        /// SG-000122 slice A6: an Enter instead runs under the Enter route
+        /// rule (`NavigationPolicy::expect_enter`): its page may open one
+        /// top-level document, a GET or POST on the committed origin, once.
+        /// That document is committed as the next generation (every node
+        /// observed before is forgotten) and `FormOutcome::committed` says
+        /// so; an Enter that opened nothing leaves the document as it was.
+        /// A submission refused before anything opened answers
+        /// `SubmissionRefused` (nothing left); once the admitted document
+        /// opened, any refusal or failure after answers `OutcomeUnknown`
+        /// (the request left). Either way the page has no committed
+        /// document until it is navigated again. After every Enter that
+        /// committed no document the no-document rule stays held until the
+        /// next observation or approved navigation
+        /// (`NavigationPolicy::hold_no_document`).
         pub fn form_action(
             &mut self,
             target: &crate::actuation::ActuationTarget,
@@ -2277,7 +2426,12 @@ mod platform {
             {
                 return Err(HostError::Invalid("password-field filling denied".into()));
             }
-            self.policy.expect_no_document();
+            let entering = matches!(input, crate::actuation::FormInput::Enter);
+            if entering {
+                self.policy.expect_enter()?;
+            } else {
+                self.policy.expect_no_document();
+            }
             if let Err(error) = crate::actuation::dispatch(
                 target,
                 approval,
@@ -2286,7 +2440,7 @@ mod platform {
                 policy_revision,
                 workspace,
             ) {
-                self.policy.finish_activation();
+                self.finish_form_route(entering);
                 return Err(error);
             }
             self.next_form += 1;
@@ -2322,7 +2476,7 @@ mod platform {
                 name: named.then_some(approved_name.as_str()),
             });
             if let Err(error) = sent {
-                self.policy.finish_activation();
+                self.finish_form_route(entering);
                 return Err(error);
             }
             // The worker may now accept this confirm, once.
@@ -2330,13 +2484,119 @@ mod platform {
                 self.approved_confirms.push(message.to_owned());
             }
             let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
-            self.policy.finish_activation();
-            match reply? {
+            let route = self.finish_form_route(entering);
+            let reply = match reply {
+                Ok(reply) => reply,
+                Err(error) => {
+                    if entering {
+                        // The lifetime ended with this reason (journaled
+                        // unknown); nothing observed holds, and no
+                        // page-initiated document opens meanwhile.
+                        self.forget_page();
+                        self.policy.hold_no_document();
+                    }
+                    return Err(error);
+                }
+            };
+            let ours = matches!(
+                &reply,
+                WorkerReply::FormDone { form_id: done, .. }
+                    | WorkerReply::FormFailed { form_id: done, .. } if *done == form_id
+            );
+            if !ours {
+                // A reply for another request, or of another kind: the
+                // worker may still be acting, so the lifetime ends.
+                if entering {
+                    self.forget_page();
+                    self.policy.hold_no_document();
+                }
+                return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+            }
+            if entering {
+                let answered = match &reply {
+                    WorkerReply::FormDone { url, navigated, .. } => EnterReply::Done {
+                        url: url.as_str(),
+                        navigated: *navigated,
+                    },
+                    WorkerReply::FormFailed { reason, .. } if reason == "denied" => {
+                        EnterReply::Denied
+                    }
+                    _ => EnterReply::Failed,
+                };
+                let verdict = enter_verdict(&route, answered, &url);
+                let hold = holds_after_enter(verdict, &route);
+                if hold {
+                    // SG-000122 slice A6: no document committed under the
+                    // rule (or the page tried to open more than it), so a
+                    // document the page opens later is refused until the
+                    // next observation or approved navigation, whatever
+                    // the worker's settle window was or did.
+                    self.policy.hold_no_document();
+                }
+                match verdict {
+                    EnterVerdict::Unchanged => {
+                        return Ok(FormOutcome {
+                            url,
+                            committed: None,
+                        })
+                    }
+                    EnterVerdict::Committed => {
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        let after = match reply {
+                            WorkerReply::FormDone { url: after, .. } => after,
+                            _ => String::new(),
+                        };
+                        if self.policy.commit_page_initiated(&after).is_err() {
+                            // The request left and the server may have
+                            // acted: whatever failed after, the outcome is
+                            // unknown.
+                            self.forget_page();
+                            self.policy.hold_no_document();
+                            return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
+                        }
+                        // Held when a frame or popup was refused while the
+                        // Enter ran (`holds_after_enter`); otherwise the
+                        // committed document ends any earlier hold. The
+                        // generation advances either way.
+                        if !hold {
+                            self.policy.release_hold();
+                        }
+                        let next = generation + 1;
+                        self.committed = Some((after.clone(), next));
+                        return Ok(FormOutcome {
+                            url: after,
+                            committed: Some(next),
+                        });
+                    }
+                    EnterVerdict::Refused => {
+                        // The page tried to leave the rule before anything
+                        // opened; the request never left, but the page is
+                        // no longer the observed document (the engine shows
+                        // its error page), so nothing observed holds and
+                        // nothing is committed.
+                        self.forget_page();
+                        return Err(HostError::Unavailable(UnavailableReason::SubmissionRefused));
+                    }
+                    EnterVerdict::Unknown => {
+                        // The key acted (or may have) and what the page holds
+                        // now is not known: nothing observed holds and
+                        // nothing is committed.
+                        self.forget_page();
+                        return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
+                    }
+                    // Nothing opened: the worker's own reason, as for every
+                    // form action, below.
+                    EnterVerdict::WorkerFailed => {}
+                }
+            }
+            match reply {
                 WorkerReply::FormDone {
-                    form_id: done,
                     url: after,
-                } if done == form_id => {
-                    if after != url {
+                    navigated,
+                    ..
+                } => {
+                    if after != url || navigated {
                         // Applied, but the page moved itself (no document
                         // was allowed, so a history change): the outcome is
                         // unverified and nothing observed holds.
@@ -2344,12 +2604,12 @@ mod platform {
                         self.host_tools.clear();
                         return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
                     }
-                    Ok(FormOutcome { url: after })
+                    Ok(FormOutcome {
+                        url: after,
+                        committed: None,
+                    })
                 }
-                WorkerReply::FormFailed {
-                    form_id: done,
-                    reason,
-                } if done == form_id => Err(match reason.as_str() {
+                WorkerReply::FormFailed { reason, .. } => Err(match reason.as_str() {
                     // Refused before anything changed.
                     "denied" => HostError::Invalid(
                         "form action refused: not the right kind of control, or a secret field"
@@ -2364,9 +2624,15 @@ mod platform {
                     "failed" | "timeout" => {
                         // The control may already have changed: nothing
                         // observed is trusted until the page is observed
-                        // again, and the outcome is unknown.
-                        self.host_nodes.clear();
-                        self.host_tools.clear();
+                        // again, and the outcome is unknown. After an Enter
+                        // the page itself may have moved: nothing is
+                        // committed either.
+                        if entering {
+                            self.forget_page();
+                        } else {
+                            self.host_nodes.clear();
+                            self.host_tools.clear();
+                        }
                         HostError::Unavailable(UnavailableReason::OutcomeUnknown)
                     }
                     _ => self.fail_closed(UnavailableReason::ProtocolViolation),
@@ -2374,6 +2640,17 @@ mod platform {
                 // A reply for another request, or of another kind: the
                 // worker may still be acting, so the lifetime ends.
                 _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// End a form action's route rule: for Enter, the Enter route
+        /// rule's record; for every other action, the no-document rule.
+        fn finish_form_route(&mut self, entering: bool) -> crate::worker_navigation::EnterRoute {
+            if entering {
+                self.policy.finish_enter()
+            } else {
+                self.policy.finish_activation();
+                crate::worker_navigation::EnterRoute::default()
             }
         }
 
@@ -2741,7 +3018,10 @@ mod platform {
                         self.host_tools.clear();
                         return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
                     }
-                    Ok(FormOutcome { url: after })
+                    Ok(FormOutcome {
+                        url: after,
+                        committed: None,
+                    })
                 }
                 WorkerReply::UploadFailed {
                     up_id: done,
@@ -3159,6 +3439,9 @@ mod platform {
                 self.policy.finish_activation();
                 return Err(error);
             }
+            // The approval is consumed: an approved navigation, which ends
+            // a no-document rule held after an Enter (SG-000122 slice A6).
+            self.policy.approved_navigation();
             self.next_exec += 1;
             let exec_id = self.next_exec;
             let sent = self.send(&WorkerRequest::Execute {
@@ -3314,6 +3597,9 @@ mod platform {
                 self.policy.finish_activation();
                 return Err(error);
             }
+            // The approval is consumed: an approved navigation, which ends
+            // a no-document rule held after an Enter (SG-000122 slice A6).
+            self.policy.approved_navigation();
             self.next_act += 1;
             let act_id = self.next_act;
             self.send(&WorkerRequest::Activate {
@@ -3430,6 +3716,9 @@ mod platform {
                 self.policy.finish_activation();
                 return Err(error);
             }
+            // The approval is consumed: an approved navigation, which ends
+            // a no-document rule held after an Enter (SG-000122 slice A6).
+            self.policy.approved_navigation();
             self.next_dl += 1;
             let dl_id = self.next_dl;
             let staged = self.staging.join(format!("dl-{dl_id}.part"));
@@ -4440,6 +4729,260 @@ mod tests {
         assert!(reply(r#"{"frame":"activated","act_id":2,"url":"u","status":200,"x":1}"#).is_err());
     }
 
+    /// SG-000122 slice A6: an Enter is committed only when the host's route
+    /// record and the worker agree that the one admitted document opened
+    /// and committed; unchanged only when neither saw one and the URL
+    /// stayed; refused only when the route refused it before anything
+    /// opened; once the document opened, every other outcome is unknown.
+    #[test]
+    fn sg122_an_enter_is_committed_only_when_both_sides_agree() {
+        use crate::worker_navigation::EnterRoute;
+        let page = "https://fixture.test/enter-form";
+        let order = "https://fixture.test/order";
+        // An opened route's admitted document is the order page.
+        let route = |opened: bool, refused, refused_later| EnterRoute {
+            opened,
+            refused,
+            refused_later,
+            document: opened.then(|| order.to_owned()),
+        };
+        let done = |url, navigated| EnterReply::Done { url, navigated };
+        let cases = [
+            // The admitted document opened and committed; a frame or popup
+            // of the result page refused after it does not change that.
+            (
+                route(true, false, false),
+                done(order, true),
+                EnterVerdict::Committed,
+            ),
+            // The worker reports the admitted URL with a fragment: the same
+            // document.
+            (
+                route(true, false, false),
+                done("https://fixture.test/order#thanks", true),
+                EnterVerdict::Committed,
+            ),
+            // A new document at a URL the host did not admit for it (another
+            // same-origin path, or the page it left): never committed.
+            (
+                route(true, false, false),
+                done(page, true),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, false),
+                done("https://fixture.test/order-elsewhere", true),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, false),
+                done("https://fixture.test/order?x=1", true),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, true),
+                done(order, true),
+                EnterVerdict::Committed,
+            ),
+            // Nothing opened, nothing refused, and the page stayed.
+            (
+                route(false, false, false),
+                done(page, false),
+                EnterVerdict::Unchanged,
+            ),
+            // Refused before anything opened: nothing left.
+            (
+                route(false, true, false),
+                EnterReply::Denied,
+                EnterVerdict::Refused,
+            ),
+            (
+                route(false, true, false),
+                EnterReply::Failed,
+                EnterVerdict::Refused,
+            ),
+            (
+                route(false, true, false),
+                done(page, false),
+                EnterVerdict::Refused,
+            ),
+            // The judged case: the document opened (the request left), then
+            // a redirect hop off the origin or a second document was refused.
+            (
+                route(true, true, false),
+                EnterReply::Denied,
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, true, false),
+                done(order, true),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, true, false),
+                done(page, false),
+                EnterVerdict::Unknown,
+            ),
+            // The document opened and the worker failed, or saw no commit.
+            (
+                route(true, false, false),
+                EnterReply::Denied,
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, false),
+                EnterReply::Failed,
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, false),
+                done(page, false),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, false),
+                done(order, false),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(true, false, true),
+                EnterReply::Denied,
+                EnterVerdict::Unknown,
+            ),
+            // A document the host never admitted committed.
+            (
+                route(false, true, false),
+                done(order, true),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(false, false, false),
+                done(order, true),
+                EnterVerdict::Unknown,
+            ),
+            (
+                route(false, false, false),
+                done(page, true),
+                EnterVerdict::Unknown,
+            ),
+            // The page moved without a document.
+            (
+                route(false, false, false),
+                done(order, false),
+                EnterVerdict::Unknown,
+            ),
+            // The worker answered "denied" with no host refusal (a popup
+            // closed, an about:blank window, a navigation that failed before
+            // the host): after the key, not "nothing happened".
+            (
+                route(false, false, false),
+                EnterReply::Denied,
+                EnterVerdict::Unknown,
+            ),
+            // Nothing opened or was refused: the worker's own reason.
+            (
+                route(false, false, false),
+                EnterReply::Failed,
+                EnterVerdict::WorkerFailed,
+            ),
+        ];
+        for (route, reply, expected) in cases {
+            assert_eq!(
+                enter_verdict(&route, reply, page),
+                expected,
+                "{route:?} {reply:?}"
+            );
+        }
+        // A 303 after the POST: the admitted hop's target is the document
+        // compared, not the POST's URL.
+        let redirected = EnterRoute {
+            opened: true,
+            refused: false,
+            refused_later: false,
+            document: Some("https://fixture.test/thanks".into()),
+        };
+        assert_eq!(
+            enter_verdict(&redirected, done("https://fixture.test/thanks", true), page),
+            EnterVerdict::Committed
+        );
+        assert_eq!(
+            enter_verdict(&redirected, done(order, true), page),
+            EnterVerdict::Unknown
+        );
+        // An opened route with no recorded document never commits.
+        let unrecorded = EnterRoute {
+            document: None,
+            ..redirected
+        };
+        assert_eq!(
+            enter_verdict(&unrecorded, done(order, true), page),
+            EnterVerdict::Unknown
+        );
+    }
+
+    /// SG-000122 slice A6 (third judge): after a committed Enter during
+    /// which a frame or popup was refused, the no-document rule stays held
+    /// (a popup that outlives the Enter opens nothing under the ordinary
+    /// rules) until the next successful observation; every other committed
+    /// Enter ends the hold, every uncommitted one keeps it.
+    #[test]
+    fn sg122_a_refused_popup_keeps_the_hold_after_a_committed_enter() {
+        use crate::worker_navigation::{EnterRoute, NavigationPolicy, RouteKind};
+        let route = |refused_later| EnterRoute {
+            opened: true,
+            refused: false,
+            refused_later,
+            document: Some("https://fixture.test/order".into()),
+        };
+        assert!(!holds_after_enter(EnterVerdict::Committed, &route(false)));
+        assert!(holds_after_enter(EnterVerdict::Committed, &route(true)));
+        for verdict in [
+            EnterVerdict::Unchanged,
+            EnterVerdict::Refused,
+            EnterVerdict::Unknown,
+            EnterVerdict::WorkerFailed,
+        ] {
+            assert!(holds_after_enter(verdict, &route(false)), "{verdict:?}");
+        }
+
+        // What the hold does to that popup, in the policy: the Enter
+        // refuses it, the result page commits, and a popup the page opens
+        // again on the origin is still refused until an observation.
+        let mut p = NavigationPolicy::new(&[crate::confinement::AdmittedDestination::fixture(
+            "fixture.test",
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        )
+        .expect("fixture.test")]);
+        p.begin("https://fixture.test/enter-form").expect("begin");
+        p.commit("https://fixture.test/enter-form").expect("commit");
+        let home = "https://fixture.test";
+        let popup = "https://fixture.test/thanks";
+        p.expect_enter().expect("enter");
+        p.decide(RouteKind::Document, "https://fixture.test/order", "")
+            .expect("the submission");
+        assert!(p.decide(RouteKind::Popup, popup, home).is_err());
+        let enter = p.finish_enter();
+        assert!(enter.refused_later);
+        let reported = EnterReply::Done {
+            url: "https://fixture.test/order",
+            navigated: true,
+        };
+        let verdict = enter_verdict(&enter, reported, "https://fixture.test/enter-form");
+        assert_eq!(verdict, EnterVerdict::Committed);
+        let hold = holds_after_enter(verdict, &enter);
+        assert!(hold);
+        p.hold_no_document();
+        p.commit_page_initiated("https://fixture.test/order")
+            .expect("committed on the origin");
+        assert!(p.decide(RouteKind::Popup, popup, home).is_err());
+        assert!(p
+            .decide(RouteKind::Document, "https://fixture.test/again", "")
+            .is_err());
+        // The next successful observation ends it.
+        p.release_hold();
+        assert!(p.decide(RouteKind::Popup, popup, home).is_ok());
+    }
+
     #[test]
     fn a_submission_names_exactly_the_approved_fields() {
         use crate::webmcp::{ControlKind, ExecField};
@@ -4756,9 +5299,22 @@ mod tests {
                 .unwrap(),
             WorkerReply::FormDone {
                 form_id: 2,
-                url: "https://fixture.test/form".into()
+                url: "https://fixture.test/form".into(),
+                navigated: false
             }
         );
+        // SG-000122 slice A6: an Enter's reply says whether the main frame
+        // committed a new document.
+        assert_eq!(
+            reply(r#"{"frame":"form_done","form_id":3,"url":"https://fixture.test/order","navigated":true}"#)
+                .unwrap(),
+            WorkerReply::FormDone {
+                form_id: 3,
+                url: "https://fixture.test/order".into(),
+                navigated: true
+            }
+        );
+        assert!(reply(r#"{"frame":"form_done","form_id":3,"url":"u","navigated":"yes"}"#).is_err());
         assert!(reply(r#"{"frame":"form_failed","form_id":2,"reason":"denied"}"#).is_ok());
         assert_eq!(
             json(&WorkerRequest::FormAction {
@@ -4934,9 +5490,27 @@ mod tests {
                 method: "GET".into(),
                 content_type: String::new(),
                 body: None,
-                body_bytes: 0
+                body_bytes: 0,
+                main_document: false
             }
         );
+        // SG-000122 slice A6: a main-frame document hop says so; the flag is
+        // a boolean, and absent means false.
+        assert_eq!(
+            reply(r#"{"frame":"route_request","request_id":2,"kind":"redirect","url":"https://fixture.test/thanks","origin":"https://fixture.test","method":"GET","content_type":"","body":null,"body_bytes":0,"main_document":true}"#).unwrap(),
+            WorkerReply::RouteRequest {
+                request_id: 2,
+                kind: "redirect".into(),
+                url: "https://fixture.test/thanks".into(),
+                origin: "https://fixture.test".into(),
+                method: "GET".into(),
+                content_type: String::new(),
+                body: None,
+                body_bytes: 0,
+                main_document: true
+            }
+        );
+        assert!(reply(r#"{"frame":"route_request","request_id":2,"kind":"redirect","url":"u","origin":"","method":"GET","content_type":"","body":null,"body_bytes":0,"main_document":"yes"}"#).is_err());
         assert_eq!(
             reply(
                 r#"{"frame":"navigated","nav_id":3,"url":"https://fixture.test/a","status":200}"#

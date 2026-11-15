@@ -15,9 +15,9 @@ import { runtimePin } from "./dev-pin.mjs";
 
 // Every native test must run: a filter that matches nothing (for example
 // after a module rename) exits 0 and would otherwise pass vacuously.
-const EXPECTED_TESTS = 37;
+const EXPECTED_TESTS = 38;
 const EXPECTED_WORKER_HOST_TESTS = 10;
-const EXPECTED_ORCELD_LIVE_TESTS = 5;
+const EXPECTED_ORCELD_LIVE_TESTS = 6;
 const EXPECTED_DEV_HOST_TESTS = 3;
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,6 +57,12 @@ if (!summary || Number(summary[1]) !== EXPECTED_TESTS) {
   process.stderr.write(
     `browser-launcher:native: expected ${EXPECTED_TESTS} native tests to pass, saw ${summary ? summary[1] : "none"}\n`
   );
+  process.exit(1);
+}
+// SG-000122 slice A6: the Enter route rule ran on the fixture (this test
+// launches with a stubbed policy key, so it always runs).
+if (!(result.stdout ?? "").includes("SG122-EVIDENCE enter route:")) {
+  process.stderr.write("browser-launcher:native: the SG-000122 Enter route test did not report its evidence\n");
   process.exit(1);
 }
 
@@ -168,7 +174,9 @@ if (!orceldSummary || Number(orceldSummary[1]) !== EXPECTED_ORCELD_LIVE_TESTS) {
   );
   process.exit(1);
 }
-const orceldJourneys = ["SG108-EVIDENCE orceld live journey", "SG108-EVIDENCE orceld live denial", "SG108-EVIDENCE orceld live lost", "SG108-EVIDENCE orceld live suspended", "SG108-EVIDENCE orceld live restart"];
+// SG-000122 slice A6: the form journey through orceld (approvals scripted
+// in the test, labelled so; the founder-present run is separate).
+const orceldJourneys = ["SG108-EVIDENCE orceld live journey", "SG108-EVIDENCE orceld live denial", "SG108-EVIDENCE orceld live lost", "SG108-EVIDENCE orceld live suspended", "SG108-EVIDENCE orceld live restart", "SG122-EVIDENCE orceld live form journey"];
 const orceldJourneysSeen = orceldJourneys.every((line) => orceldOut.includes(line));
 const orceldRefusals = orceldOut.split("SG108-EVIDENCE orceld live: managed policy present").length - 1;
 if (!orceldJourneysSeen && orceldRefusals < orceldJourneys.length) {

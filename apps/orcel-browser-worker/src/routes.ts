@@ -57,7 +57,7 @@ export async function installRoutes(
   const guard = (page: Page): Promise<RedirectGuard> => {
     let ready = guards.get(page);
     if (!ready) {
-      ready = attachRedirectGuard(context, page, policy);
+      ready = attachRedirectGuard(context, page, policy, () => primary() === page);
       guards.set(page, ready);
     }
     return ready;

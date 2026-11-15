@@ -196,6 +196,9 @@ export type WorkerFrame =
       content_type: string;
       body: string | null;
       body_bytes: number;
+      /// SG-000122 A6: present (true) only on a redirect hop of the primary
+      /// page's main-frame document.
+      main_document?: true;
     }
   | { frame: "navigated"; nav_id: number; url: string; status: number }
   | { frame: "navigation_failed"; nav_id: number; reason: NavigationFailure }
@@ -214,7 +217,7 @@ export type WorkerFrame =
   | { frame: "downloaded"; dl_id: number; url: string; name: string; media: string; bytes: number }
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
   | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
-  | { frame: "form_done"; form_id: number; url: string }
+  | { frame: "form_done"; form_id: number; url: string; navigated?: boolean }
   | { frame: "waited"; wait_id: number; url: string; met: boolean }
   | { frame: "uploaded"; up_id: number; url: string }
   | { frame: "dialogs_seen"; dlg_id: number; dialogs: DismissedDialog[]; truncated: boolean }

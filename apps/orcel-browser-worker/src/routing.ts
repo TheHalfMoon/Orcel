@@ -12,6 +12,27 @@ export interface RouteQuery {
   /// What the request carries besides its URL (the host checks an approved
   /// form submission against it). Absent means a GET with no body.
   detail?: RequestDetail;
+  /// SG-000122 A6: set (true) only on a redirect hop of the primary page's
+  /// main-frame document, so the host can tell an approved Enter's own
+  /// redirect from a subresource's, a frame's or a popup's. Absent means
+  /// not the document.
+  mainDocument?: true;
+}
+
+/// SG-000122 A6: the query for one redirect hop the CDP guard paused.
+/// `primary` says whether the guard's page is the page the host navigates;
+/// only a `Document` hop of that page's main frame is the main document.
+export function redirectHop(
+  url: string,
+  from: string,
+  resourceType: string,
+  frameId: string,
+  mainFrameId: string,
+  primary: boolean
+): RouteQuery {
+  const query: RouteQuery = { kind: "redirect", url, origin: originOf(from) };
+  if (primary && resourceType === "Document" && mainFrameId !== "" && frameId === mainFrameId) query.mainDocument = true;
+  return query;
 }
 
 export interface RequestDetail {
@@ -88,7 +109,13 @@ export function classifyRequest(request: RequestLike, primary: unknown, primaryU
   const frame = request.frame();
   if (request.isNavigationRequest()) {
     const redirected = request.redirectedFrom();
-    if (redirected) return { kind: "redirect", url, origin: originOf(redirected.url()) };
+    if (redirected) {
+      // SG-000122 A6: the primary page's own main-frame document says so.
+      const main = frame.parentFrame() === null && frame.page() === primary;
+      return main
+        ? { kind: "redirect", url, origin: originOf(redirected.url()), mainDocument: true }
+        : { kind: "redirect", url, origin: originOf(redirected.url()) };
+    }
     const parent = frame.parentFrame();
     if (parent) return { kind: "frame", url, origin: originOf(parent.url()) };
     if (frame.page() !== primary) return { kind: "popup", url, origin: originOf(primaryUrl()) };

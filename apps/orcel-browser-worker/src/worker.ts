@@ -86,7 +86,9 @@ export interface EngineSession {
   /// URL afterwards; rejects with NavigationError.
   /// With `acceptConfirm`, a confirm with exactly that message is accepted
   /// (once) while the action runs; every other dialog is dismissed.
-  formAction(ref: string, act: FormAction, target?: ApprovedTarget, acceptConfirm?: string): Promise<{ url: string }>;
+  /// SG-000122 slice A6: an Enter also says whether the main frame committed
+  /// a new document after the key (`navigated`).
+  formAction(ref: string, act: FormAction, target?: ApprovedTarget, acceptConfirm?: string): Promise<{ url: string; navigated?: boolean }>;
   /// BR-05: the dialogs dismissed since the last call (clears the log).
   takeDialogs(): { dialogs: DismissedDialog[]; truncated: boolean };
   /// BR-03: set the approved file input to the host-staged file at `path`;
@@ -186,7 +188,9 @@ export class Worker {
         method: detail.method,
         content_type: detail.contentType,
         body: detail.body,
-        body_bytes: detail.bodyBytes
+        body_bytes: detail.bodyBytes,
+        // SG-000122 A6: only on a main-frame document hop.
+        ...(query.mainDocument === true ? { main_document: true as const } : {})
       });
     });
   }
@@ -502,8 +506,9 @@ export class Worker {
   ): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const { url } = await session.formAction(ref, act, target, acceptConfirm);
-      outcome = { frame: "form_done", form_id: formId, url };
+      const { url, navigated } = await session.formAction(ref, act, target, acceptConfirm);
+      // SG-000122 slice A6: only an Enter reports a committed document.
+      outcome = act.action === "enter" ? { frame: "form_done", form_id: formId, url, navigated: navigated === true } : { frame: "form_done", form_id: formId, url };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "form_failed", form_id: formId, reason };

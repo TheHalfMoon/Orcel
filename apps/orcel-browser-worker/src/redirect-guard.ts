@@ -18,7 +18,7 @@
 // rendered.
 
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
-import { originOf } from "./routing.js";
+import { redirectHop } from "./routing.js";
 import type { RoutePolicy } from "./worker.js";
 
 /// Upper bound on a captured document (mirrors the host's transfer bound).
@@ -55,7 +55,12 @@ const WITH_DOCUMENT_RESPONSES = [
   { urlPattern: "*", resourceType: "Document" as const, requestStage: "Response" as const }
 ];
 
-export async function attachRedirectGuard(context: BrowserContext, page: Page, policy: RoutePolicy): Promise<RedirectGuard> {
+export async function attachRedirectGuard(
+  context: BrowserContext,
+  page: Page,
+  policy: RoutePolicy,
+  isPrimary: () => boolean = () => false
+): Promise<RedirectGuard> {
   const session: CDPSession = await context.newCDPSession(page);
   // Interception ids of earlier hops map to their URLs, so each hop's
   // requesting origin is the origin of the response that redirected it.
@@ -144,6 +149,9 @@ export async function attachRedirectGuard(context: BrowserContext, page: Page, p
     }
   };
 
+  // SG-000122 A6: the main frame's id, once known (a hop paused before it
+  // is known is not marked as the main document).
+  let mainFrameId = "";
   session.on("Fetch.requestPaused", (event: RequestPaused) => {
     void (async () => {
       const { requestId } = event;
@@ -162,7 +170,7 @@ export async function attachRedirectGuard(context: BrowserContext, page: Page, p
         const from = urls.get(event.redirectedRequestId) ?? "";
         let allow = false;
         try {
-          allow = await policy.decide({ kind: "redirect", url, origin: originOf(from) });
+          allow = await policy.decide(redirectHop(url, from, event.resourceType, event.frameId, mainFrameId, isPrimary()));
         } catch {
           allow = false;
         }
@@ -175,6 +183,7 @@ export async function attachRedirectGuard(context: BrowserContext, page: Page, p
   });
   const tree = (await session.send("Page.getFrameTree")) as { frameTree: { frame: { id: string } } };
   const mainFrame = tree.frameTree.frame.id;
+  mainFrameId = mainFrame;
   // Speculation-rules prerendering loads pages in hidden targets that
   // neither routes nor this guard see; the seeded profile preference stops
   // it, and this per-page switch stays as a second layer.

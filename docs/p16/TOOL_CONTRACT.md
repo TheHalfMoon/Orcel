@@ -41,7 +41,7 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `browser_click` | `browser.dom/click` | network | SOFT | local-only | no | no | no | yes | the opened URL, status and generation |
 | `browser_download` | `browser.download/download` | network | SOFT | local-only | no | no | no | yes | the committed file's name, SHA-256 and size; at most the transfer bound written, create-only |
 | `browser_download_preview` | `browser.download/preview` | preview | none | local-only | yes | no | yes | no | the link's origin, file name and digest, the folder and the file name; writes nothing |
-| `browser_enter` | `browser.form/enter` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id |
+| `browser_enter` | `browser.form/enter` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL, the record id and whether one same-origin document was committed (navigation) |
 | `browser_fill` | `browser.dom/fill` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, the committed URL and the record id; never the value |
 | `browser_navigate` | `browser.navigation/navigate` | network | SOFT | local-only | no | no | no | yes | the committed URL, status and generation |
 | `browser_observe` | `browser.snapshot/observe` | read | none | local-only | yes | no | yes | no | one frame of node identities and keyed digests, plus an untrusted accessible name of at most 256 bytes for main-frame form controls whose name holds only text; no other page text |

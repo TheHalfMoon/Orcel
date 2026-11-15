@@ -37,6 +37,13 @@
 //!   value or option exactly, the field's page-supplied role and name and,
 //!   when shared, its ordinal; journaled (SG-000120 RJ-02) and never
 //!   retried. The node's role is the one the latest observation reported.
+//!   Each reply says what happened to the document (`navigation`): `none`,
+//!   or (slice A6, Enter only) `document_committed` when the submission
+//!   committed one new document on the lifetime's origin, which the page
+//!   store follows as a new generation. A submission off that origin is
+//!   refused at the route: before anything was sent it answers
+//!   CAPABILITY_DENIED; once its same-origin request was delivered (a
+//!   redirect off the origin refused after it), outcome unknown.
 //! - `browser.wait/text {page_id, text, appear, timeout_ms,
 //!   expected_generation}` and `browser.verify/check {page_id, checks,
 //!   expected_generation}`: read-only, no approval, over the committed main
@@ -374,15 +381,29 @@ mod live {
                         )
                     })?;
                     let action = form_action(request, node_id, &role)?;
-                    let (url, record_id) = browser
+                    let (url, record_id, navigation) = browser
                         .form_action(workspace, approval, request, page_id, expected, action)?;
                     let page = browser.page().cloned().ok_or_else(stale)?;
+                    // SG-000122 slice A6: what happened to the document. An
+                    // Enter whose submission committed a new same-origin
+                    // document answers `document_committed` with the page's
+                    // new generation; every other action, and an Enter that
+                    // opened nothing, `none`. A refused submission is an
+                    // error (CAPABILITY_DENIED, or outcome unknown once it
+                    // was delivered), never done.
+                    let navigation = match navigation {
+                        orcel_browser_host::worker_host::FormNavigation::None => "none",
+                        orcel_browser_host::worker_host::FormNavigation::DocumentCommitted => {
+                            "document_committed"
+                        }
+                    };
                     Ok(json!({
                         "page_id": page.page_id,
                         "generation": page.generation,
                         "node_id": node_id,
                         "action": kind,
                         "url": url,
+                        "navigation": navigation,
                         "record_id": record_id,
                         "approval": "SOFT",
                     }))

