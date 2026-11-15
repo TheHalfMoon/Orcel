@@ -85,8 +85,9 @@ to the page generation, the control and the stated option, state or key, used on
 - `browser_check` sets one observed checkbox or radio input to a stated state (checked or unchecked).
 - `browser_enter` presses Enter, and only Enter (it takes no key), in one observed single-line text field as
   `browser_fill` defines it. Its prompt says that the page may submit or send what it holds; the lifetime's one
-  admitted site is the only place it can go. An Enter that would open a new document is still refused by BR-02's
-  no-new-document rule for form actions until slice A6 settles Enter's route.
+  admitted site is the only place it can go. A submit that would open a new document is blocked (BR-02's
+  no-new-document rule for form actions, until slice A6 settles Enter's route); the reply may still say done with
+  an unchanged URL, so check the page with `browser_verify`.
 
 Each prompt shows the control's role and name labelled page-supplied. A radio can only be selected: `checked: false`
 on a radio is refused before any approval (the host's live check, and orceld's prompt builder again); to clear a

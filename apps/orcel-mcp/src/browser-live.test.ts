@@ -335,9 +335,9 @@ test("sg122 the A4 tool descriptions state the approval, the control and what En
     "may submit or send whatever the page's form holds",
     "the approval prompt warns of it",
     "the page's one admitted site",
-    "would open a new document",
-    "still blocked",
-    "is refused"
+    "A submit that would open a new document is blocked (BR-02, until A6)",
+    "the reply may still say done",
+    "check the page with browser_verify"
   ]) {
     assert.ok(enter.includes(phrase), `browser_enter: ${phrase}`);
   }
