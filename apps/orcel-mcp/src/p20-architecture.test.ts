@@ -196,8 +196,49 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // decision (issue #515). SG-000129 (ORCEL-AGENT, the Orcel Agent planner
   // client) ran beside them by founder decision (issue #536) and is closed.
   // SG-000122 (ORCEL-BR, browser form actions, narrow scope) runs beside
-  // them by founder decision (issue #753); no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000122", "SG-000127", "SG-000128"]);
+  // them by founder decision (issue #753). SG-000130 (ORCEL-F5, workbook
+  // sources in the report task) runs beside them by founder go-ahead (issue
+  // #760); no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000122", "SG-000127", "SG-000128", "SG-000130"]);
+  const sg130 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    dependencies: string[];
+    authority_delta: {
+      activation: string;
+      report_task: string;
+      filesystem: string;
+      mcp: string;
+      release: string;
+      approval: string;
+      network: string;
+      process: string;
+      remote: string;
+      privileged: string;
+    };
+  }>(".specgrain/specs/SG-000130.json");
+  assert.equal(sg130.program, "ORCEL-F5");
+  assert.equal(sg130.state, "GRAIN");
+  assert.equal(sg130.planning_issue, 760);
+  assert.equal(sg130.base, "75e1dc299b51e52092707db2b0f6a8c1deb3d1b5");
+  assert.deepEqual(sg130.dependencies, ["SG-000120", "SG-000126", "SG-000127"]);
+  // The activation grants nothing; workbook sources, their reads, the
+  // report_start change and the parser's release caller stay proposals until
+  // their slice is qualified, no approval is added, remote exposure stays
+  // unavailable, and an added key must not go unnoticed.
+  assert.deepEqual(
+    Object.keys(sg130.authority_delta).sort(),
+    ["activation", "approval", "filesystem", "mcp", "network", "privileged", "process", "release", "remote", "report_task"]
+  );
+  for (const key of ["activation", "network", "process", "remote", "privileged"] as const) {
+    assert.ok(sg130.authority_delta[key].startsWith("None."), key);
+  }
+  for (const key of ["report_task", "filesystem", "mcp", "release"] as const) {
+    assert.ok(sg130.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg130.authority_delta.approval.startsWith("Unchanged rules"));
   const sg122 = readJson<{
     program: string;
     state: string;
