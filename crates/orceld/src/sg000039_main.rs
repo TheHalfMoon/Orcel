@@ -28,7 +28,10 @@ mod sg000128_dispatch_tests;
 // WI-05: reached through the live browser's committed downloads
 // (`LiveBrowser::parse_download`), which only the Windows `live-browser-test`
 // and `live-browser-dev` builds compile; the module's unit and end-to-end
-// tests run on every OS.
+// tests run on every OS. F5 slice 1 (founder decision 7 of 2026-11-14): the
+// Windows release ships the parser and its pin beside orceld, and no release
+// build calls this module (release_blocker_sweep.rs,
+// `the_shipped_document_parser_has_no_release_caller`).
 #[cfg_attr(
     not(all(
         windows,
@@ -55,7 +58,9 @@ mod profile_gate;
 mod remote_lease;
 mod report_check;
 mod report_task;
-// F5 Journey 2: inert until founder decision 7 (prep/F5_SPREADSHEET_JOURNEY.md).
+// F5 Journey 2 (prep/F5_SPREADSHEET_JOURNEY.md): founder decision 7 of
+// 2026-11-14 chose the confined parser, slice by slice. Compiled only into
+// tests; nothing a client can reach changes until slice 3.
 #[cfg(test)]
 mod report_workbook;
 mod resume_key;

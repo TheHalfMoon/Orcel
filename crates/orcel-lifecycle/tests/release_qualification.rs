@@ -240,13 +240,30 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
         serde_json::from_slice(&fs::read(release.join(MANIFEST_FILE)).unwrap()).unwrap();
     let base_version = manifest["version"].as_str().unwrap().to_string();
     // XP-13b: the contained-tier helper ships beside orceld.exe, pinned by
-    // orcel-contain.sha256, and both are manifest files.
-    let helper =
-        fs::read(release.join("orcel-contain.exe")).expect("orcel-contain.exe is packaged");
-    let pin =
-        fs::read_to_string(release.join("orcel-contain.sha256")).expect("its pin is packaged");
-    assert_eq!(pin, format!("{}\n", sha256_bytes(&helper)));
-    for name in ["orcel-contain.exe", "orcel-contain.sha256"] {
+    // orcel-contain.sha256. F5 slice 1 (founder decision 7 of 2026-11-14):
+    // so does the confined document parser, pinned by
+    // orcel-doc-parser.sha256, with no caller in a release build. All four
+    // are manifest files.
+    for (binary, pin_name) in [
+        ("orcel-contain.exe", "orcel-contain.sha256"),
+        ("orcel-doc-parser.exe", "orcel-doc-parser.sha256"),
+    ] {
+        let bytes = fs::read(release.join(binary))
+            .unwrap_or_else(|error| panic!("{binary} is not packaged: {error}"));
+        let pin = fs::read_to_string(release.join(pin_name))
+            .unwrap_or_else(|error| panic!("{pin_name} is not packaged: {error}"));
+        assert_eq!(
+            pin,
+            format!("{}\n", sha256_bytes(&bytes)),
+            "{pin_name} does not pin {binary}"
+        );
+    }
+    for name in [
+        "orcel-contain.exe",
+        "orcel-contain.sha256",
+        "orcel-doc-parser.exe",
+        "orcel-doc-parser.sha256",
+    ] {
         assert!(
             manifest["files"]
                 .as_array()

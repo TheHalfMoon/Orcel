@@ -108,7 +108,23 @@ pub struct ParserPin {
     sha256: String,
 }
 
+// F5 slice 1: the release ships the parser, and nothing in a release build
+// calls it. Each entry point below expects to be dead code in a build with no
+// test and no live browser, so a new release caller fails the lint (clippy
+// runs with `-D warnings`) instead of passing silently. The module's own
+// `allow(dead_code)` (sg000039_main.rs) still covers the rest.
+
 /// The helper and the parser beside the running orceld.
+#[cfg_attr(
+    not(any(
+        test,
+        all(
+            windows,
+            any(feature = "live-browser-test", feature = "live-browser-dev")
+        )
+    )),
+    expect(dead_code)
+)]
 pub fn installed_pins() -> Result<(HelperPin, ParserPin), ProviderError> {
     let helper = contained_tier::installed_helper_pin()?;
     let exe = std::env::current_exe()
@@ -123,6 +139,16 @@ pub fn installed_pins() -> Result<(HelperPin, ParserPin), ProviderError> {
 /// `dir/orcel-doc-parser[.exe]`, pinned by the single lowercase SHA-256 line
 /// in `dir/orcel-doc-parser.sha256`, under the same ownership rule as the
 /// helper's pin (`contained_tier::helper_pin_in`).
+#[cfg_attr(
+    not(any(
+        test,
+        all(
+            windows,
+            any(feature = "live-browser-test", feature = "live-browser-dev")
+        )
+    )),
+    expect(dead_code)
+)]
 pub fn parser_pin_in(dir: &Path) -> Result<ParserPin, ProviderError> {
     let parser = dir.join(PARSER_NAME);
     for file in [dir.join(PARSER_PIN_NAME), parser.clone()] {
@@ -180,6 +206,16 @@ impl ParserPin {
 
 /// Parse a committed download with the installed helper and parser. The
 /// pins are resolved before anything is asked for or read.
+#[cfg_attr(
+    not(any(
+        test,
+        all(
+            windows,
+            any(feature = "live-browser-test", feature = "live-browser-dev")
+        )
+    )),
+    expect(dead_code)
+)]
 pub fn parse_download(
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
@@ -190,6 +226,16 @@ pub fn parse_download(
 }
 
 /// Parse a committed download with the given pins.
+#[cfg_attr(
+    not(any(
+        test,
+        all(
+            windows,
+            any(feature = "live-browser-test", feature = "live-browser-dev")
+        )
+    )),
+    expect(dead_code)
+)]
 pub fn parse_committed(
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
@@ -229,6 +275,16 @@ pub fn parse_committed(
 /// Run the pinned parser under the contained tier over verified bytes, staged
 /// in a fresh private directory named from `stage_key`. The caller has already
 /// decided these bytes may be parsed. The Markdown is untrusted document content.
+#[cfg_attr(
+    not(any(
+        test,
+        all(
+            windows,
+            any(feature = "live-browser-test", feature = "live-browser-dev")
+        )
+    )),
+    expect(dead_code)
+)]
 pub(crate) fn run_parser(
     bytes: &[u8],
     stage_key: &str,
