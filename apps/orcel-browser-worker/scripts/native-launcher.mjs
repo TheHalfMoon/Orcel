@@ -232,7 +232,7 @@ for (const name of [
   "the_approval_digest_covers_both_halves",
   "host_refusals_map_onto_closed_failure_codes",
   "wi05_only_a_committed_download_is_handed_to_the_document_parser",
-  "the_six_live_shapes_are_gated",
+  "the_live_mcp_shapes_are_gated",
   "a_live_shape_needs_a_local_browser_structured_request",
   "live_browser_shapes_reach_the_live_route_only_through_the_gate"
 ]) {
