@@ -1,0 +1,126 @@
+{
+  "id": "SG-000130",
+  "title": "Workbook sources in the report task (F5 Journey 2, slice 3: .xlsx sources through the confined parser)",
+  "program": "ORCEL-F5",
+  "state": "GRAIN",
+  "risk": "high",
+  "created": "2026-11-15",
+  "base": "75e1dc299b51e52092707db2b0f6a8c1deb3d1b5",
+  "dependencies": [
+    "SG-000120",
+    "SG-000126",
+    "SG-000127"
+  ],
+  "planning_issue": 760,
+  "objective": "Let the local report task (SG-000126) take an .xlsx workbook in the workspace as a source and turn its saved figures into one approved, create-only report that the independent checker verifies figure by figure. A workbook is read only through the confined document parser (no network, no process creation, one private read-only copy, CPU, memory and time limits) by the workspace route that F5 slice 2 built (#758): plain directories only, a single-linked regular file, the open handle tied to the walked path, the parser's input bound and a SHA-256 re-check. orceld stays the sole authority. The existing local-only report_start tool (SG-000127 slice 3) is the only entry point; the core and tunnel profiles never list it. This is slice 3 of docs/orcel/implementation-readiness/prep/F5_SPREADSHEET_JOURNEY.md (roadmap Journey 2, F5, \"Desktop spreadsheet -> approved report\"), on founder decision 7 of 2026-11-14 (option A, the confined parser, slice by slice) and the founder's decisions of 2026-11-15, recorded on issue #760. Slices 1 (#754) and 2 (#758) are merged and no client can reach them.",
+  "scope": {
+    "include": [
+      "Activate the SG-000130 contract only (slice W0). Every slice below needs its own exact-head qualified implementation PR with the review gates and a fresh-context security judge.",
+      "Slice W1, the review blockers, still unreachable by any client (the F5 proposal's \"What the test-only code doesn't do yet\"; each is required before any exposure): (a) report_workbook.rs reads every workbook source through slice 2's route (observe_workspace_file at start, parse_workspace_file for every later read), never through the workspace provider's verified open; (b) the checker's re-read limit follows the source's type (the parser's 50 MiB input bound, MAX_INPUT_BYTES, for a workbook; report_check.rs's 1 MiB for a text source), is checked at start and again before the approval prompt, so a source the checker could not re-read never reaches a prompt, and reconcile (SG-000120, report_journal.rs) applies the same type-dependent limit; (c) figure checks become part of verification: a report whose stated figure does not match its cell never reaches verified, and the figure check keeps the checker's independence (it uses neither the workspace provider nor the task registry, as check_figures does today, and re-parses each workbook in its own contained run); (d) every figure names its source workbook, so a report with several workbook sources is unambiguous: a figure that names no source, or a source the task did not observe, is an error, never prose; (e) the reader's notices for each workbook (external links and data connections, hidden sheets, manual calculation, truncation) are carried to the commit approval prompt.",
+      "Optional in W1: report_workbook.rs passes the parser an expected format (workbook), so a file that is not a workbook is refused when the parser sniffs its type, before any parse. Today the route refuses it only after the parse; either way a non-workbook named .xlsx is refused and never becomes a source.",
+      "Slice W2, the exposure: report_start accepts a source ending in .xlsx (ASCII case-insensitive) beside its text sources, within the existing one-to-eight source bound; the source records the file's size and SHA-256 (not its parsed text's), so a changed workbook is stale at preview and at commit as a text source is; its parsed text is untrusted document content returned to the client as data. The commit approval prompt shows, for each workbook source, its workspace-relative path, the reader's notices and which figures came from it. The approval digest binds, for each workbook source, the canonical path the route opened, the file's SHA-256 and the parser's pinned digest, never the string the caller sent. The release_blocker_sweep guards (the_shipped_document_parser_has_no_release_caller, workspace_route_callers) and the expect(dead_code) attributes on the route change in this slice only, under its own review, to admit exactly the report task as the route's release caller (rule change below).",
+      "Slice W3, the journey test and closeout (the F5 proposal's slices 4 and 5): with a scripted, labelled SOFT consent as BM-02 Tier B does, a workbook with known cells, formula values and currency totals becomes a verified report; macro and link cases refused; a save denied once, then a fresh grant; a stale workbook; an existing destination; a report with a false figure ends verification_failed; then canonical closeout. A real approval through a real client stays with the founder, as in F4 slice 4."
+    ],
+    "exclude": [
+      ".xls and .xlsb sources, and any other binary format (.csv already works as text and is unchanged).",
+      "Recalculation of any kind: a figure is only what the file last saved; nothing evaluates a formula, refreshes a query or follows a link.",
+      "Opening the workbook on screen (the journey's \"open correct process/window\" step): it would need a Full User lease and a disposable machine and adds nothing to reading figures; it needs its own founder decision.",
+      "Installed Excel or any COM, add-in or macro surface (option B of decision 7).",
+      "Remote, tunnel, relay and public exposure: no remote-context envelope reaches a workbook read, and the core and tunnel profiles never list report_start.",
+      "A separate approval to read a workbook (founder decision of 2026-11-15, below).",
+      "Any write other than SG-000126's one create-only UTF-8 report; any spreadsheet, Office or binary output.",
+      "Carrying the parser in the Linux and macOS release packages: separate packaging work outside this grain. Until then a released Linux or macOS build refuses a workbook source as unavailable."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None. This packet authorizes implementing and proving SG-000130; it adds no source type, argument, tool, dependency, listener or authority.",
+    "report_task": "Proposed only (slices W1 and W2): the local-only report task's sources may be a binary format, an .xlsx workbook in the workspace, read only through slice 2's route and the confined parser (one private read-only copy, no network, no process creation, bounded CPU, memory, time and output), recorded by the file's SHA-256, and stale when it changes. The report task's only write stays SG-000126's create-only UTF-8 report after one SOFT approval. In a release build this gives the parser that the Windows release already ships (F5 slice 1) its first release caller; the Linux and macOS packages do not carry the parser.",
+    "approval": "Unchanged rules: no new approval; the report's existing SOFT commit approval through the local broker covers reading its workbook sources (founder decision of 2026-11-15), with exact digest binding, single use and expiry. New prompt content: the commit prompt shows each workbook's notices (links, hidden sheets) and which file each figure came from, and its digest binds each workbook's canonical path, SHA-256 and the parser's digest. Nothing mints, caches or reuses an approval.",
+    "mcp": "None. No new tool, profile entry or OAuth scope: report_start (SG-000127 slice 3) stays local-only and its sources argument keeps its shape (slice W2 changes only its description, which today says it reads text files, in the exposure, discovery and documentation tables together); no remote, tunnel or public profile lists it.",
+    "network": "None. The parser runs with no network.",
+    "process": "None. The parser's contained run is the existing qualified helper path (pinned, no process creation inside it); no new executable, process kind or registry entry.",
+    "remote": "None. Remote mapping stays disabled; a remote-context report request is refused before policy or dispatch, as today.",
+    "privileged": "None. SG-000096 Full User shell remains unarmed; no desktop, UIA or browser authority changes."
+  },
+  "decisions": [
+    {
+      "question": "Open the governed change",
+      "status": "DECIDED (founder, 2026-11-14 and 2026-11-15)",
+      "decision": "Founder decision 7 of 2026-11-14 (the founder's 2026-11-14 decision packet, docs/orcel/FOUNDER_DECISION_PACKET.md; not SG-000108's decision 7), option A, as recorded on issue #760: \"a workbook is read in the report task through the confined parser, slice by slice.\" The founder asked Claude to choose the recommended option for each pending decision (\"chose the best for me\") and made the choice selections directly in the Claude Code session; the recorded wording on #760 is Claude's. On 2026-11-15, as recorded on #760: \"the founder approved drafting SG-000130's activation, to merge only on the founder's explicit go-ahead.\" This packet merges only on that go-ahead."
+    },
+    {
+      "question": "Does reading a workbook need its own approval (slice 2's open question)?",
+      "status": "DECIDED (founder, 2026-11-15)",
+      "decision": "As recorded on issue #760: \"the report's existing approval is enough, so there is no separate prompt to read a workbook. The prompt for the create-only write shows the workbook's notices (links, hidden sheets) and which file each figure came from.\" The security review's arguments were weighed in the F5 proposal: the parser is a larger surface than read_text and reads a format a hostile file controls; it is also contained, with no network, no process creation and a read-only private copy, and returns only a bounded, untrusted text frame. A text source needs no approval to be read either. The commit approval binds each workbook's canonical path the route opened, its SHA-256 and the parser's digest, never the caller's string."
+    },
+    {
+      "question": "Program and grain",
+      "status": "DECIDED",
+      "decision": "Program ORCEL-F5, following the roadmap increments' programs (SG-000126 ORCEL-F2, SG-000127 ORCEL-F4). The F5 proposal states the reason this needs a grain: report_start's sources would accept a binary format. F5 slices 1 and 2 changed nothing a client can reach and needed none."
+    },
+    {
+      "question": "Rule change: the lawful open-grain set",
+      "status": "RECORDED (before implementation)",
+      "decision": "The canonical open-grain rule (apps/orcel-mcp/src/openai-plugin.test.ts and p20-architecture.test.ts) allowed SG-000096, SG-000122, SG-000127 and SG-000128 together. It now allows SG-000096, SG-000122, SG-000127, SG-000128 and SG-000130 together, only while CURRENT.md records SG-000130's founder decision beside the earlier records, the parallel grains SG-000108, SG-000120, SG-000126 and SG-000129 stay closed, and no other grain beyond SG-000096 exists. This follows the SG-000122, SG-000128 and SG-000129 precedents (issues #753, #515 and #536). The rule pins the set, not the order."
+    },
+    {
+      "question": "Rule change: the parser's release caller",
+      "status": "RECORDED (before implementation of slice W2)",
+      "decision": "F5 slices 1 and 2 hold that no release build calls the shipped parser or the workspace route: release_blocker_sweep.rs (the_shipped_document_parser_has_no_release_caller, the_parser_caller_scan_catches_the_shapes_it_claims, workspace_route_callers) and the expect(dead_code) attributes on the parser's entry points and the route's items in document_parse.rs. Its own comment says a later slice adds a release caller only by changing that test, under its own review. For this grain only, slice W2 amends them to admit exactly one release caller: the report task's workbook source (report_workbook.rs, then compiled into release builds, reached only from report_start and the checker). Every other caller stays refused; the scan's positive controls stay; the live browser's committed-download caller is unchanged. Until W2 merges, report_workbook.rs stays compiled only for tests and W1 changes nothing a client can reach."
+    },
+    {
+      "question": "Rule change: the checker's re-read limit and figures inside verification",
+      "status": "RECORDED (before implementation of slice W1)",
+      "decision": "SG-000126's independent checker re-reads each source with plain std::fs reads up to report_check.rs's MAX_SOURCE_BYTES (1 MiB), and figures are checked separately (check_figures, through the workspace provider). For this grain: the limit is chosen by the source's type (a workbook up to the parser's MAX_INPUT_BYTES, a text source unchanged), checked at start and before the prompt and applied by reconcile; a workbook's figures are checked as part of verification, so a false figure ends the task verification_failed, never verified; and the figure check shares no code path with the writer's observation beyond the pinned parser (no workspace provider, no task registry). The checker's other rules are unchanged."
+    },
+    {
+      "question": "Accepted and known limits",
+      "status": "RECORDED (from the F5 proposal and slice 2's route)",
+      "decision": "Saved values can be stale: nothing recalculates, a figure is only what the file last saved, and a cell whose value may be stale (an outside source declared, a formula marked as reaching outside, or any formula in a workbook that calculates manually) confirms no figure. OneDrive Files On-Demand placeholders are refused: a cloud placeholder is a reparse point, and the route takes plain directories and a regular file only, so the person must keep the file on the device. A short (8.3) name in the path is refused, not resolved. A file with more than one hard link is refused, since another name may lie outside the workspace. What remains of the open race: a file can still be renamed into the walked path from elsewhere on the volume while it is open, but only by a writer who already has that file, and with one hard link it then has no other name. A current Excel's files stay unqualified evidence (the committed fixtures are hand-written, XlsxWriter, openpyxl and two Apache POI samples); this does not block the engineering."
+    },
+    {
+      "question": ".xls, .xlsb, recalculation, opening on screen and remote exposure in this grain",
+      "status": "REJECTED (deferred)",
+      "decision": "Not needed to turn a saved workbook into a checked report. Each needs its own decision: another binary format is another parser surface, recalculation changes what a figure means, opening on screen needs a Full User lease, and remote exposure is outside the local-only report task."
+    }
+  ],
+  "invariants": [
+    "orceld remains the sole authority: the planner, the MCP edge and the parser never decide scope, staleness, approval or writes.",
+    "A workbook is read only through slice 2's route and the confined parser: plain directories, a single-linked regular file, the open handle tied to the walked path, within MAX_INPUT_BYTES, and the bytes staged for the parser equal the observed SHA-256.",
+    "The parser's output is untrusted document content: never an instruction, never authority.",
+    "Nothing recalculates a formula, refreshes a query, follows a link or runs a macro; a macro-enabled or non-workbook file is refused.",
+    "A source records the file's SHA-256; a changed, removed, relinked or replaced workbook makes the task stale.",
+    "No source reaches the approval prompt unless the checker can re-read it within its type's limit.",
+    "The commit approval binds each workbook's canonical path, SHA-256 and the parser's digest, and its prompt shows each workbook's notices and the source of each figure.",
+    "A task is verified only when the independent checker's re-read confirms the report's bytes, every source's SHA-256 and every stated figure; the checker uses neither the workspace provider nor the task registry.",
+    "No existing file is ever opened for writing; the only write is SG-000126's create-only report.",
+    "Local only: report_start stays out of the core, tunnel and public profiles, and a remote-context request never reaches policy or dispatch."
+  ],
+  "acceptance": [
+    "Activation (W0): this spec, CURRENT.md's record of the founder decisions and the open-grain pins land together; no source type, argument, tool, policy or dispatch changes.",
+    "Route (W1): report_workbook.rs reads only through observe_workspace_file and parse_workspace_file; a junction or link in the path, a second hard link, an oversized file and a file changed between observe and parse are refused for a report source as they are for the route; with the optional expected format, a PDF or other non-workbook named .xlsx is refused by the parser's sniff before any parse, and without it, after the parse.",
+    "Checker limit (W1): a workbook over 1 MiB and within MAX_INPUT_BYTES is observed, previewed, committed and verified; a source over its type's limit is refused at start or before the prompt, never after the write; reconcile applies the same limit.",
+    "Figures in verification (W1): a report with one false figure ends verification_failed, not verified; a figure naming an unobserved source, or no source, is refused; with two workbook sources sharing a sheet and cell name, each figure is checked against the workbook it names; the figure check runs without the workspace provider and the task registry, in its own contained parser run.",
+    "Prompt (W1, W2): the commit prompt shows each workbook's notices (an external link and a hidden sheet in a fixture) and which file each figure came from; the approval digest binds each workbook's canonical path, SHA-256 and the parser's digest, and an approval replayed after the workbook, its path or the parser pin changes is refused.",
+    "Exposure (W2): report_start accepts .xlsx sources in a local profile; the core and tunnel profiles list no report tool; a remote-context request is refused before policy or dispatch; .xls and .xlsb are refused; the release sweep admits exactly the report task as the route's release caller and its positive controls still fail on any other.",
+    "Journey (W3): known cells, formula values and currency totals become a verified report under a scripted, labelled SOFT consent; macro and link cases refused; deny once then a fresh grant; stale workbook; existing destination; on all three CI legs, with the end-to-end test using the CI-built parser.",
+    "Exact-head CI (Windows, macOS and Linux legs), Review Gates (Jev Semantic Review, Alibaba OpenCodeReview delegation) and a fresh-context security judge pass on each slice."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on every slice and on closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "real_client": "A real approval through a real client stays with the founder, as in F4 slice 4.",
+    "current_excel": "A file saved by a current Excel on a machine under this project's control would close the remaining evidence gap; it does not block closeout.",
+    "other_formats": ".xls, .xlsb and recalculation each need their own founder decision.",
+    "open_on_screen": "Opening the workbook on screen needs its own founder decision, a Full User lease and a disposable machine.",
+    "packages": "Carrying the parser in the Linux and macOS release packages is separate packaging work."
+  },
+  "activation_note": "No source type, argument, tool, dependency, policy, dispatch or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about workbook sources.",
+  "done_when": "In tests on the Windows, macOS and Linux CI legs, and in the Windows release, the local report task turns figures from one or more .xlsx workbooks, read only through slice 2's route and the confined parser, into one approved, create-only report whose every figure names its workbook and is confirmed by the independent checker, with the notices shown in the approval prompt, every stale, oversized, linked, macro, non-workbook and false-figure case refused, and no separate read approval, recalculation, on-screen opening, .xls or .xlsb, or remote exposure."
+}
