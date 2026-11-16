@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>[2601.00001] Sparse and dense retrieval are complementary on web-scale corpora</title>
+    <meta name="citation_title" content="Sparse and dense retrieval are complementary on web-scale corpora" />
+    <meta name="citation_author" content="M. Okafor" />
+    <meta name="citation_date" content="2026/01/05" />
+  </head>
+  <body>
+    <div id="content">
+      <h1 class="title">Sparse and dense retrieval are complementary on web-scale corpora</h1>
+      <div class="authors">M. Okafor, L. Bergstrom, S. Haddad</div>
+      <blockquote class="abstract">
+        Abstract. We study sparse lexical retrieval and dense embedding retrieval on a corpus of 1.2 billion web pages.
+        Neither retriever dominates: BM25 wins on queries containing rare identifiers and quoted phrases, while a dense
+        bi-encoder wins on paraphrased and multi-hop questions. We propose a fusion rule that combines the two scores
+        after per-query normalisation, and we show a 6.4 point nDCG improvement over the best single retriever.
+      </blockquote>
+      <p>
+        We evaluate on three query sets and report latency, memory and dollar cost per thousand queries. The sparse
+        retriever serves a query in four milliseconds from an inverted index held in RAM; the dense retriever needs a
+        GPU to stay under fifty milliseconds.
+      </p>
+      <p>
+        Our conclusion is that a production search system should keep both retrievers and route between them, rather than
+        choosing one. The routing signal is the query itself: identifier-heavy queries go sparse, natural language
+        questions go dense.
+      </p>
+    </div>
+    <div class="extra-services-banner">Sign up for our newsletter and get the latest papers daily.</div>
+  </body>
+</html>
