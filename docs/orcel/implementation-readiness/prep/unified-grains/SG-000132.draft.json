@@ -1,12 +1,12 @@
 {
   "id": "SG-000132",
   "id_status": "PROPOSED: new id; final id is part of founder decision FD-UP-4",
-  "title": "Full Control dispatcher, protected indicator and out-of-band stop on Windows",
+  "title": "Full Control dispatcher, executor process boundary, protected indicator and out-of-band stop on Windows",
   "program": "ORCEL-UP",
   "state": "DRAFT",
   "risk": "high",
   "created": "2026-11-16",
-  "revision": 2,
+  "revision": 3,
   "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
   "dependencies": [
     "SG-000019",
@@ -15,44 +15,51 @@
     "SG-000131"
   ],
   "dependency_notes": {
-    "SG-000019": "Closed. STRONG platform-presence approval, which Full User grant already requires (crates/orcel-lifecycle/src/full_control.rs); renewal requires it too.",
+    "SG-000019": "Closed. STRONG platform-presence approval, which Full User grant already requires (crates/orcel-lifecycle/src/full_control.rs); renewal requires it too, and the prompt gains the C-27 residual text.",
     "SG-000093": "Closed. The only permission-mode model; FullControlLease and AdminLease issuance and checks are reused unchanged.",
-    "SG-000095": "Closed. The DesktopInput path under Full User is migrated onto the dispatcher without changing its behaviour; its per-action approval and recorded residuals stay.",
-    "SG-000131": "LeaseRef, DispatchAuthority, write-before-dispatch audit and the anchor the indicator displays."
+    "SG-000095": "Closed. The DesktopInput path (orceld/src/uia.rs -> ComputerHostAdapter -> HostSession::spawn -> apps/orcel-computer-host) is migrated onto the dispatcher; the native host becomes the DesktopInput executor child under a lease; its per-action approval and recorded residuals stay.",
+    "SG-000131": "LeaseRef, DispatchAuthority, write-before-dispatch audit and the per-user Event Log anchor (WP1-03 is a prerequisite of WP1-12 and WP1-10)."
   },
   "consumers": {
-    "SG-000096": "Active (GRAIN). Shell and process sessions would consume the dispatcher once T02-T04 qualify; shell_session.rs denies ShellProcess until then. This grain neither qualifies nor widens SG-000096.",
+    "SG-000096": "Active (GRAIN). Shell and process sessions would consume the dispatcher and executor token once T02-T04 qualify; shell_session.rs denies ShellProcess until then. This grain neither qualifies nor widens SG-000096.",
     "SG-000097": "Reserved (P20). Full filesystem would consume the dispatcher once activated (FD-UP-4)."
   },
   "spec_document": "docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md",
-  "packets": [
-    "WP1-10",
-    "WP1-12"
+  "spec_sections": [
+    "1.2 (C-25 to C-30)",
+    "4.13 indicator protocol",
+    "4.14 executor process boundaries",
+    "8.2 WP1-10 and WP1-12"
   ],
-  "objective": "Make crates/orceld/src/full_control_dispatch.rs the single path through which any executor runs under a Full Control lease on Windows, in one critical section: confirm the protected indicator heart-beat within 2 s, take the authority-epoch lock, load the lease, re-read the native Windows identity, check every SG-000093 binding, confirm executor_enabled_now, require the shape's own per-action approval (a lease never replaces it), write and flush an audit event carrying the opaque lease id, binding digest and authority epoch, start the executor child under an OS boundary that denies the Orcel state root, assign it to a Job Object whose handle is shared with the indicator, and only then release the lock. Emergency stop takes the same lock, advances the epoch, cancels jobs and kills executor Job Objects; lease expiry kills running executors; every job unit re-checks the lease; the Admin executor class is refused. Add apps/orcel-indicator, a protected always-on-top indicator with a Stop that works even when orceld hangs. Safe-mode paths stay byte-for-byte unchanged.",
+  "packets": [
+    "WP1-10 (prerequisites WP1-02, WP1-03, WP1-12, FD-UP-9)",
+    "WP1-12 (prerequisites WP1-02, WP1-03)"
+  ],
+  "objective": "Make crates/orceld/src/full_control_dispatch.rs the single path through which any executor runs under a Full Control lease on Windows, in one critical section: confirm a visibility-gated indicator heartbeat within 2 s, take the authority-epoch lock, load the lease, re-read the native Windows identity, check every SG-000093 binding, confirm executor_enabled_now, require the shape's own per-action approval (a lease never replaces it), write and flush the audit event (lease id, binding digest, epoch), honour any pending revoke request, start or reuse the executor child under the section 4.14 boundary (restricted token with a per-install executor SID, Job Object with kill-on-close and one active process, handle duplicated to the indicator with terminate and query rights only), send the action, then release the lock. The native computer host is the DesktopInput executor child. Emergency stop takes the same lock, advances the epoch, cancels jobs and kills executor Job Objects; lease expiry kills running executors; every job unit re-checks the lease; the Admin executor class is refused. Add apps/orcel-indicator per section 4.13: launched only by orceld on an inherited anonymous pipe, peer-checked both ways, heartbeats only while visibly on screen, Stop button first, hotkey shown only when registered, and an out-of-band stop that terminates the Job Objects it was handed and writes a revoke request that orceld honours before any further dispatch, without the indicator ever holding the authority key. Safe-mode paths stay byte-for-byte unchanged.",
   "scope": {
     "include": [
       "The dispatcher module and its tests, including a race test injecting a stop between check and start.",
       "orcel-policy: pub fn mode_selectable_on(proof: &LocalGrantProof, mode: AuthorityMode, os: OsFamily) -> Result<(), PolicyError>, returning LEASE_UNSUPPORTED_PLATFORM for FullUser and FullAdmin when os is not Windows; mode_selectable delegates with the compile-time OS.",
-      "Migration of the SG-000095 DesktopInput path onto the dispatcher.",
-      "Executor child isolation: the mechanism chosen under FD-UP-9 (recommended: per-user AppContainer with explicit grants and an explicit deny on the Orcel state root), with a test that each protected file (lease store, authority key, approval history, audit logs, MCP and REST tokens, secret store, job store) is unreadable and unwritable from an executor child.",
-      "apps/orcel-indicator: window 'Orcel Full Control' showing mode, expiry and the latest audit anchor; Stop button and global hotkey; 1 s heartbeat to orceld over a private pipe; out-of-band stop that terminates held Job Objects and revokes through full_control_store when orceld does not confirm within 1 s.",
+      "crates/orcel-provider-uia HostSession::spawn: under an active lease, launch the native host with the executor token in a Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 1, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, no UI limits) and duplicate the handle to the indicator; without a lease keep today's launch.",
+      "Executor token per section 4.14 (subject to FD-UP-9): per-install S-1-9 executor SID; CreateRestrictedToken with restricting SIDs user, logon, Everyone, Users, Authenticated Users, INTERACTIVE and the executor SID; state root deny ACE for the executor SID (GENERIC_ALL, WRITE_DAC, WRITE_OWNER) plus an OWNER RIGHTS READ_CONTROL-only ACE; the same deny ACE on the orceld and indicator process objects.",
+      "STRONG grant and renewal prompt text stating the C-27 residual, with a test.",
+      "apps/orcel-indicator and the orceld side of section 4.13: launch, peer checks, frames, visibility-gated heartbeat, handle duplication, Stop/StopAck, revoke requests in the state root's stop directory checked inside the epoch lock, hotkey status.",
       "crates/orcel-provider-uia PROTECTED_WINDOW_MARKERS (and the native-host mirror) gain the indicator; the grant prompt and emergency-stop markers are confirmed; observation, capture and desktop input refuse all three, with a test per surface.",
       "Lease expiry kill; per-unit lease re-check; Admin executor refused."
     ],
     "exclude": [
       "Enabling any executor class not already enabled or separately granted by its own grain.",
-      "Any reduction of per-action approvals inside a lease (FD-UP-10).",
+      "Any reduction of per-action approvals inside a lease (FD-UP-10; its recommended form binds both lease and principal).",
       "Persistent Admin (SG-000099), Remote Full Control (SG-000105), an elevation broker (SG-000098), any Admin executor.",
       "Browser and web executors under a lease (Wave 2, with SG-000100 and successors).",
-      "macOS and Linux leases and indicators (Wave 2, WP2-01 and WP2-03).",
+      "macOS and Linux leases, executor boundaries and indicators (Wave 2, WP2-01 and WP2-03).",
       "Any change to SG-000010, SG-000040, SG-000060 or SG-000108 Safe-mode rules or approvals."
     ]
   },
   "authority_delta": {
     "activation": "None.",
-    "dispatcher": "Narrowing only: centralizes, orders and audits dispatch for executor classes other grains enable, adds the indicator precondition, state-root isolation, expiry kill and admin refusal; it widens no executor ceiling and adds no mode.",
-    "indicator": "Adds an out-of-band stop that can only terminate executors and revoke; it cannot grant, renew or widen."
+    "dispatcher": "Narrowing only: centralizes, orders and audits dispatch for executor classes other grains enable, adds the indicator and anchor preconditions, the executor token, expiry kill and admin refusal; it widens no executor ceiling and adds no mode.",
+    "indicator": "Adds an out-of-band stop that can only terminate executors and request revocation; it holds no authority key and cannot grant, renew or widen."
   },
   "decisions": [
     {
@@ -61,7 +68,7 @@
     },
     {
       "question": "Same-user isolation mechanism for executor children",
-      "status": "PENDING (FD-UP-9)"
+      "status": "PENDING (FD-UP-9); recommended: the restricted token with a per-install executor SID of section 4.14"
     },
     {
       "question": "Approvals inside a trusted session",
@@ -69,12 +76,14 @@
     }
   ],
   "invariants": [
-    "Only the authenticated local user control path mints or renews a lease, with STRONG presence; no agent, MCP caller, donor, relay or remote principal can.",
+    "Only the authenticated local user control path mints or renews a lease, with STRONG presence, and the prompt states the desktop-input residual.",
     "A lease is an additional gate and never replaces a per-action approval.",
-    "No Full Control dispatch happens unless the protected indicator heart-beat within the last 2 s.",
-    "Check, audit and executor start happen under the epoch lock; emergency stop takes the same lock.",
+    "No Full Control dispatch happens unless the indicator sent a heartbeat with all visibility checks true within the last 2 s, and a durable audit anchor is available.",
+    "Check, audit, revoke-request check and executor start happen under the epoch lock; emergency stop takes the same lock.",
     "Every Full Control dispatch has an audit event with lease id, binding digest and authority epoch, written before the executor starts, and none with a raw SID or session value.",
-    "Executor children cannot read or write the Orcel state root.",
+    "Executor children and their descendants cannot read or write the Orcel state root or open the orceld or indicator processes.",
+    "The indicator never holds the authority key; a revoke request can only remove authority.",
+    "Job Object handles reach the indicator with terminate and query rights only.",
     "With no lease, every Safe request and response is identical to the pre-grain golden pairs.",
     "Broader-authority fallback is never automatic; a lease failure after dispatch is not retried.",
     "After emergency stop or lease expiry, no executor started under the old lease keeps running.",
@@ -83,21 +92,27 @@
   "acceptance": [
     "Lease mismatch tests (SID, logon session, device, Orcel session, policy revision, epoch, expiry) deny before dispatch on the Windows runner with real host identity values.",
     "mode_selectable_on returns LEASE_UNSUPPORTED_PLATFORM for non-Windows OS values.",
-    "Golden Safe pairs for process_spawn, the executable registry and the browser shapes are unchanged.",
+    "Golden Safe pairs for process_spawn, the executable registry, the browser shapes and Safe-mode native-host observation are unchanged.",
     "A stop injected between check and start waits for the lock and kills the started process.",
-    "Indicator Stop ends a running desktop-input dispatch within 1 s, with orceld running and with orceld suspended; the next call fails LEASE_INVALID (journey J-3).",
-    "Killing the indicator makes the next dispatch fail INDICATOR_UNAVAILABLE.",
+    "The native host under a lease runs with the executor token in its Job Object; from it and from a grandchild every protected file and process is denied, and the state root's DACL cannot be changed.",
+    "Indicator Stop ends a running desktop-input dispatch within 1 s with orceld running (StopAck) and with orceld suspended (Job Objects terminated, revoke request written and honoured on resume); the next call fails LEASE_INVALID (journey J-3).",
+    "Killing, minimising, cloaking or moving the indicator off screen makes the next dispatch fail INDICATOR_UNAVAILABLE.",
+    "A forged frame or a wrong parent process is refused by both sides.",
+    "With the hotkey already taken, no hotkey-ready text is shown and the Stop button still works.",
     "Desktop input, observation and capture targeting the indicator, grant prompt and stop surface are refused.",
-    "An executor child is denied every protected file.",
+    "The grant prompt shows the residual text.",
     "The call-site test finds no lease-gated executor outside the dispatcher; the Admin executor is refused.",
     "A fresh-context security judge passes both packets."
   ],
   "tests": [
     "cargo test -p orceld full_control_dispatch_",
     "cargo test -p orceld executor_state_isolation_ (Windows)",
-    "cargo test -p orcel-policy",
-    "cargo test -p orcel-indicator",
+    "cargo test -p orceld indicator_",
+    "cargo test -p orcel-provider-uia native_host_executor_launch_ (Windows)",
     "cargo test -p orcel-provider-uia protected_markers_",
+    "cargo test -p orcel-policy",
+    "cargo test -p orcel-lifecycle grant_prompt_residual_text",
+    "cargo test -p orcel-indicator",
     "cargo test -p orceld --test j3_desktop_input_stop (Windows)",
     "Windows native CI lease issuance from real host values"
   ],
@@ -116,7 +131,7 @@
   },
   "successor_requirements": {
     "real_consent": "A real Full User grant with STRONG presence and an indicator Stop through a real client stay with the founder.",
-    "cross_platform": "WP2-01 and WP2-03 extend the dispatcher, isolation and indicator to macOS and Linux.",
+    "cross_platform": "WP2-01 and WP2-03 extend the dispatcher, executor boundary and indicator to macOS and Linux.",
     "shell_and_files": "J-3b needs SG-000096 T02-T04 qualification and SG-000097 activation."
   },
   "done_when": "WP1-10 and WP1-12 are merged with exact-head qualification, journey J-3 passes on Windows, and the canonical record names this grain CLOSED."

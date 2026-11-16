@@ -6,7 +6,7 @@
   "state": "DRAFT",
   "risk": "high",
   "created": "2026-11-16",
-  "revision": 2,
+  "revision": 3,
   "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
   "dependencies": [
     "SG-000131",
@@ -36,7 +36,8 @@
       "crates/orcel-web (depends on orcel-contracts only): v2 and v1 scrape request types derived from the MIT SDK types, refusal by name of every unsupported field, translation to RequestEnvelope with front-supplied Ids, Document shaping (section 5.3 of the spec).",
       "orceld: capability web/scrape with engines fetch (Windows) and chromium; capability report entries per OS and build; one SOFT approval per scrape bound to URL, engine, formats, resolved-address-set digest and orcel_session_id; TARGET_STALE on address drift; audit of the engine that ran.",
       "apps/orcel-mcp: tool_contract entry web_scrape (local_only, effect network, approval SOFT); loopback routes POST /v2/scrape and POST /v1/scrape on the existing loopback server with its bind, Host, Origin and body checks; REST tokens (orcel_rest_ prefix, hashed at rest, per-client principal, rotation and removal through the local control path) distinct from the MCP token; network-tool guard tests amended to admit exactly the eight web tools of the spec.",
-      "orcel-lifecycle: orcel client add-rest, rotate-rest and remove-rest; emitted client configs always set apiUrl explicitly and refuse to omit it.",
+      "orcel-lifecycle: orcel client add-rest, rotate-rest and remove-rest; add-rest and rotate-rest each require a SOFT approval through the protected local approval broker showing the client name, remove-rest needs none; emitted client configs always set apiUrl explicitly and refuse to omit it.",
+      "Pending web approval prompts capped at 1 per principal and 2 device-wide; a request past the cap fails QUEUE_FULL without raising a prompt.",
       "apps/orcel-doc-parser: format html, sniffed and refused when not HTML, using html5ever =0.40.1 with an Orcel-owned tree sink; a Rust port of Orcel's own worker extraction.",
       "tests/firecrawl-compat: @mendable/firecrawl-js 4.54.0 and firecrawl-py 4.57.0 (CI only) as black-box contract clients against the pinned fixture site; parity report per matrix row."
     ],
@@ -53,7 +54,7 @@
     "activation": "None.",
     "web_scrape": "Proposed: a new local-only capability web/scrape that composes existing governed paths (the SG-000040 Windows transport and SG-000075 navigation) behind one SOFT approval per request. No new network class or transport, no listener beyond the existing loopback server, no persistent profile.",
     "mcp_network_guard": "Proposed: the SG-000040/SG-000064 network-tool guard admits exactly web_scrape, web_map, web_crawl_start, web_batch_scrape_start, web_job_status, web_job_cancel, web_job_errors and web_job_list (the last seven owned by SG-000102).",
-    "rest_tokens": "Proposed: per-client REST tokens minted only from the local control path; they authenticate a client principal and grant no authority beyond the tools' own approvals."
+    "rest_tokens": "Proposed: per-client REST tokens minted or rotated only from the local control path under a SOFT approval; they authenticate a client principal and grant no authority beyond the tools' own approvals."
   },
   "decisions": [
     {
@@ -83,7 +84,8 @@
     "Every refused field of section 5.3 has a test and surfaces as the SDK's typed error.",
     "The fetch engine's Markdown matches the worker extraction on shared fixtures within the documented normalisation.",
     "An approval cannot be replayed after the address set changes (TARGET_STALE) or after a restart.",
-    "REST token rotation invalidates the old token immediately; the emitted client config always sets apiUrl.",
+    "REST token creation and rotation raise a SOFT approval and fail without it; rotation invalidates the old token immediately; the emitted client config always sets apiUrl.",
+    "A third concurrent web approval request device-wide fails QUEUE_FULL without a prompt.",
     "A fresh-context security judge passes WP1-06 and WP1-07."
   ],
   "tests": [

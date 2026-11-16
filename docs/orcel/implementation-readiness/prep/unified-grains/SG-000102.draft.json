@@ -6,7 +6,7 @@
   "state": "DRAFT",
   "risk": "high",
   "created": "2026-11-16",
-  "revision": 2,
+  "revision": 3,
   "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
   "dependencies": [
     "SG-000131",
@@ -47,7 +47,7 @@
   },
   "authority_delta": {
     "activation": "None.",
-    "jobs": "Proposed: bounded asynchronous web jobs (per crawl at most 50 pages, depth 5, 10 minutes; at most 50 URLs per batch; 8 queued and 2 running device-wide; 4 queued and 1 pending approval per principal; 20 MiB per job and 200 MiB across jobs, expiring after 24 h) admitted by one SOFT approval per job spec in Safe mode. This is an explicit loosening of SG-000040's one-shot fetch approval for these shapes only and needs FD-UP-5. No new network class, no listener beyond the existing loopback server, no persistent browser profile, no job egress."
+    "jobs": "Proposed: bounded asynchronous web jobs (per crawl at most 50 pages, depth 5, 10 minutes; at most 50 URLs per batch; 8 queued and 2 running device-wide; 4 queued and 1 pending approval per principal; 2 pending web approval prompts device-wide; 20 MiB per job and 200 MiB across jobs, expiring after 24 h) admitted by one SOFT approval per job spec in Safe mode. This is an explicit loosening of SG-000040's one-shot fetch approval for these shapes only and needs FD-UP-5. No new network class, no listener beyond the existing loopback server, no persistent browser profile, no job egress."
   },
   "decisions": [
     {

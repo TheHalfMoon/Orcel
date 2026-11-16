@@ -6,7 +6,7 @@
   "state": "DRAFT",
   "risk": "medium",
   "created": "2026-11-16",
-  "revision": 2,
+  "revision": 3,
   "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
   "dependencies": [
     "SG-000093"
@@ -27,7 +27,7 @@
       "WP1-00: activation of this grain and of the other Wave 1 drafts the founder approves; Firecrawl status correction in DONOR_REGISTRY.md and donor_registry.json.",
       "WP1-01: root deny.toml (licences, bans, sources); scripts/check-npm-licenses.mjs over every package-lock.json under apps/, packages/ and tests/; scripts/check-agpl-markers.mjs over crates/, apps/, packages/ and tests/, accepting AGPL markers only in docs/orcel/notices/fd06-files.txt paths; a cargo metadata test enforcing section 3.2 of the spec.",
       "WP1-02: section 4 contract types with golden JSON fixtures; schemars =1.2.3 as a dev-dependency only, with a schema drift test; canonical_json for new contract digests, with SG-000093, SG-000018, SG-000019 and SG-000040 digests exempt and unchanged; FailureCode variants LEASE_REQUIRED, LEASE_INVALID, LEASE_UNSUPPORTED_PLATFORM, INDICATOR_UNAVAILABLE, UNSUPPORTED, POLICY_BLOCKED, JOB_NOT_FOUND, QUEUE_FULL, RATE_LIMITED and OUTCOME_UNKNOWN; FailureCode::http_status covering every variant including PATH_ESCAPE (403) and PATH_RACE_DETECTED (409).",
-      "WP1-03: hash-chained audit events; lease events carry AuthorityAuditEvent verbatim (AuditKind unchanged); dispatch events written and flushed before the executor starts, with dispatch refused on write failure; argv, URLs and query strings recorded as SHA-256 digests; anchor events every 32 events and on lease, emergency_stop and shutdown, recorded in the Windows Event Log; rotation continuity; `orcel audit verify`."
+      "WP1-03: hash-chained audit events; lease events carry AuthorityAuditEvent verbatim (AuditKind unchanged); dispatch events written and flushed before the executor starts, with dispatch refused on write failure; argv, URLs and query strings recorded as SHA-256 digests; anchor events every 32 events and on lease, emergency_stop and shutdown, recorded in the Windows Application log per user through an unregistered RegisterEventSourceW('Orcel') handle (event id 4100; no source registration, which would need administrator rights); `orcel audit verify` checking every Orcel anchor record still in the log, with a conflicting record a break and a beyond-tail record a truncation; if the anchor cannot be written, Full Control is refused (no indicator-only fallback); rotation continuity."
     ],
     "exclude": [
       "Any new MCP tool, REST route, executor, runtime dependency in crates/*, listener, network path or authority.",
@@ -55,6 +55,7 @@
     "Inbound authority-bearing contract objects refuse unknown fields.",
     "LeaseView is a projection and is never accepted as proof of authority.",
     "No dispatch runs without its audit event durably written first.",
+    "No durable anchor means no Full Control; the indicator display is never the anchor.",
     "Audit events never contain a raw SID, token handle, credential, secret, raw argv, raw URL or page content.",
     "No kernel crate depends on an app, test, package or third_party unit.",
     "No new AGPL-marked file exists outside the FD-06 allowlist."
@@ -63,8 +64,9 @@
     "Every new contract type round-trips its golden fixture; unknown fields are refused where required; schema drift fails CI.",
     "Every FailureCode variant has an HTTP mapping (enumeration test).",
     "orcel-policy's existing tests pass unchanged after the vocabulary move.",
-    "Editing, deleting or reordering one audit line is reported at that line; tail truncation is reported against the newest Event Log anchor; rotation keeps continuity.",
-    "A simulated audit write failure refuses the dispatch.",
+    "Editing, deleting or reordering one audit line is reported at that line; tail truncation is reported against the newest Event Log anchor; a forged conflicting anchor record is a break; rotation keeps continuity.",
+    "A simulated audit write failure refuses the dispatch; a simulated anchor write failure refuses Full Control.",
+    "The anchor write and read-back succeed, and clearing the log is refused, when run as a standard (non-administrator) account on the Windows runner and on the founder's PC.",
     "Root cargo deny, the npm licence check and the AGPL marker scan pass on current main; fixtures with an AGPL dependency or an AGPL header outside the allowlist fail them.",
     "The dependency-direction test fails for a fixture edge from a kernel crate to an app."
   ],
@@ -74,6 +76,7 @@
     "cargo test -p orcel-audit chain_",
     "cargo test -p orceld audit_chain_",
     "cargo test -p orceld audit_anchor_ (Windows)",
+    "cargo test -p orceld --test audit_anchor_standard_user (Windows, run under a temporary standard account)",
     "cargo test -p orceld --test dependency_direction",
     "cargo deny check licenses bans sources",
     "node --test scripts/check-npm-licenses.test.mjs",
