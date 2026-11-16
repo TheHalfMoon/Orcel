@@ -3,7 +3,7 @@
   "title": "Full filesystem and local workstation parity under Full Control",
   "program": "DESKAL-P20",
   "state": "GRAIN",
-  "draft_note": "Activation-ready draft under prep/ (revision 6). P20-reserved id and role 'full_filesystem_and_workstation_parity' (docs/p20/sg000092_architecture_freeze.json); activated out of the recorded sequential order by founder decision FD-UP-4 of 2026-11-17. It becomes active only when the activation PR (WP1-00) copies it into .specgrain/specs/ with this field removed and updates apps/orcel-mcp/src/p20-architecture.test.ts.",
+  "draft_note": "Activation-ready draft under prep/ (revision 7). P20-reserved id and role 'full_filesystem_and_workstation_parity' (docs/p20/sg000092_architecture_freeze.json); activated out of the recorded sequential order by founder decision FD-UP-4 of 2026-11-17. It becomes active only when the activation PR (WP1-00) copies it into .specgrain/specs/ with this field removed and updates apps/orcel-mcp/src/p20-architecture.test.ts.",
   "risk": "high",
   "created": "2026-11-17",
   "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
@@ -19,6 +19,7 @@
   "objective": "Under a Full User lease on Windows, give complete user-level filesystem and workstation parity across the drives and roots the user authorizes at grant: read, write, create, copy, move, rename, recursive operations, large and binary files, deletion to the Recycle Bin by default (permanent deletion only by explicit request and its own approval), metadata, search; process listing, inspection and termination of the user's processes; application launch, activation and close; git beyond workspaces through the existing provider; and clipboard through the existing provider. Path identity and result semantics stay as strict as in Safe mode (canonical paths, reparse-point and alternate-data-stream rules, race detection). Every action is dispatched through SG-000132 and audited; the Orcel authority state is outside reach by construction, and the user-session Orcel state root is refused for writes. Spec sections 4.14 and 8.2 (WP1-15).",
   "scope": {
     "include": [
+      "Full Control filesystem, process and git operations run in the `orceld fc-worker` child process inside a Job Object created and owned by the authority service (SG-000132), so Stop kills in-flight operations; nothing runs in the long-lived orceld process under a lease.",
       "Filesystem provider operations under a lease, limited to the lease's authorized roots, with Safe-mode path identity rules.",
       "Recycle Bin deletion by default; permanent deletion only by explicit request with its own approval (never covered by a standing approval unless the standing approval names it).",
       "Process inspection and termination for processes of the same user; application launch and close, each launched tree in a Job Object registered with the service.",
@@ -50,7 +51,8 @@
     "Path identity, reparse-point, alternate-data-stream and race rules are not weaker than in Safe mode.",
     "Deletion goes to the Recycle Bin unless permanent deletion is explicitly requested and separately approved.",
     "Every action has a service Authorize and audit record first.",
-    "No action touches another user's processes or files, or requires elevation."
+    "No action touches another user's processes or files, or requires elevation.",
+    "Every Full Control filesystem, process or git operation runs in the fc-worker inside a service-owned Job Object."
   ],
   "acceptance": [
     "Each operation works across two authorized drives on the Windows runner and is refused outside them.",
@@ -58,7 +60,8 @@
     "Deletion lands in the Recycle Bin; permanent deletion needs its own approval.",
     "Process termination is limited to the user's processes; launched applications are visible and usable and are killed by stop.",
     "J-3b passes on Windows.",
-    "A fresh-context security judge passes the packet."
+    "A fresh-context security judge passes the packet.",
+    "Stop during a large copy kills the fc-worker within 1 s and the operation reports outcome_unknown or cancelled, never success."
   ],
   "review": {
     "jev_semantic_review": true,

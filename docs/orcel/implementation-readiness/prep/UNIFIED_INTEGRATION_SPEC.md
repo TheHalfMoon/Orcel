@@ -1,6 +1,6 @@
 # Orcel unified platform: integration specification (EGM draft)
 
-**Status: DRAFT SPECIFICATION, DOCS ONLY (revision 6, founder decisions encoded).** This document activates no grain,
+**Status: DRAFT SPECIFICATION, DOCS ONLY (revision 7, founder decisions encoded).** This document activates no grain,
 imports no donor code, adds no dependency, tool, listener or authority, and changes no canonical state. Every packet
 below needs its own activated grain, exact-head qualified PR, review gates and, where it touches authority, a
 fresh-context security judge. Activation-ready grain JSONs live in [`unified-grains/`](unified-grains/), not in
@@ -12,6 +12,7 @@ fresh-context security judge. Activation-ready grain JSONs live in [`unified-gra
   SG-000133, SG-000134, plus SG-000097 activated and SG-000096 continued), a parallel macOS/Linux track, the patched
   Obscura build authorized now, and a new Full Control architecture (sections 4.13 to 4.15) that keeps comprehensive
   computer use working on the user's desktop while Orcel's authority lives outside the user session.
+- **Revision 7** applies the security review of `4e0f3606` (pipe anti-squatting, service-owned Job Objects, audit records as session-asserted claims, the grant window after a service-observed unlock, and two disclosure nits); section 13.5 maps them.
 - Revisions 2 to 5 resolved two rounds of fresh-context review; their tables are kept in section 13 as history. Where
   revision 6 replaces a design they record (notably the restricted-token executor profiles S and D of revision 4),
   the current text governs and section 13.4 says so.
@@ -91,10 +92,17 @@ fresh-context security judge. Activation-ready grain JSONs live in [`unified-gra
   session, so: (a) anything it does through the OS outside Orcel's process trees (scheduled tasks, WMI, DCOM, startup
   items, other programs it drives) can persist after stop, and Orcel cannot undo effects already made; (b) it can read
   whatever the user can read, including other programs' data; (c) it can kill or obscure user-session Orcel processes,
-  including the indicator; (d) a Windows Hello PIN typed while an agent runs could be observed. Orcel's guarantees are
-  therefore: no self-grant, self-renewal or self-escalation; tamper-evident, out-of-session audit of every Orcel
-  dispatch; stop and expiry that end Orcel authority and kill every Orcel-started process tree; grants and renewals
-  only while no Full Control lease is active; and honest disclosure in the grant prompt of (a) to (d).
+  including the indicator, and imitate its heartbeat, so the heartbeat proves nothing against a same-user agent; (d) a
+  Windows Hello PIN can be observed by code running in the session, including code an agent persisted during an earlier
+  session (a), so a later grant's PIN entry is not private; biometric Hello is recommended and the grant prompt says so;
+  (e) during a lease the agent can talk to the authority service as if it were `orceld`, so what an `Authorize` request
+  says it will run is a claim by the session: the Full Control audit is tamper-evident, out-of-session storage of
+  session-asserted claims plus the facts the service observes itself (caller SID, logon session, process id and image,
+  time, Job Object), not proof of what ran. Orcel's guarantees are therefore: no self-grant, self-renewal or
+  self-escalation; tamper-evident, out-of-session audit of every request Orcel's authority admitted; stop and expiry
+  that end Orcel authority and kill every process tree in a service-owned Job Object; grants and renewals only while no
+  Full Control lease is active and only after a service-observed unlock; and honest disclosure in the grant prompt of
+  (a) to (e).
 - **C-28. Stop cannot be blocked from the user session.** The service ends Full Control on: the indicator's Stop
   button, the `orcel` CLI, lease expiry, session lock (Ctrl+Alt+Del then Lock, or Win+L; the service receives the session
   change itself), sign-out and service-side heartbeat loss. Stop advances the epoch and terminates every Orcel executor
@@ -172,8 +180,8 @@ fresh-context security judge. Activation-ready grain JSONs live in [`unified-gra
  state unreachable from the session):        orcel-contain -> apps/orcel-firecrawl (AGPL component)
    keys, leases, epoch, standing approvals,  browser host -> worker -> Chromium (pipe) | Obscura (pipe, WPB)
    Full Control audit chain + Event Log,
-   holds executor Job Objects, receives       EXECUTORS ON THE USER DESKTOP (user token, Job Objects
-   session lock/logoff, enforces expiry       registered with the service): shells, files, apps,
+   creates and owns executor Job Objects,     EXECUTORS ON THE USER DESKTOP (user token, each in a
+   receives lock/logoff, enforces expiry      service-owned Job Object): shells, files, apps,
         ^                                     input, browser automation, git, long-running jobs
         | Stop (direct pipe)
  Full Control indicator (user session, disclosure + Stop button)
@@ -188,8 +196,9 @@ governed transport, transforms through the contained Firecrawl component, audits
 **Full Control walk-through (Windows).** The user grants Full User for a declared task; the service checks that no
 lease is active, challenges, verifies the Windows Hello signature, issues the lease and a standing approval for the
 task scope. An MCP client asks for a PowerShell session. `orceld` calls the service's `Authorize`; the service checks
-lease, epoch, standing approval, client and scope, appends the audit record, opens and holds the named Job Object
-`orceld` created, and returns the decision; `orceld` starts PowerShell in that Job Object on the user's desktop.
+lease, epoch, standing approval, client and scope, appends the audit record, creates a Job Object it owns (granting
+`orceld` only `JOB_OBJECT_ASSIGN_PROCESS`), and returns the decision; `orceld` starts PowerShell suspended, assigns it to
+that Job Object and resumes it on the user's desktop.
 Win+L, the indicator's Stop, the CLI or expiry make the service advance the epoch and terminate every held Job Object.
 
 ## 3. Crates and packages
@@ -312,7 +321,9 @@ On restart, `not_started` jobs become `cancelled` and `dispatched` jobs `outcome
 ### 4.8 Audit chain and anchors
 
 `AuditEvent { contract, seq, prev_digest, at_ms, kind, request_id, job_id, principal_id, capability, operation,
-authority, state, detail, digest }`, `kind` in `request | decision | approval | dispatch | state | lease | standing |
+authority, state, asserted_by_session, caller_pid, caller_image, detail, digest }`, where `asserted_by_session` is true
+for every field the user session supplied (in the service's Full Control log: the action, capability, principal and
+task as claimed by the caller) and `caller_pid` and `caller_image` are what the service observed on the pipe (C-27 e); `kind` in `request | decision | approval | dispatch | state | lease | standing |
 emergency_stop | sidecar | rotation | anchor`. Lease lifecycle keeps `AuthorityAuditEvent` verbatim in `detail`;
 `AuditKind` gains no variant. Argv, URLs, query strings and header values are recorded only as SHA-256 digests.
 
@@ -413,23 +424,50 @@ installed once with administrator consent by the installer or `orcel authority i
 - **Keys:** the lease-signing key is a non-exportable key in the Microsoft Platform Crypto Provider (TPM) when present,
   otherwise the Microsoft Software Key Storage Provider, in the service account's key store. The user session never
   holds a signing key; `orceld` holds only `LeaseView`s and per-dispatch authorization ids.
-- **Interface:** named pipe `\\.\pipe\orcel-authority` with a DACL allowing `Authenticated Users` read/write and
-  `PIPE_REJECT_REMOTE_CLIENTS`. For every request the service records the caller's token user SID and logon session
-  (`ImpersonateNamedPipeClient`, `GetTokenInformation`), process id (`GetNamedPipeClientProcessId`) and image path.
-  Requests: `GrantBegin`, `GrantComplete`, `StandingBegin`, `StandingComplete`, `Authorize`, `RegisterJob`, `Stop`,
-  `Status`, `Heartbeat`. A caller can act only on leases bound to its own SID and logon session.
-- **Presence (STRONG):** at first use, the user enrolls a Windows Hello key credential ("Orcel Authority",
-  `KeyCredentialManager.RequestCreateAsync`, created by `orcel authority enroll` in the user session); the service
-  stores its public key. Each grant, renewal and standing approval: the service issues a 32-byte challenge bound to the
-  request digest; the user session calls `KeyCredential.RequestSignAsync`, which shows Windows Hello; the service
-  verifies the signature. Grants and renewals are refused while any Full Control lease is active in that session, so
-  credentials are entered only while no agent holds Full Control (C-27 d); biometric Hello is recommended in the prompt.
+- **Interface and anti-squatting:** named pipe `\\.\pipe\orcel-authority`, created by the service at start with
+  `FILE_FLAG_FIRST_PIPE_INSTANCE` (if the name already exists, the service refuses to run, logs an Event Log error and
+  Full Control is unavailable: a denial of service, never a spoof) and `PIPE_REJECT_REMOTE_CLIENTS`. Its DACL grants
+  the service SID full control and `NT AUTHORITY\INTERACTIVE` exactly `FILE_READ_DATA | FILE_WRITE_DATA |
+  SYNCHRONIZE`; it never grants `GENERIC_WRITE` or `FILE_APPEND_DATA`, whose bit is `FILE_CREATE_PIPE_INSTANCE`, so no
+  user process can add a rogue instance. The service starts automatically (not delayed) to shorten the window before
+  it owns the name. **Every client** (`orceld`, the indicator, `orcel authority enroll`, the CLI) verifies, before sending
+  anything, that `GetNamedPipeServerProcessId` equals the service's PID from `QueryServiceStatusEx(SC_STATUS_PROCESS_INFO)`
+  and that the pipe's owner SID (`GetSecurityInfo` on the handle) is the virtual service SID of
+  `NT SERVICE\OrcelAuthority` (`LookupAccountNameW`); otherwise it disconnects and reports `AUTHORITY_UNAVAILABLE`.
+  For every request the service records the caller's token user SID and logon session (`ImpersonateNamedPipeClient`,
+  `GetTokenInformation`), process id (`GetNamedPipeClientProcessId`) and image path. Requests: `GrantBegin`,
+  `GrantComplete`, `StandingBegin`, `StandingComplete`, `Authorize`, `Stop`, `Status`, `Heartbeat`. A caller can act only
+  on leases bound to its own SID and logon session.
+- **Presence (STRONG) and the grant window:** at first use, the user enrolls a Windows Hello key credential ("Orcel
+  Authority", `KeyCredentialManager.RequestCreateAsync`, created by `orcel authority enroll` in the user session); the
+  service stores its public key. Windows Hello's prompt does not show Orcel's scope, so:
+  1. a grant, renewal or standing approval can begin only inside a **grant window** of 120 s that opens when the service
+     itself observes `WTS_SESSION_UNLOCK` for that session (the user locked and unlocked, authenticating through the
+     secure attention sequence) while no Full Control lease is active; `orcel full-control grant` tells the user to press
+     Win+L and unlock;
+  2. the requested scope defaults to the narrowest form (desktop input only, no roots, no shells, 30 minutes); every
+     widening (roots, shells, apps, longer expiry) is an explicit choice in the request;
+  3. the service issues a 32-byte challenge bound to the request digest; the user session calls
+     `KeyCredential.RequestSignAsync` (Windows Hello); the service verifies the signature;
+  4. the service writes the **granted scope** (executors, roots, client, task, expiry, lease id) to the Event Log as
+     event id 4101 under its registered source, and the indicator shows the scope as the service reports it, so the
+     user can check what was granted outside any agent-controlled window.
+  Grants and renewals are refused while any Full Control lease is active. The prompt recommends biometric Hello
+  because a PIN can be observed by persisted code (C-27 d). **Remote Full Control (SG-000105) must not ship before this
+  grant window, narrow default and Event Log scope record are implemented and qualified.**
+- **Job Objects are created and owned by the service.** For each executor (and each in-process Full Control provider
+  worker, section 4.14), `orceld` asks the service in `Authorize`; the service creates a Job Object named
+  `Global\Orcel-Job-<128-bit random>` (failing on `ERROR_ALREADY_EXISTS`) with limits
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, no `JOB_OBJECT_LIMIT_BREAKAWAY_OK` and no `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`,
+  owner the service SID, and a DACL granting the requesting session's logon SID only `JOB_OBJECT_ASSIGN_PROCESS`. The
+  service keeps its handle. `orceld` opens the name with `JOB_OBJECT_ASSIGN_PROCESS`, checks that the owner is the
+  service SID, creates the executor suspended, assigns it, then resumes it (assignment before resume). `orceld` cannot
+  change limits, terminate the job or let a child break away; processes started by the job's members stay in it.
 - **Authorize (atomic, C-30):** under the epoch lock, check lease (bindings, epoch, expiry, policy revision), the
-  client principal, the standing approval (scope, task, expiry) or the action's own approval reference, the indicator
-  heartbeat (below), and that the target Job Object name was registered by this session's `orceld`; append the audit
-  record; open the named Job Object (`OpenJobObjectW` on `\Sessions\<n>\BaseNamedObjects\Orcel-Job-<id>`, which `orceld`
-  created with a DACL granting the service `JOB_OBJECT_TERMINATE | JOB_OBJECT_QUERY`) and keep the handle; return
-  `{ authorization_id, epoch }`. `orceld` then starts the executor in that Job Object.
+  client principal, the standing approval (scope, task, expiry) or the action's own approval reference; append the audit
+  record (with `asserted_by_session: true` for everything the request claims, and the observed caller SID, logon
+  session, PID and image); create the Job Object as above; return `{ authorization_id, epoch, job_name }`. The indicator
+  heartbeat is checked too, but it is disclosure only and proves nothing against a same-user agent (C-27 c).
 - **Stop (C-28):** `Stop` from any process in the same logon session (it only removes authority); the service also
   handles `SERVICE_CONTROL_SESSIONCHANGE` (`WTS_SESSION_LOCK`, `WTS_SESSION_LOGOFF`, `WTS_CONSOLE_DISCONNECT`,
   `WTS_REMOTE_DISCONNECT`), expiry timers and heartbeat loss. Stop advances the epoch, terminates every held Job Object,
@@ -453,13 +491,18 @@ present), a Unix socket with `SO_PEERCRED`, presence through a polkit action (`o
 
 | Executor class | What runs | Grain | Token and desktop | Kill |
 | --- | --- | --- | --- | --- |
-| DesktopInput, window actions, UIA observation | Native host `apps/orcel-computer-host` (Go), via `orceld/src/uia.rs` -> `ComputerHostAdapter` -> `HostSession::spawn` | SG-000095 (closed), migrated by SG-000132 | User token, user desktop | Its Job Object, held by the service |
-| ShellProcess: PowerShell 5.1/7, cmd, Git Bash, WSL bash; interactive PTY (ConPTY) | One process tree per session | SG-000096 (continued) | User token, user desktop | Same |
-| Filesystem across authorized drives and roots; process inspection and termination; app launch and close | In-process provider plus app processes in Job Objects | SG-000097 (activated) | User token | Same |
-| Git beyond workspaces | Existing git provider under the lease | SG-000097 scope | User token | n/a |
-| Long-running automation | `orcel-jobs` units | SG-000134 | As above | Same |
-| Browser automation of the user's browsers and profiles | Browser host | SG-000100 (Wave 2) | User token | Same |
-| Remote control | Relay | SG-000105 (Wave 3) | n/a | n/a |
+| DesktopInput, window actions, UIA observation | Native host `apps/orcel-computer-host` (Go), via `orceld/src/uia.rs` -> `ComputerHostAdapter` -> `HostSession::spawn` | SG-000095 (closed), migrated by SG-000132 | User token, user desktop | Service-owned Job Object |
+| ShellProcess: PowerShell 5.1/7, cmd, Git Bash, WSL bash; interactive PTY (ConPTY) | One process tree per session | SG-000096 (continued) | User token, user desktop | Service-owned Job Object |
+| Filesystem across authorized drives and roots; process inspection and termination | **Full Control provider worker** `orceld fc-worker` (the same binary in a separate process, one per lease, serving the filesystem and process providers over a private pipe), not in-process in `orceld` | SG-000097 (activated) | User token | Service-owned Job Object; Stop kills in-flight operations |
+| App launch and close | App process trees | SG-000097 | User token, user desktop | Service-owned Job Object per launch |
+| Git beyond workspaces | The git provider inside the same `fc-worker` | SG-000097 scope | User token | Service-owned Job Object |
+| Long-running automation | `orcel-jobs` units, each executor in a service-owned job | SG-000134 | As above | Service-owned Job Object |
+| Browser automation of the user's browsers and profiles | Browser host | SG-000100 (Wave 2) | User token | Service-owned Job Object |
+| Remote control | Relay | SG-000105 (Wave 3; blocked on the grant-window work of 4.13) | n/a | n/a |
+
+No Full Control operation runs inside the long-lived `orceld` process itself; Safe-mode providers stay in-process as
+today. Processes an agent starts through the OS outside these jobs (scheduled tasks, WMI, DCOM) are not in them and
+survive stop (C-27 a).
 
 - **Authorized roots** are declared at grant (drives or folders) and are part of the lease's scope; the filesystem
   provider refuses paths outside them and always refuses `%ProgramData%\Orcel\authority` (unreadable anyway) and the
@@ -472,8 +515,9 @@ present), a Unix socket with `SO_PEERCRED`, presence through a polkit action (`o
   image-load and dynamic-code mitigation policies; sends a heartbeat to the service every 1 s only while topmost, visible,
   not cloaked, on a monitor and on the input desktop. The service refuses `Authorize` after 5 s without a heartbeat.
 - **What the indicator is.** It is disclosure and a convenient Stop. An agent with the user's rights can kill or
-  imitate it (C-27 c); enforcement does not depend on it: expiry, session lock, sign-out and the CLI stop are handled by
-  the service.
+  imitate it and forge its heartbeat, so the heartbeat proves nothing against a same-user agent (C-27 c); enforcement
+  does not depend on it: expiry, session lock, sign-out and the CLI stop are handled by the service. It verifies the
+  service pipe as every client does (4.13) before sending Stop.
 - **Tests (WP1-10, WP1-12):** see section 8.2.
 
 ### 4.15 Standing approvals (FD-UP-10 decided)
@@ -793,10 +837,10 @@ run of `transform_html`. On macOS and Linux the engine reports `unsupported` unt
 | WP1-06 | `orceld` web and job dispatch, `FetchCrawlDriver`, approvals of 4.11, budgets, ownership | 03, 04, 05, 08 | `cargo test -p orceld web_`, `fetch_crawl_` | Windows; others `unsupported` until WP1-13 |
 | WP1-07 | MCP tools, Firecrawl REST routes, REST tokens, network-tool guard amendment for the eight web tools | 06 | `npm test` in `apps/orcel-mcp` | all |
 | WP1-09 | Firecrawl contract harness, both SDKs, pinned fixture site | 07, 08 | `npm test` in `tests/firecrawl-compat/js`; `python -I -m pytest tests/firecrawl-compat/py` | Windows; X legs when WP1-13 lands |
-| WP1-10 | Authority service (Windows), `orcel authority install/enroll`, Hello presence, Authorize/Stop, Job Object holding, lease store migration from the user state root, dispatcher in `orceld`, SG-000095 path moved behind it | 02, 03 | `cargo test -p orcel-authority`; `cargo test -p orceld full_control_dispatch_`; Windows native: service install in CI, standard-user caller cannot read service state, stop by session lock (`LockWorkStation`), expiry kill, grant refused while a lease is active, no lease means Safe path unchanged | Windows native; security judge |
+| WP1-10 | Authority service (Windows), `orcel authority install/enroll`, pipe anti-squatting and client server-identity checks, grant window after service-observed unlock, narrow default scope, Event Log scope record (4101), Hello presence, Authorize/Stop, service-owned Job Objects, `orceld fc-worker`, lease store migration from the user state root, dispatcher in `orceld`, SG-000095 path moved behind it | 02, 03 | `cargo test -p orcel-authority`; `cargo test -p orceld full_control_dispatch_`; Windows native: service install in CI; standard-user caller cannot read service state; a pre-created pipe makes the service refuse to start; a rogue pipe instance cannot be created by a user process; clients refuse a server whose PID or owner SID is wrong; grant refused outside the unlock window and while a lease is active; Event Log 4101 matches the granted scope; `orceld` cannot terminate or change a service-owned job and a child cannot break away; Stop kills an in-flight `fc-worker` operation; stop by session lock (`LockWorkStation`) and expiry; audit records carry `asserted_by_session`, caller PID and image; no lease means Safe path unchanged | Windows native; security judge |
 | WP1-12 | Indicator (4.14) | 10 | `cargo test -p orcel-indicator`; Windows native visibility, injected-input, close-as-Stop, hotkey-failure and `DisableLockWorkstation` tests | Windows; security judge |
 | WP1-14 | Standing approvals (4.15) | 10, 12 | `cargo test -p orcel-authority standing_` (scope, client, expiry, stop) | Windows; security judge |
-| WP1-15 | Executors: SG-000096 interactive shells (PowerShell, cmd, Git Bash, WSL bash; ConPTY; T02-T04), SG-000097 filesystem across authorized roots, process inspection and termination, app launch and close | 10, 14 | SG-000096 and SG-000097 suites; Job Object registration; stop kills every tree | Windows; security judge |
+| WP1-15 | Executors: SG-000096 interactive shells (PowerShell, cmd, Git Bash, WSL bash; ConPTY; T02-T04), SG-000097 filesystem across authorized roots, process inspection and termination, app launch and close | 10, 14 | SG-000096 and SG-000097 suites; every executor and the `fc-worker` in a service-owned Job Object; stop kills every tree | Windows; security judge |
 | WP1-16 | Credential headers and the sensitive-feature gate (4.12, 4.16), SG-000040 header amendment | 06, 07 | `cargo test -p orceld web_headers_`, `web_privacy_`; redaction scan | Windows; others with WP1-13 |
 | WP1-11 | Journeys J-1, J-2, J-3, J-3b; README and `RELEASE_READINESS.md` | all | 10.1 | Windows; founder-present runs |
 
@@ -988,3 +1032,14 @@ around the founder's decisions; where it changes a design those tables describe,
 | Fetch engine Windows-only, macOS/Linux deferred to Wave 2; Obscura patch pending a decision | Track X and track B start now (8.3, 8.4) |
 | Grains SG-000131, SG-000101, SG-000102, SG-000132 | SG-000131, SG-000133, SG-000134, SG-000132, plus SG-000097 activated and SG-000096 continued (12) |
 | G-7 numbers as blocking gates | Measured optimisation targets (G-7) |
+
+### 13.5 Revision 7 (security review of `4e0f3606`)
+
+| Finding | Resolution | Where |
+| --- | --- | --- |
+| 1 Pipe squatting (blocker) | Pipe created with `FILE_FLAG_FIRST_PIPE_INSTANCE` (service refuses to run if the name exists) and `PIPE_REJECT_REMOTE_CLIENTS`; client ACE `FILE_READ_DATA`, `FILE_WRITE_DATA`, `SYNCHRONIZE` only for `INTERACTIVE`, never `GENERIC_WRITE` or `FILE_APPEND_DATA` (`FILE_CREATE_PIPE_INSTANCE`); every client checks `GetNamedPipeServerProcessId` against `QueryServiceStatusEx` and the pipe owner against the `NT SERVICE\OrcelAuthority` SID before sending; automatic (not delayed) start | 4.13, WP1-10 |
+| 2 Job Objects (blocker) | The service creates and owns every executor Job Object (random `Global\` name, fail if it exists, kill-on-close, no breakaway limits) and grants the session only `JOB_OBJECT_ASSIGN_PROCESS`; `orceld` checks the owner, creates suspended, assigns, resumes; Full Control filesystem, process and git operations run in an `orceld fc-worker` child inside a service-owned job, so Stop kills in-flight operations; 4.14 table updated | 4.13, 4.14, WP1-10, WP1-15, SG-000132, SG-000097, SG-000096 amendment |
+| 3 Audit as claims (major) | `AuditEvent` gains `asserted_by_session`, `caller_pid`, `caller_image`; C-27 (e) states that during a lease the agent can impersonate `orceld` to the service, so the Full Control audit is tamper-evident storage of session-asserted claims plus service-observed facts | C-27, 4.8, 4.13 |
+| 4 Hello does not show scope (major; blocker before SG-000105) | Grants, renewals and standing approvals only inside a 120 s window opened by a service-observed `WTS_SESSION_UNLOCK` with no lease active; narrow default scope; granted scope written to the Event Log (event 4101) and shown by the indicator as the service reports it; SG-000105 must not ship before this | 4.13, 4.14, SG-000132 |
+| 5 Heartbeat (nit) | Stated: the indicator heartbeat proves nothing against a same-user agent | C-27 (c), 4.13, 4.14 |
+| 6 PIN observation (nit) | C-27 (d): persisted code from an earlier session can observe a PIN at a later grant; biometric Hello recommended in the grant prompt | C-27, 4.13 |
