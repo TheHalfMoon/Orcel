@@ -570,31 +570,45 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
         // WP1-01's dependency-direction test runs `cargo metadata` with every
         // feature, which resolves the graph and compiles nothing, so the
         // licence gate sees feature-gated dependencies. It may name the flag
-        // once, in that metadata call, and run no other cargo command.
-        if relative == "crates/orceld/tests/dependency_direction.rs" {
+        // once, in its single cargo call, whose argument list is exactly the
+        // metadata call below; it names no other cargo command or alias.
+        let metadata_exempt = relative == "crates/orceld/tests/dependency_direction.rs";
+        if metadata_exempt {
+            let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
             assert_eq!(text.matches("--all-features").count(), 1, "{relative}");
-            assert!(text.contains("\"metadata\","), "{relative}");
+            assert_eq!(compact.matches("Command::new(").count(), 1, "{relative}");
+            assert!(
+                compact.contains(
+                    "Command::new(env!(\"CARGO\")).args([\"metadata\",\"--format-version\",\"1\",\"--locked\",\"--all-features\",])"
+                ),
+                "{relative}: the cargo call must be exactly `metadata --format-version 1 --locked --all-features`"
+            );
             for command in [
-                "\"build\"",
-                "\"test\"",
-                "\"run\"",
-                "\"check\"",
-                "\"install\"",
+                "build", "b", "test", "t", "run", "r", "check", "c", "install", "bench", "rustc",
+                "doc", "clippy",
             ] {
-                assert!(!text.contains(command), "{relative} runs cargo {command}");
+                assert!(
+                    !text.contains(&format!("\"{command}\"")),
+                    "{relative} names cargo {command}"
+                );
             }
-            continue;
         }
         let build_surface = !relative.starts_with("docs/")
             && !relative.ends_with(".md")
             && !relative.contains("/third_party/");
         if build_surface {
-            for forbidden in ["--all-features", "feature-powerset", "each-feature"] {
+            for forbidden in ["feature-powerset", "each-feature"] {
                 assert!(
                     !text.contains(forbidden),
                     "{relative} builds with {forbidden}, which would enable live-browser-dev unnamed"
                 );
             }
+        }
+        if build_surface && !metadata_exempt {
+            assert!(
+                !text.contains("--all-features"),
+                "{relative} builds with --all-features, which would enable live-browser-dev unnamed"
+            );
         }
     }
     let mut hits = Vec::new();
