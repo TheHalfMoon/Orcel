@@ -7,8 +7,8 @@
 //! no overwrite on move, and no attribute, permission, or link change.
 
 use super::{
-    final_path_from_open_file, hash_file, resolve_final_path, sha256_hex, FsProvider,
-    ProviderError, MAX_WRITE_BYTES,
+    final_path_from_open_file, hash_file, inside_root, refuse_named_fork, resolve_final_path,
+    sha256_hex, FsProvider, ProviderError, MAX_WRITE_BYTES,
 };
 use orcel_contracts::FailureCode;
 use serde_json::{json, Value};
@@ -96,7 +96,10 @@ fn glob_match(pattern: &[char], name: &[char]) -> bool {
 
 impl FsProvider {
     fn within(&self, resolved: &Path) -> Result<(), ProviderError> {
-        if resolved == self.root {
+        // A case alias of the root (accepted by `is_within` on macOS) is the root too.
+        if resolved == self.root
+            || inside_root(&self.root, resolved).is_some_and(|rest| rest.as_os_str().is_empty())
+        {
             return Err(ProviderError::new(
                 FailureCode::PathEscape,
                 "the workspace root itself cannot be the target",
@@ -117,6 +120,8 @@ impl FsProvider {
                 "start_line must be at least 1 and max_lines from 1 to {MAX_RANGE_LINES}"
             )));
         }
+        refuse_named_fork(relative)?;
+        super::refuse_windows_stream(relative)?;
         let candidate = self.root.join(relative);
         let file = File::open(&candidate)
             .map_err(|error| ProviderError::io("open range target", error))?;
@@ -1759,5 +1764,28 @@ mod tests {
         assert!(!heads.join("new").exists());
         fs::remove_dir(&sub).unwrap();
         let _ = fs::remove_dir_all(dir);
+    }
+
+    /// macOS: a case alias of the workspace root is still the root, so the rule that the
+    /// root itself is never a target holds however the volume spells it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_case_alias_of_the_root_is_never_a_target() {
+        let base = fs::canonicalize(root("case-root")).unwrap();
+        let dir = base.join("ws");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        assert!(
+            base.join("WS").join("a.txt").exists(),
+            "case-insensitive APFS expected for the temporary directory"
+        );
+        let p = provider(&dir);
+        assert_eq!(
+            p.within(&base.join("WS")).unwrap_err().code,
+            FailureCode::PathEscape
+        );
+        assert!(p.within(&base.join("WS").join("a.txt")).is_ok());
+        assert!(p.within(&base.join("ws2")).is_err());
+        let _ = fs::remove_dir_all(base);
     }
 }
