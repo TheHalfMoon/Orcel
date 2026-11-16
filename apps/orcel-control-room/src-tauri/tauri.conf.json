@@ -11,7 +11,7 @@
       {
         "label": "main",
         "title": "Orcel Control Room",
-        "url": "index.html",
+        "url": "start.html",
         "create": false,
         "visible": false,
         "width": 960,

@@ -2,8 +2,11 @@
 
 CR-02: the Control Room's protocol layer and headless client for orceld's
 local app API, [`orcel-app-api/1`](../../docs/orcel/implementation-readiness/protocol/ORCEL_APP_API_1.md)
-(CR-01). It renders nothing. The UI shell (CR-03, Tauri 2) waits on founder
-decision FD-03, so this package makes no UI framework choice.
+(CR-01). The client itself renders nothing. The Control Room shell (CR-03,
+SG-000119, Tauri 2) lives in `src-tauri/`; its read-only view (slice A4) is
+plain TypeScript in `src/view/`, compiled with `npm run build:view` into
+`src-tauri/ui/js` and embedded in the shell. It reuses this package's state
+reducer for its timeline and draws text only.
 
 ## What it does
 
