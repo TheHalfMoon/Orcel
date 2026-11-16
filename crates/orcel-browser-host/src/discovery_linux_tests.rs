@@ -991,7 +991,7 @@ fn b7_an_expired_key_or_a_second_signer_is_refused() {
     let old_home = repo.scratch.join("gnupg-old");
     std::fs::create_dir_all(&old_home).unwrap();
     std::fs::set_permissions(&old_home, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let past = ["--faked-system-time", "20200101T000000"];
+    let past = ["--faked-system-time", "20200101T000000!"];
     let made = gpg(
         &old_home,
         &[
