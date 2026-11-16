@@ -748,21 +748,18 @@ fn bm02_tier_b_mutating_tasks_are_solved_through_orceld_with_scripted_consent() 
         };
         // The same OS version Tier A's report records (CI passes the
         // benchmark runner's own value); never guessed.
-        let os_version = std::env::var("ORCEL_BM02_OS_VERSION")
-            .ok()
-            .filter(|v| {
-                !v.is_empty()
-                    && v.len() <= 64
-                    && v.bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
-                    && v.as_bytes()[0].is_ascii_alphanumeric()
-            })
-            .unwrap_or_else(|| "unrecorded".into());
+        let os_version = report_token(std::env::var("ORCEL_BM02_OS_VERSION").ok());
+        let mut machine = json!({"os": os, "os_version": os_version, "arch": arch});
+        if cfg!(target_os = "macos") {
+            machine["os_build"] = json!(report_token(macos_os_build()));
+            machine["deployment_target"] = json!(deployment_target());
+        }
+        eprintln!("BM02B-EVIDENCE machine {machine}");
         let report = json!({
             "schema": "orcel-benchmark-report/1",
             "orcel_commit": commit,
             "suite": "journeys",
-            "machine": {"os": os, "os_version": os_version, "arch": arch},
+            "machine": machine,
             "planner": {
                 "kind": "deterministic",
                 "name": "orcel-fs-mutation-planner",
@@ -773,4 +770,78 @@ fn bm02_tier_b_mutating_tasks_are_solved_through_orceld_with_scripted_consent() 
         std::fs::write(path, serde_json::to_string_pretty(&report).unwrap()).expect("report");
     }
     assert!(failed.is_empty(), "not solved: {failed:?}");
+}
+
+/// A short report token, no looser than orcel-benchmark-report/1's `$defs/token`,
+/// else `unrecorded`: a value is never guessed.
+fn report_token(value: Option<String>) -> String {
+    const CREDENTIAL_PREFIXES: [&str; 10] = [
+        "sk-",
+        "sk_",
+        "ghp_",
+        "gho_",
+        "ghs_",
+        "ghu_",
+        "github_pat_",
+        "AKIA",
+        "ASIA",
+        "xox",
+    ];
+    value
+        .map(|v| v.trim().to_owned())
+        .filter(|v| {
+            !v.is_empty()
+                && v.len() <= 64
+                && v.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+                && v.as_bytes()[0].is_ascii_alphanumeric()
+                && !CREDENTIAL_PREFIXES.iter().any(|p| v.starts_with(p))
+        })
+        .unwrap_or_else(|| "unrecorded".into())
+}
+
+/// MAC-M1-09: the macOS build identifier (`sw_vers -buildVersion`).
+fn macos_os_build() -> Option<String> {
+    let out = std::process::Command::new("sw_vers")
+        .arg("-buildVersion")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// MAC-M1-09: the deployment target this build used; `rustc-default` when
+/// the build left `MACOSX_DEPLOYMENT_TARGET` unset.
+fn deployment_target() -> String {
+    report_token(Some(
+        option_env!("MACOSX_DEPLOYMENT_TARGET")
+            .unwrap_or("rustc-default")
+            .to_owned(),
+    ))
+}
+
+#[test]
+fn bm02_tier_b_mac_m1_09_report_tokens_are_short_and_never_prose() {
+    assert_eq!(report_token(Some("25G123\n".into())), "25G123");
+    assert_eq!(report_token(Some("15.0".into())), "15.0");
+    assert_eq!(report_token(Some("rustc-default".into())), "rustc-default");
+    for bad in [
+        None,
+        Some(String::new()),
+        Some("build 25 G 123".into()),
+        Some("-15.0".into()),
+        Some("x".repeat(65)),
+        Some(format!("gh{}", "p_abcdef123456")),
+    ] {
+        assert_eq!(report_token(bad.clone()), "unrecorded", "{bad:?}");
+    }
+    let target = deployment_target();
+    assert_ne!(target, "unrecorded");
+    if cfg!(target_os = "macos") {
+        let build = report_token(macos_os_build());
+        assert_ne!(build, "unrecorded", "sw_vers -buildVersion is readable");
+        eprintln!("MAC-M1-09-EVIDENCE os_build={build} deployment_target={target}");
+    }
 }

@@ -219,6 +219,57 @@ class OracleDryRun(unittest.TestCase):
         with self.assertRaises(ValueError):
             report("abc123", [])
 
+    def test_mac_m1_09_macos_reports_carry_the_os_build_and_deployment_target(self) -> None:
+        from unittest import mock
+
+        from orcel_bench import runner
+
+        done = subprocess.CompletedProcess(["sw_vers"], 0, stdout="25G123\n", stderr="")
+        row = {"case": "probe/x/only", "status": "pass", "observed": "solved"}
+        with mock.patch.object(runner.platform, "system", return_value="Darwin"), mock.patch.object(
+            runner.platform, "mac_ver", return_value=("26.6.2", ("", "", ""), "arm64")
+        ), mock.patch.object(runner.platform, "machine", return_value="arm64"), mock.patch.object(
+            runner.subprocess, "run", return_value=done
+        ) as sw_vers, mock.patch.dict(
+            os.environ, {runner.DEPLOYMENT_TARGET_ENV: "15.0"}
+        ):
+            produced = report(COMMIT, [row])
+        self.assertEqual(sw_vers.call_args.args[0], ["sw_vers", "-buildVersion"])
+        self.assertEqual(
+            produced["machine"],
+            {"os": "macos", "os_version": "26.6.2", "arch": "arm64", "os_build": "25G123", "deployment_target": "15.0"},
+        )
+
+    def test_mac_m1_09_unreadable_or_unsafe_values_are_unrecorded(self) -> None:
+        from unittest import mock
+
+        from orcel_bench import runner
+
+        prose = subprocess.CompletedProcess(["sw_vers"], 0, stdout="build 25 G 123", stderr="")
+        with mock.patch.object(runner.platform, "system", return_value="Darwin"), mock.patch.object(
+            runner.subprocess, "run", return_value=prose
+        ), mock.patch.dict(os.environ, {runner.DEPLOYMENT_TARGET_ENV: "fifteen point zero"}):
+            self.assertEqual(
+                runner.macos_build_evidence(), {"os_build": "unrecorded", "deployment_target": "unrecorded"}
+            )
+        with mock.patch.object(runner.platform, "system", return_value="Darwin"), mock.patch.object(
+            runner.subprocess, "run", side_effect=FileNotFoundError
+        ), mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                runner.macos_build_evidence(), {"os_build": "unrecorded", "deployment_target": "unrecorded"}
+            )
+
+    def test_mac_m1_09_other_oses_add_nothing(self) -> None:
+        from unittest import mock
+
+        from orcel_bench import runner
+
+        for system in ["Windows", "Linux"]:
+            with mock.patch.object(runner.platform, "system", return_value=system), mock.patch.object(
+                runner.subprocess, "run", side_effect=AssertionError("no probe off macOS")
+            ):
+                self.assertEqual(runner.macos_build_evidence(), {}, system)
+
 
 class SessionConfinement(unittest.TestCase):
     def test_paths_stay_inside_the_workspace(self) -> None:

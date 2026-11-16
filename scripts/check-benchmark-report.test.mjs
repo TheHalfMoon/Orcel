@@ -68,8 +68,30 @@ const invalidCases = [
   ["machine.cpu too long", (r) => (r.machine.cpu = "A".repeat(65)), /machine\/cpu: longer than 64/],
   ["URL in evidence", (r) => (r.rows[0].evidence = "https://example.com/leak/x"), /rows\/0\/evidence: does not match/],
   ["absolute path in evidence", (r) => (r.rows[0].evidence = "/etc/passwd"), /rows\/0\/evidence: does not match/],
-  ["dot segment in evidence", (r) => (r.rows[0].evidence = "runs/../secrets"), /rows\/0\/evidence: does not match/]
+  ["dot segment in evidence", (r) => (r.rows[0].evidence = "runs/../secrets"), /rows\/0\/evidence: does not match/],
+  // MAC-M1-09: the macOS build evidence fields are tokens, never prose.
+  ["prose in machine.os_build", (r) => (r.machine.os_build = "macOS 26 build"), /machine\/os_build: does not match/],
+  ["empty machine.os_build", (r) => (r.machine.os_build = ""), /machine\/os_build: shorter than 1/],
+  [
+    "prose in machine.deployment_target",
+    (r) => (r.machine.deployment_target = "fifteen point zero"),
+    /machine\/deployment_target: does not match/
+  ],
+  ["numeric machine.deployment_target", (r) => (r.machine.deployment_target = 15), /machine\/deployment_target: expected string/]
 ];
+
+test("valid: MAC-M1-09 macOS build evidence in machine", () => {
+  for (const [osBuild, target] of [
+    ["25G123", "15.0"],
+    ["24A335", "rustc-default"],
+    ["unrecorded", "unrecorded"]
+  ]) {
+    const report = copy();
+    report.machine.os_build = osBuild;
+    report.machine.deployment_target = target;
+    assert.deepEqual(validateReport(report, schema), [], `${osBuild} ${target}`);
+  }
+});
 
 // Credential-shaped values are assembled from parts so this file itself never
 // contains a secret-shaped literal.

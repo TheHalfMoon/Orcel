@@ -108,6 +108,18 @@ fn ends_mid_line(path: &Path) -> bool {
     file.read_exact(&mut last).is_ok() && last[0] != b'\n'
 }
 
+/// Append, creating the log when it is missing. MAC-M1-09: on Unix a new log is created 0600
+/// explicitly, owner read and write only, rather than by the process umask inside the private
+/// directory; the umask can only narrow that. An existing log keeps its mode: this never widens
+/// or rewrites it. Windows is unchanged.
+fn open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+}
+
 impl AuditLogger {
     pub fn new(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
@@ -185,9 +197,7 @@ impl AuditLogger {
         };
         serde_json::to_writer(&mut line, &event)?;
         line.push(b'\n');
-        let written = OpenOptions::new()
-            .create(true)
-            .append(true)
+        let written = open_options()
             .open(&self.path)
             .and_then(|mut file| file.write_all(&line).and_then(|()| file.flush()));
         if written.is_err() {
@@ -427,6 +437,56 @@ mod tests {
             .record(&request("next".into(), None), "p1", "SUCCESS")
             .expect("record");
         assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// MAC-M1-09: a new log is created 0600 on Unix whatever the umask allows (the umask can
+    /// only narrow it), and keeps that mode across records.
+    #[cfg(unix)]
+    #[test]
+    fn mac_m1_09_a_new_log_is_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = sandbox("mode-new");
+        let path = base.join("audit.jsonl");
+        let logger = AuditLogger::new(&path).expect("audit");
+        assert!(
+            !path.exists(),
+            "the logger makes the log on the first record"
+        );
+        logger
+            .record(&request("first".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let mode = std::fs::metadata(&path).expect("log").permissions().mode() & 0o777;
+        assert_eq!(mode & 0o077, 0, "no group or other access: {mode:o}");
+        assert_eq!(mode, 0o600, "owner read and write: {mode:o}");
+        logger
+            .record(&request("second".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let mode = std::fs::metadata(&path).expect("log").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{mode:o}");
+        eprintln!("MAC-M1-09-EVIDENCE audit log mode={mode:o}");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// MAC-M1-09: an existing log keeps the mode it has; the logger never widens it, even when
+    /// it is narrower than 0600.
+    #[cfg(unix)]
+    #[test]
+    fn mac_m1_09_an_existing_log_mode_is_never_widened() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = sandbox("mode-existing");
+        let path = base.join("audit.jsonl");
+        std::fs::write(&path, "").expect("existing log");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200)).expect("chmod");
+        let logger = AuditLogger::new(&path).expect("audit");
+        logger
+            .record(&request("after".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let mode = std::fs::metadata(&path).expect("log").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o200, "{mode:o}");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        assert_eq!(text.lines().count(), 1, "{text}");
         let _ = std::fs::remove_dir_all(base);
     }
 
