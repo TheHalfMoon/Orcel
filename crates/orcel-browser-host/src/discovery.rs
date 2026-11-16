@@ -51,6 +51,11 @@ impl EngineKind {
 ///   native-suite passes with the #324 leak control required, after the
 ///   profile-cleanup race (#483) was fixed by #497 (runs recorded in the
 ///   engine-attachment decision, A10).
+/// - Edge 157: the evidence host after its update to 157.0.4341.60: the
+///   native suite passes with the #324 leak control required, after an
+///   argv amendment (msForceOneAuthWAM, HttpsFirstBalancedModeAutoEnable);
+///   three tests that change machine state were skipped and are unverified
+///   on 157 (runs recorded in the engine-attachment decision, A10).
 /// - Chrome 154: qualified by earlier CI evidence.
 /// - Chrome 155: qualified by earlier CI evidence.
 /// - Chrome 156: windows-latest image 20261021 (Chromium 156.0.8078.48):
@@ -62,6 +67,7 @@ impl EngineKind {
 pub const QUALIFIED_WORKER_ENGINES: &[(EngineKind, u32)] = &[
     (EngineKind::Edge, 155),
     (EngineKind::Edge, 156),
+    (EngineKind::Edge, 157),
     (EngineKind::Chromium, 154),
     (EngineKind::Chromium, 155),
     (EngineKind::Chromium, 156),
@@ -1395,11 +1401,12 @@ mod tests {
         assert!(engine(EngineKind::Chromium, "155.0.8059.40").worker_qualified());
         assert!(engine(EngineKind::Chromium, "156.0.8078.48").worker_qualified());
         assert!(engine(EngineKind::Edge, "156.0.4314.42").worker_qualified());
+        assert!(engine(EngineKind::Edge, "157.0.4341.60").worker_qualified());
         for (kind, version) in [
             // Each kind has its own qualified majors: Chromium 154 is
             // qualified, Edge 154 is not.
             (EngineKind::Edge, "154.0.1.2"),
-            (EngineKind::Edge, "157.0.1.2"),
+            (EngineKind::Edge, "158.0.1.2"),
             (EngineKind::Edge, "1550.0.1.2"),
             (EngineKind::Edge, "0.0.0.0"),
             (EngineKind::Edge, ""),

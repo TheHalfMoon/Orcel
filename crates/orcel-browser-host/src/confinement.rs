@@ -44,7 +44,17 @@ const SHARED_WORKER_FLAG: &str = "--disable-blink-features=SharedWorker";
 /// UDP 5353 on all interfaces and answers LAN queries: off as well (WebRTC
 /// sends no non-proxied UDP under the policy flag above). The native
 /// network-endpoint test verifies what the job holds and sends.
-const DISABLED_FEATURES_FLAG: &str = "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns";
+/// Edge 157 also forces OneAuth/WAM (msForceOneAuthWAM) past
+/// msOneAuthWAM: its browser process opened TLS connections to Microsoft
+/// 365 from a confined lifetime, so that is off as well.
+/// Edge 157 auto-enables HTTPS-First balanced mode
+/// (HttpsFirstBalancedModeAutoEnable): an `http://` navigation to a public
+/// name is rewritten to `https://`, and when that fails the engine cancels
+/// it as ERR_BLOCKED_BY_CLIENT, so a navigation's scheme and failure would
+/// no longer be the ones the host approved and the no-route proxy answered.
+/// Off, so 157 navigates as the qualified 155 and 156 do; it adds no
+/// destination (A10 qualification of Edge 157).
+const DISABLED_FEATURES_FLAG: &str = "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msForceOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns,HttpsFirstBalancedModeAutoEnable";
 
 /// The no-route proxy: connecting to 0.0.0.0 fails on Windows even when a
 /// local process listens on port 9 (Windows-only; on Linux it is loopback).
@@ -533,7 +543,7 @@ mod tests {
             "--webrtc-ip-handling-policy=disable_non_proxied_udp",
             "--disable-quic",
             "--disable-blink-features=SharedWorker",
-            "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns",
+            "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msForceOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns,HttpsFirstBalancedModeAutoEnable",
             "about:blank",
         ]
         .iter()
