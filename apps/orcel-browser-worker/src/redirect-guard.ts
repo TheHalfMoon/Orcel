@@ -18,6 +18,7 @@
 // rendered.
 
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
+import type { RefusalLedger } from "./refusals.js";
 import { redirectHop } from "./routing.js";
 import type { RoutePolicy } from "./worker.js";
 
@@ -59,7 +60,8 @@ export async function attachRedirectGuard(
   context: BrowserContext,
   page: Page,
   policy: RoutePolicy,
-  isPrimary: () => boolean = () => false
+  isPrimary: () => boolean = () => false,
+  refusals?: RefusalLedger
 ): Promise<RedirectGuard> {
   const session: CDPSession = await context.newCDPSession(page);
   // Interception ids of earlier hops map to their URLs, so each hop's
@@ -70,8 +72,14 @@ export async function attachRedirectGuard(
   // this page is failed rather than rendered.
   let spent = false;
 
-  const fail = (requestId: string): Promise<unknown> =>
-    session.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }).catch(() => {});
+  // Every refusal is recorded before it is made (refusals.ts); a refused
+  // main-frame document or hop is marked as this page's document refusal.
+  const refuse = (event: RequestPaused): Promise<unknown> => {
+    const document = event.frameId === mainFrameId && event.resourceType === "Document" ? page.mainFrame() : null;
+    refusals?.record(event.request.url, document);
+    return session.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" });
+  };
+  const fail = (event: RequestPaused): Promise<unknown> => refuse(event).catch(() => {});
 
   // Read the paused response body as a stream in bounded chunks, so an
   // oversized body (even without a content-length) is never held whole.
@@ -107,7 +115,7 @@ export async function attachRedirectGuard(
       return;
     }
     if (!pending) {
-      if (spent) await fail(requestId);
+      if (spent) await fail(event);
       else await session.send("Fetch.continueRequest", { requestId });
       return;
     }
@@ -143,7 +151,7 @@ export async function attachRedirectGuard(
           body: ""
         });
       } catch {
-        await fail(requestId);
+        await fail(event);
       }
       await session.send("Fetch.enable", { patterns: REQUEST_STAGE }).catch(() => {});
     }
@@ -175,7 +183,7 @@ export async function attachRedirectGuard(
           allow = false;
         }
         if (allow) await session.send("Fetch.continueRequest", { requestId });
-        else await session.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
+        else await refuse(event);
       } catch {
         // The target went away; nothing is left to decide.
       }

@@ -230,10 +230,13 @@ pub enum EnterReply<'a> {
     /// new document after the key.
     Done { url: &'a str, navigated: bool },
     /// `form_failed` "denied": a popup, the engine's error page after a
-    /// refused or failed navigation, or a key the worker refused. After the
-    /// key it is not "nothing happened".
+    /// navigation Orcel's route stack refused, or a key the worker refused.
+    /// After the key it is not "nothing happened".
     Denied,
-    /// `form_failed` for any other reason.
+    /// `form_failed` for any other reason, including a navigation that
+    /// failed without an Orcel refusal (an engine cancellation reported with
+    /// the same net::ERR_BLOCKED_BY_CLIENT, or a network failure): it is
+    /// never read as a refusal, and fails closed (unknown or failed).
     Failed,
 }
 

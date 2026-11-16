@@ -16,6 +16,7 @@ import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/ind
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
 import { netErrorCode, rendererAnswers, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
+import { watchNavigation } from "./refusals.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
 import { runProbes } from "./verify.js";
@@ -103,15 +104,25 @@ const playwrightLauncher: Launcher = {
       page.on("load", () => traceMark("load"));
       page.on("crash", () => traceMark("page_crashed"));
       const stopWatching = traceWatchEventLoop();
+      // Which refusals during this navigation were Orcel's own (refusals.ts).
+      const watch = watchNavigation(page, routes.refusals);
       try {
         traceMark("goto");
         const response = await page.goto(url, { timeout: 30_000, waitUntil: "load" });
         stopWatching();
+        watch.stop();
         return { page, response };
       } catch (error) {
         stopWatching();
+        watch.stop();
         const message = String((error as Error).message);
-        if (message.includes("ERR_BLOCKED_BY_CLIENT")) throw new NavigationError("denied");
+        // The engine reports its own cancellations with the same error as
+        // Orcel's refusals: "denied" only for a refusal Orcel made. Anything
+        // else falls through to "failed" below (logged with its error code).
+        if (message.includes("ERR_BLOCKED_BY_CLIENT")) {
+          if (watch.refusedByOrcel(url)) throw new NavigationError("denied");
+          traceMark("blocked_not_by_orcel");
+        }
         if ((error as Error).name === "TimeoutError") {
           // #438: where it stalled, for the host's failure diagnostics. #584: and whether
           // the page's renderer answers at all (a constant expression, no page data read).
@@ -151,7 +162,7 @@ const playwrightLauncher: Launcher = {
         return { url: page.url(), status, media, text: kept, truncated: kept.length < text.length || body.length > 4 * MAX_FETCH_TEXT_BYTES };
       },
       async activate(ref: string, target?: ApprovedTarget) {
-        return clickAndLoad(primary, await approvedElement(primary, ref, target));
+        return clickAndLoad(primary, await approvedElement(primary, ref, target), routes.refusals);
       },
       async execute(tool: string, fields: ExecField[]) {
         const page = primary;
@@ -217,7 +228,7 @@ const playwrightLauncher: Launcher = {
         if ((await submit.count().catch(() => 0)) === 0) throw new NavigationError("failed");
         // The fields are already filled: a covered submit button is a plain
         // failure here, not "occluded" (which promises nothing was done).
-        const { url, status } = await clickAndLoad(page, submit).catch((error: unknown) => {
+        const { url, status } = await clickAndLoad(page, submit, routes.refusals).catch((error: unknown) => {
           throw error instanceof NavigationError && error.reason === "occluded" ? new NavigationError("failed") : error;
         });
         // The submission's result: the opened document's structured data.
@@ -306,7 +317,7 @@ const playwrightLauncher: Launcher = {
         try {
           // SG-000122 slice A6: an Enter may submit; what the main frame did
           // after the key is reported (the host decided every request).
-          if (act.action === "enter") return await enterAndSettle(primary, () => formAction(primary, ref, act, target));
+          if (act.action === "enter") return await enterAndSettle(primary, routes.refusals, () => formAction(primary, ref, act, target));
           await formAction(primary, ref, act, target);
         } finally {
           dialogs.disarm();
