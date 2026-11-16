@@ -25,9 +25,10 @@
       "Selectively COPY_ADAPT only source-level buffered stdout/stderr, session registry, stdin, and process exit/cancellation mechanics from the pinned Desktop Commander terminal-manager.ts and handlers; do not inherit donor MCP, JS eval, telemetry, default shell fallback, or service authentication.",
       "Provide one-shot and interactive input, separate bounded stdout/stderr pagination with monotonic offsets and explicit eviction/truncation, bounded session catalog, deterministic close/termination and no automatic post-dispatch retry.",
       "Reuse qdral-provider-process's existing Windows JobObject kill-on-close, assignment-before-resume, TerminateJobObject and bounded quiescence primitives as Deskal-owned process-tree supervision; qualify an ordinary current-user token separately rather than repurposing its AppContainer execution mode as Full User. Bind handles and generation, cancellation, lease revoke/expiry and no-orphan cleanup.",
-      "Gate each new shell/process and mutating stdin/termination operation through local Full User and an action-bound fresh SOFT approval; never mint or extend Full User through MCP/model/browser/remote/donor input.",
+      "Gate each new shell/process and mutating stdin/termination operation through local Full User and an action-bound fresh SOFT approval; a standing approval (spec section 4.15) is the only exception: issued with STRONG presence by the authority service (SG-000132), bound to the lease, client principal, declared task, scope (working directories and, where declared, command patterns) and an expiry no later than the lease's, each dispatch it covers authorized and audited individually with its id, ended by stop, lease end or expiry, and never covering Admin or remote callers; never mint or extend Full User through MCP/model/browser/remote/donor input.",
       "Exercise real disposable Windows process trees, consent boundaries, resource limits, Unicode/binary outputs, interrupt/revoke/expiry, session-generation drift, and racey cancellation against fail-closed outcomes.",
       "Shells under a Full User lease on Windows: PowerShell 5.1, PowerShell 7, cmd, Git Bash and WSL bash, each as an interactive ConPTY session or one-shot command, on the user's desktop with the user's token.",
+      "WSL bash stop: the session's Linux processes run in the WSL utility VM, outside the Windows Job Object, so the Job Object guarantee covers only the tracked wsl.exe tree. Each WSL session starts its command under setsid through one tracked wsl.exe in the service-owned Job Object and records the distro and Linux process group; stop kills the wsl.exe tree, then kills that process group through a second tracked wsl.exe and verifies that no member remains. If that cannot be verified within 5 s the session reports outcome_unknown, never success, and the indicator states that Linux processes may persist; `wsl.exe --terminate` of a whole distro is used only when the grant scope names that distro as Orcel-dedicated.",
       "Each session's process tree in a Job Object created and owned by the authority service (session granted only JOB_OBJECT_ASSIGN_PROCESS, no breakaway), started suspended, assigned and resumed, terminated by stop, expiry, session lock and sign-out.",
       "Shell sessions coverable by a standing approval for the same client, declared task and scope (working directories and, where declared, command patterns).",
       "Track X follow-up: zsh and bash on macOS and Linux (WPX-03)."
@@ -43,7 +44,7 @@
   "authority_delta": {
     "activation": "None. The GRAIN packet is an authorization to implement and prove SG-000096 separately, not an executable shell grant.",
     "safe": "Unchanged: registered/verified executable plan and existing workspace-bound cwd/sanitized environment, with no arbitrary command or ambient shell fallback.",
-    "full_user": "Proposed only; an exact locally granted unexpired FullControlLease with fresh per-action SOFT approval may execute ordinary user-token commands on the local host after implementation and native qualification.",
+    "full_user": "Proposed only; an exact locally granted unexpired FullControlLease with fresh per-action SOFT approval may execute ordinary user-token commands on the local host after implementation and native qualification; a standing approval (spec section 4.15) is the only exception: issued with STRONG presence by the authority service (SG-000132), bound to the lease, client principal, declared task, scope (working directories and, where declared, command patterns) and an expiry no later than the lease's, each dispatch it covers authorized and audited individually with its id, ended by stop, lease end or expiry, and never covering Admin or remote callers.",
     "privileged": "None. Full Admin/Persistent Admin/Remote Full Control excluded.",
     "remote": "None. Remote requests cannot select Full User shells, attach sessions, relay or mint local grants.",
     "network": "No added network listener, relay, or managed web host. Ordinary user-level shell commands may still use ambient OS network access; this is an explicit authority risk that must be modeled and consented to, not described as network-isolated without native proof.",
@@ -74,7 +75,7 @@
     },
     {
       "id": "A3",
-      "claim": "Safe registered-executable behavior and workspace/secret boundaries stay unchanged; only exact locally STRONG-granted Full User with independent SOFT action approval may execute a shell command or mutate a session, and future ceiling alone grants nothing."
+      "claim": "Safe registered-executable behavior and workspace/secret boundaries stay unchanged; only exact locally STRONG-granted Full User with independent SOFT action approval, or a standing approval (spec 4.15) for the same lease, client, declared task and scope, may execute a shell command or mutate a session, and future ceiling alone grants nothing."
     },
     {
       "id": "A4",
@@ -102,7 +103,7 @@
     },
     {
       "id": "A10",
-      "claim": "Each listed shell runs interactively and one-shot under a lease on the Windows runner, with bounded stdout and stderr pagination, and is killed by stop within 1 s."
+      "claim": "Each listed shell runs interactively and one-shot under a lease on the Windows runner, with bounded stdout and stderr pagination, and is killed by stop within 1 s; for WSL bash this covers the tracked wsl.exe tree, and the session's Linux process group is killed and verified gone or the session reports outcome_unknown, never success."
     },
     {
       "id": "A11",
@@ -111,6 +112,10 @@
     {
       "id": "A12",
       "claim": "J-3b passes on Windows."
+    },
+    {
+      "id": "A13",
+      "claim": "A shell command or session mutation under a standing approval that is out of scope (working directory or command pattern), expired, ended by stop, issued for another client, task or lease, or presented by a remote caller is refused before dispatch, and without a valid standing approval each action keeps its own fresh SOFT approval."
     }
   ],
   "review": {
@@ -135,7 +140,12 @@
       "created": "2026-11-17",
       "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
       "decision": "DECIDED (founder, 2026-11-17, FD-UP-4 and FD-UP-9): continue SG-000096 so interactive shells land in Wave 1 for J-3b, with comprehensive shell coverage.",
-      "note": "Applied by the founder's go-ahead of 2026-11-17, given in the Claude Code session and quoted in docs/canonical/CURRENT.md; planning_issue stays 260. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself."
+      "note": "Applied by the founder's go-ahead of 2026-11-17, given in the Claude Code session and quoted in docs/canonical/CURRENT.md; planning_issue stays 260. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself.",
+      "changes": [
+        "Dependencies SG-000131 and SG-000132 with their notes; shells on the authority service (scope include, scope_note); acceptance A10 to A12.",
+        "Standing approvals (spec 4.15) are named as the only exception to fresh per-action SOFT approval in the scope gate, authority_delta.full_user and A3; A13 requires out-of-scope, expired and other-client standing approvals to be refused.",
+        "WSL bash stop narrowed: the Job Object covers the tracked wsl.exe tree only; the session's Linux process group is killed and verified, otherwise outcome_unknown (scope include and A10)."
+      ]
     }
   ],
   "done_when": "Bounded local Full User one-shot and interactive shell/process sessions are genuinely native-Windows qualified under owned lease/approval, identity, job-tree and uncertainty semantics; Safe and remote/privileged surfaces remain unchanged, every accepted donor fragment is attributable, and independent exact-head security/CI plus canonical closeout/post-merge CI passes."
