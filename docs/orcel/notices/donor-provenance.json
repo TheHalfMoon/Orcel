@@ -1,0 +1,238 @@
+{
+  "schema": "orcel-donor-provenance/1",
+  "packet": "WP1-01",
+  "note": "Machine-readable index of every vendored, copied or adapted donor file under crates/, apps/, packages/ and tests/ (and a few outside them). Each donor names its source repository, its pin (a 40-hex commit, or a registry release with its SHA-256), the upstream licence, the notice in the repository, the founder attestation that records permission (kept separate from the upstream licence terms, founder decision 2026-11-17) and the detailed per-task provenance records it consolidates. A path ending in '/' covers the whole directory. 'references' lists files that name a donor notice or hold a provenance record without being donor code. Checked by scripts/check-donor-provenance.mjs.",
+  "attestations": {
+    "FA-2026-10-18": {
+      "records": ["docs/orcel/grants/2026-10-18-founder-attestation.md", "docs/orcel/SOURCE_PERMISSIONS.md"],
+      "scope": "Founder attestation of authorization over every donor recorded in Orcel (copy, modify, integrate, redistribute, relicense). Permissive donors are also covered by their own licence terms."
+    },
+    "FD-04": {
+      "records": ["docs/orcel/grants/2026-10-18-founder-attestation.md"],
+      "families": ["FSL"],
+      "scope": "Cua-owned FSL-1.1-MIT components may be copied and distributed inside Orcel."
+    },
+    "FD-06": {
+      "records": ["docs/orcel/grants/2026-10-13-founder-source-authorization.md", "docs/orcel/grants/2026-10-18-founder-attestation.md"],
+      "families": ["AGPL"],
+      "scope": "Firecrawl- and Skyvern-owned code may be redistributed inside Apache-2.0 Orcel. C-15/C-16: only the existing ports in fd06-files.txt; no new AGPL code in the core."
+    }
+  },
+  "donors": {
+    "firecrawl": {
+      "repo": "firecrawl/firecrawl",
+      "commit": "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "licence": "AGPL-3.0",
+      "notice": "docs/orcel/notices/firecrawl-AGPL-3.0.txt",
+      "attestation": "FD-06",
+      "records": [
+        "docs/orcel/firecrawl_crawl_scope_provenance.json",
+        "docs/orcel/firecrawl_change_tracking_provenance.json",
+        "docs/orcel/firecrawl_doc_parser_provenance.json"
+      ]
+    },
+    "cua-fsl": {
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "licence": "FSL-1.1-MIT",
+      "notice": "docs/orcel/notices/cua-FSL-1.1-MIT.txt",
+      "attestation": "FD-04",
+      "records": []
+    },
+    "cua": {
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/cua-MIT.txt",
+      "attestation": "FA-2026-10-18",
+      "records": ["docs/orcel/cua_driver_provenance.json"]
+    },
+    "cua-driver-clipboard": {
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/cua-driver-clipboard-MIT.txt",
+      "attestation": "FA-2026-10-18",
+      "records": []
+    },
+    "playwright": {
+      "repo": "microsoft/playwright",
+      "commit": "1b025d7e20a026371cd5f98ba0cdce48892737c8",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/playwright-Apache-2.0.txt",
+      "attestation": "FA-2026-10-18",
+      "records": [
+        "docs/orcel/br02_form_actions_provenance.json",
+        "docs/orcel/br03_upload_provenance.json",
+        "docs/orcel/br05_dialogs_provenance.json",
+        "docs/orcel/br07_verify_provenance.json"
+      ]
+    },
+    "agent-native": {
+      "repo": "BuilderIO/agent-native",
+      "commit": "9c277b79cb87eb27da538e572dd710986e2fa06d",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/agent-native-MIT.txt",
+      "attestation": "FA-2026-10-18",
+      "records": ["docs/orcel/control_room_agentkit_provenance.json", "docs/orcel/journal_resume_provenance.json"]
+    },
+    "browser-use": {
+      "repo": "browser-use/browser-use",
+      "commit": "c75e8476e26d18b7617643bc2ae082fae8eae431",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/browser-use-MIT.txt",
+      "attestation": "FA-2026-10-18",
+      "records": ["docs/orcel/sg000108_browser_donors_provenance.json"]
+    },
+    "webmcp": {
+      "repo": "WebMCP-org/npm-packages",
+      "commit": "7db816b5a280c2d1d4b86559696e993c497c021a",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/WebMCP-org-npm-packages-MIT.txt",
+      "attestation": "FA-2026-10-18",
+      "records": ["docs/orcel/sg000108_webmcp_provenance.json"]
+    },
+    "crawl4ai": {
+      "repo": "unclecode/crawl4ai",
+      "commit": "94b67888ca8b335ff2121423a50e06dd27661922",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/crawl4ai-Apache-2.0-attribution.txt",
+      "attestation": "FA-2026-10-18",
+      "records": ["docs/orcel/wi03_relevance_provenance.json"]
+    },
+    "agent-reach": {
+      "repo": "Panniantong/Agent-Reach",
+      "commit": "a19a171fa980a0785849596492e0af4db800c82f",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/agent-reach-MIT.txt",
+      "attestation": "FA-2026-10-18",
+      "records": ["docs/orcel/wi06_search_provenance.json"]
+    },
+    "lopdf": {
+      "repo": "J-F-Liu/lopdf",
+      "release": {
+        "registry": "crates.io",
+        "name": "lopdf",
+        "version": "0.45.0",
+        "sha256": ["bfffda0fe1ab0157e1a13c14bebd3f28671f2fccb7922f0722ec53926e6922d3"]
+      },
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/lopdf-MIT.txt",
+      "attestation": "FA-2026-10-18",
+      "records": ["docs/orcel/lopdf_provenance.json"]
+    },
+    "deer-flow": {
+      "repo": "bytedance/deer-flow",
+      "commit": "81e1ab8dcc86574cfac0ecdfe3636b775a08c567",
+      "licence": "MIT",
+      "notice": "apps/orcel-agent/third_party/deer-flow/LICENSE",
+      "attestation": "FA-2026-10-18",
+      "records": ["apps/orcel-agent/third_party/PROVENANCE.json"]
+    },
+    "langchain": {
+      "repo": "langchain-ai/langchain",
+      "release": {
+        "registry": "pypi",
+        "name": "langchain",
+        "version": "1.3.14",
+        "sha256": [
+          "1b6696c72ba3bbbce54d745e0180742c9f6ece8bbc59ed5a46c3e20b9a435929",
+          "4d10dbe91005952cddd56d0dc77aa108964da6bae90ab20063653957e901f782"
+        ],
+        "note": "The two hashes apps/orcel-agent/requirements.lock admits for langchain==1.3.14; the copied text comes from the wheel."
+      },
+      "licence": "MIT",
+      "notice": "apps/orcel-agent/third_party/langchain/NOTICE.md",
+      "attestation": "FA-2026-10-18",
+      "records": []
+    },
+    "apache-poi": {
+      "repo": "apache/poi",
+      "commit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/apache-poi-Apache-2.0.txt",
+      "attestation": "FA-2026-10-18",
+      "records": []
+    }
+  },
+  "files": [
+    { "path": "crates/orcel-browser-host/src/crawl_scope.rs", "donor": "firecrawl" },
+    { "path": "crates/orcel-browser-host/src/map_rank.rs", "donor": "firecrawl" },
+    { "path": "crates/orcel-browser-host/src/change_tracking.rs", "donor": "firecrawl" },
+    { "path": "apps/orcel-doc-parser/src/pdf.rs", "donor": "firecrawl" },
+    { "path": "apps/orcel-doc-parser/src/document.rs", "donor": "firecrawl" },
+
+    { "path": "crates/orcel-approval/src/presence_unix.rs", "donor": "cua-fsl" },
+    { "path": "crates/orcel-approval/src/linux.rs", "donor": "cua-fsl" },
+    { "path": "crates/orceld/src/app_api.rs", "donor": "cua-fsl" },
+    { "path": "crates/orcel-app-api-client/src/win.rs", "donor": "cua-fsl" },
+    { "path": "distribution/linux/ai.orcel.approve.policy", "donor": "cua-fsl" },
+
+    { "path": "apps/orcel-native-host/third_party/cua-driver/", "donor": "cua" },
+    { "path": "tests/native-fixtures/", "donor": "cua" },
+    { "path": "apps/orcel-contain/src/containment.rs", "donor": "cua" },
+    { "path": "apps/orcel-contain/src/linux.rs", "donor": "cua" },
+    { "path": "apps/orcel-contain/src/macos.rs", "donor": "cua" },
+    { "path": "apps/orcel-contain/src/unix.rs", "donor": "cua" },
+    { "path": "apps/orcel-contain/src/windows.rs", "donor": "cua" },
+    { "path": "crates/orcel-platform/src/peer.rs", "donor": "cua" },
+    { "path": "crates/orcel-platform/src/process.rs", "donor": "cua" },
+    { "path": "crates/orcel-provider-clipboard/src/unix.rs", "donor": "cua-driver-clipboard" },
+
+    { "path": "apps/orcel-browser-worker/src/actions/form.ts", "donor": "playwright" },
+    { "path": "apps/orcel-browser-worker/src/actions/wait.ts", "donor": "playwright" },
+    { "path": "apps/orcel-browser-worker/src/actions/upload.ts", "donor": "playwright" },
+    { "path": "apps/orcel-browser-worker/src/actions/dialogs.ts", "donor": "playwright" },
+    { "path": "apps/orcel-browser-worker/src/verify.ts", "donor": "playwright" },
+    { "path": "crates/orcel-browser-host/src/actuation.rs", "donor": "playwright" },
+    { "path": "crates/orcel-browser-host/src/worker_launch.rs", "donor": "playwright" },
+    { "path": "crates/orcel-browser-host/src/approved_folder.rs", "donor": "playwright" },
+    { "path": "crates/orcel-browser-host/src/verify.rs", "donor": "playwright" },
+
+    { "path": "apps/orcel-control-room/src/agentkit/protocol/version.ts", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src/agentkit/protocol/errors.ts", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src/agentkit/protocol/validation.ts", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src/agentkit/protocol/index.ts", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src/agentkit/client/client.ts", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src/agentkit/client/state.ts", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src/agentkit/client/index.ts", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src/agentkit/conformance.test.ts", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/client/state.js", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/protocol/errors.js", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/protocol/index.js", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/protocol/validation.js", "donor": "agent-native" },
+    { "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/protocol/version.js", "donor": "agent-native" },
+    { "path": "crates/orcel-journal/src/resume.rs", "donor": "agent-native" },
+
+    { "path": "apps/orcel-browser-worker/src/extract/chunk.ts", "donor": "browser-use" },
+    { "path": "apps/orcel-browser-worker/src/extract/chunk.test.ts", "donor": "browser-use" },
+    { "path": "apps/orcel-browser-worker/src/extract/clean.ts", "donor": "browser-use" },
+    { "path": "apps/orcel-browser-worker/src/extract/markdown.ts", "donor": "browser-use" },
+    { "path": "apps/orcel-browser-worker/src/extract/model.ts", "donor": "browser-use" },
+    { "path": "apps/orcel-browser-worker/src/webmcp/declarative.ts", "donor": "webmcp" },
+    { "path": "apps/orcel-browser-worker/src/extract/relevance.ts", "donor": "crawl4ai" },
+    { "path": "crates/orceld/src/search.rs", "donor": "agent-reach" },
+
+    { "path": "apps/orcel-doc-parser/third_party/lopdf/", "donor": "lopdf" },
+
+    { "path": "apps/orcel-agent/third_party/deer-flow/", "donor": "deer-flow" },
+    { "path": "apps/orcel-agent/orcel_agent/loop_detection.py", "donor": "deer-flow" },
+    { "path": "apps/orcel-agent/orcel_agent/todos.py", "donor": "deer-flow" },
+    { "path": "apps/orcel-agent/third_party/langchain/", "donor": "langchain" },
+    { "path": "apps/orcel-agent/orcel_agent/todos.py", "donor": "langchain" },
+    { "path": "apps/orcel-agent/orcel_agent/compaction.py", "donor": "langchain" },
+
+    { "path": "apps/orcel-doc-parser/tests/fixtures/workbooks/excel-12-sample/", "donor": "apache-poi" },
+    { "path": "apps/orcel-doc-parser/tests/fixtures/workbooks/excel-12-with-various-data/", "donor": "apache-poi" }
+  ],
+  "references": [
+    { "path": "apps/orcel-contain/Cargo.toml", "reason": "Manifest comment naming the Cua notice of the adapted containment files." },
+    { "path": "apps/orcel-contain/README.md", "reason": "Documents the Cua-adapted containment files." },
+    { "path": "apps/orcel-control-room/README.md", "reason": "Documents the agent-native client port." },
+    { "path": "apps/orcel-control-room/src-tauri/THIRD_PARTY_NOTICES.md", "reason": "The shell's third-party notice file." },
+    { "path": "apps/orcel-doc-parser/Cargo.toml", "reason": "Manifest comment naming the FD-06 port and its notice." },
+    { "path": "apps/orcel-doc-parser/README.md", "reason": "Documents the FD-06 port and the vendored lopdf." },
+    { "path": "apps/orcel-doc-parser/tests/fixtures/WORKBOOKS.md", "reason": "Source and hashes of the Apache POI workbook fixtures." },
+    { "path": "apps/orcel-agent/third_party/PROVENANCE.json", "reason": "The Orcel Agent's DeerFlow provenance record (consolidated by the deer-flow donor)." }
+  ]
+}

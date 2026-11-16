@@ -1,0 +1,16 @@
+# FD-04 allowlist (WP1-01).
+#
+# Files under crates/, apps/, packages/ or tests/ that may carry an
+# FSL-1.1-MIT (Functional Source License) marker: the existing Cua ports made
+# under FD-04 (docs/orcel/grants/2026-10-18-founder-attestation.md), with the
+# notice docs/orcel/notices/cua-FSL-1.1-MIT.txt. FSL-1.1 is a source-available
+# licence with a competing-use restriction, so these core-crate files are
+# held to an explicit, reviewed list like the FD-06 ports. Each line is one
+# repository-relative path; each must have a cua-fsl entry in
+# docs/orcel/notices/donor-provenance.json. Checked by
+# scripts/check-agpl-markers.mjs and scripts/check-donor-provenance.mjs.
+
+crates/orcel-app-api-client/src/win.rs
+crates/orcel-approval/src/linux.rs
+crates/orcel-approval/src/presence_unix.rs
+crates/orceld/src/app_api.rs

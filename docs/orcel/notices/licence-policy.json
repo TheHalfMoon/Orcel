@@ -1,0 +1,148 @@
+{
+  "schema": "orcel-licence-policy/1",
+  "packet": "WP1-01",
+  "spec": "docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md (C-15, C-16, C-20, section 3.2, WP1-01)",
+  "note": "One policy for the licence gates. allowed_licences is the WP1-01 allowlist, the same list as the root deny.toml. scan_roots are the trees the marker and provenance scans cover. Restricted-licence markers (AGPL, GPL, LGPL, MPL, SSPL, BUSL, FSL, commercial) are accepted only in the founder-decision allowlists (docs/orcel/notices/fd06-files.txt, fd04-files.txt), in isolated components, or in a marker exception below that names the file, the licence families and the reason. npm packages outside allowed_licences are accepted only by a named exception.",
+  "allowed_licences": ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "0BSD"],
+  "test_only_extra_licences": ["PSF-2.0"],
+  "test_only_roots": ["tests/"],
+  "scan_roots": ["crates/", "apps/", "packages/", "tests/"],
+  "restricted_allowlists": {
+    "FD-06": { "families": ["AGPL"], "list": "docs/orcel/notices/fd06-files.txt" },
+    "FD-04": { "families": ["FSL"], "list": "docs/orcel/notices/fd04-files.txt" }
+  },
+  "isolated_components": [],
+  "isolated_components_note": "An isolated component is a locally operated unit in its own directory (its own Cargo workspace or npm package), never a member of the root Cargo workspace or the root npm workspaces, and never depended on by a crates/* unit (crates/orceld/tests/dependency_direction.rs). Restricted-licence code that cannot enter the core (C-15, C-17; founder decision 2026-11-17) may live only there. Entry shape: {\"path\": \"apps/<name>/\", \"families\": [\"AGPL\"], \"attestation\": \"<id in donor-provenance.json attestations>\", \"reason\": \"...\"}. Its donor files still need provenance entries.",
+  "marker_exceptions": [
+    {
+      "path": "crates/orceld/tests/dependency_direction.rs",
+      "families": ["AGPL", "BUSL", "GPL", "LGPL", "MPL", "SSPL"],
+      "reason": "The section 3.2 gate's own test: licence ids it refuses and its planted AGPL dependency vector; no licensed code."
+    },
+    {
+      "path": "apps/orcel-doc-parser/Cargo.toml",
+      "families": ["AGPL"],
+      "reason": "Comment naming the FD-06 port and its notice; no AGPL code."
+    },
+    {
+      "path": "apps/orcel-doc-parser/README.md",
+      "families": ["AGPL"],
+      "reason": "Documents the FD-06 port and names its notice."
+    },
+    {
+      "path": "apps/orcel-mcp/src/p20-architecture.test.ts",
+      "families": ["AGPL"],
+      "reason": "Test that checks the P20 donor ledger names each donor's licence (Firecrawl's among them); no AGPL code."
+    },
+    {
+      "path": "apps/orcel-native-host/third_party/cua-driver/Skills/cua-driver/VISUAL.md",
+      "families": ["AGPL"],
+      "reason": "Vendored Cua (MIT) documentation that names the licence of the OmniParser model artifact, which Orcel does not ship."
+    },
+    {
+      "path": "apps/orcel-agent/THIRD_PARTY_LICENSES.md",
+      "families": ["MPL"],
+      "reason": "Licence inventory of the Orcel Agent's Python dependencies (certifi, orjson: recorded exceptions in that app, not core)."
+    },
+    {
+      "path": "apps/orcel-agent/requirements-notes.md",
+      "families": ["MPL"],
+      "reason": "Same dependency licence record as THIRD_PARTY_LICENSES.md."
+    },
+    {
+      "path": "apps/orcel-agent/tools/licenses.py",
+      "families": ["MPL"],
+      "reason": "The Orcel Agent's own Python licence check, which names its recorded MPL-2.0 exceptions."
+    },
+    {
+      "path": "apps/orcel-approval-helper-linux/deny.toml",
+      "families": ["LGPL"],
+      "reason": "Comment: the GTK 4 C libraries are the system's, linked dynamically, not in the crate graph."
+    },
+    {
+      "path": "apps/orcel-native-host/deny.toml",
+      "families": ["MPL"],
+      "reason": "The native host's own cargo-deny allow list (separate workspace, not a core crate)."
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/deny.toml",
+      "families": ["MPL"],
+      "reason": "The Control Room shell's own cargo-deny allow list (separate workspace, not a core crate)."
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/THIRD_PARTY_NOTICES.md",
+      "families": ["FSL", "GPL", "LGPL", "MPL"],
+      "reason": "The shell's third-party notice file: reproduces the FD-04 Cua FSL notice and lists dependency licences."
+    },
+    {
+      "path": "tests/benchmarks/README.md",
+      "families": ["FSL"],
+      "reason": "Describes the pinned cua-driver-bench taskpack (FD-04); the taskpack is fetched at its pin, not copied."
+    },
+    {
+      "path": "tests/benchmarks/taskpacks/cua-driver-bench.lock.json",
+      "families": ["FSL"],
+      "reason": "Pin record of the cua-driver-bench taskpack, which names its licence."
+    },
+    {
+      "path": "tests/benchmarks/tests/test_taskpack.py",
+      "families": ["FSL"],
+      "reason": "Test that checks the taskpack pin names its licence."
+    }
+  ],
+  "npm_exceptions": [
+    {
+      "lockfile": "apps/web/package-lock.json",
+      "licence": "LGPL-3.0-or-later",
+      "packages": [
+        "@img/sharp-libvips-darwin-arm64",
+        "@img/sharp-libvips-darwin-x64",
+        "@img/sharp-libvips-linux-arm",
+        "@img/sharp-libvips-linux-arm64",
+        "@img/sharp-libvips-linux-ppc64",
+        "@img/sharp-libvips-linux-riscv64",
+        "@img/sharp-libvips-linux-s390x",
+        "@img/sharp-libvips-linux-x64",
+        "@img/sharp-libvips-linuxmusl-arm64",
+        "@img/sharp-libvips-linuxmusl-x64"
+      ],
+      "reason": "Optional prebuilt libvips binaries of sharp, which Next.js uses for image optimization when building the website (apps/web). Website build tooling only; nothing in crates/ or the shipped runtime links them."
+    },
+    {
+      "lockfile": "apps/web/package-lock.json",
+      "licence": "Apache-2.0 AND LGPL-3.0-or-later",
+      "packages": ["@img/sharp-win32-arm64", "@img/sharp-win32-ia32", "@img/sharp-win32-x64"],
+      "reason": "Optional prebuilt sharp binaries for Windows that bundle libvips; website build tooling only, as above."
+    },
+    {
+      "lockfile": "apps/web/package-lock.json",
+      "licence": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
+      "packages": ["@img/sharp-wasm32"],
+      "reason": "Optional WebAssembly build of sharp with libvips; website build tooling only, as above."
+    },
+    {
+      "lockfile": "apps/web/package-lock.json",
+      "licence": "CC-BY-4.0",
+      "packages": ["caniuse-lite"],
+      "reason": "Browser-support data used by the website's build tooling (attribution licence on data, not code)."
+    },
+    {
+      "lockfile": "tests/native-fixtures/apps/cross-platform/electron/package-lock.json",
+      "licence": "Python-2.0",
+      "packages": ["argparse"],
+      "reason": "Test fixture build tooling (dev only); the PSF-style licence of the argparse port, the test-only PSF-2.0 allowance under its older SPDX id."
+    },
+    {
+      "lockfile": "tests/native-fixtures/apps/cross-platform/electron/package-lock.json",
+      "licence": "BlueOak-1.0.0",
+      "packages": ["jackspeak", "minimatch", "minipass", "minipass-flush", "package-json-from-dist", "path-scurry", "sax"],
+      "reason": "Test fixture build tooling (dev only, electron-builder's dependencies); Blue Oak Model License 1.0.0 is permissive."
+    },
+    {
+      "lockfile": "tests/native-fixtures/apps/cross-platform/electron/package-lock.json",
+      "licence": "WTFPL",
+      "packages": ["truncate-utf8-bytes"],
+      "reason": "Test fixture build tooling (dev only, electron-builder's dependency); permissive."
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+# cargo-deny configuration for the main workspace (crates/*), WP1-01 of
+# docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md.
+# CI runs `cargo deny check licenses bans sources` (job licence-gates, all
+# three OS legs). It mirrors the per-app files (apps/*/deny.toml); the same
+# allowlist is applied per crate by crates/orceld/tests/dependency_direction.rs
+# (section 3.2 rule 5) and to npm lockfiles by scripts/check-npm-licenses.mjs.
+#
+# Every crate in the resolved graph (all targets, all platforms) must carry a
+# license on the allow list below, or a named exception. Everything else is
+# refused, so AGPL-*, GPL-*, LGPL-*, SSPL-*, BUSL-*, FSL-* and unknown or
+# missing licenses fail. An `OR` expression passes when one branch is allowed
+# (r-efi's "MIT OR Apache-2.0 OR LGPL-2.1-or-later" is taken as MIT).
+# MPL-2.0 is admitted only by a named exception; there is none today.
+[licenses]
+confidence-threshold = 0.93
+allow = [
+  "Apache-2.0",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "0BSD",
+]
+# The allow list is a policy, not an inventory: an entry no crate uses today
+# is not an error.
+unused-allowed-license = "allow"
+exceptions = [
+  # Boost Software License 1.0 (permissive; not the Business Source License).
+  # clipboard-win and its error-code reach orcel-provider-clipboard through
+  # arboard on Windows only.
+  { crate = "clipboard-win", allow = ["BSL-1.0"] },
+  { crate = "error-code", allow = ["BSL-1.0"] },
+]
+
+[licenses.private]
+# Workspace crates are checked like any other (all are Apache-2.0).
+ignore = false
+
+[bans]
+# Duplicate versions are reported, not refused (the per-app files do the same).
+multiple-versions = "warn"
+# Workspace crates name each other by path without a version, and they are
+# not marked `publish = false`, so cargo-deny reads every such edge as a
+# wildcard (allow-wildcard-paths covers private crates only). Wildcard
+# version requirements on registry crates are refused instead by
+# crates/orceld/tests/dependency_direction.rs.
+wildcards = "allow"
+deny = [
+  # Section 3.2 rule 4: the separate workspaces (apps/orcel-contain,
+  # apps/orcel-doc-parser, apps/orcel-native-host, third_party/obscura) stay
+  # separate, so tokio and V8 never enter orceld's lockfile (AD-16).
+  { crate = "tokio", reason = "AD-16: tokio stays in the separate workspaces" },
+  { crate = "v8", reason = "AD-16: V8 stays in the separate workspaces" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

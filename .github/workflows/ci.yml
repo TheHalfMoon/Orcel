@@ -1863,6 +1863,48 @@ jobs:
       - name: Audit locked Rust dependencies
         run: cargo audit
 
+  # WP1-01 (UNIFIED_INTEGRATION_SPEC.md C-15, C-16, C-20, section 3.2): licence
+  # and provenance gates on every OS leg (cfg dependencies differ per OS).
+  # The section 3.2 dependency-direction test
+  # (crates/orceld/tests/dependency_direction.rs) runs in the Rust job's
+  # `cargo test --workspace` on the same three OSes.
+  licence-gates:
+    name: Licence gates / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        id: licence-gates-deny-cache
+        with:
+          path: ~/.cargo/bin/cargo-deny*
+          key: licence-gates-deny-0.20.2-${{ runner.os }}
+      - name: Install cargo-deny
+        if: steps.licence-gates-deny-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked --version 0.20.2
+      - name: Licence, ban and source check of the main workspace graph
+        run: cargo deny check licenses bans sources
+      - name: Licence gate negative tests (planted AGPL file, missing provenance, AGPL dependency)
+        env:
+          ORCEL_REQUIRE_CARGO_DENY: "1"
+        run: node --test scripts/check-agpl-markers.test.mjs scripts/check-npm-licenses.test.mjs scripts/check-donor-provenance.test.mjs scripts/check-cargo-deny-policy.test.mjs
+      - name: No AGPL or other restricted-licence marker outside the reviewed allowlists
+        run: node scripts/check-agpl-markers.mjs
+      - name: npm lockfile licences
+        run: node scripts/check-npm-licenses.mjs
+      - name: Every donor file has pinned, attested provenance
+        run: node scripts/check-donor-provenance.mjs
+
   governance:
     name: Governance
     runs-on: ubuntu-latest

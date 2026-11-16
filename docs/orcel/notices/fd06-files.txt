@@ -1,0 +1,20 @@
+# FD-06 allowlist (WP1-01; UNIFIED_INTEGRATION_SPEC.md C-16).
+#
+# Files under crates/, apps/, packages/ or tests/ that may carry an AGPL
+# marker ("GNU AFFERO", "AGPL", "SPDX-License-Identifier: AGPL..."): the
+# existing Firecrawl ports made under the FD-06 founder attestation
+# (docs/orcel/grants/2026-10-13-founder-source-authorization.md and
+# docs/orcel/grants/2026-10-18-founder-attestation.md), with the notice
+# docs/orcel/notices/firecrawl-AGPL-3.0.txt. Each line is one repository-
+# relative path; each must have a firecrawl entry in
+# docs/orcel/notices/donor-provenance.json. C-15: no new AGPL code is added
+# here. New AGPL code goes only into an isolated component listed in
+# docs/orcel/notices/licence-policy.json, never into a core crate.
+# Checked by scripts/check-agpl-markers.mjs and
+# scripts/check-donor-provenance.mjs.
+
+crates/orcel-browser-host/src/change_tracking.rs
+crates/orcel-browser-host/src/crawl_scope.rs
+crates/orcel-browser-host/src/map_rank.rs
+apps/orcel-doc-parser/src/document.rs
+apps/orcel-doc-parser/src/pdf.rs
