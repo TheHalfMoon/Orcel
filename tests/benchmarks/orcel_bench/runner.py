@@ -22,8 +22,10 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import math
+import os
 import platform
 import re
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -230,6 +232,48 @@ def machine() -> dict[str, Any]:
     return {"os": os_name, "os_version": release[:64], "arch": arch}
 
 
+#: A report token as the schema's ``$defs/token`` allows.
+_TOKEN = re.compile(
+    r"^(?!(?:sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|xox[a-z]-|AKIA|ASIA))[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+)
+#: The name the BM-02 Tier A test passes the deployment target orceld was
+#: built for under (see crates/orceld/tests/bm02_orcel_benchmark.rs).
+DEPLOYMENT_TARGET_ENV = "ORCEL_BM02_DEPLOYMENT_TARGET"
+
+
+def _report_token(value: Optional[str]) -> str:
+    value = (value or "").strip()
+    return value if _TOKEN.fullmatch(value) else "unrecorded"
+
+
+def _macos_os_build() -> Optional[str]:
+    try:
+        done = subprocess.run(
+            ["/usr/bin/sw_vers", "-buildVersion"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def macos_build_evidence() -> dict[str, str]:
+    """MAC-M1-09: on macOS, the OS build and the deployment target the
+    measured binaries were built for; nothing on other OSes. A value that
+    cannot be read, or is not a short token, is ``unrecorded``, never guessed.
+    """
+    if platform.system() != "Darwin":
+        return {}
+    return {
+        "os_build": _report_token(_macos_os_build()),
+        "deployment_target": _report_token(os.environ.get(DEPLOYMENT_TARGET_ENV)),
+    }
+
+
 def report(orcel_commit: str, rows: list[dict[str, Any]], planner: Optional[dict[str, str]] = None) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{40}", orcel_commit):
         raise ValueError("orcel_commit must be a full lowercase commit id")
@@ -237,7 +281,7 @@ def report(orcel_commit: str, rows: list[dict[str, Any]], planner: Optional[dict
         "schema": SCHEMA,
         "orcel_commit": orcel_commit,
         "suite": "journeys",
-        "machine": machine(),
+        "machine": {**machine(), **macos_build_evidence()},
         "planner": dict(planner or PLANNER),
         "rows": rows,
     }

@@ -42,6 +42,14 @@
         "os": { "type": "string", "enum": ["windows", "macos", "linux"] },
         "os_version": { "$ref": "#/$defs/token" },
         "arch": { "type": "string", "enum": ["x86_64", "arm64"] },
+        "os_build": {
+          "description": "MAC-M1-09: the OS build identifier (macOS: sw_vers -buildVersion, e.g. 25G123), or unrecorded when it could not be read. Optional; BM-02 Tier A and Tier B reports carry it on macOS.",
+          "$ref": "#/$defs/token"
+        },
+        "deployment_target": {
+          "description": "MAC-M1-09: the minimum OS version the measured binaries were built for (macOS: MACOSX_DEPLOYMENT_TARGET at build time, e.g. 15.0), rustc-default when the build left it unset, or unrecorded. Optional; BM-02 Tier A and Tier B reports carry it on macOS.",
+          "$ref": "#/$defs/token"
+        },
         "cpu": {
           "description": "Short CPU model name, at most 4 words (e.g. Apple M2, AMD Ryzen 9 7950X, Intel i7-1185G7); no word may begin with a credential prefix.",
           "type": "string",
