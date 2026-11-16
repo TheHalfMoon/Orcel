@@ -177,7 +177,7 @@ test("P20 subsystem ownership and sequence have no gap", () => {
   assert.equal(plan.includes("SG-000108"), false);
 });
 
-test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 grain", () => {
+test("SG-000094 and SG-000095 are closed and SG-000096 and SG-000097 are the only active P20 grains", () => {
   const specDir = join(repo, ".specgrain", "specs");
   const specs = readdirSync(specDir).filter((name) => /^SG-\d{6}\.json$/.test(name));
   const open: string[] = [];
@@ -200,8 +200,45 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // workbook sources in the report task) ran beside them by founder go-ahead
   // (issue #760) and is closed. SG-000119 (ORCEL-CR, the read-only Tauri 2
   // Control Room skeleton on Windows) runs beside them by founder decision
-  // of 2026-11-16 (issue #773); no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000119", "SG-000127", "SG-000128"]);
+  // of 2026-11-16 (issue #773). SG-000131, SG-000132, SG-000133 and
+  // SG-000134 (ORCEL-UP, the unified platform's Wave 1) and SG-000097
+  // (DESKAL-P20, full filesystem access, out of the P20 sequential order) run
+  // beside them by founder decision of 2026-11-17, given in the Claude Code
+  // session with no tracking issue; no other grain may be open, and
+  // SG-000101 and SG-000102 stay reserved.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000097", "SG-000119", "SG-000127", "SG-000128", "SG-000131", "SG-000132", "SG-000133", "SG-000134"]);
+  // The unified-platform activation grants nothing: every grain is a GRAIN
+  // copied from its prep draft without the draft note, its activation delta
+  // is "None.", and no tracking issue is claimed.
+  const unified: Record<string, { program: string; dependencies: string[]; deltaKeys: string[] }> = {
+    "SG-000097": { program: "DESKAL-P20", dependencies: ["SG-000132", "SG-000131"], deltaKeys: ["activation", "filesystem"] },
+    "SG-000131": { program: "ORCEL-UP", dependencies: ["SG-000093"], deltaKeys: ["activation", "audit", "ci", "contracts"] },
+    "SG-000132": { program: "ORCEL-UP", dependencies: ["SG-000019", "SG-000093", "SG-000095", "SG-000131"], deltaKeys: ["activation", "full_control", "service"] },
+    "SG-000133": { program: "ORCEL-UP", dependencies: ["SG-000131", "SG-000040", "SG-000064", "SG-000108"], deltaKeys: ["activation", "component", "network_transport", "web"] },
+    "SG-000134": { program: "ORCEL-UP", dependencies: ["SG-000131", "SG-000133", "SG-000108"], deltaKeys: ["activation", "jobs"] }
+  };
+  for (const [id, expected] of Object.entries(unified)) {
+    const spec = readJson<Record<string, unknown> & {
+      id: string;
+      program: string;
+      state: string;
+      base: string;
+      planning_issue: number | null;
+      dependencies: string[];
+      authority_delta: Record<string, string>;
+      activation_note: string;
+    }>(`.specgrain/specs/${id}.json`);
+    assert.equal(spec.id, id);
+    assert.equal(spec.program, expected.program, id);
+    assert.equal(spec.state, "GRAIN", id);
+    assert.equal(spec.base, "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095", id);
+    assert.equal(spec.planning_issue, null, id);
+    assert.deepEqual(spec.dependencies, expected.dependencies, id);
+    assert.equal("draft_note" in spec, false, id);
+    assert.deepEqual(Object.keys(spec.authority_delta).sort(), expected.deltaKeys, id);
+    assert.equal(spec.authority_delta.activation, "None.", id);
+    assert.match(spec.activation_note, /founder's go-ahead of 2026-11-17, given in the Claude Code session/, id);
+  }
   const sg130 = readJson<{
     program: string;
     state: string;
@@ -530,13 +567,17 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   assert.equal(sg96.program, "DESKAL-P20");
   assert.equal(sg96.state, "GRAIN");
   assert.equal(sg96.base, "7e0f93d11e9be27903d539d2f45bb2aba5fc56c0");
-  assert.deepEqual(sg96.dependencies, ["SG-000095"]);
+  // The 2026-11-17 continuation (prep/unified-grains/SG-000096.amendment.draft.json)
+  // adds the authority service and the contracts as dependencies.
+  assert.deepEqual(sg96.dependencies, ["SG-000095", "SG-000132", "SG-000131"]);
   assert.equal(sg96.planning_issue, 260);
   assert.match(sg96.authority_delta.activation, /^None\./);
   assert.match(sg96.authority_delta.safe, /Unchanged:/);
   assert.ok(sg96.scope.exclude.some(item => item.includes("Full Admin")));
 
-  for (let n = 97; n <= 107; n += 1) {
+  // SG-000097 opened out of order by founder decision FD-UP-4 of 2026-11-17;
+  // SG-000098 to SG-000107, SG-000101 and SG-000102 among them, stay reserved.
+  for (let n = 98; n <= 107; n += 1) {
     const id = `SG-${String(n).padStart(6, "0")}.json`;
     assert.equal(specs.includes(id), false, id);
   }
