@@ -194,6 +194,29 @@ fn the_manifest_pins_tauri_lean_and_registers_no_plugin() {
             "tauri = { version = \"=2.12.5\", default-features = false, features = [\"wry\", \"custom-protocol\", \"test\"] }"
         )]
     );
+    // The native tests' hooks are a feature that is never a default; only
+    // the native test target requires it.
+    assert!(manifest.contains("[features]\ndefault = []\ntest-hooks = []\n"));
+    assert!(manifest.contains("harness = false\nrequired-features = [\"test-hooks\"]\n"));
+    let shell = read("src/shell.rs");
+    let lines: Vec<&str> = shell.lines().map(str::trim).collect();
+    for (index, line) in lines.iter().enumerate() {
+        let hook = line.starts_with("pub after_apply")
+            || line.starts_with("pub after_show")
+            || line.starts_with("pub type AfterApply")
+            || line.starts_with("pub type AfterShow")
+            || line.contains("hooks.after_apply")
+            || line.contains("hooks.after_show")
+            || line.contains("after_show.take()");
+        if hook {
+            assert_eq!(
+                lines[index - 1],
+                "#[cfg(feature = \"test-hooks\")]",
+                "src/shell.rs: {line} must be compiled only with test-hooks"
+            );
+        }
+    }
+    assert!(read("src/main.rs").contains("Hooks::default()"));
     // No plugin is registered anywhere in the shell's source.
     for file in [
         "src/shell.rs",

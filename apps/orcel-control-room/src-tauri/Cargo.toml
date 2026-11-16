@@ -32,17 +32,30 @@ path = "src/main.rs"
 
 # The native Windows tests open the real window, so each scenario runs in its
 # own process on the main thread (tauri's event loop); the test binary is its
-# own driver.
+# own driver. It needs the test-hooks feature, so a plain `cargo test` skips
+# it; CI runs it with `--features test-hooks --test native_shell`.
 [[test]]
 name = "native_shell"
 path = "tests/native_shell.rs"
 harness = false
+required-features = ["test-hooks"]
 
-# SG-000119 A3: the shell against a live orceld (opt-in, see the file).
+# test-hooks compiles the native tests' callbacks (after the settings are
+# applied, after the window is shown) into the library. Never a default:
+# without it the Hooks struct has no field and no call site exists, so the
+# shipped binary cannot carry a hook.
+[features]
+default = []
+test-hooks = []
+
+# SG-000119 A3: the shell against a live orceld (opt-in, see the file). It
+# uses the after-show hook, so it needs test-hooks too:
+# `SG119_LIVE_ORCELD=<orceld.exe> cargo test --features test-hooks --test native_live`.
 [[test]]
 name = "native_live"
 path = "tests/native_live.rs"
 harness = false
+required-features = ["test-hooks"]
 
 # Exact pins (founder decision 3). tauri's default features are off; only the
 # wry runtime and custom-protocol (embedded assets) are on. Off: compression,
