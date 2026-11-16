@@ -3330,6 +3330,10 @@ fn real_path(path: &Path) -> Result<PathBuf, ProviderError> {
         .map_err(|error| ProviderError::io("resolve canonical download path", error))
 }
 
+/// Text key for a path. It feeds `download_root_identity` on every OS (that
+/// digest is unchanged) and the Windows containment test. Unix containment
+/// never uses it, because on Unix `\` is an ordinary file name byte rather
+/// than a separator.
 fn path_key(path: &Path) -> String {
     let text = path.to_string_lossy().replace('/', "\\");
     let trimmed = text.trim_end_matches('\\');
@@ -3340,14 +3344,59 @@ fn path_key(path: &Path) -> String {
     }
 }
 
+/// Windows containment decision over two `path_key` values: both `/` and `\`
+/// are boundaries (the key folds them to `\`) and the key ignores case, as
+/// NTFS does. This is exactly the comparison every OS used before MAC-M1-06.
+#[cfg_attr(unix, allow(dead_code))]
+fn windows_key_is_within(root_key: &str, candidate_key: &str) -> bool {
+    candidate_key == root_key || candidate_key.starts_with(&(root_key.to_owned() + "\\"))
+}
+
+/// Unix containment decision over raw path bytes. Only `/` separates
+/// components and components compare byte for byte, so a sibling directory
+/// literally named `ws\x`, or a non-UTF-8 name that renders the same as the
+/// root, is never inside `ws`. Empty and `.` components are skipped, as
+/// `Path::components` does on Unix; an absolute path is never inside a
+/// relative one or the reverse. Inputs must be canonical (both callers pass
+/// `std::fs::canonicalize` results); `..` is never collapsed, so a path
+/// with a `..` component on either side is refused outright.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn unix_bytes_are_within(root: &[u8], candidate: &[u8]) -> bool {
+    fn components(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+        path.split(|byte| *byte == b'/')
+            .filter(|part| !part.is_empty() && *part != b".")
+    }
+    if root.starts_with(b"/") != candidate.starts_with(b"/") {
+        return false;
+    }
+    if components(root)
+        .chain(components(candidate))
+        .any(|part| part == b"..")
+    {
+        return false;
+    }
+    let mut candidate_parts = components(candidate);
+    components(root).all(|part| candidate_parts.next() == Some(part))
+}
+
 /// Canonical containment test. Both sides are canonicalized through real
 /// filesystem identity first, so reparse points, junctions, and symlinks are
 /// already resolved when the comparison runs. Naive string prefix comparison
-/// is never trusted on its own: the separator boundary is part of the key.
+/// is never trusted on its own: the separator boundary is part of the
+/// decision, and each OS family uses only its own separators.
 pub fn path_is_within(root: &Path, candidate: &Path) -> bool {
-    let root_key = path_key(root);
-    let candidate_key = path_key(candidate);
-    candidate_key == root_key || candidate_key.starts_with(&(root_key + "\\"))
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        unix_bytes_are_within(
+            root.as_os_str().as_bytes(),
+            candidate.as_os_str().as_bytes(),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        windows_key_is_within(&path_key(root), &path_key(candidate))
+    }
 }
 
 /// Resolve the approved download root from the policy-provided workspace root.
@@ -6224,6 +6273,103 @@ mod tests {
         assert_eq!(escaped.code, FailureCode::PathEscape);
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(outside);
+    }
+
+    /// Pins the Windows containment decision exactly as it was before
+    /// MAC-M1-06, on every host: either separator is a boundary, a trailing
+    /// separator is ignored, and a bare string prefix is not containment.
+    #[test]
+    fn windows_containment_decision_is_unchanged() {
+        let key = |text: &str| {
+            text.replace('/', "\\")
+                .trim_end_matches('\\')
+                .to_lowercase()
+        };
+        let within =
+            |root: &str, candidate: &str| windows_key_is_within(&key(root), &key(candidate));
+        assert!(within(r"C:\ws", r"C:\ws"));
+        assert!(within("C:\\ws\\", "C:\\ws"));
+        assert!(within(r"C:\ws", r"C:\ws\a\b.txt"));
+        assert!(within(r"C:\ws", "C:/ws/a/b.txt"));
+        assert!(within(r"C:\WS", r"c:\ws\A"));
+        assert!(within("C:\\", "C:\\anything"));
+        assert!(!within(r"C:\ws", r"C:\wsx"));
+        assert!(!within(r"C:\ws", r"C:\ws-other\a"));
+        assert!(!within(r"C:\ws\a", r"C:\ws"));
+        assert!(!within(r"C:\ws", r"D:\ws\a"));
+        // On Windows `\` is a separator, so `ws\x` really is inside `ws`.
+        assert!(within(r"C:\ws", r"C:\ws\x"));
+        if cfg!(windows) {
+            let root = Path::new(r"C:\Users\Example\ws");
+            assert!(path_is_within(root, Path::new(r"C:\Users\Example\ws\x")));
+            assert!(path_is_within(root, Path::new("C:/users/example/WS/x")));
+            assert!(!path_is_within(root, Path::new(r"C:\Users\Example\wsx")));
+            assert_eq!(
+                download_root_identity(root),
+                sha256_hex(br"c:\users\example\ws"),
+                "the Windows root identity digest must not change"
+            );
+        }
+    }
+
+    /// The Unix containment decision, on every host: only `/` separates, so
+    /// a name containing `\` is one component and never a child of a prefix.
+    #[test]
+    fn unix_containment_decision_treats_backslash_as_a_name_byte() {
+        let within = |root: &[u8], candidate: &[u8]| unix_bytes_are_within(root, candidate);
+        assert!(within(b"/tmp/ws", b"/tmp/ws"));
+        assert!(within(b"/tmp/ws/", b"/tmp/ws"));
+        assert!(within(b"/tmp/ws", b"/tmp/ws/"));
+        assert!(within(b"/tmp/ws", b"/tmp/ws/a/b.txt"));
+        assert!(within(b"/tmp/ws", b"/tmp//ws/./a"));
+        assert!(within(b"/", b"/anything"));
+        assert!(within(b"/", b"/"));
+        assert!(!within(b"/tmp/ws", br"/tmp/ws\x"));
+        assert!(!within(b"/tmp/ws", br"/tmp/ws\x/secret.txt"));
+        assert!(!within(b"/tmp/ws\\", b"/tmp/ws/a"));
+        assert!(!within(b"/tmp/ws", b"/tmp/wsx"));
+        assert!(!within(b"/tmp/ws", b"/tmp/WS/a"));
+        assert!(!within(b"/tmp/ws/a", b"/tmp/ws"));
+        assert!(!within(b"/tmp/ws", b"tmp/ws/a"));
+        assert!(!within(b"tmp/ws", b"/tmp/ws/a"));
+        // `..` is never collapsed: a non-canonical path is refused on either side.
+        assert!(!within(b"/tmp/ws", b"/tmp/ws/../outside"));
+        assert!(!within(b"/tmp/ws", b"/tmp/ws/a/../../outside/x"));
+        assert!(!within(b"/tmp/ws/..", b"/tmp/ws/../x"));
+        assert!(!within(b"/tmp/ws", b"/tmp/ws/.."));
+        assert!(within(b"/tmp/ws", b"/tmp/ws/..x/a"));
+        // Distinct non-UTF-8 names stay distinct (a lossy text key would
+        // render both as U+FFFD and call one inside the other).
+        assert!(!within(b"/tmp/ws\xff", b"/tmp/ws\xfe/a"));
+        assert!(within(b"/tmp/ws\xff", b"/tmp/ws\xff/a"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_backslash_sibling_is_not_inside_the_root() {
+        let parent = temp_download_root("backslash");
+        let resolved_parent = resolve_download_root(&parent).expect("parent");
+        let root = resolved_parent.join("ws");
+        let sibling = resolved_parent.join("ws\\x");
+        std::fs::create_dir(&root).expect("root");
+        std::fs::create_dir(&sibling).expect("backslash sibling");
+        std::fs::write(sibling.join("secret.txt"), b"outside").expect("secret");
+        let resolved = resolve_download_root(&root).expect("root");
+        let sibling_real = std::fs::canonicalize(&sibling).expect("sibling");
+        assert!(!path_is_within(&resolved, &sibling_real));
+        assert!(!path_is_within(
+            &resolved,
+            &std::fs::canonicalize(sibling.join("secret.txt")).expect("secret")
+        ));
+        assert!(path_is_within(&resolved, &resolved.join("inside.txt")));
+        // End to end: a symlink inside the root that points at the sibling
+        // must not let a destination escape. Before MAC-M1-06 the sibling
+        // keyed as `<parent>\ws\x`, which passed as inside `<parent>\ws`.
+        std::os::unix::fs::symlink(&sibling, resolved.join("escape")).expect("symlink");
+        let escaped = resolve_download_destination(&resolved, "escape/notes.txt")
+            .expect_err("a symlink to a backslash sibling must not extend the root");
+        assert_eq!(escaped.code, FailureCode::PathEscape);
+        let _ = std::fs::remove_dir_all(parent);
     }
 
     #[test]
