@@ -1,43 +1,251 @@
+/* SG-000119 A4: the Control Room view. System fonts, no remote content,
+   light and dark from the system, forced colors respected. */
+
 :root {
   color-scheme: light dark;
   --background: #f6f4f1;
+  --surface: #ffffff;
   --text: #1f1a16;
   --muted: #5c544d;
+  --line: #d9d3cc;
+  --good: #1d6b3a;
+  --bad: #9a2a1c;
+  --withheld: #7a4b00;
+  --focus: #1f5fbf;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #16120f;
+    --surface: #201b17;
     --text: #efebe6;
     --muted: #b3aaa1;
+    --line: #3a332d;
+    --good: #7fd39b;
+    --bad: #ff9c8c;
+    --withheld: #f2c46d;
+    --focus: #8ab4ff;
   }
+}
+
+* {
+  box-sizing: border-box;
 }
 
 html,
 body {
   margin: 0;
-  height: 100%;
   background: var(--background);
   color: var(--text);
   font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
 }
 
+.top,
 main {
-  max-width: 40rem;
-  padding: 2.5rem 2rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.top {
+  padding-top: 1.5rem;
 }
 
 h1 {
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.5rem;
   font-size: 1.5rem;
   font-weight: 600;
 }
 
-.state {
-  margin: 0 0 1rem;
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
   font-weight: 600;
 }
 
-p {
+.connection {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.scope,
+.hint,
+.note {
+  margin: 0 0 0.75rem;
   color: var(--muted);
+}
+
+main {
+  padding-bottom: 2rem;
+}
+
+main[hidden] {
+  display: none;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 1rem;
+}
+
+.panel {
+  margin: 1rem 0 0;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.75rem;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 0.75rem;
+}
+
+caption {
+  text-align: left;
+  color: var(--muted);
+  padding-bottom: 0.25rem;
+}
+
+th,
+td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.3rem 0.5rem 0.3rem 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+thead th {
+  font-weight: 600;
+}
+
+code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.available {
+  color: var(--good);
+}
+
+.unavailable,
+.refusal {
+  color: var(--bad);
+}
+
+.withheld {
+  color: var(--withheld);
+  font-style: italic;
+}
+
+.tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tasks > li {
+  border-top: 1px solid var(--line);
+}
+
+summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding: 0.5rem 0;
+  cursor: default;
+}
+
+.task-state {
+  font-weight: 600;
+  min-width: 9rem;
+}
+
+.task-meta,
+.task-time {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.task-detail {
+  padding: 0 0 0.75rem 1.25rem;
+}
+
+.timeline {
+  max-height: 28rem;
+  overflow: auto;
+}
+
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.events li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.75rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.event-time,
+.event-seq {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-text {
+  overflow-wrap: anywhere;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  .panel,
+  th,
+  td,
+  .tasks > li,
+  .events li {
+    border-color: CanvasText;
+  }
+
+  .available,
+  .unavailable,
+  .refusal,
+  .withheld,
+  .note,
+  .scope,
+  .hint {
+    color: CanvasText;
+  }
+
+  :focus-visible {
+    outline-color: Highlight;
+  }
 }

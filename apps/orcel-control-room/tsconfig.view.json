@@ -1,0 +1,14 @@
+{
+  "//": "SG-000119 A4: the Control Room view for the Tauri shell. `npm run build:view` compiles src/view/main.ts and the modules it imports (the headless reducer included) into src-tauri/ui/js, which the shell embeds at compile time (frontendDist). The output is kept in the repository; src/view/build.test.ts fails if it differs from this compile.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "src-tauri/ui/js",
+    "rootDir": "src",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "newLine": "lf",
+    "sourceMap": false,
+    "declaration": false
+  },
+  "files": ["src/view/main.ts"],
+  "include": []
+}

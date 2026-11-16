@@ -15,7 +15,8 @@ use tauri::Url;
 pub const ASSET_SCHEME: &str = "https";
 /// The asset origin's host (Windows, `useHttpsScheme: true`).
 pub const ASSET_HOST: &str = "tauri.localhost";
-/// The page the shell loads, and reloads once its settings are asserted.
+/// The view: the page the shell navigates to once its settings are asserted
+/// (the window first loads `start.html`, which runs no script).
 pub const ASSET_PAGE: &str = "https://tauri.localhost/index.html";
 
 /// Whether `url` is on the exact asset origin.

@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:view": "tsc -p tsconfig.view.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsc -p tsconfig.json && node --test --test-concurrency=1 \"dist/**/*.test.js\""
   },

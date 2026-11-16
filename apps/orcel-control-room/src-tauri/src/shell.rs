@@ -281,8 +281,9 @@ fn harden(
                     if !RELOAD_REQUESTED.load(Ordering::SeqCst) || SHOWN.load(Ordering::SeqCst) {
                         return Ok(());
                     }
-                    // Tauri's own first navigation is to the origin's root;
-                    // the reload is to the page itself. Its event may arrive
+                    // Tauri's own first navigation is to `start.html` (no
+                    // script; SG-000119 A4); the reload is to the view,
+                    // `index.html`, the only page with script. Its event may arrive
                     // after the reload was asked for, so the reload is
                     // recognised by its URI, and the latest one counts.
                     let mut uri = PWSTR::null();

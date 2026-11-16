@@ -1,0 +1,177 @@
+// SG-000119 slice A4: the Control Room view's model of what the shell's five
+// commands answer (docs/orcel/implementation-readiness/prep/SG-000119.md,
+// "What the web view can call"). Every value here was already shaped in Rust
+// by the A1 sanitiser (crates/orcel-app-api-client/src/sanitize); the view
+// treats it as untrusted all the same: it reads only the fields named below,
+// replaces control and format characters again, bounds every string, and
+// renders text only (see dom.ts). Nothing here reads a file, opens a path,
+// resolves a location or acts on orceld.
+// ---------------------------------------------------------------------------
+// Bounds
+/** The longest text the view shows for any one value, in code points. */
+export const MAX_TEXT = 256;
+/** Paths may be longer (the path rule allows 1024 bytes). */
+export const MAX_PATH_TEXT = 1024;
+/** The sanitiser's own caps, applied again. */
+export const MAX_TASKS = 64;
+export const MAX_CAPABILITIES = 64;
+export const MAX_SOURCES = 64;
+export const MAX_STEPS = 32;
+/** The newest timeline rows the view draws (the reducer keeps 1,024). */
+export const MAX_TIMELINE_ROWS = 200;
+export const PATH_WITHHELD = "path withheld";
+export const WITHHELD = "withheld";
+export const NOT_REPORTED = "not reported";
+const UNSAFE = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
+/**
+ * Plain text for display: control and format characters (bidi controls and
+ * zero-width characters included) and the line and paragraph separators are
+ * replaced with U+FFFD, as the Rust text rule does, then the text is cut to
+ * `max` code points with an ellipsis.
+ */
+export function plain(value, max = MAX_TEXT) {
+    let text;
+    if (typeof value === "string")
+        text = value;
+    else if (typeof value === "number" && Number.isFinite(value))
+        text = String(value);
+    else if (typeof value === "boolean")
+        text = value ? "yes" : "no";
+    else
+        return "";
+    const points = Array.from(text.replace(UNSAFE, "\uFFFD"));
+    return points.length > max ? `${points.slice(0, Math.max(0, max - 1)).join("")}\u2026` : points.join("");
+}
+export function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+/** The first `max` entries of an array; anything else is no entries. */
+export function bounded(value, max) {
+    return Array.isArray(value) ? value.slice(0, max) : [];
+}
+/** A non-negative safe integer, or null. */
+export function count(value) {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+/** How a field reads: its value as text, "withheld" (or "path withheld"), or "not reported". */
+export function fieldText(field, format, withheld = WITHHELD) {
+    if (!isRecord(field))
+        return { text: NOT_REPORTED, withheld: false };
+    if (field.state === "withheld")
+        return { text: withheld, withheld: true };
+    if (field.state === "shown" && "value" in field) {
+        const text = format(field.value);
+        return text === "" ? { text: WITHHELD, withheld: true } : { text, withheld: false };
+    }
+    return { text: NOT_REPORTED, withheld: false };
+}
+export function textOf(value) {
+    return plain(value);
+}
+export function pathOf(value) {
+    return plain(value, MAX_PATH_TEXT);
+}
+/** A closed enum value shown as words: `approval_denied` reads "approval denied". */
+export function words(value) {
+    if (typeof value !== "string" || !/^[a-z0-9_]{1,48}$/u.test(value))
+        return "other";
+    return value.replace(/_/gu, " ");
+}
+function pad(n, width = 2) {
+    return String(n).padStart(width, "0");
+}
+/** A local date and time, `YYYY-MM-DD HH:MM:SS`. */
+export function timeOf(value) {
+    const ms = count(value);
+    if (ms === null)
+        return "";
+    const date = new Date(ms);
+    if (Number.isNaN(date.getTime()))
+        return "";
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+export function durationOf(value) {
+    const ms = count(value);
+    if (ms === null)
+        return "";
+    const seconds = Math.floor(ms / 1000);
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0)
+        return `${h} h ${m} min ${s} s`;
+    if (m > 0)
+        return `${m} min ${s} s`;
+    return `${s} s`;
+}
+export function bytesOf(value) {
+    const n = count(value);
+    return n === null ? "" : n === 1 ? "1 byte" : `${n} bytes`;
+}
+export function numberOf(value) {
+    const n = count(value);
+    return n === null ? "" : String(n);
+}
+export function hashOf(value) {
+    return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value) ? value : "";
+}
+/** "n fields withheld", or "" for none. */
+export function withheldCount(value) {
+    const n = count(value);
+    if (n === null || n === 0)
+        return "";
+    return n === 1 ? "1 field withheld" : `${n} fields withheld`;
+}
+// ---------------------------------------------------------------------------
+// Refusals and stream states, as fixed English text
+const UNAVAILABLE = {
+    not_running: "orceld is not running",
+    no_free_instance: "orceld's endpoint has no free instance",
+    timed_out: "orceld did not answer in time",
+    connection_lost: "the connection to orceld was lost",
+    no_location: "orceld's endpoint could not be located",
+    busy: "orceld is busy: all its client slots are in use",
+    refused: "orceld refused the request",
+    frame_too_large: "orceld sent a frame larger than 64 KiB",
+    protocol: "orceld sent a frame this window does not understand",
+    internal: "this window could not read orceld",
+};
+/** Why orceld is unavailable, from a fixed reason name only. */
+export function unavailableText(reason) {
+    return typeof reason === "string" && Object.hasOwn(UNAVAILABLE, reason)
+        ? UNAVAILABLE[reason]
+        : "orceld is unavailable";
+}
+export const NOT_YOURS = "orceld could not be confirmed as yours; nothing was sent to it";
+export const INCOMPATIBLE = "Incompatible orceld: it does not report itself as read-only. This window shows nothing else.";
+/** A command's refusal (`{"error": kind, ...}` or Tauri's own text) as fixed text. */
+export function refusalOf(error) {
+    if (!isRecord(error) || typeof error.error !== "string") {
+        return { kind: "other", text: "the shell refused the request" };
+    }
+    switch (error.error) {
+        case "unavailable":
+            return { kind: "unavailable", text: unavailableText(error.reason) };
+        case "busy":
+            return { kind: "unavailable", text: unavailableText("busy") };
+        case "not_yours":
+            return { kind: "not_yours", text: NOT_YOURS };
+        case "incompatible":
+            return { kind: "incompatible", text: INCOMPATIBLE };
+        case "refused":
+            return {
+                kind: "other",
+                text: typeof error.code === "string" && /^[A-Z_]{1,32}$/u.test(error.code)
+                    ? `orceld refused the request (${error.code})`
+                    : "orceld refused the request",
+            };
+        case "frame_too_large":
+            return { kind: "other", text: unavailableText("frame_too_large") };
+        case "protocol":
+            return { kind: "other", text: unavailableText("protocol") };
+        case "task_withheld":
+            return { kind: "other", text: "orceld's record of this task was withheld" };
+        default:
+            return { kind: "other", text: "the shell refused the request" };
+    }
+}
