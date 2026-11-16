@@ -1,0 +1,19 @@
+{
+  "mode": "full_user",
+  "lease": {
+    "lease_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "authority_epoch": 7
+  },
+  "grant": {
+    "contract": "orcel.grant-ref/1",
+    "approval_class": "SOFT",
+    "action_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "nonce_id": "nonce-0001",
+    "orcel_session_id": "osess-01"
+  },
+  "standing_approval": {
+    "standing_approval_id": "sa-01",
+    "scope_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  }
+}

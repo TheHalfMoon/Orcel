@@ -1,0 +1,43 @@
+[
+  {
+    "frame": "hello",
+    "generation": 1,
+    "orceld_pid": 4242,
+    "orceld_start_time": 133000000000000000,
+    "nonce": "n-02"
+  },
+  {
+    "frame": "state",
+    "lease": {
+      "contract": "orcel.lease-view/1",
+      "lease_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": "full_user",
+      "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "authority_epoch": 7,
+      "issued_at_ms": 1763300000000,
+      "expires_at_ms": 1763303600000,
+      "executors": [
+        "desktop_input"
+      ],
+      "state": "active"
+    },
+    "anchor": {
+      "file_id": "audit-0001",
+      "seq": 31,
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "frame": "job_handle",
+    "job_id": "JOBAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "handle": 1234
+  },
+  {
+    "frame": "job_gone",
+    "job_id": "JOBAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  {
+    "frame": "stop_ack",
+    "new_epoch": 8
+  }
+]

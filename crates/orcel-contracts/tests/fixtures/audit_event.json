@@ -1,0 +1,33 @@
+{
+  "contract": "orcel.audit-event/1",
+  "seq": 0,
+  "prev_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "at_ms": 1763300000000,
+  "kind": "dispatch",
+  "request_id": "req-01",
+  "job_id": null,
+  "principal_id": "mcp-client-7f3a",
+  "capability": "web",
+  "operation": "scrape",
+  "authority": {
+    "mode": "full_user",
+    "lease": {
+      "lease_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "authority_epoch": 7
+    },
+    "grant": {
+      "contract": "orcel.grant-ref/1",
+      "approval_class": "SOFT",
+      "action_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "nonce_id": "nonce-0001",
+      "orcel_session_id": "osess-01"
+    }
+  },
+  "state": "dispatched",
+  "detail": {
+    "url_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "engine": "fetch"
+  },
+  "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

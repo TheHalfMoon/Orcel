@@ -1,0 +1,30 @@
+[
+  {
+    "frame": "hello",
+    "generation": 1,
+    "nonce": "n-02"
+  },
+  {
+    "frame": "heartbeat",
+    "seq": 9,
+    "visible": {
+      "topmost": true,
+      "not_minimised": true,
+      "not_cloaked": true,
+      "on_monitor": true,
+      "on_input_desktop": true
+    }
+  },
+  {
+    "frame": "stop_request",
+    "reason": "session_lock"
+  },
+  {
+    "frame": "hotkey_status",
+    "registered": false
+  },
+  {
+    "frame": "lock_status",
+    "available": true
+  }
+]

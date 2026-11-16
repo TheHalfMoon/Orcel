@@ -1,0 +1,52 @@
+{
+  "contract": "orcel.capability-report/1",
+  "device": {
+    "contract": "orcel.device/1",
+    "device_id": "dev-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "os": "windows",
+    "os_build": "10.0.26100",
+    "arch": "x86_64",
+    "device_epoch": 3
+  },
+  "build": "release",
+  "entries": [
+    {
+      "capability": "web/scrape",
+      "engine": "fetch",
+      "status": "available",
+      "component": {
+        "name": "orcel-fetch",
+        "license": "Apache-2.0",
+        "isolation": "in_process"
+      }
+    },
+    {
+      "capability": "web/scrape",
+      "engine": "chromium",
+      "status": "unavailable",
+      "reason": "no installed engine found"
+    },
+    {
+      "capability": "web/scrape",
+      "engine": "obscura",
+      "status": "unsupported",
+      "reason": "Wave 2 engine"
+    },
+    {
+      "capability": "web/stealth",
+      "status": "blocked",
+      "policy": "FD-UP-2 stealth"
+    },
+    {
+      "capability": "web/crawl_start",
+      "engine": "firecrawl",
+      "status": "unsupported",
+      "reason": "isolated component not installed",
+      "component": {
+        "name": "firecrawl-sidecar",
+        "license": "AGPL-3.0-only",
+        "isolation": "sidecar"
+      }
+    }
+  ]
+}

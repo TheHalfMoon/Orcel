@@ -1,0 +1,15 @@
+{
+  "contract": "orcel.web-scrape/1",
+  "url": "https://example.com/pricing",
+  "extract": {
+    "formats": [
+      "markdown"
+    ],
+    "only_main_content": false,
+    "include_tags": [],
+    "exclude_tags": []
+  },
+  "engine": "chromium",
+  "timeout_ms": 30000,
+  "wait_for_ms": null
+}

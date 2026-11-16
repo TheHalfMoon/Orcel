@@ -1,0 +1,47 @@
+{
+  "contract": "orcel.web-crawl/1",
+  "mode": "crawl",
+  "start_url": "https://docs.example.com/",
+  "include_paths": [
+    "^/guide/"
+  ],
+  "exclude_paths": [
+    "^/guide/archive/"
+  ],
+  "max_pages": 50,
+  "max_depth": 5,
+  "deadline_s": 600,
+  "sitemap": "include",
+  "robots": true,
+  "search": null,
+  "extract": {
+    "formats": [
+      "markdown",
+      "links"
+    ],
+    "only_main_content": true,
+    "include_tags": [],
+    "exclude_tags": [
+      "nav"
+    ]
+  },
+  "engine": "fetch",
+  "delay_ms": 250,
+  "headers": [
+    {
+      "name": "Accept-Language",
+      "value": {
+        "source": "literal",
+        "value": "en"
+      }
+    },
+    {
+      "name": "Authorization",
+      "value": {
+        "source": "credential",
+        "credential_ref": "cred-docs-token"
+      }
+    }
+  ],
+  "stealth": "opt_in"
+}

@@ -1,0 +1,14 @@
+{
+  "contract": "orcel.lease-view/1",
+  "lease_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "mode": "full_user",
+  "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "authority_epoch": 7,
+  "issued_at_ms": 1763300000000,
+  "expires_at_ms": 1763303600000,
+  "executors": [
+    "desktop_observation",
+    "desktop_input"
+  ],
+  "state": "active"
+}

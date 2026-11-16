@@ -1,0 +1,34 @@
+[
+  {
+    "frame": "hello",
+    "generation": 1,
+    "session_nonce": "n-01",
+    "kind": "doc-parser",
+    "version": "0.1.0"
+  },
+  {
+    "frame": "heartbeat_ack",
+    "seq": 4
+  },
+  {
+    "frame": "response",
+    "id": 1,
+    "body": {
+      "markdown": "# Title"
+    }
+  },
+  {
+    "frame": "progress",
+    "id": 1,
+    "done": 3,
+    "total": 10
+  },
+  {
+    "frame": "error",
+    "id": null,
+    "code": "OUTPUT_LIMIT"
+  },
+  {
+    "frame": "bye"
+  }
+]

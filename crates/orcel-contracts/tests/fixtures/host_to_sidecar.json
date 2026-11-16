@@ -1,0 +1,32 @@
+[
+  {
+    "frame": "hello",
+    "generation": 1,
+    "session_nonce": "n-01",
+    "limits": {
+      "max_data_frame_bytes": 1048576,
+      "heartbeat_interval_ms": 2000,
+      "cancel_grace_ms": 2000
+    }
+  },
+  {
+    "frame": "heartbeat",
+    "seq": 4
+  },
+  {
+    "frame": "request",
+    "id": 1,
+    "body": {
+      "op": "parse",
+      "format": "html"
+    }
+  },
+  {
+    "frame": "cancel",
+    "id": 1
+  },
+  {
+    "frame": "shutdown",
+    "deadline_ms": 5000
+  }
+]

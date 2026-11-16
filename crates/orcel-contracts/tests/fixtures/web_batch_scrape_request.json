@@ -1,0 +1,18 @@
+{
+  "contract": "orcel.web-batch-scrape/1",
+  "urls": [
+    "https://example.com/a",
+    "https://example.com/b"
+  ],
+  "extract": {
+    "formats": [
+      "html",
+      "raw_html",
+      "change_tracking"
+    ],
+    "only_main_content": false,
+    "include_tags": [],
+    "exclude_tags": []
+  },
+  "engine": "fetch"
+}

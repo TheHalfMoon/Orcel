@@ -1,0 +1,33 @@
+{
+  "contract": "orcel.job/1",
+  "job_id": "JOBAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "kind": "web_crawl",
+  "owner": "mcp-client-7f3a",
+  "orcel_session_id": "osess-01",
+  "spec_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "state": "completed",
+  "outcome": {
+    "result": "failed",
+    "code": "TARGET_STALE"
+  },
+  "authority": {
+    "mode": "safe",
+    "lease": null,
+    "grant": {
+      "contract": "orcel.grant-ref/1",
+      "approval_class": "SOFT",
+      "action_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "nonce_id": "nonce-0001",
+      "orcel_session_id": "osess-01"
+    }
+  },
+  "progress": {
+    "total": 50,
+    "completed": 47,
+    "failed": 2,
+    "skipped": 1
+  },
+  "created_at_ms": 1763300000000,
+  "updated_at_ms": 1763300060000,
+  "expires_at_ms": 1763386400000
+}
