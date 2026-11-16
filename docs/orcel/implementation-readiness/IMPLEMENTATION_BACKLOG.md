@@ -43,7 +43,7 @@ Gates every task inherits:
 | [XP-20](#xp-20) | X6 | BLOCKED_ON_DEPENDENCY | REFERENCE | Windows host bake-off: Go host vs Cua platform-windows inside orcel-native-host | XP-08, XP-12 | 3-4 | - |
 | [CR-01](#cr-01) | X0 | READY | COPY_ADAPT | Authenticated local app API transport on three OSes (read-only status and events) | XP-01, XP-01B, XP-03 | 3-4 | SG-000118 |
 | [CR-02](#cr-02) | X1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Adopt the AgentKit protocol and headless client for the Control Room event stream | CR-01 | 3-4 | SG-000118 |
-| [CR-03](#cr-03) | X1 | FOUNDER_DECISION_REQUIRED | COPY_ADAPT | Tauri 2 Control Room skeleton (read-only) on three OSes | CR-02, FD-03 | 5-8 | SG-000119 |
+| [CR-03](#cr-03) | X1 | READY | COPY_ADAPT | Tauri 2 Control Room skeleton (read-only) on three OSes | CR-02, FD-03 | 5-8 | SG-000119 |
 | [CR-04](#cr-04) | X6 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Control Room parity gate and WPF retirement decision | CR-03 | 2-3 | - |
 | [RJ-01](#rj-01) | X2 | READY | BUILD_NEW | Extract the kernel journal crate from the SG-000108 intent journal (no behavior change) | SG-000108-CLOSE | 2-3 | SG-000120 |
 | [RJ-02](#rj-02) | X3 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Journal every mutating dispatch and add per-provider reconciliation | RJ-01 | 6-9 | SG-000120 |
@@ -77,7 +77,7 @@ Gates every task inherits:
 |---|---|---|---|---|
 | FD-01 | ADOPTED 2026-10-18 (docs/orcel/grants/2026-10-18-founder-attestation.md) | Adopt this cross-platform revision (Windows, macOS, Linux first-class; Cua platform crates for macOS/Linux native hosts; copy-first donor plan) as planning direction? | XP-05 | Nothing beyond X0 tasks with no authority delta starts. |
 | FD-02 | APPROVED 2026-10-18 (same record) | May the X0/X1 cross-platform track run as its own grain in parallel with SG-000096 and SG-000108 (as SG-000108 was allowed in parallel on 2026-10-10)? | XP-01..XP-08 scheduling | X0 waits for a free grain slot. |
-| FD-03 | OPEN | Direction: Tauri 2 Control Room for all three OSes, with WPF kept on Windows until the CR-04 parity gate passes? | CR-03 | WPF stays; CR-01/CR-02 still proceed because they are UI-toolkit-neutral. |
+| FD-03 | ANSWERED 2026-11-16 (Decision 4 of the founder's private decision record: Tauri yes, lean, with no Vite, no Tauri CLI and no React, configuration written from scratch, read-only, no Stop; Windows first by the founder's 2026-11-16 decisions). CR-03 runs as SG-000119, activated by founder decision of 2026-11-16 (issue #773). | Direction: Tauri 2 Control Room for all three OSes, with WPF kept on Windows until the CR-04 parity gate passes? | CR-03 | WPF stays; CR-01/CR-02 still proceed because they are UI-toolkit-neutral. |
 | FD-04 | CONFIRMED 2026-10-18 (same record) | Does the direct Cua authorization cover copying and commercially distributing FSL-1.1-MIT components (Cua Spaces, cua-spacesd, cua-driver-bench) inside Orcel? A one-line scope statement is enough. | any FSL reuse | FSL components stay REJECT; the plan does not depend on them. |
 | FD-05 | OPEN | Provide (a) a Mac that can act as a self-hosted GitHub runner with Accessibility and Screen Recording granted, and (b) an Apple Developer ID for signing and notarization (paid Apple membership)? | XP-08 macOS leg, XP-16 release signing | macOS ships unsigned dev builds only and macOS GUI E2E is manual. |
 | FD-06 | CONFIRMED 2026-10-18 (same record) | Confirm in one line that the AGPL donor authorization (Firecrawl, Skyvern) includes redistribution and commercial distribution inside Apache-2.0 Orcel. | release of WI-01/WI-05 code | The 2026-10-13 record's reading stands; flagged as open. |
@@ -905,7 +905,7 @@ Gates every task inherits:
 
 ### CR-03
 
-**Tauri 2 Control Room skeleton (read-only) on three OSes** · phase X1 · FOUNDER_DECISION_REQUIRED · estimate 5-8 days (ESTIMATE) · proposed grain SG-000119
+**Tauri 2 Control Room skeleton (read-only) on three OSes** · phase X1 · READY · estimate 5-8 days (ESTIMATE) · proposed grain SG-000119
 
 - **Objective.** One cross-platform Control Room: status, capabilities, device list, task timeline and stop request, with strict Tauri capabilities, CSP and no shell/fs plugins.
 - **User-visible capability.** The same Orcel window on Windows, macOS and Linux.
@@ -937,7 +937,7 @@ Gates every task inherits:
   - keyboard/screen-reader checklist on all three OSes
 - **Definition of done.** Merged; WPF retirement is CR-04.
 - **Rollback.** Keep WPF on Windows.
-- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 8-12 days if built new, 5-8 with reuse. Runtime overhead: one system WebView per OS (WebView2, WKWebView, WebKitGTK); measured against WPF in CR-04. Maintenance: Tauri major-version upgrades. Matrix rows: T-CUA-32, T-CUA-33, T-AN-06, T-AN-07, T-AN-08, T-AN-09, T-AN-10. Risks: WebKitGTK accessibility must be tested; FD-03 still open.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 8-12 days if built new, 5-8 with reuse. Runtime overhead: one system WebView per OS (WebView2, WKWebView, WebKitGTK); measured against WPF in CR-04. Maintenance: Tauri major-version upgrades. Matrix rows: T-CUA-32, T-CUA-33, T-AN-06, T-AN-07, T-AN-08, T-AN-09, T-AN-10. Risks: WebKitGTK accessibility must be tested; FD-03 answered by Decision 4 of the founder's private decision record; CR-03 runs as SG-000119 (issue #773) under the founder's 2026-11-16 decisions, which supersede this card's three-OS scope, React front end, generic proxy command and Stop button.
 
 ### CR-04
 
