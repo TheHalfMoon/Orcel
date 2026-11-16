@@ -39,4 +39,4 @@ windows-sys = { version = "0.52", features = [
 # lock.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-orcel-platform = { path = "../orcel-platform" }
+orcel-platform = { path = "../orcel-platform", version = "0.2.0" }
