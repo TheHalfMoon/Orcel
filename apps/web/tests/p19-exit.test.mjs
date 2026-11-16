@@ -166,9 +166,13 @@ test("P19 exits remain immutable and P20 activates SG-000096 only after SG-00009
   assert.equal(sg96.program, "DESKAL-P20");
   assert.equal(sg96.state, "GRAIN");
   assert.equal(sg96.base, "7e0f93d11e9be27903d539d2f45bb2aba5fc56c0");
-  assert.deepEqual(sg96.dependencies, ["SG-000095"]);
+  // The 2026-11-17 continuation adds the authority service and the contracts.
+  assert.deepEqual(sg96.dependencies, ["SG-000095", "SG-000132", "SG-000131"]);
 
-  for (let n = 97; n <= 107; n += 1) {
+  // SG-000097 opened out of order by founder decision FD-UP-4 of 2026-11-17;
+  // SG-000098 to SG-000107 stay reserved.
+  assert.equal(json(".specgrain/specs/SG-000097.json").state, "GRAIN");
+  for (let n = 98; n <= 107; n += 1) {
     const id = `SG-${String(n).padStart(6, "0")}.json`;
     assert.throws(() => read(`.specgrain/specs/${id}`), undefined, id);
   }

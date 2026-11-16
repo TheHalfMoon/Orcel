@@ -7,8 +7,14 @@
   "created": "2026-10-08",
   "base": "7e0f93d11e9be27903d539d2f45bb2aba5fc56c0",
   "dependencies": [
-    "SG-000095"
+    "SG-000095",
+    "SG-000132",
+    "SG-000131"
   ],
+  "dependency_notes": {
+    "SG-000132": "Lease checks, the dispatcher, standing approvals and stop come from the authority service; shell sessions are dispatched only through crates/orceld/src/full_control_dispatch.rs.",
+    "SG-000131": "Contracts and audit chain; argv recorded as digests."
+  },
   "planning_issue": 260,
   "objective": "Qualify Deskal-owned one-shot and interactive local shell/process sessions by reusing existing qdral-provider-process Safe execution plans, protected FullControlLease/approval identities, and selectively adapting pinned Desktop Commander bounded terminal/session mechanics. Preserve Safe behavior and prohibit implicit privilege, remote shell, and ungoverned donor executor authority.",
   "scope": {
@@ -20,7 +26,11 @@
       "Provide one-shot and interactive input, separate bounded stdout/stderr pagination with monotonic offsets and explicit eviction/truncation, bounded session catalog, deterministic close/termination and no automatic post-dispatch retry.",
       "Reuse qdral-provider-process's existing Windows JobObject kill-on-close, assignment-before-resume, TerminateJobObject and bounded quiescence primitives as Deskal-owned process-tree supervision; qualify an ordinary current-user token separately rather than repurposing its AppContainer execution mode as Full User. Bind handles and generation, cancellation, lease revoke/expiry and no-orphan cleanup.",
       "Gate each new shell/process and mutating stdin/termination operation through local Full User and an action-bound fresh SOFT approval; never mint or extend Full User through MCP/model/browser/remote/donor input.",
-      "Exercise real disposable Windows process trees, consent boundaries, resource limits, Unicode/binary outputs, interrupt/revoke/expiry, session-generation drift, and racey cancellation against fail-closed outcomes."
+      "Exercise real disposable Windows process trees, consent boundaries, resource limits, Unicode/binary outputs, interrupt/revoke/expiry, session-generation drift, and racey cancellation against fail-closed outcomes.",
+      "Shells under a Full User lease on Windows: PowerShell 5.1, PowerShell 7, cmd, Git Bash and WSL bash, each as an interactive ConPTY session or one-shot command, on the user's desktop with the user's token.",
+      "Each session's process tree in a Job Object created and owned by the authority service (session granted only JOB_OBJECT_ASSIGN_PROCESS, no breakaway), started suspended, assigned and resumed, terminated by stop, expiry, session lock and sign-out.",
+      "Shell sessions coverable by a standing approval for the same client, declared task and scope (working directories and, where declared, command patterns).",
+      "Track X follow-up: zsh and bash on macOS and Linux (WPX-03)."
     ],
     "exclude": [
       "Full Admin elevation, Persistent Admin, Remote Full Control, UAC or Windows Hello bypass, secure desktop, SYSTEM or TrustedInstaller process execution.",
@@ -29,6 +39,7 @@
       "Filesystem, clipboard, browser, scraping/search, recording, global process-management parity, privileged broker, installer, release/tag, or product distribution changes owned by successor grains."
     ]
   },
+  "scope_note": "Where the existing spec refers to crates/orcel-policy/src/full_control_store.rs and crates/orcel-lifecycle/src/full_control.rs for lease issuance and verification, read the authority service of SG-000132; the requirement to qualify an ordinary current-user token (not the AppContainer execution mode) stands.",
   "authority_delta": {
     "activation": "None. The GRAIN packet is an authorization to implement and prove SG-000096 separately, not an executable shell grant.",
     "safe": "Unchanged: registered/verified executable plan and existing workspace-bound cwd/sanitized environment, with no arbitrary command or ambient shell fallback.",
@@ -88,6 +99,18 @@
     {
       "id": "A9",
       "claim": "Exact-head genuine Jev, Alibaba OCR qualified review/delegation plus human review of exclusions, security review, zero unresolved threads, signed+DCO normal merge, and post-merge CI evidence recorded before canonical closeout."
+    },
+    {
+      "id": "A10",
+      "claim": "Each listed shell runs interactively and one-shot under a lease on the Windows runner, with bounded stdout and stderr pagination, and is killed by stop within 1 s."
+    },
+    {
+      "id": "A11",
+      "claim": "Without a lease, ShellProcess stays denied and Safe process behaviour is unchanged."
+    },
+    {
+      "id": "A12",
+      "claim": "J-3b passes on Windows."
     }
   ],
   "review": {
@@ -106,5 +129,14 @@
     "sg_000106": "No new shell sidecar enters release payload without unified packaging, license notices and signed provenance qualification."
   },
   "activation_note": "No donor runtime import or production authority change in this activation packet. Separate implementation and closeout PRs must qualify the head and must not be treated as complete based on activation CI alone.",
+  "amendments": [
+    {
+      "title": "SG-000096 continuation: interactive shells on the Orcel authority service",
+      "created": "2026-11-17",
+      "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
+      "decision": "DECIDED (founder, 2026-11-17, FD-UP-4 and FD-UP-9): continue SG-000096 so interactive shells land in Wave 1 for J-3b, with comprehensive shell coverage.",
+      "note": "Applied by the founder's go-ahead of 2026-11-17, given in the Claude Code session and quoted in docs/canonical/CURRENT.md; planning_issue stays 260. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself."
+    }
+  ],
   "done_when": "Bounded local Full User one-shot and interactive shell/process sessions are genuinely native-Windows qualified under owned lease/approval, identity, job-tree and uncertainty semantics; Safe and remote/privileged surfaces remain unchanged, every accepted donor fragment is attributable, and independent exact-head security/CI plus canonical closeout/post-merge CI passes."
 }

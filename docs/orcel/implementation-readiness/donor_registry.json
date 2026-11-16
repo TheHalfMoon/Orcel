@@ -118,9 +118,9 @@
       "license_evidence": "docs/orcel/grants/2026-10-13-founder-source-authorization.md (grantor-owned code)",
       "source_access": "public engine; hosted index, fire-engine and billing are proprietary services and not inspectable",
       "strategy": "COPY_ADAPT",
-      "strategy_detail": "Existing slices 6/7 are Orcel-native (crawl.rs states 'no Firecrawl code is copied'). Next: COPY_ADAPT apps/api/native/src/crawler.rs link filtering (regex include/exclude with size limits) and sitemap parsing; PORT lib/map-cosine.ts, lib/change-tracking-diff.ts, lib/canonical-url.ts, lib/crawl-regex.ts; WRAP pdf/document conversion (pdf-inspector, anydoc) inside a sandboxed parser process. REJECT hosted map index, fire-engine, LLM extract, prompt-injection guard model, queues, billing.",
+      "strategy_detail": "Imported so far (AGPL-3.0 upstream, under docs/orcel/grants/2026-10-13-founder-source-authorization.md and the FD-06 attestation; notice docs/orcel/notices/firecrawl-AGPL-3.0.txt): crawl_scope.rs (compile_path_regex, validate_regexes and normalizeUrl, WI-01), map_rank.rs (map-cosine, WI-02) and change_tracking.rs (change-tracking-diff, WI-04) in crates/orcel-browser-host, and the COPY_ADAPT of apps/api/native/src/pdf.rs in apps/orcel-doc-parser (WI-05); crawl.rs itself stays Orcel-native. Next (founder decision FD-UP-1 of 2026-11-17; grains SG-000133 and SG-000134): full feature parity, copy first, with copied Firecrawl code only in the isolated, network-less AGPL component apps/orcel-firecrawl under its own PROVENANCE.json. REJECT the hosted map index, fire-engine, billing, Redis and cloud queues, and any Firecrawl Cloud dependency.",
       "blueprint": "WEB_INTELLIGENCE_INTEGRATION.md",
-      "status": "REFERENCE_ONLY_SO_FAR"
+      "status": "PARTIALLY_IMPORTED"
     },
     {
       "id": "stagehand",
