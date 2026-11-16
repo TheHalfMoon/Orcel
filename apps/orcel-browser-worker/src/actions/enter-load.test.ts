@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
+import { RefusalLedger } from "../refusals.js";
 import { NavigationError } from "../worker.js";
 import { enterAndSettle, type EnterPage } from "./enter-load.js";
 
@@ -20,9 +21,23 @@ function page(start: string) {
       loads += 1;
     }
   };
-  const request = (frame: object, navigation = true) => ({ isNavigationRequest: () => navigation, frame: () => frame });
+  const request = (frame: object, navigation = true, to = "https://fixture.test/order") => ({
+    isNavigationRequest: () => navigation,
+    frame: () => frame,
+    url: () => to
+  });
+  const ledger = new RefusalLedger();
+  // The main-frame request to `to` fails and the engine's error page commits.
+  const failNavigation = (to: string) => {
+    events.emit("request", request(main, true, to));
+    events.emit("requestfailed", request(main, true, to));
+    url = "chrome-error://chromewebdata/";
+    events.emit("framenavigated", main);
+    events.emit("domcontentloaded");
+  };
   return {
     stub: stub as unknown as EnterPage,
+    ledger,
     events,
     main,
     other,
@@ -40,14 +55,15 @@ function page(start: string) {
       url = to;
       events.emit("framenavigated", main);
     },
-    // A request the host refused: it fails, the error page commits.
-    refuse: () => {
-      events.emit("request", request(main));
-      events.emit("requestfailed", request(main));
-      url = "chrome-error://chromewebdata/";
-      events.emit("framenavigated", main);
-      events.emit("domcontentloaded");
+    // A request the host refused: Orcel's route records the refusal before
+    // aborting it (routes.ts), it fails, the error page commits.
+    refuse: (to = "https://fixture.test/order") => {
+      ledger.record(to, main);
+      failNavigation(to);
     },
+    // The engine cancels the request itself (the same ERR_BLOCKED_BY_CLIENT,
+    // as Edge 157's HTTPS upgrade did): Orcel recorded no refusal.
+    cancel: (to = "https://fixture.test/order") => failNavigation(to),
     request,
     listeners: () => ["request", "requestfailed", "domcontentloaded", "popup"].map((name) => events.listenerCount(name))
   };
@@ -63,12 +79,12 @@ test("SG-000122 A6: an Enter that opens nothing settles unchanged; one that subm
     quiet.events.emit("request", quiet.request(quiet.other));
     quiet.events.emit("framenavigated", quiet.other);
   };
-  assert.deepEqual(await enterAndSettle(quiet.stub, press, 20), { url: "https://fixture.test/enter-form", navigated: false });
+  assert.deepEqual(await enterAndSettle(quiet.stub, quiet.ledger, press, 20), { url: "https://fixture.test/enter-form", navigated: false });
   assert.equal(quiet.loads(), 0);
   assert.deepEqual(quiet.listeners(), [0, 0, 0, 0], "every listener is removed");
 
   const submitting = page("https://fixture.test/enter-form");
-  const submitted = await enterAndSettle(submitting.stub, async () => submitting.submit("https://fixture.test/order"), 1_000);
+  const submitted = await enterAndSettle(submitting.stub, submitting.ledger, async () => submitting.submit("https://fixture.test/order"), 1_000);
   assert.deepEqual(submitted, { url: "https://fixture.test/order", navigated: true });
   assert.equal(submitting.loads(), 1, "the new document's load is awaited");
   assert.deepEqual(submitting.listeners(), [0, 0, 0, 0]);
@@ -76,26 +92,54 @@ test("SG-000122 A6: an Enter that opens nothing settles unchanged; one that subm
 
 test("SG-000122 A6: a refused submission, a popup and a refused element are typed refusals", async () => {
   const refused = page("https://fixture.test/enter-form");
-  await assert.rejects(enterAndSettle(refused.stub, async () => refused.refuse(), 1_000), reason("denied"));
+  await assert.rejects(enterAndSettle(refused.stub, refused.ledger, async () => refused.refuse(), 1_000), reason("denied"));
   assert.deepEqual(refused.listeners(), [0, 0, 0, 0]);
 
   const popping = page("https://fixture.test/enter-form");
   let closed = 0;
   const popup = { close: async () => void (closed += 1) };
   await assert.rejects(
-    enterAndSettle(popping.stub, async () => void popping.events.emit("popup", popup), 20),
+    enterAndSettle(popping.stub, popping.ledger, async () => void popping.events.emit("popup", popup), 20),
     reason("denied")
   );
   assert.equal(closed, 1, "a popup is closed at once");
 
   const element = page("https://fixture.test/enter-form");
   await assert.rejects(
-    enterAndSettle(element.stub, async () => {
+    enterAndSettle(element.stub, element.ledger, async () => {
       throw new NavigationError("denied");
     }),
     reason("denied")
   );
   assert.deepEqual(element.listeners(), [0, 0, 0, 0]);
+});
+
+test("an Enter's failed navigation is denied only for a refusal Orcel made", async () => {
+  // Orcel refused the submission: "denied".
+  const refused = page("https://fixture.test/enter-form");
+  await assert.rejects(enterAndSettle(refused.stub, refused.ledger, async () => refused.refuse(), 1_000), reason("denied"));
+
+  // The engine cancelled it with no Orcel refusal: "failed" (the host maps
+  // it to an unknown outcome), never "denied" and never a success.
+  const cancelled = page("https://fixture.test/enter-form");
+  await assert.rejects(enterAndSettle(cancelled.stub, cancelled.ledger, async () => cancelled.cancel(), 1_000), reason("failed"));
+  assert.deepEqual(cancelled.listeners(), [0, 0, 0, 0]);
+
+  // A refusal Orcel made before the Enter began is not this Enter's.
+  const earlier = page("https://fixture.test/enter-form");
+  earlier.ledger.record("https://fixture.test/order", earlier.main);
+  await assert.rejects(enterAndSettle(earlier.stub, earlier.ledger, async () => earlier.cancel(), 1_000), reason("failed"));
+
+  // Orcel refused another URL (a subresource) while the engine cancelled
+  // the navigation: still not Orcel's denial of the navigation.
+  const other = page("https://fixture.test/enter-form");
+  await assert.rejects(
+    enterAndSettle(other.stub, other.ledger, async () => {
+      other.ledger.record("https://tracker.test/pixel.gif");
+      other.cancel();
+    }, 1_000),
+    reason("failed")
+  );
 });
 
 test("SG-000122 A6: a popup the result page opens does not make a committed submission denied", async () => {
@@ -104,6 +148,7 @@ test("SG-000122 A6: a popup the result page opens does not make a committed subm
   const popup = { close: async () => void (closed += 1) };
   const submitted = await enterAndSettle(
     result.stub,
+    result.ledger,
     async () => {
       result.submit("https://fixture.test/order");
       // The result page calls window.open: closed here, refused by the host.
@@ -119,6 +164,7 @@ test("SG-000122 A6: a popup the result page opens does not make a committed subm
   const racing = page("https://fixture.test/enter-form");
   const raced = await enterAndSettle(
     racing.stub,
+    racing.ledger,
     async () => {
       racing.events.emit("request", racing.request(racing.main));
       racing.events.emit("popup", popup);
@@ -135,6 +181,7 @@ test("SG-000122 A6: a popup the result page opens does not make a committed subm
   const lingering = { close: () => new Promise<void>((resolve) => setTimeout(() => ((gone = true), resolve()), 30)) };
   const answered = await enterAndSettle(
     slow.stub,
+    slow.ledger,
     async () => {
       slow.submit("https://fixture.test/order");
       slow.events.emit("popup", lingering);
@@ -148,7 +195,7 @@ test("SG-000122 A6: a popup the result page opens does not make a committed subm
 test("SG-000122 A6: a same-document navigation is never a committed document", async () => {
   // pushState alone: no new document; the moved URL is the host's to judge.
   const pushed = page("https://fixture.test/enter-form");
-  assert.deepEqual(await enterAndSettle(pushed.stub, async () => pushed.pushState("https://fixture.test/enter-form#sent"), 20), {
+  assert.deepEqual(await enterAndSettle(pushed.stub, pushed.ledger, async () => pushed.pushState("https://fixture.test/enter-form#sent"), 20), {
     url: "https://fixture.test/enter-form#sent",
     navigated: false
   });
@@ -160,6 +207,7 @@ test("SG-000122 A6: a same-document navigation is never a committed document", a
   let settledEarly = false;
   const settling = enterAndSettle(
     racing.stub,
+    racing.ledger,
     async () => {
       racing.events.emit("request", racing.request(racing.main));
       racing.pushState("https://fixture.test/fake-order");

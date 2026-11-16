@@ -2,11 +2,16 @@
 // entry.ts so a native test can drive it directly, #438).
 
 import type { Locator, Page } from "playwright-core";
+import { watchNavigation, type RefusalLedger } from "../refusals.js";
 import { NavigationError } from "../worker.js";
 import { isOcclusion } from "./targets.js";
 
-export async function clickAndLoad(page: Page, target: Locator): Promise<{ url: string; status: number }> {
+/// The engine's error page after the click is "denied" only when Orcel
+/// refused the navigation (`refusals`, refusals.ts); an error page Orcel did
+/// not cause (an engine cancellation, a network failure) is "failed".
+export async function clickAndLoad(page: Page, target: Locator, refusals: RefusalLedger): Promise<{ url: string; status: number }> {
   let status = 0;
+  const watch = watchNavigation(page, refusals);
   const onResponse = (response: import("playwright-core").Response) => {
     const request = response.request();
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) status = response.status();
@@ -49,10 +54,12 @@ export async function clickAndLoad(page: Page, target: Locator): Promise<{ url: 
     if ((error as Error).name === "TimeoutError") throw new NavigationError("timeout");
     throw new NavigationError("failed");
   } finally {
+    watch.stop();
     page.off("response", onResponse);
     if (onPopup) page.off("popup", onPopup);
   }
-  // A refused navigation lands on Chromium's error page.
-  if (page.url().startsWith("chrome-error:")) throw new NavigationError("denied");
+  // A refused navigation lands on Chromium's error page; so does one the
+  // engine or the network failed.
+  if (page.url().startsWith("chrome-error:")) throw new NavigationError(watch.refusedByOrcel() ? "denied" : "failed");
   return { url: page.url(), status };
 }

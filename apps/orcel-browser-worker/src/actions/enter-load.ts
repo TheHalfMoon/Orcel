@@ -4,12 +4,15 @@
 // that stay on it); this file only tells the host what the main frame did
 // after the key: nothing (no navigation request within the settle window),
 // or a committed new document, awaited to its load like an activation
-// (click-load.ts). A popup is closed at once, and a refused navigation that
-// lands on the engine's error page is reported "denied"; the host reads that
-// against its own route record (refused before anything opened, or outcome
-// unknown), never as "nothing happened".
+// (click-load.ts). A popup is closed at once, and a navigation Orcel refused
+// (refusals.ts) that lands on the engine's error page is reported "denied";
+// a navigation that failed without an Orcel refusal (an engine cancellation,
+// a network failure) is reported "failed". The host reads either against its
+// own route record (refused before anything opened, or outcome unknown),
+// never as "nothing happened".
 
 import type { Page, Request } from "playwright-core";
+import { watchNavigation, type RefusalLedger } from "../refusals.js";
 import { NavigationError } from "../worker.js";
 
 /// How long after the key a submission's request may start. A form's
@@ -38,8 +41,9 @@ export type EnterPage = Pick<Page, "on" | "off" | "mainFrame" | "url" | "waitFor
 /// `{ navigated: false }` when no main-frame navigation began within the
 /// settle window, `{ navigated: true }` once a new main-frame document
 /// committed and loaded. Rejects "denied" for a popup opened before any
-/// main-frame navigation began, or the engine's error page (a refused
-/// request), "timeout" when the document never committed or loaded in time.
+/// main-frame navigation began, or a main-frame navigation Orcel refused
+/// (`refusals`), "failed" for one that failed without an Orcel refusal,
+/// "timeout" when the document never committed or loaded in time.
 ///
 /// Only a new document counts as committed: the main frame's
 /// DOMContentLoaded, which a same-document navigation (pushState, a
@@ -49,9 +53,12 @@ export type EnterPage = Pick<Page, "on" | "off" | "mainFrame" | "url" | "waitFor
 /// records it apart); it does not make the committed submission "denied".
 export async function enterAndSettle(
   page: EnterPage,
+  refusals: RefusalLedger,
   press: () => Promise<void>,
   settleMs = ENTER_SETTLE_MS
 ): Promise<{ url: string; navigated: boolean }> {
+  // Started before the key, so every refusal the key causes is "since".
+  const watch = watchNavigation(page, refusals);
   let began = false;
   let markBegun: () => void = () => {};
   const begun = new Promise<"begun">((resolve) => (markBegun = () => {
@@ -102,9 +109,10 @@ export async function enterAndSettle(
     if (settled === "late") throw new NavigationError("timeout");
     if (settled === "failed") {
       // A refused (or failed) request: the engine shows its error page,
-      // which commits shortly; either way this is not the page's document.
+      // which commits shortly; either way this is not the page's document,
+      // and only Orcel's own refusal is "denied".
       await Promise.race([committed, delay(ENTER_REFUSAL_GRACE_MS)]);
-      throw new NavigationError("denied");
+      throw new NavigationError(watch.refusedByOrcel() ? "denied" : "failed");
     }
     try {
       await page.waitForLoadState("load", { timeout: ENTER_LOAD_MS });
@@ -117,12 +125,16 @@ export async function enterAndSettle(
     // after an Enter that refused a popup).
     if (closing.length > 0) await Promise.race([Promise.allSettled(closing), delay(ENTER_POPUP_CLOSE_MS)]);
     for (const timer of timers) clearTimeout(timer);
+    watch.stop();
     page.off("request", onRequest);
     page.off("requestfailed", onRequestFailed);
     page.off("domcontentloaded", onDocument);
     page.off("popup", onPopup);
   }
-  // A refused navigation lands on Chromium's error page.
-  if (poppedEarly || page.url().startsWith("chrome-error:")) throw new NavigationError("denied");
+  // A popup before the navigation began is Orcel's refusal (it closed it).
+  // A refused navigation lands on Chromium's error page; so does one the
+  // engine or the network failed.
+  if (poppedEarly) throw new NavigationError("denied");
+  if (page.url().startsWith("chrome-error:")) throw new NavigationError(watch.refusedByOrcel() ? "denied" : "failed");
   return { url: page.url(), navigated: true };
 }

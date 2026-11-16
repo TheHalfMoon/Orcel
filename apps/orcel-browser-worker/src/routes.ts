@@ -16,6 +16,7 @@ import type { BrowserContext, Page } from "playwright-core";
 import { attachRedirectGuard, type RedirectGuard } from "./redirect-guard.js";
 import { classifyRequest, requestDetail } from "./routing.js";
 import { traceMark } from "./navigation-trace.js";
+import { documentFrameOf, RefusalLedger } from "./refusals.js";
 import { denyServiceWorkerScripts } from "./service-workers.js";
 import type { RoutePolicy } from "./worker.js";
 
@@ -23,6 +24,9 @@ export interface RouteStack {
   /// Resolves with `page`'s redirect guard once attached (rejects if it
   /// cannot be attached).
   guardReady(page: Page): Promise<RedirectGuard>;
+  /// Every refusal this stack made in this engine lifetime (refusals.ts):
+  /// a navigation failure is Orcel's "denied" only when it matches one.
+  refusals: RefusalLedger;
 }
 
 export async function installRoutes(
@@ -30,6 +34,7 @@ export async function installRoutes(
   primary: () => Page,
   policy: RoutePolicy
 ): Promise<RouteStack> {
+  const refusals = new RefusalLedger();
   await context.routeWebSocket(/.*/, async (socket) => {
     await socket.close({ code: 1008, reason: "denied" });
   });
@@ -48,16 +53,18 @@ export async function installRoutes(
       await route.continue();
       traceMark("route_continued");
     } else {
+      // Recorded before the abort, so the failure it causes finds it.
+      refusals.record(route.request().url(), documentFrameOf(route.request()));
       await route.abort("blockedbyclient");
     }
   });
-  await denyServiceWorkerScripts(context);
+  await denyServiceWorkerScripts(context, refusals);
 
   const guards = new WeakMap<Page, Promise<RedirectGuard>>();
   const guard = (page: Page): Promise<RedirectGuard> => {
     let ready = guards.get(page);
     if (!ready) {
-      ready = attachRedirectGuard(context, page, policy, () => primary() === page);
+      ready = attachRedirectGuard(context, page, policy, () => primary() === page, refusals);
       guards.set(page, ready);
     }
     return ready;
@@ -68,5 +75,5 @@ export async function installRoutes(
     guard(page).catch(() => page.close().catch(() => {}));
   });
   for (const page of context.pages()) await guard(page);
-  return { guardReady: guard };
+  return { guardReady: guard, refusals };
 }
