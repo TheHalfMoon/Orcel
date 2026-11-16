@@ -72,6 +72,12 @@ fn bm02_orcel_task_set_is_solved_through_the_real_orceld() {
     let output = Command::new(&python)
         .current_dir(&bench)
         .env("PYTHONDONTWRITEBYTECODE", "1")
+        // MAC-M1-09: the deployment target this build used, for the macOS
+        // report (the runner ignores it elsewhere).
+        .env(
+            "ORCEL_BM02_DEPLOYMENT_TARGET",
+            option_env!("MACOSX_DEPLOYMENT_TARGET").unwrap_or("rustc-default"),
+        )
         .args(["-m", "orcel_bench", "orcel", "--orceld"])
         .arg(env!("CARGO_BIN_EXE_orceld"))
         .args(["--commit", &commit, "--out"])

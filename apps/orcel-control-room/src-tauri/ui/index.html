@@ -5,12 +5,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Orcel Control Room</title>
     <link rel="stylesheet" href="style.css">
+    <script type="module" src="js/view/main.js"></script>
   </head>
   <body>
-    <main>
+    <header class="top">
       <h1>Orcel Control Room</h1>
-      <p class="state" role="status">Not connected</p>
-      <p>This development build does not read from orceld yet. It shows no status, events, tasks or approvals, and it changes nothing.</p>
+      <p id="connection" class="connection" role="status" aria-live="polite">Starting</p>
+      <p class="scope">Read-only. This window shows what orceld reports on this device and changes nothing. It has no Stop control and does not show approvals.</p>
+    </header>
+    <main id="data">
+      <div class="columns">
+        <section class="panel" aria-labelledby="status-heading">
+          <h2 id="status-heading">orceld</h2>
+          <div id="status-body"></div>
+        </section>
+        <section class="panel" aria-labelledby="capabilities-heading">
+          <h2 id="capabilities-heading">Capabilities</h2>
+          <div id="capabilities-body"></div>
+          <div id="devices-body"></div>
+        </section>
+      </div>
+      <section class="panel" aria-labelledby="tasks-heading">
+        <h2 id="tasks-heading">Report tasks</h2>
+        <p class="hint">Tasks are shown by state, owner and time, never by title. Open a task to read its metadata: workspace-relative paths, hashes, sizes and steps.</p>
+        <div id="tasks-body"></div>
+        <ul id="task-list" class="tasks"></ul>
+      </section>
+      <section class="panel" aria-labelledby="timeline-heading">
+        <h2 id="timeline-heading">Live events</h2>
+        <div id="timeline-body" class="timeline" role="region" aria-label="Live events list, scrollable" tabindex="0"></div>
+      </section>
     </main>
   </body>
 </html>

@@ -235,6 +235,20 @@ fn configured_workspace_roots() -> Result<Vec<PathBuf>, String> {
 }
 
 fn is_os_execution_env(name: &str) -> bool {
+    is_base_execution_env(name) || (cfg!(target_os = "macos") && is_macos_execution_env(name))
+}
+
+/// MAC-M1-04: the macOS Orcel state root is `$HOME/Library/Application
+/// Support/Orcel` (`orcel_platform::paths::state_root_for`) and the per-user
+/// temp directory comes from `TMPDIR`, so `orcel-mcp-host` and the local
+/// children need both there. Admitted on macOS only; the Windows and Linux
+/// allowlists stay as they were.
+fn is_macos_execution_env(name: &str) -> bool {
+    matches!(name, "HOME" | "TMPDIR")
+}
+
+/// The allowlist on every OS: `PATH` and the Windows execution variables.
+fn is_base_execution_env(name: &str) -> bool {
     matches!(
         name,
         "PATH"
@@ -388,6 +402,121 @@ mod tests {
         // The local children keep their allowlist.
         assert!(sanitized_env(&source).contains_key("ORCEL_ORCEL_SESSION_ID"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Every OS execution variable a host might carry, plus the Unix ones the
+    /// allowlist used to leave out.
+    fn os_candidate_env() -> BTreeMap<String, String> {
+        [
+            "PATH",
+            "Path",
+            "PATHEXT",
+            "SystemRoot",
+            "WINDIR",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "LOCALAPPDATA",
+            "APPDATA",
+            "PROGRAMDATA",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "HOME",
+            "TMPDIR",
+            "XDG_STATE_HOME",
+            "XDG_RUNTIME_DIR",
+            "USER",
+            "SHELL",
+            "LANG",
+        ]
+        .into_iter()
+        .map(|name| (name.to_string(), "v".to_string()))
+        .collect()
+    }
+
+    const BASE_ALLOWLIST: [&str; 13] = [
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "Path",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "WINDIR",
+    ];
+
+    /// MAC-M1-04: off macOS the allowlist is exactly what it was before
+    /// macOS work began, for the local children and the tunnel client alike.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn mac_m1_04_windows_and_linux_allowlist_is_unchanged() {
+        let source = os_candidate_env();
+        assert_eq!(
+            sanitized_env(&source)
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            BASE_ALLOWLIST
+        );
+        let tunnel = tunnel_client_env(&source);
+        assert_eq!(
+            tunnel.keys().map(String::as_str).collect::<Vec<_>>(),
+            BASE_ALLOWLIST
+        );
+        assert!(!tunnel.contains_key("HOME"));
+        assert!(!tunnel.contains_key("TMPDIR"));
+    }
+
+    /// MAC-M1-04: on macOS `HOME` (the state root) and `TMPDIR` (the per-user
+    /// temp directory) reach the local children and the tunnel client, and
+    /// nothing else beyond the base allowlist does.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_m1_04_macos_allowlist_adds_home_and_tmpdir_only() {
+        let source = os_candidate_env();
+        let mut expected: Vec<&str> = BASE_ALLOWLIST.to_vec();
+        expected.extend(["HOME", "TMPDIR"]);
+        expected.sort_unstable();
+        let tunnel = tunnel_client_env(&source);
+        assert_eq!(
+            tunnel.keys().map(String::as_str).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            sanitized_env(&source)
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    /// The macOS additions are pinned on every OS, so a Windows or Linux run
+    /// still notices if the list changes; only macOS admits them.
+    #[test]
+    fn mac_m1_04_macos_additions_are_home_and_tmpdir() {
+        let source = os_candidate_env();
+        let admitted: Vec<&str> = source
+            .keys()
+            .map(String::as_str)
+            .filter(|name| is_macos_execution_env(name))
+            .collect();
+        assert_eq!(admitted, ["HOME", "TMPDIR"]);
+        assert_eq!(
+            is_os_execution_env("HOME"),
+            cfg!(target_os = "macos"),
+            "HOME is admitted on macOS only"
+        );
+        assert_eq!(
+            is_os_execution_env("TMPDIR"),
+            cfg!(target_os = "macos"),
+            "TMPDIR is admitted on macOS only"
+        );
     }
 
     #[test]

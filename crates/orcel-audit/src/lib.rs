@@ -108,11 +108,34 @@ fn ends_mid_line(path: &Path) -> bool {
     file.read_exact(&mut last).is_ok() && last[0] != b'\n'
 }
 
+/// Append, creating the log when it is missing. MAC-M1-09: on Unix a new log is created 0600
+/// explicitly, owner read and write only, rather than by the process umask inside the private
+/// directory; the umask can only narrow that. An existing log keeps its mode: this never widens
+/// or rewrites it. Windows is unchanged.
+fn open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+}
+
+/// Create the log's missing parent directories. MAC-M1-09: on Unix each directory this creates is
+/// 0700, owner only, rather than the umask's default; the umask can only narrow that. A directory
+/// that already exists keeps its mode. Windows is unchanged.
+fn create_parent_dirs(parent: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(parent)
+}
+
 impl AuditLogger {
     pub fn new(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            create_parent_dirs(parent)?;
         }
         // Made once at start, before this process writes anything.
         let torn = ends_mid_line(&path);
@@ -185,9 +208,7 @@ impl AuditLogger {
         };
         serde_json::to_writer(&mut line, &event)?;
         line.push(b'\n');
-        let written = OpenOptions::new()
-            .create(true)
-            .append(true)
+        let written = open_options()
             .open(&self.path)
             .and_then(|mut file| file.write_all(&line).and_then(|()| file.flush()));
         if written.is_err() {
@@ -427,6 +448,88 @@ mod tests {
             .record(&request("next".into(), None), "p1", "SUCCESS")
             .expect("record");
         assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// MAC-M1-09: a new log is created 0600 on Unix whatever the umask allows (the umask can
+    /// only narrow it), and keeps that mode across records.
+    #[cfg(unix)]
+    #[test]
+    fn mac_m1_09_a_new_log_is_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = sandbox("mode-new");
+        let path = base.join("audit.jsonl");
+        let logger = AuditLogger::new(&path).expect("audit");
+        assert!(
+            !path.exists(),
+            "the logger makes the log on the first record"
+        );
+        logger
+            .record(&request("first".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let mode = std::fs::metadata(&path).expect("log").permissions().mode() & 0o777;
+        assert_eq!(mode & 0o077, 0, "no group or other access: {mode:o}");
+        assert_eq!(mode, 0o600, "owner read and write: {mode:o}");
+        logger
+            .record(&request("second".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let mode = std::fs::metadata(&path).expect("log").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{mode:o}");
+        eprintln!("MAC-M1-09-EVIDENCE audit log mode={mode:o}");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// MAC-M1-09: an existing log keeps the mode it has; the logger never widens it, even when
+    /// it is narrower than 0600.
+    #[cfg(unix)]
+    #[test]
+    fn mac_m1_09_an_existing_log_mode_is_never_widened() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = sandbox("mode-existing");
+        let path = base.join("audit.jsonl");
+        std::fs::write(&path, "").expect("existing log");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200)).expect("chmod");
+        let logger = AuditLogger::new(&path).expect("audit");
+        logger
+            .record(&request("after".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        let mode = std::fs::metadata(&path).expect("log").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o200, "{mode:o}");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        let text = std::fs::read_to_string(&path).expect("read audit");
+        assert_eq!(text.lines().count(), 1, "{text}");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// MAC-M1-09: on Unix the logger creates missing parent directories 0700 and leaves the mode
+    /// of a directory that already exists as it is.
+    #[cfg(unix)]
+    #[test]
+    fn mac_m1_09_missing_parent_dirs_are_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).expect("dir").permissions().mode() & 0o777;
+        let base = sandbox("mode-dirs");
+        let existing = base.join("existing");
+        std::fs::create_dir(&existing).expect("existing dir");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o750)).expect("chmod");
+        let outer = existing.join("outer");
+        let path = outer.join("inner").join("audit.jsonl");
+        let logger = AuditLogger::new(&path).expect("audit");
+        assert_eq!(mode(&outer), 0o700, "{:o}", mode(&outer));
+        assert_eq!(mode(&outer.join("inner")), 0o700);
+        assert_eq!(
+            mode(&existing),
+            0o750,
+            "an existing directory keeps its mode"
+        );
+        assert_eq!(mode(&base), 0o700);
+        logger
+            .record(&request("first".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        assert_eq!(mode(&path), 0o600);
+        // A logger over a directory that is already there changes nothing.
+        AuditLogger::new(&path).expect("audit again");
+        assert_eq!(mode(&existing), 0o750);
         let _ = std::fs::remove_dir_all(base);
     }
 

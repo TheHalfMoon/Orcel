@@ -76,7 +76,10 @@ fn the_configuration_is_exactly_the_recorded_one() {
     let main = &windows[0];
     assert_eq!(main["label"], "main");
     assert_eq!(main["title"], "Orcel Control Room");
-    assert_eq!(main["url"], "index.html");
+    // SG-000119 A4: the window first loads the script-free start page; the
+    // shell navigates to the view (index.html) only after the WebView2
+    // settings are applied and read back, so no page script runs before.
+    assert_eq!(main["url"], "start.html");
     assert_eq!(
         main["create"], false,
         "the shell builds the window itself, hidden"
@@ -234,16 +237,110 @@ fn the_manifest_pins_tauri_lean_and_registers_no_plugin() {
     }
 }
 
+/// Every file of the frontendDist (`ui/`), as (path relative to `ui/`, text).
+fn frontend_dist() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).expect("ui dir") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                walk(&path, base, out);
+            } else {
+                let name = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.push((name, std::fs::read_to_string(&path).expect("a text file")));
+            }
+        }
+    }
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let mut out = Vec::new();
+    walk(&base, &base, &mut out);
+    out.sort();
+    out
+}
+
 #[test]
-fn the_page_has_no_script_and_no_inline_handler() {
-    let page = read("ui/index.html");
+fn the_start_page_runs_no_script_and_the_view_loads_one_external_module() {
+    // SG-000119 A4. The start page is what the window holds before the
+    // WebView2 settings are applied: no script of its own.
+    let start = read("ui/start.html");
+    assert!(!start.contains("<script"), "the start page runs no script");
+    let index = read("ui/index.html");
+    assert_eq!(index.matches("<script").count(), 1);
     assert!(
-        !page.contains("<script"),
-        "the A2 page runs no script of its own"
+        index.contains(r#"<script type="module" src="js/view/main.js"></script>"#),
+        "the view's one script is the embedded module, with no inline body"
     );
-    assert!(!page.contains(" on"), "no inline event handler");
-    assert!(
-        !page.contains("http://") && !page.contains("https://"),
-        "no remote reference"
-    );
+    for page in [&start, &index] {
+        assert!(!has_inline_handler(page), "no inline event handler");
+        assert!(!page.contains(" style="), "no inline style");
+    }
+}
+
+/// Whether `page` has an attribute `on<letters>=` (an inline event handler)
+/// inside any tag. The pages' prose may say "on", so only tags are read.
+fn has_inline_handler(page: &str) -> bool {
+    page.split('<').skip(1).any(|rest| {
+        let tag = rest
+            .split('>')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        tag.split(|c: char| c.is_whitespace())
+            .skip(1)
+            .any(|attribute| {
+                attribute.strip_prefix("on").is_some_and(|name| {
+                    let letters: String =
+                        name.chars().take_while(char::is_ascii_alphabetic).collect();
+                    !letters.is_empty() && name[letters.len()..].starts_with('=')
+                })
+            })
+    })
+}
+
+#[test]
+fn the_inline_handler_check_reads_tags_only() {
+    assert!(has_inline_handler(r#"<p onclick="x()">"#));
+    assert!(has_inline_handler(r#"<img src=x ONERROR=y>"#));
+    assert!(!has_inline_handler(
+        "<p>shown on this device, only once</p>"
+    ));
+    assert!(!has_inline_handler(r#"<p class="one">"#));
+}
+
+#[test]
+fn the_built_frontend_dist_has_no_remote_url_eval_or_html_sink() {
+    let files = frontend_dist();
+    let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(names.contains(&"index.html") && names.contains(&"js/view/main.js"));
+    for (name, text) in &files {
+        assert!(
+            name.ends_with(".html") || name.ends_with(".css") || name.ends_with(".js"),
+            "{name}: only pages, the stylesheet and compiled modules are embedded"
+        );
+        for forbidden in [
+            "http://",
+            "https://",
+            "ws://",
+            "wss://",
+            "javascript:",
+            "innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+            "eval(",
+            "Function(",
+            "srcdoc",
+            "import(",
+            "fetch(",
+            "XMLHttpRequest",
+            "WebSocket",
+            "@import",
+            "url(",
+        ] {
+            assert!(!text.contains(forbidden), "{name} contains {forbidden}");
+        }
+    }
 }
