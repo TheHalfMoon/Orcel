@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-16, main at `b155d948` (#771; includes the SG-000122 closeout, #770), plus branch `browser/denial-attribution` (pushed, no PR). Open PRs: #342 and #328 (other work).
+Last updated: 2026-11-16, main at `b155d948` (#771; includes the SG-000122 closeout, #770), plus branch `browser/denial-attribution` (PR #772, open). Open PRs: #342 and #328 (other work).
 
 ## Approval and security UX
 
