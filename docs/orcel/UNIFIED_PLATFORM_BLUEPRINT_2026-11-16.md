@@ -23,6 +23,7 @@
 | Web intelligence | scrape, map, crawl, search, extract, structured JSON/Markdown/HTML, PDF/docs, queues, scheduler, sessions, change tracking, retry/backoff, exports, rate/robots compliance | Firecrawl-compatible API contract suites plus crawler/extraction golden corpus |
 | Remote | user-authorized peer pairing, screen/view/control, clipboard/file transfer, device presence, reconnection, streaming, interactive approval, session revocation | End-to-end over LAN and remote VPN or owner-hosted relay, no anonymous control |
 | Fleet/device | inventory, packages, OS/hardware reports, software install/update, patch/compliance jobs, device groups, policies, agent rollout, reporting | Multi-device Linux/macOS/Windows test lab; no stealth enrollment |
+| Mobile companion | Android ADB local on Windows/macOS/Linux; iPhone Mirroring local on supported Macs; screenshots, gestures, OCR, accessibility tree (where supported), device selection and tasks | Device-owner-connected phone with cross-platform adapter tests; iPhone Mirroring needs macOS 15+ and iOS 18+; no generic iPhone access claimed on Linux/Windows |
 | Agent | planner/provider selection, local models, checkpoints, memory opt-in, retries, scheduling, task monitoring, interrupt/resume, output verification | Real tasks completed with evidence, no simulated consent |
 | Distribution | GUI app, MCP stdio/Streamable HTTP, REST API, OpenAPI, CLI, JS/Python SDKs, release installers, auto update | Versioned protocols, cross-platform clean install tests, release provenance |
 
@@ -38,6 +39,7 @@
 | Scrapling | https://github.com/D4Vinci/Scrapling ; BSD-3-Clause | Adaptive selectors, spiders, parser, structured extraction | Independent extractor/parser adapter |
 | Firecrawl | https://github.com/firecrawl/firecrawl ; primarily AGPL-3.0 with MIT subtrees | **Full open-source feature parity** for scrape/map/crawl/search/extract, batch jobs, SDK/API, document handling | Maintain endpoint parity tests; track AGPL obligations and independently verify claimed additional relicensing grant; cloud-only proprietary features are not automatically in source |
 | Mika | https://github.com/wangzan101/Mika ; Apache-2.0 | Android background control, agent tasks, phone MCP, schedules, local sandbox | **Android companion**, not a desktop kernel replacement |
+| Phone Harness | https://github.com/phone-harness/phone-harness ; MIT (copyright © 2026 shawn pana); main `4bebff105af853215fb74c958c2c5e78bc275be2` | Android ADB local control on Windows/macOS/Linux; iPhone via macOS iPhone Mirroring + Apple Vision OCR; screenshots, text/UI discovery, gestures, keyboard, device-independent Python helpers | **Mobile device backend** to integrate alongside Mika, maintaining the MIT copyright/license notice. Hosted Phone Harness Cloud is not part of the repository's free local-device runtime and must not become a mandatory Orcel dependency |
 | Fleet | https://github.com/fleetdm/fleet ; free components MIT; commercial licensing applies elsewhere | OS/device inventory, policy, MDM, software deployment | Separate Fleet extension/service, only reuse correctly granted modules |
 | UU Remote | **No single verified upstream source/permission identified**; NetEase product and various unofficial Linux bridges | Remote desktop transport, video, input, NAT/relay | Study functionality and protocol; don't import a proprietary client or bridge blindly |
 | "Vercel agent-use" | **Exact repository not verified** | TBD after exact source identified | No copied code or feature-complete claim until disambiguated |
@@ -108,7 +110,9 @@ Default mode need not block routine work with a dialog per click; enable trusted
 - Add Fleet-style multi-device inventory/management to an optional service, not mandatory to single-device install.
 
 ### Track 5 — Mobile and packaging
-- Mika-derived Android companion when its independent runtime is qualified; no promise of desktop feature parity on phones.
+- Integrate phone-harness's MIT-licensed local device backends alongside Mika as one Orcel Mobile API: Android ADB on Windows/macOS/Linux and iPhone via Apple's iPhone Mirroring on macOS 15+ with iOS 18+. Normalize screenshots, visual/OCR observations, touch, swipe, keyboard, app opening, device selection and supported capability detection.
+- iPhone Mirroring requires the owner to pair their device and allow OS Accessibility/Screen Recording; no bypass of device lock, Face ID or camera and no unsupported cross-OS iPhone promise.
+- Mika-derived Android companion when its independent runtime is qualified; no promise of desktop feature parity on phones. Keep hosted-phone providers optional and BYOK, not a dependency of local control.
 - Installer/source distribution for Windows/macOS/Linux, native CI and tests, accessibility audits and security release gates.
 - Publish MCP/REST/SDK contract tests and user task evidence; demo and documentation in Orcel branding.
 
@@ -135,5 +139,6 @@ Existing `README.md` and canonical security/grain documents describe the current
 4. **UP-004**: Obscura/Chromium engine adapter spike with a public test corpus and fallback report.
 5. **UP-005**: Firecrawl-compatible scrape/map/crawl API parity harness and first endpoint release.
 6. **UP-006**: macOS/Linux computer-use provider qualification, remote access and application test journeys.
+7. **UP-007**: Mobile provider contract (phone-harness + Mika), local Android ADB on 3 desktop OSes, real iPhone-Mirroring journey on macOS, visible user consent, and parity tests via App/MCP/API.
 
 Each packet requires implementation, reproducible tests, CI, and a factual release/readiness update. No unbounded mass donor import as a substitute for functionality.
