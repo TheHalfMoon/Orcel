@@ -39,6 +39,18 @@
 //! after the parent starts orceld again in the same sandbox the view must
 //! recover from orceld's snapshot. The window is closed programmatically and
 //! its exit report must show `web_messages=0`.
+//!
+//! **SG-000119 A5.** A third test runs the real shell binary (no hook)
+//! against the live orceld with a report task, reads its UI Automation tree
+//! (read-only: no keystroke, click or focus change) until the task's summary
+//! is a named keyboard stop with an expand pattern, then opens orceld's real
+//! pipe under the token of each WebView2 process below Medium integrity
+//! (the renderer among them): each open must be refused, while this test, at
+//! Medium as orceld's clients run, reads status through the A1 client. The
+//! pipe's name carries this user's SID and is never printed.
+
+#[path = "support/qualify.rs"]
+mod qualify;
 
 use orcel_app_api_client::AppApiClient;
 use orcel_control_room_shell::{run, Hooks};
@@ -79,7 +91,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--list") {
         return;
     }
-    let tests: [(&str, LiveTest); 2] = [
+    let tests: [(&str, LiveTest); 3] = [
         (
             "the_shell_reads_a_live_orceld_through_the_five_commands",
             live,
@@ -88,12 +100,19 @@ fn main() {
             "the_view_renders_a_live_orceld_and_recovers_after_it_restarts",
             live_view,
         ),
+        (
+            "the_renderer_cannot_open_a_live_orcelds_pipe_and_tasks_read_well",
+            live_renderer_and_tasks,
+        ),
     ];
     let Some(orceld) = std::env::var_os("SG119_LIVE_ORCELD") else {
         for (name, _) in tests {
             println!("test {name} ... ignored (set SG119_LIVE_ORCELD to an orceld.exe built from this branch)");
         }
-        println!("test result: ok. 0 passed; 0 failed; 2 ignored");
+        println!(
+            "test result: ok. 0 passed; 0 failed; {} ignored",
+            tests.len()
+        );
         return;
     };
     let (mut passed, mut failed) = (0, 0);
@@ -960,4 +979,165 @@ fn live_view(binary: PathBuf) {
          \"{down_text}...\" with no status shown as live, and after orceld started again the view \
          recovered from its snapshot; SG119-IPC commands={commands} web_messages=0"
     );
+}
+
+// ---------------------------------------------------------------------------
+// SG-000119 A5: the renderer and a live orceld's pipe; the task summary as a
+// screen reader reads it
+
+fn live_renderer_and_tasks(binary: PathBuf) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+    let sid = orcel_app_api_client::this_user_sid().expect("this user's SID");
+    let endpoint = format!(r"\\.\pipe\orcel-{sid}-app");
+    let mut orceld = start_orceld(binary);
+    orceld.wait_listening(&endpoint);
+    let task_id = orceld.start_report();
+    println!("    orceld listens on this user's endpoint; report task {task_id} observed");
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_orcel-control-room-shell"));
+    for (name, _) in std::env::vars_os() {
+        if orcel_control_room_shell::environment::names_webview2(&name) {
+            command.env_remove(name);
+        }
+    }
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the shell");
+    let child = KillOnDrop(Some(child));
+    let pid = child.0.as_ref().expect("the shell").id();
+    let start = Instant::now();
+    let hwnd = loop {
+        let found = qualify::windows_of(&[pid])
+            .into_iter()
+            .find(|window| window.visible && window.title == "Orcel Control Room");
+        if let Some(window) = found {
+            break window.hwnd;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "no visible window"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+
+    // The task's summary through UI Automation (read-only).
+    let wanted = format!("report task {task_id}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let (stops, summary) = loop {
+        let tree = qualify::uia_tree(pid, "Orcel Control Room", 10_000);
+        let elements = tree.as_array().cloned().unwrap_or_default();
+        let stops: Vec<Value> = elements
+            .iter()
+            .filter(|element| element["focusable"] == true && element["ct"] != "Document")
+            .cloned()
+            .collect();
+        let summary = stops
+            .iter()
+            .find(|element| {
+                element["name"]
+                    .as_str()
+                    .is_some_and(|name| name.contains(&wanted))
+            })
+            .cloned();
+        if summary.is_some() || Instant::now() > deadline {
+            break (stops, summary);
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    };
+    let names: Vec<&str> = stops
+        .iter()
+        .filter_map(|element| element["name"].as_str())
+        .collect();
+    let summary =
+        summary.unwrap_or_else(|| panic!("no keyboard stop named for the task: {names:?}"));
+    let name = summary["name"].as_str().unwrap_or_default().to_owned();
+    assert!(
+        name.contains(", owner: ") && name.contains("; updated ") && !name.contains(TITLE),
+        "the summary is named by state, kind, id, owner and time, never the title: {name}"
+    );
+    assert_eq!(
+        summary["expand"], true,
+        "the summary expands its details: {summary}"
+    );
+    assert_eq!(
+        names.last().copied(),
+        Some("Live events list, scrollable"),
+        "the task summaries come before the timeline: {names:?}"
+    );
+
+    // The renderer against orceld's real pipe; the name is never printed.
+    let (lines, probes) = qualify::probe_tree(pid, &endpoint);
+    for line in &lines {
+        println!("    SG119-PROCESS {}", redact(line));
+    }
+    let control = AppApiClient::for_this_user()
+        .expect("the client")
+        .status()
+        .is_ok();
+    // SAFETY: posting WM_CLOSE to the shell's own window.
+    assert_ne!(unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) }, 0);
+    let finished = finish(child.take(), Duration::from_secs(30));
+    assert_eq!(finished.code, Some(0));
+    assert!(
+        control,
+        "this test, at Medium integrity, reads orceld's status"
+    );
+    let renderers: Vec<_> = probes
+        .iter()
+        .filter(|(kind, _, _)| kind == "renderer")
+        .collect();
+    assert!(
+        !renderers.is_empty(),
+        "a renderer was probed: {}",
+        redact(&format!("{lines:#?}"))
+    );
+    for (kind, facts, probe) in &probes {
+        assert!(
+            probe.thread.integrity == facts.integrity && facts.integrity < qualify::MEDIUM,
+            "{kind}: the probe ran at the process's own integrity"
+        );
+        assert_eq!(
+            probe.open,
+            qualify::ACCESS_DENIED,
+            "{kind}: opening orceld's pipe under its token is refused"
+        );
+    }
+    let (_, facts, probe) = renderers[0];
+    let version = line(&finished, "SG119-WEBVIEW2 version=");
+    println!(
+        "SG119-EVIDENCE A5 renderer on windows (WebView2 {version}): with a live orceld on this \
+         user's endpoint, opening its pipe (read and write, identification-only, as its clients \
+         do) under the WebView2 renderer's own token (integrity {}, appcontainer {}, restricted \
+         {}) gave {}; all {} sandboxed WebView2 processes were refused; this test at Medium \
+         integrity read status through the A1 client; the task's summary read to UI Automation \
+         as {:?} (an expandable keyboard stop, before the timeline)",
+        qualify::rid_name(facts.integrity),
+        facts.app_container,
+        facts.restricted,
+        qualify::error_name(probe.open),
+        probes.len(),
+        name.replace(&task_id, "<task>")
+    );
+}
+
+/// Kills the shell if a check fails before the test closes it, so no test
+/// window outlives its test.
+struct KillOnDrop(Option<Child>);
+
+impl KillOnDrop {
+    fn take(mut self) -> Child {
+        self.0.take().expect("the shell")
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }

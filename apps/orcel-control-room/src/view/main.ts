@@ -22,6 +22,7 @@ import {
   statusNodes,
   taskDetailNodes,
   taskListNodes,
+  taskSummaryLabel,
   taskSummaryNodes,
   timelineNodes,
   type Answer,
@@ -112,7 +113,7 @@ function taskNode(task: TaskSummary): Node {
   const answer = details.get(id) ?? { state: "loading" };
   return h("li", null, [
     h("details", { "data-task": id, ...(openTasks.has(id) ? { open: "" } : {}) }, [
-      h("summary", { "data-task": id, "aria-label": `Report task ${id}` }, taskSummaryNodes(task)),
+      h("summary", { "data-task": id, "aria-label": taskSummaryLabel(task) }, taskSummaryNodes(task)),
       h("div", { class: "task-detail" }, taskDetailNodes(answer)),
     ]),
   ]);
