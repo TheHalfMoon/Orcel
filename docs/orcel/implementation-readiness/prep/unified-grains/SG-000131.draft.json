@@ -1,93 +1,65 @@
 {
   "id": "SG-000131",
-  "id_status": "PROPOSED: next unassigned number after SG-000130; final id is part of founder decision FD-UP-4",
-  "title": "Unified platform contracts v1, audit hash chain with external anchor, and licence gates (inert)",
+  "title": "Unified platform contracts v1, audit hash chain with Event Log anchors, and licence and provenance gates (inert)",
   "program": "ORCEL-UP",
-  "state": "DRAFT",
+  "state": "GRAIN",
+  "draft_note": "Activation-ready draft under prep/ (revision 6). It becomes active only when the activation PR (WP1-00) copies it into .specgrain/specs/ with this field removed, the founder decisions of 2026-11-17 recorded in CURRENT.md and planning_issue set.",
   "risk": "medium",
-  "created": "2026-11-16",
-  "revision": 3,
-  "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
+  "created": "2026-11-17",
+  "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
+  "planning_issue": null,
   "dependencies": [
     "SG-000093"
   ],
   "dependency_notes": {
-    "SG-000093": "Closed. Its AuthorityMode, ExecutorClass and ExecutionState vocabularies move to orcel-contracts with identical serde spellings and are re-exported from orcel-policy; lease issuance, lease ids and binding digests stay in orcel-policy with their existing encodings."
+    "SG-000093": "Closed. AuthorityMode, ExecutorClass and ExecutionState move to orcel-contracts with identical serde spellings and are re-exported by orcel-policy; lease ids and binding digests keep their encodings."
   },
-  "spec_document": "docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md",
-  "packets": [
-    "WP1-00",
-    "WP1-01",
-    "WP1-02",
-    "WP1-03"
-  ],
-  "objective": "Give every later unified-platform grain one set of versioned wire contracts in crates/orcel-contracts (principal and device, per-OS identity binding, lease view and grant reference bound to orcel_session_id, session, tool registry entry with a lease gate that never replaces an approval, capability discovery with explicit unsupported, the job state machine reusing not_started|dispatched|completed|cancelled|outcome_unknown, the audit event, the sidecar IPC handshake, heartbeat and kill, WebCrawlRequest, and additive failure codes with a complete HTTP mapping), a SHA-256 hash chain in orcel-audit written before every dispatch and anchored outside executor reach (Windows Event Log and the Full Control indicator), an `orcel audit verify` command, and CI gates for per-crate and per-package licences, AGPL markers and the kernel dependency direction. Nothing becomes reachable by any client.",
+  "objective": "Give every unified-platform grain one set of versioned wire contracts in crates/orcel-contracts (principal and device, per-OS identity binding, lease view, grant reference bound to session and client, standing approval, session, tool registry entry, capability discovery with unsupported and permission_required, the job state machine reusing not_started|dispatched|completed|cancelled|outcome_unknown, the audit event, sidecar IPC, web crawl request with scope, headers, privacy profile and declared task, and additive failure codes with a complete HTTP mapping); a SHA-256 hash chain in orcel-audit written before every dispatch and anchored in the Windows Event Log; `orcel audit verify` checking every anchor still in the log; and CI gates for licences per crate, package and component, AGPL markers outside the isolated Firecrawl component and FD-06 paths, provenance of every copied directory, and the kernel dependency direction. Nothing becomes reachable by any client. Spec: docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md sections 3, 4.0 to 4.10, 8.2 (WP1-01, WP1-02, WP1-03).",
   "scope": {
     "include": [
-      "WP1-00: activation of this grain and of the other Wave 1 drafts the founder approves; Firecrawl status correction in DONOR_REGISTRY.md and donor_registry.json.",
-      "WP1-01: root deny.toml (licences, bans, sources); scripts/check-npm-licenses.mjs over every package-lock.json under apps/, packages/ and tests/; scripts/check-agpl-markers.mjs over crates/, apps/, packages/ and tests/, accepting AGPL markers only in docs/orcel/notices/fd06-files.txt paths; a cargo metadata test enforcing section 3.2 of the spec.",
-      "WP1-02: section 4 contract types with golden JSON fixtures; schemars =1.2.3 as a dev-dependency only, with a schema drift test; canonical_json for new contract digests, with SG-000093, SG-000018, SG-000019 and SG-000040 digests exempt and unchanged; FailureCode variants LEASE_REQUIRED, LEASE_INVALID, LEASE_UNSUPPORTED_PLATFORM, INDICATOR_UNAVAILABLE, UNSUPPORTED, POLICY_BLOCKED, JOB_NOT_FOUND, QUEUE_FULL, RATE_LIMITED and OUTCOME_UNKNOWN; FailureCode::http_status covering every variant including PATH_ESCAPE (403) and PATH_RACE_DETECTED (409).",
-      "WP1-03: hash-chained audit events; lease events carry AuthorityAuditEvent verbatim (AuditKind unchanged); dispatch events written and flushed before the executor starts, with dispatch refused on write failure; argv, URLs and query strings recorded as SHA-256 digests; anchor events every 32 events and on lease, emergency_stop and shutdown, recorded in the Windows Application log per user through an unregistered RegisterEventSourceW('Orcel') handle (event id 4100; no source registration, which would need administrator rights); `orcel audit verify` checking every Orcel anchor record still in the log, with a conflicting record a break and a beyond-tail record a truncation; if the anchor cannot be written, Full Control is refused (no indicator-only fallback); rotation continuity."
+      "WP1-01: root deny.toml; scripts/check-npm-licenses.mjs, check-agpl-markers.mjs (allowed only under apps/orcel-firecrawl/ and docs/orcel/notices/fd06-files.txt paths) and check-provenance.mjs (PROVENANCE.json for every upstream, third_party or vendor directory), each with tests; crates/orceld/tests/dependency_direction.rs; ci.yml wiring.",
+      "WP1-02: the contract modules listed in section 8.2 of the spec, golden fixtures, schemars =1.2.3 as a dev-dependency with a schema drift test, canonical_json with the SG-000093/SG-000018/SG-000019/SG-000040 exemptions, the FailureCode variants of section 4.10 and FailureCode::http_status.",
+      "WP1-03: chain.rs, verify.rs and anchor.rs in orcel-audit; write-before-dispatch in orceld with refusal on failure; Event Log anchors (event id 4100) through the registered source when the authority service is installed, otherwise an unregistered per-user source proven under a standard account; `orcel audit verify`; digests only for argv, URLs, query strings and header values."
     ],
     "exclude": [
-      "Any new MCP tool, REST route, executor, runtime dependency in crates/*, listener, network path or authority.",
+      "Any MCP tool, REST route, executor, runtime dependency in crates/*, listener, network path or authority.",
       "Any change to lease issuance, lease ids, binding digests, existing approval digests or Safe-mode policy.",
-      "macOS and Linux identity readers and log anchors (Wave 2).",
+      "macOS unified log and Linux journal anchors (track X).",
       "Any donor code."
     ]
   },
   "authority_delta": {
     "activation": "None.",
-    "contracts": "None. Wire types only; no issuance, no checking, no secret material.",
-    "audit": "None in what is permitted. Adds integrity evidence and a refusal when evidence cannot be written; redaction is tightened (digests for argv and URLs), never loosened.",
-    "ci": "Adds refusing gates only."
+    "contracts": "None. Wire types only.",
+    "audit": "None in what is permitted; adds integrity evidence and refuses a dispatch whose evidence cannot be written.",
+    "ci": "Refusing gates only."
   },
   "decisions": [
     {
-      "question": "Activate this grain and its id",
-      "status": "PENDING (founder decision FD-UP-4)"
+      "question": "Grain id and activation",
+      "status": "DECIDED (founder, 2026-11-17, FD-UP-4): SG-000131 covers contracts, the audit chain and licence and provenance checks."
+    },
+    {
+      "question": "Licensing approach",
+      "status": "DECIDED (founder, 2026-11-17, FD-UP-1): core independently licensed; copy-first AGPL code only in the isolated component; founder attestation recorded separately (docs/orcel/grants/2026-11-17-founder-attestation.md)."
     }
   ],
   "invariants": [
-    "orcel-contracts depends only on serde and serde_json at runtime and contains no platform-specific code.",
-    "Every existing wire spelling, including FailureCode values and the orcel-full-control-lease/1 schema, is unchanged.",
-    "SG-000093 lease ids and binding digests and existing approval digests keep their encodings.",
-    "Inbound authority-bearing contract objects refuse unknown fields.",
-    "LeaseView is a projection and is never accepted as proof of authority.",
-    "No dispatch runs without its audit event durably written first.",
-    "No durable anchor means no Full Control; the indicator display is never the anchor.",
-    "Audit events never contain a raw SID, token handle, credential, secret, raw argv, raw URL or page content.",
-    "No kernel crate depends on an app, test, package or third_party unit.",
-    "No new AGPL-marked file exists outside the FD-06 allowlist."
+    "orcel-contracts depends only on serde and serde_json at runtime and contains no platform code.",
+    "Existing wire spellings, the orcel-full-control-lease/1 schema and existing digests are unchanged.",
+    "Inbound authority-bearing objects refuse unknown fields; LeaseView is never proof.",
+    "No dispatch runs without its audit record durably written first.",
+    "Audit records never contain a raw SID, token, credential, header value, argv, URL or page content.",
+    "No kernel crate depends on an app, test, package or third_party unit, and no Apache unit links an AGPL unit.",
+    "Every copied directory carries a pinned PROVENANCE.json and its licence text."
   ],
   "acceptance": [
-    "Every new contract type round-trips its golden fixture; unknown fields are refused where required; schema drift fails CI.",
-    "Every FailureCode variant has an HTTP mapping (enumeration test).",
-    "orcel-policy's existing tests pass unchanged after the vocabulary move.",
-    "Editing, deleting or reordering one audit line is reported at that line; tail truncation is reported against the newest Event Log anchor; a forged conflicting anchor record is a break; rotation keeps continuity.",
-    "A simulated audit write failure refuses the dispatch; a simulated anchor write failure refuses Full Control.",
-    "The anchor write and read-back succeed, and clearing the log is refused, when run as a standard (non-administrator) account on the Windows runner and on the founder's PC.",
-    "Root cargo deny, the npm licence check and the AGPL marker scan pass on current main; fixtures with an AGPL dependency or an AGPL header outside the allowlist fail them.",
-    "The dependency-direction test fails for a fixture edge from a kernel crate to an app."
-  ],
-  "tests": [
-    "cargo test -p orcel-contracts",
-    "cargo test -p orcel-policy",
-    "cargo test -p orcel-audit chain_",
-    "cargo test -p orceld audit_chain_",
-    "cargo test -p orceld audit_anchor_ (Windows)",
-    "cargo test -p orceld --test audit_anchor_standard_user (Windows, run under a temporary standard account)",
-    "cargo test -p orceld --test dependency_direction",
-    "cargo deny check licenses bans sources",
-    "node --test scripts/check-npm-licenses.test.mjs",
-    "node --test scripts/check-agpl-markers.test.mjs",
-    "node scripts/check-audit-redaction.mjs",
-    "node scripts/check-current-identity.mjs"
-  ],
-  "ci_runners": [
-    "ubuntu-latest (Governance job and Rust leg)",
-    "windows-latest (Rust leg; Event Log anchor)",
-    "macos-latest (Rust leg)"
+    "Every contract type round-trips its golden fixture; unknown fields refused where required; schema drift fails CI; every FailureCode is mapped.",
+    "orcel-policy tests pass unchanged after the vocabulary move.",
+    "Edits, deletions, reorders and tail truncation are reported by `orcel audit verify`; a conflicting anchor record is a break; rotation keeps continuity.",
+    "A simulated audit write failure refuses the dispatch.",
+    "The anchor write and read-back succeed and clearing the log is refused under a temporary standard account on the Windows runner.",
+    "The licence, AGPL-marker, provenance and dependency-direction gates pass on main and fail on their fixtures."
   ],
   "review": {
     "jev_semantic_review": true,
@@ -97,10 +69,9 @@
     "cross_platform_ci": "Windows, macOS and Linux legs"
   },
   "successor_requirements": {
-    "SG-000101": "Uses the capability, error and web contracts.",
-    "SG-000102": "Uses the job state machine, restart rules and audit chain.",
-    "SG-000132": "Uses LeaseRef, DispatchAuthority, write-before-dispatch and the anchor shown by the indicator.",
-    "wave_2": "macOS unified log and Linux journal anchors; orcel-full-control-lease/2 with OsIdentityBinding."
+    "SG-000133": "Uses the web, capability and error contracts and the licence gates for the Firecrawl component.",
+    "SG-000134": "Uses the job contracts and audit chain.",
+    "SG-000132": "Uses LeaseRef, DispatchAuthority, StandingApproval and the anchor; the authority service registers the Event Log source at install."
   },
-  "done_when": "WP1-00 to WP1-03 are merged with exact-head qualification and the canonical record names this grain CLOSED."
+  "done_when": "WP1-00 to WP1-03 merge with exact-head qualification and the canonical record names this grain CLOSED."
 }

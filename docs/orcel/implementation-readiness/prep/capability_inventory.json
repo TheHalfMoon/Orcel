@@ -8,7 +8,8 @@
   "Upstream SHAs are git ls-remote HEAD values read on 2026-11-16; licences read from LICENSE/NOTICE files and manifests at those SHAs via the GitHub API.",
   "Founder attestations (docs/orcel/grants/) are recorded separately from upstream licence terms; neither is decided here.",
   "Per-OS and surface fields: tested | implemented_untested | inert_stub | not_started | not_applicable; exposed:<tools> | not_exposed | not_started.",
-  "method for NOT STARTED or BLOCKED rows is the planned method; integrated is true only for code in Orcel main."
+  "method for NOT STARTED or BLOCKED rows is the planned method; integrated is true only for code in Orcel main.",
+  "2026-11-17: founder decisions FD-UP-1 to FD-UP-13 applied (UNIFIED_INTEGRATION_SPEC.md section 11). Founder attestation of 2026-11-17 recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, separately from upstream terms. Stealth records moved from BLOCKED to NOT STARTED behind the opt-in policy gate; agent-desktop admitted as a candidate; Exa Browser and TinyFish added as source-unverified."
  ],
  "status_vocabulary": [
   "NOT STARTED",
@@ -416,8 +417,8 @@
    ],
    "upstream_tests": [],
    "feature": "Stealth build: per-session fingerprint randomisation, BoringSSL TLS impersonation, tracker blocking",
-   "classification": "unavailable_or_outside_rights",
-   "orcel_destination": "None until a policy decision",
+   "classification": "best_via_adapter",
+   "orcel_destination": "third_party/obscura (patched build, cargo feature) enabled only through the sensitive-feature gate (WPB-02, WP2-14)",
    "method": "adapter",
    "integrated": false,
    "windows": "not_started",
@@ -428,8 +429,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [],
-   "status": "BLOCKED",
-   "blocking_issue": "Policy decision required: anti-detection / fingerprint spoofing / TLS impersonation is a bot-detection bypass capability; Orcel has no adopted policy permitting it."
+   "status": "NOT STARTED",
+   "blocking_issue": "Opt-in policy gate (FD-UP-2, 2026-11-17): configurable, OFF by default, per-client permission, audited; respects site authorization; no security bypass (spec section 4.16)."
   },
   {
    "id": "browser_use.extraction",
@@ -1101,7 +1102,7 @@
     "gh search repos agent-use --owner vercel: no results; repos/vercel-labs/agent-use and repos/vercel/agent-use: 404"
    ],
    "status": "BLOCKED",
-   "blocking_issue": "Founder must name the exact repository; candidate vercel-labs/agent-desktop is NOT substituted"
+   "blocking_issue": "Original 'Vercel agent-use' repository still unidentified; search continues (FD-UP-3, 2026-11-17). Candidate vercel-labs/agent-desktop is tracked separately."
   },
   {
    "id": "agent_desktop.candidate",
@@ -1120,7 +1121,7 @@
     "tests/e2e-linux",
     "tests/conformance"
    ],
-   "feature": "Candidate only: cross-platform computer-use CLI (AX / UIA / AT-SPI) with MCP",
+   "feature": "Candidate donor (FD-UP-3, 2026-11-17): cross-platform computer-use CLI (AX / UIA / AT-SPI) with MCP",
    "classification": "best_via_adapter",
    "orcel_destination": "Would map to orcel-provider-uia / apps/orcel-native-host if confirmed",
    "method": "adapter",
@@ -1133,8 +1134,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [],
-   "status": "BLOCKED",
-   "blocking_issue": "Not confirmed as 'agent-use'; inventory pending founder identification"
+   "status": "NOT STARTED",
+   "blocking_issue": "Admitted as a candidate donor by the founder on 2026-11-17; Apache-2.0 upstream; source admission (per-file licence matrix, provenance) pending; the search for the original 'agent-use' continues."
   },
   {
    "id": "crawlee.request_queue",
@@ -1428,8 +1429,8 @@
    ],
    "upstream_tests": [],
    "feature": "Fingerprint generation and impersonating HTTP clients (impit, got-scraping)",
-   "classification": "unavailable_or_outside_rights",
-   "orcel_destination": "None until a policy decision",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host privacy profile behind the sensitive-feature gate (WP2-14)",
    "method": "adapter",
    "integrated": false,
    "windows": "not_started",
@@ -1440,8 +1441,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [],
-   "status": "BLOCKED",
-   "blocking_issue": "Policy decision required: anti-detection / fingerprint spoofing / TLS impersonation is a bot-detection bypass capability; Orcel has no adopted policy permitting it."
+   "status": "NOT STARTED",
+   "blocking_issue": "Opt-in policy gate (FD-UP-2, 2026-11-17): configurable, OFF by default, per-client permission, audited; respects site authorization; no security bypass (spec section 4.16)."
   },
   {
    "id": "scrapling.adaptive_selectors",
@@ -1514,8 +1515,8 @@
    ],
    "upstream_tests": [],
    "feature": "HTTP fetcher with browser TLS impersonation (curl_cffi)",
-   "classification": "unavailable_or_outside_rights",
-   "orcel_destination": "None until a policy decision (plain fetch already exists: web_fetch)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host privacy profile behind the sensitive-feature gate (WP2-14)",
    "method": "adapter",
    "integrated": false,
    "windows": "not_started",
@@ -1526,8 +1527,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [],
-   "status": "BLOCKED",
-   "blocking_issue": "Policy decision required: anti-detection / fingerprint spoofing / TLS impersonation is a bot-detection bypass capability; Orcel has no adopted policy permitting it."
+   "status": "NOT STARTED",
+   "blocking_issue": "Opt-in policy gate (FD-UP-2, 2026-11-17): configurable, OFF by default, per-client permission, audited; respects site authorization; no security bypass (spec section 4.16)."
   },
   {
    "id": "scrapling.stealth_browser",
@@ -1541,8 +1542,8 @@
    ],
    "upstream_tests": [],
    "feature": "Stealth Chrome fetcher (patchright, browserforge fingerprints)",
-   "classification": "unavailable_or_outside_rights",
-   "orcel_destination": "None until a policy decision",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host privacy profile behind the sensitive-feature gate (WP2-14)",
    "method": "adapter",
    "integrated": false,
    "windows": "not_started",
@@ -1553,8 +1554,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [],
-   "status": "BLOCKED",
-   "blocking_issue": "Policy decision required: anti-detection / fingerprint spoofing / TLS impersonation is a bot-detection bypass capability; Orcel has no adopted policy permitting it."
+   "status": "NOT STARTED",
+   "blocking_issue": "Opt-in policy gate (FD-UP-2, 2026-11-17): configurable, OFF by default, per-client permission, audited; respects site authorization; no security bypass (spec section 4.16)."
   },
   {
    "id": "scrapling.ad_block",
@@ -1830,9 +1831,9 @@
    ],
    "upstream_tests": [],
    "feature": "/v2/extract structured JSON via LLM",
-   "classification": "needs_new_implementation",
-   "orcel_destination": "Orcel agent/model provider (BYOK or local model)",
-   "method": "reimplemented",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-firecrawl/extract (copied apps/api/src/lib/extract on the pinned Node runtime; model calls proxied by orceld; WP2-13)",
+   "method": "copy",
    "integrated": false,
    "windows": "not_started",
    "macos": "not_started",
@@ -1843,7 +1844,7 @@
    "tests": [],
    "evidence": [],
    "status": "NOT STARTED",
-   "blocking_issue": "Needs a model provider; DONOR_REGISTRY rejects upstream LLM extract code; AGPL-3.0 upstream. Founder attestation (docs/orcel/grants/2026-10-18-founder-attestation.md, FD-06) states redistribution inside Apache-2.0 Orcel is covered for grantor-owned code; no copyright-holder-signed grant is in the repository. Third-party files keep their licences."
+   "blocking_issue": "Copy first (FD-UP-1, 2026-11-17) into the isolated AGPL component; needs the user's model provider (BYOK or local)."
   },
   {
    "id": "firecrawl.html_clean",
@@ -1856,9 +1857,9 @@
    ],
    "upstream_tests": [],
    "feature": "Native HTML cleaning and HTML-to-Markdown service",
-   "classification": "reusable_with_adaptation",
-   "orcel_destination": "crates/orcel-browser-host/src/extraction.rs (oracle tests)",
-   "method": "adapted",
+   "classification": "directly_reusable",
+   "orcel_destination": "apps/orcel-firecrawl (isolated AGPL-3.0 component, copied html.rs, markdown.rs, crawler.rs, xml.rs, utils.rs; WP1-08)",
+   "method": "copy",
    "integrated": false,
    "windows": "not_started",
    "macos": "not_started",
@@ -1869,7 +1870,7 @@
    "tests": [],
    "evidence": [],
    "status": "NOT STARTED",
-   "blocking_issue": "AGPL-3.0 upstream. Founder attestation (docs/orcel/grants/2026-10-18-founder-attestation.md, FD-06) states redistribution inside Apache-2.0 Orcel is covered for grantor-owned code; no copyright-holder-signed grant is in the repository. Third-party files keep their licences."
+   "blocking_issue": "Copy first (FD-UP-1, 2026-11-17) into the isolated AGPL component with licence, notices, provenance and source offer; founder attestation recorded separately."
   },
   {
    "id": "firecrawl.queues",
@@ -2798,6 +2799,52 @@
    ],
    "status": "BLOCKED",
    "blocking_issue": "Depends on the proprietary UU client; organisation authenticity unverified"
+  },
+  {
+   "id": "exa_browser.unverified",
+   "source": "Exa Browser (repository not verified)",
+   "upstream_commit": null,
+   "upstream_license": "unknown (source unverified)",
+   "upstream_paths": [],
+   "upstream_tests": [],
+   "feature": "Extended inventory: Exa Browser, browser or web-agent capability (unverified)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "To be decided after source verification",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "SOURCE_UNVERIFIED: added to the extended inventory by founder decision FD-UP-3 (2026-11-17). The founder's separate REA effort (D:\\Orcel-REA) has produced no outputs yet; no repository, licence or SHA has been verified."
+  },
+  {
+   "id": "tinyfish.unverified",
+   "source": "TinyFish (repository not verified)",
+   "upstream_commit": null,
+   "upstream_license": "unknown (source unverified)",
+   "upstream_paths": [],
+   "upstream_tests": [],
+   "feature": "Extended inventory: TinyFish, web-agent capability (unverified)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "To be decided after source verification",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "SOURCE_UNVERIFIED: added to the extended inventory by founder decision FD-UP-3 (2026-11-17). The founder's separate REA effort (D:\\Orcel-REA) has produced no outputs yet; no repository, licence or SHA has been verified."
   }
  ]
 }

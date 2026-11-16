@@ -405,3 +405,24 @@ The ranking weighs reuse available, licence clarity, fit with Orcel's architectu
 - **The macOS and Linux browser modules are inert stubs.** Crawl, map, change tracking and the
   document parser are platform-independent Rust and run in CI on three OSes, but none is exposed as an
   MCP tool.
+
+## 7. Founder decisions of 2026-11-17 (applied)
+
+The founder answered FD-UP-1 to FD-UP-13 on 2026-11-17 (`UNIFIED_INTEGRATION_SPEC.md` section 11). Effects on this
+inventory, also applied to `capability_inventory.json` (now 98 records: 13 TESTED, 71 NOT STARTED, 14 BLOCKED):
+
+- **Founder attestation.** Recorded in `docs/orcel/grants/2026-11-17-founder-attestation.md`: full permission to copy and
+  adapt authorized donor code (Firecrawl, Browser Use, others, including authorized private repositories). It sits
+  beside, not in place of, the upstream licence terms in sections 1 and 2. Firecrawl is copied first into the isolated
+  AGPL-3.0 component `apps/orcel-firecrawl`; the Apache-2.0 core keeps only its own code and the FD-06 files.
+- **Stealth and fingerprinting** (blocker 8) are no longer BLOCKED: `obscura.stealth`, `crawlee.fingerprints`,
+  `scrapling.static_fetcher` and `scrapling.stealth_browser` are NOT STARTED behind an opt-in policy gate (off by
+  default, per-client permission, audited, no security bypass).
+- **"Vercel agent-use"** (blocker 10): `vercel-labs/agent-desktop` at `8ffecc1d3d088727f8d84baf4dde0224aab2e8ad` is
+  admitted as a candidate donor (NOT STARTED, source admission pending); the search for the original continues
+  (`agent_use.unresolved` stays BLOCKED). The verified Vercel projects already listed (agent-browser,
+  remote-agent-browser) stay in scope on their recorded terms; `vercel-labs/ai-sdk-computer-use` (no licence) is a
+  reference only.
+- **Extended inventory:** Exa Browser (`exa_browser.unverified`) and TinyFish (`tinyfish.unverified`) are added as NOT
+  STARTED with `SOURCE_UNVERIFIED`. The founder's separate REA effort (`D:\Orcel-REA`) has produced no outputs yet, so
+  no repository, licence or SHA is recorded for either.
