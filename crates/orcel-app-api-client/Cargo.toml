@@ -1,0 +1,35 @@
+[package]
+name = "orcel-app-api-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "SG-000119 A1: the read-only orcel-app-api/1 client and sanitiser for the Control Room shell"
+
+# SG-000119 slice A1 adds no download: every crate below is already in the
+# root Cargo.lock. serde and serde_json are the workspace's own versions, so
+# answers are parsed into Rust types and re-serialized from them.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+# The fixed pipe, the identification-only open and the server identity check
+# (token user and integrity level) before the first write. Same crate and
+# version orceld uses for its side of the pipe.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+] }
+
+# The socket's peer uid (SO_PEERCRED, getpeereid) and macOS's per-user
+# runtime directory (confstr). Same version as the root lock.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

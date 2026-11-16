@@ -934,6 +934,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "orcel-app-api-client"
+version = "0.2.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "orcel-approval"
 version = "0.2.0"
 dependencies = [
