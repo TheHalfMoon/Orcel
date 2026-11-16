@@ -57,6 +57,15 @@ path = "tests/native_live.rs"
 harness = false
 required-features = ["test-hooks"]
 
+# SG-000119 A5: accessibility, layout, the renderer's reach and (only where
+# ORCEL_ALLOW_INPUT_TESTS=1, the CI job) the browser-key and keyboard checks.
+# `cargo test --features test-hooks --test native_qualify`.
+[[test]]
+name = "native_qualify"
+path = "tests/native_qualify.rs"
+harness = false
+required-features = ["test-hooks"]
+
 # Exact pins (founder decision 3). tauri's default features are off; only the
 # wry runtime and custom-protocol (embedded assets) are on. Off: compression,
 # dynamic-acl, common-controls-v6, tray-icon, image-png, image-ico, devtools,
@@ -98,5 +107,13 @@ tauri = { version = "=2.12.5", default-features = false, features = ["wry", "cus
 
 # The native test walks the shell's process tree to count every visible
 # window it (or the WebView2 browser under it) owns. Same crate and version.
+# A5 adds features of that same crate (no crate, so the lock is unchanged):
+# the renderer probe's pipe and file calls, and SendInput for the input
+# checks that run only where ORCEL_ALLOW_INPUT_TESTS=1.
 [target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "=0.52.0", features = ["Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "=0.52.0", features = [
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Pipes",
+  "Win32_UI_Input_KeyboardAndMouse",
+] }

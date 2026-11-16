@@ -14,7 +14,7 @@
 // details are opened, and again for open details when the list is read.
 import { h, show } from "./dom.js";
 import { refusalOf, INCOMPATIBLE } from "./model.js";
-import { capabilityNodes, connectionText, deviceNodes, statusNodes, taskDetailNodes, taskListNodes, taskSummaryNodes, timelineNodes, } from "./present.js";
+import { capabilityNodes, connectionText, deviceNodes, statusNodes, taskDetailNodes, taskListNodes, taskSummaryLabel, taskSummaryNodes, timelineNodes, } from "./present.js";
 import { apply, createTimeline, events } from "./timeline.js";
 function tauriCore() {
     const tauri = globalThis.__TAURI__;
@@ -85,7 +85,7 @@ function taskNode(task) {
     const answer = details.get(id) ?? { state: "loading" };
     return h("li", null, [
         h("details", { "data-task": id, ...(openTasks.has(id) ? { open: "" } : {}) }, [
-            h("summary", { "data-task": id, "aria-label": `Report task ${id}` }, taskSummaryNodes(task)),
+            h("summary", { "data-task": id, "aria-label": taskSummaryLabel(task) }, taskSummaryNodes(task)),
             h("div", { class: "task-detail" }, taskDetailNodes(answer)),
         ]),
     ]);
