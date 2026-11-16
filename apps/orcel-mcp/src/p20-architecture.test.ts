@@ -198,8 +198,10 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // SG-000122 (ORCEL-BR, browser form actions, narrow scope) ran beside
   // them by founder decision (issue #753) and is closed. SG-000130 (ORCEL-F5,
   // workbook sources in the report task) ran beside them by founder go-ahead
-  // (issue #760) and is closed; no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127", "SG-000128"]);
+  // (issue #760) and is closed. SG-000119 (ORCEL-CR, the read-only Tauri 2
+  // Control Room skeleton on Windows) runs beside them by founder decision
+  // of 2026-11-16 (issue #773); no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000119", "SG-000127", "SG-000128"]);
   const sg130 = readJson<{
     program: string;
     state: string;

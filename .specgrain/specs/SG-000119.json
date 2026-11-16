@@ -1,0 +1,176 @@
+{
+  "id": "SG-000119",
+  "title": "Tauri 2 Control Room skeleton, read-only, Windows (lean: no Vite, no Tauri CLI, no React, no Stop)",
+  "program": "ORCEL-CR",
+  "state": "GRAIN",
+  "risk": "high",
+  "created": "2026-11-16",
+  "base": "b155d9486bb51fd4640692ca0a81627eb5a6c039",
+  "dependencies": [
+    "SG-000122",
+    "SG-000126",
+    "SG-000130"
+  ],
+  "dependency_notes": "CR-01 (orcel-app-api/1, the endpoint read) and CR-02 (the headless client in apps/orcel-control-room, whose reducer and validators the front end reuses) are merged backlog work with no SpecGrain spec of their own; SG-000118 was only their proposed grain. SG-000122 is the founder's sequencing gate (forms on real Edge 157), met for starting engineering by founder decision 1 of 2026-11-16. SG-000126 serves task.list and task.get, admitted as read-only metadata by founder decision 5. SG-000130 added workbook sources to the report task, so its task records (source paths, hashes and the checker's figures_confirmed) are part of what the sanitiser shapes. FD-03 is answered by the founder's Decision 4.",
+  "planning_issue": 773,
+  "objective": "Give Orcel a secure, lightweight, professional, read-only desktop interface on Windows, built on Tauri 2 and working with the existing daemon and MCP architecture. Lean: no Vite, no Tauri CLI, no React, configuration written from scratch, a minimal TypeScript UI, no Stop control. The Tauri Rust process is the only client of orceld's local app API (orcel-app-api/1): it opens this user's fixed pipe as an identification-only client, confirms the server runs as this user at Medium integrity or above, sends only status.get, capabilities.get, events.subscribe, task.list and task.get, and re-shapes every answer and event through a closed Rust sanitiser before the web view sees it. Report tasks are shown as read-only metadata (state, safe workspace-relative paths and hashes), never content or titles. The web view reaches that data only through five typed Tauri commands under a strict CSP with embedded assets only, with browser surfaces disabled, and performs no browser, filesystem, shell or privileged action. orceld remains the sole security and authorization authority; the window shows nothing about approvals and changes no state. Windows only, development builds only, never published. The preparation packet is docs/orcel/implementation-readiness/prep/SG-000119.md; the activation, by founder decision of 2026-11-16 (issue #773), grants nothing by itself.",
+  "scope": {
+    "include": [
+      "Activate the SG-000119 contract only (slice A0), on the founder's go-ahead of 2026-11-16 recorded on tracking issue #773. Every slice below needs its own exact-head qualified implementation PR with a fresh-context security review, exact-head CI and the relevant native Windows tests before merge.",
+      "Slice A1, the Rust app API client: crates/orcel-app-api-client in the root workspace, using only std, windows-sys 0.52 and libc already in the root lock. The endpoint \\\\.\\pipe\\orcel-<user SID>-app is derived from the process token only; no environment variable (including ORCEL_APP_API_INSTANCE), argument or configuration changes it, and an instance suffix exists only for the crate's own cfg(test) tests. Open with SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION; before the first write read GetNamedPipeServerProcessId, open the process with PROCESS_QUERY_LIMITED_INFORMATION and its token with TOKEN_QUERY, and require TokenUser equal to this process's and the TokenIntegrityLevel label at least 0x2000 (Medium), the integrity half ported from apps/orcel-desktop-preview/src/Program.cs ServerIsThisUser and ProcessRunsAsThisUser (called at line 447, defined at lines 482-510) because orceld's describe_holder and token_user check the account only. A closed method enum of status.get, capabilities.get, events.subscribe, task.list and task.get; 64 KiB frames; epoch-aware cursors with gap rejection before the cursor moves.",
+      "Slice A1, the sanitiser, rules: text rule (C0 and C1 controls, Unicode category Cf including the bidi controls, and U+2028 and U+2029 replaced with U+FFFD, then a per-field character cap); identifier rule (task_id, workspace_id and run_id 1 to 128 of [A-Za-z0-9_-]; step_id s plus 1 to 4 digits; epoch in orceld's real format {pid:x}-{nanos:x} from new_epoch in crates/orceld/src/app_api.rs, 1 to 8 lowercase hex digits, a hyphen and 1 to 32 lowercase hex digits, tested against that format); path rule on exactly folder, sources[].path, proposal.destination, report.destination and check.destination (workspace-relative only: not empty, no drive letter, no leading separator, no UNC or \\\\?\\ prefix, no .. or . segment, no character the text rule replaces, no NUL, at most 1024 bytes, else withheld); file-name rule on proposal.name and report.name (path rule plus no separator, at most 255 bytes); hash rule (64 lowercase hex or withheld). No path is ever joined to a workspace root, opened or resolved.",
+      "Slice A1, the sanitiser, status and capabilities: status keeps name, version, app_api, internal_protocol_version (charset [A-Za-z0-9._+-], at most 32), read_only (must be true, else the window shows incompatible orceld only), os and arch ([a-z0-9_], at most 16), mode ([a-z_-], at most 32), policy_revision, started_at_ms, uptime_ms, events {epoch, head_seq, oldest_seq, ring_capacity}, clients {active, max} and endpoint_wait {since_ms, attempts}; it drops pid, endpoint, endpoint_wait.reason and peer. Capabilities keep os, read_only (must be true) and at most 64 capabilities {id ([a-z0-9_.-], at most 64), state (available | unavailable), reason (text rule, at most 200 characters)}; methods and reserved_methods are not forwarded.",
+      "Slice A1, the sanitiser, events: a closed allowlist of kinds. daemon.started keeps mode and drops pid; request.completed keeps capability and operation ([a-z0-9_.:/-], at most 64, or null, since orceld sends null for a request without a shape, request_event in crates/orceld/src/sg000039_main.rs), ok and failure_code ([A-Z0-9_], at most 48, or null) and drops request_id; app_api.endpoint_in_use keeps only the fact and drops reason; task.updated keeps run_id, step_id, task_kind (must be report), state, step and outcome under the task enums; snapshot keeps reason (gap | epoch), head_seq, oldest_seq, status (status rules) and resubscribe {after_seq, epoch}; truncated data is shown as withheld. Every event keeps seq, epoch and at_ms. Any other kind is dropped and counted; heartbeats are consumed in Rust.",
+      "Slice A1, the sanitiser, report tasks (founder decision 5): keeps task_id and workspace_id (identifier rule), kind (closed enum report), state (closed enum observed, proposed, approval_denied, committing, verified, verification_failed, stale, failed, stopped), owner (closed enum this_session, other_session, earlier_run), created_at_ms, updated_at_ms, folder, at most 64 sources {path, sha256, bytes}, proposal and report {name, destination, sha256, bytes}, at most 32 steps {step_id, kind, outcome, at_ms} with kind and outcome closed enums enumerated from crates/orceld/src/report_task.rs and pinned by a test (other values shown as other), and from check only checker (closed enum orcel-report-check/1, else check is dropped), passed, destination, bytes, sha256, sources_unchanged, figures_confirmed and checked_at_ms. At most 64 tasks per list. title is dropped entirely. Every field not named is dropped and counted.",
+      "Slice A1, subscriptions: one live subscription per window, a new subscription cancels the previous one first; a queue of at most 256 frames toward the web view, cleared on overflow, after which the connection is closed, a gap marker is sent and the client resubscribes from the last delivered cursor so orceld answers with a snapshot; at most two orceld connections per window (one subscription, one serialized request) against orceld's limit of 8. A second shell process is refused by the named mutex Local\\orcel-control-room-<user SID>, created with a user-only DACL by the shell's own code: ERROR_ALREADY_EXISTS means another instance of this user (exit, stating the Control Room is already open); ERROR_ACCESS_DENIED means another account created the name first (exit, stating another program, possibly another account, holds the name); both cases are tested and squatting is a recorded residual beside pipe squatting.",
+      "Slice A2, the Tauri skeleton: apps/orcel-control-room/src-tauri as its own Cargo workspace with its own Cargo.lock, deny.toml and notices, excluded from the root workspace; tauri and tauri-build pinned exactly with default-features off and only wry and custom-protocol on, tauri's test feature only in dev-dependencies; tauri.conf.json and one capability file written from scratch with the recorded CSP (connect-src ipc: https://ipc.localhost, matching the https://tauri.localhost origin; A2 may replace the scheme of ipc.localhost on recorded evidence and adds no other source; a native test shows every command goes through the custom protocol and never postMessage, counted on the Rust side only by a WebMessageReceived counter and the command handlers, reported in one SG119-IPC exit line, with no probe in the page), assetProtocol.enable false, freezePrototype true, useHttpsScheme true, dragDropEnabled false, withGlobalTauri true, no devUrl and bundle.active false; exact parsed-origin navigation; on_new_window deny (or WebView2 NewWindowRequested handled with no window; A2 records in the prep packet and in this spec which path it used before merge, and the behaviour tests run on that path); on_download refusal; devtools off by Cargo feature, by .devtools(false) and by the WebView2 setting. This slice performs the download approved by founder decision 3, under its review conditions.",
+      "Slice A2, hardening and publication: the window created hidden, then WebView2 settings and handlers applied through the platform web view handle, read back and asserted, then a reload, then the window shown; the settings (default context menus, browser accelerator keys, status bar, general autofill, password autosave, host objects and the built-in error page off); additional_browser_args set to exactly --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection; refusal to start when any environment variable named WEBVIEW2_* in any letter case is set; an explicit WebView2 user data folder outside orceld's state root; the single-instance mutex; a static not-connected page; the no-publication release-blocker sweep test over all four workflows (ci.yml, pages.yml, release.yml, review-gates.yml), reusing the sweep's workflow helpers; the control-room-shell CI job without any upload step.",
+      "Slice A3, the bridge: five Tauri commands, app_status, app_capabilities, app_events (a tauri::ipc::Channel stream that cancels any earlier subscription), app_tasks and app_task (task_id under the identifier rule), over A1; permissions generated by tauri_build AppManifest for exactly these five; invoke_handler registers exactly these five; ACL tests through tauri::test (tauri's test feature in dev-dependencies only).",
+      "Slice A4, the view: minimal plain HTML, CSS and TypeScript compiled by the typescript 5.9.3 already locked in apps/orcel-control-room, no bundler; status, capabilities with unavailable reasons, the device list shown unavailable (devices.list is reserved), the timeline from events using the headless client's reducer, report tasks as metadata without titles, withheld fields shown as withheld; nothing about approvals; every field rendered as text.",
+      "Slice A5, accessibility, hardening and the Windows run: keyboard-only use, screen reader names, RTL layout, 100/150/200% scaling, UI Automation checks adapted from PR #282's checks that apply to a read-only view, UI Automation checks that F12, Ctrl+Shift+I, Ctrl+P and right-click produce no devtools, print dialog, context menu or window, native evidence that the WebView2 renderer cannot open the pipe, and measurements of cold and warm start, working set and binary size beside the WPF preview for CR-04.",
+      "Slice A6, closeout: canonical evidence, the resolved crate versions, the known limits, and an explicit statement that forms and workbooks human acceptance is not claimed and the three skipped machine-mutating browser tests stay UNVERIFIED."
+    ],
+    "exclude": [
+      "Stop of any kind (deferred to a later grain by founder decision 7): task.stop, emergency revoke, Stop desktop control, or any control that changes orceld state.",
+      "approval.history, clients.list and every app API method other than the five listed; report content, source content, task titles, secrets and any location outside a workspace.",
+      "Any display of pending approvals until orceld exposes a read-only source of them (orcel-app-api/1 has none); answering, cancelling, dismissing, minting, scripting or forwarding an approval; any bypass of a human approval prompt.",
+      "Any browser, filesystem, shell or privileged action from the UI, directly or through a plugin; opening or revealing any path; downloads; new windows; devtools, default context menus, browser accelerator keys, the status bar, autofill and password autosave.",
+      "Any environment, argument or configuration override of the app API endpoint in the shell.",
+      "React, Vite, the Tauri CLI, tauri-driver, msedgedriver, @tauri-apps/api or any other npm package not already locked; the AgentKit React components and @tabler/icons-react; global installs and paid services.",
+      "Copying Cua Spaces' src-tauri scaffolding (FSL) or the cua-driver Tauri fixture's main.rs, tauri.conf.json or tiny_http server; the fixture itself is unchanged.",
+      "Any Tauri plugin (shell, fs, http, dialog, opener, process, updater, clipboard, notification, global-shortcut, deep-link, single-instance, store or other).",
+      "Remote content, a devUrl, a dev server, any listener, remote IPC access, the asset protocol, browser arguments beyond the recorded string, and macOSPrivateApi.",
+      "Public installers, bundles, updater artifacts, code signing, releases, deployment any workflow upload covering apps/orcel-control-room/**, and any job other than control-room-shell building the shell (founder decision 6); bundle.active stays false.",
+      "Any macOS or Linux job for the shell, including compile checks; no WebKitGTK package anywhere. Both platforms are later, independently qualified stages (founder decision 2).",
+      "Unrestricted dependency upgrades; any crate source other than crates.io and Orcel's own path crate.",
+      "Retiring the WPF preview (CR-04) or changing it.",
+      "Running or claiming the three skipped machine-mutating browser tests; claiming forms or workbooks human acceptance."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None. This packet authorizes implementing and proving SG-000119; it adds no dependency, command, listener or authority by itself.",
+    "app_api": "None. The Control Room is a new client of the existing orcel-app-api/1 endpoint, sending only status.get, capabilities.get, events.subscribe, task.list and task.get, using at most two of orceld's eight client slots; no method is added to orceld and task.stop is not sent.",
+    "ui": "Proposed only (slices A2 to A5): a read-only Tauri window whose web view can invoke exactly five commands that return sanitised read results. It shows nothing about approvals.",
+    "dependencies": "Proposed only (slice A2, approved by founder decision 3 under its review conditions): the Tauri 2 crate graph from crates.io in a separate workspace with an exact-pinned lock, and the system web view (WebView2 on Windows). Slice A1 adds no dependency.",
+    "filesystem": "None. The UI reads no file and resolves no path; task paths are displayed as text only; the asset protocol is off and downloads are refused.",
+    "network": "None. No listener, no remote content, no connect-src beyond Tauri's IPC origin, no remote IPC.",
+    "process": "One new unprivileged per-user desktop process (single instance) and the system web view's own processes; none is spawned by orceld.",
+    "approval": "None. Approvals stay with the OS presence surfaces and are never bypassed.",
+    "release": "None. Development builds only; nothing enters the release payload and no workflow uploads the shell.",
+    "remote": "None.",
+    "privileged": "None. SG-000096 Full User shell remains unarmed."
+  },
+  "decisions": [
+    {
+      "question": "Open the governed change",
+      "status": "DECIDED (founder, 2026-11-16)",
+      "decision": "Founder decision of 2026-11-16, given in the Claude Code session and recorded on issue #773. The founder's go-ahead, quoted: \"I approve proceeding with the SG-000119 Tauri development activation, subject to the following decisions\" (the eight decisions of 2026-11-16 below) ... \"Open the SG-000119 tracking issue, finalize its scope, then implement the approved slices in small PRs.\" ... \"Start development now. Public release remains separately gated.\" Founder decision 8 of 2026-11-16 approved the tracking issue (#773), opened with the reviewed activation spec; the activation (slice A0) rests on that go-ahead. It grants no capability; each slice is separate exact-head qualification work, and any public release needs separate founder authorization."
+    },
+    {
+      "question": "Toolkit and shape (FD-03)",
+      "status": "DECIDED (founder, Decision 4, private decision record)",
+      "decision": "Tauri yes, lean: no Vite, no Tauri CLI, no React; configuration written from scratch; the skeleton starts read-only, without a Stop control. Recorded in CURRENT.md at activation (slice A0, issue #773); it answers backlog FD-03."
+    },
+    {
+      "question": "Sequencing and acceptance gates",
+      "status": "DECIDED (founder, 2026-11-16, decision 1)",
+      "decision": "The real Edge 157 scripted forms journey (orceld on Edge 157.0.4341.60 on the founder's PC, PR #771, merge b155d948; evidence: SG122-EVIDENCE orceld live form journey: observe, fill, select, check and Enter approved through the broker (consent scripted), submission committed generation 2 on the origin ... 12 decisions recorded) is sufficient to start read-only Tauri engineering. The founder's personal approval journeys for forms and workbooks remain mandatory acceptance gates; scripted approvals are never human approvals or final release qualification."
+    },
+    {
+      "question": "Scope",
+      "status": "DECIDED (founder, 2026-11-16, decision 2)",
+      "decision": "Windows first; macOS and Linux later in independently qualified stages. Encoded: no macOS or Linux job for the shell in this grain, not even a compile check."
+    },
+    {
+      "question": "Dependency download",
+      "status": "DECIDED (founder, 2026-11-16, decision 3)",
+      "decision": "Approved to download the Tauri 2 crates and their transitive crates at slice A2, provided exact versions, sources, hashes where available, lockfile changes, licenses and vulnerability checks (cargo-deny, cargo-audit) are reviewed; official registries only; pinned; no unrestricted upgrades, global installs or paid services."
+    },
+    {
+      "question": "Linux CI packages",
+      "status": "DECIDED (founder, 2026-11-16, decision 4)",
+      "decision": "WebKitGTK packages only on disposable GitHub Actions Linux runners when Linux build qualification begins; never on the founder's machines. None in this grain, because Linux is out."
+    },
+    {
+      "question": "Report tasks",
+      "status": "DECIDED (founder, 2026-11-16, decision 5)",
+      "decision": "Approved as read-only metadata: task state, safe workspace-relative paths and hashes; never report content, secrets or unauthorized filesystem locations. Encoded: task.list and task.get join the allowlist, re-shaped by the Rust sanitiser (named path fields, path, file-name and hash rules, closed enums, caps); the planner-written title is dropped because decision 5 does not list it."
+    },
+    {
+      "question": "Distribution",
+      "status": "DECIDED (founder, 2026-11-16, decision 6)",
+      "decision": "Development builds only; no public installer, updater, signing, release or deployment without separate authorization. Encoded also as no workflow upload of src-tauri output, enforced by a release-blocker sweep test."
+    },
+    {
+      "question": "Stop",
+      "status": "DECIDED (founder, 2026-11-16, decision 7)",
+      "decision": "Deferred to a later grain; not implemented in SG-000119."
+    },
+    {
+      "question": "Pending approval display",
+      "status": "RECORDED (before implementation)",
+      "decision": "orcel-app-api/1 exposes no source of pending approvals (no status field, event kind or method), and approval.history is outside this grain. The window shows nothing about approvals until orceld exposes a read-only source, which needs its own change and decision; it never infers one from task states."
+    },
+    {
+      "question": "Rule change: one generic proxy command or typed commands",
+      "status": "RECORDED (before implementation)",
+      "decision": "CR-03 step 2 proposed one app_api_call command with a name allowlist. This grain uses five typed commands instead, so no command argument can carry a method name."
+    },
+    {
+      "question": "Rule change: CR-03's React front end, Cua Spaces scaffolding, Stop button, three OSes and tauri-driver",
+      "status": "RECORDED (before implementation)",
+      "decision": "Superseded by Decision 4 and the 2026-11-16 decisions: minimal TypeScript compiled by the locked tsc, configuration written from scratch, no Stop, Windows only, UI Automation instead of WebDriver."
+    }
+  ],
+  "invariants": [
+    "orceld remains the sole security and authorization authority; the Control Room reads and displays only.",
+    "The first interface is read-only: no control changes orceld state, and Stop is absent.",
+    "The UI performs no direct browser, filesystem, shell or privileged action, and no plugin provides one.",
+    "No human approval prompt is answered, scripted, suppressed or bypassed; the window shows nothing about approvals until orceld exposes a read-only source.",
+    "The Tauri Rust process is the only app API client; the endpoint is fixed by the process token's SID and no environment, argument or configuration overrides it; it opens the pipe as an identification-only client and confirms the server's token user equals its own and its integrity is Medium or above before the first write.",
+    "Only status.get, capabilities.get, events.subscribe, task.list and task.get can be sent; the method set is a closed enum, not a string allowlist.",
+    "Every answer and event passes the closed Rust sanitiser before the web view: named fields only, the text, identifier, path, file-name and hash rules, closed enums and caps; unknown fields and event kinds are dropped and counted; pid, endpoint, peer, request_id, free-text reasons and task titles never reach the UI; report content, secrets and locations outside a workspace never reach the UI; no path is opened or resolved.",
+    "One live subscription per window, a bounded queue of 256 frames with a snapshot on overflow, at most two orceld connections, and a single shell instance per user through the Local\\orcel-control-room-<user SID> mutex with a user-only DACL.",
+    "The web view can invoke exactly app_status, app_capabilities, app_events, app_tasks and app_task; the capability file grants exactly their five permissions to the main window; no core default permission, no remote section, no plugin; tauri's test feature exists only in dev-dependencies.",
+    "The CSP is default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src ipc: https://ipc.localhost; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none', A2 may replace the scheme of ipc.localhost on recorded evidence and adds no other source; IPC uses the custom protocol and never postMessage, counted on the Rust side only; no unsafe source; assetProtocol.enable is false and freezePrototype is true.",
+    "Assets are embedded; there is no devUrl, dev server or listener; navigation is allowed only to the exact parsed asset origin (https://tauri.localhost with useHttpsScheme true); new windows and downloads are refused; drag-drop is off.",
+    "Devtools are off by Cargo feature, by .devtools(false) and by the WebView2 setting; default context menus, browser accelerator keys, the status bar, general autofill, password autosave and host objects are disabled through the platform web view handle on a window created hidden, read back and asserted, reloaded, and only then shown.",
+    "The browser arguments are exactly --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection; the process refuses to start when any WEBVIEW2_* environment variable, in any letter case, is set.",
+    "Every field is rendered as text; no HTML sink, eval or Function exists in the minimal TypeScript front end.",
+    "src-tauri is its own workspace with exact pins, crates.io sources only, a checked-in Cargo.lock with checksums, reviewed lock changes, and cargo deny check sources bans licenses advisories plus cargo audit on every change; its deny.toml denies unknown registries and git sources, wildcards, every tauri-plugin-* crate, tiny_http, tauri-driver and hyper's server feature; root builds and the release payload never include it; no unrestricted upgrade, global install or paid service.",
+    "Development builds only; bundle.active is false; only the control-room-shell job builds the shell and no workflow uploads anything under apps/orcel-control-room; a release-blocker sweep test over all four workflows fails if any other job mentions src-tauri or orcel-control-room-shell, if any job other than control-room-shell and the headless control-room job mentions apps/orcel-control-room (the headless job only in its npm --prefix commands), if any upload-artifact or upload-pages-artifact path covers apps/orcel-control-room/** (each line of a multi-line path; env expanded from step, job and workflow env; github.workspace read as the checkout root; runner.temp and absolute paths outside the checkout never covering; any unresolvable expression failing the test), if the shell job has any upload step, or if distribution/ mentions any of these; no public installer, updater, signing, release or deployment without separate authorization.",
+    "Security review, exact-head CI and the relevant native Windows tests precede every merge.",
+    "The three skipped machine-mutating browser tests stay UNVERIFIED, and forms and workbooks human acceptance is never claimed until the founder's personal journeys pass; scripted approvals are never human approvals or final release qualification."
+  ],
+  "acceptance": [
+    "Activation (A0): only the governance records change (this spec, CURRENT.md, the two open-grain pins, the CR-03 and FD-03 backlog rows and the preparation packet's status line); no code or dependency changes.",
+    "Client tests (A1): against a real orceld, each allowed method answers; an unlisted method cannot be constructed; an over-cap frame is refused; a gap is rejected before the cursor moves; a new epoch clears the timeline; daemon down answers a typed unavailable; on Windows a pipe served by another account or below Medium integrity is refused before any write; no environment variable changes the endpoint.",
+    "Sanitiser tests (A1): unknown fields and event kinds are dropped and counted; pid, endpoint, peer, endpoint_wait.reason, the endpoint-in-use reason and request_id are never forwarded; read_only other than true yields incompatible; each named path field withholds absolute, drive-letter, rooted, UNC, \\\\?\\-prefixed, .. or . segment, C0, C1, Cf, U+2028, U+2029 and over-long values; names with separators are withheld; malformed hashes and identifiers are refused; epochs in orceld's {pid:x}-{nanos:x} format are accepted and others refused; request.completed with null capability and operation is accepted; out-of-enum state, owner, kind and checker are refused and out-of-enum step kind and outcome become other; caps on tasks, sources, steps and capabilities hold; no output carries a title or file content; the step enum test is pinned to report_task.rs.",
+    "Subscription tests (A1, A3): a second subscription cancels the first and orceld sees one subscriber; a stalled consumer overflows the 256-frame queue, which clears and resubscribes into a snapshot; a request during a subscription uses one more connection and never more; a second shell instance exits on ERROR_ALREADY_EXISTS, and a mutex created first under a DACL refusing this user gives ERROR_ACCESS_DENIED and the squatter message.",
+    "Skeleton tests (A2): the configuration test asserts the exact CSP, assetProtocol.enable false, freezePrototype true, useHttpsScheme true, dragDropEnabled false, the single-window five-permission capability file, no remote section, no devUrl and bundle.active false; the navigation predicate allows only the exact origin and refuses https://tauri.localhost.evil/, http://tauri.localhost/, another port, userinfo tricks, ipc.localhost, https:, http://127.0.0.1, file:, data:, blob: and javascript:; a mixed-case WEBVIEW2_* variable stops startup; the settings readback matches and a mismatch closes the window; the window becomes visible only after the reload; the SG119-IPC exit line shows commands above zero and web_messages equal to zero, counted in Rust with no page probe; the new-window path used is recorded and window.open and target=_blank open nothing on it; the browser-argument string is exactly the recorded one; cargo deny check sources bans licenses advisories and cargo audit pass with each warning recorded; cargo tree -e normal -e features -i tauri shows no test and no devtools feature; the release-blocker sweep's no-publication test passes over all four workflows, deciding every one of today's 12 upload paths (none covers apps/orcel-control-room) and failing on any expression it cannot resolve; the dependency review records versions, sources, checksums, the lock diff and licenses.",
+    "Bridge tests (A3), through tauri::test with tauri's test feature in dev-dependencies only: the AppManifest command list and the invoke_handler list are equal; an unknown command invoked through the mock IPC is refused by the ACL; an extra argument and a malformed task_id are refused; the event Channel ends when the window closes; window.open from the page opens nothing.",
+    "View tests (A4): the reducer's gap, duplicate and epoch cases pass on the compiled modules; a static check finds no innerHTML, insertAdjacentHTML, document.write, eval, Function or inline handler; no element answers an approval, shows an approval or opens a path; withheld fields render as withheld.",
+    "Windows run (A5): UI Automation checks pass on windows-latest and on the founder's PC through a live orceld; F12, Ctrl+Shift+I, Ctrl+P and right-click produce nothing; keyboard-only and Narrator checks recorded; the renderer is shown unable to open the pipe; start, memory and size measured beside the WPF preview; each run records its WebView2 version.",
+    "Closeout (A6): canonical evidence, the resolved versions written into this spec and the prep packet, the known limits, and the explicit non-claims for forms and workbooks human acceptance and the three skipped machine-mutating browser tests."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on every slice and on closeout, using the prep packet's checklist; d1-local advisory only; the checklist covers the IPC origin, the hidden-create order, the recorded new-window path, the mutex and the four-workflow no-publication test",
+    "dependency_review": "founder decision 3 conditions on the A2 lock and every later lock change: exact versions, crates.io sources, checksums, the lock diff, cargo deny check sources bans licenses advisories and cargo audit",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "A1 on the existing root Windows, macOS and Linux legs (Windows qualified only); src-tauri on Windows only; no macOS or Linux job for the shell"
+  },
+  "successor_requirements": {
+    "stop": "A Stop control (task.stop) in the Tauri window is a later grain (founder decision 7).",
+    "approvals": "Showing pending approvals needs orceld to expose a read-only source first, with its own change and decision.",
+    "macos": "macOS qualification is a later, independently qualified stage.",
+    "linux": "Linux build qualification is a later, independently qualified stage; WebKitGTK packages only on disposable GitHub Actions Linux runners, never on the founder's machines; WebKitGTK's web process must be shown unable to reach the app API socket.",
+    "parity": "WPF retirement is CR-04's parity gate.",
+    "release": "Any public installer, updater, signing, release or deployment needs separate founder authorization, after CR-04 and the SG-000045 supply-chain additions for the Tauri graph; macOS signing stays FD-05.",
+    "human_acceptance": "The founder's personal approval journeys for forms and workbooks remain mandatory acceptance gates outside this grain."
+  },
+  "activation_note": "No code, dependency, command, listener or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about the Control Room.",
+  "done_when": "On Windows, in a development build, a read-only Tauri window shows orceld's status, capabilities with unavailable reasons, the live event timeline and report tasks as sanitised metadata through exactly five typed commands under the recorded CSP, with embedded assets only, browser surfaces disabled, no plugin, listener, remote content, filesystem access, download, new window or Stop, nothing about approvals, an unlisted command and off-origin navigation refused, accessibility and hardening checks and measurements recorded, nothing uploaded or in the release payload; forms and workbooks human acceptance is not claimed."
+}
