@@ -1,13 +1,14 @@
 # Orcel unified platform: integration specification (EGM draft)
 
-**Status: DRAFT SPECIFICATION, DOCS ONLY (revision 3).** This document activates no grain, imports no donor code,
+**Status: DRAFT SPECIFICATION, DOCS ONLY (revision 4).** This document activates no grain, imports no donor code,
 adds no dependency, tool, listener or authority, and changes no canonical state. Every packet below needs its own
 activated grain, exact-head qualified PR, review gates and, where it touches authority, a fresh-context security
 judge. Draft grain JSONs live in [`unified-grains/`](unified-grains/), not in `.specgrain/specs/`.
 
 - **Revision 2** resolves the two fresh-context reviews of revision 1 (`c8c48081`): readiness findings R1 to R15 and
   security findings S1 to S13. **Revision 3** resolves the re-reviews of `e9cc14d4` (readiness RR1 to RR3, security
-  SN1 to SN6, and the grain consistency check). Section 13 maps each finding to its resolution.
+  SN1 to SN6, and the grain consistency check). **Revision 4** resolves the security re-check of `5d1651cd` (B1 and B2,
+  the section 4.14 executor boundary). Section 13 maps each finding to its resolution.
 - **Base:** branch `plan/donor-inventory` at `c72d33fa`, on `origin/main` `4dd5cfc93b524e3e99eed9097c3e81917676bee8`.
 - **Inputs read in full:** the founder blueprint and source pins from PR #785 (`UNIFIED_PLATFORM_BLUEPRINT_2026-11-16.md`,
   `UNIFIED_SOURCE_PINS_2026-11-16.json`); [`DONOR_INVENTORY.md`](DONOR_INVENTORY.md) and
@@ -100,9 +101,11 @@ grant and stop surfaces with synthetic input.
   every `protected_state.rs` override: the lease store, authority key, approval history, audit logs, MCP and REST
   tokens, secret store, job store and the stop-request directory of section 4.13) and denies opening `orceld` and the
   indicator as processes. The mechanism is FD-UP-9; the recommended Windows mechanism is concrete in section 4.14
-  (a restricted token carrying a per-install executor SID, with explicit deny ACEs on the state root and on the
-  `orceld` and indicator process objects). A test per OS tries to read and write each protected file and to open each
-  protected process from an executor child and from its grandchild, and expects denial.
+  (restricted tokens whose restricting lists exclude the user SID and carry a per-install executor SID, so executors
+  cannot open the user's other processes; process-starting executors on a separate desktop with every Job Object UI
+  limit; explicit deny ACEs on the state root and on the `orceld` and indicator process objects). A test per OS tries
+  to read and write each protected file and to open each protected process, and a same-user process such as explorer
+  with write, thread and handle rights, from an executor child and from its grandchild, and expects denial.
 - **C-27. Residual, stated not hidden.** Desktop input (SG-000095) can type into any non-protected window, including a
   terminal the user left open, and so reaches same-user code execution outside Orcel's executors. SG-000095's recorded
   residuals apply; this plan does not widen them, C-26 does not claim to close them, and C-25 shows them in the grant
@@ -111,7 +114,9 @@ grant and stop surfaces with synthetic input.
   protected Full Control indicator (WP1-12, protocol in section 4.13) has sent a heartbeat within the last 2 s, and the
   indicator sends heartbeats only while it is visibly on screen (topmost, not minimised, not cloaked, on a monitor).
   Its out-of-band stop works when `orceld` hangs: it terminates the executor Job Objects it was handed and writes a
-  revoke request that `orceld` honours before any further dispatch. The indicator never holds the authority key.
+  revoke request that `orceld` honours before any further dispatch. The indicator never holds the authority key, acts
+  on hardware input only, and treats close or hide requests as Stop. Locking the session (Ctrl+Alt+Del then Lock, or
+  Win+L), which no user-mode code can block or synthesize, always stops Full Control.
 - **C-29. Audit integrity is anchored outside executor reach.** The chain head is written to the Windows Event Log
   (Application log, source `Orcel`, written per user without registration, section 4.8) and shown by the indicator;
   on macOS to the unified log and on Linux to the journal (Wave 2). Argv, URLs and query strings are recorded as
@@ -787,6 +792,38 @@ secret travels on it.
 - `orceld` and the indicator each apply a deny ACE for the executor SID (section 4.14) to their own process object at
   startup, so executor children cannot open, read or inject into either (C-26).
 
+**Indicator self-protection.** Before creating its window, the indicator enables, with `SetProcessMitigationPolicy`:
+- `ProcessExtensionPointDisablePolicy` (`DisableExtensionPoints`): legacy extension points, including DLLs that
+  `SetWindowsHookEx` would load into it, AppInit DLLs and IMEs from outside the system, are not loaded;
+- `ProcessSignaturePolicy` (`MicrosoftSignedOnly`): only Microsoft-signed DLLs load after this point. The indicator is
+  one statically linked Rust executable that loads only system DLLs, so this works for the unsigned development build
+  too (the policy governs DLL loads, not the already-running image); a CI test asserts the indicator starts and draws
+  with the policy on;
+- `ProcessImageLoadPolicy` (`NoRemoteImages`, `NoLowMandatoryLabelImages`, `PreferSystem32Images`);
+- `ProcessDynamicCodePolicy` (`ProhibitDynamicCode`): no executable memory can be created or modified in it.
+If any call fails, the indicator shows "Protection unavailable" and sends no heartbeat, so Full Control stays refused.
+
+**Input and window handling.** The native host (profile D) shares the interactive desktop and integrity level, so it
+can send input and window messages to the indicator (UIPI allows same-integrity senders). Profile S processes are on
+another desktop and cannot. The indicator therefore:
+- acts on Stop only for **hardware input**: every mouse, pointer and key message is checked with
+  `GetCurrentInputMessageSource`, and messages whose `originId` is `IMO_INJECTED` (or `IMO_UNAVAILABLE`) are ignored.
+  The indicator has no other control, so injected input can neither press anything nor drag it;
+- treats any request to close, minimise or hide it (`WM_CLOSE`, `WM_SYSCOMMAND` with `SC_CLOSE` or `SC_MINIMIZE`,
+  `WM_SHOWWINDOW` false, `WM_QUERYENDSESSION`) as a **Stop** (the fail-safe direction), and rejects position and
+  z-order changes it did not make (`WM_WINDOWPOSCHANGING`: restores its position and `HWND_TOPMOST`);
+- treats a lost heartbeat condition (below) as unavailable, never as a reason to keep Full Control running.
+
+**Stop paths, and what can block them.**
+
+| Path | How | Can same-session user-mode code block it? |
+| --- | --- | --- |
+| Stop button | Hardware click on the indicator | A misbehaving native host could swallow input with a low-level hook or `BlockInput`; the static guard of section 4.14 keeps those calls out of the pinned host |
+| Hotkey | Ctrl+Alt+Shift+F12 via `RegisterHotKey` | Same as above; never shown as ready if registration failed |
+| **Session lock** | Ctrl+Alt+Del then Lock, or Win+L | **No.** The secure attention sequence is handled by Winlogon and cannot be intercepted or synthesized by user-mode code. `orceld` and the indicator both call `WTSRegisterSessionNotification`; on `WTS_SESSION_LOCK` each performs Stop (`orceld` advances the epoch; the indicator terminates held Job Objects and writes a revoke request). A lock requested by software (`LockWorkStation`) only stops, which is safe |
+
+The grant prompt and the indicator both say "Lock your PC (Win+L) to stop Full Control at any time".
+
 **Frames.** As section 4.9: `u32` little-endian length plus JSON, closed vocabularies, at most 16 KiB per frame,
 unknown frames refused without action.
 
@@ -803,20 +840,23 @@ pub enum OrceldToIndicator {
 pub enum IndicatorToOrceld {
     Hello { generation: u32, nonce: String },
     Heartbeat { seq: u64, visible: Visibility },
-    StopRequest { reason: StopReason },                               // button | hotkey
+    StopRequest { reason: StopReason },                               // button | hotkey | close_or_hide | session_lock
     HotkeyStatus { registered: bool },
 }
-pub struct Visibility { topmost: bool, not_minimised: bool, not_cloaked: bool, on_monitor: bool }
+pub struct Visibility { topmost: bool, not_minimised: bool, not_cloaked: bool, on_monitor: bool, on_input_desktop: bool }
 pub struct AnchorRef { file_id: String, seq: u64, digest: String }
 ```
 
-**Heartbeat.** The indicator sends `Heartbeat` every 1 s **only if** all four visibility checks pass at that moment:
+**Heartbeat.** The indicator sends `Heartbeat` every 1 s **only if** all five visibility checks pass at that moment:
 `WS_EX_TOPMOST` set and the window first in the topmost band (`GetWindow(GW_HWNDFIRST)` walk), `IsWindowVisible` true and
-`IsIconic` false, `DwmGetWindowAttribute(DWMWA_CLOAKED)` zero, and the window rectangle at least 80% inside a monitor's
-work area (`MonitorFromWindow`, `GetMonitorInfoW`). Otherwise it re-asserts topmost, restores itself and sends nothing
-until the checks pass. `orceld` refuses every Full Control dispatch when the last heartbeat with all four fields true is
-older than 2 s (`INDICATOR_UNAVAILABLE`). The checks are self-reported; their integrity rests on C-26 (executors cannot
-reach the indicator process) and C-25 (input cannot target its window).
+`IsIconic` false, `DwmGetWindowAttribute(DWMWA_CLOAKED)` zero, the window rectangle at least 80% inside a monitor's work
+area (`MonitorFromWindow`, `GetMonitorInfoW`), and its thread's desktop is the input desktop (`OpenInputDesktop`
+succeeds and `GetUserObjectInformationW(UOI_NAME)` equals the name of `GetThreadDesktop(GetCurrentThreadId())`).
+Otherwise it re-asserts topmost, restores itself and sends nothing until the checks pass. `orceld` refuses every Full
+Control dispatch when the last heartbeat with all five fields true is older than 2 s (`INDICATOR_UNAVAILABLE`). The
+checks are self-reported; their integrity rests on C-26 (executors cannot open the indicator process), the mitigation
+policies above (no injected DLLs or dynamic code), the UI limits of section 4.14 (no desktop switching by executors),
+and the input handling above.
 
 **Job Object handles.** For every executor child, `orceld` creates the Job Object, assigns the child, then calls
 `DuplicateHandle(orceld, job, indicator_process, &h, JOB_OBJECT_TERMINATE | JOB_OBJECT_QUERY, FALSE, 0)`. Direction is
@@ -825,7 +865,8 @@ indicator can end executors but cannot add processes or change limits. `orceld` 
 `JobGone` when the job ends (the indicator then closes it).
 
 **Stop.**
-1. Button (primary) or hotkey: the indicator sends `StopRequest`. `orceld` takes the epoch lock, advances the epoch,
+1. Button (primary, hardware input only), hotkey, a close or hide request, or session lock: the indicator sends
+   `StopRequest` (`orceld` also acts on the session lock by itself). `orceld` takes the epoch lock, advances the epoch,
    cancels jobs, terminates every executor Job Object, writes the `emergency_stop` audit event and replies `StopAck`.
 2. No `StopAck` within 1 s (`orceld` hung or dead): the indicator calls `TerminateJobObject` on every handle it holds,
    then writes a **revoke request**: a new file `%USERPROFILE%\.orcel\stop\<utc-ms>-<random>.json` containing
@@ -848,41 +889,94 @@ as ready; the Stop button is always the primary control and is shown first.
 
 ### 4.14 Executor process boundaries on Windows (Wave 1)
 
-| Executor class | Executor child process | Launched by | Boundary |
-| --- | --- | --- | --- |
-| DesktopInput (SG-000095) | The native computer host `apps/orcel-computer-host` (Go), today spawned by `crates/orcel-provider-uia/src/computer_host.rs` (`HostSession::spawn`, cleared environment, stdio pipes) through the `ComputerHostAdapter` singleton in `crates/orceld/src/uia.rs` | `orceld` | Executor token and Job Object below |
-| ShellProcess (SG-000096, when qualified) | Each shell session's process | `orceld` | Same |
-| Filesystem (SG-000097, when activated) | In-process provider, no child | n/a | Paths under the state root refused by the provider (`protected_state.rs`), as today |
+Revision 4 replaces the revision 3 token, whose restricting list held the user SID and so passed the access check on
+every other process the user owns.
 
-- **The native host is the DesktopInput executor child.** WP1-10 changes `HostSession::spawn` so that, while any lease
-  is active, the host is started (or restarted) with the executor token below, in a Job Object with
-  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, `JOB_OBJECT_LIMIT_ACTIVE_PROCESS` = 1 (it may not start children) and
-  `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION`, and with no `JOB_OBJECT_UILIMIT_*` flags (it must send input). The Job
-  Object handle is duplicated to the indicator. Without a lease the host keeps today's launch for Safe-mode observation.
-- **Why not an AppContainer for the native host.** An AppContainer process runs at low integrity, and User Interface
-  Privilege Isolation stops low-integrity processes from sending input to, or automating, medium-integrity windows, so
-  the host could not do its job. AppContainer stays the boundary for donor sidecars (C-09, C-13).
-- **Recommended executor token (FD-UP-9).** `orceld` creates, once per install, a random SID
-  `S-1-9-<four random 32-bit values>` (the resource-manager authority, never assigned to any account) and records it
-  under the state root. For each executor child it calls `CreateRestrictedToken` on its own primary token with no
-  disabled SIDs, no deleted privileges beyond `SeDebugPrivilege` and `SeTakeOwnershipPrivilege` if present, and the
-  restricting SID list { user SID, logon SID, `Everyone`, `BUILTIN\Users`, `NT AUTHORITY\Authenticated Users`,
-  `NT AUTHORITY\INTERACTIVE`, executor SID }. The logon SID keeps window-station and desktop access, so input still
-  works; integrity stays medium.
-- **ACLs that make it bite.** At install and at every `orceld` start, `orceld` sets on the state root (protected,
-  inheritance on): an explicit **deny** ACE for the executor SID covering `GENERIC_ALL`, `WRITE_DAC` and `WRITE_OWNER`;
-  an `OWNER RIGHTS` (`S-1-3-4`) ACE granting `READ_CONTROL` only, which removes the owner's implicit `WRITE_DAC` so an
-  executor (whose restricting list contains the user SID) cannot rewrite the DACL; and the existing user grant. The same
-  deny ACE goes on the `orceld` and indicator process objects (section 4.13). A restricted token's access check passes
-  only if both the normal and the restricting SID checks pass, and a deny ACE matching a restricting SID fails the
-  second check, so the executor and every descendant (which inherit the token) are denied while every ordinary process
-  of the user is unaffected.
-- **Tests (WP1-10):** from the native host under the executor token and from a grandchild started by a test shell
-  under the same token: open each protected file for read and write, change the state root's DACL, take ownership,
-  open `orceld` and the indicator with `PROCESS_VM_READ` and `PROCESS_TERMINATE`; every attempt is denied. A normal
-  user process can still read the state root (regression guard for orceld itself).
-- **Stated limit.** The token stops executor children; it does not stop desktop input from typing into a terminal the
-  user opened, which runs with the user's full token (C-27).
+| Executor class | Executor child process | Launched by | Token profile | Desktop | Job Object UI limits |
+| --- | --- | --- | --- | --- | --- |
+| DesktopInput (SG-000095) | The native computer host `apps/orcel-computer-host` (Go), today spawned by `crates/orcel-provider-uia/src/computer_host.rs` (`HostSession::spawn`) through the `ComputerHostAdapter` singleton in `crates/orceld/src/uia.rs` | `orceld` | D | The interactive `WinSta0\Default` (it must act there) | All `JOB_OBJECT_UILIMIT_*` except `HANDLES` |
+| ShellProcess (SG-000096, when qualified) and any other process-starting executor | Each session's process and its descendants | `orceld` | S | A dedicated `OrcelExec` window station and desktop per lease | All `JOB_OBJECT_UILIMIT_*` |
+| Filesystem (SG-000097, when activated) | In-process provider, no child | n/a | n/a | n/a | n/a; state-root paths refused by the provider |
+
+**Executor SID.** `orceld` creates, once per install, a random SID `S-1-9-<four random 32-bit values>` (resource-manager
+authority, never assigned to any account) and records it under the state root.
+
+**Token profile S (process-starting executors).** `CreateRestrictedToken` on `orceld`'s primary token with
+`SeDebugPrivilege`, `SeTakeOwnershipPrivilege`, `SeBackupPrivilege` and `SeRestorePrivilege` deleted if present, and the
+restricting SID list { executor SID, `Everyone`, `BUILTIN\Users`, `NT AUTHORITY\Authenticated Users`,
+`NT AUTHORITY\RESTRICTED` }. **Neither the user SID nor the logon SID is in the list.** Consequences:
+- Another process the user owns has a default DACL granting the user SID, `SYSTEM` and the logon SID; none of those is a
+  restricting SID, so the restricted check fails and a profile S process cannot open explorer, the terminal, the
+  browser, `orcel-mcp`, `orceld` or the indicator at all.
+- It reaches only what grants one of its restricting SIDs: system directories readable by `Users`, and **workspace roots
+  granted explicitly to the executor SID** by `orceld` with no-follow ACL grants for the lease's duration (the
+  SG-000060 contained-tier pattern, Chromium-style), plus a private temp directory granted the same way. The user's
+  profile, credential files (`.ssh`, `.gitconfig`, browser profiles) and the Orcel state root are unreachable unless a
+  root is granted; the state root additionally carries the deny ACE below and can never be granted.
+- It runs on a dedicated window station and desktop created by `orceld` per lease (`CreateWindowStationW`,
+  `CreateDesktopW`, DACLs granting only the executor SID and `orceld`), named in `STARTUPINFOW.lpDesktop`. Window
+  messages and Windows hooks do not cross desktops, so it cannot message, hook, close, move or cover the indicator, and
+  GUI programs it starts are invisible to the user (stated consequence; console programs work).
+- Its Job Object sets every `JOB_OBJECT_UILIMIT_*` flag (`HANDLES`, `READCLIPBOARD`, `WRITECLIPBOARD`,
+  `SYSTEMPARAMETERS`, `DISPLAYSETTINGS`, `GLOBALATOMS`, `DESKTOP`, `EXITWINDOWS`), plus kill-on-close.
+
+**Token profile D (the native host).** Same construction with the restricting SID list { executor SID, logon SID,
+`Everyone`, `BUILTIN\Users`, `NT AUTHORITY\Authenticated Users`, `NT AUTHORITY\INTERACTIVE` }; **the user SID is not in
+the list**. The logon SID is needed because `WinSta0` and `Default` grant it, and `SendInput` needs
+`DESKTOP_JOURNALPLAYBACK` on the input desktop, which the default desktop DACL grants to the logon SID.
+- Through default process DACLs the logon SID receives read and execute rights on the user's other processes. For a
+  process, `GENERIC_READ` maps to `PROCESS_VM_READ`, `PROCESS_QUERY_INFORMATION` and `READ_CONTROL`, and
+  `GENERIC_EXECUTE` to `PROCESS_QUERY_LIMITED_INFORMATION` and `SYNCHRONIZE`. It does **not** receive
+  `PROCESS_VM_WRITE`, `PROCESS_VM_OPERATION`, `PROCESS_CREATE_THREAD`, `PROCESS_DUP_HANDLE` or `PROCESS_TERMINATE`, so it
+  cannot inject into or act through another process. WP1-10 measures the exact granted rights on the runner and records
+  them; if the measured set includes any write, thread or handle right, the packet stops.
+- **Residual R-D1:** profile D can read other same-user processes' memory. The native host is Orcel's own pinned
+  binary; the agent controls only the closed protocol's actions; today its only process call is
+  `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` (`native_win32_windows.go`). A static guard (WP1-10) fails CI if the Go
+  host gains `ReadProcessMemory`, `OpenProcess` with any other right, `SetWindowsHookEx`, `BlockInput`, `CreateDesktop`,
+  `SwitchDesktop` or `RegisterRawInputDevices` with `RIDEV_INPUTSINK`.
+- Job Object: kill-on-close, one active process, die on unhandled exception, and the UI limits `READCLIPBOARD`,
+  `WRITECLIPBOARD` (the Go host has no clipboard call; clipboard stays with `orcel-provider-clipboard` in `orceld`),
+  `SYSTEMPARAMETERS`, `DISPLAYSETTINGS`, `GLOBALATOMS`, `DESKTOP` (no `CreateDesktop` or `SwitchDesktop`) and
+  `EXITWINDOWS`. It **cannot** take `UILIMIT_HANDLES`, which forbids using window handles owned by processes outside the
+  job; the host must find, focus and act on other processes' windows.
+
+**What the native host still needs, and what may be lost.** `SendInput` takes no handle to the target; it needs the
+input desktop and `DESKTOP_JOURNALPLAYBACK` (logon SID) and is subject to UIPI (same medium integrity: allowed).
+Window enumeration, focus and placement use window handles, which `UILIMIT_HANDLES` would block and profile D allows.
+UI Automation clients mostly work without process handles (providers answer over UIA's cross-process channel), but two
+things are unproven under a restricted token: COM access checks in target processes that call
+`CoInitializeSecurity` with restrictive defaults, and legacy common-control proxies (list view, tree view, tab) that
+allocate and read memory in the target process. WP1-10 runs the existing native qualification suites
+(`native_qualification_windows_test.go`, `native_input_qualification_windows_test.go`) under profile D and records each
+capability that fails. A failing capability is reported `unsupported` under a lease; the token is never widened to fix
+it. If observation fails broadly, FD-UP-9's sub-question (b) applies.
+
+**ACLs that make it bite.** At install and at every `orceld` start, `orceld` sets on the state root (protected,
+inheritance on): an explicit **deny** ACE for the executor SID covering `GENERIC_ALL`, `WRITE_DAC` and `WRITE_OWNER`; an
+`OWNER RIGHTS` (`S-1-3-4`) ACE granting `READ_CONTROL` only, removing the owner's implicit `WRITE_DAC`; and an explicit
+full-control grant for the user SID for `orceld` itself. `orceld` and the indicator also set a deny ACE for the executor
+SID on their own process objects (belt and braces: profile S already fails their DACLs; profile D would otherwise get
+read rights through the logon SID). A restricted token's access check passes only if both the normal and the
+restricting SID checks pass, and a deny ACE matching a restricting SID fails the second check, so executors and every
+descendant are denied while the user's ordinary processes are unaffected.
+
+**Tests (WP1-10).** From each profile (the native host under D; a test shell and its grandchild under S):
+- open each protected file for read and write, change the state root's DACL, take ownership: all denied;
+- open `explorer.exe`, a second same-user test process, `orcel-mcp`, `orceld` and the indicator with `PROCESS_VM_WRITE`,
+  `PROCESS_VM_OPERATION`, `PROCESS_CREATE_THREAD` and `PROCESS_DUP_HANDLE`: all denied for D and S; under S also
+  `PROCESS_QUERY_LIMITED_INFORMATION` denied; under D `PROCESS_VM_READ` to `orceld` and the indicator denied (process
+  deny ACE);
+- under S: `FindWindowW` for the indicator fails (other desktop), `SetWindowsHookExW` targeting the indicator's thread
+  fails, `PostMessageW(WM_CLOSE)` cannot reach it, a GUI program started by the shell is not visible on `Default`;
+- under D: `CreateDesktopW` and `SwitchDesktop` fail (UI limit); clipboard read and write fail; `SendInput` into a test
+  Notepad succeeds;
+- a normal user process can still read the state root (regression guard for `orceld` itself).
+
+**Stated limits.** Profile D can read same-user process memory (R-D1) and can send input and window messages to any
+same-desktop window at its integrity, including the indicator; section 4.13 makes the indicator ignore injected input,
+fail safe on close or hide, and adds a stop path no user-mode code can block. Desktop input can still type into a
+terminal the user opened, which runs with the user's full token (C-27).
 
 ## 5. Firecrawl parity matrix
 
@@ -1313,8 +1407,9 @@ threads, and a fresh-context security judge where marked. d1-local is advisory o
   lock. Lease expiry kills running executors; every job unit re-checks the lease. The `Admin` executor class is refused.
   **Process boundary for the existing SG-000095 path:** `orceld/src/uia.rs` -> `ComputerHostAdapter` ->
   `HostSession::spawn` -> the Go native host `apps/orcel-computer-host`. The native host is the DesktopInput executor
-  child: while any lease is active it runs under the executor token, in a Job Object with kill-on-close, one active
-  process and no UI limits, with the handle duplicated to the indicator (section 4.14); when the lease ends, `orceld`
+  child: while any lease is active it runs under token profile D (no user SID), in a Job Object with kill-on-close, one
+  active process and every UI limit except `HANDLES`, with the handle duplicated to the indicator (section 4.14);
+  process-starting executors use profile S on a separate desktop with every UI limit; when the lease ends, `orceld`
   terminates that host instance and Safe-mode observation restarts it with today's launch. The executor-token and ACL
   mechanism of section 4.14 is implemented here, subject to FD-UP-9. The STRONG grant prompt
   (`crates/orcel-lifecycle/src/full_control.rs`, `ApprovalPrompt::new_strong`) gains the C-27 residual text (C-25).
@@ -1333,9 +1428,16 @@ threads, and a fresh-context security judge where marked. d1-local is advisory o
   expiry kill; per-unit re-check; admin refused; indicator absent or invisible; stop directory honoured);
   `cargo test -p orcel-policy` (SID and logon mismatch, epoch drift, policy drift, expiry, `mode_selectable_on`);
   `cargo test -p orceld executor_state_isolation_` (Windows, section 4.14 list);
-  `cargo test -p orcel-provider-uia native_host_executor_launch_` (Windows: token restricting SIDs, Job Object limits,
-  handle duplicated with only `JOB_OBJECT_TERMINATE | JOB_OBJECT_QUERY`); `cargo test -p orcel-lifecycle
-  grant_prompt_residual_text`; Windows native CI issuing a lease from real host values (existing pattern).
+  `cargo test -p orcel-provider-uia native_host_executor_launch_` (Windows: profile D restricting SIDs without the user
+  SID, Job Object limits including every UI limit except `HANDLES`, handle duplicated with only
+  `JOB_OBJECT_TERMINATE | JOB_OBJECT_QUERY`); `cargo test -p orceld executor_profile_s_` (Windows: no user or logon
+  SID, separate window station and desktop, every UI limit, workspace grants to the executor SID);
+  `cargo test -p orceld executor_cross_process_` (Windows: from profiles D and S, opening explorer and a second same-user
+  process with `PROCESS_VM_WRITE`, `PROCESS_VM_OPERATION`, `PROCESS_CREATE_THREAD` and `PROCESS_DUP_HANDLE` is denied,
+  and the measured logon-SID rights are recorded); the existing Go native qualification suites run under profile D
+  with each failing capability recorded; `node scripts/check-native-host-calls.mjs` (static guard of section 4.14 over
+  `apps/orcel-computer-host`); `cargo test -p orcel-lifecycle grant_prompt_residual_text`; Windows native CI issuing a
+  lease from real host values (existing pattern).
 - **CI:** Windows native required; Linux and macOS prove `LEASE_UNSUPPORTED_PLATFORM`. **Security judge:** yes.
 
 #### WP1-12 Protected Full Control indicator and out-of-band stop
@@ -1343,10 +1445,13 @@ threads, and a fresh-context security judge where marked. d1-local is advisory o
 - **Scope:** `apps/orcel-indicator` (Rust, Windows in Wave 1) implementing section 4.13 exactly: launched only by
   `orceld` on an inherited anonymous pipe; the always-on-top window "Orcel Full Control" shown while any lease is active
   (`orceld` checks the lease store every 1 s), displaying mode, expiry, the latest anchor `(seq, digest)` (informational)
-  and the Stop button first; heartbeats only while all four visibility checks pass; Job Object handles received from
-  `orceld` with terminate and query rights only; out-of-band stop that terminates held Job Objects and writes a revoke
-  request, never holding the authority key; the hotkey shown as ready only when `RegisterHotKey` succeeded. `orceld`
-  side: launch, peer checks, frames, the 2 s heartbeat rule, handle duplication, the stop directory and its handling.
+  and the Stop button first; the four mitigation policies enabled before the window exists; Stop acting on hardware
+  input only (`GetCurrentInputMessageSource`); close, minimise and hide requests treated as Stop; heartbeats only while
+  all five visibility checks pass (including the input-desktop check); Job Object handles received from `orceld` with
+  terminate and query rights only; out-of-band stop that terminates held Job Objects and writes a revoke request, never
+  holding the authority key; session lock as a Stop in both the indicator and `orceld`; the hotkey shown as ready only
+  when `RegisterHotKey` succeeded. `orceld` side: launch, peer checks, frames, the 2 s heartbeat rule, handle
+  duplication, the stop directory, the session-lock stop.
   The indicator's title and class are added to `PROTECTED_WINDOW_MARKERS` and the native-host mirror (and the grant
   prompt's and emergency-stop surface's markers are confirmed present), so observation, capture and desktop input
   refuse them.
@@ -1355,11 +1460,17 @@ threads, and a fresh-context security judge where marked. d1-local is advisory o
   works with `orceld` running (StopAck within 1 s) and with `orceld` suspended (executors dead within 1 s, revoke request
   written, honoured by `orceld` before its next dispatch after resuming); a forged frame or a wrong parent is refused;
   with the hotkey already taken by another process, no "hotkey ready" text is shown; desktop input and observation
-  targeting the indicator, the grant prompt and the stop surface are refused.
-- **Tests:** `cargo test -p orcel-indicator` (frames, visibility gating, hotkey failure, revoke-request write);
-  `cargo test -p orceld indicator_` (launch pins, peer checks, heartbeat expiry, handle rights, stop directory);
-  `cargo test -p orcel-provider-uia protected_markers_`; Windows native test suspending `orceld` (`NtSuspendProcess` in
-  the test harness) and measuring stop-to-death; Windows native test minimising and cloaking the window.
+  targeting the indicator, the grant prompt and the stop surface are refused; an injected click (`SendInput`) on Stop
+  is ignored while a hardware-equivalent test path is honoured; a `WM_CLOSE` or `SC_MINIMIZE` sent by another process
+  stops Full Control; a hook DLL cannot be loaded into the indicator; switching to another desktop stops heartbeats;
+  `LockWorkStation` (standing in for Win+L in CI) stops Full Control within 1 s with `orceld` running and suspended.
+- **Tests:** `cargo test -p orcel-indicator` (frames, visibility gating including the input desktop, hotkey failure,
+  revoke-request write, mitigation policies on at startup, injected-input filter, close and minimise as Stop);
+  `cargo test -p orceld indicator_` (launch pins, peer checks, heartbeat expiry, handle rights, stop directory, session
+  lock); `cargo test -p orcel-provider-uia protected_markers_`; Windows native tests: suspend `orceld`
+  (`NtSuspendProcess`) and measure stop-to-death; minimise, cloak and send `WM_CLOSE` from a test process; inject a click
+  with `SendInput` and assert no Stop; attempt `SetWindowsHookExW` with a test DLL into the indicator's thread and assert
+  the DLL is not loaded; call `LockWorkStation` and measure stop-to-death. The founder-present J-3 run uses real Win+L.
 - **CI:** Windows native required. **Security judge:** yes.
 
 #### WP1-11 Wave 1 journeys
@@ -1421,7 +1532,7 @@ threads, and a fresh-context security judge where marked. d1-local is advisory o
 | --- | --- | --- | --- |
 | J-1 | W1 | Points the Firecrawl JS SDK, with an explicit `apiUrl`, at their local Orcel and scrapes, maps and crawls. Scripted leg: the pinned 60-page fixture site (`tests/firecrawl-compat/fixture-site/`) on the test-only fixture origin. Founder-present leg: `https://docs.python.org/3/library/` in a development build | Results returned through visible approvals; engine named; robots and the 250 ms politeness delay honoured (fixture server log); at most 50 pages read; `orcel audit verify` clean |
 | J-2 | W1 | Asks an MCP client to crawl the fixture site, then cancels mid-way | Cancel probe (below) passes; partial results readable by the owner only |
-| J-3 | W1 | Grants Full User on Windows with STRONG presence (the prompt states the C-27 residual), has an agent perform desktop input (SG-000095) in Notepad through the native host running as the executor child, then presses Stop on the indicator | Every dispatch audited with lease id, digest and epoch and anchored in the Event Log; Stop ends the running action within 1 s, including with `orceld` suspended (revoke request honoured on resume); the next call fails `LEASE_INVALID`; input aimed at the indicator or grant prompt is refused; minimising the indicator blocks dispatch |
+| J-3 | W1 | Grants Full User on Windows with STRONG presence (the prompt states the C-27 residual), has an agent perform desktop input (SG-000095) in Notepad through the native host running as the executor child (token profile D), then presses Stop on the indicator; repeated with Win+L as the stop | Every dispatch audited with lease id, digest and epoch and anchored in the Event Log; Stop ends the running action within 1 s, including with `orceld` suspended (revoke request honoured on resume); Win+L stops it the same way; the next call fails `LEASE_INVALID`; input aimed at the indicator or grant prompt is refused; injected clicks on Stop are ignored and an injected `WM_CLOSE` stops; minimising the indicator blocks dispatch; any native-host capability that fails under profile D is reported `unsupported`, not hidden |
 | J-3b | W1 if FD-UP-4 activates them, else W2 | J-3 with a shell build (SG-000096) and file edits (SG-000097) | Prerequisites: SG-000096 T02-T04 qualified (today `shell_session.rs` denies `ShellProcess` until T02-T04) and SG-000097 activated and qualified; same criteria plus C-26 isolation |
 | J-4 | W2 | J-3 and J-3b on macOS 15 arm64 and Ubuntu 24.04 GNOME | Same criteria; OS consent prompts appear as the OS shows them |
 | J-5 | W2 | Runs one browser task on Obscura and the same on Chromium | Same result or an explicit difference report; engine named; any fallback reported, never silent |
@@ -1487,15 +1598,21 @@ arrival is later than `t_ack` plus the in-flight page's own completion (at most 
 8. **FD-UP-8 Custom request headers.** Whether Firecrawl `headers` may ever be honoured (they can carry credentials and
    cookies); refused until decided.
 9. **FD-UP-9 Same-user isolation mechanism for executor children (C-26).** Recommended (section 4.14, buildable as
-   written): on Windows, every Full Control executor child, including the native computer host that performs desktop
-   input, runs under a restricted token whose restricting SID list carries a per-install executor SID
-   (`S-1-9-<random>`) next to the user, logon and standard group SIDs, inside a Job Object; the state root carries an
-   explicit deny ACE for that SID and an `OWNER RIGHTS` `READ_CONTROL`-only ACE, and `orceld` and the indicator put the
-   same deny ACE on their own process objects. This keeps medium integrity, so input and UI automation keep working,
-   which an AppContainer would break. AppContainer remains the boundary for donor sidecars. On macOS a Seatbelt deny of
-   the state root and on Linux a Landlock rule set without it (Wave 2). Alternatives: an AppContainer executor
-   (breaks desktop input), or a separate local account (needs administrator rights to create). Whichever is chosen,
-   C-27's desktop-input residual remains and is shown in the grant prompt.
+   written): on Windows, every Full Control executor child runs under a restricted token whose restricting SID list
+   **excludes the user SID** and carries a per-install executor SID (`S-1-9-<random>`). Process-starting executors use
+   profile S (no logon SID, a dedicated window station and desktop, every Job Object UI limit, explicit executor-SID
+   grants on workspace roots and a private temp directory). The native computer host uses profile D (logon SID kept for
+   the input desktop, every UI limit except `HANDLES`), with residual R-D1 (it can read same-user process memory)
+   contained by a static guard on the pinned host. The state root carries an explicit deny ACE for the executor SID and
+   an `OWNER RIGHTS` `READ_CONTROL`-only ACE, and `orceld` and the indicator put the same deny ACE on their own process
+   objects. This keeps medium integrity for the native host, so input keeps working, which an AppContainer would
+   break. AppContainer remains the boundary for donor sidecars. On macOS a Seatbelt deny of the state root and on Linux
+   a Landlock rule set without it (Wave 2). Alternatives: an AppContainer executor (breaks desktop input), or a separate
+   local account (needs administrator rights to create). Sub-questions: (a) accept that GUI programs started by shell
+   executors are invisible (profile S desktop); (b) if WP1-10's measurement shows UI Automation observation failing
+   broadly under profile D, choose between reduced capability under a lease (recommended) and a second, unrestricted,
+   observe-only host instance with no input path. Whichever is chosen, C-27's desktop-input residual remains and is
+   shown in the grant prompt.
 10. **FD-UP-10 Approvals inside a trusted session.** The founder has asked for no repetitive approval dialogs inside a
     trusted session; today a lease is an additional gate and never replaces an approval (SG-000095, C-04). Recommended
     safe form, if wanted: a **lease-scoped standing approval** granted once with STRONG presence for a declared task
@@ -1565,7 +1682,7 @@ from this draft.
 | Finding | Resolution | Where |
 | --- | --- | --- |
 | RR1 indicator protocol | New section 4.13: `orceld` alone launches the indicator (pinned, hashed handle, one inherited anonymous pipe pair, normal user token, outside executor Job Objects, relaunch at most every 10 s); peer authentication by pipe possession plus image-path, creation-time and parent checks on both sides, and self-applied deny ACEs; closed frame vocabularies; 1 s visibility-gated heartbeat, 2 s expiry; Job Object handles duplicated `orceld` to indicator with `JOB_OBJECT_TERMINATE` and `JOB_OBJECT_QUERY` only; Stop via `StopRequest`/`StopAck`, and when `orceld` hangs the indicator terminates held Job Objects and writes an unauthenticated revoke request in the state root's `stop` directory that `orceld` honours inside the epoch lock before any dispatch. Justified: the indicator never holds the authority key; a revoke request can only remove authority; executors cannot write the directory | 4.13, C-28, WP1-12 |
-| RR2 DesktopInput process boundary | New section 4.14: `orceld/src/uia.rs` -> `ComputerHostAdapter` -> `HostSession::spawn` -> Go host `apps/orcel-computer-host` is the DesktopInput executor child; under a lease it runs with the executor token in a Job Object (kill on close, one process, no UI limits), handle duplicated to the indicator. AppContainer rejected for it (UIPI blocks low-integrity input). FD-UP-9 stays the founder call, with the restricted-token-plus-executor-SID mechanism and exact ACLs stated buildably | 4.14, WP1-10, FD-UP-9 |
+| RR2 DesktopInput process boundary | New section 4.14: `orceld/src/uia.rs` -> `ComputerHostAdapter` -> `HostSession::spawn` -> Go host `apps/orcel-computer-host` is the DesktopInput executor child; under a lease it runs with the executor token in a Job Object, handle duplicated to the indicator (token and UI limits superseded by 13.2). AppContainer rejected for it (UIPI blocks low-integrity input). FD-UP-9 stays the founder call, with the restricted-token-plus-executor-SID mechanism and exact ACLs stated buildably | 4.14, WP1-10, FD-UP-9 |
 | RR3 WP1-12 prerequisite | WP1-03 added | 8.1, SG-000132 draft |
 | SN1 residual in the grant prompt | C-25: the STRONG grant and renewal prompt states the C-27 residual; WP1-10 adds the text and a test | C-25, C-27, WP1-10, J-3 |
 | SN2 anchor verify and registration | `orcel audit verify` checks every Orcel anchor still in the Application log; conflicting records are a break; beyond-tail record means truncation. No source registration (it needs admin): unregistered `RegisterEventSourceW` per user, proven by a standard-account CI test and a founder-PC run; if the write is denied, Full Control is refused; indicator-only fallback removed | C-29, 4.8, WP1-03 |
@@ -1574,3 +1691,10 @@ from this draft.
 | SN5 add-rest approval and device cap | `add-rest` and `rotate-rest` need a SOFT approval through the protected local broker; device-wide cap of 2 pending web approval prompts | 4.11, 4.12, SG-000101 and SG-000102 drafts |
 | SN6 standing approval principal | FD-UP-10's standing approval binds the lease and the requesting principal, and audits the principal | FD-UP-10, SG-000132 draft |
 | Grain consistency | All four drafts re-checked against the spec and updated to revision 3 (indicator protocol, executor boundary, anchor rule, add-rest approval, caps, prerequisites) | `unified-grains/*.draft.json` |
+
+### 13.2 Revision 4 (security re-check of `5d1651cd`)
+
+| Finding | Resolution | Where |
+| --- | --- | --- |
+| B1 user SID in the restricting list | Removed from every executor token. Profile S (process-starting executors): restricting SIDs executor, Everyone, Users, Authenticated Users, RESTRICTED (no user or logon SID), so other same-user processes are unopenable; workspace roots and a private temp directory granted explicitly to the executor SID (Chromium-style). Profile D (native host): user SID removed, logon SID kept for the input desktop and `DESKTOP_JOURNALPLAYBACK`; default DACLs give it read and execute only (stated: `PROCESS_VM_READ` included, residual R-D1, contained by a static guard on the pinned host), never write, thread, handle or terminate rights. Tests open explorer and another same-user process with `PROCESS_VM_WRITE`/`PROCESS_CREATE_THREAD` and expect denial. Native host consequence: `SendInput` needs no target handle, window actions need window handles (allowed), UIA mostly needs none but COM security and legacy common-control proxies are unproven, so WP1-10 measures with the existing Go qualification suites and reports failures `unsupported`; FD-UP-9 sub-question (b). J-3 updated accordingly | 4.14, C-26, WP1-10, J-3, FD-UP-9 |
+| B2 desktop-level attacks | Profile S runs on a dedicated window station and desktop with every `JOB_OBJECT_UILIMIT_*` flag, so it cannot message, hook, close or hide the indicator or switch desktops. The native host takes every UI limit except `HANDLES` (it must act on other processes' windows; it has no clipboard call, so the clipboard limits apply). The indicator enables extension-point, Microsoft-signed-only, image-load and dynamic-code mitigation policies (works for the unsigned build because it loads only system DLLs; CI asserts it), adds the input-desktop check to visibility, acts on hardware input only (`IMO_INJECTED` ignored), treats close, minimise and hide as Stop, and resists repositioning. Residual stated: the native host can send input and messages to the indicator at the same integrity; mitigated by the injected-input filter and fail-safe handling, and a stop no user-mode code can block or fake is added: session lock (Ctrl+Alt+Del then Lock, or Win+L) via `WTSRegisterSessionNotification` in both `orceld` and the indicator | 4.13, 4.14, C-28, WP1-12, J-3 |

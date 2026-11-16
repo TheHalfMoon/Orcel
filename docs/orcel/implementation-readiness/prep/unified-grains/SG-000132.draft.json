@@ -6,7 +6,7 @@
   "state": "DRAFT",
   "risk": "high",
   "created": "2026-11-16",
-  "revision": 3,
+  "revision": 4,
   "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
   "dependencies": [
     "SG-000019",
@@ -35,17 +35,18 @@
     "WP1-10 (prerequisites WP1-02, WP1-03, WP1-12, FD-UP-9)",
     "WP1-12 (prerequisites WP1-02, WP1-03)"
   ],
-  "objective": "Make crates/orceld/src/full_control_dispatch.rs the single path through which any executor runs under a Full Control lease on Windows, in one critical section: confirm a visibility-gated indicator heartbeat within 2 s, take the authority-epoch lock, load the lease, re-read the native Windows identity, check every SG-000093 binding, confirm executor_enabled_now, require the shape's own per-action approval (a lease never replaces it), write and flush the audit event (lease id, binding digest, epoch), honour any pending revoke request, start or reuse the executor child under the section 4.14 boundary (restricted token with a per-install executor SID, Job Object with kill-on-close and one active process, handle duplicated to the indicator with terminate and query rights only), send the action, then release the lock. The native computer host is the DesktopInput executor child. Emergency stop takes the same lock, advances the epoch, cancels jobs and kills executor Job Objects; lease expiry kills running executors; every job unit re-checks the lease; the Admin executor class is refused. Add apps/orcel-indicator per section 4.13: launched only by orceld on an inherited anonymous pipe, peer-checked both ways, heartbeats only while visibly on screen, Stop button first, hotkey shown only when registered, and an out-of-band stop that terminates the Job Objects it was handed and writes a revoke request that orceld honours before any further dispatch, without the indicator ever holding the authority key. Safe-mode paths stay byte-for-byte unchanged.",
+  "objective": "Make crates/orceld/src/full_control_dispatch.rs the single path through which any executor runs under a Full Control lease on Windows, in one critical section: confirm a visibility-gated indicator heartbeat within 2 s, take the authority-epoch lock, load the lease, re-read the native Windows identity, check every SG-000093 binding, confirm executor_enabled_now, require the shape's own per-action approval (a lease never replaces it), write and flush the audit event (lease id, binding digest, epoch), honour any pending revoke request, start or reuse the executor child under the section 4.14 boundary (restricted token whose restricting list excludes the user SID and carries a per-install executor SID; profile S on a separate desktop with every UI limit for process-starting executors, profile D with every UI limit except HANDLES for the native host; Job Object with kill-on-close; handle duplicated to the indicator with terminate and query rights only), send the action, then release the lock. The native computer host is the DesktopInput executor child. Emergency stop takes the same lock, advances the epoch, cancels jobs and kills executor Job Objects; lease expiry kills running executors; every job unit re-checks the lease; the Admin executor class is refused. Add apps/orcel-indicator per section 4.13: launched only by orceld on an inherited anonymous pipe, peer-checked both ways, heartbeats only while visibly on screen, Stop button first, hotkey shown only when registered, and an out-of-band stop that terminates the Job Objects it was handed and writes a revoke request that orceld honours before any further dispatch, without the indicator ever holding the authority key. Safe-mode paths stay byte-for-byte unchanged.",
   "scope": {
     "include": [
       "The dispatcher module and its tests, including a race test injecting a stop between check and start.",
       "orcel-policy: pub fn mode_selectable_on(proof: &LocalGrantProof, mode: AuthorityMode, os: OsFamily) -> Result<(), PolicyError>, returning LEASE_UNSUPPORTED_PLATFORM for FullUser and FullAdmin when os is not Windows; mode_selectable delegates with the compile-time OS.",
-      "crates/orcel-provider-uia HostSession::spawn: under an active lease, launch the native host with the executor token in a Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 1, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, no UI limits) and duplicate the handle to the indicator; without a lease keep today's launch.",
-      "Executor token per section 4.14 (subject to FD-UP-9): per-install S-1-9 executor SID; CreateRestrictedToken with restricting SIDs user, logon, Everyone, Users, Authenticated Users, INTERACTIVE and the executor SID; state root deny ACE for the executor SID (GENERIC_ALL, WRITE_DAC, WRITE_OWNER) plus an OWNER RIGHTS READ_CONTROL-only ACE; the same deny ACE on the orceld and indicator process objects.",
+      "crates/orcel-provider-uia HostSession::spawn: under an active lease, launch the native host with token profile D (section 4.14) in a Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 1, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, and every JOB_OBJECT_UILIMIT_* flag except HANDLES, which it needs to act on other processes' windows) and duplicate the handle to the indicator; without a lease keep today's launch.",
+      "Executor tokens per section 4.14 (subject to FD-UP-9), never containing the user SID in the restricting list: per-install S-1-9 executor SID; profile S (process-starting executors) restricting SIDs executor, Everyone, Users, Authenticated Users, RESTRICTED, on a dedicated window station and desktop with every UI limit, workspace roots and a private temp directory granted to the executor SID; profile D (native host) restricting SIDs executor, logon, Everyone, Users, Authenticated Users, INTERACTIVE; state root deny ACE for the executor SID (GENERIC_ALL, WRITE_DAC, WRITE_OWNER) plus an OWNER RIGHTS READ_CONTROL-only ACE; the same deny ACE on the orceld and indicator process objects; a static guard (scripts/check-native-host-calls.mjs) refusing ReadProcessMemory, wider OpenProcess rights, SetWindowsHookEx, BlockInput, CreateDesktop, SwitchDesktop and RIDEV_INPUTSINK in apps/orcel-computer-host.",
       "STRONG grant and renewal prompt text stating the C-27 residual, with a test.",
-      "apps/orcel-indicator and the orceld side of section 4.13: launch, peer checks, frames, visibility-gated heartbeat, handle duplication, Stop/StopAck, revoke requests in the state root's stop directory checked inside the epoch lock, hotkey status.",
+      "apps/orcel-indicator and the orceld side of section 4.13: launch, peer checks, frames, mitigation policies (DisableExtensionPoints, MicrosoftSignedOnly, image-load policy, ProhibitDynamicCode) enabled before the window exists, five-check visibility-gated heartbeat including the input desktop, Stop on hardware input only (IMO_INJECTED ignored), close, minimise and hide treated as Stop, repositioning rejected, handle duplication, Stop/StopAck, revoke requests in the state root's stop directory checked inside the epoch lock, session lock (WTS_SESSION_LOCK) as a Stop in both processes, hotkey status.",
       "crates/orcel-provider-uia PROTECTED_WINDOW_MARKERS (and the native-host mirror) gain the indicator; the grant prompt and emergency-stop markers are confirmed; observation, capture and desktop input refuse all three, with a test per surface.",
-      "Lease expiry kill; per-unit lease re-check; Admin executor refused."
+      "Lease expiry kill; per-unit lease re-check; Admin executor refused.",
+      "Measurement of the native host under profile D with the existing Go qualification suites; each failing capability is reported unsupported under a lease, never fixed by widening the token (FD-UP-9 sub-question b)."
     ],
     "exclude": [
       "Enabling any executor class not already enabled or separately granted by its own grain.",
@@ -68,7 +69,7 @@
     },
     {
       "question": "Same-user isolation mechanism for executor children",
-      "status": "PENDING (FD-UP-9); recommended: the restricted token with a per-install executor SID of section 4.14"
+      "status": "PENDING (FD-UP-9); recommended: restricted tokens without the user SID (profiles S and D of section 4.14); sub-questions on invisible GUI programs under profile S and on observation lost under profile D"
     },
     {
       "question": "Approvals inside a trusted session",
@@ -81,7 +82,9 @@
     "No Full Control dispatch happens unless the indicator sent a heartbeat with all visibility checks true within the last 2 s, and a durable audit anchor is available.",
     "Check, audit, revoke-request check and executor start happen under the epoch lock; emergency stop takes the same lock.",
     "Every Full Control dispatch has an audit event with lease id, binding digest and authority epoch, written before the executor starts, and none with a raw SID or session value.",
-    "Executor children and their descendants cannot read or write the Orcel state root or open the orceld or indicator processes.",
+    "No executor token contains the user SID in its restricting list; executor children and their descendants cannot read or write the Orcel state root, cannot open orceld or the indicator, and cannot open any other same-user process with write, thread, handle or terminate rights.",
+    "Process-starting executors run on a separate desktop with every Job Object UI limit; the native host takes every UI limit except HANDLES.",
+    "The indicator acts only on hardware input, treats close and hide as Stop, and session lock always stops Full Control.",
     "The indicator never holds the authority key; a revoke request can only remove authority.",
     "Job Object handles reach the indicator with terminate and query rights only.",
     "With no lease, every Safe request and response is identical to the pre-grain golden pairs.",
@@ -94,7 +97,10 @@
     "mode_selectable_on returns LEASE_UNSUPPORTED_PLATFORM for non-Windows OS values.",
     "Golden Safe pairs for process_spawn, the executable registry, the browser shapes and Safe-mode native-host observation are unchanged.",
     "A stop injected between check and start waits for the lock and kills the started process.",
-    "The native host under a lease runs with the executor token in its Job Object; from it and from a grandchild every protected file and process is denied, and the state root's DACL cannot be changed.",
+    "The native host under a lease runs with profile D in its Job Object; from it and from a profile S grandchild every protected file and process is denied, the state root's DACL cannot be changed, and opening explorer or another same-user process with PROCESS_VM_WRITE, PROCESS_VM_OPERATION, PROCESS_CREATE_THREAD or PROCESS_DUP_HANDLE is denied; the measured logon-SID rights are recorded and contain no write, thread or handle right.",
+    "Under profile S the indicator cannot be found, hooked or sent WM_CLOSE, and GUI programs are not shown on the user's desktop; under profile D CreateDesktop, SwitchDesktop and clipboard access fail and SendInput into a test Notepad succeeds.",
+    "An injected click on Stop is ignored; a WM_CLOSE or SC_MINIMIZE from another process stops Full Control; a hook DLL is not loaded into the indicator; leaving the input desktop stops heartbeats.",
+    "LockWorkStation in CI, and Win+L in the founder-present run, stops Full Control within 1 s with orceld running and suspended.",
     "Indicator Stop ends a running desktop-input dispatch within 1 s with orceld running (StopAck) and with orceld suspended (Job Objects terminated, revoke request written and honoured on resume); the next call fails LEASE_INVALID (journey J-3).",
     "Killing, minimising, cloaking or moving the indicator off screen makes the next dispatch fail INDICATOR_UNAVAILABLE.",
     "A forged frame or a wrong parent process is refused by both sides.",
@@ -114,7 +120,11 @@
     "cargo test -p orcel-lifecycle grant_prompt_residual_text",
     "cargo test -p orcel-indicator",
     "cargo test -p orceld --test j3_desktop_input_stop (Windows)",
-    "Windows native CI lease issuance from real host values"
+    "Windows native CI lease issuance from real host values",
+    "cargo test -p orceld executor_profile_s_ (Windows)",
+    "cargo test -p orceld executor_cross_process_ (Windows)",
+    "node scripts/check-native-host-calls.mjs",
+    "Go native qualification suites under profile D (Windows)"
   ],
   "ci_runners": [
     "windows-latest (native, required)",
