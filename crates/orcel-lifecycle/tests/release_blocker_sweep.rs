@@ -2703,10 +2703,6 @@ fn the_control_room_shell_is_never_published() {
 
 const CONTROL_ROOM_APP: &str = "apps/orcel-control-room";
 
-fn names_the_shell(text: &str) -> bool {
-    text.contains("src-tauri") || text.contains("orcel-control-room-shell")
-}
-
 /// Any mention of the Control Room's tree or binary: the bare `orcel-control-room` (which the
 /// app path and the shell binary's name both contain) or `src-tauri`.
 fn names_the_control_room(text: &str) -> bool {
@@ -2745,20 +2741,24 @@ fn upload_step_findings(
 
 /// A headless `control-room` job line may name the app only as an `npm` command run with
 /// `--prefix apps/orcel-control-room` (the prefix exactly, never a folder below it).
+///
+/// The headless job's three commands are pinned exactly (whitespace normalized), so no other
+/// npm form (`exec`, `npx`, `run-script`, an extra argument naming another path) is exempt,
+/// and every word naming `orcel-control-room` must be the app path itself.
 fn headless_npm_line(code: &str) -> bool {
+    const HEADLESS_COMMANDS: [&str; 3] = [
+        "npm ci --prefix apps/orcel-control-room --ignore-scripts",
+        "npm --prefix apps/orcel-control-room run typecheck",
+        "npm --prefix apps/orcel-control-room test",
+    ];
     let command = code.trim().trim_start_matches("- ");
     let command = command.strip_prefix("run:").unwrap_or(command).trim();
     let words: Vec<&str> = command.split_whitespace().collect();
-    words.first() == Some(&"npm")
-        && words
-            .windows(2)
-            .any(|pair| pair == ["--prefix", CONTROL_ROOM_APP])
-        && !names_the_shell(command)
-        && !words.iter().any(|word| word.contains("cargo"))
-        && words
-            .iter()
-            .filter(|word| word.contains(CONTROL_ROOM_APP))
-            .all(|word| *word == CONTROL_ROOM_APP)
+    words
+        .iter()
+        .filter(|word| word.contains("orcel-control-room"))
+        .all(|word| *word == CONTROL_ROOM_APP)
+        && HEADLESS_COMMANDS.contains(&words.join(" ").as_str())
 }
 
 /// A workflow split into its head (before `jobs:`) and its jobs, comments removed; each line
@@ -3349,5 +3349,23 @@ fn the_no_publication_parsers_decide_the_shapes_they_claim() {
     assert!(!headless_npm_line(
         "        run: npm --prefix apps/orcel-control-room test && cargo test"
     ));
-    assert!(names_the_shell("cargo build -p orcel-control-room-shell"));
+    assert!(headless_npm_line(
+        "        run: npm   --prefix apps/orcel-control-room   run typecheck"
+    ));
+    // Re-judge (A2): only the three pinned commands are exempt.
+    for refused in [
+        "        run: npm --prefix apps/orcel-control-room exec -- tar czf x.tgz ../orcel-control-room",
+        "        run: npm --prefix apps/orcel-control-room exec -- tar czf x.tgz .",
+        "        run: npx --prefix apps/orcel-control-room tar czf x.tgz .",
+        "        run: npm --prefix apps/orcel-control-room run-script typecheck",
+        "        run: npm --prefix apps/orcel-control-room run build",
+        "        run: npm --prefix apps/orcel-control-room test -- ../orcel-control-room-shell",
+        "        run: npm --prefix apps/orcel-control-room test --workspace x",
+        "        run: npm ci --prefix apps/orcel-control-room",
+    ] {
+        assert!(!headless_npm_line(refused), "{refused}");
+    }
+    assert!(names_the_control_room(
+        "cargo build -p orcel-control-room-shell"
+    ));
 }
