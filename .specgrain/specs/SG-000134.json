@@ -1,0 +1,86 @@
+{
+  "id": "SG-000134",
+  "title": "Web jobs: embedded queue, asynchronous crawl, map and batch scrape, and user-configurable budgets",
+  "program": "ORCEL-UP",
+  "state": "GRAIN",
+  "risk": "high",
+  "created": "2026-11-17",
+  "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
+  "planning_issue": null,
+  "dependencies": [
+    "SG-000131",
+    "SG-000133",
+    "SG-000108"
+  ],
+  "dependency_notes": {
+    "SG-000131": "Job contracts, restart rules, audit chain, error codes.",
+    "SG-000133": "Fetch engine, Firecrawl component (filter_links, parse_sitemap), REST tokens and the harness.",
+    "SG-000108": "Closed. crawl.rs, crawl_scope.rs, map_rank.rs, robots and sitemaps are reused; this grain turns crawl.rs's fixed constants into defaults behind a validated CrawlLimits value."
+  },
+  "objective": "Add crates/orcel-jobs, an embedded durable job queue with no server database and no async runtime (per-origin throttle, bounded retry for read-only batch units, concurrency control, reporting checkpoints, a result store with resource-protection caps and expiry, ownership per client principal, user-configurable budgets). One crawl or map job is one unit; crawl.rs keeps the frontier, dedup, scope and limits; per-URL units apply to batch scrape. Add FetchCrawlDriver beside WorkerCrawl. Expose Firecrawl v2 map, crawl (start, status, cancel, errors, ongoing, active) and batch scrape routes with v1 aliases where practical, and the MCP tools web_map, web_crawl_start, web_batch_scrape_start, web_job_status, web_job_cancel, web_job_errors and web_job_list. One SOFT approval per job bound to the client, the declared task, the destination scope with resolved addresses, the parameters and the session; every page still checked against the scope. Spec sections 4.7, 4.11, 5.2, 5.4, 8.2.",
+  "scope": {
+    "include": [
+      "WP1-04: crates/orcel-jobs modules queue, throttle, retry, concurrency, checkpoint, store, budget and owner with the tests listed in section 8.2.",
+      "Budgets: defaults 50 pages, depth 5, 10 minutes, 1,000 remembered URLs per crawl, 50 URLs per batch, 250 ms delay; changed by the user through `orcel config web-budgets` only; validated against resource-protection ceilings (store per job and in total, running jobs, concurrent fetches, delay floor, contained memory limit).",
+      "WP1-06 (jobs): web/map, web/crawl_start, web/batch_scrape_start, job/status, job/cancel, job/errors, job/list; WebCrawlRequest to CrawlSpec translation; FetchCrawlDriver; pending-approval caps of 1 per client and 2 device-wide.",
+      "WP1-07: the seven tool_contract entries and the REST routes.",
+      "WP1-09: map, crawl and batch rows and the J-2 cancel probe."
+    ],
+    "exclude": [
+      "Webhooks in Wave 1 (loopback-only webhooks are a Wave 2 option).",
+      "Ignoring robots rules.",
+      "Origins outside the approved scope (multi-origin scopes arrive in Wave 2 as declared origin sets).",
+      "Model-backed rows (Wave 2 and 3)."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None.",
+    "jobs": "Proposed: asynchronous web jobs admitted by one SOFT approval per job (FD-UP-5), within user-configured budgets and resource-protection ceilings; no new network class, no job egress, no listener beyond the existing loopback server."
+  },
+  "decisions": [
+    {
+      "question": "Job approval granularity",
+      "status": "DECIDED (founder, 2026-11-17, FD-UP-5): one approval per crawl or batch job, bound to client, scope, parameters and task; destination scope still enforced."
+    },
+    {
+      "question": "Budgets",
+      "status": "DECIDED (FD-UP-11): user-configurable with sensible defaults; no fixed product caps beyond resource protection."
+    },
+    {
+      "question": "Grain id",
+      "status": "DECIDED (FD-UP-4): SG-000134; SG-000102 stays reserved."
+    }
+  ],
+  "invariants": [
+    "Job states are exactly not_started, dispatched, completed, cancelled and outcome_unknown; outcome_unknown is never retried; mutating units are never retried.",
+    "A job approval binds client, task, scope with resolved addresses, parameters and session, and cannot be replayed for anything else.",
+    "On restart no job resumes.",
+    "crawl.rs alone owns the frontier, dedup, scope and limits; every page is checked against the approved scope.",
+    "Budgets are changed only through the local control path, never by an MCP or REST caller.",
+    "Only the owning client can read or cancel a job."
+  ],
+  "acceptance": [
+    "State-machine property tests, including restart, pass on all three OSes.",
+    "Per-origin delay honoured within 10 ms of the configured value.",
+    "A budget above a resource-protection ceiling is refused with the ceiling named; a user-raised budget within the ceilings is honoured.",
+    "The J-2 cancel probe passes on Windows.",
+    "Address drift stops the job with TARGET_STALE.",
+    "Every W1 map, crawl and batch row passes both SDK legs on Windows.",
+    "A fresh-context security judge passes the dispatch slice."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on the dispatch slice and on closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "watcher_queue_status_webhooks": "Wave 2 (WP2-11).",
+    "local_monitoring": "Wave 2 local change-tracking scheduler over orcel-jobs.",
+    "cross_platform": "Track X once WP1-13 lands."
+  },
+  "activation_note": "Activated by the founder's go-ahead of 2026-11-17, given in the Claude Code session and quoted in docs/canonical/CURRENT.md; no tracking issue was opened, so planning_issue stays null as drafted. No code, dependency, tool, route, listener, network, service or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about web jobs.",
+  "done_when": "The listed packets merge with exact-head qualification, J-2 passes, and the canonical record names this grain CLOSED."
+}

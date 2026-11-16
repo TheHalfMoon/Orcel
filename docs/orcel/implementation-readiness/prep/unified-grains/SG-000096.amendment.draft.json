@@ -1,0 +1,30 @@
+{
+  "amends": "SG-000096",
+  "title": "SG-000096 continuation: interactive shells on the Orcel authority service",
+  "draft_note": "Amendment draft under prep/ (revision 7). The activation PR (WP1-00) applies these changes to .specgrain/specs/SG-000096.json, which stays in state GRAIN; it does not replace the existing spec.",
+  "created": "2026-11-17",
+  "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
+  "decision": "DECIDED (founder, 2026-11-17, FD-UP-4 and FD-UP-9): continue SG-000096 so interactive shells land in Wave 1 for J-3b, with comprehensive shell coverage.",
+  "changes": {
+    "dependencies_add": [
+      "SG-000132",
+      "SG-000131"
+    ],
+    "dependency_notes_add": {
+      "SG-000132": "Lease checks, the dispatcher, standing approvals and stop come from the authority service; shell sessions are dispatched only through crates/orceld/src/full_control_dispatch.rs.",
+      "SG-000131": "Contracts and audit chain; argv recorded as digests."
+    },
+    "scope_include_add": [
+      "Shells under a Full User lease on Windows: PowerShell 5.1, PowerShell 7, cmd, Git Bash and WSL bash, each as an interactive ConPTY session or one-shot command, on the user's desktop with the user's token.",
+      "Each session's process tree in a Job Object created and owned by the authority service (session granted only JOB_OBJECT_ASSIGN_PROCESS, no breakaway), started suspended, assigned and resumed, terminated by stop, expiry, session lock and sign-out.",
+      "Shell sessions coverable by a standing approval for the same client, declared task and scope (working directories and, where declared, command patterns).",
+      "Track X follow-up: zsh and bash on macOS and Linux (WPX-03)."
+    ],
+    "scope_note_replace": "Where the existing spec refers to crates/orcel-policy/src/full_control_store.rs and crates/orcel-lifecycle/src/full_control.rs for lease issuance and verification, read the authority service of SG-000132; the requirement to qualify an ordinary current-user token (not the AppContainer execution mode) stands.",
+    "acceptance_add": [
+      "Each listed shell runs interactively and one-shot under a lease on the Windows runner, with bounded stdout and stderr pagination, and is killed by stop within 1 s.",
+      "Without a lease, ShellProcess stays denied and Safe process behaviour is unchanged.",
+      "J-3b passes on Windows."
+    ]
+  }
+}
