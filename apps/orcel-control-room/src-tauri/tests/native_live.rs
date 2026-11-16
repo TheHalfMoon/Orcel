@@ -146,7 +146,19 @@ fn wait_line(lines: &Receiver<String>, needle: &str, what: &str) -> String {
             Err(_) => break,
         }
     }
-    panic!("{what}: never saw {needle:?}; saw {seen:?}");
+    panic!(
+        "{what}: never saw {needle:?}; saw {}",
+        redact(&format!("{seen:?}"))
+    );
+}
+
+/// `text` with this user's SID replaced by `<SID>`: orceld's logs name its
+/// endpoint, which carries the SID, and test output must not.
+fn redact(text: &str) -> String {
+    match orcel_app_api_client::this_user_sid() {
+        Ok(sid) if !sid.is_empty() => text.replace(&sid, "<SID>"),
+        _ => text.to_owned(),
+    }
 }
 
 fn start_orceld(binary: PathBuf) -> Orceld {
@@ -271,7 +283,8 @@ fn live(binary: PathBuf) {
     );
     assert!(
         listening.trim_end().ends_with(&endpoint),
-        "orceld must listen on this user's real endpoint, which the shell alone can reach: {listening}"
+        "orceld must listen on this user's real endpoint, which the shell alone can reach: {}",
+        redact(&listening)
     );
     let task_id = orceld.start_report();
     println!("    orceld listens on this user's endpoint; report task {task_id} observed");
@@ -411,6 +424,12 @@ fn live(binary: PathBuf) {
     // window.open from the page opened nothing.
     assert_eq!(line(&finished, "SG119-NEWWINDOW "), "requests=1 denied=1");
     // Every served call went through the custom protocol; no web message.
+    // Not counted: Tauri's own `plugin:__TAURI_CHANNEL__|fetch`, which the
+    // page's channel uses to collect a channel message of 8 KiB or more.
+    // Tauri 2.12.5 exempts it from the ACL (a hard-coded check in
+    // `Webview::on_message`) and it only reads back Tauri's own buffer of
+    // messages the shell already sent on that channel; it reaches no
+    // command handler and nothing in orceld.
     assert_eq!(
         line(&finished, "SG119-IPC "),
         format!("commands={served} web_messages=0")

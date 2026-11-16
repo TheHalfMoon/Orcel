@@ -55,7 +55,7 @@ pub use cursor::Cursor;
 pub use error::ClientError;
 pub use identity::IdentityRefusal;
 pub use method::{Method, TaskId};
-pub use subscription::{Feed, Next, StreamItem, Window};
+pub use subscription::{Feed, Next, StreamItem, UnavailableReason, Window};
 
 /// This account's SID as `S-1-5-...`, read from this process's token (the
 /// same SID the fixed pipe name carries). SG-000119 A2: the shell names its

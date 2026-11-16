@@ -52,6 +52,7 @@ use orcel_app_api_client::{
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::ipc::{Channel, InvokeBody, JavaScriptChannelId, Request};
@@ -93,6 +94,8 @@ pub enum CommandError {
     InvalidTaskId,
     /// The shell could not run the read (a worker or thread failed).
     Internal,
+    /// `app_events` after the window started closing: nothing subscribes.
+    WindowClosed,
 }
 
 /// Why orceld is unavailable, without OS detail.
@@ -132,6 +135,7 @@ impl CommandError {
             CommandError::InvalidArguments => "invalid_arguments",
             CommandError::InvalidTaskId => "invalid_task_id",
             CommandError::Internal => "internal",
+            CommandError::WindowClosed => "window_closed",
         }
     }
 
@@ -247,6 +251,10 @@ impl Source for Orceld {
 /// The commands' shared state: the one source of this window.
 pub struct Bridge {
     source: Arc<dyn Source>,
+    /// Set once the main window starts closing (or the app exits), before
+    /// its subscription is ended: no later `app_events` may subscribe, and
+    /// one that was subscribing while the window closed ends at once.
+    closed: Arc<AtomicBool>,
 }
 
 impl Bridge {
@@ -255,9 +263,18 @@ impl Bridge {
     }
 }
 
+/// Marks the window closed, then ends its subscription.
+fn close(closed: &AtomicBool, source: &dyn Source) {
+    closed.store(true, Ordering::SeqCst);
+    source.unsubscribe();
+}
+
 /// One stream item as `app_events` sends it on its channel, exactly as the
 /// client serializes it: `{"type": "event" | "withheld" | "cleared" | "gap" |
-/// "unavailable" | "not_yours" | "incompatible", ...}`.
+/// "unavailable" | "not_yours" | "incompatible", ...}`. An `unavailable`
+/// item's `reason` is one of the client's fixed names
+/// (`orcel_app_api_client::UnavailableReason`), never text or an OS error
+/// code.
 pub fn delivery(item: &StreamItem) -> Option<Value> {
     serde_json::to_value(item).ok()
 }
@@ -282,8 +299,10 @@ pub fn context<R: Runtime>() -> tauri::Context<R> {
 /// subscription when the window closes.
 pub fn register<R: Runtime>(builder: Builder<R>, source: Arc<dyn Source>) -> Builder<R> {
     let closing = Arc::clone(&source);
+    let closed = Arc::new(AtomicBool::new(false));
+    let closed_on_event = Arc::clone(&closed);
     builder
-        .manage(Bridge { source })
+        .manage(Bridge { source, closed })
         .invoke_handler(tauri::generate_handler![
             app_status,
             app_capabilities,
@@ -298,7 +317,7 @@ pub fn register<R: Runtime>(builder: Builder<R>, source: Arc<dyn Source>) -> Bui
                     WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
                 )
             {
-                closing.unsubscribe();
+                close(&closed_on_event, closing.as_ref());
             }
         })
 }
@@ -320,7 +339,7 @@ pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, event: &RunEvent) {
     };
     if closing {
         if let Some(bridge) = app.try_state::<Bridge>() {
-            bridge.source.unsubscribe();
+            close(&bridge.closed, bridge.source.as_ref());
         }
     }
 }
@@ -445,7 +464,8 @@ async fn app_events<R: Runtime>(
 ) -> Result<(), Value> {
     report::command();
     let source = bridge.source();
-    subscribe(webview, &request, source)
+    let closed = Arc::clone(&bridge.closed);
+    subscribe(webview, &request, source, closed)
         .await
         .map_err(|error| error.to_value())
 }
@@ -454,6 +474,7 @@ async fn subscribe<R: Runtime>(
     webview: Webview<R>,
     request: &Request<'_>,
     source: Arc<dyn Source>,
+    closed: Arc<AtomicBool>,
 ) -> Result<(), CommandError> {
     let arguments =
         arguments(request, &["channel", "from"])?.ok_or(CommandError::InvalidArguments)?;
@@ -464,8 +485,19 @@ async fn subscribe<R: Runtime>(
         .ok_or(CommandError::InvalidArguments)?
         .channel_on(webview);
     let from = cursor(arguments.get("from"))?;
+    if closed.load(Ordering::SeqCst) {
+        return Err(CommandError::WindowClosed);
+    }
     let subscribing = Arc::clone(&source);
     let events = blocking(move || subscribing.subscribe(from)).await?;
+    // The window may have closed while this call was subscribing, after the
+    // close ended the earlier subscription: end this one too. The close sets
+    // the flag before it unsubscribes, so either it ended this subscription
+    // or this check sees the flag.
+    if closed.load(Ordering::SeqCst) {
+        source.unsubscribe();
+        return Err(CommandError::WindowClosed);
+    }
     let pumped = std::thread::Builder::new()
         .name("orcel-control-room-events".into())
         .spawn(move || pump(events.as_ref(), &channel));
@@ -501,6 +533,7 @@ fn pump(events: &dyn Events, channel: &Channel<Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orcel_app_api_client::UnavailableReason as StreamReason;
 
     fn parse(text: &str) -> Value {
         serde_json::from_str(text).unwrap()
@@ -585,13 +618,22 @@ mod tests {
             delivery(&StreamItem::Gap).unwrap().to_string(),
             r#"{"type":"gap"}"#
         );
+        // A fixed reason name from the client, never text or an OS code.
         assert_eq!(
             delivery(&StreamItem::Unavailable {
-                reason: "orceld is not running".into()
+                reason: StreamReason::NotRunning
             })
-            .unwrap()
-            .to_string(),
-            r#"{"reason":"orceld is not running","type":"unavailable"}"#
+            .unwrap(),
+            json!({ "type": "unavailable", "reason": "not_running" })
+        );
+        assert_eq!(
+            delivery(&StreamItem::Unavailable {
+                reason: StreamReason::of(&ClientError::Unavailable(Unavailable::ConnectionLost(
+                    Some(232)
+                )))
+            })
+            .unwrap(),
+            json!({ "type": "unavailable", "reason": "connection_lost" })
         );
     }
 }

@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponseBody};
 use tauri::test::{get_ipc_response, mock_builder, MockRuntime, INVOKE_KEY};
 use tauri::webview::InvokeRequest;
-use tauri::{App, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const SHA: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
 const SID_PIPE: &str = r"\\.\pipe\orcel-S-1-5-21-1111111111-2222222222-3333333333-1001-app";
@@ -149,6 +149,9 @@ struct Fake {
     opened: AtomicUsize,
     live: AtomicUsize,
     most_live: AtomicUsize,
+    /// Runs inside `subscribe`, before the subscription opens: a window
+    /// close racing an `app_events` call.
+    during_subscribe: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl Fake {
@@ -200,6 +203,10 @@ impl Source for Fake {
             Some(cursor) => format!("events.subscribe {} {}", cursor.epoch(), cursor.after_seq()),
             None => "events.subscribe".to_owned(),
         });
+        let racing = self.during_subscribe.lock().unwrap().take();
+        if let Some(race) = racing {
+            race();
+        }
         // As the client's Window does: the earlier subscription ends first.
         self.end_current();
         let feed = Arc::new(FakeFeed {
@@ -659,4 +666,37 @@ fn the_channel_ends_when_the_window_closes() {
     wait_for("the channel's end", || {
         sent_on(&h.sent, 21).last() == Some(&json!({ "type": "ended" }))
     });
+}
+
+#[test]
+fn no_subscription_starts_or_survives_after_the_window_closes() {
+    // After the close: app_events refuses, and nothing subscribes.
+    let h = harness();
+    commands::on_run_event(h.app.handle(), &RunEvent::Exit);
+    assert_eq!(
+        invoke(&h, "app_events", json!({ "channel": "__CHANNEL__:31" })),
+        Err(json!({ "error": "window_closed" }))
+    );
+    assert_eq!(h.fake.opened.load(Ordering::SeqCst), 0);
+
+    // A close racing the call: it lands while app_events is subscribing,
+    // after the close's own unsubscribe ran, so the new subscription is
+    // ended at once and the call answers window_closed.
+    let h = harness();
+    let handle = h.app.handle().clone();
+    *h.fake.during_subscribe.lock().unwrap() = Some(Box::new(move || {
+        commands::on_run_event(&handle, &RunEvent::Exit);
+    }));
+    assert_eq!(
+        invoke(&h, "app_events", json!({ "channel": "__CHANNEL__:32" })),
+        Err(json!({ "error": "window_closed" }))
+    );
+    assert_eq!(h.fake.opened.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        h.fake.live.load(Ordering::SeqCst),
+        0,
+        "the racing subscription did not outlive the close"
+    );
+    // The other reads still answer (they hold no subscription).
+    assert!(invoke(&h, "app_status", json!({})).is_ok());
 }

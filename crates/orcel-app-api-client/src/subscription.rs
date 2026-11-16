@@ -52,8 +52,9 @@ pub enum StreamItem {
     /// The queue overflowed and was cleared; the missed events, or a
     /// snapshot, follow.
     Gap,
-    /// orceld is unavailable; the subscription keeps trying.
-    Unavailable { reason: String },
+    /// orceld is unavailable; the subscription keeps trying. The reason is
+    /// a fixed name, never text or an OS error code.
+    Unavailable { reason: UnavailableReason },
     /// "orceld could not be confirmed as yours"; nothing was written to it.
     NotYours {
         #[serde(skip)]
@@ -62,6 +63,49 @@ pub enum StreamItem {
     /// orceld is not read-only: the window shows this and nothing else. The
     /// subscription ends.
     Incompatible,
+}
+
+/// Why a subscription is unavailable, as a fixed name for the web view
+/// (`not_running`, `no_free_instance`, `timed_out`, `connection_lost`,
+/// `no_location`, `busy`, `refused`, `frame_too_large`, `protocol`,
+/// `internal`): no message, no OS error code, no orceld text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableReason {
+    NotRunning,
+    NoFreeInstance,
+    TimedOut,
+    ConnectionLost,
+    NoLocation,
+    Busy,
+    Refused,
+    FrameTooLarge,
+    Protocol,
+    /// The subscription thread could not start, or another failure of
+    /// this client.
+    Internal,
+}
+
+impl UnavailableReason {
+    /// The reason for a connection failure. `NotYours` and `Incompatible`
+    /// have their own stream items and never reach here.
+    pub fn of(error: &ClientError) -> Self {
+        use crate::error::Unavailable;
+        match error {
+            ClientError::Unavailable(Unavailable::NotRunning) => Self::NotRunning,
+            ClientError::Unavailable(Unavailable::NoFreeInstance) => Self::NoFreeInstance,
+            ClientError::Unavailable(Unavailable::TimedOut) => Self::TimedOut,
+            ClientError::Unavailable(Unavailable::ConnectionLost(_)) => Self::ConnectionLost,
+            ClientError::Unavailable(Unavailable::NoLocation) => Self::NoLocation,
+            ClientError::Busy => Self::Busy,
+            ClientError::Refused(_) => Self::Refused,
+            ClientError::FrameTooLarge => Self::FrameTooLarge,
+            ClientError::Protocol(_) => Self::Protocol,
+            ClientError::NotYours(_) | ClientError::Incompatible | ClientError::TaskWithheld => {
+                Self::Internal
+            }
+        }
+    }
 }
 
 /// What [`Feed::next`] found.
@@ -312,7 +356,7 @@ impl Window {
         if thread.is_none() {
             feed.push(
                 StreamItem::Unavailable {
-                    reason: "the subscription thread could not start".into(),
+                    reason: UnavailableReason::Internal,
                 },
                 None,
             );
@@ -363,7 +407,7 @@ fn run(client: &AppApiClient, feed: &Feed, cancel: &Arc<Cancel>, from: Option<Cu
                         return;
                     }
                     error => StreamItem::Unavailable {
-                        reason: error.to_string(),
+                        reason: UnavailableReason::of(&error),
                     },
                 };
                 // Reported once per outage, not on every retry.
