@@ -38,14 +38,24 @@ name = "native_shell"
 path = "tests/native_shell.rs"
 harness = false
 
+# SG-000119 A3: the shell against a live orceld (opt-in, see the file).
+[[test]]
+name = "native_live"
+path = "tests/native_live.rs"
+harness = false
+
 # Exact pins (founder decision 3). tauri's default features are off; only the
 # wry runtime and custom-protocol (embedded assets) are on. Off: compression,
 # dynamic-acl, common-controls-v6, tray-icon, image-png, image-ico, devtools,
 # macos-private-api and test. orcel-app-api-client is Orcel's own path crate
-# (slice A1); A2 uses only its user SID, for the single-instance mutex name.
+# (slice A1): A2 uses its user SID for the single-instance mutex name; A3's
+# five commands read orceld through it. serde_json (the root lock's
+# =1.0.151, already the shell's dev-dependency in A2, so the lock is
+# unchanged) builds the commands' typed refusals and channel messages.
 [dependencies]
 tauri = { version = "=2.12.5", default-features = false, features = ["wry", "custom-protocol"] }
 orcel-app-api-client = { path = "../../../crates/orcel-app-api-client" }
+serde_json = "=1.0.151"
 
 # webview2-com and windows-core are exactly the versions tauri already
 # resolves (no extra download): the WebView2 settings, their readback and the
@@ -65,9 +75,13 @@ windows-sys = { version = "=0.52.0", features = [
 [build-dependencies]
 tauri-build = { version = "=2.7.4", default-features = false }
 
-# The configuration test reads tauri.conf.json and the capability file.
+# SG-000119 A3: the ACL tests run the real ACL through tauri's test runtime
+# (`tauri::test`), so tauri's `test` feature is on for test builds ONLY: the
+# same exact version, and that feature adds no crate (`test = []` in 2.12.5),
+# so the lock is unchanged. CI's `cargo tree -e normal -e features -i tauri`
+# shows it absent from the normal build.
 [dev-dependencies]
-serde_json = "=1.0.151"
+tauri = { version = "=2.12.5", default-features = false, features = ["wry", "custom-protocol", "test"] }
 
 # The native test walks the shell's process tree to count every visible
 # window it (or the WebView2 browser under it) owns. Same crate and version.

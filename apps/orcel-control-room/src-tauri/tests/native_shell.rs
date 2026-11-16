@@ -616,9 +616,13 @@ fn probe(window: tauri::WebviewWindow) {
         }
     };
     pause(800);
+    // A3: each served command call is counted; a command the ACL refuses is
+    // not (it never reaches a handler). Without orceld, app_status answers a
+    // typed "unavailable".
     for _ in 0..COMMAND_CALLS {
-        eval("window.__TAURI__.core.invoke('sg119_native_probe').catch(function () {});");
+        eval("window.__TAURI__.core.invoke('app_status').catch(function () {});");
     }
+    eval("window.__TAURI__.core.invoke('sg119_native_probe').catch(function () {});");
     pause(1500);
     eval("window.open('https://tauri.localhost/index.html');");
     eval("window.open('https://example.invalid/');");

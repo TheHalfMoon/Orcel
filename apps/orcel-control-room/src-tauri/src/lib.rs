@@ -1,9 +1,10 @@
 //! SG-000119 slice A2: the Orcel Control Room shell skeleton (Windows).
 //!
 //! A lean Tauri 2 window: no Vite, no Tauri CLI, no React, no plugin, the
-//! configuration written from scratch. In this slice it shows a static "not
-//! connected" page and serves no command; slice A3 adds the five read-only
-//! commands over `orcel-app-api-client`. The preparation packet is
+//! configuration written from scratch. It shows a static "not connected"
+//! page (slice A4 builds the view) and, since slice A3, serves exactly five
+//! read-only commands over `orcel-app-api-client` ([`commands`]). The
+//! preparation packet is
 //! `docs/orcel/implementation-readiness/prep/SG-000119.md`.
 //!
 //! What A2 holds:
@@ -22,7 +23,10 @@
 //! - **Configuration** (`tauri.conf.json`): the recorded CSP, embedded assets,
 //!   no asset protocol, a frozen prototype, `useHttpsScheme`, no drag and
 //!   drop, no `devUrl`, bundling off; one capability file for the `main`
-//!   window granting nothing.
+//!   window granting exactly the five commands' permissions.
+//! - **The five commands** ([`commands`], A3): `app_status`,
+//!   `app_capabilities`, `app_events`, `app_tasks` and `app_task`, each over
+//!   the A1 client and returning only its sanitiser's output.
 //! - **Rust-side IPC counting** ([`report`]): `SG119-IPC commands=<n>
 //!   web_messages=<m>` on exit.
 
@@ -32,6 +36,7 @@ compile_error!(
      macOS and Linux are later, independently qualified stages"
 );
 
+pub mod commands;
 pub mod environment;
 pub mod hardening;
 pub mod navigation;

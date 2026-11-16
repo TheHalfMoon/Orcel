@@ -2,8 +2,8 @@
 //!
 //! The counts are taken on the Rust side only; no probe is compiled into the
 //! page. `SG119-IPC commands=<n> web_messages=<m>`: `n` is every command
-//! request that reached the Rust invoke handler (A2 registers no command, so
-//! each is refused there), `m` every web message the shell's own WebView2
+//! call one of the five command handlers served (A3; a call the ACL refuses
+//! never reaches them), `m` every web message the shell's own WebView2
 //! `WebMessageReceived` handler saw (Tauri's `postMessage` fallback would
 //! arrive there). The native test requires `n` above zero and `m` zero.
 

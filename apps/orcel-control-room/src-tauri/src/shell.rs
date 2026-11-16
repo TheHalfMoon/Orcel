@@ -20,10 +20,12 @@
 //! On exit the shell writes its report ([`crate::report`]), including
 //! `SG119-IPC commands=<n> web_messages=<m>`.
 
+use crate::commands::{Orceld, Source};
 use crate::hardening;
 use crate::navigation;
 use crate::report;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{Manager, RunEvent, WebviewWindow, WebviewWindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
@@ -97,17 +99,11 @@ pub fn run(hooks: Hooks) -> i32 {
             };
         }
     };
-    let app = tauri::Builder::default()
-        // A2 registers no command. Every command request that reaches Rust
-        // (through the custom protocol, or a web message if one ever came)
-        // is counted and refused here.
-        .invoke_handler(|invoke| {
-            report::command();
-            invoke
-                .resolver
-                .reject("Orcel Control Room serves no command in this build");
-            true
-        })
+    // A3: exactly the five read-only commands, over this user's orceld
+    // (`crate::commands`); the ACL refuses every other command before it
+    // reaches Rust's handlers.
+    let source: Arc<dyn Source> = Arc::new(Orceld::for_this_user());
+    let app = crate::commands::register(tauri::Builder::default(), source)
         .setup(move |app| {
             if let Err(reason) = open_main_window(app, hooks) {
                 eprintln!("Orcel Control Room could not open its window: {reason}");
@@ -115,7 +111,7 @@ pub fn run(hooks: Hooks) -> i32 {
             }
             Ok(())
         })
-        .build(tauri::generate_context!());
+        .build(crate::commands::context());
     let app = match app {
         Ok(app) => app,
         Err(error) => {
@@ -123,7 +119,8 @@ pub fn run(hooks: Hooks) -> i32 {
             return exit::STARTUP;
         }
     };
-    app.run_return(|_, event| {
+    app.run_return(|handle, event| {
+        crate::commands::on_run_event(handle, &event);
         if let RunEvent::Exit = event {
             for line in report::lines() {
                 println!("{line}");
