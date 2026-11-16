@@ -7,6 +7,8 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 
 pub mod mutation;
+#[cfg(test)]
+mod stream_tests;
 
 const DEFAULT_MAX_READ_BYTES: usize = 1024 * 1024;
 const DEFAULT_MAX_SEARCH_FILES: usize = 2_000;
@@ -112,6 +114,7 @@ impl FsProvider {
                 "filesystem tools cannot mutate a Git metadata workspace",
             ));
         }
+        refuse_windows_stream(relative)?;
         let mut candidate = self.root.clone();
         let mut has_name = false;
         let mut missing_prefix = false;
@@ -137,7 +140,10 @@ impl FsProvider {
                 ));
             }
             #[cfg(windows)]
-            if spelling.contains(':') || spelling.ends_with('.') || spelling.ends_with(' ') {
+            if is_windows_stream_or_device(&spelling)
+                || spelling.ends_with('.')
+                || spelling.ends_with(' ')
+            {
                 return Err(ProviderError::new(
                     FailureCode::CapabilityDenied,
                     "Windows alternate streams and path aliases are not mutable",
@@ -269,6 +275,7 @@ impl FsProvider {
     /// A regular file's bytes, through the verified open that keeps a read inside
     /// the workspace, at most `limit` of them.
     pub fn read_bytes(&self, relative: &str, limit: usize) -> Result<Vec<u8>, ProviderError> {
+        refuse_windows_stream(relative)?;
         let candidate = self.root.join(relative);
         let (file, resolved) = open_verified_file(&candidate)
             .map_err(|error| ProviderError::io("open file", error))?;
@@ -573,7 +580,7 @@ impl FsProvider {
                     }
                     if file_type.is_dir() {
                         match resolve_final_path(&child) {
-                            Ok(resolved_child) if is_within(&self.root, &resolved_child) => {
+                            Ok(resolved_child) if self.ensure_within(&resolved_child).is_ok() => {
                                 queue.push_back(resolved_child);
                             }
                             _ => {}
@@ -598,7 +605,7 @@ impl FsProvider {
                 Ok(opened) => opened,
                 Err(_) => continue,
             };
-            if !is_within(&self.root, &resolved) {
+            if self.ensure_within(&resolved).is_err() {
                 continue;
             }
 
@@ -648,6 +655,7 @@ impl FsProvider {
     }
 
     fn resolve_existing(&self, relative: &str) -> Result<PathBuf, ProviderError> {
+        refuse_windows_stream(relative)?;
         let candidate = self.root.join(relative);
         let resolved = resolve_final_path(&candidate)
             .map_err(|error| ProviderError::io("resolve target", error))?;
@@ -661,6 +669,11 @@ impl FsProvider {
                 FailureCode::PathEscape,
                 "resolved path is outside the trusted workspace",
             ));
+        }
+        // A link or junction inside the workspace can lead to a stream that the submitted
+        // spelling never names, so the real path is checked as well as the request.
+        if cfg!(windows) && resolved_names_stream(resolved) {
+            return Err(windows_stream_refusal());
         }
         Ok(())
     }
@@ -706,6 +719,87 @@ fn truncate_line(line: &str, max_chars: usize) -> String {
         output.push('…');
     }
     output
+}
+
+/// Windows reaches data that a listing never shows through a colon in a path segment: an
+/// NTFS alternate data stream or attribute (`a.txt:s`, `a.txt::$DATA`, `a.txt:s:$DATA`,
+/// `dir:$I30:$INDEX_ALLOCATION`). A reserved device name (`NUL`, `con.txt`, `COM1`,
+/// `CONIN$`) opens a device instead of a workspace file. Case does not matter to either. A
+/// drive letter is not a segment (`C:\ws` parses as a prefix), so it is never matched here.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_windows_stream_or_device(segment: &str) -> bool {
+    if segment.contains(':') {
+        return true;
+    }
+    let stem = segment
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    match stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+    {
+        Some(number) => {
+            let mut chars = number.chars();
+            matches!(
+                (chars.next(), chars.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
+        }
+        None => false,
+    }
+}
+
+/// Whether a submitted path names a stream or device in any segment, or is drive-relative
+/// (`a:s` or `C:x`, which Windows parses as a path on drive `A:` or `C:`, never a workspace
+/// entry). An absolute path such as `C:\ws\a.txt` keeps its drive prefix and is left to the
+/// containment check.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn names_windows_stream(path: &Path) -> bool {
+    let drive_relative =
+        matches!(path.components().next(), Some(Component::Prefix(_))) && !path.has_root();
+    drive_relative
+        || path.components().any(|part| {
+            matches!(part, Component::Normal(name)
+                if is_windows_stream_or_device(&name.to_string_lossy()))
+        })
+}
+
+/// Whether a resolved (final) path reaches a stream: a colon in any segment after the
+/// drive or volume prefix. Device names are not matched, since a real path only ever names
+/// a file the volume holds.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn resolved_names_stream(resolved: &Path) -> bool {
+    resolved
+        .components()
+        .any(|part| matches!(part, Component::Normal(name) if name.to_string_lossy().contains(':')))
+}
+
+fn windows_stream_refusal() -> ProviderError {
+    ProviderError::new(
+        FailureCode::CapabilityDenied,
+        "Windows alternate data streams and device names are not reachable through filesystem tools",
+    )
+}
+
+/// Refuses, on Windows, a path that names an alternate data stream or a device instead of a
+/// workspace entry. Every read-side entry point calls it before it opens or resolves
+/// anything; mutations refuse the same names in `reject_git_mutation`, and both refuse a
+/// resolved path that reaches a stream in `ensure_within`. Elsewhere `:` is an ordinary file
+/// name byte, so the guard does nothing.
+pub(crate) fn refuse_windows_stream(relative: &str) -> Result<(), ProviderError> {
+    if cfg!(windows) && names_windows_stream(Path::new(relative)) {
+        return Err(windows_stream_refusal());
+    }
+    Ok(())
 }
 
 fn open_verified_file(path: &Path) -> io::Result<(File, PathBuf)> {

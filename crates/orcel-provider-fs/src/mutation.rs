@@ -117,6 +117,7 @@ impl FsProvider {
                 "start_line must be at least 1 and max_lines from 1 to {MAX_RANGE_LINES}"
             )));
         }
+        super::refuse_windows_stream(relative)?;
         let candidate = self.root.join(relative);
         let file = File::open(&candidate)
             .map_err(|error| ProviderError::io("open range target", error))?;
