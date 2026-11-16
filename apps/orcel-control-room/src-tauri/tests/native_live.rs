@@ -1006,7 +1006,8 @@ fn live_renderer_and_tasks(binary: PathBuf) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn the shell");
-    let pid = child.id();
+    let child = KillOnDrop(Some(child));
+    let pid = child.0.as_ref().expect("the shell").id();
     let start = Instant::now();
     let hwnd = loop {
         let found = qualify::windows_of(&[pid])
@@ -1078,7 +1079,7 @@ fn live_renderer_and_tasks(binary: PathBuf) {
         .is_ok();
     // SAFETY: posting WM_CLOSE to the shell's own window.
     assert_ne!(unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) }, 0);
-    let finished = finish(child, Duration::from_secs(30));
+    let finished = finish(child.take(), Duration::from_secs(30));
     assert_eq!(finished.code, Some(0));
     assert!(
         control,
@@ -1120,4 +1121,23 @@ fn live_renderer_and_tasks(binary: PathBuf) {
         probes.len(),
         name.replace(&task_id, "<task>")
     );
+}
+
+/// Kills the shell if a check fails before the test closes it, so no test
+/// window outlives its test.
+struct KillOnDrop(Option<Child>);
+
+impl KillOnDrop {
+    fn take(mut self) -> Child {
+        self.0.take().expect("the shell")
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }

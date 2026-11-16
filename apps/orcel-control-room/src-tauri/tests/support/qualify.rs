@@ -328,6 +328,37 @@ fn open_pipe(name: &[u16]) -> u32 {
     }
 }
 
+/// orceld's pipe security descriptor, `{sid}` standing for this user's SID.
+/// [`assert_orceld_pipe_sddl_matches`] reads orceld's source and fails if
+/// orceld's own `sddl` function builds anything else.
+pub const ORCELD_PIPE_SDDL: &str = "D:P(A;;GA;;;{sid})S:(ML;;NWNR;;;ME)";
+
+/// Fails unless `crates/orceld/src/app_api.rs` builds exactly
+/// [`ORCELD_PIPE_SDDL`] in its `sddl` function (the test's copy cannot drift).
+pub fn assert_orceld_pipe_sddl_matches() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../crates/orceld/src/app_api.rs");
+    let text = std::fs::read_to_string(&source)
+        .unwrap_or_else(|error| panic!("read {}: {error}", source.display()));
+    let start = text
+        .find("fn sddl(sid: &str) -> String {")
+        .expect("orceld's app_api.rs defines fn sddl(sid: &str) -> String");
+    let body = &text[start..];
+    // The function ends at the first line holding only its closing brace
+    // (the descriptor's own `{sid}` braces are inside the string).
+    let body = &body[..body.find("\n    }").expect("the function's end")];
+    let built: Vec<&str> = body
+        .split("format!(\"")
+        .skip(1)
+        .filter_map(|rest| rest.split_once("\")").map(|(literal, _)| literal))
+        .collect();
+    assert_eq!(
+        built,
+        [ORCELD_PIPE_SDDL],
+        "the test's copy of orceld's pipe descriptor differs from orceld's sddl()"
+    );
+}
+
 /// A pipe served by this test under orceld's own security descriptor
 /// (`D:P(A;;GA;;;<this user>)S:(ML;;NWNR;;;ME)`, `crates/orceld/src/app_api.rs`),
 /// with a name that carries no SID.
@@ -347,8 +378,9 @@ impl OrceldStylePipe {
             CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
             PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
         };
+        assert_orceld_pipe_sddl_matches();
         let sid = orcel_app_api_client::this_user_sid().expect("this user's SID");
-        let sddl = wide(&format!("D:P(A;;GA;;;{sid})S:(ML;;NWNR;;;ME)"));
+        let sddl = wide(&ORCELD_PIPE_SDDL.replace("{sid}", &sid));
         let name = wide(name);
         let mut descriptor = std::ptr::null_mut();
         // SAFETY: plain Win32 calls; the descriptor is freed below.

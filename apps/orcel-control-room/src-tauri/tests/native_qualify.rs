@@ -20,7 +20,11 @@
 //!   `SendInput`, so they run only on a disposable runner: the CI job
 //!   `control-room-shell` (windows-latest) sets the variable for this test.
 //!   Without it they report themselves ignored and inject nothing; the child
-//!   scenarios refuse too.
+//!   scenarios refuse too. Even there, every key press and the right-click
+//!   is sent only while the test's own window is the foreground window
+//!   (checked before each event), and the click only where the window under
+//!   the point belongs to the shell's process tree; otherwise the scenario
+//!   stops and closes its window.
 //!
 //! Adapted from PR #282's UI Automation checks (the WPF preview's
 //! `tests/e2e.ps1`), those that apply to a read-only view: the window
@@ -827,13 +831,15 @@ fn renderer_cannot_open_the_pipe() {
 
 mod input {
     use std::time::Duration;
+    use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
         KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT,
-        VK_CONTROL, VK_F12, VK_MENU, VK_RETURN, VK_SHIFT, VK_TAB,
+        VK_CONTROL, VK_F12, VK_RETURN, VK_SHIFT, VK_TAB,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowRect, SetCursorPos, SetForegroundWindow,
+        GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId, SetCursorPos,
+        SetForegroundWindow, WindowFromPoint,
     };
 
     pub const CTRL: u16 = VK_CONTROL;
@@ -852,6 +858,20 @@ mod input {
         );
     }
 
+    /// Refuses unless the test's own window is the foreground window right
+    /// now: checked before every injected press and click, so a window that
+    /// lost the foreground (to anything) receives nothing more.
+    fn still_front(hwnd: isize) -> Result<(), String> {
+        refuse_without_gate();
+        // SAFETY: a plain query.
+        let front = unsafe { GetForegroundWindow() };
+        if hwnd != 0 && front == hwnd {
+            Ok(())
+        } else {
+            Err("the test window is no longer the foreground window".into())
+        }
+    }
+
     fn key(vk: u16, up: bool) -> INPUT {
         INPUT {
             r#type: INPUT_KEYBOARD,
@@ -868,38 +888,65 @@ mod input {
         }
     }
 
-    fn send(inputs: &[INPUT]) {
+    fn send_one(input: &INPUT) -> bool {
         refuse_without_gate();
-        // SAFETY: a slice of initialised INPUTs.
-        let sent = unsafe {
-            SendInput(
-                inputs.len() as u32,
-                inputs.as_ptr(),
-                std::mem::size_of::<INPUT>() as i32,
-            )
-        };
-        assert_eq!(sent as usize, inputs.len(), "SendInput sent every event");
+        // SAFETY: one initialised INPUT.
+        unsafe { SendInput(1, input, std::mem::size_of::<INPUT>() as i32) == 1 }
     }
 
-    /// Presses `keys` in order and releases them in reverse.
-    pub fn chord(keys: &[u16]) {
-        let mut inputs: Vec<INPUT> = keys.iter().map(|vk| key(*vk, false)).collect();
-        inputs.extend(keys.iter().rev().map(|vk| key(*vk, true)));
-        send(&inputs);
+    /// Presses `keys` in order, each only while `hwnd` is the foreground
+    /// window, then releases what was pressed in reverse. A release is sent
+    /// even after a failed check, so no key stays held down on the runner.
+    pub fn chord(hwnd: isize, keys: &[u16]) -> Result<(), String> {
+        let mut pressed = Vec::new();
+        let mut outcome = Ok(());
+        for vk in keys {
+            if let Err(error) = still_front(hwnd) {
+                outcome = Err(error);
+                break;
+            }
+            if !send_one(&key(*vk, false)) {
+                outcome = Err("SendInput did not send a key press".into());
+                break;
+            }
+            pressed.push(*vk);
+        }
+        for vk in pressed.iter().rev() {
+            send_one(&key(*vk, true));
+        }
+        outcome
     }
 
-    /// A right-click at the centre of `hwnd`'s lower half (inside the page).
-    pub fn right_click(hwnd: isize) {
-        refuse_without_gate();
-        let mut rect = unsafe { std::mem::zeroed() };
+    /// A right-click two thirds down the middle of `hwnd` (inside the page),
+    /// only while `hwnd` is the foreground window and the window under that
+    /// point belongs to this process's tree (the shell and its WebView2).
+    pub fn right_click(hwnd: isize) -> Result<(), String> {
+        still_front(hwnd)?;
         // SAFETY: a plain query on the test's own window.
-        assert_ne!(unsafe { GetWindowRect(hwnd, &mut rect) }, 0);
-        let (x, y) = (
-            (rect.left + rect.right) / 2,
-            rect.top + (rect.bottom - rect.top) * 2 / 3,
-        );
+        let mut rect = unsafe { std::mem::zeroed() };
+        if unsafe { GetWindowRect(hwnd, &mut rect) } == 0 {
+            return Err("the window's rectangle is unreadable".into());
+        }
+        let point = POINT {
+            x: (rect.left + rect.right) / 2,
+            y: rect.top + (rect.bottom - rect.top) * 2 / 3,
+        };
+        // SAFETY: plain queries.
+        let under = unsafe { WindowFromPoint(point) };
+        let mut owner = 0u32;
+        unsafe { GetWindowThreadProcessId(under, &mut owner) };
+        let tree: Vec<u32> = super::qualify::tree(std::process::id())
+            .iter()
+            .map(|proc| proc.pid)
+            .collect();
+        if under == 0 || !tree.contains(&owner) {
+            return Err("the window under the click point is not the shell's".into());
+        }
+        still_front(hwnd)?;
         // SAFETY: moves the cursor of a disposable runner.
-        assert_ne!(unsafe { SetCursorPos(x, y) }, 0);
+        if unsafe { SetCursorPos(point.x, point.y) } == 0 {
+            return Err("SetCursorPos failed".into());
+        }
         std::thread::sleep(Duration::from_millis(200));
         let mouse = |flags| INPUT {
             r#type: INPUT_MOUSE,
@@ -914,22 +961,30 @@ mod input {
                 },
             },
         };
-        send(&[mouse(MOUSEEVENTF_RIGHTDOWN), mouse(MOUSEEVENTF_RIGHTUP)]);
+        still_front(hwnd)?;
+        if !send_one(&mouse(MOUSEEVENTF_RIGHTDOWN)) {
+            return Err("SendInput did not send the right button press".into());
+        }
+        // The release follows the press whatever happens, so no button stays
+        // held down on the runner.
+        send_one(&mouse(MOUSEEVENTF_RIGHTUP));
+        Ok(())
     }
 
-    /// Brings `window` to the foreground and the web view to keyboard focus.
+    /// Brings `window` to the foreground and the web view to keyboard focus,
+    /// with no injected input: only Tauri's `set_focus` and
+    /// `SetForegroundWindow` on the test's own window. False when it cannot
+    /// take the foreground.
     pub fn focus(window: &tauri::WebviewWindow) -> bool {
         refuse_without_gate();
         let hwnd = window.hwnd().map(|hwnd| hwnd.0 as isize).unwrap_or(0);
-        let front = || unsafe { GetForegroundWindow() } == hwnd;
+        let front = || hwnd != 0 && unsafe { GetForegroundWindow() } == hwnd;
         let _ = window.set_focus();
         for attempt in 0..40 {
             if front() {
                 break;
             }
             if attempt == 10 {
-                // A tap of Alt lets this process take the foreground.
-                chord(&[VK_MENU]);
                 // SAFETY: the test's own window.
                 unsafe { SetForegroundWindow(hwnd) };
             }
@@ -947,8 +1002,15 @@ mod input {
                     .MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
             };
         });
-        true
+        front()
     }
+}
+
+/// Ends an input scenario that may not go on: reports why and closes the
+/// window, so nothing more is sent.
+fn abort(window: &tauri::WebviewWindow, reason: &str) {
+    println!("SG119-INPUT-ERROR {reason}");
+    let _ = window.close();
 }
 
 /// Records what reaches the page: each keydown, context menu and print event.
@@ -968,8 +1030,7 @@ const STATE: &str = r#"JSON.stringify({ input: window.__sg119Input || null, focu
 /// the window and answers false, so no keystroke is sent to another window.
 fn focus_or_close(window: &tauri::WebviewWindow) -> bool {
     if !input::focus(window) {
-        println!("SG119-INPUT-ERROR the test window could not take the foreground");
-        let _ = window.close();
+        abort(window, "the test window could not take the foreground");
         return false;
     }
     let focused = evaluate_until(window, STATE, Duration::from_secs(5), |state| {
@@ -977,8 +1038,7 @@ fn focus_or_close(window: &tauri::WebviewWindow) -> bool {
     });
     println!("SG119-INPUT-FOCUS {focused}");
     if focused["focused"] != true {
-        println!("SG119-INPUT-ERROR the page did not take keyboard focus");
-        let _ = window.close();
+        abort(window, "the page did not take keyboard focus");
         return false;
     }
     true
@@ -1000,14 +1060,18 @@ fn drive_keys(window: tauri::WebviewWindow) {
     ];
     let mut results = Vec::new();
     for (label, keys) in steps {
-        input::chord(keys);
+        if let Err(reason) = input::chord(hwnd, keys) {
+            return abort(&window, &reason);
+        }
         std::thread::sleep(Duration::from_millis(2000));
         let state = evaluate(&window, STATE).unwrap_or(Value::Null);
         results.push(
             json!({ "step": label, "windows": qualify::visible_windows(pid), "state": state }),
         );
     }
-    input::right_click(hwnd);
+    if let Err(reason) = input::right_click(hwnd) {
+        return abort(&window, &reason);
+    }
     std::thread::sleep(Duration::from_millis(2000));
     let state = evaluate(&window, STATE).unwrap_or(Value::Null);
     results.push(
@@ -1097,17 +1161,22 @@ fn drive_tabs(window: tauri::WebviewWindow) {
     if !focus_or_close(&window) {
         return;
     }
+    let hwnd = window.hwnd().map(|hwnd| hwnd.0 as isize).unwrap_or(0);
     let first = evaluate(&window, FOCUS).unwrap_or(Value::Null);
     let count = first["stops"].as_array().map(Vec::len).unwrap_or(0);
     let mut forward = Vec::new();
     for _ in 0..count {
-        input::chord(&[input::TAB]);
+        if let Err(reason) = input::chord(hwnd, &[input::TAB]) {
+            return abort(&window, &reason);
+        }
         std::thread::sleep(Duration::from_millis(400));
         forward.push(evaluate(&window, FOCUS).unwrap_or(Value::Null));
     }
     let mut backward = Vec::new();
     for _ in 1..count {
-        input::chord(&[input::SHIFT, input::TAB]);
+        if let Err(reason) = input::chord(hwnd, &[input::SHIFT, input::TAB]) {
+            return abort(&window, &reason);
+        }
         std::thread::sleep(Duration::from_millis(400));
         backward.push(evaluate(&window, FOCUS).unwrap_or(Value::Null));
     }
@@ -1119,7 +1188,9 @@ fn drive_tabs(window: tauri::WebviewWindow) {
         .as_str()
         .is_some_and(|id| id.starts_with("summary"))
     {
-        input::chord(&[input::ENTER]);
+        if let Err(reason) = input::chord(hwnd, &[input::ENTER]) {
+            return abort(&window, &reason);
+        }
         std::thread::sleep(Duration::from_millis(600));
         opened = evaluate(&window, FOCUS).unwrap_or(Value::Null);
     }
