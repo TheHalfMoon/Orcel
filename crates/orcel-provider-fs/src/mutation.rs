@@ -121,6 +121,7 @@ impl FsProvider {
             )));
         }
         refuse_named_fork(relative)?;
+        super::refuse_windows_stream(relative)?;
         let candidate = self.root.join(relative);
         let file = File::open(&candidate)
             .map_err(|error| ProviderError::io("open range target", error))?;
