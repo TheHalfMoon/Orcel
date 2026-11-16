@@ -92,8 +92,11 @@ export const DISABLE_QUIC = "--disable-quic";
 /// SG-000108 slice 3a: SharedWorker requests are never routed, so the API is removed.
 export const DISABLE_SHARED_WORKER = "--disable-blink-features=SharedWorker";
 /// #324: browser-process services that reach the network outside the
-/// resolver and no-route layers (Media Router; Edge account integration).
-export const DISABLE_FEATURES = "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns";
+/// resolver and no-route layers (Media Router; Edge account integration,
+/// including Edge 157's forced OneAuth/WAM, msForceOneAuthWAM), and Edge
+/// 157's automatic HTTPS-First balanced mode, which rewrites the scheme of an
+/// approved `http://` navigation (A10, Edge 157).
+export const DISABLE_FEATURES = "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msForceOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns,HttpsFirstBalancedModeAutoEnable";
 export const PIPE = "--remote-debugging-pipe";
 export const INITIAL_URL = "about:blank";
 

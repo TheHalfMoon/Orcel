@@ -71,7 +71,7 @@ function confinedArgv(profile: string, destinations: Destination[]): string[] {
     WEBRTC_POLICY,
     "--disable-quic",
     "--disable-blink-features=SharedWorker",
-    "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns",
+    "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msForceOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns,HttpsFirstBalancedModeAutoEnable",
     "about:blank"
   ];
 }
@@ -179,7 +179,10 @@ const EVENT_DEADLINE_MS = 90_000;
 /// them, a wait on those processes themselves (Wait-Process waits on their
 /// handles), and again for any that appeared meanwhile, until none remain or
 /// the deadline passes. Not a fixed-interval loop of process queries, each of
-/// which costs seconds on a loaded runner.
+/// which costs seconds on a loaded runner. Each query result is wrapped in
+/// @() where it is assigned: Windows PowerShell unrolls a one-element array
+/// into a bare CimInstance, whose .Count is empty, so a single remaining
+/// engine process was neither waited on nor counted (seen on Edge 157).
 function engineExited(profile: string, timeoutMs: number = EVENT_DEADLINE_MS): boolean {
   const leaf = profile.split("\\").pop() ?? profile;
   const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
@@ -189,7 +192,7 @@ function engineExited(profile: string, timeoutMs: number = EVENT_DEADLINE_MS): b
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `$ErrorActionPreference='Stop'; $q = { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like '*${leaf}*' }) }; $deadline = (Get-Date).AddSeconds(${seconds}); $p = & $q; while ($p.Count -gt 0 -and (Get-Date) -lt $deadline) { $left = [Math]::Max(1, [int]($deadline - (Get-Date)).TotalSeconds); Wait-Process -Id $p.ProcessId -Timeout $left -ErrorAction SilentlyContinue; $p = & $q }; $p.Count`
+      `$ErrorActionPreference='Stop'; $q = { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like '*${leaf}*' }) }; $deadline = (Get-Date).AddSeconds(${seconds}); $p = @(& $q); while ($p.Count -gt 0 -and (Get-Date) -lt $deadline) { $left = [Math]::Max(1, [int]($deadline - (Get-Date)).TotalSeconds); Wait-Process -Id $p.ProcessId -Timeout $left -ErrorAction SilentlyContinue; $p = @(& $q) }; $p.Count`
     ],
     { encoding: "utf8", timeout: timeoutMs + 60_000 }
   );

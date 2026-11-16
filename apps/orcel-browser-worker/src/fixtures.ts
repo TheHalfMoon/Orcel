@@ -24,7 +24,7 @@ export function validLaunch(): Extract<HostFrame, { frame: "launch" }> {
       "--webrtc-ip-handling-policy=disable_non_proxied_udp",
       "--disable-quic",
       "--disable-blink-features=SharedWorker",
-      "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns",
+      "--disable-features=MediaRouter,DialMediaRouteProvider,CastMediaRouteProvider,msImplicitSignin,msEdgeOSAccountInfoSubstrate,msEdgeOnlineAccounts,msOneAuthWAM,msForceOneAuthWAM,msLoadOneAuthInBackground,msIdentityCore,WebRtcHideLocalIpsWithMdns,HttpsFirstBalancedModeAutoEnable",
       "about:blank"
     ],
     env: { SystemRoot: "C:\\Windows", PATH: "C:\\Windows\\System32", TEMP: "C:\\Windows\\Temp" }
