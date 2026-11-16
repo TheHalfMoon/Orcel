@@ -166,6 +166,60 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Agent-Native AgentKit (MIT): the view's timeline reducer
+
+SG-000119 slice A4. The view embedded in the shell (`ui/js`, compiled from `apps/orcel-control-room/src`) includes the headless client's state reducer (`src/agentkit/client/state.ts`, transplant row T-AN-02) and its error type (`src/agentkit/protocol/errors.ts`, T-AN-01), adapted from BuilderIO/agent-native under MIT; the compiled files keep each source file's header. `tsc` also emits the protocol module (`index.js`, `version.js`, `validation.js`, T-AN-01) because the reducer's types come from it; the page never loads them. The notice, `docs/orcel/notices/agent-native-MIT.txt`, follows verbatim.
+
+```text
+Agent-Native AgentKit (BuilderIO/agent-native) - adapted source notice
+
+Orcel adapts parts of the AgentKit protocol, headless client and conformance
+suite from BuilderIO/agent-native at commit
+9c277b79cb87eb27da538e572dd710986e2fa06d (packages/agentkit/src/protocol,
+packages/agentkit/src/client, packages/agentkit/src/conformance/index.ts;
+transplant rows T-AN-01, T-AN-02 and T-AN-03, task CR-02). The adapted files
+live under apps/orcel-control-room/src/agentkit/. Each one names its donor
+file in its header and lists Orcel's changes there, and
+docs/orcel/control_room_agentkit_provenance.json records the donor blob of
+every file.
+
+SG-000120 RJ-03 also ports the tool-call journal classification from the
+same commit (packages/core/src/agent/tool-call-journal.ts, blob
+be77f428f557b2e777665bfacd0d6dd51a58ff1d; packages/core declares "license":
+"MIT" in its package.json) into crates/orcel-journal/src/resume.rs, whose
+header lists Orcel's changes; docs/orcel/journal_resume_provenance.json
+records the donor blob.
+
+packages/agentkit declares "license": "MIT" in its package.json and ships no
+license text of its own. The text below is the MIT license the same
+repository carries in packages/vscode-extension/LICENSE.md, with its
+copyright line. The founder's attestation of 2026-10-18
+(docs/orcel/grants/2026-10-18-founder-attestation.md), which names
+Agent-Native, covers the missing per-package notice text.
+
+MIT License
+
+Copyright (c) Builder.io
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Microsoft WebView2 loader (approved for development and internal testing only)
 
 `webview2-com-sys` 0.39.1 declares MIT for its Rust bindings, but its crate also ships Microsoft's prebuilt WebView2 loader, and with the MSVC toolchain the shell statically links `WebView2LoaderStatic.lib`. The loader is Microsoft's, under the Microsoft WebView2 SDK license terms; it is not MIT or Apache-2.0, and `deny.toml` records the crate as `MIT AND LicenseRef-Microsoft-WebView2-SDK`.

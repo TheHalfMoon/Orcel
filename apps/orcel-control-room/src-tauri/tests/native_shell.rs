@@ -33,7 +33,13 @@ const SHELL: &str = env!("CARGO_BIN_EXE_orcel-control-room-shell");
 
 /// Off-origin navigations the probe scenario tries, and how the shell
 /// reports each refusal (scheme, userinfo marker, host and port).
-const NAVIGATIONS: [(&str, &str); 6] = [
+const NAVIGATIONS: [(&str, &str); 7] = [
+    // An asset opened as a page: on the origin but not one of the two pages
+    // (the refusal line never carries the path).
+    (
+        "https://tauri.localhost/style.css",
+        "https://tauri.localhost",
+    ),
     (
         "https://tauri.localhost.evil/",
         "https://tauri.localhost.evil",
@@ -54,6 +60,35 @@ const NAVIGATIONS: [(&str, &str); 6] = [
 /// page must stay on the asset origin.
 const BLOCKED_ANYWAY: [&str; 2] = ["file:///C:/Windows/win.ini", "data:text/html,x"];
 const COMMAND_CALLS: usize = 3;
+/// SG-000119 A4: the view's own calls when it loads (app_status,
+/// app_capabilities, app_tasks and app_events, once each). Without an orceld
+/// it makes no other: it reads again only once orceld answers.
+const PAGE_CALLS: usize = 4;
+
+/// Whether this user's own orceld answers (on a developer's PC it may; on a
+/// CI runner it does not). When it does, the view also reads the tasks and
+/// events it reports, so the shell serves more than the calls counted here.
+fn this_users_orceld_answers() -> bool {
+    orcel_app_api_client::AppApiClient::for_this_user()
+        .map(|client| client.status().is_ok())
+        .unwrap_or(false)
+}
+
+/// `SG119-IPC commands=<n> web_messages=0`, with `n` exactly `expected`
+/// (at least `expected` while this user's orceld answers).
+fn assert_ipc(finished: &Finished, expected: usize) {
+    let line = finished.line("SG119-IPC ");
+    let served: usize = line
+        .strip_prefix("SG119-IPC commands=")
+        .and_then(|rest| rest.strip_suffix(" web_messages=0"))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("{line}"));
+    if this_users_orceld_answers() {
+        assert!(served >= expected, "{line}: at least {expected} expected");
+    } else {
+        assert_eq!(served, expected, "{line}");
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -487,11 +522,8 @@ fn real_window() {
     assert_order(&finished);
     let version = finished.line("SG119-WEBVIEW2 version=");
     assert_ne!(version, "SG119-WEBVIEW2 version=unknown");
-    // The static page calls nothing.
-    assert_eq!(
-        finished.line("SG119-IPC "),
-        "SG119-IPC commands=0 web_messages=0"
-    );
+    // The view's own reads on load, each through the custom protocol.
+    assert_ipc(&finished, PAGE_CALLS);
     assert_eq!(finished.line("SG119-NAV "), "SG119-NAV refused=0");
 }
 
@@ -537,10 +569,7 @@ fn probes() {
     assert_order(&finished);
     // Every command call reached Rust through the custom protocol; none came
     // as a web message.
-    assert_eq!(
-        finished.line("SG119-IPC "),
-        format!("SG119-IPC commands={COMMAND_CALLS} web_messages=0")
-    );
+    assert_ipc(&finished, COMMAND_CALLS + PAGE_CALLS);
     // window.open twice and a target=_blank link: each request denied, no
     // window opened.
     assert_eq!(
@@ -565,7 +594,7 @@ fn probes() {
     );
     let probe = finished.line("SG119-PROBE ");
     assert!(
-        probe.starts_with("SG119-PROBE url=https://tauri.localhost/"),
+        probe.starts_with("SG119-PROBE url=https://tauri.localhost/index.html "),
         "{probe}"
     );
     assert!(
