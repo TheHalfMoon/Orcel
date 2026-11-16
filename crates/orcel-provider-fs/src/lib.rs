@@ -102,6 +102,7 @@ impl FsProvider {
     /// junction, or Windows short-name alias can reach .git without naming it.
     /// This is a deny-only guard; typed git operations use their own provider.
     pub(crate) fn reject_git_mutation(&self, relative: &str) -> Result<(), ProviderError> {
+        refuse_named_fork(relative)?;
         if self.root.components().any(|part| {
             matches!(part, Component::Normal(name)
                 if name.to_string_lossy().eq_ignore_ascii_case(".git"))
@@ -182,7 +183,7 @@ impl FsProvider {
     /// opened handle or new directory really has, so a link swapped in between is caught.
     pub(crate) fn ensure_not_git(&self, resolved: &Path) -> Result<(), ProviderError> {
         self.ensure_within(resolved)?;
-        let inside = resolved.strip_prefix(&self.root).map_err(|_| {
+        let inside = inside_root(&self.root, resolved).ok_or_else(|| {
             ProviderError::new(
                 FailureCode::PathEscape,
                 "resolved mutation path escaped the trusted workspace",
@@ -269,6 +270,7 @@ impl FsProvider {
     /// A regular file's bytes, through the verified open that keeps a read inside
     /// the workspace, at most `limit` of them.
     pub fn read_bytes(&self, relative: &str, limit: usize) -> Result<Vec<u8>, ProviderError> {
+        refuse_named_fork(relative)?;
         let candidate = self.root.join(relative);
         let (file, resolved) = open_verified_file(&candidate)
             .map_err(|error| ProviderError::io("open file", error))?;
@@ -648,6 +650,7 @@ impl FsProvider {
     }
 
     fn resolve_existing(&self, relative: &str) -> Result<PathBuf, ProviderError> {
+        refuse_named_fork(relative)?;
         let candidate = self.root.join(relative);
         let resolved = resolve_final_path(&candidate)
             .map_err(|error| ProviderError::io("resolve target", error))?;
@@ -662,7 +665,9 @@ impl FsProvider {
                 "resolved path is outside the trusted workspace",
             ));
         }
-        Ok(())
+        // Every resolved or descriptor path passes here, so a link to a named fork is
+        // refused even though its own name is plain.
+        refuse_named_fork(resolved)
     }
 }
 
@@ -770,7 +775,30 @@ mod unix_fd {
         })?;
         buffer.truncate(length);
         use std::os::unix::ffi::OsStringExt as _;
-        checked(PathBuf::from(std::ffi::OsString::from_vec(buffer)), b"")
+        let path = checked(PathBuf::from(std::ffi::OsString::from_vec(buffer)), b"")?;
+        same_object(file, &path)?;
+        Ok(path)
+    }
+
+    /// macOS: the reported path must name the open object itself (same device and inode).
+    /// A named fork opened through a link (`link -> file/..namedfork/rsrc`) is a different
+    /// object from the file its path may name, and a path renamed away in between no longer
+    /// names it; both fail closed.
+    #[cfg(target_os = "macos")]
+    fn same_object(file: &File, path: &std::path::Path) -> io::Result<()> {
+        use std::os::unix::fs::MetadataExt as _;
+        let open = file.metadata()?;
+        let named = std::fs::metadata(path)?;
+        if open.dev() != named.dev() || open.ino() != named.ino() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "the open file is not the object its path names ({})",
+                    path.display()
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// Only an absolute path counts, and on Linux not one that names an unlinked file.
@@ -874,7 +902,93 @@ fn is_within(root: &Path, candidate: &Path) -> bool {
 
 #[cfg(not(windows))]
 fn is_within(root: &Path, candidate: &Path) -> bool {
-    candidate == root || candidate.starts_with(root)
+    inside_root(root, candidate).is_some()
+}
+
+/// The part of the resolved `candidate` below the resolved `root`, or `None` when the
+/// candidate is not the root or inside it. Windows keeps the plain component prefix it
+/// always used (after its own case-insensitive `is_within`).
+#[cfg(windows)]
+pub(crate) fn inside_root(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    candidate.strip_prefix(root).ok().map(Path::to_path_buf)
+}
+
+/// The part of the resolved `candidate` below the resolved `root`, or `None` when the
+/// candidate is not the root or inside it. A byte-for-byte component prefix always counts
+/// (equal bytes name the same directory on any volume). On macOS a case-insensitive volume
+/// can also report the root in another case, so a prefix that differs only in case counts
+/// too, but only when it is the very same directory as the root (same device and inode).
+/// Case folding alone would be wrong on a case-sensitive APFS volume, where `WS` and `ws`
+/// are two different directories.
+#[cfg(not(windows))]
+pub(crate) fn inside_root(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    if let Ok(rest) = candidate.strip_prefix(root) {
+        return Some(rest.to_path_buf());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        case_alias_inside_root(root, candidate)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// The identity check behind macOS case aliases of the root, kept on every Unix so a
+/// case-sensitive volume (Linux CI) proves it never accepts a different directory.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn case_alias_inside_root(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt as _;
+    let root_parts: Vec<Component<'_>> = root.components().collect();
+    let candidate_parts: Vec<Component<'_>> = candidate.components().collect();
+    if !root.is_absolute() || candidate_parts.len() < root_parts.len() {
+        return None;
+    }
+    let (head, tail) = candidate_parts.split_at(root_parts.len());
+    let same_spelling_ignoring_case = head.iter().zip(&root_parts).all(|(alias, real)| {
+        match (alias.as_os_str().to_str(), real.as_os_str().to_str()) {
+            (Some(alias), Some(real)) => alias.to_lowercase() == real.to_lowercase(),
+            _ => alias == real,
+        }
+    });
+    if !same_spelling_ignoring_case {
+        return None;
+    }
+    let prefix: PathBuf = head.iter().collect();
+    // Not followed: a link in place of the root's last part is never the root itself.
+    let alias = fs::symlink_metadata(&prefix).ok()?;
+    let real = fs::symlink_metadata(root).ok()?;
+    if !alias.is_dir() || alias.dev() != real.dev() || alias.ino() != real.ino() {
+        return None;
+    }
+    Some(tail.iter().collect())
+}
+
+/// macOS reaches a file's resource fork, and any other named fork, through a
+/// `..namedfork` segment (`file/..namedfork/rsrc`): a second data stream behind a name a
+/// listing never shows, the analogue of a Windows alternate stream. Refused in any ASCII
+/// case, since a case-insensitive volume may match it either way.
+fn has_named_fork_segment(path: impl AsRef<Path>) -> bool {
+    path.as_ref().components().any(|part| {
+        matches!(part, Component::Normal(name)
+            if name.as_encoded_bytes().eq_ignore_ascii_case(b"..namedfork"))
+    })
+}
+
+/// Refuses a `..namedfork` segment on macOS, in a submitted relative path or in a resolved
+/// one (a link already in the workspace can point at `file/..namedfork/rsrc`, so the
+/// submitted spelling alone is not enough). Elsewhere `..namedfork` is an ordinary file
+/// name, so the guard does nothing there (Windows and Linux behaviour is unchanged).
+pub(crate) fn refuse_named_fork(path: impl AsRef<Path>) -> Result<(), ProviderError> {
+    if cfg!(target_os = "macos") && has_named_fork_segment(path) {
+        return Err(ProviderError::new(
+            FailureCode::CapabilityDenied,
+            "macOS named forks (..namedfork) are not reachable through filesystem tools",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1569,5 +1683,264 @@ mod tests {
         let _ = fs::remove_dir(root.join("state"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(protected);
+    }
+
+    /// Pins the containment decision each OS family had before MAC-M1-06 for paths that
+    /// involve no filesystem lookup: Windows folds case and both separators, and its
+    /// remainder is the plain component prefix; elsewhere a byte-for-byte prefix counts.
+    #[test]
+    fn containment_decisions_are_unchanged_for_plain_prefixes() {
+        #[cfg(windows)]
+        {
+            let root = Path::new(r"C:\ws");
+            assert!(is_within(root, Path::new(r"C:\ws")));
+            assert!(is_within(root, Path::new(r"C:\WS\a.txt")));
+            assert!(is_within(root, Path::new("C:/ws/a.txt")));
+            assert!(!is_within(root, Path::new(r"C:\wsx\a.txt")));
+            assert!(!is_within(root, Path::new(r"D:\ws\a.txt")));
+            assert_eq!(
+                inside_root(root, Path::new(r"C:\ws\a\b.txt")),
+                Some(PathBuf::from(r"a\b.txt"))
+            );
+            assert_eq!(inside_root(root, Path::new(r"C:\ws")), Some(PathBuf::new()));
+            assert_eq!(inside_root(root, Path::new(r"C:\WS\a.txt")), None);
+        }
+        #[cfg(not(windows))]
+        {
+            let root = Path::new("/nonexistent-orcel-root/ws");
+            assert!(is_within(root, root));
+            assert!(is_within(root, &root.join("a/b.txt")));
+            assert!(!is_within(root, Path::new("/nonexistent-orcel-root/wsx/a")));
+            assert!(!is_within(
+                root,
+                Path::new("/nonexistent-orcel-root/ws\\x/a")
+            ));
+            assert!(!is_within(root, Path::new("/nonexistent-orcel-root")));
+            // No such directory exists, so a case alias has no identity to match.
+            assert!(!is_within(root, Path::new("/nonexistent-orcel-root/WS/a")));
+            assert_eq!(
+                inside_root(root, &root.join("a/b.txt")),
+                Some(PathBuf::from("a/b.txt"))
+            );
+        }
+    }
+
+    /// The `..namedfork` recogniser, on every host. Only a whole segment counts.
+    #[test]
+    fn named_fork_segments_are_recognised_in_any_case() {
+        for path in [
+            "a.txt/..namedfork/rsrc",
+            "dir/a.txt/..namedfork/data",
+            "a.txt/..NAMEDFORK/rsrc",
+            "a.txt/..NamedFork/rsrc",
+            "./a.txt/..namedfork/rsrc",
+            "..namedfork",
+        ] {
+            assert!(has_named_fork_segment(path), "{path}");
+        }
+        for path in [
+            "a.txt",
+            "a..namedfork",
+            "..namedforks/rsrc",
+            ".namedfork/rsrc",
+            "namedfork/rsrc",
+            "a.txt/rsrc",
+        ] {
+            assert!(!has_named_fork_segment(path), "{path}");
+        }
+        // Off macOS the name is ordinary and the guard does nothing.
+        assert_eq!(
+            refuse_named_fork("a.txt/..namedfork/rsrc").is_err(),
+            cfg!(target_os = "macos")
+        );
+        assert!(refuse_named_fork("a.txt").is_ok());
+    }
+
+    /// Whether the volume holding `dir` matches names case-insensitively. On macOS the
+    /// answer must be yes (the default APFS volume, and the CI runner's), so a test that
+    /// depends on it fails instead of skipping; a developer whose temporary directory sits
+    /// on a case-sensitive volume sets ORCEL_ALLOW_CASE_SENSITIVE_TMP=1.
+    #[cfg(unix)]
+    fn case_insensitive_volume(dir: &Path) -> bool {
+        fs::write(dir.join("case-probe"), "probe").unwrap();
+        let insensitive = dir.join("CASE-PROBE").exists();
+        fs::remove_file(dir.join("case-probe")).unwrap();
+        if cfg!(target_os = "macos") && !insensitive {
+            assert!(
+                std::env::var_os("ORCEL_ALLOW_CASE_SENSITIVE_TMP").is_some(),
+                "the macOS temporary directory is on a case-sensitive volume; the APFS \
+                 case-alias tests need the default case-insensitive volume"
+            );
+        }
+        insensitive
+    }
+
+    /// A prefix spelled like the root but in another case is the root only when it is the
+    /// same directory. On a case-sensitive volume (Linux) `WS` is a different directory and
+    /// must never count as inside `ws`; on a case-insensitive one (macOS) it is the root.
+    #[cfg(unix)]
+    #[test]
+    fn a_case_alias_of_the_root_counts_only_as_the_same_directory() {
+        let base = fs::canonicalize(temp_root("case-alias")).unwrap();
+        let root = base.join("ws");
+        fs::create_dir(&root).unwrap();
+        let alias = base.join("WS");
+        let insensitive = case_insensitive_volume(&base);
+        if !insensitive {
+            // A link spelled like the root in another case resolves to the root, but the
+            // link itself is not the root directory.
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            assert_eq!(case_alias_inside_root(&root, &alias.join("a.txt")), None);
+            fs::remove_file(&alias).unwrap();
+            fs::create_dir(&alias).unwrap();
+        }
+        let found = case_alias_inside_root(&root, &alias.join("a.txt"));
+        if insensitive {
+            assert_eq!(found, Some(PathBuf::from("a.txt")));
+            assert_eq!(case_alias_inside_root(&root, &alias), Some(PathBuf::new()));
+        } else {
+            assert_eq!(found, None, "a different directory is never the root");
+        }
+        // Never a sibling, a parent, or a differently spelled link to the root.
+        fs::create_dir(base.join("ws2")).unwrap();
+        assert_eq!(case_alias_inside_root(&root, &base.join("WS2/a.txt")), None);
+        assert_eq!(case_alias_inside_root(&root, &base), None);
+        std::os::unix::fs::symlink(&root, base.join("wx")).unwrap();
+        assert_eq!(case_alias_inside_root(&root, &base.join("wx/a.txt")), None);
+        let _ = fs::remove_dir_all(base);
+    }
+
+    /// macOS: a workspace opened under another case of its name still reads, and the Git
+    /// guard still sees `.git` through a case alias of the root.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_case_alias_of_the_workspace_keeps_reads_and_the_git_guard() {
+        let base = fs::canonicalize(temp_root("case-workspace")).unwrap();
+        assert!(
+            case_insensitive_volume(&base),
+            "case-insensitive APFS expected"
+        );
+        let root = base.join("ws");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join(".git/config"), "safe").unwrap();
+        fs::write(root.join("a.txt"), "hello").unwrap();
+        let provider = FsProvider::new(base.join("WS")).unwrap();
+        // The alias really takes the identity path: whatever case the resolved root has,
+        // one of the two spellings is not a byte prefix of the other's children.
+        let upper = base.join("WS/.git/config");
+        let lower = root.join(".git/config");
+        let alias = if upper.starts_with(provider.root()) {
+            lower
+        } else {
+            upper
+        };
+        assert!(!alias.starts_with(provider.root()));
+        assert_eq!(
+            inside_root(provider.root(), &alias),
+            Some(PathBuf::from(".git/config"))
+        );
+        assert_eq!(
+            provider.ensure_not_git(&alias).unwrap_err().code,
+            FailureCode::CapabilityDenied
+        );
+        assert_eq!(provider.read_text("a.txt").unwrap()["text"], "hello");
+        assert_eq!(provider.read_text("A.TXT").unwrap()["text"], "hello");
+        for name in [".GIT/config", ".Git/config", ".git/CONFIG"] {
+            assert_eq!(
+                provider
+                    .write_text(name, "bad", None, true)
+                    .unwrap_err()
+                    .code,
+                FailureCode::CapabilityDenied,
+                "{name}"
+            );
+        }
+        let error = provider
+            .ensure_not_git(&base.join("WS/.git/config"))
+            .unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+        assert_eq!(
+            fs::read_to_string(root.join(".git/config")).unwrap(),
+            "safe"
+        );
+        let _ = fs::remove_dir_all(base);
+    }
+
+    /// macOS: every filesystem tool refuses a `..namedfork` path, so no tool reads or
+    /// writes a resource fork, and the fork stays empty.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn named_fork_paths_are_refused_on_macos() {
+        let root = temp_root("namedfork");
+        fs::write(root.join("a.txt"), "plain").unwrap();
+        let provider = FsProvider::new(&root).unwrap();
+        for name in [
+            "a.txt/..namedfork/rsrc",
+            "a.txt/..NAMEDFORK/rsrc",
+            "./a.txt/..namedfork/rsrc",
+        ] {
+            let denied = |result: Result<Value, ProviderError>, what: &str| {
+                assert_eq!(
+                    result.unwrap_err().code,
+                    FailureCode::CapabilityDenied,
+                    "{what} {name}"
+                );
+            };
+            denied(provider.read_text(name), "read");
+            denied(provider.stat(name), "stat");
+            denied(provider.list(name), "list");
+            denied(provider.search_text(name, "x", None), "search");
+            denied(provider.read_range(name, 1, 1), "range");
+            denied(provider.write_text(name, "fork", None, true), "write");
+            denied(provider.create_text(name, "fork"), "create");
+            denied(provider.mkdir(name, true), "mkdir");
+            assert_eq!(
+                provider.preview_write(name, "fork").unwrap_err().code,
+                FailureCode::CapabilityDenied
+            );
+            assert_eq!(
+                provider.entry_identity(name).unwrap_err().code,
+                FailureCode::CapabilityDenied
+            );
+        }
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "plain");
+        assert!(fs::read(root.join("a.txt/..namedfork/rsrc"))
+            .unwrap_or_default()
+            .is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// macOS: a link already in the workspace that points at a named fork has a plain name,
+    /// so the submitted spelling passes; the resolved or descriptor path (and the identity
+    /// of the opened object) still keeps every tool off the fork.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_link_to_a_named_fork_is_refused_on_macos() {
+        let root = temp_root("namedfork-link");
+        fs::write(root.join("b.txt"), "plain").unwrap();
+        fs::write(root.join("b.txt/..namedfork/rsrc"), "fork").unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("b.txt/..namedfork/rsrc")).unwrap(),
+            "fork",
+            "the test needs a resource fork with content"
+        );
+        std::os::unix::fs::symlink("b.txt/..namedfork/rsrc", root.join("link")).unwrap();
+        let provider = FsProvider::new(&root).unwrap();
+        assert!(provider.read_text("link").is_err(), "read through the link");
+        assert!(provider.stat("link").is_err(), "stat through the link");
+        assert!(provider.read_range("link", 1, 1).is_err(), "range read");
+        assert!(provider.preview_write("link", "x").is_err(), "preview");
+        assert!(
+            provider.write_text("link", "forged", None, false).is_err(),
+            "write through the link"
+        );
+        let search = provider.search_text("", "fork", None).unwrap();
+        assert_eq!(search["matches"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            fs::read_to_string(root.join("b.txt/..namedfork/rsrc")).unwrap(),
+            "fork"
+        );
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "plain");
+        let _ = fs::remove_dir_all(root);
     }
 }
