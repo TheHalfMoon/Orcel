@@ -567,6 +567,24 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
         // Every file that could run a build (workflows, actions, scripts in
         // any folder, manifests), that is everything but documentation and
         // vendored third-party sources.
+        // WP1-01's dependency-direction test runs `cargo metadata` with every
+        // feature, which resolves the graph and compiles nothing, so the
+        // licence gate sees feature-gated dependencies. It may name the flag
+        // once, in that metadata call, and run no other cargo command.
+        if relative == "crates/orceld/tests/dependency_direction.rs" {
+            assert_eq!(text.matches("--all-features").count(), 1, "{relative}");
+            assert!(text.contains("\"metadata\","), "{relative}");
+            for command in [
+                "\"build\"",
+                "\"test\"",
+                "\"run\"",
+                "\"check\"",
+                "\"install\"",
+            ] {
+                assert!(!text.contains(command), "{relative} runs cargo {command}");
+            }
+            continue;
+        }
         let build_surface = !relative.starts_with("docs/")
             && !relative.ends_with(".md")
             && !relative.contains("/third_party/");

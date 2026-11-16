@@ -8,7 +8,8 @@
 // founder attestation that records permission separately from the licence.
 //
 // A file under crates/, apps/, packages/ or tests/ is a donor file when
-// - it lies under a third_party/ directory, or
+// - a path segment marks it as vendored (upstream/, vendor/, vendored/,
+//   third_party/ anywhere in the path), or
 // - it names a donor notice (docs/orcel/notices/<file>), or
 // - an "orcel-adapted-source-provenance/1" record lists it,
 // and each one must be covered by a manifest file entry (an exact path, or a
@@ -22,17 +23,31 @@
 // fd04-files.txt) or inside an isolated component; every allowlisted path in
 // turn needs such a donor entry.
 //
+// Each donor's licence text (its licence_text file, else its notice) must
+// carry the text of the licence it declares, and every directory entry
+// names its patch queue ("patches": a file, or "none").
+//
+// The manifest is central rather than one PROVENANCE.json per vendored
+// directory: one entry per directory or file carries the same fields
+// ({repo, sha, paths, licence, attestation_ref, patches} as donor repo,
+// commit or release, files[].path, licence, attestation, patches), and one
+// file lets the gate check every allowlist, record and attestation against
+// it in one place. Existing per-directory records stay and are cross-linked
+// through each donor's "records".
+//
 // Usage: node scripts/check-donor-provenance.mjs [--root <repository>]
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DONOR_SEGMENT,
   familiesOfExpression,
+  licenceTextProblem,
   listFiles,
   PROVENANCE_PATH,
   readJson,
-  readList,
+  readPinnedList,
   readPolicy,
   readText,
   underAny,
@@ -71,6 +86,13 @@ function checkDonor(root, id, donor, attestations, errors) {
   }
   if (typeof donor.licence !== "string" || !donor.licence.trim()) errors.push(`${where}: licence is required`);
   if (!exists(root, donor.notice)) errors.push(`${where}: notice ${donor.notice} does not exist`);
+  const licenceText = donor.licence_text ?? donor.notice;
+  if (exists(root, licenceText) && typeof donor.licence === "string") {
+    const problem = licenceTextProblem(donor.licence, readFileSync(join(root, licenceText), "utf8"));
+    if (problem) errors.push(`${where}: licence text ${licenceText} ${problem}`);
+  } else if (donor.licence_text !== undefined) {
+    errors.push(`${where}: licence_text ${donor.licence_text} does not exist`);
+  }
   const attestation = attestations[donor.attestation];
   if (!attestation) errors.push(`${where}: attestation ${donor.attestation} is not defined`);
   for (const record of donor.records ?? []) {
@@ -116,6 +138,8 @@ export function checkProvenance(root) {
       errors.push(`file ${entry.path}: does not exist`);
     } else if (entry.path.endsWith("/") !== statSync(join(root, entry.path)).isDirectory()) {
       errors.push(`file ${entry.path}: a directory entry must end in '/', a file entry must not`);
+    } else if (entry.path.endsWith("/") && entry.patches !== "none" && !exists(root, entry.patches)) {
+      errors.push(`file ${entry.path}: a directory entry needs "patches": an existing patch queue file, or "none"`);
     }
   }
   for (const reference of references) {
@@ -154,8 +178,9 @@ export function checkProvenance(root) {
   // Donor files found in the scanned trees.
   for (const path of files) {
     if (!underAny(path, policy.scan_roots) || path === PROVENANCE_PATH) continue;
-    if (path.includes("/third_party/")) {
-      need(path, "under a third_party/ directory");
+    const segment = DONOR_SEGMENT.exec(path);
+    if (segment) {
+      need(path, `under a ${segment[2]}/ directory`);
       continue;
     }
     const text = readText(root, path);
@@ -171,7 +196,7 @@ export function checkProvenance(root) {
   const isolated = policy.isolated_components ?? [];
   const lists = new Map();
   for (const [decision, entry] of Object.entries(policy.restricted_allowlists ?? {})) {
-    lists.set(decision, exists(root, entry.list) ? new Set(readList(root, entry.list)) : new Set());
+    lists.set(decision, exists(root, entry.list) ? new Set(readPinnedList(root, entry.list).map((e) => e.path)) : new Set());
   }
   for (const entry of entries) {
     const info = restricted.get(entry.donor);

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // WP1-01 npm licence check (UNIFIED_INTEGRATION_SPEC.md WP1-01, C-20).
 //
-// Reads every package-lock.json under apps/, packages/ and tests/, plus the
-// root package-lock.json (the lockfile of the root npm workspaces, which
-// live under apps/), and requires every locked package to declare a licence
+// Reads every package-lock.json in the repository (apps/, packages/ and
+// tests/ as the spec names, the root workspace lockfile, and any other), and
+// requires every locked package to declare a licence
 // expression satisfiable from the WP1-01 allowlist in
 // docs/orcel/notices/licence-policy.json (an OR expression passes when one
 // branch is allowed). Lockfiles under tests/ may also use PSF-2.0. A package
@@ -12,6 +12,12 @@
 // in licence-policy.json lists that lockfile, that licence and that package
 // with a reason. Exceptions that match nothing fail too.
 //
+// Every npm package must be locked by a package-lock.json the gate reads:
+// another lockfile kind (npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock,
+// bun.lock, bun.lockb) fails, and so does a package.json that declares
+// dependencies with no package-lock.json beside it (a root npm workspace
+// member is locked by the root lockfile).
+//
 // Usage: node scripts/check-npm-licenses.mjs [--root <repository>]
 
 import { existsSync, readFileSync } from "node:fs";
@@ -19,7 +25,8 @@ import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { familiesOfExpression, listFiles, readPolicy, spdxAllowed, underAny } from "./licence-gate-lib.mjs";
 
-const LOCK_ROOTS = ["apps/", "packages/", "tests/"];
+const OTHER_LOCKS = /(^|\/)(npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/;
+const DEPENDENCY_KEYS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
 
 function packageName(key) {
   const marker = "node_modules/";
@@ -28,9 +35,31 @@ function packageName(key) {
 }
 
 export function lockfiles(root) {
-  return listFiles(root).filter(
-    (path) => path === "package-lock.json" || (underAny(path, LOCK_ROOTS) && path.endsWith("/package-lock.json")),
-  );
+  return listFiles(root).filter((path) => path === "package-lock.json" || path.endsWith("/package-lock.json"));
+}
+
+/** Lockfiles of other kinds, and package.json files with dependencies but no lockfile. */
+export function unlockedPackages(root) {
+  const files = listFiles(root);
+  const errors = files
+    .filter((path) => OTHER_LOCKS.test(path))
+    .map((path) => `${path}: only package-lock.json is read by the licence gate; use npm and commit package-lock.json`);
+  const locks = new Set(files.filter((path) => path === "package-lock.json" || path.endsWith("/package-lock.json")));
+  let workspaces = [];
+  if (existsSync(join(root, "package.json"))) {
+    const top = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    workspaces = Array.isArray(top.workspaces) ? top.workspaces : top.workspaces?.packages ?? [];
+  }
+  for (const path of files.filter((p) => p === "package.json" || p.endsWith("/package.json"))) {
+    const dir = posix.dirname(path);
+    const manifest = JSON.parse(readFileSync(join(root, path), "utf8"));
+    const declares = DEPENDENCY_KEYS.some((key) => manifest[key] && Object.keys(manifest[key]).length);
+    if (!declares) continue;
+    const lock = dir === "." ? "package-lock.json" : `${dir}/package-lock.json`;
+    const member = workspaces.includes(dir) && locks.has("package-lock.json");
+    if (!locks.has(lock) && !member) errors.push(`${path}: declares dependencies but has no package-lock.json`);
+  }
+  return errors;
 }
 
 export function checkNpmLicences(root) {
@@ -42,6 +71,7 @@ export function checkNpmLicences(root) {
       errors.push(`npm exception for ${entry.lockfile}: needs licence, packages and a reason`);
     }
   }
+  errors.push(...unlockedPackages(root));
   const locks = lockfiles(root);
   let checked = 0;
   for (const lockfile of locks) {

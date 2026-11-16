@@ -1892,18 +1892,25 @@ jobs:
       - name: Install cargo-deny
         if: steps.licence-gates-deny-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-deny --locked --version 0.20.2
-      - name: Licence, ban and source check of the main workspace graph
-        run: cargo deny check licenses bans sources
+      - name: Licence, ban and source check of the main workspace graph (all features; stale exceptions fail)
+        run: cargo deny check -D license-exception-not-encountered licenses bans sources
       - name: Licence gate negative tests (planted AGPL file, missing provenance, AGPL dependency)
         env:
           ORCEL_REQUIRE_CARGO_DENY: "1"
-        run: node --test scripts/check-agpl-markers.test.mjs scripts/check-npm-licenses.test.mjs scripts/check-donor-provenance.test.mjs scripts/check-cargo-deny-policy.test.mjs
+        run: node --test scripts/check-agpl-markers.test.mjs scripts/check-npm-licenses.test.mjs scripts/check-donor-provenance.test.mjs scripts/check-cargo-deny-policy.test.mjs scripts/check-cargo-licences.test.mjs
       - name: No AGPL or other restricted-licence marker outside the reviewed allowlists
         run: node scripts/check-agpl-markers.mjs
       - name: npm lockfile licences
         run: node scripts/check-npm-licenses.mjs
       - name: Every donor file has pinned, attested provenance
         run: node scripts/check-donor-provenance.mjs
+      - name: Every Cargo project is under a licence gate
+        run: node scripts/check-cargo-licences.mjs
+      # The fixture graphs are resolved from crates.io (cargo metadata lists
+      # every platform's dependencies, so one OS leg covers them).
+      - name: Licences of the Cargo test fixtures (tests/native-fixtures Tauri harness)
+        if: runner.os == 'Linux'
+        run: node scripts/check-cargo-licences.mjs --fixtures
 
   governance:
     name: Governance

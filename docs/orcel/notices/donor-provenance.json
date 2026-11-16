@@ -1,7 +1,7 @@
 {
   "schema": "orcel-donor-provenance/1",
   "packet": "WP1-01",
-  "note": "Machine-readable index of every vendored, copied or adapted donor file under crates/, apps/, packages/ and tests/ (and a few outside them). Each donor names its source repository, its pin (a 40-hex commit, or a registry release with its SHA-256), the upstream licence, the notice in the repository, the founder attestation that records permission (kept separate from the upstream licence terms, founder decision 2026-11-17) and the detailed per-task provenance records it consolidates. A path ending in '/' covers the whole directory. 'references' lists files that name a donor notice or hold a provenance record without being donor code. Checked by scripts/check-donor-provenance.mjs.",
+  "note": "Machine-readable index of every vendored, copied or adapted donor file under crates/, apps/, packages/ and tests/ (and a few outside them). Each donor names its source repository, its pin (a 40-hex commit, or a registry release with its SHA-256), the upstream licence, the notice in the repository, the founder attestation that records permission (kept separate from the upstream licence terms, founder decision 2026-11-17) and the detailed per-task provenance records it consolidates. A path ending in '/' covers the whole directory and names its patch queue (\"patches\": a file, or \"none\"). Each donor's licence_text (else its notice) must carry the text of its declared licence. This central manifest stands in for per-directory PROVENANCE.json files: each entry carries the same fields {repo, sha, paths, licence, attestation_ref, patches}, and one file lets the gate cross-check allowlists, records and attestations in one place. 'references' lists files that name a donor notice or hold a provenance record without being donor code. Checked by scripts/check-donor-provenance.mjs.",
   "attestations": {
     "FA-2026-10-18": {
       "records": ["docs/orcel/grants/2026-10-18-founder-attestation.md", "docs/orcel/SOURCE_PERMISSIONS.md"],
@@ -143,6 +143,7 @@
       },
       "licence": "MIT",
       "notice": "apps/orcel-agent/third_party/langchain/NOTICE.md",
+      "licence_text": "apps/orcel-agent/third_party/langchain/LICENSE",
       "attestation": "FA-2026-10-18",
       "records": []
     },
@@ -168,8 +169,8 @@
     { "path": "crates/orcel-app-api-client/src/win.rs", "donor": "cua-fsl" },
     { "path": "distribution/linux/ai.orcel.approve.policy", "donor": "cua-fsl" },
 
-    { "path": "apps/orcel-native-host/third_party/cua-driver/", "donor": "cua" },
-    { "path": "tests/native-fixtures/", "donor": "cua" },
+    { "path": "apps/orcel-native-host/third_party/cua-driver/", "donor": "cua", "patches": "apps/orcel-native-host/third_party/cua-driver/PATCHES.md" },
+    { "path": "tests/native-fixtures/", "donor": "cua", "patches": "none" },
     { "path": "apps/orcel-contain/src/containment.rs", "donor": "cua" },
     { "path": "apps/orcel-contain/src/linux.rs", "donor": "cua" },
     { "path": "apps/orcel-contain/src/macos.rs", "donor": "cua" },
@@ -213,17 +214,17 @@
     { "path": "apps/orcel-browser-worker/src/extract/relevance.ts", "donor": "crawl4ai" },
     { "path": "crates/orceld/src/search.rs", "donor": "agent-reach" },
 
-    { "path": "apps/orcel-doc-parser/third_party/lopdf/", "donor": "lopdf" },
+    { "path": "apps/orcel-doc-parser/third_party/lopdf/", "donor": "lopdf", "patches": "apps/orcel-doc-parser/third_party/lopdf/PATCHES.md" },
 
-    { "path": "apps/orcel-agent/third_party/deer-flow/", "donor": "deer-flow" },
+    { "path": "apps/orcel-agent/third_party/deer-flow/", "donor": "deer-flow", "patches": "none" },
     { "path": "apps/orcel-agent/orcel_agent/loop_detection.py", "donor": "deer-flow" },
     { "path": "apps/orcel-agent/orcel_agent/todos.py", "donor": "deer-flow" },
-    { "path": "apps/orcel-agent/third_party/langchain/", "donor": "langchain" },
+    { "path": "apps/orcel-agent/third_party/langchain/", "donor": "langchain", "patches": "none" },
     { "path": "apps/orcel-agent/orcel_agent/todos.py", "donor": "langchain" },
     { "path": "apps/orcel-agent/orcel_agent/compaction.py", "donor": "langchain" },
 
-    { "path": "apps/orcel-doc-parser/tests/fixtures/workbooks/excel-12-sample/", "donor": "apache-poi" },
-    { "path": "apps/orcel-doc-parser/tests/fixtures/workbooks/excel-12-with-various-data/", "donor": "apache-poi" }
+    { "path": "apps/orcel-doc-parser/tests/fixtures/workbooks/excel-12-sample/", "donor": "apache-poi", "patches": "none" },
+    { "path": "apps/orcel-doc-parser/tests/fixtures/workbooks/excel-12-with-various-data/", "donor": "apache-poi", "patches": "none" }
   ],
   "references": [
     { "path": "apps/orcel-contain/Cargo.toml", "reason": "Manifest comment naming the Cua notice of the adapted containment files." },
@@ -233,6 +234,9 @@
     { "path": "apps/orcel-doc-parser/Cargo.toml", "reason": "Manifest comment naming the FD-06 port and its notice." },
     { "path": "apps/orcel-doc-parser/README.md", "reason": "Documents the FD-06 port and the vendored lopdf." },
     { "path": "apps/orcel-doc-parser/tests/fixtures/WORKBOOKS.md", "reason": "Source and hashes of the Apache POI workbook fixtures." },
-    { "path": "apps/orcel-agent/third_party/PROVENANCE.json", "reason": "The Orcel Agent's DeerFlow provenance record (consolidated by the deer-flow donor)." }
+    { "path": "apps/orcel-agent/third_party/PROVENANCE.json", "reason": "The Orcel Agent's DeerFlow provenance record (consolidated by the deer-flow donor)." },
+    { "path": "scripts/generate-sbom.mjs", "reason": "Release SBOM generator; names the Firecrawl notice for the FD-06 component." },
+    { "path": "scripts/third-party-notices.mjs", "reason": "Release notice generator; names the donor notices it bundles." },
+    { "path": "scripts/check-donor-provenance.test.mjs", "reason": "This gate's own tests; the notice names are fixture vectors." }
   ]
 }

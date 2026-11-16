@@ -1,20 +1,22 @@
 # FD-06 allowlist (WP1-01; UNIFIED_INTEGRATION_SPEC.md C-16).
 #
-# Files under crates/, apps/, packages/ or tests/ that may carry an AGPL
+# Files in the scanned trees (licence-policy.json scan_roots) that may carry an AGPL
 # marker ("GNU AFFERO", "AGPL", "SPDX-License-Identifier: AGPL..."): the
 # existing Firecrawl ports made under the FD-06 founder attestation
 # (docs/orcel/grants/2026-10-13-founder-source-authorization.md and
 # docs/orcel/grants/2026-10-18-founder-attestation.md), with the notice
-# docs/orcel/notices/firecrawl-AGPL-3.0.txt. Each line is one repository-
-# relative path; each must have a firecrawl entry in
+# docs/orcel/notices/firecrawl-AGPL-3.0.txt. Each line is "<sha256>  <path>":
+# the SHA-256 of the file (CRLF folded to LF) and its repository-relative
+# path, so any change to a listed file fails until it is reviewed under FD-06
+# and re-pinned (node scripts/check-agpl-markers.mjs --pins). Each must have a firecrawl entry in
 # docs/orcel/notices/donor-provenance.json. C-15: no new AGPL code is added
 # here. New AGPL code goes only into an isolated component listed in
 # docs/orcel/notices/licence-policy.json, never into a core crate.
 # Checked by scripts/check-agpl-markers.mjs and
 # scripts/check-donor-provenance.mjs.
 
-crates/orcel-browser-host/src/change_tracking.rs
-crates/orcel-browser-host/src/crawl_scope.rs
-crates/orcel-browser-host/src/map_rank.rs
-apps/orcel-doc-parser/src/document.rs
-apps/orcel-doc-parser/src/pdf.rs
+35b1bcd1357988cb3a0129554fb007b261f87e42d690c0463962506f8f212c3d  crates/orcel-browser-host/src/change_tracking.rs
+0efd27d04910764edae99f9888d608d95928057c9a87e0bac90e95b95afafa08  crates/orcel-browser-host/src/crawl_scope.rs
+b1fe51239204ab4e70e502727e881872a064c006f2d605ba71f36b4456b0f044  crates/orcel-browser-host/src/map_rank.rs
+047b9919da3e9e3b6aa6a84badc10d2206e82765410dbab8eb0cc9eb01d40a7d  apps/orcel-doc-parser/src/document.rs
+137eed3758c5ca6129528b608d365a128c84c939608bfb61af291698cad3472f  apps/orcel-doc-parser/src/pdf.rs

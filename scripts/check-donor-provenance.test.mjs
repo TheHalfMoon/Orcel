@@ -36,7 +36,7 @@ function manifest(overrides = {}) {
     },
     files: [
       { path: "apps/tool/src/copied.ts", donor: "upstream" },
-      { path: "apps/tool/third_party/lib/", donor: "upstream" },
+      { path: "apps/tool/third_party/lib/", donor: "upstream", patches: "none" },
       { path: "crates/core/src/port.rs", donor: "agpl" },
     ],
     references: [{ path: "apps/tool/README.md", reason: "documents the copy" }],
@@ -49,8 +49,8 @@ function base(extra = {}, overrides = {}) {
     "docs/orcel/notices/licence-policy.json": basePolicy(),
     "docs/orcel/notices/fd06-files.txt": "crates/core/src/port.rs\n",
     "docs/orcel/notices/fd04-files.txt": "",
-    "docs/orcel/notices/upstream-MIT.txt": "MIT License\n",
-    "docs/orcel/notices/agpl-AGPL-3.0.txt": "AGPL notice\n",
+    "docs/orcel/notices/upstream-MIT.txt": "MIT License\n\nPermission is hereby granted, free of charge, to any person\n",
+    "docs/orcel/notices/agpl-AGPL-3.0.txt": "Upstream licence: GNU Affero General Public License v3.0\n",
     "docs/orcel/grants/attestation.md": "Founder attestation\n",
     "docs/orcel/upstream_provenance.json": {
       schema: "orcel-adapted-source-provenance/1",
@@ -151,21 +151,48 @@ test("an FD-06 allowlist path without an AGPL donor entry fails", () => {
 test("a restricted donor must cite an attestation for its family and list files, not directories", () => {
   const donors = { ...manifest().donors, agpl: { ...manifest().donors.agpl, attestation: "FA-1" } };
   expectOne(run(base({}, { donors })), "donor agpl: AGPL licence needs an attestation that covers AGPL");
-  const files = [...manifest().files, { path: "crates/core/", donor: "agpl" }];
+  const files = [...manifest().files, { path: "crates/core/", donor: "agpl", patches: "none" }];
   expectOne(run(base({}, { files })), "must list files, not a directory");
 });
 
 test("an isolated component may hold restricted donor code as a directory entry", () => {
   const component = { path: "apps/sidecar/", families: ["AGPL"], attestation: "FD-06", reason: "fixture" };
-  const files = [...manifest().files, { path: "apps/sidecar/", donor: "agpl" }];
+  const files = [...manifest().files, { path: "apps/sidecar/", donor: "agpl", patches: "none" }];
   const tree = base({ "apps/sidecar/src/server.ts": "// notice in docs/orcel/notices/agpl-AGPL-3.0.txt\n" }, { files });
   tree["docs/orcel/notices/licence-policy.json"] = basePolicy({ isolated_components: [component] });
   assert.deepEqual(run(tree), []);
 });
 
 test("entries must point at existing paths with the right shape", () => {
-  const files = [...manifest().files, { path: "apps/tool/src/gone.ts", donor: "upstream" }, { path: "apps/tool/src", donor: "upstream" }];
+  const files = [
+    ...manifest().files,
+    { path: "apps/tool/src/gone.ts", donor: "upstream" },
+    { path: "apps/tool/src", donor: "upstream" },
+    { path: "apps/tool/third_party/", donor: "upstream" },
+  ];
   const errors = run(base({}, { files }));
   expectOne(errors, "file apps/tool/src/gone.ts: does not exist");
   expectOne(errors, "file apps/tool/src: a directory entry must end in '/'");
+  expectOne(errors, 'file apps/tool/third_party/: a directory entry needs "patches"');
+});
+
+test("an unpinned upstream/ directory fails, wherever the segment appears", () => {
+  for (const path of ["apps/tool/upstream/parser.c", "crates/core/src/vendor/lib.rs", "packages/sdk/vendored/x.js", "third_party/obscura/src/main.rs", "scripts/upstream/helper.py"]) {
+    const errors = run(base({ [path]: "int main(void) { return 0; }\n" }));
+    assert.equal(errors.length, 1, `${path}: ${errors.join("; ")}`);
+    expectOne(errors, `${path}: donor file (under a`);
+  }
+});
+
+test("a pinned upstream/ directory entry with its patch queue passes", () => {
+  const files = [...manifest().files, { path: "apps/tool/upstream/", donor: "upstream", patches: "apps/tool/upstream/PATCHES.md" }];
+  const tree = base({ "apps/tool/upstream/parser.c": "int x;\n", "apps/tool/upstream/PATCHES.md": "No patches.\n" }, { files });
+  assert.deepEqual(run(tree), []);
+});
+
+test("a donor whose notice does not carry its declared licence text fails", () => {
+  const errors = run(base({ "docs/orcel/notices/upstream-MIT.txt": "Licensed under the Apache License, Version 2.0\n" }));
+  expectOne(errors, "donor upstream: licence text docs/orcel/notices/upstream-MIT.txt does not contain the MIT licence text");
+  const donors = { ...manifest().donors, upstream: { ...manifest().donors.upstream, licence: "WTFPL" } };
+  expectOne(run(base({}, { donors })), "no licence-text check is defined for WTFPL");
 });

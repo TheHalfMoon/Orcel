@@ -4,6 +4,7 @@
 // licence families. See docs/orcel/notices/licence-policy.json.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -74,14 +75,77 @@ export function underAny(path, prefixes) {
   return prefixes.some((prefix) => path.startsWith(prefix));
 }
 
-/** The file's text, or null for a binary or very large file. */
-export function readText(root, path) {
+export const MAX_TEXT_BYTES = 4 * 1024 * 1024;
+const ARCHIVE = /\.(jar|war|whl|egg|tgz|tar|gz|bz2|xz|zst|zip|7z|rar|nupkg|crate|gem|deb|rpm|apk|aar)$/i;
+
+/**
+ * Reads a file for scanning. Returns {text} for text (UTF-8, or UTF-16 with a
+ * byte-order mark), or {unreadable} naming why the scan cannot read it: an
+ * archive, an oversized file, or binary content. The gates never skip an
+ * unreadable file silently; they require provenance or an exception for it.
+ */
+export function readScan(root, path) {
+  if (ARCHIVE.test(path)) return { unreadable: "archive" };
   const full = join(root, path);
-  if (statSync(full).size > 4 * 1024 * 1024) return null;
+  if (statSync(full).size > MAX_TEXT_BYTES) return { unreadable: "larger than 4 MiB" };
   const bytes = readFileSync(full);
-  if (bytes.subarray(0, 8192).includes(0)) return null;
-  return bytes.toString("utf8");
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return { text: bytes.subarray(2).toString("utf16le") };
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const swapped = Buffer.from(bytes.subarray(2));
+    swapped.swap16();
+    return { text: swapped.toString("utf16le") };
+  }
+  if (bytes.includes(0)) return { unreadable: "binary" };
+  const text = bytes.toString("utf8");
+  return { text: text.charCodeAt(0) === 0xfeff ? text.slice(1) : text };
 }
+
+/** The file's text, or null when readScan cannot read it. */
+export function readText(root, path) {
+  return readScan(root, path).text ?? null;
+}
+
+/** SHA-256 of the file with CRLF folded to LF, so a pin holds on every OS checkout. */
+export function contentSha256(root, path) {
+  const text = readFileSync(join(root, path)).toString("latin1").replace(/\r\n/g, "\n");
+  return createHash("sha256").update(Buffer.from(text, "latin1")).digest("hex");
+}
+
+/**
+ * A pinned allowlist: one "<sha256>  <path>" per line (sha256sum format,
+ * LF-normalized content); blank lines and '#' comments are ignored.
+ */
+export function readPinnedList(root, path) {
+  return readList(root, path).map((line) => {
+    const match = /^([0-9a-f]{64})\s+(\S+)$/.exec(line);
+    return match ? { sha256: match[1], path: match[2] } : { sha256: null, path: line };
+  });
+}
+
+// Text a donor's licence file or notice must contain for its declared
+// licence, so a manifest cannot name one licence while the copied notice
+// carries another.
+const LICENCE_TEXT = {
+  MIT: /Permission is hereby granted, free of charge/i,
+  "Apache-2.0": /Apache License,?\s+Version 2\.0/i,
+  "BSD-2-Clause": /Redistribution and use in source and binary forms/i,
+  "BSD-3-Clause": /Redistribution and use in source and binary forms/i,
+  ISC: /Permission to use, copy, modify, and\/or distribute this software/i,
+  "AGPL-3.0": /GNU Affero General Public License/i,
+  "AGPL-3.0-only": /GNU Affero General Public License/i,
+  "AGPL-3.0-or-later": /GNU Affero General Public License/i,
+  "FSL-1.1-MIT": /Functional Source License, Version 1\.1/i,
+};
+
+/** Null when `text` carries the licence text of `licence`, else why not. */
+export function licenceTextProblem(licence, text) {
+  const pattern = LICENCE_TEXT[licence];
+  if (!pattern) return `no licence-text check is defined for ${licence}`;
+  return pattern.test(text) ? null : `does not contain the ${licence} licence text`;
+}
+
+/** A path segment that marks vendored or copied upstream code. */
+export const DONOR_SEGMENT = /(^|\/)(upstream|vendor|vendored|third_party)\//;
 
 // ---------------------------------------------------------------- SPDX
 
@@ -221,8 +285,10 @@ export function markerFamilies(line, allowed) {
   const found = new Set();
   const spdx = /SPDX-License-Identifier:\s*(.*)$/i.exec(line);
   if (spdx) {
-    const expression = spdx[1].replace(/\s*(\*\/|-->|#}|%>).*$/, "").trim();
-    for (const family of familiesOfExpression(expression, allowed)) found.add(family);
+    // The expression runs while the characters are SPDX ones; a comment
+    // close, quote or escape (a header inside a string literal) ends it.
+    const expression = /^[A-Za-z0-9.+\-()\s]*/.exec(spdx[1])[0].trim();
+    if (expression) for (const family of familiesOfExpression(expression, allowed)) found.add(family);
   }
   for (const [family, pattern] of TEXT_MARKERS) {
     if (pattern.test(line)) found.add(family);

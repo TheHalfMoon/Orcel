@@ -7,8 +7,9 @@
 //!    `docs/orcel/notices/licence-policy.json`; every `crates/*` directory is
 //!    a workspace member, so no crate escapes these rules.
 //! 2. `orcel-contracts` depends on `serde` and `serde_json` only (dev:
-//!    `schemars`), has no target-specific dependency and no `cfg(target_os)`
-//!    (or `cfg(windows)` / `cfg(unix)`) code.
+//!    `schemars`), has no target-specific dependency and no platform code:
+//!    no `cfg(..)`, `cfg!(..)` or `cfg_attr(..)` naming `windows`, `unix` or
+//!    a `target_*` key, in any form (`cfg(any(windows))`, multi-line, ...).
 //! 3. `orcel-web` depends on `orcel-contracts` only and `orcel-jobs` on
 //!    `orcel-contracts` and `orcel-journal` only (plus the section 7.2
 //!    libraries), with no target-specific dependency. The diagram's "only"
@@ -19,10 +20,18 @@
 //!    its own `[workspace]` and lockfile, and tokio and V8 never enter this
 //!    graph (AD-16).
 //! 5. Every workspace crate's licence set (its own and its resolved
-//!    dependencies', all targets) passes the allowlist and named exceptions
-//!    of the root `deny.toml`.
+//!    dependencies', all targets, all features) passes the allowlist and
+//!    named exceptions of the root `deny.toml`; every exception names a
+//!    crate version that is in the graph (no stale exception).
 //! 6. No registry dependency uses a wildcard version requirement (the root
 //!    `deny.toml` leaves wildcards to this test, see its `[bans]`).
+//! 7. Nothing redirects the graph around these rules: the root Cargo.toml
+//!    has no `[patch]` or `[replace]`, a root `.cargo/config(.toml)` has no
+//!    `[patch]` or `paths`, and every path package in the resolved graph
+//!    lives under `crates/`.
+//!
+//! The metadata is read with every feature enabled, so feature-gated
+//! dependencies are checked too.
 //!
 //! The rules are pure functions over the metadata JSON, so the negative
 //! tests below feed them small hand-built graphs.
@@ -363,17 +372,10 @@ fn violations(
         }
     }
     for (path, text) in contracts_sources {
-        for (number, line) in text.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or("");
-            if ["target_os", "cfg(windows", "cfg(unix", "target_family"]
-                .iter()
-                .any(|needle| code.contains(needle))
-            {
-                out.push(format!(
-                    "rule 2: platform code in orcel-contracts at {path}:{}",
-                    number + 1
-                ));
-            }
+        for (line, cfg) in platform_cfgs(text) {
+            out.push(format!(
+                "rule 2: platform code in orcel-contracts at {path}:{line}: {cfg}"
+            ));
         }
     }
 
@@ -463,8 +465,13 @@ fn violations(
                 continue;
             };
             let mut allowed = policy.allow.clone();
-            if let Some(extra) = policy.exceptions.get(package.name) {
-                allowed.extend(extra.iter().cloned());
+            for key in [
+                package.name.to_string(),
+                format!("{}@{}", package.name, package.version),
+            ] {
+                if let Some(extra) = policy.exceptions.get(&key) {
+                    allowed.extend(extra.iter().cloned());
+                }
             }
             match package.license {
                 Some(license) if spdx_allowed(license, &allowed) => {}
@@ -479,14 +486,137 @@ fn violations(
             }
         }
     }
+    for key in policy.exceptions.keys() {
+        let used = all
+            .values()
+            .any(|p| *key == p.name || *key == format!("{}@{}", p.name, p.version));
+        if !used {
+            out.push(format!(
+                "rule 5: deny.toml exception {key} matches no crate in the graph; remove it"
+            ));
+        }
+    }
+
+    // Rule 7: every path package lives under crates/.
+    for (id, package) in &all {
+        if id.starts_with("path+") && !package.dir.starts_with("crates/") {
+            out.push(format!(
+                "rule 7: path package {} at {} is in the main graph, outside crates/",
+                package.name, package.dir
+            ));
+        }
+    }
     out.sort();
     out.dedup();
     out
 }
 
+/// Rule 7: `[patch]` or `[replace]` in the root manifest, or `[patch]` or
+/// `paths` in a root `.cargo/config(.toml)`, would let a dependency be
+/// swapped without the graph above showing it.
+fn graph_overrides(manifest: &str, configs: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    let table = |line: &str| line.split('#').next().unwrap_or("").trim().to_string();
+    for line in manifest.lines().map(table) {
+        if line.starts_with("[patch") || line.starts_with("[replace") {
+            out.push(format!("rule 7: the root Cargo.toml has {line}"));
+        }
+    }
+    for (path, text) in configs {
+        for line in text.lines().map(table) {
+            if line.starts_with("[patch") || line.starts_with("paths") {
+                out.push(format!("rule 7: {path} has {line}"));
+            }
+        }
+    }
+    out
+}
+
+/// `(line, text)` of every `cfg(..)`, `cfg!(..)` or `cfg_attr(..)` in `code`
+/// that names a platform, with comments removed first.
+fn platform_cfgs(text: &str) -> Vec<(usize, String)> {
+    const PLATFORM: &[&str] = &[
+        "windows",
+        "unix",
+        "target_os",
+        "target_family",
+        "target_arch",
+        "target_env",
+        "target_vendor",
+        "target_pointer_width",
+        "target_endian",
+        "target_has_atomic",
+    ];
+    let code: String = text
+        .lines()
+        .map(|line| line.split("//").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = code.as_bytes();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = code[from..].find("cfg") {
+        let start = from + at;
+        from = start + 3;
+        let before_ok =
+            start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        let mut open = start + 3;
+        if code[open..].starts_with("_attr") {
+            open += 5;
+        } else if code[open..].starts_with('!') {
+            open += 1;
+        }
+        while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+            open += 1;
+        }
+        if !before_ok || bytes.get(open) != Some(&b'(') {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = open;
+        for (offset, ch) in code[open..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // String literals ("windows-names" in a feature name) are not keys.
+        let mut inner = String::new();
+        let mut quoted = false;
+        for ch in code[open..=end.max(open)].chars() {
+            if ch == '"' {
+                quoted = !quoted;
+            } else if !quoted {
+                inner.push(ch);
+            }
+        }
+        let names_platform = inner
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|token| PLATFORM.contains(&token));
+        if names_platform {
+            let line = code[..start].matches('\n').count() + 1;
+            out.push((line, code[start..=end.max(open)].replace('\n', " ")));
+        }
+    }
+    out
+}
+
 fn cargo_metadata(root: &Path) -> Value {
     let output = Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version", "1", "--locked"])
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--locked",
+            "--all-features",
+        ])
         .current_dir(root)
         .output()
         .expect("run cargo metadata");
@@ -568,7 +698,7 @@ fn the_main_workspace_keeps_the_section_3_2_dependency_direction() {
         policy.allow.contains("Apache-2.0") && policy.allow.contains("MIT"),
         "deny.toml allow list not read: {policy:?}"
     );
-    let found = violations(
+    let mut found = violations(
         &meta,
         &policy,
         &rust_sources(&root, "crates/orcel-contracts/src"),
@@ -576,6 +706,16 @@ fn the_main_workspace_keeps_the_section_3_2_dependency_direction() {
         &isolated_components(&root),
         &separate_workspaces(&root),
     );
+    let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("read the root Cargo.toml");
+    let configs: Vec<(String, String)> = [".cargo/config.toml", ".cargo/config"]
+        .iter()
+        .filter_map(|path| {
+            fs::read_to_string(root.join(path))
+                .ok()
+                .map(|text| (path.to_string(), text))
+        })
+        .collect();
+    found.extend(graph_overrides(&manifest, &configs));
     assert!(
         found.is_empty(),
         "section 3.2 violations:\n{}",
@@ -601,6 +741,13 @@ fn the_deny_toml_allowlist_is_the_wp1_01_allowlist() {
     .map(|s| s.to_string())
     .collect();
     assert_eq!(policy.allow, expected);
+    // Every exception pins the crate version it was reviewed at.
+    for krate in policy.exceptions.keys() {
+        assert!(
+            krate.contains('@'),
+            "deny.toml exception {krate} must name crate@version"
+        );
+    }
     // MPL-2.0 only by named exception, and none of the refused families at all.
     for (krate, licences) in &policy.exceptions {
         for licence in licences {
@@ -695,6 +842,10 @@ fn metadata(members: Vec<Value>, others: Vec<Value>, edges: &[(&str, &str)]) -> 
 }
 
 fn policy() -> LicencePolicy {
+    parse_deny_toml("[licenses]\nallow = [\n  \"Apache-2.0\",\n  \"MIT\",\n]\n")
+}
+
+fn boost_policy() -> LicencePolicy {
     parse_deny_toml(
         "[licenses]\nallow = [\n  \"Apache-2.0\",\n  \"MIT\",\n]\nexceptions = [\n  { crate = \"boost\", allow = [\"BSL-1.0\"] },\n]\n",
     )
@@ -922,7 +1073,7 @@ fn licence_exceptions_are_per_crate_and_or_expressions_need_one_branch() {
             .unwrap()
             .push(json!({ "pkg": p["id"], "dep_kinds": [{ "kind": null }] }));
     }
-    let found = check(&meta);
+    let found = violations(&meta, &boost_policy(), &[], &[], &[], &[]);
     assert_eq!(
         found,
         vec!["rule 5: orceld reaches other-boost 1.0.0 under \"BSL-1.0\", not on the deny.toml allowlist".to_string()]
@@ -976,6 +1127,107 @@ fn a_crate_outside_the_workspace_or_a_merged_separate_workspace_fails() {
         found
             .iter()
             .any(|v| v.contains("rule 4: apps/orcel-doc-parser must keep its own [workspace]")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn rule_2_catches_every_platform_cfg_form() {
+    let caught = [
+        "#[cfg(windows)]",
+        "#[cfg(any(windows))]",
+        "#[cfg(all(unix, not(target_os = \"macos\")))]",
+        "#[cfg_attr(target_family = \"wasm\", allow(dead_code))]",
+        "let wide = cfg!(target_pointer_width = \"64\");",
+        "if cfg! (unix) {}",
+        "#[cfg(\n    any(\n        windows,\n    )\n)]",
+        "#[cfg(target_arch = \"x86_64\")]",
+    ];
+    for code in caught {
+        assert_eq!(platform_cfgs(code).len(), 1, "not caught: {code}");
+    }
+    let multi = platform_cfgs("fn a() {}\n#[cfg(\n  any(windows)\n)]\nfn b() {}\n");
+    assert_eq!(multi[0].0, 2);
+    let clean = [
+        "#[cfg(test)]",
+        "#[cfg(feature = \"windows-names\")]",
+        "// #[cfg(windows)] only in a comment",
+        "let config = 1; // cfg(windows) mentioned",
+        "fn mycfg(unix: bool) {}",
+    ];
+    for code in clean {
+        assert!(platform_cfgs(code).is_empty(), "false positive: {code}");
+    }
+}
+
+#[test]
+fn patch_replace_and_cargo_config_paths_are_refused() {
+    let manifest = "[workspace]\nmembers = []\n\n[patch.crates-io]\nserde = { path = \"../serde\" }\n[replace]\n\"a:1.0.0\" = { path = \"x\" }\n";
+    let configs = vec![(
+        ".cargo/config.toml".to_string(),
+        "paths = [\"../fork\"]\n[patch.crates-io]\n".to_string(),
+    )];
+    let found = graph_overrides(manifest, &configs);
+    assert_eq!(found.len(), 4, "{found:?}");
+    assert!(graph_overrides("[workspace]\n# [patch] in a comment\n", &[]).is_empty());
+}
+
+#[test]
+fn a_path_package_outside_crates_in_the_graph_fails() {
+    let mut meta = sound_graph();
+    let stray = json!({
+        "id": "path+file:///w/apps/shim#shim@0.1.0",
+        "name": "shim", "version": "0.1.0", "license": "MIT",
+        "manifest_path": "/w/apps/shim/Cargo.toml", "source": null, "dependencies": [],
+    });
+    meta["packages"].as_array_mut().unwrap().push(stray);
+    let found = check(&meta);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains("rule 7: path package shim at apps/shim is in the main graph")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_stale_or_version_mismatched_deny_exception_fails() {
+    let mut meta = sound_graph();
+    let boost = registry_package("boost", "BSL-1.0");
+    meta["packages"].as_array_mut().unwrap().push(boost.clone());
+    meta["resolve"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": boost["id"], "deps": [] }));
+    let orceld = meta["resolve"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|n| n["id"].as_str().unwrap().contains("#orceld@"))
+        .unwrap();
+    orceld["deps"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "pkg": boost["id"], "dep_kinds": [{ "kind": null }] }));
+    let pinned = parse_deny_toml(
+        "[licenses]\nallow = [\"Apache-2.0\", \"MIT\"]\nexceptions = [\n  { crate = \"boost@1.0.0\", allow = [\"BSL-1.0\"] },\n  { crate = \"gone@2.0.0\", allow = [\"BSL-1.0\"] },\n]\n",
+    );
+    let found = violations(&meta, &pinned, &[], &[], &[], &[]);
+    assert_eq!(
+        found,
+        vec![
+            "rule 5: deny.toml exception gone@2.0.0 matches no crate in the graph; remove it"
+                .to_string()
+        ]
+    );
+    let wrong_version = parse_deny_toml(
+        "[licenses]\nallow = [\"Apache-2.0\", \"MIT\"]\nexceptions = [\n  { crate = \"boost@0.9.0\", allow = [\"BSL-1.0\"] },\n]\n",
+    );
+    let found = violations(&meta, &wrong_version, &[], &[], &[], &[]);
+    assert!(
+        found
+            .iter()
+            .any(|v| v.contains("orceld reaches boost 1.0.0 under \"BSL-1.0\"")),
         "{found:?}"
     );
 }

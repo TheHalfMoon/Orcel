@@ -96,6 +96,30 @@ test("workspace packages take their licence from package.json", () => {
   assert.match(errors[0], /package-lock\.json: apps\/mcp: no licence declared/);
 });
 
-test("lockfiles outside apps/, packages/ and tests/ (other than the root one) are not read", () => {
-  assert.deepEqual(run({ "docs/example/package-lock.json": lock({ "node_modules/g": { license: "GPL-3.0-only" } }) }), []);
+test("a lockfile anywhere in the repository is read", () => {
+  const errors = run({ "docs/example/package-lock.json": lock({ "node_modules/g": { license: "GPL-3.0-only" } }) });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /docs\/example\/package-lock\.json: g: licence "GPL-3\.0-only"/);
+});
+
+test("other lockfile kinds fail: the gate reads only package-lock.json", () => {
+  for (const name of ["npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"]) {
+    const errors = run({ [`apps/a/${name}`]: "{}\n" });
+    assert.equal(errors.length, 1, `${name}: ${errors.join("; ")}`);
+    assert.match(errors[0], /only package-lock\.json is read/);
+  }
+});
+
+test("a package.json with dependencies but no package-lock.json fails; workspace members use the root lock", () => {
+  const unlocked = { "packages/sdk/package.json": { name: "sdk", license: "MIT", dependencies: { left: "1.0.0" } } };
+  const errors = run(unlocked);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /packages\/sdk\/package\.json: declares dependencies but has no package-lock\.json/);
+  assert.deepEqual(run({ "packages/sdk/package.json": { name: "sdk", scripts: { build: "tsc" } } }), []);
+  const member = {
+    ...unlocked,
+    "package.json": { name: "root", private: true, workspaces: ["packages/sdk"] },
+    "package-lock.json": lock({ "packages/sdk": { name: "sdk", license: "MIT" } }),
+  };
+  assert.deepEqual(run(member), []);
 });

@@ -1,7 +1,7 @@
 # cargo-deny configuration for the main workspace (crates/*), WP1-01 of
 # docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md.
 # CI runs `cargo deny check licenses bans sources` (job licence-gates, all
-# three OS legs). It mirrors the per-app files (apps/*/deny.toml); the same
+# three OS legs, with -D license-exception-not-encountered). It mirrors the per-app files (apps/*/deny.toml); the same
 # allowlist is applied per crate by crates/orceld/tests/dependency_direction.rs
 # (section 3.2 rule 5) and to npm lockfiles by scripts/check-npm-licenses.mjs.
 #
@@ -11,6 +11,11 @@
 # missing licenses fail. An `OR` expression passes when one branch is allowed
 # (r-efi's "MIT OR Apache-2.0 OR LGPL-2.1-or-later" is taken as MIT).
 # MPL-2.0 is admitted only by a named exception; there is none today.
+[graph]
+# Every feature of every workspace crate, so no feature-gated dependency
+# (test-only and development features included) escapes the check.
+all-features = true
+
 [licenses]
 confidence-threshold = 0.93
 allow = [
@@ -30,8 +35,11 @@ exceptions = [
   # Boost Software License 1.0 (permissive; not the Business Source License).
   # clipboard-win and its error-code reach orcel-provider-clipboard through
   # arboard on Windows only.
-  { crate = "clipboard-win", allow = ["BSL-1.0"] },
-  { crate = "error-code", allow = ["BSL-1.0"] },
+  # Each exception names the exact version, so an upgrade is re-reviewed.
+  # CI runs with -D license-exception-not-encountered, so an exception no
+  # crate uses fails; dependency_direction.rs checks the same.
+  { crate = "clipboard-win@5.4.1", allow = ["BSL-1.0"] },
+  { crate = "error-code@3.4.0", allow = ["BSL-1.0"] },
 ]
 
 [licenses.private]
