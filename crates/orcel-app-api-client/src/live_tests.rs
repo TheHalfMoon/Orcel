@@ -286,7 +286,11 @@ fn live(label: &str) -> Option<(Orceld, Arc<AppApiClient>)> {
     let client = {
         let client = AppApiClient::with_instance(&instance).expect("endpoint");
         // The client derives the same pipe name orceld serves.
-        assert_eq!(client.endpoint().name, orceld.endpoint);
+        // Compared without printing either: the names carry the user's SID.
+        assert!(
+            client.endpoint().name == orceld.endpoint,
+            "the client's pipe name differs from the one orceld serves"
+        );
         client
     };
     #[cfg(unix)]
@@ -545,6 +549,36 @@ fn a_cursor_ahead_of_orcelds_head_gets_a_gap_snapshot() {
     ));
 }
 
+#[cfg(unix)]
+#[test]
+fn unsubscribe_returns_promptly_while_the_acknowledgement_is_awaited() {
+    use std::io::Read;
+    use std::os::unix::net::UnixListener;
+    let dir = Sandbox::new();
+    let path = dir.base.join("r").join("s.sock");
+    let listener = UnixListener::bind(&path).expect("bind");
+    let (got_request, request) = channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf);
+        let _ = got_request.send(());
+        // Never acknowledge; read until the client goes away.
+        while matches!(stream.read(&mut buf), Ok(n) if n > 0) {}
+    });
+    let client = Arc::new(AppApiClient::with_socket(path));
+    let window = Window::new(Arc::clone(&client));
+    let _feed = window.subscribe(None);
+    request
+        .recv_timeout(WAIT)
+        .expect("the subscription request");
+    let started = Instant::now();
+    window.unsubscribe();
+    let took = started.elapsed();
+    assert!(took < Duration::from_secs(1), "unsubscribe took {took:?}");
+    server.join().unwrap();
+}
+
 #[cfg(windows)]
 mod windows {
     use super::*;
@@ -554,11 +588,15 @@ mod windows {
     use windows_sys::Win32::Foundation::{
         GetLastError, LocalFree, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
     };
-    use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW,
+        SDDL_REVISION_1,
+    };
     use windows_sys::Win32::Security::{
         DuplicateTokenEx, GetLengthSid, SecurityImpersonation, SetTokenInformation,
-        TokenIntegrityLevel, TokenPrimary, SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT,
-        TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+        TokenIntegrityLevel, TokenPrimary, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+        SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
+        TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
     };
     use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile, PIPE_ACCESS_DUPLEX};
     use windows_sys::Win32::System::Pipes::{
@@ -576,11 +614,37 @@ mod windows {
     /// to serve. Read by test code only.
     const HELPER_INSTANCE: &str = "ORCEL_A1_TEST_LOW_SERVER_INSTANCE";
 
-    /// A plain blocking pipe server of `name` with the creator's default
-    /// security.
-    fn serve(name: &str) -> Owned {
+    /// orceld's own pipe security: this user only, labeled Medium.
+    fn orceld_sddl() -> String {
+        let sid = crate::win::current_user_sid().unwrap();
+        format!("D:P(A;;GA;;;{sid})S:(ML;;NWNR;;;ME)")
+    }
+
+    /// A plain blocking pipe server of `name`, with the security descriptor
+    /// `sddl`, or the creator's default security (no label) when `None`.
+    fn serve(name: &str, sddl: Option<&str>) -> Owned {
         let wide = wide(name);
-        // SAFETY: `wide` is NUL-terminated; default security attributes.
+        let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        if let Some(sddl) = sddl {
+            let sddl = crate::win::wide(sddl);
+            // SAFETY: `sddl` is NUL-terminated; `descriptor` is freed below.
+            let made = unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    sddl.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut descriptor,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_ne!(made, 0, "the test pipe's security descriptor");
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        // SAFETY: `wide` is NUL-terminated; `attributes` and its descriptor
+        // live through the call.
         let handle = unsafe {
             CreateNamedPipeW(
                 wide.as_ptr(),
@@ -590,9 +654,17 @@ mod windows {
                 65_536,
                 65_536,
                 0,
-                std::ptr::null(),
+                if descriptor.is_null() {
+                    std::ptr::null()
+                } else {
+                    &attributes
+                },
             )
         };
+        if !descriptor.is_null() {
+            // SAFETY: freed once, after the pipe copied it.
+            unsafe { LocalFree(descriptor) };
+        }
         assert_ne!(
             handle,
             INVALID_HANDLE_VALUE,
@@ -636,7 +708,11 @@ mod windows {
         let endpoint = Endpoint::for_this_user().unwrap();
         std::env::remove_var("ORCEL_APP_API_INSTANCE");
         std::env::remove_var("ORCEL_APP_API");
-        assert_eq!(endpoint.name, format!(r"\\.\pipe\orcel-{sid}-app"));
+        // Compared without printing either: the name carries the user's SID.
+        assert!(
+            endpoint.name == format!(r"\\.\pipe\orcel-{sid}-app"),
+            "the endpoint is not the fixed pipe name"
+        );
         // The Windows endpoint code reads no environment at all.
         for (file, source) in [
             ("win.rs", include_str!("win.rs")),
@@ -659,7 +735,7 @@ mod windows {
     fn a_server_of_this_user_at_medium_is_accepted_and_an_over_cap_frame_is_refused() {
         let instance = instance("f");
         let client = AppApiClient::with_instance(&instance).unwrap();
-        let pipe = serve(&client.endpoint().name);
+        let pipe = serve(&client.endpoint().name, Some(&orceld_sddl()));
         let server = std::thread::spawn(move || {
             // SAFETY: blocking connect on a live server handle.
             unsafe { ConnectNamedPipe(pipe.0, std::ptr::null_mut()) };
@@ -706,7 +782,12 @@ mod windows {
             return;
         };
         let endpoint = Endpoint::with_instance(instance.to_str().unwrap()).unwrap();
-        let pipe = serve(&endpoint.name);
+        // Two connections, one at a time: the parent's probe, then the
+        // client.
+        let pipe = serve(&endpoint.name, None);
+        assert_eq!(received(&pipe), 0, "the probe wrote to the helper");
+        drop(pipe);
+        let pipe = serve(&endpoint.name, None);
         assert_eq!(
             received(&pipe),
             0,
@@ -822,6 +903,26 @@ mod windows {
         let client = AppApiClient::with_instance(&instance).unwrap();
         let helper = spawn_low(&instance);
         let deadline = Instant::now() + WAIT;
+        // The pipe object a Low integrity process creates is labeled Low: the
+        // object check refuses it on its own too.
+        let (process, object) = loop {
+            if let Some(facts) = crate::win::probe(&client.endpoint().name) {
+                break facts;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the helper never served its pipe"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(
+            crate::identity::decide(&process),
+            Err(IdentityRefusal::BelowMedium)
+        );
+        assert_eq!(
+            crate::identity::decide_object(&object),
+            Err(IdentityRefusal::PipeLabelBelowMedium)
+        );
         let refused = loop {
             match client.status() {
                 Err(ClientError::Unavailable(Unavailable::NotRunning)) => {
@@ -849,5 +950,74 @@ mod windows {
         // SAFETY: a live, exited process handle.
         unsafe { GetExitCodeProcess(helper.0, &mut code) };
         assert_eq!(code, 0, "the helper saw bytes from the client (or failed)");
+    }
+
+    /// A same-user, Medium integrity server whose pipe object fails the
+    /// object check: it must be refused before any byte is written.
+    fn refused_by_the_pipe_object(
+        sddl: Option<&str>,
+    ) -> Result<crate::sanitize::status::Status, ClientError> {
+        let instance = instance("p");
+        let client = AppApiClient::with_instance(&instance).unwrap();
+        let pipe = serve(&client.endpoint().name, sddl);
+        let server = std::thread::spawn(move || received(&pipe));
+        let answer = client.status();
+        assert_eq!(server.join().unwrap(), 0, "the client wrote to the server");
+        answer
+    }
+
+    #[test]
+    fn a_pipe_labeled_below_medium_is_refused_before_any_write() {
+        let sid = crate::win::current_user_sid().unwrap();
+        let low = format!("D:P(A;;GA;;;{sid})S:(ML;;NWNR;;;LW)");
+        assert_eq!(
+            refused_by_the_pipe_object(Some(&low)),
+            Err(ClientError::NotYours(IdentityRefusal::PipeLabelBelowMedium))
+        );
+    }
+
+    #[test]
+    fn an_unlabeled_pipe_is_refused_before_any_write() {
+        assert_eq!(
+            refused_by_the_pipe_object(None),
+            Err(ClientError::NotYours(IdentityRefusal::PipeUnlabeled))
+        );
+    }
+
+    #[test]
+    fn unsubscribe_returns_promptly_while_the_acknowledgement_is_awaited() {
+        let instance = instance("u");
+        let client = Arc::new(AppApiClient::with_instance(&instance).unwrap());
+        let pipe = serve(&client.endpoint().name, Some(&orceld_sddl()));
+        let (got_request, request) = channel();
+        let server = std::thread::spawn(move || {
+            // SAFETY: blocking connect on a live server handle.
+            unsafe { ConnectNamedPipe(pipe.0, std::ptr::null_mut()) };
+            let mut buf = [0u8; 4096];
+            let mut read = 0u32;
+            // SAFETY: `buf` holds its length; blocking read of the request.
+            unsafe {
+                ReadFile(
+                    pipe.0,
+                    buf.as_mut_ptr(),
+                    buf.len() as u32,
+                    &mut read,
+                    std::ptr::null_mut(),
+                )
+            };
+            let _ = got_request.send(());
+            // Never acknowledge; read until the client goes away.
+            received(&pipe)
+        });
+        let window = Window::new(Arc::clone(&client));
+        let _feed = window.subscribe(None);
+        request
+            .recv_timeout(WAIT)
+            .expect("the subscription request");
+        let started = Instant::now();
+        window.unsubscribe();
+        let took = started.elapsed();
+        assert!(took < Duration::from_secs(1), "unsubscribe took {took:?}");
+        server.join().unwrap();
     }
 }

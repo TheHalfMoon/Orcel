@@ -1,14 +1,27 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Portions copyright (c) 2026 Cua AI, Inc.; modifications copyright Orcel.
+
 //! Windows: the fixed pipe, the identification-only open, and the server
 //! identity read before the first write.
 //!
-//! Written for this crate from the Win32 documentation and the WPF preview's
-//! checks (`apps/orcel-desktop-preview/src/Program.cs`, `ServerIsThisUser`
-//! and `ProcessRunsAsThisUser`); orceld's `describe_holder` performs the
-//! same identification-only open on the server side of the protocol.
+//! Provenance (transplant rows T-CUA-25 and T-CUA-26): the handle guard, the
+//! wide-string helper, the token-user buffer, the SID string, the pipe name,
+//! the identification-only `CreateFileW` and the `OpenProcess`/`EqualSid`
+//! account comparison adapt orceld's FSL-1.1-MIT identity helpers
+//! (`Owned`, `wide`, `TokenUserBuf`, `token_user`, `current_user_sid`,
+//! `pipe_name`, `describe_holder` and `same_account` in
+//! `crates/orceld/src/app_api.rs`), which adapt cua@a802eaf26ca9's
+//! `cua-keyvault` `winpipe.rs` and `winpeer.rs`; notice in
+//! `docs/orcel/notices/cua-FSL-1.1-MIT.txt`. Modifications: a client rather
+//! than a server; the integrity half (the token's mandatory label at Medium
+//! or above) is ported from the WPF preview's `ProcessRunsAsThisUser`
+//! (`apps/orcel-desktop-preview/src/Program.cs`); the pipe object's owner and
+//! label are read with `GetSecurityInfo`; reads and the connect wait can be
+//! cancelled from another thread.
 
 use crate::error::{ClientError, Unavailable};
-use crate::identity::{self, IdentityRefusal, ServerFacts};
-use crate::transport::{Canceller, Conn};
+use crate::identity::{self, IdentityRefusal, ObjectFacts, ServerFacts};
+use crate::transport::{Cancel, Conn};
 use std::ffi::c_void;
 use std::io;
 use std::sync::Arc;
@@ -18,20 +31,24 @@ use windows_sys::Win32::Foundation::{
     ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_PIPE_BUSY, ERROR_PIPE_NOT_CONNECTED,
     GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
-use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+use windows_sys::Win32::Security::Authorization::{
+    ConvertSidToStringSidW, GetSecurityInfo, SE_KERNEL_OBJECT,
+};
 use windows_sys::Win32::Security::{
-    EqualSid, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
-    TokenIntegrityLevel, TokenUser, TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
-    TOKEN_USER,
+    EqualSid, GetAce, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
+    TokenIntegrityLevel, TokenOwner, TokenUser, ACE_HEADER, ACL, LABEL_SECURITY_INFORMATION,
+    OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SYSTEM_MANDATORY_LABEL_ACE,
+    TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, SECURITY_IDENTIFICATION,
     SECURITY_SQOS_PRESENT,
 };
 use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
+use windows_sys::Win32::System::SystemServices::SYSTEM_MANDATORY_LABEL_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, OpenProcess, OpenProcessToken, SetEvent,
-    WaitForMultipleObjects, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION,
+    WaitForMultipleObjects, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
@@ -89,24 +106,119 @@ impl TokenInfo {
         unsafe { (*(self.0.as_ptr() as *const TOKEN_USER)).User.Sid }
     }
 
+    /// The owner SID of a `TokenOwner` answer; valid while `self` is.
+    fn owner_sid(&self) -> *mut c_void {
+        // SAFETY: filled by GetTokenInformation(TokenOwner), aligned.
+        unsafe { (*(self.0.as_ptr() as *const TOKEN_OWNER)).Owner }
+    }
+
     /// The last sub-authority of a `TokenIntegrityLevel` answer's label.
     fn integrity(&self) -> Option<u32> {
         // SAFETY: filled by GetTokenInformation(TokenIntegrityLevel), aligned;
         // the label SID lives inside the buffer.
         unsafe {
-            let sid = (*(self.0.as_ptr() as *const TOKEN_MANDATORY_LABEL))
-                .Label
-                .Sid;
-            if sid.is_null() {
-                return None;
-            }
-            let count = *GetSidSubAuthorityCount(sid);
-            if count == 0 {
-                return None;
-            }
-            Some(*GetSidSubAuthority(sid, u32::from(count) - 1))
+            last_sub_authority(
+                (*(self.0.as_ptr() as *const TOKEN_MANDATORY_LABEL))
+                    .Label
+                    .Sid,
+            )
         }
     }
+}
+
+/// The last sub-authority of `sid` (a mandatory label's level).
+///
+/// # Safety
+/// `sid` is null or a valid SID.
+unsafe fn last_sub_authority(sid: *mut c_void) -> Option<u32> {
+    if sid.is_null() {
+        return None;
+    }
+    let count = *GetSidSubAuthorityCount(sid);
+    if count == 0 {
+        return None;
+    }
+    Some(*GetSidSubAuthority(sid, u32::from(count) - 1))
+}
+
+/// A security descriptor `GetSecurityInfo` allocated, freed once.
+struct Descriptor(PSECURITY_DESCRIPTOR);
+
+impl Drop for Descriptor {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: allocated by GetSecurityInfo and freed once.
+            unsafe { LocalFree(self.0) };
+        }
+    }
+}
+
+/// The pipe object's owner (against this user and this process's default
+/// owner) and its mandatory label.
+pub(crate) fn object_facts(pipe: HANDLE) -> ObjectFacts {
+    let mut owner: *mut c_void = std::ptr::null_mut();
+    let mut sacl: *mut ACL = std::ptr::null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    // SAFETY: every out pointer is writable; the descriptor holding `owner`
+    // and `sacl` is freed by `Descriptor` after their last use.
+    let read = unsafe {
+        GetSecurityInfo(
+            pipe,
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut sacl,
+            &mut descriptor,
+        )
+    };
+    let descriptor = Descriptor(descriptor);
+    if read != 0 {
+        return ObjectFacts::Unreadable(read);
+    }
+    // SAFETY: the pseudo handle of this process needs no closing.
+    let ours = match process_token(unsafe { GetCurrentProcess() }) {
+        Ok(token) => match (
+            token_info(token.0, TokenUser),
+            token_info(token.0, TokenOwner),
+        ) {
+            (Ok(user), Ok(default_owner)) => (user, default_owner),
+            (Err(code), _) | (_, Err(code)) => return ObjectFacts::Unreadable(code),
+        },
+        Err(code) => return ObjectFacts::Unreadable(code),
+    };
+    // SAFETY: `owner` lives in `descriptor`; the SIDs live in their buffers.
+    let owner_ours = !owner.is_null()
+        && unsafe {
+            EqualSid(owner, ours.0.user_sid()) != 0 || EqualSid(owner, ours.1.owner_sid()) != 0
+        };
+    // SAFETY: `sacl` is null or the ACL inside `descriptor`; each ACE GetAce
+    // returns lives inside it.
+    let label = unsafe { label_of(sacl) };
+    drop(descriptor);
+    ObjectFacts::Read { owner_ours, label }
+}
+
+/// The level of the first mandatory label ACE in `sacl`, if any.
+///
+/// # Safety
+/// `sacl` is null or a valid ACL.
+unsafe fn label_of(sacl: *mut ACL) -> Option<u32> {
+    if sacl.is_null() {
+        return None;
+    }
+    for index in 0..u32::from((*sacl).AceCount) {
+        let mut ace: *mut c_void = std::ptr::null_mut();
+        if GetAce(sacl, index, &mut ace) == 0 || ace.is_null() {
+            return None;
+        }
+        if u32::from((*(ace as *const ACE_HEADER)).AceType) == SYSTEM_MANDATORY_LABEL_ACE_TYPE {
+            let sid = std::ptr::addr_of_mut!((*(ace as *mut SYSTEM_MANDATORY_LABEL_ACE)).SidStart);
+            return last_sub_authority(sid.cast());
+        }
+    }
+    None
 }
 
 /// Opens `process`'s token for a query.
@@ -199,6 +311,29 @@ pub(crate) fn process_facts(pid: u32) -> ServerFacts {
     }
 }
 
+/// Opens `name` identification-only, reads its server's process and pipe
+/// object facts, and closes it without writing. This crate's tests only.
+#[cfg(test)]
+pub(crate) fn probe(name: &str) -> Option<(ServerFacts, ObjectFacts)> {
+    let wide_name = wide(name);
+    // SAFETY: `wide_name` is NUL-terminated; `Owned` closes the handle.
+    let handle = Owned(unsafe {
+        CreateFileW(
+            wide_name.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+            0,
+        )
+    });
+    if handle.0 == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    Some((server_facts(handle.0), object_facts(handle.0)))
+}
+
 /// A manual-reset event.
 fn event() -> io::Result<Owned> {
     // SAFETY: an unnamed manual-reset event with default security.
@@ -209,12 +344,32 @@ fn event() -> io::Result<Owned> {
     Ok(Owned(handle))
 }
 
+/// A cancel event: set once, it ends every wait on it.
+pub(crate) struct CancelEvent(Owned);
+
+impl CancelEvent {
+    pub(crate) fn new() -> io::Result<Self> {
+        event().map(Self)
+    }
+
+    pub(crate) fn set(&self) {
+        // SAFETY: a live event handle.
+        unsafe { SetEvent((self.0).0) };
+    }
+
+    /// Waits up to `millis`; true when the event is set.
+    fn wait(&self, millis: u32) -> bool {
+        // SAFETY: a live event handle.
+        unsafe { WaitForSingleObject((self.0).0, millis) == WAIT_OBJECT_0 }
+    }
+}
+
 /// The client end of the pipe, overlapped so every read can time out or be
 /// cancelled from another thread.
 pub(crate) struct Pipe {
     handle: Owned,
     io: Owned,
-    cancel: Arc<Owned>,
+    cancel: Arc<Cancel>,
     read_timeout: Option<Duration>,
 }
 
@@ -224,9 +379,18 @@ fn millis(timeout: Option<Duration>) -> u32 {
         .unwrap_or(INFINITE)
 }
 
+/// How long one wait for a free pipe instance lasts before the cancel event
+/// and the deadline are looked at again.
+const BUSY_POLL: u32 = 50;
+
 /// Opens `name` as an identification-only client and confirms its server
-/// before returning; nothing is written here.
-pub(crate) fn connect(name: &str, timeout: Duration) -> Result<Pipe, ClientError> {
+/// (process and pipe object) before returning; nothing is written here.
+/// `cancel` ends the wait for a free instance and every later read.
+pub(crate) fn connect(
+    name: &str,
+    timeout: Duration,
+    cancel: Arc<Cancel>,
+) -> Result<Pipe, ClientError> {
     let deadline = Instant::now() + timeout;
     let wide_name = wide(name);
     let handle = loop {
@@ -262,8 +426,13 @@ pub(crate) fn connect(name: &str, timeout: Duration) -> Result<Pipe, ClientError
                 let Some(left) = deadline.checked_duration_since(Instant::now()) else {
                     return Err(ClientError::Unavailable(Unavailable::NoFreeInstance));
                 };
+                if cancel.event().wait(0) {
+                    return Err(ClientError::Unavailable(Unavailable::ConnectionLost(None)));
+                }
                 // SAFETY: `wide_name` is NUL-terminated.
-                unsafe { WaitNamedPipeW(wide_name.as_ptr(), millis(Some(left)).max(1)) };
+                unsafe {
+                    WaitNamedPipeW(wide_name.as_ptr(), millis(Some(left)).clamp(1, BUSY_POLL))
+                };
             }
             code => {
                 return Err(ClientError::Unavailable(Unavailable::ConnectionLost(Some(
@@ -273,12 +442,12 @@ pub(crate) fn connect(name: &str, timeout: Duration) -> Result<Pipe, ClientError
         }
     };
     identity::decide(&server_facts(handle.0)).map_err(ClientError::NotYours)?;
+    identity::decide_object(&object_facts(handle.0)).map_err(ClientError::NotYours)?;
     let io = event().map_err(|error| ClientError::io(&error))?;
-    let cancel = event().map_err(|error| ClientError::io(&error))?;
     Ok(Pipe {
         handle,
         io,
-        cancel: Arc::new(cancel),
+        cancel,
         read_timeout: None,
     })
 }
@@ -319,7 +488,7 @@ impl Pipe {
         } else {
             self.read_timeout
         };
-        let handles = [self.io.0, self.cancel.0];
+        let handles = [self.io.0, (self.cancel.event().0).0];
         // SAFETY: both handles are live events.
         let waited = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, millis(timeout)) };
         let mut transferred = 0u32;
@@ -377,13 +546,5 @@ impl Conn for Pipe {
     fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         self.read_timeout = timeout;
         Ok(())
-    }
-
-    fn canceller(&self) -> io::Result<Canceller> {
-        let cancel = Arc::clone(&self.cancel);
-        Ok(Canceller::new(move || {
-            // SAFETY: a live event handle shared through the Arc.
-            unsafe { SetEvent(cancel.0) };
-        }))
     }
 }

@@ -23,7 +23,7 @@ use crate::error::ClientError;
 use crate::frame::{self, FrameReader, Incoming};
 use crate::identity::IdentityRefusal;
 use crate::sanitize::events::{self, Event, EventBody};
-use crate::transport::{Canceller, Conn};
+use crate::transport::{Cancel, Conn};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -229,13 +229,15 @@ impl Feed {
 }
 
 /// How one subscription connection ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum End {
     /// Resubscribe at once from the cursor (after a snapshot, a rejected
     /// gap, or orceld closing the stream).
     Resubscribe,
-    /// Resubscribe after [`RETRY`]: the connection ended before any frame,
-    /// or carried one that is not this protocol, so an immediate retry
-    /// could spin against a misbehaving server.
+    /// Resubscribe after [`RETRY`]: the connection ended without moving the
+    /// cursor (no frame, a frame that is not this protocol, a rejected gap,
+    /// a withheld snapshot), so an immediate retry could spin against a
+    /// misbehaving server.
     Retry,
     /// The queue overflowed.
     Overflow,
@@ -243,11 +245,11 @@ enum End {
     Cancelled,
 }
 
-type CancelSlot = Arc<Mutex<Option<Canceller>>>;
-
 struct Running {
     feed: Arc<Feed>,
-    connection: CancelSlot,
+    /// Created before the first connect, so a stop ends a connect wait, an
+    /// acknowledgement read and a stream read alike.
+    cancel: Option<Arc<Cancel>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -256,13 +258,8 @@ impl Running {
     /// joined before this returns.
     fn stop(mut self) {
         self.feed.cancel();
-        let canceller = self
-            .connection
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        if let Some(canceller) = canceller {
-            canceller.cancel();
+        if let Some(cancel) = &self.cancel {
+            cancel.cancel();
         }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -302,16 +299,16 @@ impl Window {
             running.stop();
         }
         let feed = Arc::new(Feed::new(from.clone()));
-        let connection: CancelSlot = Arc::new(Mutex::new(None));
-        let thread = {
+        let cancel = Cancel::new().ok();
+        let thread = cancel.as_ref().and_then(|cancel| {
             let client = Arc::clone(&self.client);
             let feed = Arc::clone(&feed);
-            let connection = Arc::clone(&connection);
+            let cancel = Arc::clone(cancel);
             std::thread::Builder::new()
                 .name("orcel-app-api-subscription".into())
-                .spawn(move || run(&client, &feed, &connection, from))
+                .spawn(move || run(&client, &feed, &cancel, from))
                 .ok()
-        };
+        });
         if thread.is_none() {
             feed.push(
                 StreamItem::Unavailable {
@@ -323,7 +320,7 @@ impl Window {
         }
         *current = Some(Running {
             feed: Arc::clone(&feed),
-            connection,
+            cancel,
             thread,
         });
         feed
@@ -348,19 +345,15 @@ impl Drop for Window {
     }
 }
 
-fn set_canceller(slot: &CancelSlot, canceller: Option<Canceller>) {
-    *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = canceller;
-}
-
 /// The subscription thread.
-fn run(client: &AppApiClient, feed: &Feed, slot: &CancelSlot, from: Option<Cursor>) {
+fn run(client: &AppApiClient, feed: &Feed, cancel: &Arc<Cancel>, from: Option<Cursor>) {
     let mut cursor = from;
     let mut reported: Option<String> = None;
     loop {
         if feed.cancelled() {
             return;
         }
-        let (mut conn, mut reader, ack) = match client.open_subscription(cursor.as_ref()) {
+        let (mut conn, mut reader, ack) = match client.open_subscription(cursor.as_ref(), cancel) {
             Ok(opened) => opened,
             Err(error) => {
                 let item = match error {
@@ -388,21 +381,13 @@ fn run(client: &AppApiClient, feed: &Feed, slot: &CancelSlot, from: Option<Curso
             }
         };
         reported = None;
-        match conn.canceller() {
-            Ok(canceller) => set_canceller(slot, Some(canceller)),
-            Err(_) => {
-                if !feed.sleep(RETRY) {
-                    return;
-                }
-                continue;
-            }
-        }
-        // A cancel that came before the canceller was registered.
         if feed.cancelled() {
             return;
         }
         if conn.set_read_timeout(Some(IDLE_TIMEOUT)).is_err() {
-            set_canceller(slot, None);
+            if !feed.sleep(RETRY) {
+                return;
+            }
             continue;
         }
         let mut received = match cursor.take() {
@@ -415,7 +400,6 @@ fn run(client: &AppApiClient, feed: &Feed, slot: &CancelSlot, from: Option<Curso
             },
         };
         let end = stream(&mut conn, &mut reader, &mut received, feed);
-        set_canceller(slot, None);
         drop(conn);
         cursor = Some(received);
         match end {
@@ -440,8 +424,22 @@ fn run(client: &AppApiClient, feed: &Feed, slot: &CancelSlot, from: Option<Curso
     }
 }
 
-/// Reads one subscription connection until it ends.
+/// Reads one subscription connection until it ends. A connection that
+/// ends without moving the cursor resubscribes only after [`RETRY`].
 fn stream(
+    conn: &mut Box<dyn Conn>,
+    reader: &mut FrameReader,
+    cursor: &mut Cursor,
+    feed: &Feed,
+) -> End {
+    let start = cursor.clone();
+    match stream_frames(conn, reader, cursor, feed) {
+        End::Resubscribe if *cursor == start => End::Retry,
+        end => end,
+    }
+}
+
+fn stream_frames(
     conn: &mut Box<dyn Conn>,
     reader: &mut FrameReader,
     cursor: &mut Cursor,
@@ -452,7 +450,6 @@ fn stream(
         Pushed::Overflowed => Some(End::Overflow),
         Pushed::Cancelled => Some(End::Cancelled),
     };
-    let mut frames = 0usize;
     loop {
         let bytes = match reader.next(conn) {
             Ok(Some(bytes)) => bytes,
@@ -462,14 +459,11 @@ fn stream(
             Ok(None) | Err(_) => {
                 return if feed.cancelled() {
                     End::Cancelled
-                } else if frames == 0 {
-                    End::Retry
                 } else {
                     End::Resubscribe
                 };
             }
         };
-        frames += 1;
         let value = match frame::parse(&bytes) {
             Ok(Incoming::Event(value)) => value,
             Ok(Incoming::Heartbeat) => continue,
@@ -495,11 +489,16 @@ fn stream(
                 }
                 Err(_) => return End::Incompatible,
             };
+            // A snapshot too large for orceld's event bound (its data is
+            // replaced by `{truncated, bytes}`) carries no cursor: withheld.
             let EventBody::Snapshot { resubscribe, .. } = &event.body else {
-                return End::Resubscribe;
+                if let Some(end) = push(StreamItem::Withheld, None) {
+                    return end;
+                }
+                return End::Retry;
             };
             let Some(next) = Cursor::new(&resubscribe.epoch, resubscribe.after_seq) else {
-                return End::Resubscribe;
+                return End::Retry;
             };
             if next.epoch() != cursor.epoch() {
                 if let Some(end) = push(StreamItem::Cleared, None) {
@@ -539,6 +538,84 @@ fn stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    /// A connection that yields `input` and then ends.
+    struct Scripted(std::io::Cursor<Vec<u8>>);
+
+    impl std::io::Read for Scripted {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(buf)
+        }
+    }
+
+    impl std::io::Write for Scripted {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Conn for Scripted {
+        fn set_read_timeout(&mut self, _: Option<Duration>) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    const EPOCH: &str = "1a-2b";
+
+    fn frames(events: &[serde_json::Value]) -> Box<dyn Conn> {
+        let mut input = Vec::new();
+        for event in events {
+            let frame = json!({ "v": "orcel-app-api/1", "id": 1, "event": event });
+            input.extend(serde_json::to_vec(&frame).unwrap());
+            input.push(b'\n');
+        }
+        Box::new(Scripted(std::io::Cursor::new(input)))
+    }
+
+    fn completed(seq: u64) -> serde_json::Value {
+        json!({ "seq": seq, "epoch": EPOCH, "run_id": null, "step_id": null, "kind": "request.completed", "at_ms": 1,
+                "data": { "request_id": "r", "capability": null, "operation": null, "ok": true, "failure_code": null } })
+    }
+
+    fn run_stream(events: &[serde_json::Value], at: u64) -> (End, Cursor, Feed) {
+        let feed = Feed::new(None);
+        let mut cursor = Cursor::new(EPOCH, at).unwrap();
+        let mut conn = frames(events);
+        let end = stream(&mut conn, &mut FrameReader::default(), &mut cursor, &feed);
+        (end, cursor, feed)
+    }
+
+    #[test]
+    fn a_connection_that_does_not_move_the_cursor_retries_after_the_backoff() {
+        // Nothing at all.
+        assert_eq!(run_stream(&[], 3).0, End::Retry);
+        // A gap is rejected and the cursor stays.
+        let (end, cursor, _) = run_stream(&[completed(9)], 3);
+        assert_eq!((end, cursor.after_seq()), (End::Retry, 3));
+        // Duplicates only.
+        assert_eq!(run_stream(&[completed(2), completed(3)], 3).0, End::Retry);
+        // Progress, then the stream ends: resubscribe at once.
+        let (end, cursor, feed) = run_stream(&[completed(4), completed(5)], 3);
+        assert_eq!(
+            (end, cursor.after_seq(), feed.len()),
+            (End::Resubscribe, 5, 2)
+        );
+    }
+
+    #[test]
+    fn a_truncated_snapshot_is_withheld_and_retried() {
+        let snapshot = json!({ "seq": 40, "epoch": EPOCH, "run_id": null, "step_id": null, "kind": "snapshot",
+                               "at_ms": 1, "data": { "truncated": true, "bytes": 20000 } });
+        let (end, cursor, feed) = run_stream(&[snapshot], 3);
+        assert_eq!((end, cursor.after_seq()), (End::Retry, 3));
+        assert_eq!(feed.next(Duration::ZERO), Next::Item(StreamItem::Withheld));
+        assert!(feed.is_empty());
+    }
 
     fn cursor(seq: u64) -> Option<Cursor> {
         Cursor::new("1a-2b", seq)

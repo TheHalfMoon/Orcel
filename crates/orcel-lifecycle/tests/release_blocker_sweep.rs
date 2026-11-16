@@ -2556,7 +2556,9 @@ fn the_app_api_client_crate_reaches_no_release_binary() {
             let path = entry.unwrap().path();
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             if path.is_dir() {
-                if !matches!(name.as_str(), ".git" | "target" | "node_modules" | "dist") {
+                // `dist` folders are walked too: a manifest there is still
+                // a manifest.
+                if !matches!(name.as_str(), ".git" | "target" | "node_modules") {
                     stack.push(path);
                 }
                 continue;
@@ -2584,11 +2586,13 @@ fn the_app_api_client_crate_reaches_no_release_binary() {
                     }
                 }
             } else {
-                // A dependency entry is ` "orcel-app-api-client",` inside
-                // another package's `dependencies = [...]`.
+                // A dependency entry is ` "orcel-app-api-client",` or, when
+                // several versions are locked, ` "orcel-app-api-client 0.2.0",`
+                // inside another package's `dependencies = [...]`: match the
+                // quoted prefix.
                 for block in text.split("\n[[package]]\n") {
                     let own = block.starts_with(&format!("name = \"{CRATE}\"\n"));
-                    if !own && block.contains(&format!(" \"{CRATE}\"")) {
+                    if !own && block.contains(&format!(" \"{CRATE}")) {
                         hits.push(format!(
                             "{relative}: {}",
                             block.lines().next().unwrap_or_default()

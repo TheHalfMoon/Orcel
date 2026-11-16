@@ -10,8 +10,16 @@
 //! called at line 447, defined at lines 482-510): the mandatory label's last
 //! sub-authority is the level, and `0x2000` is Medium.
 //!
-//! The platform code only gathers [`ServerFacts`]; [`decide`] is the whole
-//! decision, so it is unit-tested on every OS.
+//! On Windows the pipe object is checked too, against a server that took
+//! the pid check's process and then handed the pipe on: its owner must be
+//! this user (or this process's own default owner, which is the
+//! Administrators group in an elevated token) and its mandatory label must
+//! be Medium or above (orceld labels its pipe `ME`); an unlabeled pipe is
+//! refused.
+//!
+//! The platform code only gathers [`ServerFacts`] and [`ObjectFacts`];
+//! [`decide`] and [`decide_object`] are the whole decision, so they are
+//! unit-tested on every OS.
 
 use std::fmt;
 
@@ -44,6 +52,21 @@ pub enum ServerFacts {
     Unreadable,
 }
 
+/// What the platform read about the pipe object itself (Windows).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjectFacts {
+    /// `GetSecurityInfo` failed with this Win32 error, or this process's
+    /// own token could not be read.
+    Unreadable(u32),
+    /// The owner and the mandatory label were read: whether the owner is
+    /// this user or this process's default owner, and the label's last
+    /// sub-authority (`None` when the pipe carries no label).
+    Read {
+        owner_ours: bool,
+        label: Option<u32>,
+    },
+}
+
 /// Why a connection was refused before anything was written. The window
 /// says "orceld could not be confirmed as yours".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +83,14 @@ pub enum IdentityRefusal {
     BelowMedium,
     /// The peer could not be identified.
     Unidentified,
+    /// The pipe object is owned by someone else.
+    PipeNotOwned,
+    /// The pipe object's mandatory label is below Medium.
+    PipeLabelBelowMedium,
+    /// The pipe object carries no mandatory label.
+    PipeUnlabeled,
+    /// The pipe object's security could not be read.
+    PipeUnreadable,
 }
 
 impl IdentityRefusal {
@@ -76,6 +107,10 @@ impl fmt::Display for IdentityRefusal {
             Self::TokenUnreadable => "the server's token could not be read",
             Self::BelowMedium => "the server runs below Medium integrity",
             Self::Unidentified => "the server could not be identified",
+            Self::PipeNotOwned => "the endpoint is owned by another account",
+            Self::PipeLabelBelowMedium => "the endpoint is labeled below Medium integrity",
+            Self::PipeUnlabeled => "the endpoint carries no integrity label",
+            Self::PipeUnreadable => "the endpoint's security could not be read",
         };
         write!(f, "{}: {why}", Self::MESSAGE)
     }
@@ -107,9 +142,54 @@ pub fn decide(facts: &ServerFacts) -> Result<(), IdentityRefusal> {
     }
 }
 
+/// The pipe object decision: owned by this user, labeled Medium or above.
+/// Every failure to read refuses.
+pub fn decide_object(facts: &ObjectFacts) -> Result<(), IdentityRefusal> {
+    match *facts {
+        ObjectFacts::Unreadable(_) => Err(IdentityRefusal::PipeUnreadable),
+        ObjectFacts::Read {
+            owner_ours: false, ..
+        } => Err(IdentityRefusal::PipeNotOwned),
+        ObjectFacts::Read {
+            owner_ours: true,
+            label,
+        } => match label {
+            Some(level) if level >= MEDIUM_INTEGRITY => Ok(()),
+            Some(_) => Err(IdentityRefusal::PipeLabelBelowMedium),
+            None => Err(IdentityRefusal::PipeUnlabeled),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_pipe_this_user_owns_labeled_medium_or_above_is_accepted() {
+        let read = |owner_ours, label| ObjectFacts::Read { owner_ours, label };
+        for level in [0x2000, 0x3000, 0x4000] {
+            assert_eq!(decide_object(&read(true, Some(level))), Ok(()));
+        }
+        for level in [0x0000, 0x1000, 0x1fff] {
+            assert_eq!(
+                decide_object(&read(true, Some(level))),
+                Err(IdentityRefusal::PipeLabelBelowMedium)
+            );
+        }
+        assert_eq!(
+            decide_object(&read(true, None)),
+            Err(IdentityRefusal::PipeUnlabeled)
+        );
+        assert_eq!(
+            decide_object(&read(false, Some(0x2000))),
+            Err(IdentityRefusal::PipeNotOwned)
+        );
+        assert_eq!(
+            decide_object(&ObjectFacts::Unreadable(5)),
+            Err(IdentityRefusal::PipeUnreadable)
+        );
+    }
 
     #[test]
     fn only_this_user_at_medium_or_above_is_accepted() {

@@ -10,10 +10,10 @@ use crate::sanitize::capabilities::{self, Capabilities};
 use crate::sanitize::rules;
 use crate::sanitize::status::{self, Status};
 use crate::sanitize::tasks::{self, TaskDetail, TaskList};
-use crate::transport::{self, Conn, Endpoint};
+use crate::transport::{self, Cancel, Conn, Endpoint};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// How long connecting may wait for a free pipe instance.
@@ -79,7 +79,7 @@ impl AppApiClient {
             .requests
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut conn = transport::connect(&self.endpoint, CONNECT_TIMEOUT)?;
+        let mut conn = transport::connect(&self.endpoint, CONNECT_TIMEOUT, None)?;
         conn.set_read_timeout(Some(REPLY_TIMEOUT))
             .map_err(|error| ClientError::io(&error))?;
         let id = self.id();
@@ -116,8 +116,10 @@ impl AppApiClient {
     pub(crate) fn open_subscription(
         &self,
         from: Option<&Cursor>,
+        cancel: &Arc<Cancel>,
     ) -> Result<(Box<dyn Conn>, FrameReader, Ack), ClientError> {
-        let mut conn = transport::connect(&self.endpoint, CONNECT_TIMEOUT)?;
+        let mut conn =
+            transport::connect(&self.endpoint, CONNECT_TIMEOUT, Some(Arc::clone(cancel)))?;
         conn.set_read_timeout(Some(REPLY_TIMEOUT))
             .map_err(|error| ClientError::io(&error))?;
         let id = self.id();

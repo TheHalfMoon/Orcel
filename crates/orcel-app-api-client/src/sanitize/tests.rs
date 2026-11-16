@@ -1191,3 +1191,55 @@ fn the_sanitiser_never_touches_the_file_system() {
         }
     }
 }
+
+#[test]
+fn path_rule_refuses_dot_runs_streams_devices_and_lookalikes() {
+    for bad in [
+        "...",
+        ". ",
+        ".. ",
+        "reports/.. /x",
+        "reports/. /x",
+        "reports/.../x",
+        "reports\\ . \\x",
+        "q3.md:secret",
+        "reports/q3.md::$DATA",
+        "a:b",
+        "CON",
+        "con.txt",
+        "reports/NUL",
+        "reports/Aux.md",
+        "prn",
+        "COM1",
+        "lpt9.log",
+        "reports/com3.csv",
+        "CON .txt",
+        "reports\u{2215}..\u{2215}x",
+        "reports\u{FF0F}x",
+        "reports\u{FF3C}x",
+        "\u{FF0E}\u{FF0E}/x",
+        "\u{2024}\u{2024}/x",
+        "reports/\u{FE52}\u{FE52}",
+        "reports\u{2044}x",
+    ] {
+        assert_eq!(rules::workspace_path(bad), None, "{bad:?}");
+    }
+    for bad in ["CON", "nul.md", "q3.md:ads", "\u{2215}q3.md", "...", "COM9"] {
+        assert_eq!(rules::file_name(bad), None, "{bad:?}");
+    }
+    for good in [
+        "reports/console.md",
+        "reports/COM10",
+        "reports/LPT0.txt",
+        "reports/connect",
+        "a/b.c/d",
+        "reports//q3.md",
+        "COMA",
+    ] {
+        assert_eq!(
+            rules::workspace_path(good).as_deref(),
+            Some(good),
+            "{good:?}"
+        );
+    }
+}

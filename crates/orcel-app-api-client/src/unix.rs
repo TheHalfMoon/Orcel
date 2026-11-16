@@ -11,10 +11,9 @@
 
 use crate::error::{ClientError, Unavailable};
 use crate::identity::{self, ServerFacts};
-use crate::transport::{Canceller, Conn};
+use crate::transport::{Cancel, Conn};
 use std::ffi::OsString;
 use std::io;
-use std::net::Shutdown;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Component, Path, PathBuf};
@@ -124,13 +123,16 @@ fn peer_uid(_stream: &UnixStream) -> Option<u32> {
 
 /// Connects to `path` and confirms the peer runs as this uid before
 /// returning; nothing is written here.
-pub(crate) fn connect(path: &Path) -> Result<UnixStream, ClientError> {
+pub(crate) fn connect(path: &Path, cancel: &Cancel) -> Result<UnixStream, ClientError> {
     let stream = UnixStream::connect(path).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => {
             ClientError::Unavailable(Unavailable::NotRunning)
         }
         _ => ClientError::io(&error),
     })?;
+    cancel
+        .watch(&stream)
+        .map_err(|error| ClientError::io(&error))?;
     // SAFETY: geteuid has no preconditions.
     let ours = unsafe { libc::geteuid() };
     let facts = match peer_uid(&stream) {
@@ -147,12 +149,5 @@ pub(crate) fn connect(path: &Path) -> Result<UnixStream, ClientError> {
 impl Conn for UnixStream {
     fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         UnixStream::set_read_timeout(self, timeout)
-    }
-
-    fn canceller(&self) -> io::Result<Canceller> {
-        let clone = self.try_clone()?;
-        Ok(Canceller::new(move || {
-            let _ = clone.shutdown(Shutdown::Both);
-        }))
     }
 }

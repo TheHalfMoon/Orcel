@@ -115,30 +115,62 @@ pub fn sha256(value: &str) -> Option<String> {
     .then(|| value.to_owned())
 }
 
+/// Characters that look like a path separator or a dot: division and
+/// fraction slashes, fullwidth and small solidus and reverse solidus, the set
+/// minus, fullwidth and small full stops, the one-dot leader, the ideographic
+/// and halfwidth ideographic full stops.
+const LOOKALIKES: &[char] = &[
+    '\u{2215}', '\u{2044}', '\u{29F8}', '\u{29F9}', '\u{FF0F}', '\u{FF3C}', '\u{FE68}', '\u{2216}',
+    '\u{FF0E}', '\u{2024}', '\u{FE52}', '\u{3002}', '\u{FF61}',
+];
+
+/// Whether `segment` names a Windows device (`CON`, `PRN`, `AUX`, `NUL`,
+/// `COM1`-`COM9`, `LPT1`-`LPT9`), with or without an extension, in any case.
+fn is_device_name(segment: &str) -> bool {
+    let stem = segment
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    match stem.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" => true,
+        _ => {
+            let bytes = stem.as_bytes();
+            bytes.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && (b'1'..=b'9').contains(&bytes[3])
+        }
+    }
+}
+
 /// The path rule for `folder`, `sources[].path`, `proposal.destination`,
 /// `report.destination` and `check.destination`. A path is kept only if it
-/// is workspace-relative: not empty, at most 1024 bytes, no drive letter, no
-/// leading `/` or `\` (which also refuses UNC and `\\?\` prefixes), no `.`
-/// or `..` segment (segments split at `/` and `\`), and no character the
-/// text rule would replace (NUL included). It is never resolved.
+/// is workspace-relative: not empty, at most 1024 bytes, no leading `/` or
+/// `\` (which also refuses UNC and `\\?\` prefixes), no `:` anywhere (a
+/// drive letter or an alternate data stream), no segment (split at `/` and
+/// `\`) that is empty once trailing dots and spaces are trimmed (`.`, `..`,
+/// `...`, `. `), no Windows device name segment, no character that looks like
+/// a separator or a dot, and no character the text rule would replace (NUL
+/// included). It is never resolved.
 pub fn workspace_path(value: &str) -> Option<String> {
     if value.is_empty() || value.len() > 1024 {
         return None;
     }
-    let bytes = value.as_bytes();
-    if bytes[0] == b'/' || bytes[0] == b'\\' {
-        return None;
-    }
-    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-        return None;
-    }
-    if value.chars().any(|c| c == '\0' || is_replaced(c)) {
+    if value.starts_with(['/', '\\']) || value.contains(':') {
         return None;
     }
     if value
-        .split(['/', '\\'])
-        .any(|segment| segment == "." || segment == "..")
+        .chars()
+        .any(|c| c == '\0' || is_replaced(c) || LOOKALIKES.contains(&c))
     {
+        return None;
+    }
+    let bad_segment = |segment: &str| {
+        !segment.is_empty()
+            && (segment.trim_end_matches(['.', ' ']).is_empty() || is_device_name(segment))
+    };
+    if value.split(['/', '\\']).any(bad_segment) {
         return None;
     }
     Some(value.to_owned())
