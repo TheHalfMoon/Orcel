@@ -3357,7 +3357,9 @@ fn windows_key_is_within(root_key: &str, candidate_key: &str) -> bool {
 /// literally named `ws\x`, or a non-UTF-8 name that renders the same as the
 /// root, is never inside `ws`. Empty and `.` components are skipped, as
 /// `Path::components` does on Unix; an absolute path is never inside a
-/// relative one or the reverse.
+/// relative one or the reverse. Inputs must be canonical (both callers pass
+/// `std::fs::canonicalize` results); `..` is never collapsed, so a path
+/// with a `..` component on either side is refused outright.
 #[cfg_attr(not(unix), allow(dead_code))]
 fn unix_bytes_are_within(root: &[u8], candidate: &[u8]) -> bool {
     fn components(path: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -3365,6 +3367,12 @@ fn unix_bytes_are_within(root: &[u8], candidate: &[u8]) -> bool {
             .filter(|part| !part.is_empty() && *part != b".")
     }
     if root.starts_with(b"/") != candidate.starts_with(b"/") {
+        return false;
+    }
+    if components(root)
+        .chain(components(candidate))
+        .any(|part| part == b"..")
+    {
         return false;
     }
     let mut candidate_parts = components(candidate);
@@ -6324,6 +6332,12 @@ mod tests {
         assert!(!within(b"/tmp/ws/a", b"/tmp/ws"));
         assert!(!within(b"/tmp/ws", b"tmp/ws/a"));
         assert!(!within(b"tmp/ws", b"/tmp/ws/a"));
+        // `..` is never collapsed: a non-canonical path is refused on either side.
+        assert!(!within(b"/tmp/ws", b"/tmp/ws/../outside"));
+        assert!(!within(b"/tmp/ws", b"/tmp/ws/a/../../outside/x"));
+        assert!(!within(b"/tmp/ws/..", b"/tmp/ws/../x"));
+        assert!(!within(b"/tmp/ws", b"/tmp/ws/.."));
+        assert!(within(b"/tmp/ws", b"/tmp/ws/..x/a"));
         // Distinct non-UTF-8 names stay distinct (a lossy text key would
         // render both as U+FFFD and call one inside the other).
         assert!(!within(b"/tmp/ws\xff", b"/tmp/ws\xfe/a"));

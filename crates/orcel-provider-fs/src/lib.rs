@@ -665,7 +665,9 @@ impl FsProvider {
                 "resolved path is outside the trusted workspace",
             ));
         }
-        Ok(())
+        // Every resolved or descriptor path passes here, so a link to a named fork is
+        // refused even though its own name is plain.
+        refuse_named_fork(resolved)
     }
 }
 
@@ -773,7 +775,30 @@ mod unix_fd {
         })?;
         buffer.truncate(length);
         use std::os::unix::ffi::OsStringExt as _;
-        checked(PathBuf::from(std::ffi::OsString::from_vec(buffer)), b"")
+        let path = checked(PathBuf::from(std::ffi::OsString::from_vec(buffer)), b"")?;
+        same_object(file, &path)?;
+        Ok(path)
+    }
+
+    /// macOS: the reported path must name the open object itself (same device and inode).
+    /// A named fork opened through a link (`link -> file/..namedfork/rsrc`) is a different
+    /// object from the file its path may name, and a path renamed away in between no longer
+    /// names it; both fail closed.
+    #[cfg(target_os = "macos")]
+    fn same_object(file: &File, path: &std::path::Path) -> io::Result<()> {
+        use std::os::unix::fs::MetadataExt as _;
+        let open = file.metadata()?;
+        let named = std::fs::metadata(path)?;
+        if open.dev() != named.dev() || open.ino() != named.ino() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "the open file is not the object its path names ({})",
+                    path.display()
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// Only an absolute path counts, and on Linux not one that names an unlinked file.
@@ -945,17 +970,19 @@ fn case_alias_inside_root(root: &Path, candidate: &Path) -> Option<PathBuf> {
 /// `..namedfork` segment (`file/..namedfork/rsrc`): a second data stream behind a name a
 /// listing never shows, the analogue of a Windows alternate stream. Refused in any ASCII
 /// case, since a case-insensitive volume may match it either way.
-fn has_named_fork_segment(relative: &str) -> bool {
-    Path::new(relative).components().any(|part| {
+fn has_named_fork_segment(path: impl AsRef<Path>) -> bool {
+    path.as_ref().components().any(|part| {
         matches!(part, Component::Normal(name)
             if name.as_encoded_bytes().eq_ignore_ascii_case(b"..namedfork"))
     })
 }
 
-/// Refuses a `..namedfork` segment on macOS. Elsewhere `..namedfork` is an ordinary file
+/// Refuses a `..namedfork` segment on macOS, in a submitted relative path or in a resolved
+/// one (a link already in the workspace can point at `file/..namedfork/rsrc`, so the
+/// submitted spelling alone is not enough). Elsewhere `..namedfork` is an ordinary file
 /// name, so the guard does nothing there (Windows and Linux behaviour is unchanged).
-pub(crate) fn refuse_named_fork(relative: &str) -> Result<(), ProviderError> {
-    if cfg!(target_os = "macos") && has_named_fork_segment(relative) {
+pub(crate) fn refuse_named_fork(path: impl AsRef<Path>) -> Result<(), ProviderError> {
+    if cfg!(target_os = "macos") && has_named_fork_segment(path) {
         return Err(ProviderError::new(
             FailureCode::CapabilityDenied,
             "macOS named forks (..namedfork) are not reachable through filesystem tools",
@@ -1798,6 +1825,24 @@ mod tests {
         fs::write(root.join(".git/config"), "safe").unwrap();
         fs::write(root.join("a.txt"), "hello").unwrap();
         let provider = FsProvider::new(base.join("WS")).unwrap();
+        // The alias really takes the identity path: whatever case the resolved root has,
+        // one of the two spellings is not a byte prefix of the other's children.
+        let upper = base.join("WS/.git/config");
+        let lower = root.join(".git/config");
+        let alias = if upper.starts_with(provider.root()) {
+            lower
+        } else {
+            upper
+        };
+        assert!(!alias.starts_with(provider.root()));
+        assert_eq!(
+            inside_root(provider.root(), &alias),
+            Some(PathBuf::from(".git/config"))
+        );
+        assert_eq!(
+            provider.ensure_not_git(&alias).unwrap_err().code,
+            FailureCode::CapabilityDenied
+        );
         assert_eq!(provider.read_text("a.txt").unwrap()["text"], "hello");
         assert_eq!(provider.read_text("A.TXT").unwrap()["text"], "hello");
         for name in [".GIT/config", ".Git/config", ".git/CONFIG"] {
@@ -1862,6 +1907,40 @@ mod tests {
         assert!(fs::read(root.join("a.txt/..namedfork/rsrc"))
             .unwrap_or_default()
             .is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// macOS: a link already in the workspace that points at a named fork has a plain name,
+    /// so the submitted spelling passes; the resolved or descriptor path (and the identity
+    /// of the opened object) still keeps every tool off the fork.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_link_to_a_named_fork_is_refused_on_macos() {
+        let root = temp_root("namedfork-link");
+        fs::write(root.join("b.txt"), "plain").unwrap();
+        fs::write(root.join("b.txt/..namedfork/rsrc"), "fork").unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("b.txt/..namedfork/rsrc")).unwrap(),
+            "fork",
+            "the test needs a resource fork with content"
+        );
+        std::os::unix::fs::symlink("b.txt/..namedfork/rsrc", root.join("link")).unwrap();
+        let provider = FsProvider::new(&root).unwrap();
+        assert!(provider.read_text("link").is_err(), "read through the link");
+        assert!(provider.stat("link").is_err(), "stat through the link");
+        assert!(provider.read_range("link", 1, 1).is_err(), "range read");
+        assert!(provider.preview_write("link", "x").is_err(), "preview");
+        assert!(
+            provider.write_text("link", "forged", None, false).is_err(),
+            "write through the link"
+        );
+        let search = provider.search_text("", "fork", None).unwrap();
+        assert_eq!(search["matches"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            fs::read_to_string(root.join("b.txt/..namedfork/rsrc")).unwrap(),
+            "fork"
+        );
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "plain");
         let _ = fs::remove_dir_all(root);
     }
 }
