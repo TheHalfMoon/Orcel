@@ -1,0 +1,4 @@
+/target/
+# tauri-build writes its capability schemas here on every build (for the
+# Tauri CLI, which this shell does not use).
+/gen/

@@ -1,0 +1,115 @@
+# cargo-deny configuration for the Control Room shell workspace only
+# (SG-000119 slice A2, founder decision 3). CI runs
+# `cargo deny check sources bans licenses advisories` on every change, beside
+# `cargo audit`. Every crate in the resolved graph (all targets) is checked,
+# including the Linux and macOS crates this Windows-only grain never builds.
+
+[graph]
+all-features = false
+
+# crates.io only. Orcel's own path crate (orcel-app-api-client) is the one
+# other source; no git source, no other registry, no [patch].
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+# No Tauri plugin of any kind, no HTTP server, no WebDriver. cargo-deny
+# matches names exactly, so each plugin is listed; CI also fails on any
+# crate named tauri-plugin-* in `cargo tree`.
+deny = [
+  { crate = "tauri-plugin", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-autostart", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-barcode-scanner", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-biometric", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-cli", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-clipboard-manager", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-deep-link", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-dialog", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-fs", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-geolocation", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-global-shortcut", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-haptics", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-http", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-localhost", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-log", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-nfc", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-notification", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-opener", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-os", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-persisted-scope", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-positioner", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-process", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-shell", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-single-instance", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-sql", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-store", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-stronghold", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-updater", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-upload", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-websocket", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tauri-plugin-window-state", reason = "no Tauri plugin (SG-000119)" },
+  { crate = "tiny_http", reason = "no listener (SG-000119)" },
+  { crate = "tauri-driver", reason = "no WebDriver (SG-000119)" },
+]
+# hyper is in the lock only through reqwest, which tauri depends on for
+# Android and iOS (never built here), with the client feature. Its server
+# feature is banned.
+features = [
+  { crate = "hyper", deny = ["server"] },
+]
+
+# The native host's allowlist (apps/orcel-native-host/deny.toml). Two
+# crate-scoped exceptions below, each FLAGGED FOR THE FOUNDER in the prep
+# packet ("Slice A2 as implemented", dependency review); neither widens the
+# allowlist for any other crate.
+[licenses]
+confidence-threshold = 0.93
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "Zlib",
+  "Unicode-3.0",
+  "MPL-2.0",
+]
+exceptions = [
+  # Linux only: a build dependency of system-deps (the gtk3-rs -sys crates),
+  # never compiled for Windows. The LLVM exception only relaxes Apache-2.0;
+  # orcel-contain's allowlist already admits it. Founder to confirm.
+  { crate = "target-lexicon", allow = ["Apache-2.0 WITH LLVM-exception"] },
+  # FOUNDER DECISION PENDING. webview2-com-sys declares MIT, but it ships
+  # Microsoft's prebuilt WebView2Loader.dll and WebView2LoaderStatic.lib
+  # (x64, x86, arm64), and on MSVC links WebView2LoaderStatic.lib into the
+  # shell. That binary is Microsoft's, under the WebView2 SDK license, not
+  # MIT. The clarification below makes the graph say so instead of letting
+  # the declared MIT stand; this exception admits it for development builds
+  # only until the founder decides (any distribution stays separately gated,
+  # founder decision 6).
+  { crate = "webview2-com-sys", allow = ["LicenseRef-Microsoft-WebView2-SDK"] },
+]
+
+[[licenses.clarify]]
+crate = "webview2-com-sys"
+expression = "MIT AND LicenseRef-Microsoft-WebView2-SDK"
+license-files = []
+
+# RustSec. Yanked crates are refused. Each ignored advisory carries its
+# Windows reachability, recorded in the prep packet as well; `cargo audit`
+# reports the same two as allowed warnings.
+[advisories]
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+ignore = [
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error (unmaintained) is a build-time proc macro of glib-macros and gtk3-macros, Linux only (gtk3-rs); never built for Windows in SG-000119" },
+  { id = "RUSTSEC-2024-0429", reason = "glib 0.18.5 VariantStrIter unsoundness; glib is Linux only (gtk3-rs, webkit2gtk); never built for Windows in SG-000119" },
+]
