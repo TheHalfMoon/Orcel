@@ -1,0 +1,92 @@
+{
+  "id": "SG-000131",
+  "id_status": "PROPOSED: next unassigned number after SG-000130; final id is part of founder decision FD-UP-4",
+  "title": "Unified platform contracts v1, audit hash chain and licence gates (inert)",
+  "program": "ORCEL-UP",
+  "state": "DRAFT",
+  "risk": "medium",
+  "created": "2026-11-16",
+  "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
+  "dependencies": [
+    "SG-000093"
+  ],
+  "dependency_notes": {
+    "SG-000093": "Closed. Its AuthorityMode, ExecutorClass and ExecutionState vocabularies move to orcel-contracts with identical serde spellings and are re-exported from orcel-policy; lease issuance and checking stay in orcel-policy."
+  },
+  "spec_document": "docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md",
+  "packets": [
+    "WP1-00",
+    "WP1-01",
+    "WP1-02",
+    "WP1-03"
+  ],
+  "objective": "Give every later unified-platform grain one set of versioned wire contracts in crates/orcel-contracts (principal and device, per-OS identity binding, lease view and grant reference, session, tool registry entry, capability discovery with explicit unsupported, the job state machine reusing not_started|dispatched|completed|cancelled|outcome_unknown, the audit event, the sidecar IPC handshake, heartbeat and kill, and eight additive failure codes), a SHA-256 hash chain in orcel-audit with an `orcel audit verify` command, and CI gates for per-crate and per-package licences and for the kernel dependency direction. Nothing becomes reachable by any client.",
+  "scope": {
+    "include": [
+      "WP1-00: activation of this grain and of the other Wave 1 drafts the founder approves; Firecrawl status correction in DONOR_REGISTRY.md and donor_registry.json.",
+      "WP1-01: root deny.toml (licences, bans, sources); scripts/check-npm-licenses.mjs over every package-lock.json under apps/, packages/ and tests/; a cargo metadata test enforcing the dependency direction of section 3.2; a text scan refusing AGPL markers under crates/ outside the FD-06 files already listed in docs/orcel/notices/.",
+      "WP1-02: section 4 contract types with golden JSON fixtures, generated JSON Schema files under docs/orcel/contracts/schema/, canonical_json, and the new FailureCode variants LEASE_REQUIRED, LEASE_INVALID, LEASE_UNSUPPORTED_PLATFORM, UNSUPPORTED, POLICY_BLOCKED, JOB_NOT_FOUND, QUEUE_FULL and RATE_LIMITED.",
+      "WP1-03: hash-chained audit events, rotation continuity, orceld recording request, decision, approval, dispatch, state, lease and emergency_stop events, and `orcel audit verify`."
+    ],
+    "exclude": [
+      "Any new MCP tool, REST route, executor, dependency in crates/*, listener, network path or authority.",
+      "Any change to lease issuance, lease checking, approvals or Safe-mode policy.",
+      "macOS and Linux identity readers (Wave 2, WP2-01).",
+      "Any donor code."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None.",
+    "contracts": "None. Wire types only; no issuance, no checking, no secret material.",
+    "audit": "None. Adds integrity evidence to existing events without widening what is recorded; redaction rules unchanged.",
+    "ci": "Adds refusing gates only."
+  },
+  "decisions": [
+    {
+      "question": "Activate this grain and its id",
+      "status": "PENDING (founder decision FD-UP-4)"
+    }
+  ],
+  "invariants": [
+    "orcel-contracts depends only on serde and serde_json and contains no platform-specific code.",
+    "Every existing wire spelling, including FailureCode values and the orcel-full-control-lease/1 schema, is unchanged.",
+    "Inbound authority-bearing contract objects refuse unknown fields.",
+    "LeaseView is a projection and is never accepted as proof of authority.",
+    "Audit events never contain a raw SID, token handle, credential, secret or page content.",
+    "No kernel crate depends on an app, test, package or third_party unit."
+  ],
+  "acceptance": [
+    "Every new contract type round-trips its golden fixture; unknown fields are refused where required; schema drift fails CI.",
+    "orcel-policy's existing tests pass unchanged after the vocabulary move.",
+    "Editing, deleting or reordering one audit line is reported at that line by `orcel audit verify`; rotation keeps continuity.",
+    "Root cargo deny and the npm licence check pass on current main; a fixture crate with an AGPL dependency fails them.",
+    "The dependency-direction test fails for a fixture edge from a kernel crate to an app."
+  ],
+  "tests": [
+    "cargo test -p orcel-contracts",
+    "cargo test -p orcel-policy",
+    "cargo test -p orcel-audit chain_",
+    "cargo test -p orceld audit_chain_",
+    "cargo test -p orceld --test dependency_direction",
+    "cargo deny check licenses bans sources",
+    "node --test scripts/check-npm-licenses.test.mjs"
+  ],
+  "ci_runners": [
+    "ubuntu-latest",
+    "windows-latest",
+    "macos-latest"
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on WP1-03; d1-local advisory only",
+    "exact_head_ci": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "SG-000101": "Uses the job, capability and error contracts.",
+    "SG-000102": "Uses the job state machine and audit chain.",
+    "SG-000132": "Uses LeaseRef and DispatchAuthority in every Full Control audit event."
+  },
+  "done_when": "WP1-00 to WP1-03 are merged with exact-head qualification and the canonical record names this grain CLOSED."
+}

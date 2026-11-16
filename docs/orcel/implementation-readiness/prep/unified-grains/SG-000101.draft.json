@@ -1,0 +1,104 @@
+{
+  "id": "SG-000101",
+  "id_status": "PROPOSED: reuses the P20-reserved id and role 'local_web_scrape_and_extraction_runtime' (docs/p20/sg000092_architecture_freeze.json) out of its recorded sequential order; founder decision FD-UP-4 may allocate a new id instead",
+  "title": "Firecrawl-compatible scrape over MCP and loopback, fetch engine and contract harness",
+  "program": "ORCEL-UP",
+  "state": "DRAFT",
+  "risk": "high",
+  "created": "2026-11-16",
+  "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
+  "dependencies": [
+    "SG-000131",
+    "SG-000108",
+    "SG-000122"
+  ],
+  "dependency_notes": {
+    "SG-000131": "Contracts v1, audit chain and licence gates.",
+    "SG-000108": "Closed. The live isolated browser engine, governed navigation (SG-000075), extraction and the test-only fixture pinning that the chromium engine and the harness reuse.",
+    "SG-000122": "Closed. Browser form shapes stay as they are; this grain adds none."
+  },
+  "spec_document": "docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md",
+  "packets": [
+    "WP1-05",
+    "WP1-06 (scrape)",
+    "WP1-07 (web_scrape and REST scrape routes)",
+    "WP1-08",
+    "WP1-09"
+  ],
+  "objective": "Let a local caller scrape one public HTTPS page through the Firecrawl v2 contract (with a v1 alias) using the MIT Firecrawl SDKs unchanged, via the MCP tool web_scrape or the loopback REST route POST /v2/scrape, with orceld as the sole authority. Two engines: fetch (web_fetch through orcel-provider-network, then HTML to Markdown in the contained orcel-doc-parser; available on Windows, macOS and Linux) and chromium (the existing browser host's extract_page; where the live browser is built). The result names the engine that ran. The contract is reimplemented in Apache-2.0 code from the MIT SDK types; no AGPL Firecrawl file is copied or vendored.",
+  "scope": {
+    "include": [
+      "crates/orcel-web: v2 and v1 scrape request types derived from the MIT SDK types, refusal by name of every unsupported field, translation to RequestEnvelope, Document shaping (section 5.3 of the spec).",
+      "orceld: capability web.scrape with engines fetch and chromium, capability report entries per OS and build, one SOFT approval per scrape bound to the URL, engine and formats digest in Safe mode, audit of the engine that ran.",
+      "apps/orcel-mcp: tool_contract entry web_scrape (local_only, effect network, approval SOFT) and loopback routes POST /v2/scrape and POST /v1/scrape on the existing loopback server with its existing bind, Host, Origin, bearer and body checks.",
+      "apps/orcel-doc-parser: format html, sniffed and refused when not HTML, using html5ever =0.40.1 with an Orcel-owned tree sink; a Rust port of Orcel's own worker extraction.",
+      "tests/firecrawl-compat: @mendable/firecrawl-js 4.54.0 and firecrawl-py 4.57.0 (CI only) as black-box contract clients; parity report per matrix row."
+    ],
+    "exclude": [
+      "Any AGPL Firecrawl code or file, including apps/api/openapi.json.",
+      "Remote (relay or OAuth) exposure of the new tool.",
+      "Formats screenshot, json, summary and the other rows marked later or not planned in section 5.3; actions; custom headers; skipTlsVerification; stealth proxy, mobile and location (FD-UP-2).",
+      "Any change to existing browser_* shapes, their profiles or their approvals.",
+      "The chromium engine in release builds (stays development-only until F4 slice 7 is decided)."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None.",
+    "web_scrape": "Proposed: a new local-only capability web.scrape that composes existing governed paths (web_fetch rules and SG-000075 navigation) behind one SOFT approval per request. No new network class, no listener beyond the existing loopback server, no persistent profile."
+  },
+  "decisions": [
+    {
+      "question": "Firecrawl approach",
+      "status": "PENDING (FD-UP-1); this draft assumes option (a), reimplementation in Apache-2.0 code"
+    },
+    {
+      "question": "Fetch engine in release builds",
+      "status": "PENDING (FD-UP-7)"
+    },
+    {
+      "question": "Grain id and activation order",
+      "status": "PENDING (FD-UP-4)"
+    }
+  ],
+  "invariants": [
+    "orceld remains the sole authority; the loopback REST front and the MCP edge decide nothing.",
+    "No AGPL-licensed file enters crates/* or apps/*; the licence gates of SG-000131 enforce it.",
+    "Every refused or unsupported option is refused before any dispatch, by name.",
+    "A scrape never runs on an engine other than the one reported in its result and audit event; no silent fallback.",
+    "The HTML parser runs with no network and no process creation under orcel-contain.",
+    "Safe-mode approvals for every pre-existing shape are unchanged."
+  ],
+  "acceptance": [
+    "Every W1 scrape row of the parity matrix passes the JS and Python SDK harness on all three OSes with the fetch engine, and on Windows with the chromium engine in a live-browser-test build.",
+    "Every refused field of section 5.3 has a test and surfaces as the SDK's typed error.",
+    "The fetch engine's Markdown matches the worker extraction on shared fixtures within the documented normalisation.",
+    "Unsupported engines report unsupported or unavailable in the capability report and fail with UNSUPPORTED or PROVIDER_UNAVAILABLE.",
+    "A fresh-context security judge passes WP1-06 and WP1-07."
+  ],
+  "tests": [
+    "cargo test -p orcel-web",
+    "cargo test -p orceld web_scrape_",
+    "cargo test (apps/orcel-doc-parser) html_",
+    "npm test (apps/orcel-mcp) loopback-http and tool-contract suites",
+    "tests/firecrawl-compat js and py legs"
+  ],
+  "ci_runners": [
+    "ubuntu-latest",
+    "windows-latest",
+    "macos-latest"
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on every slice and on closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "screenshot_and_actions": "Wave 2 (WP2-04, WP2-07, WP2-11).",
+    "model_formats": "Wave 3 (WP3-07).",
+    "remote_exposure": "Needs its own decision and the remote-session scope tables."
+  },
+  "done_when": "The listed packets are merged with exact-head qualification, the harness report shows every W1 scrape row passed, and the canonical record names this grain CLOSED."
+}

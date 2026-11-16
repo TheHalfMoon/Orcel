@@ -1,0 +1,90 @@
+{
+  "id": "SG-000132",
+  "id_status": "PROPOSED: new id; final id is part of founder decision FD-UP-4",
+  "title": "Full Control dispatcher on Windows (lease-consuming executor dispatch, audit, emergency stop)",
+  "program": "ORCEL-UP",
+  "state": "DRAFT",
+  "risk": "high",
+  "created": "2026-11-16",
+  "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
+  "dependencies": [
+    "SG-000093",
+    "SG-000095",
+    "SG-000131"
+  ],
+  "dependency_notes": {
+    "SG-000093": "Closed. The only permission-mode model; FullControlLease and AdminLease issuance and checks are reused unchanged.",
+    "SG-000095": "Closed. The existing DesktopInput path under Full User is migrated onto the dispatcher without changing its behaviour.",
+    "SG-000131": "LeaseRef, DispatchAuthority and the audit hash chain.",
+    "SG-000096": "Active (GRAIN). Shell and process sessions consume the dispatcher; this grain neither closes nor widens SG-000096.",
+    "SG-000097": "Reserved (P20). Full filesystem would consume the dispatcher once activated (FD-UP-4)."
+  },
+  "spec_document": "docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md",
+  "packets": [
+    "WP1-10"
+  ],
+  "objective": "Make crates/orceld/src/full_control_dispatch.rs the single path through which any executor runs under a Full Control lease on Windows: load the lease, re-read the native Windows identity, check every SG-000093 binding (SID, logon session, device, Orcel session, profile, policy revision, epoch, expiry), confirm executor_enabled_now for the mode and executor class, write an audit event carrying the opaque lease id, binding digest and authority epoch, then dispatch and record the execution state. Emergency stop advances the epoch, cancels in-flight jobs and kills supervised children. Safe-mode paths stay byte-for-byte unchanged.",
+  "scope": {
+    "include": [
+      "The dispatcher module and its tests.",
+      "Migration of the SG-000095 DesktopInput path onto the dispatcher.",
+      "Wiring for SG-000096 shell sessions (and SG-000097 when activated) to call the dispatcher.",
+      "Emergency stop: epoch advance, job cancellation through orcel-jobs, child termination, state reporting (cancelled when confirmed, outcome_unknown otherwise).",
+      "A call-site test proving no executor runs under a lease outside the dispatcher."
+    ],
+    "exclude": [
+      "Enabling any executor class not already enabled or separately granted by its own grain.",
+      "Persistent Admin (SG-000099), Remote Full Control (SG-000105), an elevation broker (SG-000098).",
+      "Browser and web executors under a lease (Wave 2, with SG-000100 and successors).",
+      "macOS and Linux leases (Wave 2, WP2-01); on those OSes the dispatcher answers LEASE_UNSUPPORTED_PLATFORM.",
+      "Any change to SG-000010, SG-000060 or SG-000108 Safe-mode rules or approvals."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None.",
+    "dispatcher": "None by itself: it centralizes and audits dispatch for executor classes that other grains enable; it widens no executor ceiling and adds no mode."
+  },
+  "decisions": [
+    {
+      "question": "Grain id, activation, and whether SG-000097 is activated in Wave 1",
+      "status": "PENDING (FD-UP-4)"
+    }
+  ],
+  "invariants": [
+    "Only the authenticated local user control path mints a lease; no agent, MCP caller, donor, relay or remote principal can.",
+    "Every Full Control dispatch has an audit event with lease id, binding digest and authority epoch, and none with a raw SID or session value.",
+    "With no lease, every Safe request and response is identical to the pre-grain golden pairs.",
+    "Broader-authority fallback is never automatic; a lease failure after dispatch is not retried.",
+    "After emergency stop, no mutation dispatches under any earlier lease."
+  ],
+  "acceptance": [
+    "Lease mismatch tests (SID, logon session, device, Orcel session, policy revision, epoch, expiry) deny before dispatch on the Windows runner with real host identity values.",
+    "Golden Safe pairs for process_spawn, the executable registry and the browser shapes are unchanged.",
+    "Emergency stop ends a running dispatched process within 1 s on the Windows runner and the next call fails LEASE_INVALID (journey J-3).",
+    "The call-site test finds no lease-gated executor outside the dispatcher.",
+    "A fresh-context security judge passes the packet."
+  ],
+  "tests": [
+    "cargo test -p orceld full_control_dispatch_",
+    "cargo test -p orcel-policy",
+    "Windows native CI lease issuance from real host values"
+  ],
+  "ci_runners": [
+    "windows-latest (native, required)",
+    "ubuntu-latest",
+    "macos-latest"
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on the packet and on closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "real_consent": "A real Full User grant and emergency stop through a real client stay with the founder.",
+    "cross_platform": "WP2-01 and WP2-03 extend the dispatcher to macOS and Linux leases."
+  },
+  "done_when": "WP1-10 is merged with exact-head qualification, journey J-3 passes on Windows, and the canonical record names this grain CLOSED."
+}
