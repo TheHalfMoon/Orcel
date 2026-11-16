@@ -1,11 +1,12 @@
 {
   "id": "SG-000102",
   "id_status": "PROPOSED: reuses the P20-reserved id and role 'crawl_map_documents_and_bounded_web_jobs' (docs/p20/sg000092_architecture_freeze.json) out of its recorded sequential order; founder decision FD-UP-4 may allocate a new id instead",
-  "title": "Embedded job queue; asynchronous crawl, map and batch scrape over MCP and loopback",
+  "title": "Embedded job queue; asynchronous crawl, map and batch scrape over MCP and loopback REST (Windows)",
   "program": "ORCEL-UP",
   "state": "DRAFT",
   "risk": "high",
   "created": "2026-11-16",
+  "revision": 2,
   "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
   "dependencies": [
     "SG-000131",
@@ -13,43 +14,49 @@
     "SG-000108"
   ],
   "dependency_notes": {
-    "SG-000131": "Job state machine, audit chain, error codes.",
-    "SG-000101": "Scrape options, engines and the harness; batch scrape units are scrapes.",
-    "SG-000108": "Closed. crawl.rs, crawl_scope.rs, map_rank.rs, robots and sitemaps (slice 7, #317) are reused in place; their limits stay."
+    "SG-000131": "Job state machine, restart rules, audit chain, error codes, WebCrawlRequest.",
+    "SG-000101": "Scrape options, engines, REST tokens, the network-tool guard amendment and the harness; batch scrape units are scrapes.",
+    "SG-000108": "Closed. crawl.rs, crawl_scope.rs, map_rank.rs, robots and sitemaps (slice 7, #317) are reused in place with their limits: at most 50 pages, depth 5, 10 minutes and 1,000 remembered URLs."
   },
   "spec_document": "docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md",
   "packets": [
     "WP1-04",
-    "WP1-06 (jobs)",
+    "WP1-06 (jobs, WebCrawlRequest to CrawlSpec translation, FetchCrawlDriver)",
     "WP1-07 (job tools and REST routes)",
     "WP1-09 (crawl, map and batch rows)"
   ],
-  "objective": "Add crates/orcel-jobs, an embedded durable job queue with no server database and no async runtime (per-unit leases, dedup by normalized URL, per-origin politeness throttle, bounded retry with backoff for read-only units only, concurrency 1 to 4, checkpoint and resume that reports interrupted units as outcome_unknown, a bounded expiring result store), porting ideas from Crawlee (Apache-2.0) and Scrapling (BSD-3-Clause) without copying files. Expose the existing tested crawl and map code through Firecrawl v2 routes (POST /v2/map, POST /v2/crawl, GET and DELETE /v2/crawl/{id}, GET /v2/crawl/{id}/errors, /v2/crawl/ongoing and /active, POST /v2/batch/scrape and its status, cancel and errors routes, with v1 aliases for map and crawl) and MCP tools web_map, web_crawl_start, web_batch_scrape_start, web_job_status, web_job_cancel, web_job_errors and web_job_list.",
+  "objective": "Add crates/orcel-jobs, an embedded durable job queue with no server database and no async runtime (per-unit leases, per-origin politeness throttle callable by crawl drivers, bounded retry for read-only batch units, batch concurrency 1 to 4, a progress log used for reporting, a result store capped per job and globally with expiry, job ownership per principal). One crawl or map job is one unit: crawl.rs keeps the frontier, dedup, scope and limits through its CrawlDriver trait; per-URL units and dedup apply to batch scrape only. Add FetchCrawlDriver (fetch engine on the Windows SG-000040 transport) beside the existing WorkerCrawl (chromium). Expose them through Firecrawl v2 routes (POST /v2/map, POST /v2/crawl, GET and DELETE /v2/crawl/{id}, GET /v2/crawl/{id}/errors, /v2/crawl/ongoing and /active, POST /v2/batch/scrape and its status, cancel and errors routes, with v1 aliases for map and crawl) and the MCP tools web_map, web_crawl_start, web_batch_scrape_start, web_job_status, web_job_cancel, web_job_errors and web_job_list.",
   "scope": {
     "include": [
-      "crates/orcel-jobs: queue, throttle, retry, concurrency, checkpoint and store modules (section 4.11 of the spec); the job state machine of section 4.7 with no new state.",
-      "orceld: capabilities web.map, web.crawl, web.batch_scrape, job.status, job.cancel, job.errors, job.list; one SOFT approval per job bound to the full spec digest in Safe mode (subject to FD-UP-5); every page navigation still governed by SG-000075; cancel and emergency stop reach running units.",
+      "crates/orcel-jobs: queue, throttle, retry, concurrency, checkpoint and store modules (section 4.11 of the spec); the job state machine of section 4.7 with no new state; restart handling (not_started to cancelled, dispatched to outcome_unknown).",
+      "orceld: capabilities web/map, web/crawl_start, web/batch_scrape_start, job/status, job/cancel, job/errors, job/list; WebCrawlRequest to CrawlSpec translation in crates/orceld/src/web_dispatch.rs; FetchCrawlDriver in crates/orceld/src/fetch_crawl.rs; one SOFT approval per job bound to the canonical spec digest, the start origin's resolved-address set, engine, limits, principal and orcel_session_id (subject to FD-UP-5); TARGET_STALE on address drift; cancel, lease-independent emergency stop and approval-prompt expiry reach the job.",
       "orcel-web: map, crawl and batch request types and the status mapping of section 5.5.",
-      "apps/orcel-mcp: the seven tool_contract entries (local_only) and the loopback routes listed in the objective.",
-      "tests/firecrawl-compat rows for map, crawl and batch."
+      "apps/orcel-mcp: the seven tool_contract entries (local_only) and the loopback routes listed in the objective, with job ownership and per-principal bounds.",
+      "tests/firecrawl-compat rows for map, crawl and batch, and the J-2 cancel probe."
     ],
     "exclude": [
       "Webhooks or any outbound callback from a job.",
       "Subdomains, external links or whole-domain crawls (one admitted destination).",
       "Ignoring robots.txt.",
+      "Raising SG-000108 slice 7's crawl limits (FD-UP-11).",
       "Crawl prompts, extract and other model-backed rows (Wave 3).",
+      "Any web job on macOS or Linux (WP2-12, SG-000115).",
       "Remote exposure.",
       "Any Firecrawl AGPL file; any Crawlee or Scrapling file copied verbatim."
     ]
   },
   "authority_delta": {
     "activation": "None.",
-    "jobs": "Proposed: bounded asynchronous web jobs (at most 8 queued, 2 running, 1,000 URLs remembered, depth 5, 100 URLs per batch) admitted by one SOFT approval per job spec in Safe mode. No new network class, no listener beyond the existing loopback server, no persistent browser profile, no job egress."
+    "jobs": "Proposed: bounded asynchronous web jobs (per crawl at most 50 pages, depth 5, 10 minutes; at most 50 URLs per batch; 8 queued and 2 running device-wide; 4 queued and 1 pending approval per principal; 20 MiB per job and 200 MiB across jobs, expiring after 24 h) admitted by one SOFT approval per job spec in Safe mode. This is an explicit loosening of SG-000040's one-shot fetch approval for these shapes only and needs FD-UP-5. No new network class, no listener beyond the existing loopback server, no persistent browser profile, no job egress."
   },
   "decisions": [
     {
-      "question": "Job approval granularity in Safe mode",
+      "question": "Job approval granularity in Safe mode (explicit loosening of SG-000040 one-shot fetch approval and C-04)",
       "status": "PENDING (FD-UP-5)"
+    },
+    {
+      "question": "Crawl bounds",
+      "status": "PENDING (FD-UP-11); this draft keeps SG-000108 slice 7's limits"
     },
     {
       "question": "Grain id and activation order",
@@ -59,30 +66,36 @@
   "invariants": [
     "Job states are exactly not_started, dispatched, completed, cancelled and outcome_unknown.",
     "outcome_unknown is never retried automatically; mutating units are never retried.",
-    "A job approval binds the canonical spec digest and cannot be replayed for a different spec.",
-    "A restarted orceld reports interrupted units as outcome_unknown and never re-runs them silently.",
+    "A job approval binds the canonical spec digest, the resolved-address set and orcel_session_id, and cannot be replayed for a different spec, address set or session.",
+    "On restart no job resumes: not_started jobs are cancelled and dispatched jobs end as outcome_unknown.",
+    "crawl.rs alone owns the crawl frontier, dedup, scope and limits.",
     "The crawl origin is the boundary; filters only narrow it.",
-    "Result storage is bounded and expires; it lives under the private state root."
+    "Only the owning principal can read or cancel a job.",
+    "Result storage is bounded per job and globally, expires, and lives under the private state root."
   ],
   "acceptance": [
-    "State machine property tests show no transition outside the table of section 4.7.",
-    "Crash-resume test passes on all three OSes.",
-    "Per-origin delay is honoured within 10 ms of the configured value on all three OSes.",
-    "Cancel reaches cancelled within 2 s and no page is fetched after the cancel is acknowledged (journey J-2).",
-    "Every W1 map, crawl and batch row of the parity matrix passes the SDK harness.",
+    "State machine property tests show no transition outside the table of section 4.7, including restart.",
+    "Crash test passes on all three OSes (orcel-jobs is platform-independent).",
+    "Per-origin delay is honoured within 10 ms of the configured value.",
+    "The J-2 cancel probe passes on Windows: cancelled within 2 s of the acknowledgement, and no fixture request after it beyond the in-flight page.",
+    "A change in the start origin's resolved-address set stops the job with TARGET_STALE.",
+    "Every W1 map, crawl and batch row of the parity matrix passes the SDK harness on Windows.",
     "A fresh-context security judge passes the orceld dispatch slice."
   ],
   "tests": [
     "cargo test -p orcel-jobs",
     "cargo test -p orcel-web",
     "cargo test -p orceld web_job_",
+    "cargo test -p orceld fetch_crawl_",
+    "cargo test -p orceld --test j2_cancel_probe",
     "npm test (apps/orcel-mcp)",
-    "tests/firecrawl-compat js and py legs"
+    "npm test (tests/firecrawl-compat/js)",
+    "python -I -m pytest tests/firecrawl-compat/py"
   ],
   "ci_runners": [
-    "ubuntu-latest",
-    "windows-latest",
-    "macos-latest"
+    "windows-latest (native; dispatch, drivers, harness, cancel probe)",
+    "ubuntu-latest (orcel-jobs, orcel-web, unsupported assertions)",
+    "macos-latest (orcel-jobs, orcel-web, unsupported assertions)"
   ],
   "review": {
     "jev_semantic_review": true,
@@ -93,7 +106,8 @@
     "cross_platform_ci": "Windows, macOS and Linux legs"
   },
   "successor_requirements": {
-    "watcher_and_queue_status": "Wave 2 (WP2-11).",
+    "watcher_and_queue_status": "Wave 2 (WP2-11); the WebSocket checks Host, Origin and the REST token.",
+    "non_windows": "WP2-12 and SG-000115.",
     "scheduler_and_monitoring": "Wave 3; Firecrawl monitor parity is not claimed.",
     "mobile_and_fleet_jobs": "Wave 3 consumers of orcel-jobs."
   },
