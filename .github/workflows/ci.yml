@@ -49,6 +49,9 @@ jobs:
           # The commit this job built (on a pull request, GITHUB_SHA is the
           # merge commit, not the checked-out head).
           ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          # SG-000119 A1: orcel-app-api-client's live tests run against the
+          # orceld this step builds; a missing binary fails them, never skips.
+          ORCEL_REQUIRE_LIVE_ORCELD: "1"
         run: cargo test --workspace
       # The Windows approval dialog closes itself when nobody answers. This shows a real
       # dialog, so it runs on the CI runner only; the step fails unless the test ran and passed.
