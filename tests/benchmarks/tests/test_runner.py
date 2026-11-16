@@ -234,7 +234,7 @@ class OracleDryRun(unittest.TestCase):
             os.environ, {runner.DEPLOYMENT_TARGET_ENV: "15.0"}
         ):
             produced = report(COMMIT, [row])
-        self.assertEqual(sw_vers.call_args.args[0], ["sw_vers", "-buildVersion"])
+        self.assertEqual(sw_vers.call_args.args[0], ["/usr/bin/sw_vers", "-buildVersion"])
         self.assertEqual(
             produced["machine"],
             {"os": "macos", "os_version": "26.6.2", "arch": "arm64", "os_build": "25G123", "deployment_target": "15.0"},

@@ -120,11 +120,22 @@ fn open_options() -> OpenOptions {
     options
 }
 
+/// Create the log's missing parent directories. MAC-M1-09: on Unix each directory this creates is
+/// 0700, owner only, rather than the umask's default; the umask can only narrow that. A directory
+/// that already exists keeps its mode. Windows is unchanged.
+fn create_parent_dirs(parent: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(parent)
+}
+
 impl AuditLogger {
     pub fn new(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            create_parent_dirs(parent)?;
         }
         // Made once at start, before this process writes anything.
         let torn = ends_mid_line(&path);
@@ -487,6 +498,38 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
         let text = std::fs::read_to_string(&path).expect("read audit");
         assert_eq!(text.lines().count(), 1, "{text}");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// MAC-M1-09: on Unix the logger creates missing parent directories 0700 and leaves the mode
+    /// of a directory that already exists as it is.
+    #[cfg(unix)]
+    #[test]
+    fn mac_m1_09_missing_parent_dirs_are_created_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).expect("dir").permissions().mode() & 0o777;
+        let base = sandbox("mode-dirs");
+        let existing = base.join("existing");
+        std::fs::create_dir(&existing).expect("existing dir");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o750)).expect("chmod");
+        let outer = existing.join("outer");
+        let path = outer.join("inner").join("audit.jsonl");
+        let logger = AuditLogger::new(&path).expect("audit");
+        assert_eq!(mode(&outer), 0o700, "{:o}", mode(&outer));
+        assert_eq!(mode(&outer.join("inner")), 0o700);
+        assert_eq!(
+            mode(&existing),
+            0o750,
+            "an existing directory keeps its mode"
+        );
+        assert_eq!(mode(&base), 0o700);
+        logger
+            .record(&request("first".into(), None), "p1", "SUCCESS")
+            .expect("record");
+        assert_eq!(mode(&path), 0o600);
+        // A logger over a directory that is already there changes nothing.
+        AuditLogger::new(&path).expect("audit again");
+        assert_eq!(mode(&existing), 0o750);
         let _ = std::fs::remove_dir_all(base);
     }
 

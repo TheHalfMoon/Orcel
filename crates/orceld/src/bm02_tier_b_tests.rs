@@ -802,7 +802,7 @@ fn report_token(value: Option<String>) -> String {
 
 /// MAC-M1-09: the macOS build identifier (`sw_vers -buildVersion`).
 fn macos_os_build() -> Option<String> {
-    let out = std::process::Command::new("sw_vers")
+    let out = std::process::Command::new("/usr/bin/sw_vers")
         .arg("-buildVersion")
         .stdin(std::process::Stdio::null())
         .output()

@@ -249,7 +249,7 @@ def _report_token(value: Optional[str]) -> str:
 def _macos_os_build() -> Optional[str]:
     try:
         done = subprocess.run(
-            ["sw_vers", "-buildVersion"],
+            ["/usr/bin/sw_vers", "-buildVersion"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
