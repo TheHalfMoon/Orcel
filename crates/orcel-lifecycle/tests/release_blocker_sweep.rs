@@ -2533,3 +2533,79 @@ fn the_release_sweep_parsers_catch_the_spellings_they_claim() {
     assert_eq!(yaml_code("  a: b # c"), "  a: b");
     assert_eq!(yaml_code("  a: b#c"), "  a: b#c");
 }
+
+/// SG-000119 A1: the Control Room's app API client
+/// (`crates/orcel-app-api-client`) never reaches a release binary. It is a
+/// root workspace member only so its tests run on the root legs; no other
+/// manifest may depend on it, except the shell's own src-tauri workspace (A2),
+/// which is never in the release payload. Lock files are checked too: no
+/// package in any of them may list it as a dependency, except that shell's.
+#[test]
+fn the_app_api_client_crate_reaches_no_release_binary() {
+    const CRATE: &str = "orcel-app-api-client";
+    const OWN: &str = "crates/orcel-app-api-client/Cargo.toml";
+    const SHELL: &str = "apps/orcel-control-room/src-tauri/";
+    let root = repo_root();
+    let mut hits = Vec::new();
+    let mut manifests = 0;
+    // text_files skips lock files, so every Cargo.toml and Cargo.lock is
+    // read here directly.
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if path.is_dir() {
+                // `dist` folders are walked too: a manifest there is still
+                // a manifest.
+                if !matches!(name.as_str(), ".git" | "target" | "node_modules") {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if name != "Cargo.toml" && name != "Cargo.lock" {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative == OWN || relative.starts_with(SHELL) {
+                continue;
+            }
+            manifests += 1;
+            let text = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+            if name == "Cargo.toml" {
+                // The root manifest may name it only as a workspace member.
+                for line in text.lines().filter(|line| line.contains(CRATE)) {
+                    let member = relative == "Cargo.toml"
+                        && line.trim() == "\"crates/orcel-app-api-client\",";
+                    if !member {
+                        hits.push(format!("{relative}: {}", line.trim()));
+                    }
+                }
+            } else {
+                // A dependency entry is ` "orcel-app-api-client",` or, when
+                // several versions are locked, ` "orcel-app-api-client 0.2.0",`
+                // inside another package's `dependencies = [...]`: match the
+                // quoted prefix.
+                for block in text.split("\n[[package]]\n") {
+                    let own = block.starts_with(&format!("name = \"{CRATE}\"\n"));
+                    if !own && block.contains(&format!(" \"{CRATE}")) {
+                        hits.push(format!(
+                            "{relative}: {}",
+                            block.lines().next().unwrap_or_default()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(manifests > 2, "found only {manifests} manifests");
+    assert!(
+        hits.is_empty(),
+        "orcel-app-api-client must stay out of every release build:\n{}",
+        hits.join("\n")
+    );
+}

@@ -21,6 +21,10 @@ a802eaf26ca97616a6bf0de6a29729a9346fbb1f:
        T-CUA-26, COPY_ADAPT: the per-user pipe DACL, first-instance and
        remote-client rules, the pipe client's token-user check, and the
        stale-socket rule; Authenticode and code-signature checks not taken)
+    -> crates/orcel-app-api-client/src/win.rs (SG-000119 A1, matrix rows
+       T-CUA-25 and T-CUA-26, through crates/orceld/src/app_api.rs: the
+       handle guard, wide strings, token-user and SID helpers, the pipe
+       name and the identification-only open, used client side)
 
   apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy
     blob 39fc34b0b3bcf434d25b785fbc62bf3b38669d27

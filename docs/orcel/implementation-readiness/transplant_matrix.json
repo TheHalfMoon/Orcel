@@ -301,7 +301,7 @@
       "method": "COPY_ADAPT",
       "task": "CR-01",
       "object": "16c562b91464aa6086d3ee38e8d31f5ba1c02f27",
-      "notes": "FSL-1.1-MIT (FD-04). Kernel-derived peer identity: macOS LOCAL_PEERTOKEN audit token -> SecCode -> SecCodeCheckValidity against a requirement; Linux SO_PEERCRED + /proc/<pid>/exe marked os_verified=false (same-user ptrace); Windows pipe client pid + Authenticode. Orcel's trust policy (which signer is first-party) replaces Cua's."
+      "notes": "FSL-1.1-MIT (FD-04). Kernel-derived peer identity: macOS LOCAL_PEERTOKEN audit token -> SecCode -> SecCodeCheckValidity against a requirement; Linux SO_PEERCRED + /proc/<pid>/exe marked os_verified=false (same-user ptrace); Windows pipe client pid + Authenticode. Orcel's trust policy (which signer is first-party) replaces Cua's. Also adapted, through crates/orceld/src/app_api.rs (the pipe open, token user and SID helpers), into crates/orcel-app-api-client/src/win.rs (SG-000119 A1, the Control Room client's identification-only open and server identity check), under the same FSL-1.1-MIT header."
     },
     {
       "id": "T-CUA-26",
@@ -313,7 +313,7 @@
       "method": "COPY_ADAPT",
       "task": "CR-01",
       "object": "cbf138941874ec84045a8433f5403e7fc3c8cdf2",
-      "notes": "FSL-1.1-MIT (FD-04). Named-pipe client process and Authenticode publisher check."
+      "notes": "FSL-1.1-MIT (FD-04). Named-pipe client process and Authenticode publisher check. Also adapted, through crates/orceld/src/app_api.rs (the pipe open, token user and SID helpers), into crates/orcel-app-api-client/src/win.rs (SG-000119 A1, the Control Room client's identification-only open and server identity check), under the same FSL-1.1-MIT header."
     },
     {
       "id": "T-CUA-27",
