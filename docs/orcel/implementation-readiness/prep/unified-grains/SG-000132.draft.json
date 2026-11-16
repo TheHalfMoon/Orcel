@@ -6,7 +6,7 @@
   "state": "DRAFT",
   "risk": "high",
   "created": "2026-11-16",
-  "revision": 4,
+  "revision": 5,
   "base": "4dd5cfc93b524e3e99eed9097c3e81917676bee8",
   "dependencies": [
     "SG-000019",
@@ -46,7 +46,10 @@
       "apps/orcel-indicator and the orceld side of section 4.13: launch, peer checks, frames, mitigation policies (DisableExtensionPoints, MicrosoftSignedOnly, image-load policy, ProhibitDynamicCode) enabled before the window exists, five-check visibility-gated heartbeat including the input desktop, Stop on hardware input only (IMO_INJECTED ignored), close, minimise and hide treated as Stop, repositioning rejected, handle duplication, Stop/StopAck, revoke requests in the state root's stop directory checked inside the epoch lock, session lock (WTS_SESSION_LOCK) as a Stop in both processes, hotkey status.",
       "crates/orcel-provider-uia PROTECTED_WINDOW_MARKERS (and the native-host mirror) gain the indicator; the grant prompt and emergency-stop markers are confirmed; observation, capture and desktop input refuse all three, with a test per surface.",
       "Lease expiry kill; per-unit lease re-check; Admin executor refused.",
-      "Measurement of the native host under profile D with the existing Go qualification suites; each failing capability is reported unsupported under a lease, never fixed by widening the token (FD-UP-9 sub-question b)."
+      "Measurement of the native host under profile D with the existing Go qualification suites; each failing capability is reported unsupported under a lease, never fixed by widening the token (FD-UP-9 sub-question b).",
+      "The executor-SID deny ACE on the orcel-mcp process (applied by orceld to its identified launching parent, READ_CONTROL | WRITE_DAC only; Full Control refused for the session if the parent cannot be identified) and on the orcel-agent process (self-applied through ctypes advapi32.SetSecurityInfo with the executor SID from orceld's status response).",
+      "Indicator reads DisableLockWorkstation (HKCU and HKLM policy keys) at startup and every 10 s; if set, it warns, sends LockStatus { available: false }, and never shows lock-to-stop as ready; orceld reports it in the capability report and audits it.",
+      "Section 4.13 residual: low-level input hooks or BlockInput by non-executor same-user processes can swallow Stop and the hotkey; covered by the session-lock path, uncovered where locking is disabled (stated by the indicator)."
     ],
     "exclude": [
       "Enabling any executor class not already enabled or separately granted by its own grain.",
@@ -90,7 +93,8 @@
     "With no lease, every Safe request and response is identical to the pre-grain golden pairs.",
     "Broader-authority fallback is never automatic; a lease failure after dispatch is not retried.",
     "After emergency stop or lease expiry, no executor started under the old lease keeps running.",
-    "The residual of SG-000095 (desktop input can reach non-protected windows) is stated, not claimed closed."
+    "The residual of SG-000095 (desktop input can reach non-protected windows) is stated, not claimed closed.",
+    "Every Orcel process that holds tokens or session state (orceld, the indicator, orcel-mcp, orcel-agent) carries the executor-SID deny ACE."
   ],
   "acceptance": [
     "Lease mismatch tests (SID, logon session, device, Orcel session, policy revision, epoch, expiry) deny before dispatch on the Windows runner with real host identity values.",
@@ -108,7 +112,10 @@
     "Desktop input, observation and capture targeting the indicator, grant prompt and stop surface are refused.",
     "The grant prompt shows the residual text.",
     "The call-site test finds no lease-gated executor outside the dispatcher; the Admin executor is refused.",
-    "A fresh-context security judge passes both packets."
+    "A fresh-context security judge passes both packets.",
+    "From profile S, schtasks /create and ITaskService with an interactive logon type, WMI Win32_Process.Create, BITS SetNotifyCmdLine, and DCOM activation of ShellWindows and MMC20.Application are each refused or yield a process that still carries the restricted token.",
+    "From profile D, orcel-mcp and orcel-agent cannot be opened with PROCESS_VM_READ.",
+    "With DisableLockWorkstation = 1, the indicator warns, reports LockStatus { available: false }, and never shows lock-to-stop as ready."
   ],
   "tests": [
     "cargo test -p orceld full_control_dispatch_",
@@ -124,7 +131,8 @@
     "cargo test -p orceld executor_profile_s_ (Windows)",
     "cargo test -p orceld executor_cross_process_ (Windows)",
     "node scripts/check-native-host-calls.mjs",
-    "Go native qualification suites under profile D (Windows)"
+    "Go native qualification suites under profile D (Windows)",
+    "cargo test -p orceld executor_indirect_spawn_ (Windows)"
   ],
   "ci_runners": [
     "windows-latest (native, required)",

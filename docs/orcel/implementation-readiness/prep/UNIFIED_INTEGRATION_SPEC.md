@@ -1,6 +1,6 @@
 # Orcel unified platform: integration specification (EGM draft)
 
-**Status: DRAFT SPECIFICATION, DOCS ONLY (revision 4).** This document activates no grain, imports no donor code,
+**Status: DRAFT SPECIFICATION, DOCS ONLY (revision 5).** This document activates no grain, imports no donor code,
 adds no dependency, tool, listener or authority, and changes no canonical state. Every packet below needs its own
 activated grain, exact-head qualified PR, review gates and, where it touches authority, a fresh-context security
 judge. Draft grain JSONs live in [`unified-grains/`](unified-grains/), not in `.specgrain/specs/`.
@@ -8,7 +8,8 @@ judge. Draft grain JSONs live in [`unified-grains/`](unified-grains/), not in `.
 - **Revision 2** resolves the two fresh-context reviews of revision 1 (`c8c48081`): readiness findings R1 to R15 and
   security findings S1 to S13. **Revision 3** resolves the re-reviews of `e9cc14d4` (readiness RR1 to RR3, security
   SN1 to SN6, and the grain consistency check). **Revision 4** resolves the security re-check of `5d1651cd` (B1 and B2,
-  the section 4.14 executor boundary). Section 13 maps each finding to its resolution.
+  the section 4.14 executor boundary). **Revision 5** applies the four nits of the re-check of `c19e7b94`. Section 13
+  maps each finding to its resolution.
 - **Base:** branch `plan/donor-inventory` at `c72d33fa`, on `origin/main` `4dd5cfc93b524e3e99eed9097c3e81917676bee8`.
 - **Inputs read in full:** the founder blueprint and source pins from PR #785 (`UNIFIED_PLATFORM_BLUEPRINT_2026-11-16.md`,
   `UNIFIED_SOURCE_PINS_2026-11-16.json`); [`DONOR_INVENTORY.md`](DONOR_INVENTORY.md) and
@@ -822,7 +823,21 @@ another desktop and cannot. The indicator therefore:
 | Hotkey | Ctrl+Alt+Shift+F12 via `RegisterHotKey` | Same as above; never shown as ready if registration failed |
 | **Session lock** | Ctrl+Alt+Del then Lock, or Win+L | **No.** The secure attention sequence is handled by Winlogon and cannot be intercepted or synthesized by user-mode code. `orceld` and the indicator both call `WTSRegisterSessionNotification`; on `WTS_SESSION_LOCK` each performs Stop (`orceld` advances the epoch; the indicator terminates held Job Objects and writes a revoke request). A lock requested by software (`LockWorkStation`) only stops, which is safe |
 
-The grant prompt and the indicator both say "Lock your PC (Win+L) to stop Full Control at any time".
+The grant prompt and the indicator both say "Lock your PC (Win+L) to stop Full Control at any time", unless locking is
+disabled (below).
+
+**Locking disabled by policy.** At startup and every 10 s the indicator reads `DisableLockWorkstation` under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System` (and the same value under `HKLM`). If either is 1, it
+shows "Locking is disabled on this PC: lock-to-stop is unavailable, use the Stop button", never lists lock-to-stop as
+ready, and sends `LockStatus { available: false }`; `orceld` records it in the capability report and audits it with the
+next `lease` event. Full Control is not refused for this alone, but the user is told on every grant.
+
+**Residual: low-level hooks by other same-user processes.** Any non-executor process already running as the user (not
+an Orcel executor, which C-26 and the UI limits confine) can install `WH_MOUSE_LL` or `WH_KEYBOARD_LL` hooks, or call
+`BlockInput`, and so swallow clicks on Stop and the hotkey. Orcel cannot prevent this at the same integrity level. It is
+covered by the session-lock path: the secure attention sequence is not delivered through low-level hooks, so
+Ctrl+Alt+Del then Lock still stops Full Control. Where locking is disabled by policy, this residual is uncovered, and the
+indicator says so.
 
 **Frames.** As section 4.9: `u32` little-endian length plus JSON, closed vocabularies, at most 16 KiB per frame,
 unknown frames refused without action.
@@ -842,6 +857,7 @@ pub enum IndicatorToOrceld {
     Heartbeat { seq: u64, visible: Visibility },
     StopRequest { reason: StopReason },                               // button | hotkey | close_or_hide | session_lock
     HotkeyStatus { registered: bool },
+    LockStatus { available: bool },                                   // false when DisableLockWorkstation is set
 }
 pub struct Visibility { topmost: bool, not_minimised: bool, not_cloaked: bool, on_monitor: bool, on_input_desktop: bool }
 pub struct AnchorRef { file_id: String, seq: u64, digest: String }
@@ -957,7 +973,15 @@ inheritance on): an explicit **deny** ACE for the executor SID covering `GENERIC
 `OWNER RIGHTS` (`S-1-3-4`) ACE granting `READ_CONTROL` only, removing the owner's implicit `WRITE_DAC`; and an explicit
 full-control grant for the user SID for `orceld` itself. `orceld` and the indicator also set a deny ACE for the executor
 SID on their own process objects (belt and braces: profile S already fails their DACLs; profile D would otherwise get
-read rights through the logon SID). A restricted token's access check passes only if both the normal and the
+read rights through the logon SID). The same deny ACE covers the other Orcel processes that hold tokens or session
+state, narrowing R-D1:
+- the `orcel-mcp` front: Node cannot call `SetSecurityInfo` without a native addon, so `orceld` applies the ACE to its
+  own launching parent at startup, identified by `InheritedFromUniqueProcessId` with a creation time earlier than its
+  own and the image path of the pinned Node runtime, opening it with `READ_CONTROL | WRITE_DAC` only; if the parent
+  cannot be identified, Full Control is refused for that session;
+- `apps/orcel-agent` (Python): applies the ACE to itself at startup through `ctypes` (`advapi32.SetSecurityInfo` on
+  `GetCurrentProcess()`), with the executor SID read from `orceld`'s status response, and refuses to start a Full
+  Control session if the call fails. A restricted token's access check passes only if both the normal and the
 restricting SID checks pass, and a deny ACE matching a restricting SID fails the second check, so executors and every
 descendant are denied while the user's ordinary processes are unaffected.
 
@@ -965,8 +989,14 @@ descendant are denied while the user's ordinary processes are unaffected.
 - open each protected file for read and write, change the state root's DACL, take ownership: all denied;
 - open `explorer.exe`, a second same-user test process, `orcel-mcp`, `orceld` and the indicator with `PROCESS_VM_WRITE`,
   `PROCESS_VM_OPERATION`, `PROCESS_CREATE_THREAD` and `PROCESS_DUP_HANDLE`: all denied for D and S; under S also
-  `PROCESS_QUERY_LIMITED_INFORMATION` denied; under D `PROCESS_VM_READ` to `orceld` and the indicator denied (process
-  deny ACE);
+  `PROCESS_QUERY_LIMITED_INFORMATION` denied; under D `PROCESS_VM_READ` to `orceld`, the indicator, `orcel-mcp` and
+  `orcel-agent` denied (process deny ACE);
+- under S, indirect process creation through system services is refused, or the process it creates still carries the
+  restricted token (checked by reading the new process's token restricting SIDs): `schtasks /create` and the Task
+  Scheduler COM API (`ITaskService`) with an interactive logon type and `/run`; WMI `Win32_Process.Create`; a BITS job
+  with `SetNotifyCmdLine`; out-of-process COM/DCOM activation of a local server such as Explorer's `ShellWindows`
+  (`IShellDispatch2.ShellExecute`) and `MMC20.Application`. Any of these that yields a process with the user's full
+  token fails the packet;
 - under S: `FindWindowW` for the indicator fails (other desktop), `SetWindowsHookExW` targeting the indicator's thread
   fails, `PostMessageW(WM_CLOSE)` cannot reach it, a GUI program started by the shell is not visible on `Default`;
 - under D: `CreateDesktopW` and `SwitchDesktop` fail (UI limit); clipboard read and write fail; `SendInput` into a test
@@ -1434,7 +1464,10 @@ threads, and a fresh-context security judge where marked. d1-local is advisory o
   SID, separate window station and desktop, every UI limit, workspace grants to the executor SID);
   `cargo test -p orceld executor_cross_process_` (Windows: from profiles D and S, opening explorer and a second same-user
   process with `PROCESS_VM_WRITE`, `PROCESS_VM_OPERATION`, `PROCESS_CREATE_THREAD` and `PROCESS_DUP_HANDLE` is denied,
-  and the measured logon-SID rights are recorded); the existing Go native qualification suites run under profile D
+  and the measured logon-SID rights are recorded; `orcel-mcp` and `orcel-agent` unreadable from profile D);
+  `cargo test -p orceld executor_indirect_spawn_` (Windows, profile S: `schtasks /create` and `ITaskService` with an
+  interactive logon type, WMI `Win32_Process.Create`, BITS `SetNotifyCmdLine`, DCOM `ShellWindows` and
+  `MMC20.Application`, each refused or yielding a restricted-token process); the existing Go native qualification suites run under profile D
   with each failing capability recorded; `node scripts/check-native-host-calls.mjs` (static guard of section 4.14 over
   `apps/orcel-computer-host`); `cargo test -p orcel-lifecycle grant_prompt_residual_text`; Windows native CI issuing a
   lease from real host values (existing pattern).
@@ -1470,7 +1503,9 @@ threads, and a fresh-context security judge where marked. d1-local is advisory o
   lock); `cargo test -p orcel-provider-uia protected_markers_`; Windows native tests: suspend `orceld`
   (`NtSuspendProcess`) and measure stop-to-death; minimise, cloak and send `WM_CLOSE` from a test process; inject a click
   with `SendInput` and assert no Stop; attempt `SetWindowsHookExW` with a test DLL into the indicator's thread and assert
-  the DLL is not loaded; call `LockWorkStation` and measure stop-to-death. The founder-present J-3 run uses real Win+L.
+  the DLL is not loaded; call `LockWorkStation` and measure stop-to-death; set `DisableLockWorkstation` = 1 under HKCU
+  for the test user and assert the warning, `LockStatus { available: false }`, the capability report entry and that
+  lock-to-stop is never shown as ready. The founder-present J-3 run uses real Win+L.
 - **CI:** Windows native required. **Security judge:** yes.
 
 #### WP1-11 Wave 1 journeys
@@ -1698,3 +1733,12 @@ from this draft.
 | --- | --- | --- |
 | B1 user SID in the restricting list | Removed from every executor token. Profile S (process-starting executors): restricting SIDs executor, Everyone, Users, Authenticated Users, RESTRICTED (no user or logon SID), so other same-user processes are unopenable; workspace roots and a private temp directory granted explicitly to the executor SID (Chromium-style). Profile D (native host): user SID removed, logon SID kept for the input desktop and `DESKTOP_JOURNALPLAYBACK`; default DACLs give it read and execute only (stated: `PROCESS_VM_READ` included, residual R-D1, contained by a static guard on the pinned host), never write, thread, handle or terminate rights. Tests open explorer and another same-user process with `PROCESS_VM_WRITE`/`PROCESS_CREATE_THREAD` and expect denial. Native host consequence: `SendInput` needs no target handle, window actions need window handles (allowed), UIA mostly needs none but COM security and legacy common-control proxies are unproven, so WP1-10 measures with the existing Go qualification suites and reports failures `unsupported`; FD-UP-9 sub-question (b). J-3 updated accordingly | 4.14, C-26, WP1-10, J-3, FD-UP-9 |
 | B2 desktop-level attacks | Profile S runs on a dedicated window station and desktop with every `JOB_OBJECT_UILIMIT_*` flag, so it cannot message, hook, close or hide the indicator or switch desktops. The native host takes every UI limit except `HANDLES` (it must act on other processes' windows; it has no clipboard call, so the clipboard limits apply). The indicator enables extension-point, Microsoft-signed-only, image-load and dynamic-code mitigation policies (works for the unsigned build because it loads only system DLLs; CI asserts it), adds the input-desktop check to visibility, acts on hardware input only (`IMO_INJECTED` ignored), treats close, minimise and hide as Stop, and resists repositioning. Residual stated: the native host can send input and messages to the indicator at the same integrity; mitigated by the injected-input filter and fail-safe handling, and a stop no user-mode code can block or fake is added: session lock (Ctrl+Alt+Del then Lock, or Win+L) via `WTSRegisterSessionNotification` in both `orceld` and the indicator | 4.13, 4.14, C-28, WP1-12, J-3 |
+
+### 13.3 Revision 5 (nits from the re-check of `c19e7b94`)
+
+| Nit | Resolution | Where |
+| --- | --- | --- |
+| N1 indirect spawn from profile S | Negative tests added: `schtasks /create` and `ITaskService` with an interactive logon type, WMI `Win32_Process.Create`, BITS `SetNotifyCmdLine`, DCOM `ShellWindows` and `MMC20.Application`; each must be refused or yield a process that still carries the restricted token, or the packet fails | 4.14 tests, WP1-10, SG-000132 draft |
+| N2 R-D1 coverage of other Orcel processes | The executor-SID deny ACE also covers `orcel-mcp` (applied by `orceld` to its identified launching parent, since Node has no native ACL call) and `orcel-agent` (self-applied through `ctypes`); profile D tests assert both are unreadable | 4.14, WP1-10, SG-000132 draft |
+| N3 locking disabled by policy | The indicator reads `DisableLockWorkstation` (HKCU and HKLM policy keys), warns, sends `LockStatus { available: false }`, never shows lock-to-stop as ready; `orceld` reports and audits it | 4.13, WP1-12, SG-000132 draft |
+| N4 low-level hooks by other same-user processes | Stated as a residual in section 4.13, covered by the session-lock path (the secure attention sequence bypasses low-level hooks), and uncovered where locking is disabled, which the indicator states | 4.13 |
