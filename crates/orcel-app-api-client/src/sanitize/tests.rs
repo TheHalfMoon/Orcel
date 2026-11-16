@@ -1243,3 +1243,29 @@ fn path_rule_refuses_dot_runs_streams_devices_and_lookalikes() {
         );
     }
 }
+
+#[test]
+fn path_rule_refuses_the_other_device_names() {
+    for bad in [
+        "COM\u{B9}",
+        "com\u{B2}.txt",
+        "reports/LPT\u{B3}",
+        "lpt\u{B9}.log",
+        "CONIN$",
+        "conout$.txt",
+        "reports/Clock$",
+        "CLOCK$.md",
+        "reports/conin$ .x",
+    ] {
+        assert_eq!(rules::workspace_path(bad), None, "{bad:?}");
+        let name = bad.rsplit('/').next().unwrap();
+        assert_eq!(rules::file_name(name), None, "{name:?}");
+    }
+    for good in ["COM\u{B4}", "LPT\u{2074}", "CONIN", "clock", "conout$x"] {
+        assert_eq!(
+            rules::workspace_path(good).as_deref(),
+            Some(good),
+            "{good:?}"
+        );
+    }
+}

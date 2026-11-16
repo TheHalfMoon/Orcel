@@ -20,7 +20,7 @@
 //! cancelled from another thread.
 
 use crate::error::{ClientError, Unavailable};
-use crate::identity::{self, IdentityRefusal, ObjectFacts, ServerFacts};
+use crate::identity::{self, IdentityRefusal, ObjectFacts, PipeOwner, ServerFacts};
 use crate::transport::{Cancel, Conn};
 use std::ffi::c_void;
 use std::io;
@@ -36,9 +36,9 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::{
     EqualSid, GetAce, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation,
-    TokenIntegrityLevel, TokenOwner, TokenUser, ACE_HEADER, ACL, LABEL_SECURITY_INFORMATION,
-    OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SYSTEM_MANDATORY_LABEL_ACE,
-    TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER,
+    TokenElevation, TokenIntegrityLevel, TokenUser, ACE_HEADER, ACL, LABEL_SECURITY_INFORMATION,
+    OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SYSTEM_MANDATORY_LABEL_ACE, TOKEN_ELEVATION,
+    TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, SECURITY_IDENTIFICATION,
@@ -106,10 +106,10 @@ impl TokenInfo {
         unsafe { (*(self.0.as_ptr() as *const TOKEN_USER)).User.Sid }
     }
 
-    /// The owner SID of a `TokenOwner` answer; valid while `self` is.
-    fn owner_sid(&self) -> *mut c_void {
-        // SAFETY: filled by GetTokenInformation(TokenOwner), aligned.
-        unsafe { (*(self.0.as_ptr() as *const TOKEN_OWNER)).Owner }
+    /// Whether a `TokenElevation` answer says the token is elevated.
+    fn elevated(&self) -> bool {
+        // SAFETY: filled by GetTokenInformation(TokenElevation), aligned.
+        unsafe { (*(self.0.as_ptr() as *const TOKEN_ELEVATION)).TokenIsElevated != 0 }
     }
 
     /// The last sub-authority of a `TokenIntegrityLevel` answer's label.
@@ -181,23 +181,33 @@ pub(crate) fn object_facts(pipe: HANDLE) -> ObjectFacts {
     let ours = match process_token(unsafe { GetCurrentProcess() }) {
         Ok(token) => match (
             token_info(token.0, TokenUser),
-            token_info(token.0, TokenOwner),
+            token_info(token.0, TokenElevation),
         ) {
-            (Ok(user), Ok(default_owner)) => (user, default_owner),
+            (Ok(user), Ok(elevation)) => (user, elevation),
             (Err(code), _) | (_, Err(code)) => return ObjectFacts::Unreadable(code),
         },
         Err(code) => return ObjectFacts::Unreadable(code),
     };
-    // SAFETY: `owner` lives in `descriptor`; the SIDs live in their buffers.
-    let owner_ours = !owner.is_null()
-        && unsafe {
-            EqualSid(owner, ours.0.user_sid()) != 0 || EqualSid(owner, ours.1.owner_sid()) != 0
-        };
+    let owner = if owner.is_null() {
+        PipeOwner::Other
+    // SAFETY: `owner` lives in `descriptor`; the user SID in its buffer.
+    } else if unsafe { EqualSid(owner, ours.0.user_sid()) } != 0 {
+        PipeOwner::ThisUser
+    // SAFETY: `owner` lives in `descriptor`.
+    } else if unsafe { sid_string(owner) }.is_ok_and(|sid| sid == ADMINISTRATORS) {
+        PipeOwner::Administrators
+    } else {
+        PipeOwner::Other
+    };
     // SAFETY: `sacl` is null or the ACL inside `descriptor`; each ACE GetAce
     // returns lives inside it.
     let label = unsafe { label_of(sacl) };
     drop(descriptor);
-    ObjectFacts::Read { owner_ours, label }
+    ObjectFacts::Read {
+        owner,
+        client_elevated: ours.1.elevated(),
+        label,
+    }
 }
 
 /// The level of the first mandatory label ACE in `sacl`, if any.
@@ -242,10 +252,21 @@ fn own_user() -> Result<TokenInfo, u32> {
 /// This account's SID as `S-1-5-...`, from this process's token.
 pub(crate) fn current_user_sid() -> io::Result<String> {
     let user = own_user().map_err(|code| io::Error::from_raw_os_error(code as i32))?;
+    // SAFETY: the SID is valid while `user` is.
+    unsafe { sid_string(user.user_sid()) }
+}
+
+/// BUILTIN\Administrators, the owner of what an elevated token creates.
+const ADMINISTRATORS: &str = "S-1-5-32-544";
+
+/// `sid` as `S-1-...`.
+///
+/// # Safety
+/// `sid` is a valid SID.
+unsafe fn sid_string(sid: *mut c_void) -> io::Result<String> {
     let mut text: *mut u16 = std::ptr::null_mut();
-    // SAFETY: the SID is valid while `user` is; `text` receives a LocalAlloc'd
-    // string freed below.
-    if unsafe { ConvertSidToStringSidW(user.user_sid(), &mut text) } == 0 {
+    // SAFETY: `text` receives a LocalAlloc'd string freed below.
+    if ConvertSidToStringSidW(sid, &mut text) == 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: `text` is a NUL-terminated UTF-16 string freed once.

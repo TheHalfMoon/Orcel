@@ -12,8 +12,9 @@
 //!
 //! On Windows the pipe object is checked too, against a server that took
 //! the pid check's process and then handed the pipe on: its owner must be
-//! this user (or this process's own default owner, which is the
-//! Administrators group in an elevated token) and its mandatory label must
+//! this user (or, only when this client's token is elevated, exactly the
+//! Administrators group `S-1-5-32-544`, which owns what an elevated token
+//! creates) and its mandatory label must
 //! be Medium or above (orceld labels its pipe `ME`); an unlabeled pipe is
 //! refused.
 //!
@@ -58,13 +59,25 @@ pub enum ObjectFacts {
     /// `GetSecurityInfo` failed with this Win32 error, or this process's
     /// own token could not be read.
     Unreadable(u32),
-    /// The owner and the mandatory label were read: whether the owner is
-    /// this user or this process's default owner, and the label's last
+    /// The owner and the mandatory label were read: who owns the pipe,
+    /// whether this client's token is elevated, and the label's last
     /// sub-authority (`None` when the pipe carries no label).
     Read {
-        owner_ours: bool,
+        owner: PipeOwner,
+        client_elevated: bool,
         label: Option<u32>,
     },
+}
+
+/// Who owns the pipe object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipeOwner {
+    /// This client's user.
+    ThisUser,
+    /// Exactly `S-1-5-32-544`, BUILTIN\Administrators.
+    Administrators,
+    /// Anyone else, or no owner.
+    Other,
 }
 
 /// Why a connection was refused before anything was written. The window
@@ -142,21 +155,23 @@ pub fn decide(facts: &ServerFacts) -> Result<(), IdentityRefusal> {
     }
 }
 
-/// The pipe object decision: owned by this user, labeled Medium or above.
-/// Every failure to read refuses.
+/// The pipe object decision: owned by this user (or by Administrators when
+/// this client is elevated), labeled Medium or above. Every failure to read
+/// refuses.
 pub fn decide_object(facts: &ObjectFacts) -> Result<(), IdentityRefusal> {
     match *facts {
         ObjectFacts::Unreadable(_) => Err(IdentityRefusal::PipeUnreadable),
         ObjectFacts::Read {
-            owner_ours: false, ..
-        } => Err(IdentityRefusal::PipeNotOwned),
-        ObjectFacts::Read {
-            owner_ours: true,
+            owner,
+            client_elevated,
             label,
-        } => match label {
-            Some(level) if level >= MEDIUM_INTEGRITY => Ok(()),
-            Some(_) => Err(IdentityRefusal::PipeLabelBelowMedium),
-            None => Err(IdentityRefusal::PipeUnlabeled),
+        } => match (owner, client_elevated) {
+            (PipeOwner::ThisUser, _) | (PipeOwner::Administrators, true) => match label {
+                Some(level) if level >= MEDIUM_INTEGRITY => Ok(()),
+                Some(_) => Err(IdentityRefusal::PipeLabelBelowMedium),
+                None => Err(IdentityRefusal::PipeUnlabeled),
+            },
+            _ => Err(IdentityRefusal::PipeNotOwned),
         },
     }
 }
@@ -167,7 +182,15 @@ mod tests {
 
     #[test]
     fn only_a_pipe_this_user_owns_labeled_medium_or_above_is_accepted() {
-        let read = |owner_ours, label| ObjectFacts::Read { owner_ours, label };
+        let read = |ours: bool, label| ObjectFacts::Read {
+            owner: if ours {
+                PipeOwner::ThisUser
+            } else {
+                PipeOwner::Other
+            },
+            client_elevated: false,
+            label,
+        };
         for level in [0x2000, 0x3000, 0x4000] {
             assert_eq!(decide_object(&read(true, Some(level))), Ok(()));
         }
@@ -188,6 +211,38 @@ mod tests {
         assert_eq!(
             decide_object(&ObjectFacts::Unreadable(5)),
             Err(IdentityRefusal::PipeUnreadable)
+        );
+    }
+
+    #[test]
+    fn an_administrators_owned_pipe_is_accepted_only_by_an_elevated_client() {
+        let admins = |client_elevated, owner| ObjectFacts::Read {
+            owner,
+            client_elevated,
+            label: Some(0x2000),
+        };
+        assert_eq!(
+            decide_object(&admins(false, PipeOwner::Administrators)),
+            Err(IdentityRefusal::PipeNotOwned)
+        );
+        assert_eq!(
+            decide_object(&admins(true, PipeOwner::Administrators)),
+            Ok(())
+        );
+        // Elevation never admits any other owner.
+        assert_eq!(
+            decide_object(&admins(true, PipeOwner::Other)),
+            Err(IdentityRefusal::PipeNotOwned)
+        );
+        assert_eq!(decide_object(&admins(false, PipeOwner::ThisUser)), Ok(()));
+        // An elevated client still needs the label.
+        assert_eq!(
+            decide_object(&ObjectFacts::Read {
+                owner: PipeOwner::Administrators,
+                client_elevated: true,
+                label: Some(0x1000),
+            }),
+            Err(IdentityRefusal::PipeLabelBelowMedium)
         );
     }
 

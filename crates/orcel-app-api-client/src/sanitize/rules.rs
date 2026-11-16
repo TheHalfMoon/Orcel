@@ -125,7 +125,9 @@ const LOOKALIKES: &[char] = &[
 ];
 
 /// Whether `segment` names a Windows device (`CON`, `PRN`, `AUX`, `NUL`,
-/// `COM1`-`COM9`, `LPT1`-`LPT9`), with or without an extension, in any case.
+/// `CONIN$`, `CONOUT$`, `CLOCK$`, `COM1`-`COM9`, `LPT1`-`LPT9`, and `COM` or
+/// `LPT` with a superscript one, two or three), with or without an
+/// extension, in any case.
 fn is_device_name(segment: &str) -> bool {
     let stem = segment
         .split('.')
@@ -134,13 +136,27 @@ fn is_device_name(segment: &str) -> bool {
         .trim_end_matches(' ')
         .to_ascii_uppercase();
     match stem.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" => true,
-        _ => {
-            let bytes = stem.as_bytes();
-            bytes.len() == 4
-                && (stem.starts_with("COM") || stem.starts_with("LPT"))
-                && (b'1'..=b'9').contains(&bytes[3])
-        }
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" | "CLOCK$" => true,
+        _ => match stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+        {
+            Some(digit) => matches!(
+                digit,
+                "1" | "2"
+                    | "3"
+                    | "4"
+                    | "5"
+                    | "6"
+                    | "7"
+                    | "8"
+                    | "9"
+                    | "\u{B9}"
+                    | "\u{B2}"
+                    | "\u{B3}"
+            ),
+            None => false,
+        },
     }
 }
 
