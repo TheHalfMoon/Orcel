@@ -3,7 +3,7 @@
   "title": "Windows Full Control: Orcel authority service, lease-consuming dispatcher, indicator, standing approvals and stop",
   "program": "ORCEL-UP",
   "state": "GRAIN",
-  "draft_note": "Activation-ready draft under prep/ (revision 7). It becomes active only when the activation PR (WP1-00) copies it into .specgrain/specs/ with this field removed, the founder decisions of 2026-11-17 recorded in CURRENT.md and planning_issue set. Revision 6 replaces the revision 4 and 5 restricted-token design with the authority service.",
+  "draft_note": "Activation-ready draft under prep/ (revision 8). It becomes active only when the activation PR (WP1-00) copies it into .specgrain/specs/ with this field removed, the founder decisions of 2026-11-17 recorded in CURRENT.md and planning_issue set. Revision 6 replaces the revision 4 and 5 restricted-token design with the authority service.",
   "risk": "high",
   "created": "2026-11-17",
   "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
@@ -23,7 +23,7 @@
   "objective": "Give comprehensive, owner-authorized computer use on Windows (FD-UP-9) without letting the agent grant, renew, extend or escalate its own authority or tamper with the record. Executors (native host for input and UI Automation, shells, filesystem, processes, apps, git, long-running jobs) run on the user's desktop with the user's normal token, each Orcel-started process tree in a Job Object the service creates and owns. Orcel's authority moves into apps/orcel-authority-service, a Windows service running as NT SERVICE\\OrcelAuthority, installed once with administrator consent, with state in %ProgramData%\\Orcel\\authority unreadable by users: the lease-signing key (TPM when present), leases, epoch, enrolled Windows Hello public keys, standing approvals, the Full Control audit chain and its Event Log source. orceld obtains an atomic Authorize from the service before every Full Control dispatch; the service checks lease, epoch, client, standing approval or action approval and indicator heartbeat, appends the audit record (session-asserted claims marked as such), creates the executor's Job Object and returns. Grants, renewals and standing approvals require a Windows Hello signature inside a grant window opened by a service-observed unlock, default to a narrow scope, are recorded in the Event Log, and are refused while a lease is active. Stop by the indicator, CLI, expiry, session lock, sign-out, disconnect or heartbeat loss advances the epoch and terminates every held Job Object. The indicator is disclosure plus a Stop that calls the service directly. The grant prompt states the OS limits of spec C-27. Spec sections 1.2, 4.13, 4.14, 4.15, 8.2.",
   "scope": {
     "include": [
-      "crates/orcel-authority and apps/orcel-authority-service: service install (`orcel authority install`, elevated; automatic start), enrollment (`orcel authority enroll`, Hello key credential), protected state, the named pipe created with FILE_FLAG_FIRST_PIPE_INSTANCE and PIPE_REJECT_REMOTE_CLIENTS whose client ACE (INTERACTIVE) is exactly FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE (never GENERIC_WRITE or FILE_APPEND_DATA), caller identity checks, GrantBegin/GrantComplete, StandingBegin/StandingComplete, Authorize, Stop, Status, Heartbeat; SERVICE_CONTROL_SESSIONCHANGE handling; expiry timers; Event Log source registration.",
+      "crates/orcel-authority and apps/orcel-authority-service: service install (`orcel authority install`, elevated; automatic start), enrollment (`orcel authority enroll`, Hello key credential), protected state, the named pipe created with FILE_FLAG_FIRST_PIPE_INSTANCE and PIPE_REJECT_REMOTE_CLIENTS whose client ACE (INTERACTIVE) is exactly FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | READ_CONTROL (never GENERIC_WRITE or FILE_APPEND_DATA), caller identity checks, GrantBegin/GrantComplete, StandingBegin/StandingComplete, Authorize, Stop, Status, Heartbeat; SERVICE_CONTROL_SESSIONCHANGE handling; expiry timers; Event Log source registration.",
       "Migration of lease issuance, the lease store and the epoch from crates/orcel-policy/src/full_control_store.rs (user state root) to the service; orcel-policy keeps the mode model and becomes the service client for checks.",
       "crates/orceld/src/full_control_dispatch.rs: the only path for lease-gated executors; named Job Objects with a DACL granting the service terminate and query; refusal with AUTHORITY_UNAVAILABLE or INDICATOR_UNAVAILABLE.",
       "apps/orcel-indicator: disclosure (mode, client, task, roots, expiry, anchor), Stop first and calling the service directly, hotkey only when registered, lock-to-stop text unless DisableLockWorkstation is set, hardware input only, close and hide as Stop, mitigation policies, visibility-gated heartbeat to the service.",
@@ -33,7 +33,7 @@
       "Client-side server verification in orceld, the indicator, `orcel authority enroll` and the CLI: GetNamedPipeServerProcessId equals the PID from QueryServiceStatusEx, and the pipe owner SID is the NT SERVICE\\OrcelAuthority virtual SID, checked before anything is sent.",
       "Service-created and service-owned Job Objects (random Global\\ name, fail on ERROR_ALREADY_EXISTS, kill-on-close, no breakaway limits, session granted only JOB_OBJECT_ASSIGN_PROCESS); orceld checks the owner, creates suspended, assigns, resumes.",
       "`orceld fc-worker`: Full Control filesystem, process and git operations run in this child process inside a service-owned Job Object, never in the long-lived orceld process.",
-      "Grant window: grants, renewals and standing approvals only within 120 s after a service-observed WTS_SESSION_UNLOCK with no lease active; narrow default scope (desktop input only, no roots, no shells, 30 minutes); granted scope written to the Event Log (event 4101) and shown by the indicator from the service.",
+      "Grant flow: a recorded grant intent (one per session, 5-minute expiry, Event Log 4102), then a 120 s window opened by the first service-observed WTS_SESSION_UNLOCK after it with no lease active, then a service-rendered WTSSendMessageW confirmation of scope, client, task and expiry (Yes/No, 60 s), then Windows Hello; narrow default scope (desktop input only, no roots, no shells, 30 minutes); granted scope written to the Event Log (event 4101) and shown by the indicator from the service.",
       "Audit records with asserted_by_session for caller-supplied fields and the observed caller PID and image."
     ],
     "exclude": [
@@ -74,8 +74,9 @@
     "The grant prompt discloses that Full Control acts with the user's rights and that effects made through the OS outside Orcel's process trees can persist.",
     "Clients send nothing to an authority pipe whose server PID or owner SID does not match the service.",
     "Every executor and fc-worker runs in a Job Object created and owned by the service; the session holds only JOB_OBJECT_ASSIGN_PROCESS and no member can break away.",
-    "Grants happen only inside a service-observed unlock window, default to the narrowest scope, and are recorded in the Event Log.",
-    "Full Control audit records distinguish session-asserted claims from service-observed facts."
+    "Grants happen only after a recorded intent, a service-observed unlock and a service-rendered confirmation, default to the narrowest scope, and are recorded in the Event Log; a routine unlock without an intent opens nothing.",
+    "Full Control audit records distinguish session-asserted claims from service-observed facts.",
+    "Residual (spec C-27 f): a same-user process can record an intent, lock the session and cover or imitate the confirmation; the grant prompt and the confirmation tell the user to approve only the scope they asked for."
   ],
   "acceptance": [
     "A standard-user process cannot read the service state directory or use the signing key.",
@@ -87,7 +88,7 @@
     "A fresh-context security judge passes the service, dispatcher, indicator and standing-approval packets.",
     "A pre-created pipe name makes the service refuse to start; a user process cannot create a second instance of the service pipe; each client refuses a server with a wrong PID or owner SID.",
     "orceld cannot terminate or change a service-owned job; CREATE_BREAKAWAY_FROM_JOB fails; Stop kills an in-flight fc-worker file operation.",
-    "A grant outside the unlock window is refused; Event Log 4101 matches the granted scope; the default request is the narrow scope.",
+    "A grant without an intent or outside the unlock window is refused; a lock and unlock without an intent opens nothing; the confirmation cannot be answered by injected input (or is recorded as not input-protected); Event Log 4101 matches the granted scope; the default request is the narrow scope.",
     "Audit records carry asserted_by_session, caller PID and image."
   ],
   "review": {

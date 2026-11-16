@@ -1,6 +1,6 @@
 # Orcel unified platform: integration specification (EGM draft)
 
-**Status: DRAFT SPECIFICATION, DOCS ONLY (revision 7, founder decisions encoded).** This document activates no grain,
+**Status: DRAFT SPECIFICATION, DOCS ONLY (revision 8, founder decisions encoded).** This document activates no grain,
 imports no donor code, adds no dependency, tool, listener or authority, and changes no canonical state. Every packet
 below needs its own activated grain, exact-head qualified PR, review gates and, where it touches authority, a
 fresh-context security judge. Activation-ready grain JSONs live in [`unified-grains/`](unified-grains/), not in
@@ -13,6 +13,7 @@ fresh-context security judge. Activation-ready grain JSONs live in [`unified-gra
   Obscura build authorized now, and a new Full Control architecture (sections 4.13 to 4.15) that keeps comprehensive
   computer use working on the user's desktop while Orcel's authority lives outside the user session.
 - **Revision 7** applies the security review of `4e0f3606` (pipe anti-squatting, service-owned Job Objects, audit records as session-asserted claims, the grant window after a service-observed unlock, and two disclosure nits); section 13.5 maps them.
+- **Revision 8** applies the two nits of the review of `d6f2b3ba` (`READ_CONTROL` for the client owner check; grant intent plus a service-rendered confirmation, with the residual stated in C-27 (f)); section 13.6.
 - Revisions 2 to 5 resolved two rounds of fresh-context review; their tables are kept in section 13 as history. Where
   revision 6 replaces a design they record (notably the restricted-token executor profiles S and D of revision 4),
   the current text governs and section 13.4 says so.
@@ -98,11 +99,16 @@ fresh-context security judge. Activation-ready grain JSONs live in [`unified-gra
   (e) during a lease the agent can talk to the authority service as if it were `orceld`, so what an `Authorize` request
   says it will run is a claim by the session: the Full Control audit is tamper-evident, out-of-session storage of
   session-asserted claims plus the facts the service observes itself (caller SID, logon session, process id and image,
-  time, Job Object), not proof of what ran. Orcel's guarantees are therefore: no self-grant, self-renewal or
+  time, Job Object), not proof of what ran; (f) any process with the user's rights can record a grant intent (with any
+  scope) and call `LockWorkStation`, so after the user's next unlock a grant confirmation can appear that the user did
+  not ask for, and such a process can draw windows that cover or imitate it; the user must read the scope in the
+  service's own "Orcel Authority" confirmation and approve only what they asked for, and Windows Hello still needs the
+  user's own gesture. Every intent, confirmation answer and grant is in the Event Log (4101, 4102), the intent expires
+  after 5 minutes, and only one is pending per session. Orcel's guarantees are therefore: no self-grant, self-renewal or
   self-escalation; tamper-evident, out-of-session audit of every request Orcel's authority admitted; stop and expiry
   that end Orcel authority and kill every process tree in a service-owned Job Object; grants and renewals only while no
   Full Control lease is active and only after a service-observed unlock; and honest disclosure in the grant prompt of
-  (a) to (e).
+  (a) to (f).
 - **C-28. Stop cannot be blocked from the user session.** The service ends Full Control on: the indicator's Stop
   button, the `orcel` CLI, lease expiry, session lock (Ctrl+Alt+Del then Lock, or Win+L; the service receives the session
   change itself), sign-out and service-side heartbeat loss. Stop advances the epoch and terminates every Orcel executor
@@ -428,7 +434,8 @@ installed once with administrator consent by the installer or `orcel authority i
   `FILE_FLAG_FIRST_PIPE_INSTANCE` (if the name already exists, the service refuses to run, logs an Event Log error and
   Full Control is unavailable: a denial of service, never a spoof) and `PIPE_REJECT_REMOTE_CLIENTS`. Its DACL grants
   the service SID full control and `NT AUTHORITY\INTERACTIVE` exactly `FILE_READ_DATA | FILE_WRITE_DATA |
-  SYNCHRONIZE`; it never grants `GENERIC_WRITE` or `FILE_APPEND_DATA`, whose bit is `FILE_CREATE_PIPE_INSTANCE`, so no
+  SYNCHRONIZE | READ_CONTROL` (`READ_CONTROL` lets clients read the owner for the check below and cannot create pipe
+  instances); it never grants `GENERIC_WRITE` or `FILE_APPEND_DATA`, whose bit is `FILE_CREATE_PIPE_INSTANCE`, so no
   user process can add a rogue instance. The service starts automatically (not delayed) to shorten the window before
   it owns the name. **Every client** (`orceld`, the indicator, `orcel authority enroll`, the CLI) verifies, before sending
   anything, that `GetNamedPipeServerProcessId` equals the service's PID from `QueryServiceStatusEx(SC_STATUS_PROCESS_INFO)`
@@ -441,15 +448,25 @@ installed once with administrator consent by the installer or `orcel authority i
 - **Presence (STRONG) and the grant window:** at first use, the user enrolls a Windows Hello key credential ("Orcel
   Authority", `KeyCredentialManager.RequestCreateAsync`, created by `orcel authority enroll` in the user session); the
   service stores its public key. Windows Hello's prompt does not show Orcel's scope, so:
-  1. a grant, renewal or standing approval can begin only inside a **grant window** of 120 s that opens when the service
-     itself observes `WTS_SESSION_UNLOCK` for that session (the user locked and unlocked, authenticating through the
-     secure attention sequence) while no Full Control lease is active; `orcel full-control grant` tells the user to press
-     Win+L and unlock;
-  2. the requested scope defaults to the narrowest form (desktop input only, no roots, no shells, 30 minutes); every
-     widening (roots, shells, apps, longer expiry) is an explicit choice in the request;
-  3. the service issues a 32-byte challenge bound to the request digest; the user session calls
+  1. **intent first:** `orcel full-control grant` sends `GrantBegin` with the requested scope, client and task; the service
+     records it as the session's single pending **grant intent** (event 4102 in the Event Log) and expires it after
+     5 minutes. Without a recorded intent, an unlock opens nothing, so the user's routine unlocks (including after a
+     lock any process caused with `LockWorkStation`) never produce a grant prompt by themselves;
+  2. a **grant window** of 120 s opens only on the first service-observed `WTS_SESSION_UNLOCK` for that session after the
+     intent (the user authenticated through the secure attention sequence), while no Full Control lease is active; the
+     CLI tells the user to press Win+L and unlock;
+  3. the requested scope defaults to the narrowest form (desktop input only, no roots, no shells, 30 minutes); every
+     widening (roots, shells, apps, longer expiry) is an explicit choice in the intent;
+  4. **service-rendered confirmation:** when the window opens, the service calls `WTSSendMessageW` for that session with
+     the title "Orcel Authority" and the requested scope, client, task and expiry, buttons Yes and No, a 60 s timeout, and
+     waits for the answer. The message box is created by the system on the service's behalf, not by a user-session
+     process; WP1-10 verifies that `SendInput` and `PostMessageW` from a medium-integrity user process cannot answer it
+     (User Interface Privilege Isolation). Only Yes continues; No or timeout clears the intent (event 4102 records the
+     result). If WP1-10's verification fails, this step still shows the scope but is recorded as not input-protected,
+     and the residual in C-27 (f) carries the whole weight;
+  5. the service issues a 32-byte challenge bound to the intent's digest; the user session calls
      `KeyCredential.RequestSignAsync` (Windows Hello); the service verifies the signature;
-  4. the service writes the **granted scope** (executors, roots, client, task, expiry, lease id) to the Event Log as
+  6. the service writes the **granted scope** (executors, roots, client, task, expiry, lease id) to the Event Log as
      event id 4101 under its registered source, and the indicator shows the scope as the service reports it, so the
      user can check what was granted outside any agent-controlled window.
   Grants and renewals are refused while any Full Control lease is active. The prompt recommends biometric Hello
@@ -837,7 +854,7 @@ run of `transform_html`. On macOS and Linux the engine reports `unsupported` unt
 | WP1-06 | `orceld` web and job dispatch, `FetchCrawlDriver`, approvals of 4.11, budgets, ownership | 03, 04, 05, 08 | `cargo test -p orceld web_`, `fetch_crawl_` | Windows; others `unsupported` until WP1-13 |
 | WP1-07 | MCP tools, Firecrawl REST routes, REST tokens, network-tool guard amendment for the eight web tools | 06 | `npm test` in `apps/orcel-mcp` | all |
 | WP1-09 | Firecrawl contract harness, both SDKs, pinned fixture site | 07, 08 | `npm test` in `tests/firecrawl-compat/js`; `python -I -m pytest tests/firecrawl-compat/py` | Windows; X legs when WP1-13 lands |
-| WP1-10 | Authority service (Windows), `orcel authority install/enroll`, pipe anti-squatting and client server-identity checks, grant window after service-observed unlock, narrow default scope, Event Log scope record (4101), Hello presence, Authorize/Stop, service-owned Job Objects, `orceld fc-worker`, lease store migration from the user state root, dispatcher in `orceld`, SG-000095 path moved behind it | 02, 03 | `cargo test -p orcel-authority`; `cargo test -p orceld full_control_dispatch_`; Windows native: service install in CI; standard-user caller cannot read service state; a pre-created pipe makes the service refuse to start; a rogue pipe instance cannot be created by a user process; clients refuse a server whose PID or owner SID is wrong; grant refused outside the unlock window and while a lease is active; Event Log 4101 matches the granted scope; `orceld` cannot terminate or change a service-owned job and a child cannot break away; Stop kills an in-flight `fc-worker` operation; stop by session lock (`LockWorkStation`) and expiry; audit records carry `asserted_by_session`, caller PID and image; no lease means Safe path unchanged | Windows native; security judge |
+| WP1-10 | Authority service (Windows), `orcel authority install/enroll`, pipe anti-squatting and client server-identity checks, grant window after service-observed unlock, narrow default scope, Event Log scope record (4101), Hello presence, Authorize/Stop, service-owned Job Objects, `orceld fc-worker`, lease store migration from the user state root, dispatcher in `orceld`, SG-000095 path moved behind it | 02, 03 | `cargo test -p orcel-authority`; `cargo test -p orceld full_control_dispatch_`; Windows native: service install in CI; standard-user caller cannot read service state; a pre-created pipe makes the service refuse to start; a rogue pipe instance cannot be created by a user process; clients refuse a server whose PID or owner SID is wrong; grant refused without a recorded intent, outside the unlock window after it, and while a lease is active; a routine lock and unlock without an intent opens nothing; the `WTSSendMessageW` confirmation shows the intent's scope and cannot be answered by `SendInput` or `PostMessageW` from a medium-integrity process (or is recorded as not input-protected); No and timeout clear the intent; events 4101 and 4102 recorded; Event Log 4101 matches the granted scope; `orceld` cannot terminate or change a service-owned job and a child cannot break away; Stop kills an in-flight `fc-worker` operation; stop by session lock (`LockWorkStation`) and expiry; audit records carry `asserted_by_session`, caller PID and image; no lease means Safe path unchanged | Windows native; security judge |
 | WP1-12 | Indicator (4.14) | 10 | `cargo test -p orcel-indicator`; Windows native visibility, injected-input, close-as-Stop, hotkey-failure and `DisableLockWorkstation` tests | Windows; security judge |
 | WP1-14 | Standing approvals (4.15) | 10, 12 | `cargo test -p orcel-authority standing_` (scope, client, expiry, stop) | Windows; security judge |
 | WP1-15 | Executors: SG-000096 interactive shells (PowerShell, cmd, Git Bash, WSL bash; ConPTY; T02-T04), SG-000097 filesystem across authorized roots, process inspection and termination, app launch and close | 10, 14 | SG-000096 and SG-000097 suites; every executor and the `fc-worker` in a service-owned Job Object; stop kills every tree | Windows; security judge |
@@ -1043,3 +1060,10 @@ around the founder's decisions; where it changes a design those tables describe,
 | 4 Hello does not show scope (major; blocker before SG-000105) | Grants, renewals and standing approvals only inside a 120 s window opened by a service-observed `WTS_SESSION_UNLOCK` with no lease active; narrow default scope; granted scope written to the Event Log (event 4101) and shown by the indicator as the service reports it; SG-000105 must not ship before this | 4.13, 4.14, SG-000132 |
 | 5 Heartbeat (nit) | Stated: the indicator heartbeat proves nothing against a same-user agent | C-27 (c), 4.13, 4.14 |
 | 6 PIN observation (nit) | C-27 (d): persisted code from an earlier session can observe a PIN at a later grant; biometric Hello recommended in the grant prompt | C-27, 4.13 |
+
+### 13.6 Revision 8 (nits from the review of `d6f2b3ba`)
+
+| Nit | Resolution | Where |
+| --- | --- | --- |
+| 1 Owner check needs `READ_CONTROL` | `INTERACTIVE` now gets `FILE_READ_DATA`, `FILE_WRITE_DATA`, `SYNCHRONIZE` and `READ_CONTROL`; `READ_CONTROL` cannot create pipe instances | 4.13 |
+| 2 Induced grant windows | Chosen design: a grant needs a prior **grant intent** recorded by the service (one per session, 5-minute expiry, Event Log 4102), then a service-observed unlock, then a **service-rendered confirmation** (`WTSSendMessageW`, created by the system for the service, showing scope, client, task and expiry, Yes/No, 60 s), then Windows Hello. Routine unlocks without an intent open nothing. Residual recorded in C-27 (f): a same-user process can record an intent and lock the session, and can cover or imitate the confirmation, so the user must read the scope in the service's own confirmation; WP1-10 verifies the confirmation cannot be answered by injected input, and records it as not input-protected if that fails | C-27 (f), 4.13, WP1-10, SG-000132 |
