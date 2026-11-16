@@ -17,7 +17,10 @@
 //!   write.** The pipe is opened with `SECURITY_SQOS_PRESENT |
 //!   SECURITY_IDENTIFICATION`; then the server's pid, its token user (must
 //!   be this user) and its integrity level (Medium or above) are read before
-//!   a byte is written ([`identity`]). Unix reads the socket peer's uid.
+//!   a byte is written ([`identity`]). On macOS and Linux the socket and
+//!   its directory must be this user's and closed to others, and the peer
+//!   is read from the kernel with `orcel_platform::peer`, as orceld reads
+//!   its clients: this uid, bound to its live process (MAC-M1-05).
 //! - **Closed methods.** [`Method`] has exactly `status.get`,
 //!   `capabilities.get`, `events.subscribe`, `task.list` and `task.get`; no
 //!   string becomes a method name.
@@ -55,4 +58,13 @@ pub use cursor::Cursor;
 pub use error::ClientError;
 pub use identity::IdentityRefusal;
 pub use method::{Method, TaskId};
-pub use subscription::{Feed, Next, StreamItem, Window};
+pub use subscription::{Feed, Next, StreamItem, UnavailableReason, Window};
+
+/// This account's SID as `S-1-5-...`, read from this process's token (the
+/// same SID the fixed pipe name carries). SG-000119 A2: the shell names its
+/// single-instance mutex `Local\orcel-control-room-<SID>` with it and grants
+/// that SID alone in the mutex's DACL.
+#[cfg(windows)]
+pub fn this_user_sid() -> std::io::Result<String> {
+    win::current_user_sid()
+}

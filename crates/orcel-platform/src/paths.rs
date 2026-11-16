@@ -253,6 +253,21 @@ pub fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
     imp::ensure_private_dir(path)
 }
 
+/// Unix: [`ensure_private_dir`]'s rules (owner, mode, ancestors, links and,
+/// on macOS, extended ACLs) applied to a directory that must already exist,
+/// strictly read-only: nothing is created, not even between the existence
+/// check and the walk. A missing directory or ancestor is
+/// [`PlatformError::Io`] with [`std::io::ErrorKind::NotFound`]. For a
+/// reader of another process's directory, such as the app API client
+/// checking orceld's socket directory (MAC-M1-05).
+#[cfg(unix)]
+pub fn verify_existing_private_dir(path: &Path) -> Result<(), PlatformError> {
+    if !path.is_absolute() {
+        return Err(PlatformError::NotAbsolute(path.to_path_buf()));
+    }
+    imp::verify_existing_private_dir(path)
+}
+
 /// Whether an existing folder passes [`ensure_private_dir`]'s rules, changing nothing: never
 /// creates it or an ancestor.
 pub fn check_existing_private_dir(path: &Path) -> Result<(), String> {
@@ -436,18 +451,45 @@ mod imp {
         ensure_private_dir_as(path, current_uid())
     }
 
+    pub(super) fn verify_existing_private_dir(path: &Path) -> Result<(), PlatformError> {
+        walk_private_dir(path, current_uid(), Missing::Refuse)
+    }
+
     pub(super) fn ensure_private_dir_as(path: &Path, uid: u32) -> Result<(), PlatformError> {
+        walk_private_dir(path, uid, Missing::Create)
+    }
+
+    /// What the walk does with a missing directory.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Missing {
+        /// Create it 0700 ([`super::ensure_private_dir`]).
+        Create,
+        /// Report it as `NotFound` and create nothing
+        /// ([`super::verify_existing_private_dir`]).
+        Refuse,
+    }
+
+    fn metadata_or(path: &Path, missing: Missing) -> Result<Metadata, PlatformError> {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) => Ok(metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => match missing {
+                Missing::Create => create_private(path),
+                Missing::Refuse => Err(io_error(path, error)),
+            },
+            Err(error) => Err(io_error(path, error)),
+        }
+    }
+
+    pub(super) fn walk_private_dir(
+        path: &Path,
+        uid: u32,
+        missing: Missing,
+    ) -> Result<(), PlatformError> {
         let ancestors: Vec<&Path> = path.ancestors().skip(1).collect();
         // From `/` down, so each directory is accepted or created only after
         // its parent passed.
         for ancestor in ancestors.iter().rev() {
-            let metadata = match std::fs::symlink_metadata(ancestor) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    create_private(ancestor)?
-                }
-                Err(error) => return Err(io_error(ancestor, error)),
-            };
+            let metadata = metadata_or(ancestor, missing)?;
             verify_ancestor(ancestor, &metadata, uid)?;
             // The link itself passed; the directories it resolves to must
             // pass too before anything is created beneath it.
@@ -458,11 +500,7 @@ mod imp {
         if let Some(parent) = path.parent() {
             verify_resolved(parent, uid)?;
         }
-        let metadata = match std::fs::symlink_metadata(path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => create_private(path)?,
-            Err(error) => return Err(io_error(path, error)),
-        };
+        let metadata = metadata_or(path, missing)?;
         verify(path, &metadata, uid)
     }
 
@@ -1385,6 +1423,86 @@ mod tests {
                 })
             );
             assert!(std::fs::symlink_metadata(home.join(".local")).is_err());
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        /// MAC-M1-05: the read-only verifier creates nothing, while
+        /// `ensure_private_dir` (orceld's `bind`) still creates the missing
+        /// chain 0700, as before.
+        #[test]
+        fn verify_existing_private_dir_creates_nothing_and_ensure_still_creates() {
+            let base = sandbox("verify-missing");
+            let root = base.join("a").join("b").join("orcel");
+            let error = verify_existing_private_dir(&root).expect_err("missing");
+            assert!(
+                matches!(&error, PlatformError::Io { kind: std::io::ErrorKind::NotFound, path, .. }
+                    if path == &base.join("a")),
+                "{error:?}"
+            );
+            assert!(std::fs::symlink_metadata(base.join("a")).is_err());
+            // Only the last component missing: still nothing is created.
+            std::fs::create_dir_all(base.join("a").join("b")).expect("parents");
+            set_mode(&base.join("a"), 0o700);
+            set_mode(&base.join("a").join("b"), 0o700);
+            assert!(matches!(
+                verify_existing_private_dir(&root),
+                Err(PlatformError::Io {
+                    kind: std::io::ErrorKind::NotFound,
+                    ..
+                })
+            ));
+            assert!(std::fs::symlink_metadata(&root).is_err());
+            // orceld's behaviour is unchanged: the directory is created 0700.
+            let _ = std::fs::remove_dir_all(base.join("a"));
+            ensure_private_dir(&root).expect("ensure creates the chain");
+            for dir in [base.join("a"), base.join("a").join("b"), root.clone()] {
+                let meta = std::fs::symlink_metadata(&dir).expect("created");
+                assert!(meta.is_dir());
+                assert_eq!(meta.permissions().mode() & 0o777, 0o700, "{dir:?}");
+            }
+            // And the verifier now accepts what ensure made.
+            assert_eq!(verify_existing_private_dir(&root), Ok(()));
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn verify_existing_private_dir_applies_the_same_rules() {
+            let base = sandbox("verify-rules");
+            let root = base.join("orcel");
+            std::fs::create_dir(&root).expect("root");
+            set_mode(&root, 0o750);
+            assert_eq!(
+                verify_existing_private_dir(&root),
+                ensure_private_dir(&root),
+                "the same refusal"
+            );
+            assert!(matches!(
+                verify_existing_private_dir(&root),
+                Err(PlatformError::InsecureMode { mode: 0o750, .. })
+            ));
+            set_mode(&root, 0o700);
+            set_mode(&base, 0o777);
+            assert!(matches!(
+                verify_existing_private_dir(&root),
+                Err(PlatformError::WritableAncestor { mode: 0o777, .. })
+            ));
+            set_mode(&base, 0o700);
+            let link = base.join("link");
+            std::os::unix::fs::symlink(&root, &link).expect("symlink");
+            assert!(matches!(
+                verify_existing_private_dir(&link),
+                Err(PlatformError::Symlink(_))
+            ));
+            let other = imp::current_uid().wrapping_add(1);
+            assert!(matches!(
+                imp::walk_private_dir(&root, other, imp::Missing::Refuse),
+                Err(PlatformError::ForeignOwner { .. })
+            ));
+            assert!(matches!(
+                verify_existing_private_dir(Path::new("relative/orcel")),
+                Err(PlatformError::NotAbsolute(_))
+            ));
+            assert_eq!(verify_existing_private_dir(&root), Ok(()));
             let _ = std::fs::remove_dir_all(base);
         }
 

@@ -15,7 +15,7 @@ use crate::method::TaskId;
 use crate::sanitize::events::{EventBody, SnapshotReason};
 use crate::sanitize::tasks::{Known, StepKind, StepOutcome, TaskState};
 use crate::sanitize::Field;
-use crate::subscription::{Feed, Next, StreamItem, Window};
+use crate::subscription::{Feed, Next, StreamItem, UnavailableReason, Window};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -390,7 +390,53 @@ fn daemon_down_is_a_typed_unavailable() {
     );
     let window = Window::new(Arc::new(client));
     let feed = window.subscribe(None);
-    assert!(matches!(next(&feed), StreamItem::Unavailable { .. }));
+    let item = next(&feed);
+    assert_eq!(
+        item,
+        StreamItem::Unavailable {
+            reason: UnavailableReason::NotRunning
+        }
+    );
+    // A fixed name for the web view: no message, no OS error code.
+    assert_eq!(
+        serde_json::to_string(&item).unwrap(),
+        r#"{"type":"unavailable","reason":"not_running"}"#
+    );
+}
+
+#[test]
+fn every_connection_failure_maps_to_a_fixed_reason() {
+    let cases = [
+        (
+            ClientError::Unavailable(Unavailable::ConnectionLost(Some(232))),
+            UnavailableReason::ConnectionLost,
+        ),
+        (
+            ClientError::Unavailable(Unavailable::TimedOut),
+            UnavailableReason::TimedOut,
+        ),
+        (
+            ClientError::Unavailable(Unavailable::NoFreeInstance),
+            UnavailableReason::NoFreeInstance,
+        ),
+        (
+            ClientError::Unavailable(Unavailable::NoLocation),
+            UnavailableReason::NoLocation,
+        ),
+        (ClientError::Busy, UnavailableReason::Busy),
+        (
+            ClientError::Refused("SOMETHING".into()),
+            UnavailableReason::Refused,
+        ),
+        (ClientError::FrameTooLarge, UnavailableReason::FrameTooLarge),
+        (
+            ClientError::Protocol("subscription acknowledgement"),
+            UnavailableReason::Protocol,
+        ),
+    ];
+    for (error, reason) in cases {
+        assert_eq!(UnavailableReason::of(&error), reason, "{error:?}");
+    }
 }
 
 #[test]
@@ -557,6 +603,11 @@ fn unsubscribe_returns_promptly_while_the_acknowledgement_is_awaited() {
     let dir = Sandbox::new();
     let path = dir.base.join("r").join("s.sock");
     let listener = UnixListener::bind(&path).expect("bind");
+    // The client accepts only a socket served as orceld serves it (0600).
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    }
     let (got_request, request) = channel();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept");
@@ -577,6 +628,74 @@ fn unsubscribe_returns_promptly_while_the_acknowledgement_is_awaited() {
     let took = started.elapsed();
     assert!(took < Duration::from_secs(1), "unsubscribe took {took:?}");
     server.join().unwrap();
+}
+
+/// MAC-M1-05 against a real orceld: its own socket and directory pass the
+/// client's checks, and the same socket loosened to other accounts is
+/// refused before the client connects, until orceld's mode is restored.
+/// Another uid's server cannot be made without root or a second account,
+/// so that case is the unit-tested decision (`identity.rs`, `unix.rs`).
+#[cfg(unix)]
+#[test]
+fn a_real_orcelds_socket_loosened_to_other_accounts_is_refused() {
+    use crate::identity::IdentityRefusal;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let Some((orceld, client)) = live("u") else {
+        return;
+    };
+    let socket = PathBuf::from(&orceld.endpoint);
+    let mode_of = |path: &std::path::Path| std::fs::metadata(path).unwrap().mode() & 0o7777;
+    assert_eq!(mode_of(&socket), 0o600, "orceld serves its socket 0600");
+    assert_eq!(
+        mode_of(socket.parent().unwrap()),
+        0o700,
+        "orceld's socket directory is 0700"
+    );
+    assert!(client.status().is_ok(), "orceld's own endpoint is accepted");
+
+    /// Restores `path`'s mode when dropped, so a failed assertion leaves
+    /// orceld's endpoint as it was.
+    struct Restore(PathBuf, u32);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+        }
+    }
+    let chmod = |path: &std::path::Path, mode| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap()
+    };
+
+    for mode in [0o660, 0o606, 0o666] {
+        let _restore = Restore(socket.clone(), 0o600);
+        chmod(&socket, mode);
+        assert_eq!(
+            client.status(),
+            Err(ClientError::NotYours(IdentityRefusal::SocketNotPrivate)),
+            "{mode:o}"
+        );
+    }
+    assert!(client.status().is_ok(), "accepted again at 0600");
+
+    // On Linux the directory is this test's own runtime directory. On macOS
+    // it is the user's real `<DARWIN_USER_TEMP_DIR>/orcel`, which other
+    // orcelds of the user share, so it is not loosened there; the
+    // directory refusal is covered by `unix.rs`'s tests on every Unix.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let dir = socket.parent().unwrap().to_path_buf();
+        for mode in [0o750, 0o705] {
+            let _restore = Restore(dir.clone(), 0o700);
+            chmod(&dir, mode);
+            assert_eq!(
+                client.status(),
+                Err(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate(
+                    crate::identity::DirectoryReason::OpenToOthers
+                ))),
+                "{mode:o}"
+            );
+        }
+        assert!(client.status().is_ok(), "accepted again at 0700");
+    }
 }
 
 #[cfg(windows)]

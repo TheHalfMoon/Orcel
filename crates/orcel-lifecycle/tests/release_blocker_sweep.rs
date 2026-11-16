@@ -2609,3 +2609,763 @@ fn the_app_api_client_crate_reaches_no_release_binary() {
         hits.join("\n")
     );
 }
+
+/// SG-000119 A2 (founder decision 6, development builds only): the Control Room shell is never
+/// published. Exactly one job, `control-room-shell` in `ci.yml`, builds it, and it uploads
+/// nothing; no other job names `src-tauri` or the shell binary; only that job and the headless
+/// `control-room` job (in its `npm --prefix` commands alone) name `apps/orcel-control-room`; no
+/// upload step in any of the four workflows has a path covering `apps/orcel-control-room/**`;
+/// and nothing under `distribution/` names any of them. Upload paths are decided, never
+/// guessed: each line of a block path, `${{ env.NAME }}` expanded from the step, job and
+/// workflow `env`, `${{ github.workspace }}` read as the checkout root, `${{ runner.temp }}`
+/// and `/tmp` outside it; any other expression or a missing `env` name fails.
+#[test]
+fn the_control_room_shell_is_never_published() {
+    const SHELL_JOB: &str = "control-room-shell";
+    const HEADLESS_JOB: &str = "control-room";
+    let root = repo_root();
+    let mut shell_jobs = Vec::new();
+    let mut decided = Vec::new();
+    let mut hits = Vec::new();
+    for workflow in ["ci.yml", "pages.yml", "release.yml", "review-gates.yml"] {
+        let text = read_lf(&root.join(".github/workflows").join(workflow));
+        let parsed = WorkflowJobs::parse(&text);
+        for (number, code) in &parsed.head {
+            if names_the_control_room(code) {
+                hits.push(format!(
+                    "{workflow}:{number}: outside every job: {}",
+                    code.trim()
+                ));
+            }
+        }
+        for job in &parsed.jobs {
+            if job.name == SHELL_JOB {
+                shell_jobs.push(workflow);
+            }
+            for (number, code) in &job.lines {
+                if job.name != SHELL_JOB
+                    && names_the_control_room(code)
+                    && !(job.name == HEADLESS_JOB && headless_npm_line(code))
+                {
+                    hits.push(format!(
+                        "{workflow}:{number} (job {}): names the Control Room: {}",
+                        job.name,
+                        code.trim()
+                    ));
+                }
+            }
+            for step in job.upload_steps() {
+                let at = format!("{workflow}:{} (job {})", step.line, job.name);
+                if job.name == SHELL_JOB {
+                    hits.push(format!("{at}: the shell job uploads"));
+                }
+                let (paths, problems) = upload_step_findings(&step, &job.env, &parsed.env);
+                decided.extend(paths.iter().map(|path| format!("{workflow}: {path}")));
+                hits.extend(problems.iter().map(|problem| format!("{at}: {problem}")));
+            }
+        }
+    }
+    assert_eq!(
+        shell_jobs,
+        ["ci.yml"],
+        "exactly one {SHELL_JOB} job, in ci.yml"
+    );
+    for (relative, text) in text_files(&root) {
+        // Composite actions belong to no job that may build the shell, and distribution
+        // ships nothing of it.
+        let action = relative.starts_with(".github/actions/")
+            && (relative.ends_with("/action.yml") || relative.ends_with("/action.yaml"));
+        if action {
+            for (index, line) in text.replace("\r\n", "\n").lines().enumerate() {
+                if names_the_control_room(yaml_code(line)) {
+                    hits.push(format!(
+                        "{relative}:{}: a composite action names the Control Room: {}",
+                        index + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+        if relative.starts_with("distribution/") && names_the_control_room(&text) {
+            hits.push(format!(
+                "{relative}: distribution names the Control Room shell"
+            ));
+        }
+    }
+    println!("decided upload paths:\n{}", decided.join("\n"));
+    assert!(!decided.is_empty(), "no upload path was decided");
+    assert!(
+        hits.is_empty(),
+        "the Control Room shell must never be published:\n{}",
+        hits.join("\n")
+    );
+}
+
+const CONTROL_ROOM_APP: &str = "apps/orcel-control-room";
+
+/// Any mention of the Control Room's tree or binary: the bare `orcel-control-room` (which the
+/// app path and the shell binary's name both contain) or `src-tauri`.
+fn names_the_control_room(text: &str) -> bool {
+    text.contains("orcel-control-room") || text.contains("src-tauri")
+}
+
+/// One upload step decided: each path with where it points, and every problem with it (a path
+/// covering the app, a path that cannot be decided, or paths that cannot be read at all).
+fn upload_step_findings(
+    step: &UploadStep,
+    job_env: &BTreeMap<String, String>,
+    workflow_env: &BTreeMap<String, String>,
+) -> (Vec<String>, Vec<String>) {
+    let mut decided = Vec::new();
+    let mut problems = Vec::new();
+    let paths = match step.paths() {
+        Ok(paths) => paths,
+        Err(reason) => {
+            problems.push(format!("upload paths cannot be read: {reason}"));
+            return (decided, problems);
+        }
+    };
+    for path in paths {
+        match decide_upload_path(&path, &[&step.env, job_env, workflow_env]) {
+            Ok(place) => {
+                if place.covers_the_control_room() {
+                    problems.push(format!("upload path {path} covers {CONTROL_ROOM_APP}"));
+                }
+                decided.push(format!("{path} -> {place:?}"));
+            }
+            Err(reason) => problems.push(format!("upload path {path} cannot be decided: {reason}")),
+        }
+    }
+    (decided, problems)
+}
+
+/// A headless `control-room` job line may name the app only as an `npm` command run with
+/// `--prefix apps/orcel-control-room` (the prefix exactly, never a folder below it).
+///
+/// The headless job's three commands are pinned exactly (whitespace normalized), so no other
+/// npm form (`exec`, `npx`, `run-script`, an extra argument naming another path) is exempt,
+/// and every word naming `orcel-control-room` must be the app path itself.
+fn headless_npm_line(code: &str) -> bool {
+    const HEADLESS_COMMANDS: [&str; 3] = [
+        "npm ci --prefix apps/orcel-control-room --ignore-scripts",
+        "npm --prefix apps/orcel-control-room run typecheck",
+        "npm --prefix apps/orcel-control-room test",
+    ];
+    let command = code.trim().trim_start_matches("- ");
+    let command = command.strip_prefix("run:").unwrap_or(command).trim();
+    let words: Vec<&str> = command.split_whitespace().collect();
+    words
+        .iter()
+        .filter(|word| word.contains("orcel-control-room"))
+        .all(|word| *word == CONTROL_ROOM_APP)
+        && HEADLESS_COMMANDS.contains(&words.join(" ").as_str())
+}
+
+/// A workflow split into its head (before `jobs:`) and its jobs, comments removed; each line
+/// keeps its 1-based number.
+struct WorkflowJobs {
+    head: Vec<(usize, String)>,
+    env: BTreeMap<String, String>,
+    jobs: Vec<WorkflowJob>,
+}
+
+struct WorkflowJob {
+    name: String,
+    lines: Vec<(usize, String)>,
+    env: BTreeMap<String, String>,
+}
+
+struct UploadStep {
+    line: usize,
+    body: Vec<(usize, String)>,
+    item_indent: usize,
+    env: BTreeMap<String, String>,
+}
+
+/// The `key: value` pairs of the block under the line at `at` (a `key:` line at `indent`),
+/// one level deeper.
+fn block_map(lines: &[(usize, String)], at: usize, indent: usize) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    let mut child = None;
+    for (_, code) in &lines[at + 1..] {
+        if code.trim().is_empty() {
+            continue;
+        }
+        let depth = indent_of(code);
+        if depth <= indent {
+            break;
+        }
+        let child_indent = *child.get_or_insert(depth);
+        if depth == child_indent {
+            if let Some((key, value)) = code.trim().split_once(':') {
+                map.insert(unquote(key).to_owned(), unquote(value).to_owned());
+            }
+        }
+    }
+    map
+}
+
+/// The index of the `key:` line at exactly `indent` among `lines`, if any.
+fn key_at(lines: &[(usize, String)], key: &str, indent: usize) -> Option<usize> {
+    lines.iter().position(|(_, code)| {
+        indent_of(code) == indent
+            && code
+                .trim()
+                .split_once(':')
+                .is_some_and(|(name, _)| unquote(name) == key)
+    })
+}
+
+impl WorkflowJobs {
+    fn parse(text: &str) -> WorkflowJobs {
+        let numbered: Vec<(usize, String)> = text
+            .lines()
+            .enumerate()
+            .map(|(index, line)| (index + 1, yaml_code(line).to_owned()))
+            .collect();
+        let jobs_at = numbered
+            .iter()
+            .position(|(_, code)| code == "jobs:")
+            .expect("a jobs: key");
+        let head: Vec<(usize, String)> = numbered[..jobs_at].to_vec();
+        let env = key_at(&head, "env", 0)
+            .map(|at| block_map(&head, at, 0))
+            .unwrap_or_default();
+        let mut jobs: Vec<WorkflowJob> = Vec::new();
+        for (number, code) in &numbered[jobs_at + 1..] {
+            if code.trim().is_empty() {
+                continue;
+            }
+            let depth = indent_of(code);
+            assert!(depth > 0, "a top-level key after jobs: at line {number}");
+            if depth == 2 && code.ends_with(':') {
+                jobs.push(WorkflowJob {
+                    name: code.trim().trim_end_matches(':').to_owned(),
+                    lines: Vec::new(),
+                    env: BTreeMap::new(),
+                });
+            } else if let Some(job) = jobs.last_mut() {
+                job.lines.push((*number, code.clone()));
+            }
+        }
+        for job in &mut jobs {
+            job.env = key_at(&job.lines, "env", 4)
+                .map(|at| block_map(&job.lines, at, 4))
+                .unwrap_or_default();
+        }
+        WorkflowJobs { head, env, jobs }
+    }
+}
+
+impl WorkflowJob {
+    /// Every step whose `uses:` is `actions/upload-artifact` or
+    /// `actions/upload-pages-artifact`.
+    fn upload_steps(&self) -> Vec<UploadStep> {
+        let Some(steps_at) = key_at(&self.lines, "steps", 4) else {
+            return Vec::new();
+        };
+        let rest = &self.lines[steps_at + 1..];
+        let item_indent = rest
+            .iter()
+            .find(|(_, code)| !code.trim().is_empty())
+            .map(|(_, code)| indent_of(code))
+            .unwrap_or(0);
+        let mut steps: Vec<UploadStep> = Vec::new();
+        for (number, code) in rest {
+            if code.trim().is_empty() {
+                continue;
+            }
+            let depth = indent_of(code);
+            if depth < item_indent {
+                break;
+            }
+            if depth == item_indent && code.trim_start().starts_with("- ") {
+                // The dash line's own key sits two columns in, as the step's other keys do.
+                let key_line =
+                    format!("{}{}", " ".repeat(item_indent + 2), &code.trim_start()[2..]);
+                steps.push(UploadStep {
+                    line: *number,
+                    body: vec![(*number, key_line)],
+                    item_indent,
+                    env: BTreeMap::new(),
+                });
+            } else if let Some(step) = steps.last_mut() {
+                step.body.push((*number, code.clone()));
+            }
+        }
+        // Action references are matched without case: GitHub resolves `Actions/Upload-Artifact`
+        // to the same action.
+        steps.retain(|step| {
+            step.value("uses").is_some_and(|uses| {
+                let uses = uses.to_ascii_lowercase();
+                uses.starts_with("actions/upload-artifact@")
+                    || uses.starts_with("actions/upload-pages-artifact@")
+            })
+        });
+        for step in &mut steps {
+            step.env = key_at(&step.body, "env", step.item_indent + 2)
+                .map(|at| block_map(&step.body, at, step.item_indent + 2))
+                .unwrap_or_default();
+        }
+        steps
+    }
+}
+
+impl UploadStep {
+    fn value(&self, key: &str) -> Option<String> {
+        let at = key_at(&self.body, key, self.item_indent + 2)?;
+        let (_, value) = self.body[at].1.trim().split_once(':')?;
+        Some(unquote(value).to_owned())
+    }
+
+    /// The `with: path:` entries: a scalar, or each line of a block scalar; a `!` line is an
+    /// exclusion and can only remove files, so it is skipped. Fails closed: an upload step
+    /// whose paths cannot be read in this block form (no `with:` block, inline `with:` content
+    /// such as a flow mapping, no `path`, a flow or empty value, only exclusions) is an error,
+    /// never an empty list.
+    fn paths(&self) -> Result<Vec<String>, String> {
+        let with_indent = self.item_indent + 2;
+        let with_at = key_at(&self.body, "with", with_indent).ok_or("no `with:` block")?;
+        let (_, inline) = self.body[with_at]
+            .1
+            .trim()
+            .split_once(':')
+            .unwrap_or(("", ""));
+        if !inline.trim().is_empty() {
+            return Err(format!(
+                "inline `with:` content cannot be decided: {}",
+                inline.trim()
+            ));
+        }
+        let block: Vec<(usize, String)> = self.body[with_at + 1..]
+            .iter()
+            .take_while(|(_, code)| code.trim().is_empty() || indent_of(code) > with_indent)
+            .cloned()
+            .collect();
+        let key_indent = block
+            .iter()
+            .find(|(_, code)| !code.trim().is_empty())
+            .map(|(_, code)| indent_of(code))
+            .ok_or("an empty `with:` block")?;
+        let path_at = key_at(&block, "path", key_indent).ok_or("no `path` under `with:`")?;
+        let (_, value) = block[path_at].1.trim().split_once(':').unwrap_or(("", ""));
+        let value = value.trim();
+        let lines: Vec<String> = if value.starts_with('|') || value.starts_with('>') {
+            block[path_at + 1..]
+                .iter()
+                .take_while(|(_, code)| code.trim().is_empty() || indent_of(code) > key_indent)
+                .map(|(_, code)| code.trim().to_owned())
+                .filter(|line| !line.is_empty())
+                .collect()
+        } else if value.starts_with('[') || value.starts_with('{') {
+            return Err(format!("a flow-style `path` cannot be decided: {value}"));
+        } else {
+            vec![unquote(value).to_owned()]
+        };
+        let paths: Vec<String> = lines
+            .into_iter()
+            .filter(|line| !line.is_empty() && !line.starts_with('!'))
+            .collect();
+        if paths.is_empty() {
+            return Err("`path` names nothing to decide".to_owned());
+        }
+        Ok(paths)
+    }
+}
+
+/// Where an upload path points.
+#[derive(Debug, PartialEq)]
+enum UploadPlace {
+    /// Outside the checkout (`runner.temp`, `/tmp`, or a path that leaves the checkout).
+    Outside,
+    /// Checkout-relative, normalized (empty: the checkout root).
+    Checkout(String),
+}
+
+impl UploadPlace {
+    /// Whether the path covers `apps/orcel-control-room/**`: the root, `apps`, the app or
+    /// anything under it, or a glob whose directory before the first `*`, `?` or `[` is one of
+    /// those. Compared without case (Windows runners).
+    fn covers_the_control_room(&self) -> bool {
+        let UploadPlace::Checkout(path) = self else {
+            return false;
+        };
+        let path = path.to_ascii_lowercase();
+        let literal = match path.find(['*', '?', '[']) {
+            Some(glob) => path[..glob].rsplit_once('/').map_or("", |(dir, _)| dir),
+            None => path.as_str(),
+        };
+        literal.is_empty()
+            || literal == "apps"
+            || literal == CONTROL_ROOM_APP
+            || literal.starts_with(&format!("{CONTROL_ROOM_APP}/"))
+    }
+}
+
+const WORKSPACE_MARK: &str = "\u{1}workspace\u{1}";
+const TEMP_MARK: &str = "\u{1}temp\u{1}";
+
+/// Expands `${{ }}` expressions: `env.NAME` from the first scope that has it (decided again),
+/// `github.workspace` and `runner.temp` to markers; anything else fails.
+fn expand_upload_path(
+    text: &str,
+    scopes: &[&BTreeMap<String, String>],
+    depth: usize,
+) -> Result<String, String> {
+    if depth > 8 {
+        return Err("env expansion does not end".to_owned());
+    }
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("${{") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 3..];
+        let end = after.find("}}").ok_or("an unclosed expression")?;
+        let inner = after[..end].trim();
+        if let Some(name) = inner.strip_prefix("env.") {
+            let value = scopes
+                .iter()
+                .find_map(|scope| scope.get(name))
+                .ok_or(format!("env.{name} is set in no step, job or workflow env"))?;
+            out.push_str(&expand_upload_path(value, scopes, depth + 1)?);
+        } else if inner == "github.workspace" {
+            out.push_str(WORKSPACE_MARK);
+        } else if inner == "runner.temp" {
+            out.push_str(TEMP_MARK);
+        } else {
+            return Err(format!(
+                "the expression `{inner}` is not runner.temp, github.workspace or env"
+            ));
+        }
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+fn decide_upload_path(
+    path: &str,
+    scopes: &[&BTreeMap<String, String>],
+) -> Result<UploadPlace, String> {
+    let expanded = expand_upload_path(path.trim(), scopes, 0)?;
+    let (relative, from_workspace) = if let Some(rest) = expanded.strip_prefix(WORKSPACE_MARK) {
+        (rest.to_owned(), true)
+    } else if expanded.starts_with(TEMP_MARK) {
+        return Ok(UploadPlace::Outside);
+    } else {
+        (expanded, false)
+    };
+    if relative.contains('\u{1}') {
+        return Err("runner.temp or github.workspace inside a path".to_owned());
+    }
+    let unix = relative.replace('\\', "/");
+    if !from_workspace {
+        if unix.starts_with("/tmp/") || unix.starts_with("/var/tmp/") {
+            return Ok(UploadPlace::Outside);
+        }
+        if unix.starts_with('/') || unix.starts_with('~') || unix.as_bytes().get(1) == Some(&b':') {
+            return Err("an absolute path that may lie under the checkout".to_owned());
+        }
+    }
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in unix.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if segments.pop().is_none() {
+                    return Ok(UploadPlace::Outside);
+                }
+            }
+            other => segments.push(other),
+        }
+    }
+    Ok(UploadPlace::Checkout(segments.join("/")))
+}
+
+/// The no-publication parsers decide the shapes they claim.
+#[test]
+fn the_no_publication_parsers_decide_the_shapes_they_claim() {
+    let env = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    };
+    let step = env(&[("STEP", "apps/web/out")]);
+    let job = env(&[
+        ("DIST", "${{ github.workspace }}/macos-dist"),
+        ("STEP", "apps"),
+        ("LOOP", "${{ env.LOOP }}"),
+    ]);
+    let workflow = env(&[("APP", "apps/orcel-control-room/src-tauri/target")]);
+    let scopes = [&step, &job, &workflow];
+    let decide = |path: &str| decide_upload_path(path, &scopes);
+    let checkout = |path: &str| Ok(UploadPlace::Checkout(path.to_owned()));
+    // Today's shapes.
+    assert_eq!(
+        decide("${{ runner.temp }}/xp08-reports"),
+        Ok(UploadPlace::Outside)
+    );
+    assert_eq!(decide("${{runner.temp}}/dist/*"), Ok(UploadPlace::Outside));
+    assert_eq!(
+        decide("target/release/examples/f4_journey.exe"),
+        checkout("target/release/examples/f4_journey.exe")
+    );
+    assert_eq!(decide("${{ env.DIST }}/"), checkout("macos-dist"));
+    assert_eq!(decide("apps/web/out"), checkout("apps/web/out"));
+    assert_eq!(
+        decide("/tmp/orcel-ocr-output/ocr-preview.json"),
+        Ok(UploadPlace::Outside)
+    );
+    assert_eq!(decide("jev-review.json"), checkout("jev-review.json"));
+    // The step's env wins over the job's; the workflow's is read last.
+    assert_eq!(decide("${{ env.STEP }}"), checkout("apps/web/out"));
+    assert_eq!(
+        decide("${{ env.APP }}"),
+        checkout("apps/orcel-control-room/src-tauri/target")
+    );
+    // Normalization; leaving the checkout is outside.
+    assert_eq!(
+        decide("./apps/../apps/./orcel-control-room/"),
+        checkout("apps/orcel-control-room")
+    );
+    assert_eq!(decide("../elsewhere"), Ok(UploadPlace::Outside));
+    assert_eq!(decide("${{ github.workspace }}"), checkout(""));
+    assert_eq!(
+        decide("${{ github.workspace }}/../x"),
+        Ok(UploadPlace::Outside)
+    );
+    // What cannot be decided fails.
+    assert!(decide("${{ env.MISSING }}/x").is_err());
+    assert!(decide("${{ github.event.pull_request.head.sha }}/x").is_err());
+    assert!(decide("${{ env.LOOP }}").is_err());
+    assert!(decide("${{ steps.x.outputs.dir }}").is_err());
+    assert!(decide("${{ runner.temp").is_err());
+    assert!(decide("/home/runner/work/Orcel/Orcel/apps").is_err());
+    assert!(decide("D:\\a\\Orcel\\Orcel\\apps").is_err());
+    assert!(decide("x/${{ github.workspace }}").is_err());
+    // Coverage.
+    for covering in [
+        "",
+        "apps",
+        "APPS/Orcel-Control-Room",
+        "apps/orcel-control-room",
+        "apps/orcel-control-room/src-tauri/target/debug",
+        "*",
+        "**",
+        "a*",
+        "apps/*",
+        "apps/**",
+        "apps/orcel-*",
+        "apps/orcel-control-room/**/*.exe",
+        "ap?s/x",
+    ] {
+        assert!(
+            UploadPlace::Checkout(covering.to_owned()).covers_the_control_room(),
+            "{covering}"
+        );
+    }
+    for apart in [
+        "apps/web/out",
+        "apps/orcel-control-room-x",
+        "apps/web/*",
+        "macos-dist",
+        "target/release/examples/f4_journey.exe",
+        "jev-review.json",
+    ] {
+        assert!(
+            !UploadPlace::Checkout(apart.to_owned()).covers_the_control_room(),
+            "{apart}"
+        );
+    }
+    assert!(!UploadPlace::Outside.covers_the_control_room());
+
+    // Steps, block paths, exclusions and env scopes, from a workflow's text.
+    let text = [
+        "name: x",
+        "on: push",
+        "env:",
+        "  TOP: apps",
+        "jobs:",
+        "  a:",
+        "    runs-on: x",
+        "    env:",
+        "      DIST: ${{ github.workspace }}/out",
+        "    steps:",
+        "      - run: echo apps/orcel-control-room",
+        "      - name: up",
+        "        uses: actions/upload-artifact@0000000000000000000000000000000000000000 # v4",
+        "        env:",
+        "          MINE: apps/web",
+        "        with:",
+        "          name: n",
+        "          path: |",
+        "            ${{ env.DIST }}/a",
+        "            !apps/orcel-control-room",
+        "            ${{ env.MINE }}/b # c",
+        "            ${{ env.TOP }}",
+        "          retention-days: 3",
+        "      - uses: actions/upload-pages-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path: \"apps/web/out\"",
+        "  control-room:",
+        "    steps:",
+        "      - run: npm --prefix apps/orcel-control-room test",
+        "",
+    ]
+    .join("\n");
+    let parsed = WorkflowJobs::parse(&text);
+    assert_eq!(parsed.env.get("TOP").map(String::as_str), Some("apps"));
+    let names: Vec<&str> = parsed.jobs.iter().map(|job| job.name.as_str()).collect();
+    assert_eq!(names, ["a", "control-room"]);
+    let job = &parsed.jobs[0];
+    assert_eq!(
+        job.env.get("DIST").map(String::as_str),
+        Some("${{ github.workspace }}/out")
+    );
+    let steps = job.upload_steps();
+    assert_eq!(steps.len(), 2);
+    assert_eq!(steps[0].line, 12);
+    assert_eq!(
+        steps[0].env.get("MINE").map(String::as_str),
+        Some("apps/web")
+    );
+    assert_eq!(
+        steps[0].paths().unwrap(),
+        ["${{ env.DIST }}/a", "${{ env.MINE }}/b", "${{ env.TOP }}"]
+    );
+    let decided: Vec<UploadPlace> = steps[0]
+        .paths()
+        .unwrap()
+        .iter()
+        .map(|path| decide_upload_path(path, &[&steps[0].env, &job.env, &parsed.env]).unwrap())
+        .collect();
+    assert_eq!(
+        decided,
+        [
+            UploadPlace::Checkout("out/a".to_owned()),
+            UploadPlace::Checkout("apps/web/b".to_owned()),
+            UploadPlace::Checkout("apps".to_owned()),
+        ]
+    );
+    assert!(decided[2].covers_the_control_room());
+    assert_eq!(steps[1].paths().unwrap(), ["apps/web/out"]);
+    let (_, problems) = upload_step_findings(&steps[0], &job.env, &parsed.env);
+    assert_eq!(
+        problems,
+        ["upload path ${{ env.TOP }} covers apps/orcel-control-room"]
+    );
+
+    // Fail-closed shapes (security judge, A2): each upload step below is found, and each one
+    // fails the rule instead of passing with no path.
+    let shapes = [
+        "  a:",
+        "    steps:",
+        // An action reference in another letter case is the same action.
+        "      - uses: Actions/Upload-Artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path: apps",
+        // Inline `with:` content (a flow mapping) is never read as having no path.
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with: { name: x, path: apps }",
+        // No path at all.
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          name: x",
+        // No `with:` at all.
+        "      - uses: ACTIONS/UPLOAD-PAGES-ARTIFACT@0000000000000000000000000000000000000000",
+        // A flow-style path, an empty path, and exclusions only.
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path: [apps]",
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path:",
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path: |",
+        "            !apps/orcel-control-room",
+        "      - run: echo done",
+    ];
+    let text = format!("name: x\non: push\njobs:\n{}\n", shapes.join("\n"));
+    let parsed = WorkflowJobs::parse(&text);
+    let job = &parsed.jobs[0];
+    let steps = job.upload_steps();
+    let lines: Vec<usize> = steps.iter().map(|step| step.line).collect();
+    assert_eq!(
+        lines,
+        [6, 9, 11, 14, 15, 18, 21],
+        "every upload step is found"
+    );
+    let problems: Vec<String> = steps
+        .iter()
+        .map(|step| {
+            let (decided, problems) = upload_step_findings(step, &job.env, &parsed.env);
+            assert!(
+                !problems.is_empty(),
+                "step at line {} passed: {decided:?}",
+                step.line
+            );
+            problems.join("; ")
+        })
+        .collect();
+    assert_eq!(
+        problems,
+        [
+            "upload path apps covers apps/orcel-control-room",
+            "upload paths cannot be read: inline `with:` content cannot be decided: \
+             { name: x, path: apps }",
+            "upload paths cannot be read: no `path` under `with:`",
+            "upload paths cannot be read: no `with:` block",
+            "upload paths cannot be read: a flow-style `path` cannot be decided: [apps]",
+            "upload paths cannot be read: `path` names nothing to decide",
+            "upload paths cannot be read: `path` names nothing to decide",
+        ]
+    );
+
+    // The bare name is caught wherever it appears.
+    assert!(names_the_control_room("cargo build -p orcel-control-room"));
+    assert!(names_the_control_room(
+        "cd apps/orcel-control-room && npm test"
+    ));
+    assert!(names_the_control_room("working-directory: x/src-tauri"));
+    assert!(!names_the_control_room("npm --prefix apps/web test"));
+    // The headless job's npm lines pass; anything else naming the app does not.
+    assert!(headless_npm_line(
+        "      - run: npm --prefix apps/orcel-control-room test"
+    ));
+    assert!(headless_npm_line(
+        "        run: npm ci --prefix apps/orcel-control-room --ignore-scripts"
+    ));
+    assert!(!headless_npm_line(
+        "        run: npm --prefix apps/orcel-control-room/src-tauri test"
+    ));
+    assert!(!headless_npm_line(
+        "        run: cargo build --manifest-path apps/orcel-control-room/src-tauri/Cargo.toml"
+    ));
+    assert!(!headless_npm_line(
+        "        working-directory: apps/orcel-control-room"
+    ));
+    assert!(!headless_npm_line(
+        "        run: npm --prefix apps/orcel-control-room test && cargo test"
+    ));
+    assert!(headless_npm_line(
+        "        run: npm   --prefix apps/orcel-control-room   run typecheck"
+    ));
+    // Re-judge (A2): only the three pinned commands are exempt.
+    for refused in [
+        "        run: npm --prefix apps/orcel-control-room exec -- tar czf x.tgz ../orcel-control-room",
+        "        run: npm --prefix apps/orcel-control-room exec -- tar czf x.tgz .",
+        "        run: npx --prefix apps/orcel-control-room tar czf x.tgz .",
+        "        run: npm --prefix apps/orcel-control-room run-script typecheck",
+        "        run: npm --prefix apps/orcel-control-room run build",
+        "        run: npm --prefix apps/orcel-control-room test -- ../orcel-control-room-shell",
+        "        run: npm --prefix apps/orcel-control-room test --workspace x",
+        "        run: npm ci --prefix apps/orcel-control-room",
+    ] {
+        assert!(!headless_npm_line(refused), "{refused}");
+    }
+    assert!(names_the_control_room(
+        "cargo build -p orcel-control-room-shell"
+    ));
+}

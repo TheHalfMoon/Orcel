@@ -29,7 +29,14 @@ windows-sys = { version = "0.52", features = [
   "Win32_System_Threading",
 ] }
 
-# The socket's peer uid (SO_PEERCRED, getpeereid) and macOS's per-user
-# runtime directory (confstr). Same version as the root lock.
+# MAC-M1-05: the server's identity is read with the same XP-03 code orceld
+# reads its clients with (`orcel_platform::peer`: SO_PEERCRED and
+# SO_PEERPIDFD on Linux, getpeereid and LOCAL_PEERTOKEN on macOS, bound to
+# the process's start generation), and the socket's directory is held to
+# XP-01's private directory rules (`orcel_platform::paths`). orcel-platform
+# is a root workspace crate whose Unix dependency is libc alone, so this
+# downloads nothing. libc gives the effective uid. Same version as the root
+# lock.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+orcel-platform = { path = "../orcel-platform", version = "0.2.0" }
