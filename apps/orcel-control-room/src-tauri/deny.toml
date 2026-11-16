@@ -65,9 +65,9 @@ features = [
 ]
 
 # The native host's allowlist (apps/orcel-native-host/deny.toml). Two
-# crate-scoped exceptions below, each FLAGGED FOR THE FOUNDER in the prep
-# packet ("Slice A2 as implemented", dependency review); neither widens the
-# allowlist for any other crate.
+# crate-scoped exceptions below, each APPROVED BY THE FOUNDER on 2026-11-16
+# (prep packet, "Slice A2 as implemented"); each applies to that one crate in
+# this Control Room workspace only and widens no other policy.
 [licenses]
 confidence-threshold = 0.93
 allow = [
@@ -82,18 +82,23 @@ allow = [
   "MPL-2.0",
 ]
 exceptions = [
-  # Linux only: a build dependency of system-deps (the gtk3-rs -sys crates),
-  # never compiled for Windows. The LLVM exception only relaxes Apache-2.0;
-  # orcel-contain's allowlist already admits it. Founder to confirm.
+  # APPROVED by the founder (2026-11-16) under Apache-2.0 WITH
+  # LLVM-exception, for this crate in this Control Room workspace only; the
+  # global policy and the allowlist above are untouched. Linux only: a build
+  # dependency of system-deps (the gtk3-rs -sys crates), never compiled for
+  # Windows. Its SPDX expression stays as declared; its notice is kept in
+  # THIRD_PARTY_NOTICES.md.
   { crate = "target-lexicon", allow = ["Apache-2.0 WITH LLVM-exception"] },
-  # FOUNDER DECISION PENDING. webview2-com-sys declares MIT, but it ships
-  # Microsoft's prebuilt WebView2Loader.dll and WebView2LoaderStatic.lib
-  # (x64, x86, arm64), and on MSVC links WebView2LoaderStatic.lib into the
-  # shell. That binary is Microsoft's, under the WebView2 SDK license, not
-  # MIT. The clarification below makes the graph say so instead of letting
-  # the declared MIT stand; this exception admits it for development builds
-  # only until the founder decides (any distribution stays separately gated,
-  # founder decision 6).
+  # APPROVED by the founder (2026-11-16) for development and internal testing
+  # only. webview2-com-sys declares MIT, but it ships Microsoft's prebuilt
+  # WebView2Loader.dll and WebView2LoaderStatic.lib (x64, x86, arm64), and on
+  # MSVC links WebView2LoaderStatic.lib into the shell. That binary is
+  # Microsoft's, under the Microsoft WebView2 SDK license terms; it is never
+  # labelled MIT or Apache-2.0, so the clarification below keeps the
+  # expression MIT AND LicenseRef-Microsoft-WebView2-SDK. Conditions: this
+  # approval does not authorize public distribution of the shell (founder
+  # decision 6), and Microsoft's redistribution obligations must be verified
+  # against the SDK license before any public release.
   { crate = "webview2-com-sys", allow = ["LicenseRef-Microsoft-WebView2-SDK"] },
 ]
 
