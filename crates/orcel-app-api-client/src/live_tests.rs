@@ -15,7 +15,7 @@ use crate::method::TaskId;
 use crate::sanitize::events::{EventBody, SnapshotReason};
 use crate::sanitize::tasks::{Known, StepKind, StepOutcome, TaskState};
 use crate::sanitize::Field;
-use crate::subscription::{Feed, Next, StreamItem, Window};
+use crate::subscription::{Feed, Next, StreamItem, UnavailableReason, Window};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -390,7 +390,53 @@ fn daemon_down_is_a_typed_unavailable() {
     );
     let window = Window::new(Arc::new(client));
     let feed = window.subscribe(None);
-    assert!(matches!(next(&feed), StreamItem::Unavailable { .. }));
+    let item = next(&feed);
+    assert_eq!(
+        item,
+        StreamItem::Unavailable {
+            reason: UnavailableReason::NotRunning
+        }
+    );
+    // A fixed name for the web view: no message, no OS error code.
+    assert_eq!(
+        serde_json::to_string(&item).unwrap(),
+        r#"{"type":"unavailable","reason":"not_running"}"#
+    );
+}
+
+#[test]
+fn every_connection_failure_maps_to_a_fixed_reason() {
+    let cases = [
+        (
+            ClientError::Unavailable(Unavailable::ConnectionLost(Some(232))),
+            UnavailableReason::ConnectionLost,
+        ),
+        (
+            ClientError::Unavailable(Unavailable::TimedOut),
+            UnavailableReason::TimedOut,
+        ),
+        (
+            ClientError::Unavailable(Unavailable::NoFreeInstance),
+            UnavailableReason::NoFreeInstance,
+        ),
+        (
+            ClientError::Unavailable(Unavailable::NoLocation),
+            UnavailableReason::NoLocation,
+        ),
+        (ClientError::Busy, UnavailableReason::Busy),
+        (
+            ClientError::Refused("SOMETHING".into()),
+            UnavailableReason::Refused,
+        ),
+        (ClientError::FrameTooLarge, UnavailableReason::FrameTooLarge),
+        (
+            ClientError::Protocol("subscription acknowledgement"),
+            UnavailableReason::Protocol,
+        ),
+    ];
+    for (error, reason) in cases {
+        assert_eq!(UnavailableReason::of(&error), reason, "{error:?}");
+    }
 }
 
 #[test]

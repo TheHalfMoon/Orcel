@@ -1,0 +1,43 @@
+:root {
+  color-scheme: light dark;
+  --background: #f6f4f1;
+  --text: #1f1a16;
+  --muted: #5c544d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #16120f;
+    --text: #efebe6;
+    --muted: #b3aaa1;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--background);
+  color: var(--text);
+  font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+}
+
+main {
+  max-width: 40rem;
+  padding: 2.5rem 2rem;
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.state {
+  margin: 0 0 1rem;
+  font-weight: 600;
+}
+
+p {
+  color: var(--muted);
+}
