@@ -2631,7 +2631,7 @@ fn the_control_room_shell_is_never_published() {
         let text = read_lf(&root.join(".github/workflows").join(workflow));
         let parsed = WorkflowJobs::parse(&text);
         for (number, code) in &parsed.head {
-            if names_the_shell(code) || code.contains(CONTROL_ROOM_APP) {
+            if names_the_control_room(code) {
                 hits.push(format!(
                     "{workflow}:{number}: outside every job: {}",
                     code.trim()
@@ -2643,43 +2643,25 @@ fn the_control_room_shell_is_never_published() {
                 shell_jobs.push(workflow);
             }
             for (number, code) in &job.lines {
-                let at = format!("{workflow}:{number} (job {})", job.name);
-                if job.name != SHELL_JOB && names_the_shell(code) {
-                    hits.push(format!("{at}: names the shell: {}", code.trim()));
-                }
                 if job.name != SHELL_JOB
-                    && code.contains(CONTROL_ROOM_APP)
+                    && names_the_control_room(code)
                     && !(job.name == HEADLESS_JOB && headless_npm_line(code))
                 {
-                    hits.push(format!("{at}: names {CONTROL_ROOM_APP}: {}", code.trim()));
+                    hits.push(format!(
+                        "{workflow}:{number} (job {}): names the Control Room: {}",
+                        job.name,
+                        code.trim()
+                    ));
                 }
             }
             for step in job.upload_steps() {
+                let at = format!("{workflow}:{} (job {})", step.line, job.name);
                 if job.name == SHELL_JOB {
-                    hits.push(format!(
-                        "{workflow}:{} (job {SHELL_JOB}): the shell job uploads",
-                        step.line
-                    ));
+                    hits.push(format!("{at}: the shell job uploads"));
                 }
-                for path in step.paths() {
-                    match decide_upload_path(&path, &[&step.env, &job.env, &parsed.env]) {
-                        Ok(place) => {
-                            if place.covers_the_control_room() {
-                                hits.push(format!(
-                                    "{workflow}:{} (job {}): upload path {path} covers \
-                                     {CONTROL_ROOM_APP}",
-                                    step.line, job.name
-                                ));
-                            }
-                            decided.push(format!("{workflow}: {path} -> {place:?}"));
-                        }
-                        Err(reason) => hits.push(format!(
-                            "{workflow}:{} (job {}): upload path {path} cannot be decided: \
-                             {reason}",
-                            step.line, job.name
-                        )),
-                    }
-                }
+                let (paths, problems) = upload_step_findings(&step, &job.env, &parsed.env);
+                decided.extend(paths.iter().map(|path| format!("{workflow}: {path}")));
+                hits.extend(problems.iter().map(|problem| format!("{at}: {problem}")));
             }
         }
     }
@@ -2689,9 +2671,22 @@ fn the_control_room_shell_is_never_published() {
         "exactly one {SHELL_JOB} job, in ci.yml"
     );
     for (relative, text) in text_files(&root) {
-        if relative.starts_with("distribution/")
-            && (names_the_shell(&text) || text.contains(CONTROL_ROOM_APP))
-        {
+        // Composite actions belong to no job that may build the shell, and distribution
+        // ships nothing of it.
+        let action = relative.starts_with(".github/actions/")
+            && (relative.ends_with("/action.yml") || relative.ends_with("/action.yaml"));
+        if action {
+            for (index, line) in text.replace("\r\n", "\n").lines().enumerate() {
+                if names_the_control_room(yaml_code(line)) {
+                    hits.push(format!(
+                        "{relative}:{}: a composite action names the Control Room: {}",
+                        index + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+        if relative.starts_with("distribution/") && names_the_control_room(&text) {
             hits.push(format!(
                 "{relative}: distribution names the Control Room shell"
             ));
@@ -2710,6 +2705,42 @@ const CONTROL_ROOM_APP: &str = "apps/orcel-control-room";
 
 fn names_the_shell(text: &str) -> bool {
     text.contains("src-tauri") || text.contains("orcel-control-room-shell")
+}
+
+/// Any mention of the Control Room's tree or binary: the bare `orcel-control-room` (which the
+/// app path and the shell binary's name both contain) or `src-tauri`.
+fn names_the_control_room(text: &str) -> bool {
+    text.contains("orcel-control-room") || text.contains("src-tauri")
+}
+
+/// One upload step decided: each path with where it points, and every problem with it (a path
+/// covering the app, a path that cannot be decided, or paths that cannot be read at all).
+fn upload_step_findings(
+    step: &UploadStep,
+    job_env: &BTreeMap<String, String>,
+    workflow_env: &BTreeMap<String, String>,
+) -> (Vec<String>, Vec<String>) {
+    let mut decided = Vec::new();
+    let mut problems = Vec::new();
+    let paths = match step.paths() {
+        Ok(paths) => paths,
+        Err(reason) => {
+            problems.push(format!("upload paths cannot be read: {reason}"));
+            return (decided, problems);
+        }
+    };
+    for path in paths {
+        match decide_upload_path(&path, &[&step.env, job_env, workflow_env]) {
+            Ok(place) => {
+                if place.covers_the_control_room() {
+                    problems.push(format!("upload path {path} covers {CONTROL_ROOM_APP}"));
+                }
+                decided.push(format!("{path} -> {place:?}"));
+            }
+            Err(reason) => problems.push(format!("upload path {path} cannot be decided: {reason}")),
+        }
+    }
+    (decided, problems)
 }
 
 /// A headless `control-room` job line may name the app only as an `npm` command run with
@@ -2862,8 +2893,11 @@ impl WorkflowJob {
                 step.body.push((*number, code.clone()));
             }
         }
+        // Action references are matched without case: GitHub resolves `Actions/Upload-Artifact`
+        // to the same action.
         steps.retain(|step| {
             step.value("uses").is_some_and(|uses| {
+                let uses = uses.to_ascii_lowercase();
                 uses.starts_with("actions/upload-artifact@")
                     || uses.starts_with("actions/upload-pages-artifact@")
             })
@@ -2885,36 +2919,57 @@ impl UploadStep {
     }
 
     /// The `with: path:` entries: a scalar, or each line of a block scalar; a `!` line is an
-    /// exclusion and can only remove files, so it is skipped.
-    fn paths(&self) -> Vec<String> {
-        let Some(with_at) = key_at(&self.body, "with", self.item_indent + 2) else {
-            return Vec::new();
-        };
-        let inner = &self.body[with_at + 1..];
-        let key_indent = inner
+    /// exclusion and can only remove files, so it is skipped. Fails closed: an upload step
+    /// whose paths cannot be read in this block form (no `with:` block, inline `with:` content
+    /// such as a flow mapping, no `path`, a flow or empty value, only exclusions) is an error,
+    /// never an empty list.
+    fn paths(&self) -> Result<Vec<String>, String> {
+        let with_indent = self.item_indent + 2;
+        let with_at = key_at(&self.body, "with", with_indent).ok_or("no `with:` block")?;
+        let (_, inline) = self.body[with_at]
+            .1
+            .trim()
+            .split_once(':')
+            .unwrap_or(("", ""));
+        if !inline.trim().is_empty() {
+            return Err(format!(
+                "inline `with:` content cannot be decided: {}",
+                inline.trim()
+            ));
+        }
+        let block: Vec<(usize, String)> = self.body[with_at + 1..]
+            .iter()
+            .take_while(|(_, code)| code.trim().is_empty() || indent_of(code) > with_indent)
+            .cloned()
+            .collect();
+        let key_indent = block
             .iter()
             .find(|(_, code)| !code.trim().is_empty())
             .map(|(_, code)| indent_of(code))
-            .unwrap_or(0);
-        let Some(path_at) = key_at(inner, "path", key_indent) else {
-            return Vec::new();
-        };
-        let (_, value) = inner[path_at].1.trim().split_once(':').unwrap_or(("", ""));
+            .ok_or("an empty `with:` block")?;
+        let path_at = key_at(&block, "path", key_indent).ok_or("no `path` under `with:`")?;
+        let (_, value) = block[path_at].1.trim().split_once(':').unwrap_or(("", ""));
         let value = value.trim();
         let lines: Vec<String> = if value.starts_with('|') || value.starts_with('>') {
-            inner[path_at + 1..]
+            block[path_at + 1..]
                 .iter()
                 .take_while(|(_, code)| code.trim().is_empty() || indent_of(code) > key_indent)
                 .map(|(_, code)| code.trim().to_owned())
                 .filter(|line| !line.is_empty())
                 .collect()
+        } else if value.starts_with('[') || value.starts_with('{') {
+            return Err(format!("a flow-style `path` cannot be decided: {value}"));
         } else {
             vec![unquote(value).to_owned()]
         };
-        lines
+        let paths: Vec<String> = lines
             .into_iter()
-            .filter(|line| !line.starts_with('!'))
-            .collect()
+            .filter(|line| !line.is_empty() && !line.starts_with('!'))
+            .collect();
+        if paths.is_empty() {
+            return Err("`path` names nothing to decide".to_owned());
+        }
+        Ok(paths)
     }
 }
 
@@ -3176,11 +3231,12 @@ fn the_no_publication_parsers_decide_the_shapes_they_claim() {
         Some("apps/web")
     );
     assert_eq!(
-        steps[0].paths(),
+        steps[0].paths().unwrap(),
         ["${{ env.DIST }}/a", "${{ env.MINE }}/b", "${{ env.TOP }}"]
     );
     let decided: Vec<UploadPlace> = steps[0]
         .paths()
+        .unwrap()
         .iter()
         .map(|path| decide_upload_path(path, &[&steps[0].env, &job.env, &parsed.env]).unwrap())
         .collect();
@@ -3193,7 +3249,87 @@ fn the_no_publication_parsers_decide_the_shapes_they_claim() {
         ]
     );
     assert!(decided[2].covers_the_control_room());
-    assert_eq!(steps[1].paths(), ["apps/web/out"]);
+    assert_eq!(steps[1].paths().unwrap(), ["apps/web/out"]);
+    let (_, problems) = upload_step_findings(&steps[0], &job.env, &parsed.env);
+    assert_eq!(
+        problems,
+        ["upload path ${{ env.TOP }} covers apps/orcel-control-room"]
+    );
+
+    // Fail-closed shapes (security judge, A2): each upload step below is found, and each one
+    // fails the rule instead of passing with no path.
+    let shapes = [
+        "  a:",
+        "    steps:",
+        // An action reference in another letter case is the same action.
+        "      - uses: Actions/Upload-Artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path: apps",
+        // Inline `with:` content (a flow mapping) is never read as having no path.
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with: { name: x, path: apps }",
+        // No path at all.
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          name: x",
+        // No `with:` at all.
+        "      - uses: ACTIONS/UPLOAD-PAGES-ARTIFACT@0000000000000000000000000000000000000000",
+        // A flow-style path, an empty path, and exclusions only.
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path: [apps]",
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path:",
+        "      - uses: actions/upload-artifact@0000000000000000000000000000000000000000",
+        "        with:",
+        "          path: |",
+        "            !apps/orcel-control-room",
+        "      - run: echo done",
+    ];
+    let text = format!("name: x\non: push\njobs:\n{}\n", shapes.join("\n"));
+    let parsed = WorkflowJobs::parse(&text);
+    let job = &parsed.jobs[0];
+    let steps = job.upload_steps();
+    let lines: Vec<usize> = steps.iter().map(|step| step.line).collect();
+    assert_eq!(
+        lines,
+        [6, 9, 11, 14, 15, 18, 21],
+        "every upload step is found"
+    );
+    let problems: Vec<String> = steps
+        .iter()
+        .map(|step| {
+            let (decided, problems) = upload_step_findings(step, &job.env, &parsed.env);
+            assert!(
+                !problems.is_empty(),
+                "step at line {} passed: {decided:?}",
+                step.line
+            );
+            problems.join("; ")
+        })
+        .collect();
+    assert_eq!(
+        problems,
+        [
+            "upload path apps covers apps/orcel-control-room",
+            "upload paths cannot be read: inline `with:` content cannot be decided: \
+             { name: x, path: apps }",
+            "upload paths cannot be read: no `path` under `with:`",
+            "upload paths cannot be read: no `with:` block",
+            "upload paths cannot be read: a flow-style `path` cannot be decided: [apps]",
+            "upload paths cannot be read: `path` names nothing to decide",
+            "upload paths cannot be read: `path` names nothing to decide",
+        ]
+    );
+
+    // The bare name is caught wherever it appears.
+    assert!(names_the_control_room("cargo build -p orcel-control-room"));
+    assert!(names_the_control_room(
+        "cd apps/orcel-control-room && npm test"
+    ));
+    assert!(names_the_control_room("working-directory: x/src-tauri"));
+    assert!(!names_the_control_room("npm --prefix apps/web test"));
     // The headless job's npm lines pass; anything else naming the app does not.
     assert!(headless_npm_line(
         "      - run: npm --prefix apps/orcel-control-room test"

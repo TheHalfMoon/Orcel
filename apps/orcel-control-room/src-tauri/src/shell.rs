@@ -26,9 +26,11 @@ use crate::report;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{Manager, RunEvent, WebviewWindow, WebviewWindowBuilder};
+#[cfg(feature = "test-hooks")]
+use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2NavigationCompletedEventArgs,
-    ICoreWebView2NavigationStartingEventArgs, ICoreWebView2Settings, COREWEBVIEW2_WEB_ERROR_STATUS,
+    ICoreWebView2NavigationStartingEventArgs, COREWEBVIEW2_WEB_ERROR_STATUS,
 };
 use webview2_com::{
     take_pwstr, NavigationCompletedEventHandler, NavigationStartingEventHandler,
@@ -55,17 +57,26 @@ pub mod exit {
     pub const STARTUP: i32 = 6;
 }
 
-/// Runs after the settings are applied and before they are read back.
+/// Runs after the settings are applied and before they are read back
+/// (`test-hooks` feature only).
+#[cfg(feature = "test-hooks")]
 pub type AfterApply = Box<dyn FnOnce(&ICoreWebView2Settings) + Send>;
-/// Runs on the main thread once the window is shown.
+/// Runs on the main thread once the window is shown (`test-hooks` feature
+/// only).
+#[cfg(feature = "test-hooks")]
 pub type AfterShow = Box<dyn FnOnce(WebviewWindow) + Send>;
 
-/// Callbacks the native tests use; the shell binary passes none.
+/// Callbacks for the native tests. Without the `test-hooks` feature (the
+/// default, and every build the shell ships as) this struct has no field
+/// and the hook call sites are not compiled, so the binary cannot carry a
+/// hook. Only the native test target enables the feature.
 #[derive(Default)]
 pub struct Hooks {
     /// See [`AfterApply`].
+    #[cfg(feature = "test-hooks")]
     pub after_apply: Option<AfterApply>,
     /// See [`AfterShow`].
+    #[cfg(feature = "test-hooks")]
     pub after_show: Option<AfterShow>,
 }
 
@@ -175,6 +186,18 @@ fn open_main_window(app: &mut tauri::App, hooks: Hooks) -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     report::step("created-hidden");
+    // A window that is never hardened, reloaded and shown is closed, not
+    // left hidden, even if the hardening callback below never runs.
+    let guarded = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SHOW_DEADLINE);
+        if !SHOWN.load(Ordering::SeqCst) {
+            refuse(
+                &guarded,
+                "the window was not hardened, reloaded and shown in time",
+            );
+        }
+    });
     let hardened = window.clone();
     window
         .with_webview(move |webview| {
@@ -185,14 +208,22 @@ fn open_main_window(app: &mut tauri::App, hooks: Hooks) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-/// Closes the window and the app with a stated reason.
+/// Set by the first refusal; a later one (the guard after a readback
+/// mismatch, say) does nothing.
+static REFUSED: AtomicBool = AtomicBool::new(false);
+
+/// Closes the window and the app with a stated reason (once).
 fn refuse(window: &WebviewWindow, reason: &str) {
+    if REFUSED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     eprintln!("Orcel Control Room closed its window: {reason}");
     report::step("refused");
     let _ = window.destroy();
     window.app_handle().exit(exit::HARDENING);
 }
 
+#[cfg_attr(not(feature = "test-hooks"), allow(unused_variables))]
 fn harden(
     webview: &tauri::webview::PlatformWebview,
     window: WebviewWindow,
@@ -221,6 +252,7 @@ fn harden(
             .map_err(|error| format!("no ICoreWebView2Settings: {error}"))?;
         hardening::apply(&settings)?;
         report::step("settings-applied");
+        #[cfg(feature = "test-hooks")]
         if let Some(after_apply) = hooks.after_apply {
             after_apply(&settings);
         }
@@ -271,6 +303,7 @@ fn harden(
         )
         .map_err(|error| format!("the navigation tracker could not be registered: {error}"))?;
 
+        #[cfg(feature = "test-hooks")]
         let mut after_show = hooks.after_show;
         let shown = window.clone();
         core.add_NavigationCompleted(
@@ -316,6 +349,7 @@ fn harden(
                         return Ok(());
                     }
                     report::step("shown");
+                    #[cfg(feature = "test-hooks")]
                     if let Some(after_show) = after_show.take() {
                         after_show(shown.clone());
                     }
@@ -331,17 +365,13 @@ fn harden(
         core.Navigate(&HSTRING::from(navigation::ASSET_PAGE))
             .map_err(|error| format!("the reload could not start: {error}"))?;
     }
-    // A window that never finishes its reload is closed, not left hidden.
-    std::thread::spawn(move || {
-        std::thread::sleep(SHOW_DEADLINE);
-        if !SHOWN.load(Ordering::SeqCst) {
-            refuse(&window, "the page did not finish loading in time");
-        }
-    });
     Ok(())
 }
 
-/// How long the hidden window may take to reload before it is closed.
+/// How long the hidden window may take to be hardened, reloaded and shown
+/// before it is closed. The guard starts before `with_webview` is asked to
+/// run, so a hardening callback that never runs still ends the process with
+/// a stated reason.
 const SHOW_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Whether the window is visible on screen, read from Windows directly.
