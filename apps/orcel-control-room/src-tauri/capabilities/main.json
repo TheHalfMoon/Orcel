@@ -1,7 +1,13 @@
 {
   "identifier": "main",
-  "description": "SG-000119 A2: the main window only. A2 registers no command, so this grants nothing: no core default, no window, webview, event, path or app permission, no plugin and no remote section. Slice A3 adds exactly the five generated allow-app-* permissions.",
+  "description": "SG-000119 A3: the main window only, granted exactly the five read-only commands, each by its own generated permission. No core default, no window, webview, event, path or app permission, no plugin and no remote section.",
   "local": true,
   "windows": ["main"],
-  "permissions": []
+  "permissions": [
+    "allow-app-status",
+    "allow-app-capabilities",
+    "allow-app-events",
+    "allow-app-tasks",
+    "allow-app-task"
+  ]
 }

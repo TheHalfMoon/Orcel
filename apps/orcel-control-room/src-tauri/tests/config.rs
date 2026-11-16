@@ -121,7 +121,7 @@ fn the_csp_has_no_unsafe_or_remote_source() {
 }
 
 #[test]
-fn the_capability_file_is_one_window_granting_nothing() {
+fn the_capability_file_is_one_window_granting_the_five_commands() {
     let entries: Vec<String> =
         std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities"))
             .expect("capabilities")
@@ -142,10 +142,19 @@ fn the_capability_file_is_one_window_granting_nothing() {
     assert_eq!(capability["identifier"], "main");
     assert_eq!(capability["local"], true);
     assert_eq!(capability["windows"], json!(["main"]));
-    // A2 registers no command, so nothing is granted (A3 adds exactly the
-    // five allow-app-* permissions). No core default, no remote section, no
-    // platform list, no webview wildcard.
-    assert_eq!(capability["permissions"], json!([]));
+    // A3: exactly the five commands' own generated allow permissions
+    // (tests/acl.rs checks them against build.rs and the handler). No core
+    // default, no remote section, no platform list, no webview wildcard.
+    assert_eq!(
+        capability["permissions"],
+        json!([
+            "allow-app-status",
+            "allow-app-capabilities",
+            "allow-app-events",
+            "allow-app-tasks",
+            "allow-app-task"
+        ])
+    );
     assert!(capability.get("remote").is_none());
     assert!(capability.get("platforms").is_none());
     assert!(capability.get("webviews").is_none());
@@ -158,19 +167,33 @@ fn the_manifest_pins_tauri_lean_and_registers_no_plugin() {
         "tauri = { version = \"=2.12.5\", default-features = false, features = [\"wry\", \"custom-protocol\"] }"
     ));
     assert!(manifest.contains("tauri-build = { version = \"=2.7.4\", default-features = false }"));
-    for forbidden in [
-        "tauri-plugin",
-        "devtools\"",
-        "\"test\"",
-        "tiny_http",
-        "tauri-driver",
-    ] {
+    for forbidden in ["tauri-plugin", "devtools\"", "tiny_http", "tauri-driver"] {
         let hits: Vec<&str> = manifest
             .lines()
             .filter(|line| !line.trim_start().starts_with('#') && line.contains(forbidden))
             .collect();
         assert!(hits.is_empty(), "{forbidden}: {hits:?}");
     }
+    // tauri's `test` feature (A3's ACL tests) appears exactly once, in
+    // [dev-dependencies], on the same exact version; never in a normal or
+    // build dependency table.
+    let mut section = "";
+    let mut test_feature = Vec::new();
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            section = line;
+        } else if !line.starts_with('#') && line.contains("\"test\"") {
+            test_feature.push((section, line));
+        }
+    }
+    assert_eq!(
+        test_feature,
+        [(
+            "[dev-dependencies]",
+            "tauri = { version = \"=2.12.5\", default-features = false, features = [\"wry\", \"custom-protocol\", \"test\"] }"
+        )]
+    );
     // The native tests' hooks are a feature that is never a default; only
     // the native test target requires it.
     assert!(manifest.contains("[features]\ndefault = []\ntest-hooks = []\n"));
@@ -195,7 +218,13 @@ fn the_manifest_pins_tauri_lean_and_registers_no_plugin() {
     }
     assert!(read("src/main.rs").contains("Hooks::default()"));
     // No plugin is registered anywhere in the shell's source.
-    for file in ["src/shell.rs", "src/lib.rs", "src/main.rs", "build.rs"] {
+    for file in [
+        "src/shell.rs",
+        "src/commands.rs",
+        "src/lib.rs",
+        "src/main.rs",
+        "build.rs",
+    ] {
         let source = read(file);
         assert!(!source.contains(".plugin("), "{file} registers a plugin");
         assert!(

@@ -4,8 +4,14 @@
 //! tauri-build embeds a window icon in the Windows resources and refuses to
 //! build without one. Rather than a binary file in the repository, the icon
 //! is drawn here into OUT_DIR: a 32x32 dark square with a light ring.
-//! A2 registers no command, so there is no `AppManifest` yet; slice A3 lists
-//! exactly its five commands here.
+//!
+//! SG-000119 A3: the app's ACL manifest names exactly the five read-only
+//! commands, so tauri-build generates an `allow-<command>` and a
+//! `deny-<command>` permission for each, and Tauri's ACL refuses any command
+//! a capability does not grant (with an app manifest, an unlisted command is
+//! refused before it reaches the invoke handler). The list is written once
+//! here; `tests/acl.rs` compares it with `commands::COMMANDS`, the
+//! `generate_handler!` list and the capability file.
 
 use std::path::PathBuf;
 
@@ -58,6 +64,13 @@ fn main() {
     let icon_path = out_dir.join("orcel-control-room.ico");
     std::fs::write(&icon_path, icon()).expect("write the window icon");
     let attributes = tauri_build::Attributes::new()
-        .windows_attributes(tauri_build::WindowsAttributes::new().window_icon_path(&icon_path));
+        .windows_attributes(tauri_build::WindowsAttributes::new().window_icon_path(&icon_path))
+        .app_manifest(tauri_build::AppManifest::new().commands(&[
+            "app_status",
+            "app_capabilities",
+            "app_events",
+            "app_tasks",
+            "app_task",
+        ]));
     tauri_build::try_build(attributes).expect("tauri-build (ACL, resources, context)");
 }

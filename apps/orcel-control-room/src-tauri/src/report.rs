@@ -2,10 +2,17 @@
 //!
 //! The counts are taken on the Rust side only; no probe is compiled into the
 //! page. `SG119-IPC commands=<n> web_messages=<m>`: `n` is every command
-//! request that reached the Rust invoke handler (A2 registers no command, so
-//! each is refused there), `m` every web message the shell's own WebView2
+//! call one of the five command handlers served (A3; a call the ACL refuses
+//! never reaches them), `m` every web message the shell's own WebView2
 //! `WebMessageReceived` handler saw (Tauri's `postMessage` fallback would
 //! arrive there). The native test requires `n` above zero and `m` zero.
+//!
+//! Not in `n`: Tauri's own `plugin:__TAURI_CHANNEL__|fetch`, which the page
+//! calls to collect a channel message of 8 KiB or more (a large `app_events`
+//! item). Tauri 2.12.5 exempts that one command from the ACL (a hard-coded
+//! check in `Webview::on_message`); it reaches no command handler, only reads
+//! back Tauri's own buffer of messages the shell already sent on that
+//! channel, and sends nothing to orceld.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
