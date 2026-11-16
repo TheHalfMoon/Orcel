@@ -1167,6 +1167,23 @@ jobs:
       # shipped binary is the build above, without it).
       - name: Native window tests on WebView2
         run: cargo test --locked --features test-hooks --test native_shell
+      # SG-000119 A5: accessibility, scaling, right-to-left layout and the
+      # renderer's reach (read-only), and, only here where the runner is
+      # disposable, the checks that send real keystrokes and a right-click
+      # (F12, Ctrl+Shift+I, Ctrl+P, a right-click, Tab order). Elsewhere those
+      # report themselves ignored unless ORCEL_ALLOW_INPUT_TESTS is 1.
+      - name: Accessibility and hardening checks on WebView2 (UI Automation, input on this runner only)
+        env:
+          ORCEL_ALLOW_INPUT_TESTS: "1"
+        run: cargo test --locked --features test-hooks --test native_qualify
+      # Measured on the optimised build, which stays on the runner (no
+      # upload); report only, beside the WPF preview built with Windows' own
+      # .NET Framework compiler.
+      - name: Optimised build for the measurements
+        run: cargo build --locked --release
+      - name: Start time, memory, idle CPU and binary size beside the WPF preview (report only)
+        shell: pwsh
+        run: ./tests/measure.ps1 -Shell target/release/orcel-control-room-shell.exe -WpfBuildDirectory "$env:RUNNER_TEMP/a5-wpf"
       - name: Feature graph (no test or devtools feature, no test hooks, no plugin)
         run: |
           set -euo pipefail

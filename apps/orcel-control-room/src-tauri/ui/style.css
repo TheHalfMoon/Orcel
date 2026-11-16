@@ -1,5 +1,9 @@
 /* SG-000119 A4: the Control Room view. System fonts, no remote content,
-   light and dark from the system, forced colors respected. */
+   light and dark from the system, forced colors respected.
+   A5: logical properties only (no left or right), so the layout mirrors
+   under dir="rtl"; every text colour meets 4.5:1 on its background in both
+   schemes (src/view/a11y.test.ts); grids shrink to the narrowest window at
+   200% zoom without a horizontal scroll. */
 
 :root {
   color-scheme: light dark;
@@ -85,7 +89,7 @@ main[hidden] {
 
 .columns {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
   gap: 1rem;
 }
 
@@ -100,13 +104,25 @@ main[hidden] {
 
 .facts {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
   gap: 0.25rem 1rem;
   margin: 0 0 0.75rem;
 }
 
 .facts dt {
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* SG-000119 A5: a value orceld reports (a path, an identifier, an event's
+   text) takes its direction from its own characters, so a right-to-left
+   name neither reorders the label beside it nor is reordered by it. */
+.facts dd,
+td,
+code,
+.event-text,
+.task-meta {
+  unicode-bidi: plaintext;
 }
 
 .facts dd {
@@ -121,16 +137,17 @@ table {
 }
 
 caption {
-  text-align: left;
+  text-align: start;
   color: var(--muted);
   padding-bottom: 0.25rem;
 }
 
 th,
 td {
-  text-align: left;
+  text-align: start;
   vertical-align: top;
-  padding: 0.3rem 0.5rem 0.3rem 0;
+  padding-block: 0.3rem;
+  padding-inline: 0 0.5rem;
   border-bottom: 1px solid var(--line);
   overflow-wrap: anywhere;
 }
@@ -194,7 +211,8 @@ summary {
 }
 
 .task-detail {
-  padding: 0 0 0.75rem 1.25rem;
+  padding-block: 0 0.75rem;
+  padding-inline: 1.25rem 0;
 }
 
 .timeline {
