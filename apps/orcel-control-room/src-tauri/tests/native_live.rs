@@ -345,7 +345,7 @@ fn finish(mut child: Child, limit: Duration) -> Finished {
     };
     println!("--- live scenario: exit {:?}", finished.code);
     for line in finished.stdout.lines().chain(finished.stderr.lines()) {
-        let shown: String = line.chars().take(400).collect();
+        let shown: String = redact(line).chars().take(400).collect();
         println!("    {shown}");
     }
     assert!(

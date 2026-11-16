@@ -9,6 +9,7 @@
 
 import { h, type Node } from "./dom.js";
 import {
+  INCOMPATIBLE,
   MAX_CAPABILITIES,
   MAX_SOURCES,
   MAX_STEPS,
@@ -34,6 +35,7 @@ import {
   type Capability,
   type Check,
   type DocumentInfo,
+  type FieldView,
   type Refusal,
   type Source,
   type Status,
@@ -51,8 +53,15 @@ export type Answer<T> =
   | { state: "ok"; value: T }
   | { state: "refused"; refusal: Refusal };
 
-function row(term: string, value: { text: string; withheld: boolean }): Node[] {
-  return [h("dt", null, term), h("dd", value.withheld ? { class: "withheld" } : null, value.text)];
+/** The class a field's value is drawn with: withheld and unexpected differ. */
+function toneOf(value: FieldView): { class: string } | null {
+  if (value.withheld) return { class: "withheld" };
+  if (value.unexpected) return { class: "unexpected" };
+  return null;
+}
+
+function row(term: string, value: FieldView): Node[] {
+  return [h("dt", null, term), h("dd", toneOf(value), value.text)];
 }
 
 function note(text: string): Node {
@@ -65,7 +74,9 @@ function withheldNote(value: unknown): Node[] {
 }
 
 function refusalNode(refusal: Refusal): Node {
-  return h("p", { class: "refusal", role: "note" }, `Unavailable: ${refusal.text}.`);
+  // INCOMPATIBLE is already a full sentence that names its state.
+  const text = refusal.kind === "incompatible" ? refusal.text : `Unavailable: ${refusal.text}.`;
+  return h("p", { class: "refusal", role: "note" }, text);
 }
 
 function loading(): Node {
@@ -88,7 +99,7 @@ export function connectionText(link: Link, hasCore: boolean): string {
     case "not_yours":
       return "Unavailable: orceld could not be confirmed as yours; nothing was sent to it.";
     case "incompatible":
-      return "Incompatible orceld: it does not report itself as read-only. This window shows nothing else.";
+      return INCOMPATIBLE;
     case "ended":
       return "Live events ended. Reopen the window to follow orceld again.";
   }
@@ -125,6 +136,7 @@ export function statusNodes(answer: Answer<Status>, link: Link): Node[] {
       ...row("System", {
         text: [text(status.os).text, text(status.arch).text].join(" / "),
         withheld: text(status.os).withheld || text(status.arch).withheld,
+        unexpected: text(status.os).unexpected === true || text(status.arch).unexpected === true,
       }),
       ...row("Mode", text(status.mode)),
       ...row("Policy revision", text(status.policy_revision)),
@@ -246,9 +258,9 @@ function checkRows(field: unknown): Node[] {
   ];
 }
 
-function cell(value: { text: string; withheld: boolean }, code = false): Node {
-  const attrs = value.withheld ? { class: "withheld" } : null;
-  return code && !value.withheld ? h("td", attrs, [h("code", null, value.text)]) : h("td", attrs, value.text);
+function cell(value: FieldView, code = false): Node {
+  const attrs = toneOf(value);
+  return code && attrs === null ? h("td", attrs, [h("code", null, value.text)]) : h("td", attrs, value.text);
 }
 
 /** One task's detail: metadata only, never content or a title. */

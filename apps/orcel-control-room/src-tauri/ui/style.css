@@ -159,6 +159,11 @@ code {
   font-style: italic;
 }
 
+.unexpected {
+  color: var(--bad);
+  text-decoration: underline dotted;
+}
+
 .tasks {
   list-style: none;
   margin: 0;
@@ -239,6 +244,7 @@ summary {
   .unavailable,
   .refusal,
   .withheld,
+  .unexpected,
   .note,
   .scope,
   .hint {

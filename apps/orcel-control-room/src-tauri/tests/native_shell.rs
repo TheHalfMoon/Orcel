@@ -33,7 +33,13 @@ const SHELL: &str = env!("CARGO_BIN_EXE_orcel-control-room-shell");
 
 /// Off-origin navigations the probe scenario tries, and how the shell
 /// reports each refusal (scheme, userinfo marker, host and port).
-const NAVIGATIONS: [(&str, &str); 6] = [
+const NAVIGATIONS: [(&str, &str); 7] = [
+    // An asset opened as a page: on the origin but not one of the two pages
+    // (the refusal line never carries the path).
+    (
+        "https://tauri.localhost/style.css",
+        "https://tauri.localhost",
+    ),
     (
         "https://tauri.localhost.evil/",
         "https://tauri.localhost.evil",
@@ -588,7 +594,7 @@ fn probes() {
     );
     let probe = finished.line("SG119-PROBE ");
     assert!(
-        probe.starts_with("SG119-PROBE url=https://tauri.localhost/"),
+        probe.starts_with("SG119-PROBE url=https://tauri.localhost/index.html "),
         "{probe}"
     );
     assert!(

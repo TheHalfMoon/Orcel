@@ -7,9 +7,17 @@
 // sanitiser withheld something. Nothing here describes an approval, a
 // control that acts, or a way to open a path.
 import { h } from "./dom.js";
-import { MAX_CAPABILITIES, MAX_SOURCES, MAX_STEPS, MAX_TASKS, MAX_TIMELINE_ROWS, PATH_WITHHELD, bounded, bytesOf, count, durationOf, fieldText, hashOf, isRecord, numberOf, pathOf, plain, textOf, timeOf, unavailableText, withheldCount, words, } from "./model.js";
+import { INCOMPATIBLE, MAX_CAPABILITIES, MAX_SOURCES, MAX_STEPS, MAX_TASKS, MAX_TIMELINE_ROWS, PATH_WITHHELD, bounded, bytesOf, count, durationOf, fieldText, hashOf, isRecord, numberOf, pathOf, plain, textOf, timeOf, unavailableText, withheldCount, words, } from "./model.js";
+/** The class a field's value is drawn with: withheld and unexpected differ. */
+function toneOf(value) {
+    if (value.withheld)
+        return { class: "withheld" };
+    if (value.unexpected)
+        return { class: "unexpected" };
+    return null;
+}
 function row(term, value) {
-    return [h("dt", null, term), h("dd", value.withheld ? { class: "withheld" } : null, value.text)];
+    return [h("dt", null, term), h("dd", toneOf(value), value.text)];
 }
 function note(text) {
     return h("p", { class: "note" }, text);
@@ -19,7 +27,9 @@ function withheldNote(value) {
     return text ? [h("p", { class: "withheld" }, text)] : [];
 }
 function refusalNode(refusal) {
-    return h("p", { class: "refusal", role: "note" }, `Unavailable: ${refusal.text}.`);
+    // INCOMPATIBLE is already a full sentence that names its state.
+    const text = refusal.kind === "incompatible" ? refusal.text : `Unavailable: ${refusal.text}.`;
+    return h("p", { class: "refusal", role: "note" }, text);
 }
 function loading() {
     return note("Reading from orceld\u2026");
@@ -40,7 +50,7 @@ export function connectionText(link, hasCore) {
         case "not_yours":
             return "Unavailable: orceld could not be confirmed as yours; nothing was sent to it.";
         case "incompatible":
-            return "Incompatible orceld: it does not report itself as read-only. This window shows nothing else.";
+            return INCOMPATIBLE;
         case "ended":
             return "Live events ended. Reopen the window to follow orceld again.";
     }
@@ -71,6 +81,7 @@ export function statusNodes(answer, link) {
             ...row("System", {
                 text: [text(status.os).text, text(status.arch).text].join(" / "),
                 withheld: text(status.os).withheld || text(status.arch).withheld,
+                unexpected: text(status.os).unexpected === true || text(status.arch).unexpected === true,
             }),
             ...row("Mode", text(status.mode)),
             ...row("Policy revision", text(status.policy_revision)),
@@ -190,8 +201,8 @@ function checkRows(field) {
     ];
 }
 function cell(value, code = false) {
-    const attrs = value.withheld ? { class: "withheld" } : null;
-    return code && !value.withheld ? h("td", attrs, [h("code", null, value.text)]) : h("td", attrs, value.text);
+    const attrs = toneOf(value);
+    return code && attrs === null ? h("td", attrs, [h("code", null, value.text)]) : h("td", attrs, value.text);
 }
 /** One task's detail: metadata only, never content or a title. */
 export function taskDetailNodes(answer) {

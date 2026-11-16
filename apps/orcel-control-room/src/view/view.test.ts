@@ -8,11 +8,15 @@ import { test } from "node:test";
 
 import type { Node } from "./dom.js";
 import {
+  INCOMPATIBLE,
   MAX_PATH_TEXT,
   MAX_TEXT,
   MAX_TIMELINE_ROWS,
   plain,
   refusalOf,
+  textOf,
+  UNEXPECTED,
+  fieldText,
   unavailableText,
   words,
   type Capabilities,
@@ -141,6 +145,44 @@ test("status renders as text, withheld fields read 'withheld' and the count is s
   assert.ok(!shownText.some((text) => text.includes("pid") || text.includes("endpoint")));
   const one = texts(statusNodes({ state: "ok", value: status({ withheld: 1 }) }, live));
   assert.ok(one.includes("1 field withheld"));
+});
+
+test("a shown value that formats to nothing reads 'not shown (unexpected value)', never 'withheld'", () => {
+  assert.deepEqual(fieldText<string>(shown(""), textOf), { text: UNEXPECTED, withheld: false, unexpected: true });
+  assert.deepEqual(fieldText<string>(shown({ x: 1 }), textOf), { text: UNEXPECTED, withheld: false, unexpected: true });
+  assert.deepEqual(fieldText<string>(withheld, textOf), { text: "withheld", withheld: true });
+  assert.deepEqual(fieldText<string>(withheld, textOf, "path withheld"), { text: "path withheld", withheld: true });
+  assert.deepEqual(fieldText<string>(absent, textOf), { text: "not reported", withheld: false });
+
+  // In the window: the unexpected values carry their own class, and nothing
+  // reads "withheld" because nothing was withheld.
+  const odd = statusNodes(
+    { state: "ok", value: status({ version: shown(""), clients: shown("not a record") as unknown as Status["clients"] }) },
+    live,
+  );
+  const unexpected = all(odd).filter((node) => node.text === UNEXPECTED);
+  assert.equal(unexpected.length, 2);
+  assert.ok(unexpected.every((node) => node.attrs?.class === "unexpected"));
+  assert.ok(!texts(odd).includes("withheld"));
+  assert.ok(!all(odd).some((node) => node.attrs?.class === "withheld"));
+
+  // A withheld field is still drawn as withheld.
+  const hidden = all(statusNodes({ state: "ok", value: status({ version: withheld }) }, live));
+  assert.ok(hidden.some((node) => node.text === "withheld" && node.attrs?.class === "withheld"));
+});
+
+test("an incompatible orceld reads as one sentence, not 'Unavailable: Incompatible ...'", () => {
+  const refusal = refusalOf({ error: "incompatible" });
+  for (const nodes of [
+    statusNodes({ state: "refused", refusal }, live),
+    taskListNodes({ state: "refused", refusal }, false).nodes,
+  ]) {
+    const shownText = texts(nodes);
+    assert.deepEqual(shownText, [INCOMPATIBLE]);
+  }
+  assert.equal(connectionText({ state: "incompatible" }, true), INCOMPATIBLE);
+  const other = texts(statusNodes({ state: "refused", refusal: refusalOf({ error: "busy" }) }, live));
+  assert.ok(other[0]?.startsWith("Unavailable: ") && other[0].endsWith("."), String(other[0]));
 });
 
 test("status says unavailable while orceld is, and never shows stale values as live", () => {

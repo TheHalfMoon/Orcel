@@ -144,6 +144,21 @@ export const MAX_TIMELINE_ROWS = 200;
 export const PATH_WITHHELD = "path withheld";
 export const WITHHELD = "withheld";
 export const NOT_REPORTED = "not reported";
+/**
+ * A value orceld marked as shown but whose shape the view does not expect
+ * (it formats to nothing). It is not a withheld field, so it never reads
+ * "withheld"; it has its own label and style.
+ */
+export const UNEXPECTED = "not shown (unexpected value)";
+
+/** A field as the view draws it. */
+export interface FieldView {
+  text: string;
+  /** The sanitiser withheld it. */
+  withheld: boolean;
+  /** Marked shown, but its value had a shape the view does not draw. */
+  unexpected?: boolean;
+}
 
 const UNSAFE = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
 
@@ -177,17 +192,21 @@ export function count(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-/** How a field reads: its value as text, "withheld" (or "path withheld"), or "not reported". */
+/**
+ * How a field reads: its value as text, "withheld" (or "path withheld") only
+ * where the sanitiser withheld it, "not shown (unexpected value)" for a shown
+ * value that formats to nothing, or "not reported".
+ */
 export function fieldText<T>(
   field: unknown,
   format: (value: T) => string,
   withheld: string = WITHHELD,
-): { text: string; withheld: boolean } {
+): FieldView {
   if (!isRecord(field)) return { text: NOT_REPORTED, withheld: false };
   if (field.state === "withheld") return { text: withheld, withheld: true };
   if (field.state === "shown" && "value" in field) {
     const text = format(field.value as T);
-    return text === "" ? { text: WITHHELD, withheld: true } : { text, withheld: false };
+    return text === "" ? { text: UNEXPECTED, withheld: false, unexpected: true } : { text, withheld: false };
   }
   return { text: NOT_REPORTED, withheld: false };
 }
