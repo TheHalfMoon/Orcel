@@ -105,14 +105,53 @@ pub struct EntryFacts {
 pub struct EndpointFacts {
     /// The socket's directory.
     pub dir: EntryFacts,
-    /// Whether the directory also passes XP-01's private directory rules
-    /// (`orcel_platform::paths::check_existing_private_dir`: no ancestor
-    /// another user can modify; on macOS no extended ACL entry).
-    pub dir_rules: bool,
+    /// Whether the directory also passes XP-01's private directory rules,
+    /// read without creating anything
+    /// (`orcel_platform::paths::verify_existing_private_dir`: no ancestor
+    /// another user owns or can modify; on macOS no extended ACL entry),
+    /// and if not, why.
+    pub dir_rules: Result<(), DirectoryReason>,
     /// The socket path itself.
     pub socket: EntryFacts,
     /// This process's effective uid.
     pub ours: u32,
+}
+
+/// Unix: why the socket's directory is not this user's private directory.
+/// A closed set that names no path, uid or other account, so it is safe
+/// wherever the refusal is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectoryReason {
+    /// The directory, or an ancestor, is a link or not a directory.
+    NotADirectory,
+    /// The directory is owned by another account.
+    ForeignOwner,
+    /// The directory grants group or other access.
+    OpenToOthers,
+    /// An ancestor is owned by an account that is neither this user nor
+    /// root.
+    ForeignOwnedAncestor,
+    /// An ancestor is writable by group or others (and is not a root-owned
+    /// sticky directory such as `/tmp`).
+    WritableAncestor,
+    /// macOS: an extended ACL entry grants another account access.
+    AclGrant,
+    /// The directory or an ancestor could not be read.
+    Unreadable,
+}
+
+impl DirectoryReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotADirectory => "it or a folder above it is a link or not a folder",
+            Self::ForeignOwner => "it is owned by another account",
+            Self::OpenToOthers => "it is open to other accounts",
+            Self::ForeignOwnedAncestor => "a folder above it is owned by another account",
+            Self::WritableAncestor => "a folder above it can be changed by other accounts",
+            Self::AclGrant => "an access control entry grants another account access",
+            Self::Unreadable => "it could not be read",
+        }
+    }
 }
 
 /// What the platform read about the pipe object itself (Windows).
@@ -172,8 +211,9 @@ pub enum IdentityRefusal {
     /// Unix: the peer was identified only by a source orceld does not
     /// accept either (Linux before 6.5).
     WeakIdentity,
-    /// Unix: the socket's directory is not this user's private directory.
-    DirectoryNotPrivate,
+    /// Unix: the socket's directory is not this user's private directory,
+    /// and why.
+    DirectoryNotPrivate(DirectoryReason),
     /// Unix: the socket path is a link or not a socket.
     NotASocket,
     /// Unix: the socket is owned by another account.
@@ -202,7 +242,14 @@ impl fmt::Display for IdentityRefusal {
             Self::PipeUnreadable => "the endpoint's security could not be read",
             Self::ServerGone => "the server process is gone",
             Self::WeakIdentity => "the server's process could not be bound to its identity",
-            Self::DirectoryNotPrivate => "the endpoint's directory is not private to this user",
+            Self::DirectoryNotPrivate(reason) => {
+                return write!(
+                    f,
+                    "{}: the endpoint's directory is not private to this user ({})",
+                    Self::MESSAGE,
+                    reason.as_str()
+                );
+            }
             Self::NotASocket => "the endpoint is not a socket",
             Self::SocketNotOwned => "the endpoint is owned by another account",
             Self::SocketNotPrivate => "the endpoint is open to other accounts",
@@ -266,16 +313,23 @@ pub fn decide_endpoint(facts: &EndpointFacts) -> Result<(), IdentityRefusal> {
 /// The directory half of [`decide_endpoint`], decided first, so a socket
 /// that is missing from a directory that is not private is refused rather
 /// than reported as orceld not running.
+/// The directory's own facts are decided before XP-01's walk, so the most
+/// direct reason is the one reported.
 pub fn decide_directory(
     dir: EntryFacts,
-    dir_rules: bool,
+    dir_rules: Result<(), DirectoryReason>,
     ours: u32,
 ) -> Result<(), IdentityRefusal> {
-    if dir.kind == EntryKind::Directory && dir.owner == ours && dir.mode & 0o077 == 0 && dir_rules {
-        Ok(())
+    let reason = if dir.kind != EntryKind::Directory {
+        DirectoryReason::NotADirectory
+    } else if dir.owner != ours {
+        DirectoryReason::ForeignOwner
+    } else if dir.mode & 0o077 != 0 {
+        DirectoryReason::OpenToOthers
     } else {
-        Err(IdentityRefusal::DirectoryNotPrivate)
-    }
+        return dir_rules.map_err(IdentityRefusal::DirectoryNotPrivate);
+    };
+    Err(IdentityRefusal::DirectoryNotPrivate(reason))
 }
 
 /// The pipe object decision: owned by this user (or by Administrators when
@@ -487,7 +541,7 @@ mod tests {
     fn orcelds() -> EndpointFacts {
         EndpointFacts {
             dir: entry(EntryKind::Directory, OURS, 0o700),
-            dir_rules: true,
+            dir_rules: Ok(()),
             socket: entry(EntryKind::Socket, OURS, 0o600),
             ours: OURS,
         }
@@ -517,24 +571,64 @@ mod tests {
 
     #[test]
     fn a_directory_that_is_not_this_users_private_one_is_refused() {
-        let refused = |change: &dyn Fn(&mut EndpointFacts)| {
-            assert_eq!(changed(change), Err(IdentityRefusal::DirectoryNotPrivate));
+        use DirectoryReason::*;
+        let refused = |reason, change: &dyn Fn(&mut EndpointFacts)| {
+            assert_eq!(
+                changed(change),
+                Err(IdentityRefusal::DirectoryNotPrivate(reason))
+            );
         };
         for mode in [0o710, 0o750, 0o755, 0o701, 0o777, 0o1777, 0o720, 0o702] {
-            refused(&|facts| facts.dir.mode = mode);
+            refused(OpenToOthers, &|facts| facts.dir.mode = mode);
         }
         for owner in [0, OURS + 1] {
-            refused(&|facts| facts.dir.owner = owner);
+            refused(ForeignOwner, &|facts| facts.dir.owner = owner);
         }
         for kind in [EntryKind::Symlink, EntryKind::Socket, EntryKind::Other] {
-            refused(&|facts| facts.dir.kind = kind);
+            refused(NotADirectory, &|facts| facts.dir.kind = kind);
         }
-        refused(&|facts| facts.dir_rules = false);
-        // The directory is decided first.
-        refused(&|facts| {
+        // XP-01's walk keeps its precise reason.
+        for reason in [
+            NotADirectory,
+            ForeignOwner,
+            OpenToOthers,
+            ForeignOwnedAncestor,
+            WritableAncestor,
+            AclGrant,
+            Unreadable,
+        ] {
+            refused(reason, &|facts| facts.dir_rules = Err(reason));
+        }
+        // The directory's own facts come before the walk's reason, and the
+        // directory is decided before the socket.
+        refused(OpenToOthers, &|facts| {
             facts.dir.mode = 0o755;
+            facts.dir_rules = Err(AclGrant);
             facts.socket.owner = 0;
         });
+    }
+
+    #[test]
+    fn a_directory_refusal_names_no_path_or_account() {
+        use DirectoryReason::*;
+        for reason in [
+            NotADirectory,
+            ForeignOwner,
+            OpenToOthers,
+            ForeignOwnedAncestor,
+            WritableAncestor,
+            AclGrant,
+            Unreadable,
+        ] {
+            let text = IdentityRefusal::DirectoryNotPrivate(reason).to_string();
+            assert!(text.starts_with(IdentityRefusal::MESSAGE), "{text}");
+            assert!(
+                !text.contains('/')
+                    && !text.contains('\\')
+                    && !text.chars().any(|c| c.is_ascii_digit()),
+                "{text}"
+            );
+        }
     }
 
     #[test]

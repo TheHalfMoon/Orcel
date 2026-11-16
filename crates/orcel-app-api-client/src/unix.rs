@@ -6,8 +6,12 @@
 //! 1. Before connecting, the socket's directory and the socket are read
 //!    without following links and must be what orceld creates: a directory
 //!    of this user without group or other access that passes XP-01's
-//!    private directory rules, holding a socket of this user without group
-//!    or other access ([`identity::decide_endpoint`]).
+//!    private directory rules (checked with the strictly read-only
+//!    `orcel_platform::paths::verify_existing_private_dir`; the client
+//!    never creates anything, and a missing directory is "not running"),
+//!    holding a socket of this user without group or other access
+//!    ([`identity::decide_endpoint`]). A refused directory keeps its reason
+//!    as a closed [`DirectoryReason`] that names no path or account.
 //! 2. After connecting, the peer is read with
 //!    `orcel_platform::peer::unix_peer_credentials` (XP-03), the code orceld
 //!    reads its clients with: the kernel's uid for the peer, bound to its
@@ -23,7 +27,9 @@
 //! registry, #655), so it reports that the app API has no location.
 
 use crate::error::{ClientError, Unavailable};
-use crate::identity::{self, EndpointFacts, EntryFacts, EntryKind, IdentityRefusal, ServerFacts};
+use crate::identity::{
+    self, DirectoryReason, EndpointFacts, EntryFacts, EntryKind, IdentityRefusal, ServerFacts,
+};
 use crate::transport::{Cancel, Conn};
 use orcel_platform::peer::PeerIdentity;
 use orcel_platform::PlatformError;
@@ -109,6 +115,34 @@ fn read_entry(path: &Path) -> Result<EntryFacts, ClientError> {
     }
 }
 
+/// XP-01's verdict on the socket's directory `dir` as a closed reason that
+/// names no path or account. A directory removed since it was read means
+/// orceld is not running.
+fn walk_outcome(
+    read: Result<(), PlatformError>,
+    dir: &Path,
+) -> Result<Result<(), DirectoryReason>, ClientError> {
+    let reason = match read {
+        Ok(()) => return Ok(Ok(())),
+        Err(PlatformError::Io {
+            kind: io::ErrorKind::NotFound,
+            ..
+        }) => return Err(ClientError::Unavailable(Unavailable::NotRunning)),
+        Err(PlatformError::Symlink(_) | PlatformError::NotDirectory(_)) => {
+            DirectoryReason::NotADirectory
+        }
+        Err(PlatformError::ForeignOwner { path, .. }) if path == dir => {
+            DirectoryReason::ForeignOwner
+        }
+        Err(PlatformError::ForeignOwner { .. }) => DirectoryReason::ForeignOwnedAncestor,
+        Err(PlatformError::InsecureMode { .. }) => DirectoryReason::OpenToOthers,
+        Err(PlatformError::WritableAncestor { .. }) => DirectoryReason::WritableAncestor,
+        Err(PlatformError::InsecureAcl { .. }) => DirectoryReason::AclGrant,
+        Err(_) => DirectoryReason::Unreadable,
+    };
+    Ok(Err(reason))
+}
+
 /// Step 1: the socket's directory, then the socket, decided before any
 /// connect. The directory is decided first, so a socket missing from a
 /// directory that is not private is refused, not reported as not running.
@@ -116,11 +150,20 @@ fn check_endpoint(path: &Path, ours: u32) -> Result<(), ClientError> {
     let dir_path = path
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
-        .ok_or(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate))?;
+        .ok_or(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate(
+            DirectoryReason::NotADirectory,
+        )))?;
     let dir = read_entry(dir_path)?;
-    // XP-01's rules, read-only: the ancestors and (macOS) extended ACLs.
-    let dir_rules = dir.kind == EntryKind::Directory
-        && orcel_platform::paths::check_existing_private_dir(dir_path).is_ok();
+    // XP-01's rules (the ancestors and, on macOS, extended ACLs), read with
+    // the strictly read-only verifier: the client never creates anything.
+    let dir_rules = if dir.kind == EntryKind::Directory {
+        walk_outcome(
+            orcel_platform::paths::verify_existing_private_dir(dir_path),
+            dir_path,
+        )?
+    } else {
+        Err(DirectoryReason::NotADirectory)
+    };
     identity::decide_directory(dir, dir_rules, ours).map_err(ClientError::NotYours)?;
     let socket = read_entry(path)?;
     identity::decide_endpoint(&EndpointFacts {
@@ -254,6 +297,14 @@ mod tests {
         );
     }
 
+    /// The client is accepted, and its connection is taken off the
+    /// listener so a later [`nobody_connected`] sees only what follows.
+    fn connects(path: &Path, listener: &UnixListener) {
+        let stream = connect_to(path).expect("accepted");
+        listener.accept().expect("the accepted client's connection");
+        drop(stream);
+    }
+
     #[test]
     fn a_socket_served_as_orceld_serves_it_is_accepted() {
         let dir = Dir::new();
@@ -284,22 +335,110 @@ mod tests {
     fn a_directory_open_to_other_accounts_is_refused_before_connecting() {
         let dir = Dir::new();
         let (path, listener) = dir.serve("s.sock", 0o600);
+        let open = ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate(
+            DirectoryReason::OpenToOthers,
+        ));
         for mode in [0o750, 0o705, 0o755] {
             chmod(&dir.orcel(), mode);
-            assert_eq!(
-                connect_to(&path).map(drop),
-                Err(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate)),
-                "{mode:o}"
-            );
+            assert_eq!(connect_to(&path).map(drop), Err(open.clone()), "{mode:o}");
             // A missing socket there is refused too, not "not running".
             assert_eq!(
                 connect_to(&dir.orcel().join("missing.sock")).map(drop),
-                Err(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate))
+                Err(open.clone())
             );
         }
         nobody_connected(&listener);
         chmod(&dir.orcel(), 0o700);
-        assert!(connect_to(&path).is_ok());
+        connects(&path, &listener);
+        // A folder above it that others can change keeps that reason.
+        chmod(&dir.0, 0o777);
+        assert_eq!(
+            connect_to(&path).map(drop),
+            Err(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate(
+                DirectoryReason::WritableAncestor
+            )))
+        );
+        nobody_connected(&listener);
+        chmod(&dir.0, 0o700);
+        connects(&path, &listener);
+    }
+
+    #[test]
+    fn xp01s_verdict_maps_to_a_reason_without_a_path() {
+        let dir = Path::new("/run/user/1000/orcel");
+        let above = Path::new("/run/user/1000");
+        let reason = |error| walk_outcome(Err(error), dir);
+        assert_eq!(walk_outcome(Ok(()), dir), Ok(Ok(())));
+        assert_eq!(
+            reason(PlatformError::Io {
+                path: dir.to_path_buf(),
+                kind: io::ErrorKind::NotFound,
+                message: String::new(),
+            }),
+            Err(ClientError::Unavailable(Unavailable::NotRunning))
+        );
+        let cases = [
+            (
+                PlatformError::Symlink(dir.to_path_buf()),
+                DirectoryReason::NotADirectory,
+            ),
+            (
+                PlatformError::NotDirectory(above.to_path_buf()),
+                DirectoryReason::NotADirectory,
+            ),
+            (
+                PlatformError::ForeignOwner {
+                    path: dir.to_path_buf(),
+                    owner: 0,
+                    expected: 1000,
+                },
+                DirectoryReason::ForeignOwner,
+            ),
+            (
+                PlatformError::ForeignOwner {
+                    path: above.to_path_buf(),
+                    owner: 7,
+                    expected: 1000,
+                },
+                DirectoryReason::ForeignOwnedAncestor,
+            ),
+            (
+                PlatformError::InsecureMode {
+                    path: dir.to_path_buf(),
+                    mode: 0o750,
+                },
+                DirectoryReason::OpenToOthers,
+            ),
+            (
+                PlatformError::WritableAncestor {
+                    path: above.to_path_buf(),
+                    mode: 0o777,
+                },
+                DirectoryReason::WritableAncestor,
+            ),
+            (
+                PlatformError::InsecureAcl {
+                    path: dir.to_path_buf(),
+                    reason: "group:staff allow write".into(),
+                },
+                DirectoryReason::AclGrant,
+            ),
+            (
+                PlatformError::Io {
+                    path: dir.to_path_buf(),
+                    kind: io::ErrorKind::PermissionDenied,
+                    message: String::new(),
+                },
+                DirectoryReason::Unreadable,
+            ),
+            (
+                PlatformError::NotAbsolute(PathBuf::from("orcel")),
+                DirectoryReason::Unreadable,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(reason(error), Ok(Err(expected)));
+        }
     }
 
     #[test]
@@ -325,7 +464,9 @@ mod tests {
         std::os::unix::fs::symlink(dir.orcel(), &linked_dir).expect("symlink");
         assert_eq!(
             connect_to(&linked_dir.join("real.sock")).map(drop),
-            Err(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate))
+            Err(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate(
+                DirectoryReason::NotADirectory
+            )))
         );
         nobody_connected(&listener);
     }
@@ -336,19 +477,34 @@ mod tests {
         for path in [
             dir.orcel().join("missing.sock"),
             dir.0.join("no-dir").join("missing.sock"),
+            dir.0.join("a").join("b").join("missing.sock"),
         ] {
             assert_eq!(
                 connect_to(&path).map(drop),
                 Err(ClientError::Unavailable(Unavailable::NotRunning))
             );
         }
-        // A stale socket nobody listens on is not running either.
+        // The client created nothing on the way.
+        for created in ["no-dir", "a"] {
+            assert!(std::fs::symlink_metadata(dir.0.join(created)).is_err());
+        }
+        // A stale socket nobody listens on is not running either. Another
+        // test spawning a process forks this one, and until that child
+        // execs it holds a copy of every descriptor, the listener included,
+        // so the socket can stay live for a moment after the drop.
         let (path, listener) = dir.serve("stale.sock", 0o600);
         drop(listener);
-        assert_eq!(
-            connect_to(&path).map(drop),
-            Err(ClientError::Unavailable(Unavailable::NotRunning))
-        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match connect_to(&path).map(drop) {
+                Err(ClientError::Unavailable(Unavailable::NotRunning)) => break,
+                other => assert!(
+                    Instant::now() < deadline,
+                    "a stale socket was read as {other:?}"
+                ),
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]

@@ -642,7 +642,9 @@ fn a_real_orcelds_socket_loosened_to_other_accounts_is_refused() {
             chmod(&dir, mode);
             assert_eq!(
                 client.status(),
-                Err(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate)),
+                Err(ClientError::NotYours(IdentityRefusal::DirectoryNotPrivate(
+                    crate::identity::DirectoryReason::OpenToOthers
+                ))),
                 "{mode:o}"
             );
         }
