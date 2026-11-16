@@ -1,0 +1,2803 @@
+{
+ "schema": "orcel.capability_inventory.v1",
+ "created_at": "2026-11-16",
+ "orcel_base": "origin/main 4dd5cfc93b524e3e99eed9097c3e81917676bee8",
+ "status": "planning_only",
+ "notes": [
+  "Inventory only. No donor code is imported, copied or sublicensed by this file.",
+  "Upstream SHAs are git ls-remote HEAD values read on 2026-11-16; licences read from LICENSE/NOTICE files and manifests at those SHAs via the GitHub API.",
+  "Founder attestations (docs/orcel/grants/) are recorded separately from upstream licence terms; neither is decided here.",
+  "Per-OS and surface fields: tested | implemented_untested | inert_stub | not_started | not_applicable; exposed:<tools> | not_exposed | not_started.",
+  "method for NOT STARTED or BLOCKED rows is the planned method; integrated is true only for code in Orcel main."
+ ],
+ "status_vocabulary": [
+  "NOT STARTED",
+  "IMPORTED",
+  "INTEGRATED",
+  "TESTED",
+  "RELEASED",
+  "BLOCKED"
+ ],
+ "classification_vocabulary": [
+  "directly_reusable",
+  "reusable_with_adaptation",
+  "best_via_adapter",
+  "already_in_orcel",
+  "needs_new_implementation",
+  "unavailable_or_outside_rights"
+ ],
+ "sources": {
+  "h4ckf0r0day/obscura": {
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)"
+  },
+  "browser-use/browser-use": {
+   "upstream_commit": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2024 Gregor Zunic)"
+  },
+  "vercel-labs/agent-browser": {
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)"
+  },
+  "vercel-labs/remote-agent-browser": {
+   "upstream_commit": "8770ea28f3ab0e8822e104e12e0efb65339d235b",
+   "upstream_license": "MIT declared in package.json only; no LICENSE file in the tree; GitHub reports no licence"
+  },
+  "apify/crawlee": {
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)"
+  },
+  "D4Vinci/Scrapling": {
+   "upstream_commit": "bb223f2f5fc8f743772751a5ce283ef7851ca6be",
+   "upstream_license": "BSD-3-Clause (root LICENSE, Copyright (c) 2024 Karim Shoair)"
+  },
+  "firecrawl/firecrawl": {
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)"
+  },
+  "wangzan101/Mika": {
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)"
+  },
+  "fleetdm/fleet": {
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT"
+  },
+  "phone-harness/phone-harness": {
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)"
+  },
+  "vercel-labs/agent-desktop": {
+   "upstream_commit": "8ffecc1d3d088727f8d84baf4dde0224aab2e8ad",
+   "upstream_license": "Apache-2.0 (root LICENSE)"
+  },
+  "netease-uuyc/uuremote-integration-guide": {
+   "upstream_commit": "181dee4540a8e4161a65e1053fbcf6ad223d24f8",
+   "upstream_license": "MIT (Copyright (c) 2026 netease-uuyc); org not GitHub-verified"
+  },
+  "UU Remote (NetEase)": {
+   "upstream_commit": null,
+   "upstream_license": "Proprietary product; no official source repository found"
+  },
+  "Vercel agent-use": {
+   "upstream_commit": null,
+   "upstream_license": "Unknown; repository not identified"
+  }
+ },
+ "records": [
+  {
+   "id": "obscura.engine",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-browser/src",
+    "crates/obscura-js",
+    "crates/obscura-dom/src",
+    "crates/obscura-net/src"
+   ],
+   "upstream_tests": [
+    "crates/obscura/tests/*.rs (12 files)",
+    "render-repros/representative-suite"
+   ],
+   "feature": "Rust headless browser engine (V8 + html5ever DOM + network stack) as an Orcel engine plugin",
+   "classification": "best_via_adapter",
+   "orcel_destination": "crates/orcel-browser-host (new engine contract, UP-002/UP-004); pinned release binary run as a contained sidecar",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Engine contract does not exist yet; Orcel drives an installed Chromium through playwright-core (crates/orcel-browser-host/src/discovery.rs)"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.cdp",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-cdp/src/domains"
+   ],
+   "upstream_tests": [
+    "crates/obscura-cdp (72 files incl. tests)"
+   ],
+   "feature": "CDP server subset (Target, Page, Runtime, DOM, DOMSnapshot, Network, Fetch, IO, Storage, Input, Emulation, LP)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "apps/orcel-browser-worker (playwright-core connectOverCDP to a loopback, token-bound Obscura endpoint)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Upstream README: Puppeteer and Playwright compatibility claimed; parity with Chromium unproven"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.screenshot",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-render/src",
+    "crates/obscura-cdp/src/domains/page.rs"
+   ],
+   "upstream_tests": [
+    "crates/obscura-render/tests"
+   ],
+   "feature": "Page screenshot (render build: taffy layout + cosmic-text + paint)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "crates/orcel-browser-host/src/capture.rs via engine adapter",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel has no page-screenshot browser tool today (only desktop_window_capture)"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.pdf",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-browser/src/pdf.rs",
+    "crates/obscura-cdp/src/domains/pdf.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Page.printToPDF",
+   "classification": "best_via_adapter",
+   "orcel_destination": "crates/orcel-browser-host (new browser_pdf capability)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel treats PDF navigations as inert downloads; no page-to-PDF tool"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.a11y_snapshot",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-browser/src/accessibility.rs",
+    "crates/obscura-cdp/src/domains/accessibility.rs",
+    "crates/obscura-cdp/src/domains/domsnapshot.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Accessibility tree and DOM snapshot",
+   "classification": "best_via_adapter",
+   "orcel_destination": "apps/orcel-browser-worker/src/snapshot.ts must produce identical refs on both engines",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel snapshot refs exist for Chromium only (apps/orcel-browser-worker/src/snapshot.ts)"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.markdown",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-cdp/src/domains/lp.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "DOM-to-Markdown (LP.getMarkdown)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "Comparison oracle for crates/orcel-browser-host/src/extraction.rs; not a second extractor",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel already has HTML-to-Markdown (browser-use port) in apps/orcel-browser-worker/src/extract"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.interception",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-net/src/interceptor.rs",
+    "crates/obscura-cdp/src/domains/fetch.rs",
+    "crates/obscura-cdp/src/domains/io.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Fetch-domain request interception and streamed response bodies",
+   "classification": "best_via_adapter",
+   "orcel_destination": "crates/orcel-browser-host/src/navigation.rs governed navigation (deny-by-default)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.robots",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-net/src/robots.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "robots.txt obedience (--obey-robots)",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-browser-host/src/robots.rs",
+   "method": "existing",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "not_exposed",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-browser-host/src/robots.rs::our_group_wins_over_star_and_the_longest_match_decides"
+   ],
+   "evidence": [
+    "Orcel-native RFC 9309 implementation; platform-independent Rust unit tests run in ci.yml on three OSes"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "obscura.ssrf",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-ssrf/src/lib.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "SSRF guard for engine networking",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-provider-network (web_fetch SSRF guard)",
+   "method": "existing",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "exposed: web_fetch (local-only)",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-provider-network/tests/sg000040_security.rs::public_only_catalog_denies_special_ipv4_ipv6_and_mapped_private"
+   ],
+   "evidence": [
+    "Obscura's own guard must still be enabled inside the sidecar; Orcel's guard does not cover engine-internal fetches"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "obscura.mcp",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-mcp/src/lib.rs",
+    "crates/obscura-mcp/src/http.rs"
+   ],
+   "upstream_tests": [
+    "crates/obscura-mcp/tests/cors_preflight.rs",
+    "crates/obscura-mcp/tests/sse_stream_does_not_wedge.rs"
+   ],
+   "feature": "Built-in MCP server (38 browser_* tools, stdio + HTTP with optional OBSCURA_MCP_TOKEN)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-mcp browser_structured profile (map tools onto the Orcel contract; never expose Obscura's MCP listener)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Blueprint: a donor MCP server or CDP port must not become a second authorization channel"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.worker_pool",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-cli/src/pool.rs",
+    "crates/obscura-cli/src/worker.rs",
+    "crates/obscura-cli/src/batch.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Multi-worker CDP serve and parallel scrape pool with worker recycling",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host/src/supervise.rs (one supervised engine process per job)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "obscura.stealth",
+   "source": "h4ckf0r0day/obscura",
+   "upstream_commit": "0d9a2f764ffdb097269da048002c593865e83a9e",
+   "upstream_license": "Apache-2.0 (root LICENSE; vendor/taffy MIT, vendor/cosmic-text MIT OR Apache-2.0, vendor/wreq-util Apache-2.0, Noto Color Emoji OFL-1.1)",
+   "upstream_paths": [
+    "crates/obscura-net/src/wreq_client.rs",
+    "crates/obscura-net/src/blocklist.rs",
+    "crates/obscura/tests/stealth_transport.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Stealth build: per-session fingerprint randomisation, BoringSSL TLS impersonation, tracker blocking",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None until a policy decision",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Policy decision required: anti-detection / fingerprint spoofing / TLS impersonation is a bot-detection bypass capability; Orcel has no adopted policy permitting it."
+  },
+  {
+   "id": "browser_use.extraction",
+   "source": "browser-use/browser-use",
+   "upstream_commit": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2024 Gregor Zunic)",
+   "upstream_paths": [
+    "browser_use (pre-4b5b1b0 layout; ported at c75e8476)"
+   ],
+   "upstream_tests": [],
+   "feature": "DOM extraction / HTML-to-Markdown pipeline",
+   "classification": "already_in_orcel",
+   "orcel_destination": "apps/orcel-browser-worker/src/extract/*",
+   "method": "adapted",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "implemented_untested",
+   "linux": "implemented_untested",
+   "mcp": "exposed: browser_observe (browser_structured profile, Windows dev builds)",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "apps/orcel-browser-worker/src/extract/extract.test.ts: 'headings, paragraphs, emphasis, lists, quotes, code and rules become Markdown'"
+   ],
+   "evidence": [
+    "docs/orcel/notices/browser-use-MIT.txt",
+    "DONOR_REGISTRY.md: PARTIALLY_IMPORTED (PR #312)",
+    "Live browser reaches a real host only in live-browser-dev builds on Windows (crates/orcel-browser-host/src/exposure.rs)"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "browser_use.action_semantics",
+   "source": "browser-use/browser-use",
+   "upstream_commit": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2024 Gregor Zunic)",
+   "upstream_paths": [
+    "browser_use/tools.py",
+    "browser_use/ax.py"
+   ],
+   "upstream_tests": [],
+   "feature": "Action semantics: clear-then-type, dropdown discovery, nearest file input, scroll container choice",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-browser-worker/src/actions*",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "At 4b5b1b0 the browser layer moved to the browser-harness dependency (MIT, separate repo); re-pin that repo before porting"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Re-pin browser-use/browser-harness (where the CDP action layer now lives) and diff against c75e8476 port base"
+  },
+  {
+   "id": "browser_use.agent_loop",
+   "source": "browser-use/browser-use",
+   "upstream_commit": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2024 Gregor Zunic)",
+   "upstream_paths": [
+    "browser_use/agent/loop.py",
+    "browser_use/agent/service.py",
+    "browser_use/agent/judge.py",
+    "browser_use/agent/prompt.py"
+   ],
+   "upstream_tests": [
+    "tests/ci (24 files)"
+   ],
+   "feature": "Agent loop, prompts and judge (output verification)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent (judge/verification ideas only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "DONOR_REGISTRY.md rejects the agent loop as code; apps/orcel-agent already has its own loop"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "browser_use.mcp",
+   "source": "browser-use/browser-use",
+   "upstream_commit": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2024 Gregor Zunic)",
+   "upstream_paths": [
+    "browser_use/mcp/cli_mcp.py"
+   ],
+   "upstream_tests": [],
+   "feature": "browser-use MCP server",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-mcp (Orcel tools only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Reference only; no second MCP authority"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "browser_use.cloud",
+   "source": "browser-use/browser-use",
+   "upstream_commit": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2024 Gregor Zunic)",
+   "upstream_paths": [
+    "browser_use/harness_cloud.py",
+    "skills/cloud",
+    "skills/x402",
+    "CLOUD.md"
+   ],
+   "upstream_tests": [],
+   "feature": "Browser Use Cloud: stealth browsers, hosted agent API, x402 skills",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "Optional BYOK provider at most",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Hosted proprietary service; not part of the zero-cost local baseline"
+  },
+  {
+   "id": "browser_use.telemetry",
+   "source": "browser-use/browser-use",
+   "upstream_commit": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2024 Gregor Zunic)",
+   "upstream_paths": [
+    "browser_use/telemetry"
+   ],
+   "upstream_tests": [],
+   "feature": "Product telemetry",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None (must not be imported)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Orcel imports no donor telemetry"
+  },
+  {
+   "id": "agent_browser.snapshot_refs",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/snapshot.rs",
+    "cli/src/native/element.rs"
+   ],
+   "upstream_tests": [
+    "cli/src/native/parity_tests.rs",
+    "cli/src/native/e2e_tests.rs",
+    "cli/tests (23 files)"
+   ],
+   "feature": "Accessibility snapshot with stable element refs (@eN)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host/src/observation.rs + apps/orcel-browser-worker/src/snapshot.ts (engine-neutral refs)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel already has e-refs for Chromium; agent-browser is Rust and Apache-2.0, so engine-neutral logic can be adapted"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.actions",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/actions.rs",
+    "cli/src/native/interaction.rs",
+    "cli/src/native/pointer.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Interaction commands: click, dblclick, fill, type, press, hover, drag, scroll, select, check, upload, mouse",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-browser-worker/src/actions*",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel exposes click/fill/select/check/enter/wait; hover, drag, scroll, dblclick and upload exposure are missing"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.capture",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/screenshot.rs",
+    "cli/src/native/recording.rs",
+    "cli/src/native/diff.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Screenshot, PDF, recording, visual diff",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host/src/capture.rs",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.downloads",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/downloads.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Downloads and file uploads",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-browser-host/src/transfers.rs (approval-bound downloads)",
+   "method": "existing",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "inert_stub",
+   "linux": "inert_stub",
+   "mcp": "exposed: browser_download_preview, browser_download (Windows dev builds)",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-browser-host/tests/sg000108_worker_host.rs::the_journey_downloads_the_latest_report_through_bound_approvals_and_verifies_it"
+   ],
+   "evidence": [
+    "Uploads are implemented model-only and not exposed"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "agent_browser.sessions_state",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/state.rs",
+    "cli/src/native/storage.rs",
+    "cli/src/native/cookies.rs",
+    "cli/src/native/auth.rs",
+    "cli/src/session_files.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Sessions, persistent state, cookies, storage, auth vault",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host/src/profile.rs (opt-in persistent profile under Full Control) + Orcel secret store",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel profiles are ephemeral by design today (profile.rs); persistence needs a policy change"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Policy: persistent browser profiles and credential vault are outside current Orcel limits; Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.tabs_frames",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/tab_binding.rs",
+    "cli/src/native/browser.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Tabs, frames, dialogs",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host (multi-tab contract)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel has no multi-tab management; dialogs are handled in apps/orcel-browser-worker"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.network",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/network.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Network inspection, HAR, request routing",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host/src/navigation.rs",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.engine_select",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/browser.rs",
+    "cli/src/connection.rs",
+    "docs/content"
+   ],
+   "upstream_tests": [],
+   "feature": "Engine selection (Chrome for Testing, Lightpanda, Obscura) and CDP attach",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "UP-002 engine selection in crates/orcel-browser-host",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Upstream README lists Obscura as a selectable engine; the blueprint notes it is experimental upstream"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.providers",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/providers.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Cloud browser providers (Browserbase, Browserless, Browser Use, Kernel, AgentCore)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Optional BYOK provider adapters (never default)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Hosted services; optional only. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.policy",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/policy.rs",
+    "cli/src/browser_security.rs",
+    "cli/src/validation.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Domain allowlists, action policies, confirm/deny, content boundaries",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-policy + crates/orcel-browser-host/src/navigation.rs",
+   "method": "existing",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "implemented_untested",
+   "linux": "implemented_untested",
+   "mcp": "exposed (policy applies to all browser_* tools)",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-policy/tests/sg000096_shell_intent.rs"
+   ],
+   "evidence": [
+    "Reference only for gap analysis"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "agent_browser.mcp",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/mcp.rs",
+    "cli/src/native/webmcp.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "MCP stdio server and WebMCP",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-mcp; crates/orcel-browser-host/src/webmcp.rs already exists",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "No second MCP authority"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "agent_browser.a11y_audit",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/a11y/axe.min.js",
+    "cli/src/native/a11y/LICENSE-axe-core.txt"
+   ],
+   "upstream_tests": [],
+   "feature": "axe-core accessibility audit",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-browser-worker (optional audit tool)",
+   "method": "copied",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "axe-core is MPL-2.0 (file-level copyleft): keep the file unmodified or publish modifications; record the notice. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.ios_sim",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/webdriver"
+   ],
+   "upstream_tests": [],
+   "feature": "Mobile Safari in the iOS Simulator",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Mobile API (macOS-only)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_applicable",
+   "macos": "not_started",
+   "linux": "not_applicable",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "agent_browser.test_corpus",
+   "source": "vercel-labs/agent-browser",
+   "upstream_commit": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+   "upstream_license": "Apache-2.0 (root LICENSE); cli/src/native/a11y/axe.min.js is MPL-2.0 (axe-core)",
+   "upstream_paths": [
+    "cli/src/native/parity_tests.rs",
+    "cli/src/native/e2e_tests.rs",
+    "evals/cases",
+    "benchmarks"
+   ],
+   "upstream_tests": [],
+   "feature": "Parity, E2E and eval corpus",
+   "classification": "directly_reusable",
+   "orcel_destination": "tests/browser-corpus (UP-004 dual-engine qualification)",
+   "method": "copied",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "remote_agent_browser.client_contract",
+   "source": "vercel-labs/remote-agent-browser",
+   "upstream_commit": "8770ea28f3ab0e8822e104e12e0efb65339d235b",
+   "upstream_license": "MIT declared in package.json only; no LICENSE file in the tree; GitHub reports no licence",
+   "upstream_paths": [
+    "src/browser.ts",
+    "src/create.ts",
+    "src/types.ts",
+    "docs.md"
+   ],
+   "upstream_tests": [
+    "tests/unit.test.mjs",
+    "tests/session.integration.ts"
+   ],
+   "feature": "Remote browser session client contract (create, command, close, named resumable runtime, heartbeat)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "Reference for a remote engine provider contract in crates/orcel-browser-host",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "No LICENSE file: package.json declares MIT but the repository carries no licence text or copyright notice; confirm with Vercel or rely on the founder grant"
+  },
+  {
+   "id": "remote_agent_browser.sandbox",
+   "source": "vercel-labs/remote-agent-browser",
+   "upstream_commit": "8770ea28f3ab0e8822e104e12e0efb65339d235b",
+   "upstream_license": "MIT declared in package.json only; no LICENSE file in the tree; GitHub reports no licence",
+   "upstream_paths": [
+    "src/vercel.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "Vercel Sandbox provisioning (@vercel/sandbox, OIDC)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None (cloud infrastructure)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Requires Vercel cloud account; violates zero mandatory paid runtime. No LICENSE file: package.json declares MIT but the repository carries no licence text or copyright notice; confirm with Vercel or rely on the founder grant"
+  },
+  {
+   "id": "remote_agent_browser.transfers",
+   "source": "vercel-labs/remote-agent-browser",
+   "upstream_commit": "8770ea28f3ab0e8822e104e12e0efb65339d235b",
+   "upstream_license": "MIT declared in package.json only; no LICENSE file in the tree; GitHub reports no licence",
+   "upstream_paths": [
+    "src/browser.ts",
+    "examples/proxy"
+   ],
+   "upstream_tests": [],
+   "feature": "Upload/download without exposing the sandbox filesystem; proxy settings",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "crates/orcel-browser-host/src/transfers.rs (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "No LICENSE file: package.json declares MIT but the repository carries no licence text or copyright notice; confirm with Vercel or rely on the founder grant"
+  },
+  {
+   "id": "agent_use.unresolved",
+   "source": "Vercel agent-use",
+   "upstream_commit": null,
+   "upstream_license": "Unknown; repository not identified",
+   "upstream_paths": [],
+   "upstream_tests": [],
+   "feature": "Unidentified 'Vercel agent-use' source",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "gh search repos agent-use --owner vercel-labs: agent-desktop, ai-sdk-computer-use, design-systems-to-agent-skills, tau-agent (fuzzy matches)",
+    "gh search repos agent-use --owner vercel: no results; repos/vercel-labs/agent-use and repos/vercel/agent-use: 404"
+   ],
+   "status": "BLOCKED",
+   "blocking_issue": "Founder must name the exact repository; candidate vercel-labs/agent-desktop is NOT substituted"
+  },
+  {
+   "id": "agent_desktop.candidate",
+   "source": "vercel-labs/agent-desktop",
+   "upstream_commit": "8ffecc1d3d088727f8d84baf4dde0224aab2e8ad",
+   "upstream_license": "Apache-2.0 (root LICENSE)",
+   "upstream_paths": [
+    "crates/core",
+    "crates/windows",
+    "crates/macos",
+    "crates/linux",
+    "src/mcp"
+   ],
+   "upstream_tests": [
+    "tests/e2e-windows",
+    "tests/e2e-linux",
+    "tests/conformance"
+   ],
+   "feature": "Candidate only: cross-platform computer-use CLI (AX / UIA / AT-SPI) with MCP",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Would map to orcel-provider-uia / apps/orcel-native-host if confirmed",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Not confirmed as 'agent-use'; inventory pending founder identification"
+  },
+  {
+   "id": "crawlee.request_queue",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/core/src/storages/request-queue.ts",
+    "packages/core/src/storages/request-dedup-cache.ts",
+    "packages/core/src/storages/request-list.ts"
+   ],
+   "upstream_tests": [
+    "test/core/request-queue",
+    "test/core/storages"
+   ],
+   "feature": "Persistent request queue with dedup, locking and request lists",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "New crate orcel-jobs (durable queue) used by crates/orcel-browser-host/src/crawl.rs",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel crawl has a bounded in-memory queue only; no job queue or scheduler exists"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "TypeScript/Node library; Orcel crawl core is Rust, so port logic rather than embed. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "crawlee.autoscaling",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/basic-crawler/src/internals/autoscaling"
+   ],
+   "upstream_tests": [
+    "test/core/autoscaling (11 files)"
+   ],
+   "feature": "Autoscaled pool driven by CPU/memory/event-loop load signals",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "orcel-jobs concurrency controller",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "TypeScript/Node library; Orcel crawl core is Rust, so port logic rather than embed. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "crawlee.retry_session",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/basic-crawler/src/internals/basic-crawler.ts",
+    "packages/basic-crawler/src/internals/request-timeout.ts",
+    "packages/basic-crawler/src/internals/session-pool"
+   ],
+   "upstream_tests": [
+    "test/core/session-pool",
+    "test/core/crawlers"
+   ],
+   "feature": "Retries with backoff, request timeouts, session pool rotation",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "orcel-jobs retry policy",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "TypeScript/Node library; Orcel crawl core is Rust, so port logic rather than embed. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "crawlee.rate_limit",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/basic-crawler/src/internals/throttling-request-manager.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "Throttling request manager and maxRequestsPerMinute",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host/src/crawl.rs politeness throttle (missing today)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Orcel has page/depth/time budgets but no crawl-delay or rate limit"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "TypeScript/Node library; Orcel crawl core is Rust, so port logic rather than embed. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "crawlee.storage",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/core/src/storages/dataset.ts",
+    "packages/core/src/storages/key-value-store.ts",
+    "packages/fs-storage/src"
+   ],
+   "upstream_tests": [],
+   "feature": "Dataset and key-value store with file-system backend",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "orcel-jobs result store under the private state root",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "TypeScript/Node library; Orcel crawl core is Rust, so port logic rather than embed. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "crawlee.enqueue_links",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/basic-crawler/src/internals/enqueue-links"
+   ],
+   "upstream_tests": [],
+   "feature": "enqueueLinks with globs/regex/strategies (same-domain, same-hostname)",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-browser-host/src/crawl_scope.rs (Firecrawl-derived include/exclude)",
+   "method": "existing",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "not_exposed",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-browser-host/src/crawl.rs::wi01_regex_patterns_and_canonical_urls_through_a_crawl"
+   ],
+   "evidence": [
+    "Glob strategies are a gap"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "crawlee.robots_sitemap",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/utils/src/internals/robots.ts",
+    "packages/utils/src/internals/sitemap.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "robots.txt and sitemap parsing",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-browser-host/src/robots.rs",
+   "method": "existing",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "not_exposed",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-browser-host/src/robots.rs::our_group_wins_over_star_and_the_longest_match_decides"
+   ],
+   "evidence": [],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "crawlee.adaptive",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/playwright-crawler/src",
+    "docs/guides/adaptive-crawling"
+   ],
+   "upstream_tests": [],
+   "feature": "Adaptive HTTP-vs-browser crawling",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "UP-002 engine selection (fetch, Obscura, Chromium)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "TypeScript/Node library; Orcel crawl core is Rust, so port logic rather than embed. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "crawlee.extractors",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/utils/src/internals/extract-microdata.ts",
+    "packages/utils/src/internals/open-graph-parser.ts",
+    "packages/utils/src/internals/social.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "Microdata, OpenGraph, social handle and URL extractors",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host/src/extraction.rs",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "TypeScript/Node library; Orcel crawl core is Rust, so port logic rather than embed. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "crawlee.browser_pool",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/browser-pool/src"
+   ],
+   "upstream_tests": [],
+   "feature": "Browser pool (Playwright/Puppeteer lifecycle)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "Orcel keeps its own supervised engine lifecycle (supervise.rs)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Reference only"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "crawlee.fingerprints",
+   "source": "apify/crawlee",
+   "upstream_commit": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+   "upstream_license": "Apache-2.0 (LICENSE.md)",
+   "upstream_paths": [
+    "packages/basic-crawler/src/internals/session-pool/fingerprint.ts",
+    "packages/impit-client",
+    "packages/got-scraping-client"
+   ],
+   "upstream_tests": [],
+   "feature": "Fingerprint generation and impersonating HTTP clients (impit, got-scraping)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None until a policy decision",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Policy decision required: anti-detection / fingerprint spoofing / TLS impersonation is a bot-detection bypass capability; Orcel has no adopted policy permitting it."
+  },
+  {
+   "id": "scrapling.adaptive_selectors",
+   "source": "D4Vinci/Scrapling",
+   "upstream_commit": "bb223f2f5fc8f743772751a5ce283ef7851ca6be",
+   "upstream_license": "BSD-3-Clause (root LICENSE, Copyright (c) 2024 Karim Shoair)",
+   "upstream_paths": [
+    "scrapling/parser.py",
+    "scrapling/core/storage.py",
+    "scrapling/core/translator.py"
+   ],
+   "upstream_tests": [
+    "tests/parser (9 files)"
+   ],
+   "feature": "Parser with adaptive element relocation (similarity-based auto-match after page changes)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Extractor adapter behind crates/orcel-browser-host/src/extraction.rs (orcel-contain sidecar), or Rust port",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Python; Orcel has no Python runtime in the release path, so run as a contained sidecar or port. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "scrapling.spiders",
+   "source": "D4Vinci/Scrapling",
+   "upstream_commit": "bb223f2f5fc8f743772751a5ce283ef7851ca6be",
+   "upstream_license": "BSD-3-Clause (root LICENSE, Copyright (c) 2024 Karim Shoair)",
+   "upstream_paths": [
+    "scrapling/spiders/scheduler.py",
+    "scrapling/spiders/checkpoint.py",
+    "scrapling/spiders/throttle.py",
+    "scrapling/spiders/robotstxt.py",
+    "scrapling/spiders/cache.py"
+   ],
+   "upstream_tests": [
+    "tests/spiders (21 files)"
+   ],
+   "feature": "Spider engine: scheduler, checkpoint/resume, throttle, robots, cache, sessions",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "orcel-jobs (checkpoint/resume ideas)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Python; Orcel has no Python runtime in the release path, so run as a contained sidecar or port. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "scrapling.static_fetcher",
+   "source": "D4Vinci/Scrapling",
+   "upstream_commit": "bb223f2f5fc8f743772751a5ce283ef7851ca6be",
+   "upstream_license": "BSD-3-Clause (root LICENSE, Copyright (c) 2024 Karim Shoair)",
+   "upstream_paths": [
+    "scrapling/engines/static.py",
+    "scrapling/fetchers/requests.py"
+   ],
+   "upstream_tests": [],
+   "feature": "HTTP fetcher with browser TLS impersonation (curl_cffi)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None until a policy decision (plain fetch already exists: web_fetch)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Policy decision required: anti-detection / fingerprint spoofing / TLS impersonation is a bot-detection bypass capability; Orcel has no adopted policy permitting it."
+  },
+  {
+   "id": "scrapling.stealth_browser",
+   "source": "D4Vinci/Scrapling",
+   "upstream_commit": "bb223f2f5fc8f743772751a5ce283ef7851ca6be",
+   "upstream_license": "BSD-3-Clause (root LICENSE, Copyright (c) 2024 Karim Shoair)",
+   "upstream_paths": [
+    "scrapling/fetchers/stealth_chrome.py",
+    "scrapling/engines/_browsers/_stealth.py",
+    "scrapling/engines/toolbelt/fingerprints.py"
+   ],
+   "upstream_tests": [],
+   "feature": "Stealth Chrome fetcher (patchright, browserforge fingerprints)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None until a policy decision",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Policy decision required: anti-detection / fingerprint spoofing / TLS impersonation is a bot-detection bypass capability; Orcel has no adopted policy permitting it."
+  },
+  {
+   "id": "scrapling.ad_block",
+   "source": "D4Vinci/Scrapling",
+   "upstream_commit": "bb223f2f5fc8f743772751a5ce283ef7851ca6be",
+   "upstream_license": "BSD-3-Clause (root LICENSE, Copyright (c) 2024 Karim Shoair)",
+   "upstream_paths": [
+    "scrapling/engines/toolbelt/ad_domains.py"
+   ],
+   "upstream_tests": [],
+   "feature": "Ad-domain list for request blocking",
+   "classification": "directly_reusable",
+   "orcel_destination": "crates/orcel-browser-host/src/navigation.rs blocklist data",
+   "method": "copied",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "scrapling.mcp",
+   "source": "D4Vinci/Scrapling",
+   "upstream_commit": "bb223f2f5fc8f743772751a5ce283ef7851ca6be",
+   "upstream_license": "BSD-3-Clause (root LICENSE, Copyright (c) 2024 Karim Shoair)",
+   "upstream_paths": [
+    "scrapling/cli.py (mcp command)",
+    "docs/ai/mcp-server.md",
+    "server.json"
+   ],
+   "upstream_tests": [
+    "tests/ai/test_ai_mcp.py"
+   ],
+   "feature": "Scrapling MCP server",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "No second MCP authority"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "firecrawl.scrape",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/src/controllers/v2/scrape.ts",
+    "apps/api/src/scraper/scrapeURL"
+   ],
+   "upstream_tests": [
+    "apps/api/src/__tests__",
+    "apps/api/src/scraper/scrapeURL/__tests__"
+   ],
+   "feature": "/v2/scrape (markdown, html, rawHtml, links, screenshot, json formats)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "Orcel API web.scrape + MCP tool (UP-005); today: apps/orcel-browser-worker extract + web_fetch",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_exposed (web_fetch returns raw content only)",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Building blocks exist (extraction.rs, web_fetch) but no Firecrawl-compatible scrape endpoint"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "AGPL-3.0 upstream. Founder attestation (docs/orcel/grants/2026-10-18-founder-attestation.md, FD-06) states redistribution inside Apache-2.0 Orcel is covered for grantor-owned code; no copyright-holder-signed grant is in the repository. Third-party files keep their licences."
+  },
+  {
+   "id": "firecrawl.crawl",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/src/controllers/v2/crawl.ts",
+    "apps/api/src/controllers/v2/crawl-status.ts",
+    "apps/api/native/src/crawler.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "/v2/crawl with status, cancel, errors, WebSocket status",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-browser-host/src/crawl.rs + crawl_scope.rs (worker_launch.rs::crawl_site)",
+   "method": "adapted",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "not_exposed",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-browser-host/src/crawl.rs::a_crawl_stays_on_its_origin_and_directory_and_reads_each_page_once",
+    "crates/orcel-browser-host/src/crawl.rs::wi01_regex_patterns_and_canonical_urls_through_a_crawl"
+   ],
+   "evidence": [
+    "Library-level only, one origin, bounded; no async job API, no status/cancel endpoint; docs/orcel/notices/firecrawl-AGPL-3.0.txt"
+   ],
+   "status": "TESTED",
+   "blocking_issue": "Not exposed through MCP/API; needs job queue (orcel-jobs)"
+  },
+  {
+   "id": "firecrawl.map",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/src/controllers/v2/map.ts",
+    "apps/api/src/lib/map-cosine.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "/v2/map with relevance ranking",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-browser-host/src/map_rank.rs",
+   "method": "adapted",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "not_exposed",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-browser-host/src/map_rank.rs::wi02_the_most_relevant_urls_come_first"
+   ],
+   "evidence": [
+    "Upstream hosted map index is a cloud service and is not reproduced"
+   ],
+   "status": "TESTED",
+   "blocking_issue": "Not exposed through MCP/API"
+  },
+  {
+   "id": "firecrawl.change_tracking",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/src/lib/change-tracking-diff.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "Change tracking diff",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-browser-host/src/change_tracking.rs",
+   "method": "adapted",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "not_exposed",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-browser-host/src/change_tracking.rs::wi04_a_changed_page_returns_its_diff"
+   ],
+   "evidence": [],
+   "status": "TESTED",
+   "blocking_issue": "Not exposed; no persisted snapshot store or scheduler"
+  },
+  {
+   "id": "firecrawl.documents",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/native/src/pdf.rs",
+    "apps/api/native/src/document.rs",
+    "apps/api/src/scraper/scrapeURL/engines/pdf",
+    "apps/api/src/scraper/scrapeURL/engines/document"
+   ],
+   "upstream_tests": [],
+   "feature": "Document parsing: PDF and Office to Markdown (pdf-inspector, anydoc; native/pdf.rs, native/document.rs)",
+   "classification": "already_in_orcel",
+   "orcel_destination": "apps/orcel-doc-parser (run in orcel-contain via crates/orceld/src/document_parse.rs)",
+   "method": "adapted",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "not_exposed (runs on approved downloads)",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "apps/orcel-doc-parser/src/pdf_tests.rs::nesting_is_bounded",
+    "crates/orceld/src/document_parse_tests.rs::wi05_a_changed_or_moved_download_is_refused_before_any_approval"
+   ],
+   "evidence": [
+    "FD-06; CI runs the parser on three OSes plus a fuzz job"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "firecrawl.search",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/src/controllers/v2/search.ts",
+    "apps/api/src/search"
+   ],
+   "upstream_tests": [],
+   "feature": "/v2/search",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orceld/src/search.rs (web_search; SearXNG, Brave, Tavily, Exa via user keys; off by default)",
+   "method": "existing",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "exposed: web_search (local-only)",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orceld/tests/wi06_search.rs::wi06_real_orceld_search_is_off_and_never_leaks_a_key"
+   ],
+   "evidence": [
+    "Firecrawl Local forwards search to Firecrawl cloud (apps/local/README.md); Orcel uses BYOK providers instead"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "firecrawl.batch_scrape",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/src/controllers/v2/batch-scrape.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "/v2/batch-scrape jobs",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "orcel-jobs + Orcel API",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Needs job queue; AGPL-3.0 upstream. Founder attestation (docs/orcel/grants/2026-10-18-founder-attestation.md, FD-06) states redistribution inside Apache-2.0 Orcel is covered for grantor-owned code; no copyright-holder-signed grant is in the repository. Third-party files keep their licences."
+  },
+  {
+   "id": "firecrawl.extract",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/src/controllers/v2/extract.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "/v2/extract structured JSON via LLM",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "Orcel agent/model provider (BYOK or local model)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Needs a model provider; DONOR_REGISTRY rejects upstream LLM extract code; AGPL-3.0 upstream. Founder attestation (docs/orcel/grants/2026-10-18-founder-attestation.md, FD-06) states redistribution inside Apache-2.0 Orcel is covered for grantor-owned code; no copyright-holder-signed grant is in the repository. Third-party files keep their licences."
+  },
+  {
+   "id": "firecrawl.html_clean",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/native/src/html.rs",
+    "apps/go-html-to-md-service"
+   ],
+   "upstream_tests": [],
+   "feature": "Native HTML cleaning and HTML-to-Markdown service",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-browser-host/src/extraction.rs (oracle tests)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "AGPL-3.0 upstream. Founder attestation (docs/orcel/grants/2026-10-18-founder-attestation.md, FD-06) states redistribution inside Apache-2.0 Orcel is covered for grantor-owned code; no copyright-holder-signed grant is in the repository. Third-party files keep their licences."
+  },
+  {
+   "id": "firecrawl.queues",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/nuq-postgres",
+    "apps/redis",
+    "docker-compose.yaml"
+   ],
+   "upstream_tests": [],
+   "feature": "NuQ PostgreSQL / Redis / RabbitMQ job infrastructure",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "orcel-jobs (embedded, no server database)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Zero-cost local baseline forbids mandatory server databases"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "firecrawl.cloud_only",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/api/src/scraper/scrapeURL/engines/fire-engine",
+    "apps/api/src/controllers/v2/agent.ts",
+    "apps/api/src/controllers/v2/monitor.ts",
+    "apps/api/src/controllers/v2/browser.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "fire-engine, Alexandria data providers, agent, monitor, hosted browser sessions, hosted map index",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Cloud-only: self-hosted routes answer CLOUD_ONLY or forward to Firecrawl cloud (apps/local/README.md); proprietary service code is not in the repository"
+  },
+  {
+   "id": "firecrawl.sdks",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/js-sdk",
+    "apps/python-sdk",
+    "apps/rust-sdk",
+    "apps/go-sdk",
+    "apps/java-sdk",
+    "apps/php-sdk",
+    "apps/ruby-sdk",
+    "apps/elixir-sdk",
+    "apps/dot-net-sdk"
+   ],
+   "upstream_tests": [
+    "apps/python-sdk/tests",
+    "apps/go-sdk/*_test.go",
+    "apps/dot-net-sdk/Firecrawl.Tests"
+   ],
+   "feature": "Official SDKs (JS, Python, Rust, Go, Java, PHP, Ruby, Elixir, .NET)",
+   "classification": "directly_reusable",
+   "orcel_destination": "tests/firecrawl-compat (use the MIT JS/Python SDKs as API-contract clients against the Orcel endpoint)",
+   "method": "copied",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "MIT confirmed by LICENSE file for js/python/elixir/ruby and by manifest for rust/java/php; go-sdk and dot-net-sdk carry no LICENSE file or licence field, so they default to the root AGPL-3.0 until clarified"
+  },
+  {
+   "id": "firecrawl.test_corpus",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/test-site",
+    "apps/test-suite"
+   ],
+   "upstream_tests": [],
+   "feature": "Test site and load/benchmark suites",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/firecrawl-compat golden corpus",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "AGPL-3.0 upstream. Founder attestation (docs/orcel/grants/2026-10-18-founder-attestation.md, FD-06) states redistribution inside Apache-2.0 Orcel is covered for grantor-owned code; no copyright-holder-signed grant is in the repository. Third-party files keep their licences."
+  },
+  {
+   "id": "firecrawl.local_netguard",
+   "source": "firecrawl/firecrawl",
+   "upstream_commit": "42f4d669954649ce33466a2a50e8215c7f1f4d1c",
+   "upstream_license": "AGPL-3.0 (root LICENSE: apps/api, apps/local, apps/playwright-service-ts, apps/test-site, apps/test-suite, apps/go-html-to-md-service); MIT (apps/js-sdk, apps/python-sdk, apps/elixir-sdk, apps/ruby-sdk LICENSE files; rust/java/php SDK manifests declare MIT)",
+   "upstream_paths": [
+    "apps/local/src/netguard.rs",
+    "apps/local/src/guard.rs"
+   ],
+   "upstream_tests": [],
+   "feature": "Firecrawl Local loopback proxy network guard for the browser",
+   "classification": "already_in_orcel",
+   "orcel_destination": "crates/orcel-provider-network + crates/orcel-browser-host/src/navigation.rs",
+   "method": "existing",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "implemented_untested",
+   "linux": "implemented_untested",
+   "mcp": "exposed: web_fetch",
+   "api": "not_exposed",
+   "app": "not_exposed",
+   "tests": [
+    "crates/orcel-provider-network/tests/sg000040_security.rs::public_only_catalog_denies_special_ipv4_ipv6_and_mapped_private"
+   ],
+   "evidence": [
+    "Reference for gap analysis only"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "mika.android_agent",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "core/src/main/kotlin/com/wangzan101/mika/core/agent",
+    "core/src/main/kotlin/com/wangzan101/mika/core/run",
+    "core/src/main/kotlin/com/wangzan101/mika/core/verify"
+   ],
+   "upstream_tests": [
+    "core/src/test (JVM unit tests)",
+    "app/src/test",
+    "eval/tasks (128 tasks)"
+   ],
+   "feature": "On-device Android agent runtime (plan, act, verify)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Android companion paired to Orcel (UP-007), not a desktop kernel",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_applicable",
+   "macos": "not_applicable",
+   "linux": "not_applicable",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Android-only Kotlin app. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "mika.ui_control",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "app/src/main/java/com/wangzan101/mika/a11y",
+    "core/src/main/kotlin/com/wangzan101/mika/core/uistate",
+    "core/src/main/kotlin/com/wangzan101/mika/core/action"
+   ],
+   "upstream_tests": [],
+   "feature": "Accessibility-service UI observation and actions",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Orcel Mobile API (companion transport)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_applicable",
+   "macos": "not_applicable",
+   "linux": "not_applicable",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Android-only Kotlin app. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "mika.adb_shell",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "core/src/main/kotlin/com/wangzan101/mika/core/adb",
+    "app/src/main/java/com/wangzan101/mika/shell"
+   ],
+   "upstream_tests": [],
+   "feature": "ADB and shell-privileged control (scrcpy-style ShellContext)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "Orcel Mobile API Android backend (compare with phone-harness android.py)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "ShellContext follows scrcpy (Apache-2.0) per THIRD_PARTY_NOTICES.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Android-only Kotlin app. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "mika.phone_mcp",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "core/src/main/kotlin/com/wangzan101/mika/core/mcp/McpServer.kt",
+    "core/src/main/kotlin/com/wangzan101/mika/core/mcp/McpDeviceTools.kt",
+    "core/src/main/kotlin/com/wangzan101/mika/core/mcp/McpTaskTools.kt"
+   ],
+   "upstream_tests": [],
+   "feature": "Phone MCP server (device, task, call, USB tools)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "apps/orcel-mcp mobile_* tools proxied through Orcel authority",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Must not become a second authority channel"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Android-only Kotlin app. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "mika.schedules",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "core/src/main/kotlin/com/wangzan101/mika/core/trigger",
+    "core/src/main/kotlin/com/wangzan101/mika/core/proactive"
+   ],
+   "upstream_tests": [],
+   "feature": "Triggers, schedules and proactive notices",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "orcel-jobs scheduler (does not exist yet)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Android-only Kotlin app. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "mika.sandbox",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "tools/sandbox",
+    "core/src/main/kotlin/com/wangzan101/mika/core/cap/sandbox"
+   ],
+   "upstream_tests": [],
+   "feature": "Local Linux sandbox (PRoot + Alpine rootfs, Python/Node)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None for desktop (apps/orcel-contain already sandboxes on three OSes)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Bundles GPL-2.0-or-later PRoot (patched) and LGPL-3.0 talloc plus GPL/LGPL Alpine packages; redistribution needs corresponding-source offers; desktop need already covered by orcel-contain"
+  },
+  {
+   "id": "mika.relay",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "tools/relay"
+   ],
+   "upstream_tests": [],
+   "feature": "Owner-hosted relay and console (Go)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-relay (reference for phone pairing)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "tools/relay carries Apache-2.0 LICENSE + NOTICE and a coder/websocket licence file"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Android-only Kotlin app. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "mika.calls_wechat",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "app/src/main/java/com/wangzan101/mika/calls",
+    "core/src/main/kotlin/com/wangzan101/mika/core/wechat"
+   ],
+   "upstream_tests": [],
+   "feature": "Phone calls (FlashPhone fork, Volcengine realtime voice) and WeChat binding",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Depends on third-party cloud services (Volcengine, WeChat); outside zero-cost baseline"
+  },
+  {
+   "id": "mika.eval",
+   "source": "wangzan101/Mika",
+   "upstream_commit": "e956f5529ad4cfd7881aafaa630318097949f56a",
+   "upstream_license": "Apache-2.0 (root LICENSE + NOTICE); bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed (licenses/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "eval/tasks"
+   ],
+   "upstream_tests": [],
+   "feature": "Mobile task eval corpus",
+   "classification": "directly_reusable",
+   "orcel_destination": "tests/mobile-corpus",
+   "method": "copied",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Android-only Kotlin app. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "fleet.inventory",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "server/service/hosts.go",
+    "orbit/pkg/osquery",
+    "schema/tables",
+    "server/datastore"
+   ],
+   "upstream_tests": [
+    "server/service/hosts_test.go",
+    "server/datastore (tests)"
+   ],
+   "feature": "Host inventory via osquery (hardware, OS, software) and host details",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Optional orcel-fleet service (UP later); app-api devices.list is reserved (METHOD_UNAVAILABLE)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "MIT outside ee/; osquery itself is Apache-2.0 OR GPL-2.0 and is downloaded by orbit"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "fleet.policies_queries",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "server/service/global_policies.go",
+    "server/service/team_policies.go",
+    "server/service/live_queries.go",
+    "server/live_query"
+   ],
+   "upstream_tests": [],
+   "feature": "Policies (yes/no osquery checks) and live queries",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Optional orcel-fleet service",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner. Teams-scoped features may check license.IsPremium; verify per call site."
+  },
+  {
+   "id": "fleet.scripts",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "server/service/scripts.go",
+    "orbit/pkg/scripts"
+   ],
+   "upstream_tests": [],
+   "feature": "Script execution on hosts",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Optional orcel-fleet service via Orcel process policy",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner. Verify premium gating in scripts.go."
+  },
+  {
+   "id": "fleet.software_install",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "ee/server/service/software_installers.go",
+    "ee/server/service/maintained_apps.go",
+    "ee/maintained-apps",
+    "ee/server/service/vpp.go"
+   ],
+   "upstream_tests": [],
+   "feature": "Software installers, Fleet-maintained apps, auto-update, VPP, patch deadlines",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None (reimplement independently if needed)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Lives under ee/ (Fleet EE licence): production use requires a paid Fleet subscription; copying/distribution forbidden. Founder attestation does not cover Fleet-owned EE code unless a signed grant says so."
+  },
+  {
+   "id": "fleet.mdm",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "ee/server/service/mdm.go",
+    "ee/server/service/mdm_profiles.go",
+    "ee/server/service/setup_experience.go",
+    "server/mdm/nanomdm",
+    "server/mdm/nanodep",
+    "server/mdm/scep"
+   ],
+   "upstream_tests": [],
+   "feature": "Apple/Windows MDM, profiles, setup experience, SCEP/certificates",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Lives under ee/ (Fleet EE licence): production use requires a paid Fleet subscription; copying/distribution forbidden. Founder attestation does not cover Fleet-owned EE code unless a signed grant says so. server/mdm/nanomdm, nanodep (MIT, Jesse Peterson) and scep (MIT, Victor Vrantchan) are separately reusable third-party code."
+  },
+  {
+   "id": "fleet.orbit_agent",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "orbit/cmd",
+    "orbit/pkg/update",
+    "orbit/pkg/osservice",
+    "orbit/pkg/platform"
+   ],
+   "upstream_tests": [
+    "orbit/pkg/** _test.go"
+   ],
+   "feature": "Orbit agent (osquery launcher, TUF auto-update, desktop notifications, Windows/macOS/Linux)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Reference for orcel-fleet agent rollout; never stealth enrollment",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "fleet.mcp",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "server/fleetmcp",
+    "cmd/fleet-mcp"
+   ],
+   "upstream_tests": [
+    "server/fleetmcp/routes_test.go",
+    "server/fleetmcp/fleet_integration_test.go"
+   ],
+   "feature": "Fleet MCP server (hosts, inventory, policies, vetted queries)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "apps/orcel-mcp fleet_* tools proxied through Orcel authority",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "fleet.vulns",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "server/vulnerabilities",
+    "third_party/goval-dictionary"
+   ],
+   "upstream_tests": [],
+   "feature": "Vulnerability detection (NVD, OVAL, MSRC, goval-dictionary)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "Optional orcel-fleet service",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "third_party/goval-dictionary is Apache-2.0; ee/vulnerability-dashboard is EE"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "fleet.ee_security",
+   "source": "fleetdm/fleet",
+   "upstream_commit": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+   "upstream_license": "MIT Expat outside ee/; ee/ = Fleet Enterprise Edition licence (production use requires paid subscription); docs/ = CC BY-SA 4.0; orbit/ MIT",
+   "upstream_paths": [
+    "ee/cis",
+    "ee/orbit/pkg/hostidentity",
+    "ee/orbit/pkg/securehw",
+    "ee/fleetd-chrome"
+   ],
+   "upstream_tests": [],
+   "feature": "CIS benchmarks, host identity/TPM, SCEP proxy, Chrome extension agent",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Lives under ee/ (Fleet EE licence): production use requires a paid Fleet subscription; copying/distribution forbidden. Founder attestation does not cover Fleet-owned EE code unless a signed grant says so."
+  },
+  {
+   "id": "phone_harness.android_adb",
+   "source": "phone-harness/phone-harness",
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)",
+   "upstream_paths": [
+    "src/phone_harness/android.py",
+    "src/phone_harness/transport.py"
+   ],
+   "upstream_tests": [
+    "tests/test_android.py",
+    "tests/test_android_screen_bounds.py"
+   ],
+   "feature": "Android control over adb: screenshot, tap, swipe, type, key, app open, device selection",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "New crate orcel-provider-mobile (Android backend) behind the Orcel Mobile API (UP-007)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Python (>=3.10); port to Rust or run in a contained sidecar. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "phone_harness.iphone_mirroring",
+   "source": "phone-harness/phone-harness",
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)",
+   "upstream_paths": [
+    "src/phone_harness/mirror.py",
+    "src/phone_harness/ios.py"
+   ],
+   "upstream_tests": [
+    "tests/test_ios_session.py"
+   ],
+   "feature": "iPhone control through macOS iPhone Mirroring (Quartz, ApplicationServices)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "orcel-provider-mobile iOS backend via apps/orcel-native-host (macOS 15+, iOS 18+)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_applicable",
+   "macos": "not_started",
+   "linux": "not_applicable",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Python (>=3.10); port to Rust or run in a contained sidecar. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "phone_harness.ocr",
+   "source": "phone-harness/phone-harness",
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)",
+   "upstream_paths": [
+    "src/phone_harness/ocr.py"
+   ],
+   "upstream_tests": [
+    "tests/test_ocr.py"
+   ],
+   "feature": "Apple Vision OCR text discovery",
+   "classification": "best_via_adapter",
+   "orcel_destination": "orcel-provider-mobile observation (macOS); Windows/Linux need an alternative OCR",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Python (>=3.10); port to Rust or run in a contained sidecar. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "phone_harness.backend_contract",
+   "source": "phone-harness/phone-harness",
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)",
+   "upstream_paths": [
+    "src/phone_harness/helpers.py",
+    "src/phone_harness/run.py"
+   ],
+   "upstream_tests": [
+    "tests/test_backend_contract.py"
+   ],
+   "feature": "Device-independent helper API and backend contract",
+   "classification": "directly_reusable",
+   "orcel_destination": "Orcel Mobile API contract tests",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Python (>=3.10); port to Rust or run in a contained sidecar. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "phone_harness.transfer",
+   "source": "phone-harness/phone-harness",
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)",
+   "upstream_paths": [
+    "src/phone_harness/transfer.py"
+   ],
+   "upstream_tests": [
+    "tests/test_transfer.py"
+   ],
+   "feature": "File transfer to/from device",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "orcel-provider-mobile with approval-bound transfers",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "NOT STARTED",
+   "blocking_issue": "Python (>=3.10); port to Rust or run in a contained sidecar. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
+  },
+  {
+   "id": "phone_harness.cloud",
+   "source": "phone-harness/phone-harness",
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)",
+   "upstream_paths": [
+    "src/phone_harness/cloud.py",
+    "src/phone_harness/remote.py",
+    "setup/cloud.md"
+   ],
+   "upstream_tests": [],
+   "feature": "Phone Harness Cloud (rented Android / cloud iPhone over HTTPS)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "Optional BYOK adapter only",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Hosted paid service; must not become a mandatory dependency"
+  },
+  {
+   "id": "phone_harness.telemetry",
+   "source": "phone-harness/phone-harness",
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)",
+   "upstream_paths": [
+    "src/phone_harness/telemetry.py"
+   ],
+   "upstream_tests": [
+    "tests/test_telemetry_network.py"
+   ],
+   "feature": "Telemetry",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None (must not be imported)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [],
+   "status": "BLOCKED",
+   "blocking_issue": "Orcel imports no donor telemetry"
+  },
+  {
+   "id": "phone_harness.approval",
+   "source": "phone-harness/phone-harness",
+   "upstream_commit": "4bebff105af853215fb74c958c2c5e78bc275be2",
+   "upstream_license": "MIT (root LICENSE, Copyright (c) 2026 shawn pana)",
+   "upstream_paths": [
+    "integrations/openclaw/src/approval.ts"
+   ],
+   "upstream_tests": [],
+   "feature": "OpenClaw approval plugin",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "crates/orcel-approval (already the authority)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Reference only"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "uu_remote.transport",
+   "source": "UU Remote (NetEase)",
+   "upstream_commit": null,
+   "upstream_license": "Proprietary product; no official source repository found",
+   "upstream_paths": [],
+   "upstream_tests": [],
+   "feature": "Remote desktop transport: P2P/NAT traversal, video streaming, input injection, relay",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "Orcel remote screen/control (Track 4) must be independently implemented",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "No official source repository found; community projects (VallierDev/uu-remote-linux GPL-3.0, GaryOAO/UUWay AGPL-3.0, Alex-Yori/linux-uuremote MIT) are unofficial reverse-engineering or Wine wrappers"
+   ],
+   "status": "BLOCKED",
+   "blocking_issue": "Proprietary NetEase product; importing reverse-engineered protocol code carries copyright, ToS and anti-circumvention risk; do not import"
+  },
+  {
+   "id": "uu_remote.url_scheme",
+   "source": "netease-uuyc/uuremote-integration-guide",
+   "upstream_commit": "181dee4540a8e4161a65e1053fbcf6ad223d24f8",
+   "upstream_license": "MIT (Copyright (c) 2026 netease-uuyc); org not GitHub-verified",
+   "upstream_paths": [
+    "README.md",
+    "example"
+   ],
+   "upstream_tests": [],
+   "feature": "UU Remote app-to-app URL scheme (device authorise, launch remote session) for iOS/Android",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "None (only launches the proprietary UU client)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Org displays the name of NetEase UU Remote but is not GitHub-verified; MIT covers the doc and samples only"
+   ],
+   "status": "BLOCKED",
+   "blocking_issue": "Depends on the proprietary UU client; organisation authenticity unverified"
+  }
+ ]
+}
