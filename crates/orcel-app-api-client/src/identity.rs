@@ -18,9 +18,23 @@
 //! be Medium or above (orceld labels its pipe `ME`); an unlabeled pipe is
 //! refused.
 //!
-//! The platform code only gathers [`ServerFacts`] and [`ObjectFacts`];
-//! [`decide`] and [`decide_object`] are the whole decision, so they are
-//! unit-tested on every OS.
+//! On macOS and Linux (MAC-M1-05) the client checks the server the way
+//! orceld checks its clients (`admit_unix` in `crates/orceld/src/app_api.rs`):
+//! the socket peer is read with `orcel_platform::peer::unix_peer_credentials`
+//! (XP-03), so its uid comes from the kernel and is bound to the peer's
+//! process instance (pid plus start generation); the uid must be this
+//! process's effective uid, a peer that has exited or whose pid now names
+//! another process is refused, and only the sources orceld accepts are
+//! accepted (Linux's pre-6.5 `linux-so-peercred` is not, #367 item 2). Before
+//! connecting, the socket and its directory are held to what orceld creates:
+//! a socket this user owns without group or other access (orceld sets 0600),
+//! not a link, in a directory this user owns without group or other access
+//! that passes XP-01's private directory rules (orceld's `bind` holds it to
+//! `ensure_private_dir`, 0700).
+//!
+//! The platform code only gathers [`ServerFacts`], [`ObjectFacts`] and
+//! [`EndpointFacts`]; [`decide`], [`decide_object`] and [`decide_endpoint`]
+//! are the whole decision, so they are unit-tested on every OS.
 
 use std::fmt;
 
@@ -47,10 +61,97 @@ pub enum ServerFacts {
         same_user: bool,
         integrity: Option<u32>,
     },
-    /// Unix: the socket peer's uid, against this process's effective uid.
-    PeerUid { peer: u32, ours: u32 },
+    /// Unix: the socket peer as `orcel_platform::peer` read it from the
+    /// kernel: its uid, this process's effective uid, and how the identity
+    /// was read (`PeerIdentity::source`).
+    Peer {
+        uid: u32,
+        ours: u32,
+        source: &'static str,
+    },
+    /// Unix: the peer process has exited, or its pid names another process
+    /// now (`PlatformError::ProcessGone`). It means only "refuse this
+    /// connection".
+    PeerGone,
     /// The peer's identity could not be read on this OS.
     Unreadable,
+}
+
+/// The `orcel_platform::peer` sources orceld admits (#367 item 2): Linux
+/// 6.5+'s pidfd-bound read and macOS's audit token. Anything else, the
+/// pre-6.5 `linux-so-peercred` with its pid-reuse race included, is refused.
+pub const ACCEPTED_PEER_SOURCES: [&str; 2] = ["linux-so-peerpidfd", "macos-local-peertoken"];
+
+/// Unix: what one entry on the socket path is, read without following
+/// links.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    Directory,
+    Socket,
+    Symlink,
+    Other,
+}
+
+/// Unix: one entry's type, owner and permission bits (`st_mode & 0o7777`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntryFacts {
+    pub kind: EntryKind,
+    pub owner: u32,
+    pub mode: u32,
+}
+
+/// Unix: the socket and its directory, read before connecting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndpointFacts {
+    /// The socket's directory.
+    pub dir: EntryFacts,
+    /// Whether the directory also passes XP-01's private directory rules,
+    /// read without creating anything
+    /// (`orcel_platform::paths::verify_existing_private_dir`: no ancestor
+    /// another user owns or can modify; on macOS no extended ACL entry),
+    /// and if not, why.
+    pub dir_rules: Result<(), DirectoryReason>,
+    /// The socket path itself.
+    pub socket: EntryFacts,
+    /// This process's effective uid.
+    pub ours: u32,
+}
+
+/// Unix: why the socket's directory is not this user's private directory.
+/// A closed set that names no path, uid or other account, so it is safe
+/// wherever the refusal is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectoryReason {
+    /// The directory, or an ancestor, is a link or not a directory.
+    NotADirectory,
+    /// The directory is owned by another account.
+    ForeignOwner,
+    /// The directory grants group or other access.
+    OpenToOthers,
+    /// An ancestor is owned by an account that is neither this user nor
+    /// root.
+    ForeignOwnedAncestor,
+    /// An ancestor is writable by group or others (and is not a root-owned
+    /// sticky directory such as `/tmp`).
+    WritableAncestor,
+    /// macOS: an extended ACL entry grants another account access.
+    AclGrant,
+    /// The directory or an ancestor could not be read.
+    Unreadable,
+}
+
+impl DirectoryReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotADirectory => "it or a folder above it is a link or not a folder",
+            Self::ForeignOwner => "it is owned by another account",
+            Self::OpenToOthers => "it is open to other accounts",
+            Self::ForeignOwnedAncestor => "a folder above it is owned by another account",
+            Self::WritableAncestor => "a folder above it can be changed by other accounts",
+            Self::AclGrant => "an access control entry grants another account access",
+            Self::Unreadable => "it could not be read",
+        }
+    }
 }
 
 /// What the platform read about the pipe object itself (Windows).
@@ -104,6 +205,21 @@ pub enum IdentityRefusal {
     PipeUnlabeled,
     /// The pipe object's security could not be read.
     PipeUnreadable,
+    /// Unix: the server process has exited, or its pid names another
+    /// process now.
+    ServerGone,
+    /// Unix: the peer was identified only by a source orceld does not
+    /// accept either (Linux before 6.5).
+    WeakIdentity,
+    /// Unix: the socket's directory is not this user's private directory,
+    /// and why.
+    DirectoryNotPrivate(DirectoryReason),
+    /// Unix: the socket path is a link or not a socket.
+    NotASocket,
+    /// Unix: the socket is owned by another account.
+    SocketNotOwned,
+    /// Unix: the socket grants group or other access.
+    SocketNotPrivate,
 }
 
 impl IdentityRefusal {
@@ -124,14 +240,27 @@ impl fmt::Display for IdentityRefusal {
             Self::PipeLabelBelowMedium => "the endpoint is labeled below Medium integrity",
             Self::PipeUnlabeled => "the endpoint carries no integrity label",
             Self::PipeUnreadable => "the endpoint's security could not be read",
+            Self::ServerGone => "the server process is gone",
+            Self::WeakIdentity => "the server's process could not be bound to its identity",
+            Self::DirectoryNotPrivate(reason) => {
+                return write!(
+                    f,
+                    "{}: the endpoint's directory is not private to this user ({})",
+                    Self::MESSAGE,
+                    reason.as_str()
+                );
+            }
+            Self::NotASocket => "the endpoint is not a socket",
+            Self::SocketNotOwned => "the endpoint is owned by another account",
+            Self::SocketNotPrivate => "the endpoint is open to other accounts",
         };
         write!(f, "{}: {why}", Self::MESSAGE)
     }
 }
 
 /// The decision. Only a server that runs as this user, at Medium integrity
-/// or above (Windows), or as this uid (Unix), is accepted; every failure to
-/// read refuses.
+/// or above (Windows), or as this uid, read from a source bound to its live
+/// process (Unix), is accepted; every failure to read refuses.
 pub fn decide(facts: &ServerFacts) -> Result<(), IdentityRefusal> {
     match *facts {
         ServerFacts::PipeRefusesThisAccount => Err(IdentityRefusal::OtherAccount),
@@ -149,10 +278,58 @@ pub fn decide(facts: &ServerFacts) -> Result<(), IdentityRefusal> {
             Some(_) => Err(IdentityRefusal::BelowMedium),
             None => Err(IdentityRefusal::TokenUnreadable),
         },
-        ServerFacts::PeerUid { peer, ours } if peer == ours => Ok(()),
-        ServerFacts::PeerUid { .. } => Err(IdentityRefusal::OtherAccount),
+        ServerFacts::Peer { uid, ours, .. } if uid != ours => Err(IdentityRefusal::OtherAccount),
+        ServerFacts::Peer { source, .. } if ACCEPTED_PEER_SOURCES.contains(&source) => Ok(()),
+        ServerFacts::Peer { .. } => Err(IdentityRefusal::WeakIdentity),
+        ServerFacts::PeerGone => Err(IdentityRefusal::ServerGone),
         ServerFacts::Unreadable => Err(IdentityRefusal::Unidentified),
     }
+}
+
+/// The Unix endpoint decision, before connecting: a real directory this
+/// user owns, without group or other access, that passes XP-01's rules,
+/// holding a socket (not a link) this user owns without group or other
+/// access.
+pub fn decide_endpoint(facts: &EndpointFacts) -> Result<(), IdentityRefusal> {
+    let EndpointFacts {
+        dir,
+        dir_rules,
+        socket,
+        ours,
+    } = *facts;
+    decide_directory(dir, dir_rules, ours)?;
+    if socket.kind != EntryKind::Socket {
+        return Err(IdentityRefusal::NotASocket);
+    }
+    if socket.owner != ours {
+        return Err(IdentityRefusal::SocketNotOwned);
+    }
+    if socket.mode & 0o077 != 0 {
+        return Err(IdentityRefusal::SocketNotPrivate);
+    }
+    Ok(())
+}
+
+/// The directory half of [`decide_endpoint`], decided first, so a socket
+/// that is missing from a directory that is not private is refused rather
+/// than reported as orceld not running.
+/// The directory's own facts are decided before XP-01's walk, so the most
+/// direct reason is the one reported.
+pub fn decide_directory(
+    dir: EntryFacts,
+    dir_rules: Result<(), DirectoryReason>,
+    ours: u32,
+) -> Result<(), IdentityRefusal> {
+    let reason = if dir.kind != EntryKind::Directory {
+        DirectoryReason::NotADirectory
+    } else if dir.owner != ours {
+        DirectoryReason::ForeignOwner
+    } else if dir.mode & 0o077 != 0 {
+        DirectoryReason::OpenToOthers
+    } else {
+        return dir_rules.map_err(IdentityRefusal::DirectoryNotPrivate);
+    };
+    Err(IdentityRefusal::DirectoryNotPrivate(reason))
 }
 
 /// The pipe object decision: owned by this user (or by Administrators when
@@ -297,21 +474,191 @@ mod tests {
         );
     }
 
+    fn peer(uid: u32, source: &'static str) -> ServerFacts {
+        ServerFacts::Peer {
+            uid,
+            ours: 1000,
+            source,
+        }
+    }
+
     #[test]
     fn unix_peer_must_be_this_uid() {
+        for source in ACCEPTED_PEER_SOURCES {
+            assert_eq!(decide(&peer(1000, source)), Ok(()));
+            // root and any other account are refused alike.
+            for other in [0, 999, 1001, u32::MAX] {
+                assert_eq!(
+                    decide(&peer(other, source)),
+                    Err(IdentityRefusal::OtherAccount)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unix_peer_must_come_from_a_source_orceld_accepts() {
+        // The pre-6.5 Linux read can race with pid reuse; orceld refuses it
+        // for its clients, and the client refuses it for its server.
+        for source in [
+            "linux-so-peercred",
+            "",
+            "test",
+            "LINUX-SO-PEERPIDFD",
+            "macos-getpeereid",
+        ] {
+            assert_eq!(
+                decide(&peer(1000, source)),
+                Err(IdentityRefusal::WeakIdentity)
+            );
+        }
+        // Another account is reported as such whatever the source.
         assert_eq!(
-            decide(&ServerFacts::PeerUid {
-                peer: 1000,
-                ours: 1000
-            }),
-            Ok(())
+            decide(&peer(0, "linux-so-peercred")),
+            Err(IdentityRefusal::OtherAccount)
+        );
+    }
+
+    #[test]
+    fn a_unix_server_that_is_gone_or_unreadable_is_refused() {
+        assert_eq!(
+            decide(&ServerFacts::PeerGone),
+            Err(IdentityRefusal::ServerGone)
         );
         assert_eq!(
-            decide(&ServerFacts::PeerUid {
-                peer: 0,
-                ours: 1000
+            decide(&ServerFacts::Unreadable),
+            Err(IdentityRefusal::Unidentified)
+        );
+    }
+
+    const OURS: u32 = 501;
+
+    fn entry(kind: EntryKind, owner: u32, mode: u32) -> EntryFacts {
+        EntryFacts { kind, owner, mode }
+    }
+
+    /// What orceld creates: a 0700 directory and a 0600 socket of this user.
+    fn orcelds() -> EndpointFacts {
+        EndpointFacts {
+            dir: entry(EntryKind::Directory, OURS, 0o700),
+            dir_rules: Ok(()),
+            socket: entry(EntryKind::Socket, OURS, 0o600),
+            ours: OURS,
+        }
+    }
+
+    fn changed(change: &dyn Fn(&mut EndpointFacts)) -> Result<(), IdentityRefusal> {
+        let mut facts = orcelds();
+        change(&mut facts);
+        decide_endpoint(&facts)
+    }
+
+    #[test]
+    fn the_endpoint_orceld_creates_is_accepted() {
+        assert_eq!(decide_endpoint(&orcelds()), Ok(()));
+        // Fewer owner bits still grant nobody else anything.
+        for (dir, socket) in [(0o500, 0o600), (0o700, 0o700), (0o700, 0o400)] {
+            assert_eq!(
+                changed(&|facts| {
+                    facts.dir.mode = dir;
+                    facts.socket.mode = socket;
+                }),
+                Ok(()),
+                "{dir:o} {socket:o}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_directory_that_is_not_this_users_private_one_is_refused() {
+        use DirectoryReason::*;
+        let refused = |reason, change: &dyn Fn(&mut EndpointFacts)| {
+            assert_eq!(
+                changed(change),
+                Err(IdentityRefusal::DirectoryNotPrivate(reason))
+            );
+        };
+        for mode in [0o710, 0o750, 0o755, 0o701, 0o777, 0o1777, 0o720, 0o702] {
+            refused(OpenToOthers, &|facts| facts.dir.mode = mode);
+        }
+        for owner in [0, OURS + 1] {
+            refused(ForeignOwner, &|facts| facts.dir.owner = owner);
+        }
+        for kind in [EntryKind::Symlink, EntryKind::Socket, EntryKind::Other] {
+            refused(NotADirectory, &|facts| facts.dir.kind = kind);
+        }
+        // XP-01's walk keeps its precise reason.
+        for reason in [
+            NotADirectory,
+            ForeignOwner,
+            OpenToOthers,
+            ForeignOwnedAncestor,
+            WritableAncestor,
+            AclGrant,
+            Unreadable,
+        ] {
+            refused(reason, &|facts| facts.dir_rules = Err(reason));
+        }
+        // The directory's own facts come before the walk's reason, and the
+        // directory is decided before the socket.
+        refused(OpenToOthers, &|facts| {
+            facts.dir.mode = 0o755;
+            facts.dir_rules = Err(AclGrant);
+            facts.socket.owner = 0;
+        });
+    }
+
+    #[test]
+    fn a_directory_refusal_names_no_path_or_account() {
+        use DirectoryReason::*;
+        for reason in [
+            NotADirectory,
+            ForeignOwner,
+            OpenToOthers,
+            ForeignOwnedAncestor,
+            WritableAncestor,
+            AclGrant,
+            Unreadable,
+        ] {
+            let text = IdentityRefusal::DirectoryNotPrivate(reason).to_string();
+            assert!(text.starts_with(IdentityRefusal::MESSAGE), "{text}");
+            assert!(
+                !text.contains('/')
+                    && !text.contains('\\')
+                    && !text.chars().any(|c| c.is_ascii_digit()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_socket_that_is_not_this_users_private_one_is_refused() {
+        for kind in [EntryKind::Symlink, EntryKind::Directory, EntryKind::Other] {
+            assert_eq!(
+                changed(&|facts| facts.socket.kind = kind),
+                Err(IdentityRefusal::NotASocket)
+            );
+        }
+        for owner in [0, OURS + 1, u32::MAX] {
+            assert_eq!(
+                changed(&|facts| facts.socket.owner = owner),
+                Err(IdentityRefusal::SocketNotOwned)
+            );
+        }
+        for mode in [0o640, 0o604, 0o644, 0o660, 0o666, 0o777, 0o610, 0o601] {
+            assert_eq!(
+                changed(&|facts| facts.socket.mode = mode),
+                Err(IdentityRefusal::SocketNotPrivate),
+                "{mode:o}"
+            );
+        }
+        // Another account's socket is refused as such, whatever its mode.
+        assert_eq!(
+            changed(&|facts| {
+                facts.socket.owner = 0;
+                facts.socket.mode = 0o666;
             }),
-            Err(IdentityRefusal::OtherAccount)
+            Err(IdentityRefusal::SocketNotOwned)
         );
     }
 

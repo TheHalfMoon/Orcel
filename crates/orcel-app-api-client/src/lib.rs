@@ -17,7 +17,10 @@
 //!   write.** The pipe is opened with `SECURITY_SQOS_PRESENT |
 //!   SECURITY_IDENTIFICATION`; then the server's pid, its token user (must
 //!   be this user) and its integrity level (Medium or above) are read before
-//!   a byte is written ([`identity`]). Unix reads the socket peer's uid.
+//!   a byte is written ([`identity`]). On macOS and Linux the socket and
+//!   its directory must be this user's and closed to others, and the peer
+//!   is read from the kernel with `orcel_platform::peer`, as orceld reads
+//!   its clients: this uid, bound to its live process (MAC-M1-05).
 //! - **Closed methods.** [`Method`] has exactly `status.get`,
 //!   `capabilities.get`, `events.subscribe`, `task.list` and `task.get`; no
 //!   string becomes a method name.

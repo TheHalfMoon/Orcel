@@ -938,6 +938,7 @@ name = "orcel-app-api-client"
 version = "0.2.0"
 dependencies = [
  "libc",
+ "orcel-platform",
  "serde",
  "serde_json",
  "windows-sys 0.52.0",
