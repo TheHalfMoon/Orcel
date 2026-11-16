@@ -22,6 +22,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium, type BrowserContext } from "playwright-core";
 import { splitWindowsCommandLine } from "./cmdline.js";
+import { RefusalLedger } from "./refusals.js";
 import { installRoutes } from "./routes.js";
 import { originOf, type RouteQuery } from "./routing.js";
 import { denyServiceWorkerScripts } from "./service-workers.js";
@@ -364,7 +365,7 @@ nativeTest("an activation whose navigation commits after the click budget still 
   const page = await context.newPage();
   await page.goto("http://fixture.test/", { timeout: EVENT_DEADLINE_MS, waitUntil: "load" });
   const started = Date.now();
-  const opened = await clickAndLoad(page, page.locator("a"));
+  const opened = await clickAndLoad(page, page.locator("a"), new RefusalLedger());
   assert.deepEqual(opened, { url: "http://fixture.test/slow", status: 200 });
   assert.ok(Date.now() - started >= 6_000, "the target really answered after the click budget");
   assert.deepEqual(served.filter((path) => path !== "/favicon.ico"), ["/", "/slow"]);
