@@ -95,16 +95,19 @@ fn drive_prefixes_are_not_streams_but_drive_relative_paths_are_refused() {
         r"sub\b.txt",
     ] {
         assert!(!names_windows_stream(Path::new(path)), "{path}");
+        assert!(!is_drive_relative(Path::new(path)), "{path}");
         assert!(!resolved_names_stream(Path::new(path)), "{path}");
+        assert!(refuse_windows_stream(path).is_ok(), "{path}");
     }
-    for path in [
-        "a:s",
-        "C:x",
-        "C:",
-        r"C:\ws\a.txt:s",
-        r"C:\ws\sub:$I30:$INDEX_ALLOCATION\b",
-    ] {
+    for path in ["a:s", "C:x", "C:", r"c:sub\b.txt"] {
+        assert!(is_drive_relative(Path::new(path)), "{path}");
+        let error = refuse_windows_stream(path).unwrap_err();
+        assert_eq!(error.code, FailureCode::PathEscape, "{path}");
+    }
+    for path in [r"C:\ws\a.txt:s", r"C:\ws\sub:$I30:$INDEX_ALLOCATION\b"] {
         assert!(names_windows_stream(Path::new(path)), "{path}");
+        let error = refuse_windows_stream(path).unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied, "{path}");
     }
     for path in [
         r"C:\ws\a.txt:s",
@@ -177,7 +180,6 @@ const REFUSED_SPELLINGS: &[&str] = &[
     r"sub\b.txt::$DATA",
     "./a.txt:secret",
     "sub/../a.txt:secret",
-    "a:secret",
     "NUL",
     "nul.txt",
     "sub/CON",
@@ -185,40 +187,58 @@ const REFUSED_SPELLINGS: &[&str] = &[
     "com1",
 ];
 
+/// Drive-relative spellings keep the PathEscape code a mutation always gave them.
+#[cfg(windows)]
+const DRIVE_RELATIVE_SPELLINGS: &[&str] = &["a:secret", "C:a.txt", "c:sub/b.txt"];
+
+/// Every spelling with the code its refusal must carry.
+#[cfg(windows)]
+fn refused_cases() -> Vec<(&'static str, FailureCode)> {
+    REFUSED_SPELLINGS
+        .iter()
+        .map(|&path| (path, FailureCode::CapabilityDenied))
+        .chain(
+            DRIVE_RELATIVE_SPELLINGS
+                .iter()
+                .map(|&path| (path, FailureCode::PathEscape)),
+        )
+        .collect()
+}
+
+#[cfg(windows)]
+fn assert_code(
+    result: Result<impl std::fmt::Debug, ProviderError>,
+    code: &FailureCode,
+    what: &str,
+) {
+    let error = result.expect_err(what);
+    assert_eq!(&error.code, code, "{what}: {error:?}");
+}
+
 #[cfg(windows)]
 fn assert_refused(result: Result<impl std::fmt::Debug, ProviderError>, what: &str) {
-    let error = result.expect_err(what);
-    assert_eq!(
-        error.code,
-        FailureCode::CapabilityDenied,
-        "{what}: {error:?}"
-    );
+    assert_code(result, &FailureCode::CapabilityDenied, what);
 }
 
 #[cfg(windows)]
 #[test]
 fn read_side_entry_points_refuse_every_stream_and_device_spelling() {
     let (root, provider) = stream_workspace("reads");
-    for &path in REFUSED_SPELLINGS {
-        assert_refused(provider.stat(path), &format!("stat {path}"));
-        assert_refused(provider.list(path), &format!("list {path}"));
-        assert_refused(provider.read_text(path), &format!("read_text {path}"));
-        assert_refused(
+    for (path, code) in refused_cases() {
+        let check = |result: Result<Value, ProviderError>, what: &str| {
+            assert_code(result, &code, &format!("{what} {path}"));
+        };
+        check(provider.stat(path), "stat");
+        check(provider.list(path), "list");
+        check(provider.read_text(path), "read_text");
+        assert_code(
             provider.read_bytes(path, 1024),
+            &code,
             &format!("read_bytes {path}"),
         );
-        assert_refused(
-            provider.read_range(path, 1, 10),
-            &format!("read_range {path}"),
-        );
-        assert_refused(
-            provider.search_text(path, "hello", None),
-            &format!("search_text {path}"),
-        );
-        assert_refused(
-            provider.find_names(path, "*", 10, 2),
-            &format!("find_names {path}"),
-        );
+        check(provider.read_range(path, 1, 10), "read_range");
+        check(provider.search_text(path, "hello", None), "search_text");
+        check(provider.find_names(path, "*", 10, 2), "find_names");
     }
     let _ = fs::remove_dir_all(root);
 }
@@ -227,29 +247,43 @@ fn read_side_entry_points_refuse_every_stream_and_device_spelling() {
 #[test]
 fn mutation_entry_points_refuse_every_stream_and_device_spelling() {
     let (root, provider) = stream_workspace("mutations");
-    for &path in REFUSED_SPELLINGS {
-        assert_refused(
+    // The identity of an ordinary file, so a move or removal is refused for its spelling
+    // alone and never for a stale identity.
+    let identity = provider.entry_identity("a.txt").unwrap();
+    for (path, code) in refused_cases() {
+        let check = |result: Result<Value, ProviderError>, what: &str| {
+            assert_code(result, &code, &format!("{what} {path}"));
+        };
+        assert_code(
             provider.preview_write(path, "x"),
+            &code,
             &format!("preview_write {path}"),
         );
-        assert_refused(
-            provider.write_text(path, "x", None, true),
-            &format!("write_text {path}"),
-        );
-        assert_refused(
-            provider.create_text(path, "x"),
-            &format!("create_text {path}"),
-        );
-        assert_refused(provider.mkdir(path, true), &format!("mkdir {path}"));
-        assert_refused(
+        check(provider.write_text(path, "x", None, true), "write_text");
+        check(provider.create_text(path, "x"), "create_text");
+        check(provider.mkdir(path, true), "mkdir");
+        assert_code(
             provider.entry_identity(path),
+            &code,
             &format!("entry_identity {path}"),
         );
-        assert_refused(
+        assert_code(
             provider.edit_preview(path, "hello", "bye", "0", 1),
+            &code,
             &format!("edit_preview {path}"),
         );
+        check(
+            provider.move_entry(path, "moved.txt", &identity),
+            "move from",
+        );
+        check(provider.move_entry("a.txt", path, &identity), "move to");
+        check(provider.remove_entry(path, &identity), "remove_entry");
     }
+    assert_eq!(
+        fs::read_to_string(root.join("a.txt")).unwrap(),
+        "visible hello\n"
+    );
+    assert!(!root.join("moved.txt").exists());
     assert_eq!(
         fs::read_to_string(root.join("a.txt:secret")).unwrap(),
         format!("{SECRET}\n")

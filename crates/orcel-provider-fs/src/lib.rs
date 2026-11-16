@@ -139,6 +139,8 @@ impl FsProvider {
                     "filesystem tools cannot mutate Git control paths",
                 ));
             }
+            // Streams and device names were already refused by `refuse_windows_stream`
+            // above; the recogniser stays here as defence in depth beside the alias rules.
             #[cfg(windows)]
             if is_windows_stream_or_device(&spelling)
                 || spelling.ends_with('.')
@@ -758,19 +760,21 @@ fn is_windows_stream_or_device(segment: &str) -> bool {
     }
 }
 
-/// Whether a submitted path names a stream or device in any segment, or is drive-relative
-/// (`a:s` or `C:x`, which Windows parses as a path on drive `A:` or `C:`, never a workspace
-/// entry). An absolute path such as `C:\ws\a.txt` keeps its drive prefix and is left to the
-/// containment check.
+/// Whether a submitted path names a stream or device in any segment.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn names_windows_stream(path: &Path) -> bool {
-    let drive_relative =
-        matches!(path.components().next(), Some(Component::Prefix(_))) && !path.has_root();
-    drive_relative
-        || path.components().any(|part| {
-            matches!(part, Component::Normal(name)
-                if is_windows_stream_or_device(&name.to_string_lossy()))
-        })
+    path.components().any(|part| {
+        matches!(part, Component::Normal(name)
+            if is_windows_stream_or_device(&name.to_string_lossy()))
+    })
+}
+
+/// Whether a submitted path is drive-relative (`a:s` or `C:x`, which Windows parses as a
+/// path on drive `A:` or `C:`, never a workspace entry). An absolute path such as
+/// `C:\ws\a.txt` has a root after its drive prefix and is left to the containment check.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_drive_relative(path: &Path) -> bool {
+    matches!(path.components().next(), Some(Component::Prefix(_))) && !path.has_root()
 }
 
 /// Whether a resolved (final) path reaches a stream: a colon in any segment after the
@@ -791,12 +795,23 @@ fn windows_stream_refusal() -> ProviderError {
 }
 
 /// Refuses, on Windows, a path that names an alternate data stream or a device instead of a
-/// workspace entry. Every read-side entry point calls it before it opens or resolves
-/// anything; mutations refuse the same names in `reject_git_mutation`, and both refuse a
+/// workspace entry (CapabilityDenied), or that is drive-relative (PathEscape, the code a
+/// mutation always gave it). Every read-side entry point calls it before it opens or
+/// resolves anything, as `reject_git_mutation` does for every mutation, and both refuse a
 /// resolved path that reaches a stream in `ensure_within`. Elsewhere `:` is an ordinary file
 /// name byte, so the guard does nothing.
 pub(crate) fn refuse_windows_stream(relative: &str) -> Result<(), ProviderError> {
-    if cfg!(windows) && names_windows_stream(Path::new(relative)) {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let path = Path::new(relative);
+    if is_drive_relative(path) {
+        return Err(ProviderError::new(
+            FailureCode::PathEscape,
+            "a drive-relative path never names a workspace entry",
+        ));
+    }
+    if names_windows_stream(path) {
         return Err(windows_stream_refusal());
     }
     Ok(())
