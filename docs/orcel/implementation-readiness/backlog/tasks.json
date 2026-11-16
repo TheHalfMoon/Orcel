@@ -2196,7 +2196,7 @@
         "maintenance": "Tauri major-version upgrades",
         "risks": [
           "WebKitGTK accessibility must be tested",
-          "FD-03 answered by founder Decision 4; CR-03 runs as SG-000119 (issue #773) under the founder's 2026-11-16 decisions, which supersede this card's three-OS scope, React front end, generic proxy command and Stop button"
+          "FD-03 answered by Decision 4 of the founder's private decision record; CR-03 runs as SG-000119 (issue #773) under the founder's 2026-11-16 decisions, which supersede this card's three-OS scope, React front end, generic proxy command and Stop button"
         ],
         "matrix_rows": [
           "T-CUA-32",
@@ -4090,7 +4090,7 @@
         "CR-03"
       ],
       "default_if_silent": "WPF stays; CR-01/CR-02 still proceed because they are UI-toolkit-neutral.",
-      "status": "ANSWERED 2026-11-16 (founder Decision 4: Tauri yes, lean, with no Vite, no Tauri CLI and no React, configuration written from scratch, read-only, no Stop; Windows first by the founder's 2026-11-16 decisions). CR-03 runs as SG-000119, activated by founder decision of 2026-11-16 (issue #773)."
+      "status": "ANSWERED 2026-11-16 (Decision 4 of the founder's private decision record: Tauri yes, lean, with no Vite, no Tauri CLI and no React, configuration written from scratch, read-only, no Stop; Windows first by the founder's 2026-11-16 decisions). CR-03 runs as SG-000119, activated by founder decision of 2026-11-16 (issue #773)."
     },
     {
       "id": "FD-04",

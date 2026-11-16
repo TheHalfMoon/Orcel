@@ -66,7 +66,7 @@
     {
       "question": "Open the governed change",
       "status": "DECIDED (founder, 2026-11-16)",
-      "decision": "Founder decision of 2026-11-16, given in the Claude Code session and recorded on issue #773. The founder's go-ahead, quoted: \"I approve proceeding with the SG-000119 Tauri development activation, subject to the following decisions\" (the eight decisions of 2026-11-16 below) ... \"Open the SG-000119 tracking issue, finalize its scope, then implement the approved slices in small PRs.\" ... \"Start development now. Public release remains separately gated.\" Founder decision 8 of 2026-11-16 approved the tracking issue (#773), opened with the reviewed activation spec; the activation (slice A0) rests on that go-ahead. It grants no capability; each slice is separate exact-head qualification work, and any public release needs separate founder authorization."
+      "decision": "Founder decision of 2026-11-16, given in the Claude Code session; issue #773's body records the eight decisions, and the go-ahead below is quoted from the session: \"I approve proceeding with the SG-000119 Tauri development activation, subject to the following decisions\" (the eight decisions of 2026-11-16 below) ... \"Open the SG-000119 tracking issue, finalize its scope, then implement the approved slices in small PRs.\" ... \"Start development now. Public release remains separately gated.\" Founder decision 8 of 2026-11-16 approved the tracking issue (#773), opened with the reviewed activation spec; the activation (slice A0) rests on that go-ahead. It grants no capability; each slice is separate exact-head qualification work, and any public release needs separate founder authorization."
     },
     {
       "question": "Toolkit and shape (FD-03)",

@@ -11,8 +11,10 @@
 // complete. The future SG-000075 policy route must keep this denial.
 
 import type { BrowserContext, Route } from "playwright-core";
+import { documentFrameOf, type RefusalLedger } from "./refusals.js";
 
-export async function denyServiceWorkerScripts(context: BrowserContext): Promise<void> {
+/// `refusals` records each refusal (refusals.ts); installRoutes passes its own.
+export async function denyServiceWorkerScripts(context: BrowserContext, refusals?: RefusalLedger): Promise<void> {
   await context.route("**/*", async (route: Route) => {
     const headers = await route.request().allHeaders();
     // Shared workers too: their own requests are never routed (measured),
@@ -20,6 +22,7 @@ export async function denyServiceWorkerScripts(context: BrowserContext): Promise
     // cannot forge it.
     const destination = headers["sec-fetch-dest"];
     if (headers["service-worker"] === "script" || destination === "serviceworker" || destination === "sharedworker") {
+      refusals?.record(route.request().url(), documentFrameOf(route.request()));
       await route.abort("blockedbyclient");
       return;
     }
