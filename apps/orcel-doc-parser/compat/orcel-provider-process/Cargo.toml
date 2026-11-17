@@ -1,0 +1,36 @@
+# crates/orcel-provider-process as this workspace builds it: the same source
+# files (`[lib] path` points at them), under a manifest inside this workspace.
+#
+# Why: Cargo derives a crate's `-C metadata` hash from its package id. For a
+# path package inside the workspace root it hashes the path relative to that
+# root; for one outside it (`../../crates/...`) it hashes the absolute path.
+# The checkout location then reached orcel_provider_process's crate hash,
+# every symbol name that mentions it, and rustc's symbol-ordered placement of
+# code, so two clean builds of orcel-doc-parser.exe from two checkouts
+# differed (Release qualification / reproducibility check). Inside the
+# workspace root the hash is relative and the build does not depend on where
+# the repository is checked out. `--remap-path-prefix` already covers the
+# file paths themselves.
+#
+# Keep in step with crates/orcel-provider-process/Cargo.toml: same name,
+# version, edition and dependencies (it has none). orceld and the root
+# workspace keep using that manifest.
+[package]
+name = "orcel-provider-process"
+version = "0.2.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/TheHalfMoon/Orcel"
+rust-version = "1.82"
+publish = false
+autotests = false
+autobenches = false
+autoexamples = false
+autobins = false
+
+[lib]
+path = "../../../../crates/orcel-provider-process/src/lib.rs"
+test = false
+doctest = false
+
+[dependencies]

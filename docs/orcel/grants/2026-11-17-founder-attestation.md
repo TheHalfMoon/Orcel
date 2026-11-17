@@ -84,6 +84,10 @@ How Orcel records it:
 - It gives no access to private source. Private repositories still need authorized credentials and exact names.
 - Architecture choices made for other reasons (for example the separate `apps/orcel-firecrawl` process in
   UNIFIED_INTEGRATION_SPEC.md) stay until changed by their own decision; they are no longer required by licence.
+- WP1-01 gates: every donor in `docs/orcel/notices/donor-provenance.json` cites the authorization reference
+  **OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17** (defined there and in `docs/orcel/notices/licence-policy.json`,
+  both pointing at this record). No gate refuses AGPL, GPL, LGPL, MPL, SSPL, BUSL, FSL, commercial or unlicensed code or
+  dependencies; the gates require provenance and preserved notices, and dependency licences are reported, not judged.
 
 ## Vercel source expansion (2026-11-17)
 
@@ -113,3 +117,52 @@ How Orcel records it:
 - Not covered: hosted services and their terms (Vercel Sandbox, AI Gateway, Workflow on Vercel, Vercel Connect), model weights and
   trademarks. The Vercel Sandbox microVM backend is not public and is not made available by this record.
 - Security, review, dependency-admission and release gates are unchanged.
+
+## Browser donors (2026-11-17)
+
+Status: **OWNER-ASSERTED AUTHORIZATION — 2026-11-17. Not independently verified.** Recorded by the engineering agent on
+2026-11-17 for Orcel Browser packet B0, from the founder directive relayed by the coordinating agent. The directive is
+marked binding.
+
+The directive's wording, verbatim as relayed:
+
+> the owner asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source of
+> BrowserOS (all browseros-ai repos incl. BrowserOS neo), Browser Harness, browser-use, Vercel agent-browser,
+> Stagehand and Obscura, regardless of public licence.
+
+The founder's own sentence, verbatim as quoted in `D:\Orcel-Experience\ORCEL_BROWSER_MASTER_DECISION.md` (outside this
+repository):
+
+> i do have full legal permission to copy BrowserOS and all its repos. full permission to cop and rename. also all of
+> these [BrowserOS + BrowserOS neo, Browser Harness, agent-browser, Stagehand, Obscura].
+
+How Orcel records it:
+
+- **Scope.** The scope is the accessible source of these repositories:
+  - browseros-ai/BrowserOS, including packages/browseros-agent (BrowserOS neo)
+  - browseros-ai/BrowserOS-agent
+  - the other public browseros-ai repositories
+  - browser-use/browser-harness, browser-use/browser-use, vercel-labs/agent-browser, browserbase/stagehand and
+    h4ckf0r0day/obscura
+
+  Pinned SHAs and status are recorded in `docs/orcel/implementation-readiness/prep/TRANSPLANT_LEDGER.json`: the
+  updated records `browseros`, `stagehand`, `agent_browser`, `obscura` and `browser_use`, group K, and `browser_b0`.
+  The inventory summary is `docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md`.
+- **Exclusions.** The assertion does not cover:
+  - Chromium and Chrome trademarks
+  - hosted private services, such as BrowserOS hosted neo and billing, Browser Use Cloud and Browserbase
+  - credentials, such as signing keys, API keys and DSNs
+  - proprietary model weights
+
+  It gives no access to private repositories, for example the private `browseros-ai/internal-docs` submodule.
+- **Not covered: forks of other projects.** The org's forks of openai/codex, openclaw/openclaw and ggml-org/llama.cpp
+  are recorded as UNRELATED mirrors with separately owned contributors. They were not cloned.
+- **Notices stay.** Copies keep upstream copyright, licence and NOTICE texts, together with a provenance record
+  (repository, SHA, paths). Third-party components inside a donor keep their own terms. Examples: Chromium and the
+  ungoogled-chromium patches (BSD-3-Clause), Playwright, mime and yaml in neo-playwright, agent-cursor (Cua AI), and
+  axe-core (MPL-2.0) in agent-browser.
+- **Public redistribution under changed terms.** Redistributing under terms that differ from the upstream licences
+  needs grant evidence from each copyright holder, and that evidence is not in the repository. One example is
+  relicensing AGPL-3.0 BrowserOS code. The evidence needed is listed in the B0 report `REDISTRIBUTION_GRANT_GAPS.md`
+  (summarised in the inventory file above).
+- **Gates.** Security, review, dependency-admission and release gates are unchanged.

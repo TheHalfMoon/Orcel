@@ -229,6 +229,12 @@ func nativeSemanticAction(req hostRequest) hostResponse {
 			return
 		}
 		defer element.release()
+		// W2-01: refuse before any pattern call when the live element is
+		// not the one orceld observed (HCU live-target staleness).
+		if liveErr := checkLiveTarget(req, element); liveErr != nil {
+			operationErr = liveErr
+			return
+		}
 		operationErr = dispatchSemanticAction(req, element)
 	})
 	if err != nil {
