@@ -3741,9 +3741,7 @@ mod tests {
         let adapter = adapter.unwrap();
         adapter.list_processes().unwrap();
         adapter.read_ref_tree(11).unwrap();
-        adapter.age_observations_for_test(
-            MAX_OBSERVATION_AGE + std::time::Duration::from_secs(1),
-        );
+        adapter.age_observations_for_test(MAX_OBSERVATION_AGE + std::time::Duration::from_secs(1));
         adapter.invoke_element(11, "42.2").unwrap();
         let sent = semantic_ops(&frames);
         assert_eq!(sent.len(), 1);

@@ -95,10 +95,12 @@ binary. W2-01 therefore copies and adapts the semantic-layer functions of the Go
 - Donor baseline (`go test` on a copy of the donor): contract 4/4; core 843 passed, 5 failed (4 Linux-only
   `read_text`, 1 test that assumes `/proc` is unwritable), 1 skipped; provider 38 passed, 1 failed (a timing test);
   transport 75 passed, 1 failed (a Linux-only ablation), 1 skipped; live probe and Python SDK tests skipped.
-- Semantic package: 24 tests pass on Windows; it vets and its tests compile for Linux and macOS.
+- Semantic package: 25 tests pass on Windows (including the 64 KiB diff text bound); it vets and its tests compile
+  for Linux and macOS.
 - Host: 17 protocol and supervisor tests plus the SG-000094 native tests and the W2-01 native ref-tree test pass
   locally; SG-000095 raw-input tests were not run locally (they send input).
-- Rust: `orcel-provider-uia` 230 lib tests pass (6 new W2-01 tests); orceld gate test added.
+- Rust: `orcel-provider-uia` 231 lib tests pass (7 new W2-01 tests, including the observation age limit); orceld gate
+  test added.
 - Baseline, disposable 3-node Windows Forms window, 30 rounds: UIA read p50 36.6 ms / p95 65.0 ms; ref-tree build
   p95 0.55 ms; heap 16 KB per observation; in-process working set 24 MB; host end to end (supervisor plus one
   sacrificial worker per request) p50 315 ms / p95 650 ms, supervisor peak working set 10.9 MB; element JSON 821
