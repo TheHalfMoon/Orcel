@@ -1,0 +1,109 @@
+{
+  "id": "SG-000132",
+  "title": "Windows Full Control: Orcel authority service, lease-consuming dispatcher, indicator, standing approvals and stop",
+  "program": "ORCEL-UP",
+  "state": "GRAIN",
+  "risk": "high",
+  "created": "2026-11-17",
+  "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
+  "planning_issue": null,
+  "dependencies": [
+    "SG-000019",
+    "SG-000093",
+    "SG-000095",
+    "SG-000131"
+  ],
+  "dependency_notes": {
+    "SG-000019": "Closed. STRONG presence; realized here as a Windows Hello key-credential signature over a service challenge.",
+    "SG-000093": "Closed. The mode model and lease bindings are unchanged; issuance, the lease store, the epoch and LocalGrantProof move from the user state root into the authority service.",
+    "SG-000095": "Closed. The desktop-input path (orceld/src/uia.rs -> ComputerHostAdapter -> HostSession::spawn -> apps/orcel-computer-host) moves behind the service's Authorize; its per-action approval stays unless a standing approval covers it.",
+    "SG-000131": "Contracts (LeaseRef, DispatchAuthority, StandingApproval), the audit chain and Event Log anchors."
+  },
+  "objective": "Give comprehensive, owner-authorized computer use on Windows (FD-UP-9) without letting the agent grant, renew, extend or escalate its own authority or tamper with the record. Executors (native host for input and UI Automation, shells, filesystem, processes, apps, git, long-running jobs) run on the user's desktop with the user's normal token, each Orcel-started process tree in a Job Object the service creates and owns. Orcel's authority moves into apps/orcel-authority-service, a Windows service running as NT SERVICE\\OrcelAuthority, installed once with administrator consent, with state in %ProgramData%\\Orcel\\authority unreadable by users: the lease-signing key (TPM when present), leases, epoch, enrolled Windows Hello public keys, standing approvals, the Full Control audit chain and its Event Log source. orceld obtains an atomic Authorize from the service before every Full Control dispatch; the service checks lease, epoch, client, standing approval or action approval and indicator heartbeat, appends the audit record (session-asserted claims marked as such), creates the executor's Job Object and returns. Grants, renewals and standing approvals require a Windows Hello signature inside a grant window opened by a service-observed unlock, default to a narrow scope, are recorded in the Event Log, and are refused while a lease is active. Stop by the indicator, CLI, expiry, session lock, sign-out, disconnect or heartbeat loss advances the epoch and terminates every held Job Object. The indicator is disclosure plus a Stop that calls the service directly. The grant prompt states the OS limits of spec C-27. Spec sections 1.2, 4.13, 4.14, 4.15, 8.2.",
+  "scope": {
+    "include": [
+      "crates/orcel-authority and apps/orcel-authority-service: service install (`orcel authority install`, elevated; automatic start), enrollment (`orcel authority enroll`, Hello key credential), protected state, the named pipe created with FILE_FLAG_FIRST_PIPE_INSTANCE and PIPE_REJECT_REMOTE_CLIENTS whose client ACE (INTERACTIVE) is exactly FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | READ_CONTROL (never GENERIC_WRITE or FILE_APPEND_DATA), caller identity checks, GrantBegin/GrantComplete, StandingBegin/StandingComplete, Authorize, Stop, Status, Heartbeat; SERVICE_CONTROL_SESSIONCHANGE handling; expiry timers; Event Log source registration.",
+      "Migration of lease issuance, the lease store and the epoch from crates/orcel-policy/src/full_control_store.rs (user state root) to the service; orcel-policy keeps the mode model and becomes the service client for checks.",
+      "crates/orceld/src/full_control_dispatch.rs: the only path for lease-gated executors; named Job Objects with a DACL granting the service terminate and query; refusal with AUTHORITY_UNAVAILABLE or INDICATOR_UNAVAILABLE.",
+      "apps/orcel-indicator: disclosure (mode, client, task, roots, expiry, anchor), Stop first and calling the service directly, hotkey only when registered, lock-to-stop text unless DisableLockWorkstation is set, hardware input only, close and hide as Stop, mitigation policies, visibility-gated heartbeat to the service.",
+      "Standing approvals (spec 4.15) bound to lease, client, declared task, scope and expiry, never Admin.",
+      "Grant prompt text stating the C-27 limits.",
+      "Executor classes enabled under a Full User lease through this dispatcher: DesktopInput and window actions (SG-000095), ShellProcess (SG-000096), Filesystem, process and app management (SG-000097), git beyond workspaces, long-running jobs (SG-000134).",
+      "Client-side server verification in orceld, the indicator, `orcel authority enroll` and the CLI: GetNamedPipeServerProcessId equals the PID from QueryServiceStatusEx, and the pipe owner SID is the NT SERVICE\\OrcelAuthority virtual SID, checked before anything is sent.",
+      "Service-created and service-owned Job Objects (random Global\\ name, fail on ERROR_ALREADY_EXISTS, kill-on-close, no breakaway limits, session granted only JOB_OBJECT_ASSIGN_PROCESS); orceld checks the owner, creates suspended, assigns, resumes.",
+      "`orceld fc-worker`: Full Control filesystem, process and git operations run in this child process inside a service-owned Job Object, never in the long-lived orceld process.",
+      "Grant flow: a recorded grant intent (one per session, 5-minute expiry, Event Log 4102), then a 120 s window opened by the first service-observed WTS_SESSION_UNLOCK after it with no lease active, then a service-rendered WTSSendMessageW confirmation of scope, client, task and expiry (Yes/No, 60 s), then Windows Hello; narrow default scope (desktop input only, no roots, no shells, 30 minutes); granted scope written to the Event Log (event 4101) and shown by the indicator from the service.",
+      "Audit records with asserted_by_session for caller-supplied fields and the observed caller PID and image."
+    ],
+    "exclude": [
+      "The Admin executor and any elevation (SG-000098); Persistent Admin (SG-000099); Remote Full Control (SG-000105).",
+      "Browser automation of the user's own profiles (SG-000100, Wave 2).",
+      "macOS and Linux services and executors (track X).",
+      "Any change to Safe-mode rules or approvals."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None.",
+    "full_control": "Proposed: Full User executors with the user's token on the user's desktop, admitted per dispatch by the authority service under a Hello-granted lease and either the action's approval or a standing approval; Orcel's authority state moved out of the user session.",
+    "service": "Proposed: a per-machine service with no network access configured and no elevation capability; it can only authorize, record and stop."
+  },
+  "decisions": [
+    {
+      "question": "Full Control architecture",
+      "status": "DECIDED (founder, 2026-11-17, FD-UP-9): approved architecture preventing self-escalation and tampering while giving comprehensive control; realized as the authority service design of spec 4.13 and 4.14, with the OS limits of C-27 disclosed."
+    },
+    {
+      "question": "Standing approvals",
+      "status": "DECIDED (FD-UP-10): tied to identified client, declared task, scope and expiry; audited; emergency stop preserved."
+    },
+    {
+      "question": "Grain id and J-3b in Wave 1",
+      "status": "DECIDED (FD-UP-4): SG-000132; SG-000097 activated and SG-000096 continued."
+    }
+  ],
+  "invariants": [
+    "Only the service issues leases and standing approvals, and only after a valid Windows Hello signature over its challenge; never while a lease is active in that session.",
+    "Users cannot read or write the service's state; the signing key never leaves the service.",
+    "No lease-gated executor runs without a service Authorize whose audit record was written first.",
+    "Every Orcel-started executor tree is in a Job Object created, owned and held by the service; stop and expiry terminate them.",
+    "Stop is honoured from any process in the session and from session lock, sign-out and disconnect, which user-session code cannot block.",
+    "A lease alone never replaces an approval; only a standing approval for the same client, task and scope does.",
+    "The service never elevates; Admin is refused.",
+    "With no lease, every Safe request and response is unchanged.",
+    "The grant prompt discloses that Full Control acts with the user's rights and that effects made through the OS outside Orcel's process trees can persist.",
+    "Clients send nothing to an authority pipe whose server PID or owner SID does not match the service.",
+    "Every executor and fc-worker runs in a Job Object created and owned by the service; the session holds only JOB_OBJECT_ASSIGN_PROCESS and no member can break away.",
+    "Grants happen only after a recorded intent, a service-observed unlock and a service-rendered confirmation, default to the narrowest scope, and are recorded in the Event Log; a routine unlock without an intent opens nothing.",
+    "Full Control audit records distinguish session-asserted claims from service-observed facts.",
+    "Residual (spec C-27 f): a same-user process can record an intent, lock the session and cover or imitate the confirmation; the grant prompt and the confirmation tell the user to approve only the scope they asked for."
+  ],
+  "acceptance": [
+    "A standard-user process cannot read the service state directory or use the signing key.",
+    "Grant, renewal and standing approval fail without a valid Hello signature, and while a lease is active.",
+    "Authorize refuses a wrong session, expired or revoked lease, epoch drift, wrong client, out-of-scope standing approval, missing indicator heartbeat, or an unregistered Job Object; each allowed dispatch has an audit record first.",
+    "Stop by indicator, CLI, LockWorkStation (standing in for Win+L in CI), sign-out and expiry kills every Orcel executor tree within 1 s and the next call fails LEASE_INVALID.",
+    "Journeys J-3 and J-3b pass on Windows with visible, usable GUI applications and working UI Automation.",
+    "Golden Safe pairs unchanged; the Admin executor is refused.",
+    "A fresh-context security judge passes the service, dispatcher, indicator and standing-approval packets.",
+    "A pre-created pipe name makes the service refuse to start; a user process cannot create a second instance of the service pipe; each client refuses a server with a wrong PID or owner SID.",
+    "orceld cannot terminate or change a service-owned job; CREATE_BREAKAWAY_FROM_JOB fails; Stop kills an in-flight fc-worker file operation.",
+    "A grant without an intent or outside the unlock window is refused; a lock and unlock without an intent opens nothing; the confirmation cannot be answered by injected input (or is recorded as not input-protected); Event Log 4101 matches the granted scope; the default request is the narrow scope.",
+    "Audit records carry asserted_by_session, caller PID and image."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on each packet and on closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "real_consent": "A real Hello grant, a standing approval and stops through a real client are run by the founder.",
+    "cross_platform": "WPX-01 and WPX-03 bring the service, executors and indicator to macOS and Linux.",
+    "browser_profiles": "SG-000100 under the same dispatcher.",
+    "remote": "SG-000105 (Remote Full Control) must not ship before the grant window, narrow default scope and Event Log scope record are implemented and qualified."
+  },
+  "activation_note": "Activated by the founder's go-ahead of 2026-11-17, given in the Claude Code session and quoted in docs/canonical/CURRENT.md; no tracking issue was opened, so planning_issue stays null as drafted. No code, dependency, tool, route, listener, network, service or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about Windows Full Control.",
+  "done_when": "WP1-10, WP1-12 and WP1-14 merge with exact-head qualification, J-3 and J-3b pass on Windows, and the canonical record names this grain CLOSED."
+}

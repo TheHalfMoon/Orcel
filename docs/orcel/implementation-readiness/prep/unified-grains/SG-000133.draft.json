@@ -1,0 +1,103 @@
+{
+  "id": "SG-000133",
+  "title": "Web intelligence: Firecrawl-compatible scrape, search and extract, browser-free fetch, and the isolated Firecrawl component",
+  "program": "ORCEL-UP",
+  "state": "GRAIN",
+  "draft_note": "Activation-ready draft under prep/ (revision 6). It becomes active only when the activation PR (WP1-00) copies it into .specgrain/specs/ with this field removed, the founder decisions of 2026-11-17 recorded in CURRENT.md and planning_issue set.",
+  "risk": "high",
+  "created": "2026-11-17",
+  "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
+  "planning_issue": null,
+  "dependencies": [
+    "SG-000131",
+    "SG-000040",
+    "SG-000064",
+    "SG-000108"
+  ],
+  "dependency_notes": {
+    "SG-000131": "Contracts, audit chain, licence and provenance gates (the AGPL carve-out for apps/orcel-firecrawl).",
+    "SG-000040": "Closed. The Windows WinHTTP transport with DNS pinning and the exact-peer check is reused; this grain amends its 'no MCP network tool' and 'no caller headers' rules for exactly the shapes listed here, and extends the transport to macOS and Linux (WP1-13).",
+    "SG-000064": "Closed. Admitted web_fetch; its network-tool guard tests are amended here.",
+    "SG-000108": "Closed. Governed navigation, extraction and the test fixture pinning used by the chromium engine and the harness."
+  },
+  "objective": "Deliver Firecrawl feature parity, copy first (FD-UP-1): an Apache-2.0 contract layer (crates/orcel-web, orceld dispatch, MCP tools and loopback REST routes for Firecrawl v2 natively and v1 where practical) over a browser-free fetch engine (governed fetch, Windows first, macOS and Linux in parallel) and an isolated AGPL-3.0 component apps/orcel-firecrawl holding copied Firecrawl code (html.rs, markdown.rs, crawler.rs, xml.rs, utils.rs in Wave 1; the extract pipeline in Wave 2) run under orcel-contain with no network, no process creation and a JSON-over-stdio protocol, with upstream licence, notices, provenance and a source offer. Scrape and search in Wave 1; extract, structured outputs, document parsing and the remaining rows in Wave 2. Custom request headers (credentials from the OS secret store, per-client permission, destination-scoped, redacted) and the sensitive-feature policy gate (privacy defaults on; fingerprint, TLS impersonation, proxy, geo and device emulation off by default, per-client permission, audited; no security bypass). No Firecrawl Cloud dependency. Spec sections 4.11, 4.12, 4.16, 4.17, 5, 6, 8.2 and 8.3.",
+  "scope": {
+    "include": [
+      "WP1-05: crates/orcel-web (v2, v1, refusals, translation, Document shaping, status mapping, policy fields).",
+      "WP1-08: apps/orcel-firecrawl (own workspace, AGPL-3.0, LICENSE, NOTICE, PROVENANCE.json pinned to firecrawl/firecrawl@42f4d669954649ce33466a2a50e8215c7f1f4d1c, PATCHES.md, deny.toml) with copied src/upstream/{html,markdown,crawler,xml,utils}.rs; contained launch entry; crates/orceld/src/web_fetch_engine.rs; separate release package with source archive.",
+      "WP1-06 (scrape, search): web/scrape and web/search dispatch; one SOFT approval per scrape bound to URL, engine, formats, resolved addresses, client and session; capability entries per OS and build.",
+      "WP1-07: tool_contract entry web_scrape; REST routes /v2/scrape, /v1/scrape, /v2/search, /v1/search; per-client REST tokens created and rotated with SOFT approval; network-tool guard amendment for the eight web tools.",
+      "WP1-09: tests/firecrawl-compat with @mendable/firecrawl-js 4.54.0 and firecrawl-py 4.57.0 (CI only) against the pinned fixture site.",
+      "WP1-13 (track X): macOS and Linux HTTPS transport (rustls with the platform verifier, DNS pinning, exact-peer check) and the SG-000040 amendment for those OSes.",
+      "WP1-16: credential headers (OS secret store, destination binding, dropped on cross-origin redirect, redaction) and the sensitive-feature gate with per-client permissions.",
+      "WP2-13 (Wave 2, same grain): the copied extract pipeline (apps/api/src/lib/extract, excluding Redis and cloud paths) on the pinned Node runtime inside the component, model calls proxied by orceld from the user's configured provider, structured outputs validated against the schema; /v2/extract, json and summary formats; /v2/parse through the document parser."
+    ],
+    "exclude": [
+      "Any AGPL code in crates/* or the Apache apps; any link between an Apache unit and the component.",
+      "Firecrawl cloud-only features and any Firecrawl Cloud dependency.",
+      "CAPTCHA solving, login, paywall or access-control bypass, ignoring robots rules, skipTlsVerification.",
+      "Network access from the component.",
+      "Remote (relay or OAuth) exposure of the web tools."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None.",
+    "web": "Proposed: local-only web/scrape and web/search shapes composing the governed transport and the contained component behind one SOFT approval per request; caller headers only under per-client permission with credentials from the OS secret store; sensitive privacy features only under per-client permission.",
+    "network_transport": "Proposed: the SG-000040 transport on macOS and Linux (WP1-13), with the same pinning and peer rules.",
+    "component": "Proposed: a contained, network-less AGPL component; it holds no authority."
+  },
+  "decisions": [
+    {
+      "question": "Firecrawl approach",
+      "status": "DECIDED (founder, 2026-11-17, FD-UP-1): full parity, copy first; isolated AGPL component; founder attestation recorded separately."
+    },
+    {
+      "question": "Sensitive features",
+      "status": "DECIDED (FD-UP-2): opt-in, off by default, per-client permission, audited, no security bypass."
+    },
+    {
+      "question": "Release and platforms",
+      "status": "DECIDED (FD-UP-7, FD-UP-12): release once qualified, Windows first, macOS and Linux transport in parallel now."
+    },
+    {
+      "question": "Headers",
+      "status": "DECIDED (FD-UP-8): supported with OS secret storage, per-client permission, destination scoping, redaction."
+    },
+    {
+      "question": "Grain id",
+      "status": "DECIDED (FD-UP-4): SG-000133; SG-000101 stays reserved."
+    }
+  ],
+  "invariants": [
+    "orceld remains the sole authority; fronts and the component decide nothing.",
+    "AGPL code exists only under apps/orcel-firecrawl and the FD-06 paths; the component ships separately with its source.",
+    "The component has no network, no process creation and no file access beyond its private input.",
+    "Every refused field is refused before dispatch, by name.",
+    "Credential header values never appear in logs, audit, errors or approvals, and are never sent outside their destination origins.",
+    "Sensitive features are off unless the calling client holds the permission; every use is audited.",
+    "The engine that ran is named in every result and audit record; fallback is never silent.",
+    "Safe-mode approvals for pre-existing shapes are unchanged."
+  ],
+  "acceptance": [
+    "Every W1 scrape and search row of the parity matrix passes both SDK legs on Windows, and on macOS and Linux once WP1-13 lands; until then those OSes report unsupported.",
+    "The component's output equals the upstream fixtures for main content, tag filters, links, metadata and sitemaps.",
+    "An approval cannot be replayed after the address set changes or after a restart.",
+    "A header secret is refused for an origin outside its binding and dropped on a cross-origin redirect.",
+    "A sensitive feature without the client permission fails PERMISSION_REQUIRED; with it, the use is audited.",
+    "Licence gates: AGPL markers only in the component and FD-06 paths; the component release archive includes its source.",
+    "A fresh-context security judge passes WP1-06, WP1-07, WP1-13 and WP1-16."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on every authority-touching slice and on closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "remote_exposure": "Needs its own decision and the remote-session scope tables.",
+    "llmstxt_and_deep_research": "Wave 3."
+  },
+  "done_when": "The listed Wave 1 packets merge with exact-head qualification and the W1 rows pass the harness on Windows (closeout may record macOS and Linux as track X follow-ups); Wave 2 rows close in the same grain or a named successor."
+}

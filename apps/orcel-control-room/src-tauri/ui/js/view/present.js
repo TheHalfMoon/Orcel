@@ -147,6 +147,14 @@ export function deviceNodes() {
 function taskLine(task) {
     return `owner: ${words(task.owner)}; updated ${fieldText(task.updated_at_ms, timeOf).text}`;
 }
+/**
+ * The accessible name of a task's summary (SG-000119 A5): what the summary
+ * shows, in reading order, so a screen reader announces the state, kind,
+ * identifier, owner and time, not the identifier alone. Never the title.
+ */
+export function taskSummaryLabel(task) {
+    return `${words(task.state)}, ${words(task.kind)} task ${textOf(task.task_id)}, ${taskLine(task)}`;
+}
 /** A summary per task (no title: tasks are shown by state, owner and time). */
 export function taskSummaryNodes(task) {
     return [
