@@ -409,6 +409,10 @@ impl<B: ApprovalBroker> ApprovalBroker for OriginStamp<'_, B> {
     fn history(&self, limit: usize) -> Vec<orcel_approval::ApprovalRecordSummary> {
         self.inner.history(limit)
     }
+
+    fn verified_revoke_epoch(&self) -> Option<u64> {
+        self.inner.verified_revoke_epoch()
+    }
 }
 
 /// SG-000055 entry: remote-context requests must pass the local

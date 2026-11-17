@@ -52,6 +52,10 @@ const LIVE_TASK: &str = "live-browser";
 /// Domain separation for a write's provisional (per-page) key.
 const ACTION_KEY_DOMAIN: &str = "orcel-b1-action-key/1";
 
+/// The prefix of a client's ledger task (never a session id or the live
+/// task, which carry no such prefix).
+const CLIENT_TASK_PREFIX: &str = "client\u{0}";
+
 /// Domain separation for a write's stable key.
 const STABLE_KEY_DOMAIN: &str = "orcel-b1-stable-action/1";
 
@@ -72,6 +76,17 @@ pub(crate) struct TakeoverGate<C: Clock = SystemClock> {
     /// The task that owns the pages this gate claims: the live browser's
     /// one task, or (SG-000135 OB-01) the broker session's id.
     task: String,
+    /// SG-000135 OB-01: the MCP client a broker session belongs to. Its
+    /// uncertain consequential actions are also kept under the client in
+    /// the shared ledger, so the client cannot repeat one by opening a new
+    /// session; unrelated clients stay independent.
+    client: Option<String>,
+    /// The shared ledger (the session gate's own), for the client entries.
+    ledger: Option<SharedLedger>,
+    /// The class of the write in progress, from `before_write`.
+    pending_class: Option<ActionClass>,
+    /// The client-scoped key of the consequential write in progress.
+    pending_client_key: Option<ActionKey>,
 }
 
 impl TakeoverGate<SystemClock> {
@@ -92,6 +107,10 @@ impl<C: Clock> TakeoverGate<C> {
             gate: None,
             basis: HashMap::new(),
             task: LIVE_TASK.to_owned(),
+            client: None,
+            ledger: None,
+            pending_class: None,
+            pending_client_key: None,
         }
     }
 
@@ -104,9 +123,17 @@ impl<C: Clock> TakeoverGate<C> {
     /// A gate on `clock` whose idempotency guard uses `ledger`.
     pub(crate) fn on_with_ledger(clock: C, ledger: SharedLedger) -> Self {
         Self {
-            gate: Some(SessionGate::with_ledger(clock, Reads::Block, ledger)),
+            gate: Some(SessionGate::with_ledger(
+                clock,
+                Reads::Block,
+                SharedLedger::clone(&ledger),
+            )),
             basis: HashMap::new(),
             task: LIVE_TASK.to_owned(),
+            client: None,
+            ledger: Some(ledger),
+            pending_class: None,
+            pending_client_key: None,
         }
     }
 
@@ -118,6 +145,19 @@ impl<C: Clock> TakeoverGate<C> {
     #[cfg_attr(not(feature = "live-browser-dev"), allow(dead_code))]
     pub(crate) fn set_task(&mut self, task: &str) {
         self.task = task.to_owned();
+    }
+
+    /// SG-000135 OB-01: the MCP client (its `client_session_id`) the
+    /// session belongs to; its uncertain consequential actions are also
+    /// kept per client.
+    #[cfg_attr(not(feature = "live-browser-dev"), allow(dead_code))]
+    pub(crate) fn set_client(&mut self, client: &str) {
+        self.client = Some(client.to_owned());
+    }
+
+    /// The ledger task a client's entries are kept under.
+    fn client_task(client: &str) -> TaskId {
+        TaskId::new(format!("{CLIENT_TASK_PREFIX}{client}"))
     }
 
     /// With the gate on, a page it does not track is refused (fail closed).
@@ -199,6 +239,8 @@ impl<C: Clock> TakeoverGate<C> {
             return Ok(None);
         };
         Self::tracked(gate, page_id)?;
+        self.pending_class = Some(class);
+        self.pending_client_key = None;
         let basis = self.basis.get(page_id).copied().unwrap_or(0);
         gate.begin_write(
             &ResourceId::new(page_id),
@@ -222,12 +264,32 @@ impl<C: Clock> TakeoverGate<C> {
         material: &str,
     ) -> Result<(), ProviderError> {
         let key = stable_key(&self.task, origin, url_path(url), kind, material);
-        match (self.gate.as_mut(), ticket) {
-            (Some(gate), Some(ticket)) => {
-                gate.rekey(ticket, key).map_err(|refusal| refused(&refusal))
+        let (Some(gate), Some(ticket)) = (self.gate.as_mut(), ticket) else {
+            return Ok(());
+        };
+        gate.rekey(ticket, key)
+            .map_err(|refusal| refused(&refusal))?;
+        // SG-000135 OB-01: the same action's outcome is unknown under this
+        // client, from any of its sessions.
+        if let (Some(client), Some(ledger)) = (&self.client, &self.ledger) {
+            let task = Self::client_task(client);
+            let client_key = stable_key(task.as_str(), origin, url_path(url), kind, material);
+            let consequential = self.pending_class == Some(ActionClass::Consequential);
+            let refuses = ledger
+                .lock()
+                .map(|ledger| ledger.refuses(&task, &client_key, consequential))
+                .unwrap_or(true);
+            if refuses {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "browser session stale: outcome_uncertain: an earlier session of this client sent this action and its outcome is unknown; check the page and reconcile before repeating it",
+                ));
             }
-            _ => Ok(()),
+            if consequential {
+                self.pending_client_key = Some(client_key);
+            }
         }
+        Ok(())
     }
 
     /// Right before the write's approval is spent and the frame is sent.
@@ -246,6 +308,15 @@ impl<C: Clock> TakeoverGate<C> {
     /// The write finished: `outcome` is the journal's word for it (`done`,
     /// `failed`, or anything else for unknown).
     pub(crate) fn after_write(&mut self, ticket: Option<WriteTicket>, outcome: &str) {
+        let client_key = self.pending_client_key.take();
+        self.pending_class = None;
+        if let (Some(key), Some(client), Some(ledger)) = (client_key, &self.client, &self.ledger) {
+            if ticket.is_some() && !matches!(outcome, "done" | "failed") {
+                if let Ok(mut ledger) = ledger.lock() {
+                    let _ = ledger.record(&Self::client_task(client), key);
+                }
+            }
+        }
         if let (Some(gate), Some(ticket)) = (self.gate.as_mut(), ticket) {
             let outcome = match outcome {
                 "done" => WriteOutcome::Done,
@@ -702,6 +773,41 @@ mod tests {
         // ...and an unrelated session doing the same action is not.
         let mut other = session(b, "page-b");
         assert!(matches!(enter_on(&mut other, "page-b", "n1"), Ok(Some(_))));
+    }
+
+    /// SG-000135 OB-01: a client's lost consequential action stays
+    /// uncertain across that client's sessions; another client is not
+    /// blocked by it.
+    #[test]
+    fn a_client_cannot_repeat_a_lost_action_from_a_new_session() {
+        let ledger = UncertainLedger::shared();
+        let clock = ManualClock::at(0);
+        let session = |client: &str, task: &str, page: &str| {
+            let mut gate = TakeoverGate::on_with_ledger(clock.clone(), ledger.clone());
+            gate.set_task(task);
+            gate.set_client(client);
+            gate.page_opened(page);
+            gate
+        };
+        let mut first = session("client-a", "bs-0123456789abcdef-1-0001020304050607", "p1");
+        let ticket = enter_on(&mut first, "p1", "n1").ok().flatten();
+        assert!(first.before_dispatch(ticket.as_ref()).is_ok());
+        first.after_write(ticket, "unknown");
+        // The same client, in a fresh session: refused.
+        let mut second = session("client-a", "bs-0123456789abcdef-3-0001020304050607", "p2");
+        let refused = enter_on(&mut second, "p2", "n5");
+        assert!(
+            matches!(&refused, Err(e) if e.message.contains("outcome_uncertain")),
+            "{refused:?}"
+        );
+        // Another client doing the same: admitted.
+        let mut other = session("client-b", "bs-0123456789abcdef-4-0001020304050607", "p3");
+        assert!(matches!(enter_on(&mut other, "p3", "n1"), Ok(Some(_))));
+        // A done or failed action leaves nothing under the client.
+        let ticket = enter_on(&mut other, "p3", "n1").ok().flatten();
+        other.after_write(ticket, "failed");
+        let mut again = session("client-b", "bs-0123456789abcdef-5-0001020304050607", "p4");
+        assert!(matches!(enter_on(&mut again, "p4", "n1"), Ok(Some(_))));
     }
 
     /// SG-000135 OB-01: a broker session's gate claims its pages for the

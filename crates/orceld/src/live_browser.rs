@@ -1767,6 +1767,13 @@ impl LiveBrowser {
         self.takeover.set_task(task);
     }
 
+    /// SG-000135 OB-01: the MCP client the broker session belongs to; the
+    /// takeover gate keeps its uncertain consequential actions per client
+    /// too.
+    pub fn set_client(&mut self, client: &str) {
+        self.takeover.set_client(client);
+    }
+
     fn require_lifetime(&self) -> Result<(), ProviderError> {
         if self.lifetime.is_none() {
             return Err(ProviderError::new(

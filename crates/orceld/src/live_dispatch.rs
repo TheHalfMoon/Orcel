@@ -700,7 +700,11 @@ mod full {
     }
 
     /// Launch a session's worker on its own directories.
-    fn start(session_id: &str, dirs: &SessionDirs) -> Result<LiveBrowser, ProviderError> {
+    fn start(
+        session_id: &str,
+        client: &str,
+        dirs: &SessionDirs,
+    ) -> Result<LiveBrowser, ProviderError> {
         let launch = WorkerHostLaunch {
             node: None,
             worker_main: None,
@@ -717,6 +721,7 @@ mod full {
             },
         )?;
         browser.set_task(session_id);
+        browser.set_client(client);
         Ok(browser)
     }
 
@@ -738,15 +743,14 @@ mod full {
         action: &FullAction,
     ) -> Result<Value, ProviderError> {
         let client = request.client_session_id.as_str();
-        // An emergency revoke in this or any other orceld moved the
-        // approval epoch: every session ends before anything else runs.
-        let epoch = crate::browser_broker::approval_epoch(approval);
-        with_broker(|broker| {
-            broker.observe_epoch(epoch);
-            Ok(())
-        })?;
+        let probe = || crate::browser_broker::verified_epoch(approval);
+        // Each arm checks the approval epoch inside the same broker borrow
+        // as its action: an emergency revoke in this or any other orceld,
+        // or a ledger that cannot be verified now, ends every session and
+        // refuses the action.
         match action {
             FullAction::Create { task } => with_broker(|broker| {
+                broker.check_epoch(probe())?;
                 let random = random8()?;
                 let instance = broker.instance().to_owned();
                 let session = broker.create(
@@ -754,7 +758,7 @@ mod full {
                     task.as_deref(),
                     random,
                     orcel_approval::now_ms(),
-                    start,
+                    |id, dirs| start(id, client, dirs),
                 )?;
                 Ok(json!({
                     "session_id": session.id,
@@ -764,18 +768,33 @@ mod full {
                     "page_id": Value::Null,
                 }))
             }),
-            FullAction::Close { session } => {
-                with_broker(|broker| broker.close(client, session).map(|report| report.to_json()))
-            }
-            FullAction::Status { session } => with_broker(|broker| broker.status(client, session)),
+            FullAction::Close { session } => with_broker(|broker| {
+                broker.check_epoch(probe())?;
+                broker.close(client, session).map(|report| report.to_json())
+            }),
+            FullAction::Status { session } => with_broker(|broker| {
+                broker.check_epoch(probe())?;
+                broker.status(client, session)
+            }),
             other => {
                 let id = other.session_id().ok_or_else(|| {
                     ProviderError::new(FailureCode::InvalidRequest, "session_id is required")
                 })?;
                 with_broker(|broker| {
+                    broker.check_epoch(probe())?;
+                    let baseline = probe();
                     let session = broker.session(client, id)?;
                     session.begin_action()?;
-                    run_recorded(workspace, approval, request, session, other)
+                    // Checked once more right before the action runs; an
+                    // approval minted before a revoke also fails at consume.
+                    let current = || baseline.is_some() && probe() == baseline;
+                    let result =
+                        run_recorded(workspace, approval, request, session, other, &current);
+                    if !current() {
+                        // Ends every session now, not at the next action.
+                        let _ = broker.check_epoch(probe());
+                    }
+                    result
                 })
             }
         }
@@ -789,7 +808,14 @@ mod full {
         request: &RequestEnvelope,
         session: &mut BrokerSession<LiveBrowser>,
         action: &FullAction,
+        epoch_current: &dyn Fn() -> bool,
     ) -> Result<Value, ProviderError> {
+        if !epoch_current() {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "the approval epoch moved or could not be verified before the action ran; nothing was sent",
+            ));
+        }
         let outcomes_before = session.worker.outcomes().len();
         let before = session
             .worker

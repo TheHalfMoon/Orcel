@@ -234,16 +234,13 @@ fn is_instance_id(name: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// The approval epoch as the shared approval ledger records it: the newest
-/// record's epoch (an emergency revoke advances it), or 0 for an empty or
-/// unreadable ledger. orceld compares it before every broker action, so an
-/// emergency stop in any orceld ends this orceld's sessions too.
-pub(crate) fn approval_epoch(approval: &impl orcel_approval::ApprovalBroker) -> u64 {
-    approval
-        .history(1)
-        .first()
-        .map(|record| record.epoch)
-        .unwrap_or(0)
+/// The shared approval ledger's revoke epoch, read and verified now (an
+/// emergency revoke in any orceld advances it), or `None` when the ledger
+/// could not be verified just now (busy, unreadable or failing
+/// verification). orceld checks it before every broker action and again
+/// right before the action runs.
+pub(crate) fn verified_epoch(approval: &impl orcel_approval::ApprovalBroker) -> Option<u64> {
+    approval.verified_revoke_epoch()
 }
 
 /// Why a session ended.
@@ -588,13 +585,29 @@ impl<W: SessionWorker> Broker<W> {
         &self.pending_removal
     }
 
-    /// Compare the approval epoch before a broker action: when it moved (an
-    /// emergency revoke in this or any other orceld), every session ends
-    /// as by emergency stop.
-    pub(crate) fn observe_epoch(&mut self, epoch: u64) -> Vec<EndReport> {
+    /// Check the approval epoch before (and again right before running) a
+    /// broker action. When it moved (an emergency revoke in this or any
+    /// other orceld), every session ends as by emergency stop and the
+    /// action is refused; an epoch that could not be verified (`None`)
+    /// ends every session and refuses the action too (fail closed). The
+    /// first verified sight is the baseline.
+    pub(crate) fn check_epoch(&mut self, epoch: Option<u64>) -> Result<(), ProviderError> {
+        let Some(epoch) = epoch else {
+            self.end_all(EndReason::EmergencyStop);
+            return Err(ProviderError::new(
+                FailureCode::ApprovalUnavailable,
+                "the approval ledger could not be verified just now, so an emergency revoke cannot be ruled out; every browser session ended; retry",
+            ));
+        };
         match self.epoch.replace(epoch) {
-            Some(seen) if seen != epoch => self.end_all(EndReason::EmergencyStop),
-            _ => Vec::new(),
+            Some(seen) if seen != epoch => {
+                self.end_all(EndReason::EmergencyStop);
+                Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "an emergency revoke moved the approval epoch; every browser session ended",
+                ))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -1448,81 +1461,66 @@ mod tests {
     }
 
     /// An emergency revoke in any orceld moves the approval epoch; the next
-    /// broker action here sees it and ends every session first.
+    /// broker action here sees it, ends every session and is refused.
     #[test]
     fn a_moved_approval_epoch_ends_every_session() {
         let mut scene = Scene::new("epoch");
         let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
         assert!(
-            broker.observe_epoch(3).is_empty(),
+            broker.check_epoch(Some(3)).is_ok(),
             "the first sight is the baseline"
         );
         let a = scene.create(&mut broker, "client-a", "1").unwrap();
         let b = scene.create(&mut broker, "client-b", "2").unwrap();
-        assert!(broker.observe_epoch(3).is_empty());
-        let ended = broker.observe_epoch(4);
-        assert_eq!(ended.len(), 2);
-        assert!(ended
-            .iter()
-            .all(|r| r.reason == EndReason::EmergencyStop && r.profile_removed));
+        assert!(broker.check_epoch(Some(3)).is_ok());
+        let moved = broker.check_epoch(Some(4)).unwrap_err();
+        assert_eq!(moved.code, FailureCode::TargetStale);
         for (client, id) in [("client-a", &a), ("client-b", &b)] {
             let refused = broker.session(client, id).map(|_| ()).unwrap_err();
             assert!(refused.message.contains("emergency_stop"));
         }
-        // An unreadable ledger reads as epoch 0: also a change, fail closed.
-        let _c = scene.create(&mut broker, "client-a", "3").unwrap();
-        assert_eq!(broker.observe_epoch(0).len(), 1);
+        // The new epoch is the baseline from now on.
+        assert!(broker.check_epoch(Some(4)).is_ok());
     }
 
+    /// A busy or unverifiable ledger gives no verified epoch: every session
+    /// ends and the action is refused, never run on a stale view.
     #[test]
-    fn the_approval_epoch_is_the_newest_ledger_records() {
-        use orcel_approval::{
-            ApprovalBroker, ApprovalClass, ApprovalError, ApprovalPrompt, ApprovalRecordSummary,
-            ApprovedToken, ConsumeExpectation, PresenceOutcome, RecordedDecision,
-        };
-        struct Ledger(Vec<ApprovalRecordSummary>);
-        impl ApprovalBroker for Ledger {
-            fn request_token(&self, _: &ApprovalPrompt) -> Result<ApprovedToken, ApprovalError> {
-                Err(ApprovalError {
-                    code: FailureCode::ApprovalUnavailable,
-                    message: "test".into(),
-                })
-            }
-            fn consume(
-                &self,
-                _: &ApprovedToken,
-                _: &ConsumeExpectation,
-                _: u64,
-            ) -> Result<(), ApprovalError> {
-                Err(ApprovalError {
-                    code: FailureCode::ApprovalUnavailable,
-                    message: "test".into(),
-                })
-            }
-            fn history(&self, limit: usize) -> Vec<ApprovalRecordSummary> {
-                self.0.iter().take(limit).cloned().collect()
-            }
-        }
-        let record = |epoch: u64| ApprovalRecordSummary {
-            id: "r".into(),
-            digest: "d".into(),
-            workspace_id: "w".into(),
-            policy_revision: "p".into(),
-            decision: RecordedDecision::Approved,
-            approval_class: ApprovalClass::Strong,
-            presence_outcome: PresenceOutcome::VerifiedStrong,
-            presence_method: "m".into(),
-            epoch,
-            is_revoke: true,
-            requested_at_ms: 0,
-            decided_at_ms: 0,
-            expires_at_ms: 0,
-            reuse_scope: "s".into(),
-            consumed: true,
-            origin: None,
-        };
-        assert_eq!(approval_epoch(&Ledger(Vec::new())), 0);
-        assert_eq!(approval_epoch(&Ledger(vec![record(5), record(4)])), 5);
+    fn an_unverified_epoch_ends_every_session_and_refuses() {
+        let mut scene = Scene::new("unverified");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        assert!(broker.check_epoch(Some(0)).is_ok());
+        let a = scene.create(&mut broker, "client-a", "1").unwrap();
+        let refused = broker.check_epoch(None).unwrap_err();
+        assert_eq!(refused.code, FailureCode::ApprovalUnavailable);
+        let ended = broker.session("client-a", &a).map(|_| ()).unwrap_err();
+        assert!(ended.message.contains("emergency_stop"));
+        // A real busy ledger: another writer holds its lock.
+        let ledger = scene.root.join("approvals.jsonl");
+        let approval = orcel_approval::LocalApprovalBroker::with_path_and_soft_decider(
+            &ledger,
+            std::sync::Arc::new(orcel_approval::NoPresenceVerifier),
+            std::sync::Arc::new(|_| orcel_approval::ApprovalDecision::Approved),
+        );
+        assert_eq!(verified_epoch(&approval), Some(0));
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(orcel_approval::approval_ledger_lock_path(&ledger))
+            .unwrap();
+        fs4::FileExt::lock(&lock).unwrap();
+        assert_eq!(
+            verified_epoch(&approval),
+            None,
+            "a busy ledger is not verified"
+        );
+        let _b = scene.create(&mut broker, "client-a", "2").unwrap();
+        assert!(broker.check_epoch(verified_epoch(&approval)).is_err());
+        assert_eq!(broker.client_sessions("client-a").len(), 0);
+        drop(lock);
+        assert_eq!(verified_epoch(&approval), Some(0));
     }
 
     #[test]

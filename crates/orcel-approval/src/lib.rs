@@ -996,6 +996,15 @@ pub trait ApprovalBroker {
     fn history(&self, _limit: usize) -> Vec<ApprovalRecordSummary> {
         Vec::new()
     }
+
+    /// The approval ledger's revoke epoch, read and verified now (an
+    /// emergency revoke in any process advances it), or `None` when it
+    /// could not be verified just now (busy, unreadable, failing
+    /// verification) or this broker has no ledger. A caller that must not
+    /// act after a revoke refuses on `None`.
+    fn verified_revoke_epoch(&self) -> Option<u64> {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -1085,6 +1094,15 @@ impl LocalApprovalBroker {
             .map(|mut ledger| ledger.history(limit))
             .unwrap_or_default()
     }
+
+    /// The ledger's revoke epoch and whether it was verified for this
+    /// answer (see [`HistoryState`]).
+    pub fn revoke_epoch_with_state(&self) -> (u64, HistoryState) {
+        self.ledger
+            .lock()
+            .map(|mut ledger| ledger.revoke_epoch_with_state())
+            .unwrap_or((0, HistoryState::Unverifiable))
+    }
 }
 
 /// How current an approval history answer is. History is best effort: when the ledger can't
@@ -1146,6 +1164,15 @@ impl ApprovalHistoryReader {
             .map(|mut ledger| ledger.history_with_state(limit))
             .unwrap_or((Vec::new(), HistoryState::Unverifiable))
     }
+
+    /// The ledger's revoke epoch and whether it was verified for this
+    /// answer, or is the last verified view.
+    pub fn revoke_epoch_with_state(&self) -> (u64, HistoryState) {
+        self.ledger
+            .lock()
+            .map(|mut ledger| ledger.revoke_epoch_with_state())
+            .unwrap_or((0, HistoryState::Unverifiable))
+    }
 }
 
 impl ApprovalBroker for LocalApprovalBroker {
@@ -1171,6 +1198,13 @@ impl ApprovalBroker for LocalApprovalBroker {
 
     fn history(&self, limit: usize) -> Vec<ApprovalRecordSummary> {
         Self::history(self, limit)
+    }
+
+    fn verified_revoke_epoch(&self) -> Option<u64> {
+        match self.revoke_epoch_with_state() {
+            (epoch, HistoryState::Verified) => Some(epoch),
+            _ => None,
+        }
     }
 
     fn emergency_revoke(&self, prompt: &ApprovalPrompt) -> Result<u64, ApprovalError> {
@@ -2169,14 +2203,26 @@ impl ApprovalLedger {
         self.history_with_state(limit).0
     }
 
-    fn history_with_state(&mut self, limit: usize) -> (Vec<ApprovalRecordSummary>, HistoryState) {
-        // History is best effort: it waits briefly for the writer lock and a
-        // busy or failed refresh still reports the last verified view, and says which.
-        let state = match self.transact_waiting(HISTORY_LOCK_WAIT, |_| Ok(())) {
+    /// Refresh from the file, waiting briefly for the writer lock, and say
+    /// whether the view is verified now or the last verified one.
+    fn refresh_state(&mut self) -> HistoryState {
+        match self.transact_waiting(HISTORY_LOCK_WAIT, |_| Ok(())) {
             Ok(()) => HistoryState::Verified,
             Err(_) if self.poisoned() => HistoryState::Unverifiable,
             Err(_) => HistoryState::Busy,
-        };
+        }
+    }
+
+    /// The revoke epoch after a refresh, with that refresh's state.
+    fn revoke_epoch_with_state(&mut self) -> (u64, HistoryState) {
+        let state = self.refresh_state();
+        (self.revoke_epoch, state)
+    }
+
+    fn history_with_state(&mut self, limit: usize) -> (Vec<ApprovalRecordSummary>, HistoryState) {
+        // History is best effort: it waits briefly for the writer lock and a
+        // busy or failed refresh still reports the last verified view, and says which.
+        let state = self.refresh_state();
         let bound = limit.clamp(1, 200);
         let entries = self
             .records
@@ -5878,5 +5924,48 @@ mod tests {
         let expected = ConsumeExpectation::strong(prompt.digest.clone(), "default", "sg-000019-v1");
         broker.consume(&token, &expected, 6_500).expect("consume");
         let _ = std::fs::remove_file(path);
+    }
+
+    /// SG-000135 OB-01: the revoke epoch is read with its state: a revoke
+    /// written through another broker on the same ledger is seen, and a
+    /// busy or unverifiable ledger gives no verified epoch.
+    #[test]
+    fn the_verified_revoke_epoch_sees_another_writer_and_refuses_unverified_reads() {
+        let path = temp_path("revoke-epoch-state");
+        let ours = broker_with_presence(path.clone(), TestPresenceVerifier::verified());
+        assert_eq!(ours.verified_revoke_epoch(), Some(0));
+        let theirs = broker_with_presence(path.clone(), TestPresenceVerifier::verified());
+        let revoke =
+            ApprovalPrompt::new_strong("ws", "rev-1", "emergency revoke", "t", "s", "e".repeat(64));
+        assert_eq!(theirs.emergency_revoke(&revoke).expect("revoke"), 1);
+        assert_eq!(
+            ours.verified_revoke_epoch(),
+            Some(1),
+            "another writer's revoke is seen"
+        );
+        assert_eq!(ours.revoke_epoch_with_state(), (1, HistoryState::Verified));
+        let held = acquire_ledger_lock(&path, LEDGER_LOCK_WAIT).expect("lock");
+        assert_eq!(ours.revoke_epoch_with_state().1, HistoryState::Busy);
+        assert_eq!(
+            ours.verified_revoke_epoch(),
+            None,
+            "a busy ledger gives no epoch"
+        );
+        drop(held);
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("{\"not\":\"a record\"}\n");
+        std::fs::write(&path, text).unwrap();
+        let reader = ApprovalHistoryReader::at(&path);
+        assert_eq!(
+            reader.revoke_epoch_with_state().1,
+            HistoryState::Unverifiable
+        );
+        assert_eq!(
+            ours.verified_revoke_epoch(),
+            None,
+            "an unverifiable ledger gives no epoch"
+        );
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(approval_ledger_lock_path(&path));
     }
 }
