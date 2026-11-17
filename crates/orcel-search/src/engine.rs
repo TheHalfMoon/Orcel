@@ -7,11 +7,12 @@
 //! selection. No embedding model, no LLM, no network. The lexical limit is
 //! reported in `notices` rather than hidden.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
-use crate::bm25::{cosine_similarity, Bm25Index, Hit};
+use crate::bm25::{Bm25Index, Hit};
 use crate::extract::content_hash;
 use crate::formats::{render_html, render_json};
 use crate::highlights::{extract_highlights, lead_sentences, round_to, HighlightOptions};
@@ -85,15 +86,31 @@ impl Default for EngineOptions {
     }
 }
 
+/// BM25 term vectors with their squared norms, valid for one corpus state.
+#[derive(Debug, Default)]
+struct VectorCache {
+    vectors: HashMap<String, (BTreeMap<String, f64>, f64)>,
+}
+
 /// The in-memory corpus and its index.
 #[derive(Debug)]
 pub struct LocalSearchEngine {
     docs: HashMap<String, CorpusDoc>,
-    order: Vec<String>,
+    /// Insertion order as `(id, generation)`. Entries whose generation no
+    /// longer matches `generation[id]` are stale and skipped, so eviction
+    /// and replacement are O(1) amortized; the queue is compacted when
+    /// stale entries outnumber live ones.
+    order: VecDeque<(String, u64)>,
+    generation: HashMap<String, u64>,
+    next_generation: u64,
     by_url: HashMap<String, String>,
     index: Bm25Index,
     options: EngineOptions,
     requests: AtomicU64,
+    /// Term vectors for `find_similar`. Every IDF weight changes when the
+    /// corpus changes, so any add or eviction clears the whole cache; it is
+    /// rebuilt once on the next `find_similar` and reused until then.
+    vectors: Mutex<Option<VectorCache>>,
 }
 
 impl Default for LocalSearchEngine {
@@ -141,6 +158,25 @@ fn validate_query(raw: &str) -> Result<&str, EngineInputError> {
     Ok(query)
 }
 
+/// [`crate::bm25::cosine_similarity`] with precomputed squared norms: the
+/// same dot product, clamp and 12-decimal rounding.
+fn cosine_with_norms(
+    a: &BTreeMap<String, f64>,
+    norm_a: f64,
+    b: &BTreeMap<String, f64>,
+    norm_b: f64,
+) -> f64 {
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    let dot: f64 = a
+        .iter()
+        .filter_map(|(term, weight)| b.get(term).map(|other| weight * other))
+        .sum();
+    let similarity = dot / (norm_a.sqrt() * norm_b.sqrt());
+    (similarity.clamp(0.0, 1.0) * 1e12).round() / 1e12
+}
+
 fn truncate_at_word(text: &str, max_characters: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= max_characters {
@@ -164,11 +200,14 @@ impl LocalSearchEngine {
     pub fn new(options: EngineOptions) -> Self {
         Self {
             docs: HashMap::new(),
-            order: Vec::new(),
+            order: VecDeque::new(),
+            generation: HashMap::new(),
+            next_generation: 0,
             by_url: HashMap::new(),
             index: Bm25Index::default(),
             options,
             requests: AtomicU64::new(0),
+            vectors: Mutex::new(None),
         }
     }
 
@@ -205,8 +244,12 @@ impl LocalSearchEngine {
             }
         }
         if !self.docs.contains_key(&doc.id) {
-            self.order.push(doc.id.clone());
+            let generation = self.next_generation;
+            self.next_generation += 1;
+            self.generation.insert(doc.id.clone(), generation);
+            self.order.push_back((doc.id.clone(), generation));
         }
+        self.invalidate_vectors();
         let index_text = if doc.markdown.is_empty() {
             doc.text.clone()
         } else {
@@ -216,11 +259,34 @@ impl LocalSearchEngine {
         self.by_url.insert(doc.url.clone(), doc.id.clone());
         self.docs.insert(doc.id.clone(), doc);
         while self.docs.len() > self.options.max_documents {
-            let Some(oldest) = self.order.first().cloned() else {
+            let Some((oldest, generation)) = self.order.pop_front() else {
                 break;
             };
-            self.evict(&oldest);
+            if self.generation.get(&oldest) == Some(&generation) {
+                self.evict(&oldest);
+            }
         }
+        self.compact_order();
+    }
+
+    fn invalidate_vectors(&mut self) {
+        match self.vectors.get_mut() {
+            Ok(cache) => *cache = None,
+            Err(poisoned) => *poisoned.into_inner() = None,
+        }
+    }
+
+    /// Drops stale order entries once they outnumber live documents.
+    fn compact_order(&mut self) {
+        if self.order.len() > 2 * self.docs.len() + 16 {
+            let generation = &self.generation;
+            self.order
+                .retain(|(id, g)| generation.get(id).is_some_and(|live| live == g));
+        }
+    }
+
+    fn is_live(&self, id: &str, generation: u64) -> bool {
+        self.generation.get(id) == Some(&generation)
     }
 
     /// Adds every document; returns the corpus size.
@@ -245,7 +311,8 @@ impl LocalSearchEngine {
     pub fn all(&self) -> Vec<&CorpusDoc> {
         self.order
             .iter()
-            .filter_map(|id| self.docs.get(id))
+            .filter(|(id, g)| self.is_live(id, *g))
+            .filter_map(|(id, _)| self.docs.get(id))
             .collect()
     }
 
@@ -258,7 +325,9 @@ impl LocalSearchEngine {
         let Some(doc) = self.docs.remove(id) else {
             return;
         };
-        self.order.retain(|other| other != id);
+        // The order entry goes stale here and is skipped or compacted later.
+        self.generation.remove(id);
+        self.invalidate_vectors();
         if self.by_url.get(&doc.url).map(String::as_str) == Some(id) {
             self.by_url.remove(&doc.url);
         }
@@ -568,7 +637,13 @@ impl LocalSearchEngine {
                 "findSimilar needs a document already in the corpus (looked up by {looked_up})"
             )));
         };
-        let vector = self.index.term_vector(&source.id);
+        let mut guard = match self.vectors.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let cache = guard.get_or_insert_with(|| self.build_vectors());
+        let empty = (BTreeMap::new(), 0.0);
+        let (vector, norm) = cache.vectors.get(&source.id).unwrap_or(&empty);
         let source_host = url::parse(&source.url).map(|p| p.host);
         let mut scored: Vec<Hit> = Vec::new();
         for doc in self.all() {
@@ -584,7 +659,8 @@ impl LocalSearchEngine {
                     continue;
                 }
             }
-            let similarity = cosine_similarity(&vector, &self.index.term_vector(&doc.id));
+            let (other, other_norm) = cache.vectors.get(&doc.id).unwrap_or(&empty);
+            let similarity = cosine_with_norms(vector, *norm, other, *other_norm);
             if similarity > 0.0 {
                 scored.push(Hit {
                     id: doc.id.clone(),
@@ -627,6 +703,16 @@ impl LocalSearchEngine {
             )]),
             pagination: None,
         })
+    }
+
+    fn build_vectors(&self) -> VectorCache {
+        let mut vectors = HashMap::with_capacity(self.docs.len());
+        for id in self.docs.keys() {
+            let vector = self.index.term_vector(id);
+            let norm: f64 = vector.values().map(|w| w * w).sum();
+            vectors.insert(id.clone(), (vector, norm));
+        }
+        VectorCache { vectors }
     }
 
     fn collect_ranked(&self, query: &str, request: &SearchRequest) -> Vec<Hit> {

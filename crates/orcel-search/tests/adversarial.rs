@@ -325,3 +325,95 @@ fn answer_num_results_is_clamped_and_contents_enforces_the_batch_limit() {
     });
     assert!(pagination.expect("search").results.is_empty());
 }
+
+fn small_doc(i: usize, url: &str) -> orcel_search::CorpusDoc {
+    orcel_search::CorpusDoc {
+        id: format!("d{i}"),
+        url: url.to_string(),
+        title: format!("doc {i}"),
+        text: format!("shared words and topic{i}"),
+        markdown: String::new(),
+        blocks: Vec::new(),
+        published_date: None,
+        author: None,
+        site_name: None,
+        language: None,
+        category: orcel_search::types::DocCategory::General,
+        content_hash: format!("hash{i}"),
+        ingest: orcel_search::IngestRecord::default(),
+    }
+}
+
+#[test]
+fn eviction_at_the_cap_keeps_insertion_order_and_replacements_consistent() {
+    let mut engine = orcel_search::LocalSearchEngine::new(orcel_search::EngineOptions {
+        max_documents: 5_000,
+        ..Default::default()
+    });
+    for i in 0..20_000 {
+        engine.add(small_doc(i, &format!("https://example.org/{i}")));
+    }
+    assert_eq!(engine.len(), 5_000);
+    let ids: Vec<String> = engine.all().iter().map(|d| d.id.clone()).collect();
+    let expected: Vec<String> = (15_000..20_000).map(|i| format!("d{i}")).collect();
+    assert_eq!(ids, expected);
+
+    // Same URL, new id: the old document goes and the new one is newest.
+    engine.add(small_doc(99_999, "https://example.org/15000"));
+    assert!(engine.get("d15000").is_none());
+    assert_eq!(engine.all().last().map(|d| d.id.as_str()), Some("d99999"));
+    // The same id again keeps its place.
+    engine.add(small_doc(15_001, "https://example.org/15001"));
+    assert_eq!(engine.all().first().map(|d| d.id.as_str()), Some("d15001"));
+    assert_eq!(engine.len(), 5_000);
+    // An evicted id added again is newest, and the cap still holds.
+    engine.add(small_doc(3, "https://example.org/3"));
+    assert_eq!(engine.len(), 5_000);
+    assert_eq!(engine.all().last().map(|d| d.id.as_str()), Some("d3"));
+    assert!(engine.get("d15001").is_none(), "the oldest is evicted");
+    let hits = engine.search(&search("topic15001")).expect("search");
+    assert!(hits.results.is_empty(), "the evicted doc left the index");
+}
+
+#[test]
+fn find_similar_cached_vectors_match_the_direct_computation_and_refresh_on_change() {
+    use orcel_search::bm25::cosine_similarity;
+    use orcel_search::FindSimilarRequest;
+
+    let mut engine = build_engine();
+    let source = "https://searchlab.example.org/notes/bm25-hybrid-retrieval";
+    let request = FindSimilarRequest {
+        url: Some(source.into()),
+        num_results: Some(100),
+        ..Default::default()
+    };
+    let first = engine.find_similar(&request).expect("findSimilar");
+    let second = engine.find_similar(&request).expect("findSimilar");
+    assert_eq!(first.results, second.results);
+    let source_id = engine.get_by_url(source).expect("doc").id.clone();
+    let vector = engine.index().term_vector(&source_id);
+    for item in &first.results {
+        let direct = cosine_similarity(&vector, &engine.index().term_vector(&item.id));
+        assert_eq!(item.score, orcel_search::highlights::round_to(direct, 6));
+    }
+
+    // A new document changes every IDF weight: the cache must refresh.
+    let mut twin = engine.get_by_url(source).expect("doc").clone();
+    twin.id = "twin".into();
+    twin.url = "https://other.example/twin".into();
+    engine.add(twin);
+    let after = engine.find_similar(&request).expect("findSimilar");
+    assert_eq!(after.results[0].id, "twin");
+    assert_eq!(after.results[0].score, 1.0);
+}
+
+#[test]
+fn dom_traversals_return_empty_for_ids_outside_the_tree() {
+    let dom = parse("<p>one</p>").expect("parses");
+    let outside = dom.nodes.len() + 10;
+    assert!(dom.descendants(outside).is_empty());
+    assert!(dom.post_order(outside).is_empty());
+    assert_eq!(dom.text_content(outside), "");
+    assert_eq!(dom.find(outside, |_, _| true), None);
+    assert_eq!(dom.text_content(0), "one");
+}

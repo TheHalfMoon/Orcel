@@ -614,14 +614,25 @@ impl Dom {
             .is_some_and(|value| value.split_ascii_whitespace().any(|c| c == class))
     }
 
-    /// Element descendants of `root` in document order (excluding `root`).
+    /// Children of `id`, empty for an id that is not in the tree.
+    fn children_of(&self, id: NodeId) -> &[NodeId] {
+        self.nodes
+            .get(id)
+            .map_or(&[], |node| node.children.as_slice())
+    }
+
+    /// Element descendants of `root` in document order (excluding `root`);
+    /// empty for an id that is not in the tree.
     pub fn descendants(&self, root: NodeId) -> Vec<NodeId> {
         let mut out = Vec::new();
-        let mut stack: Vec<NodeId> = self.nodes[root].children.iter().rev().copied().collect();
+        let mut stack: Vec<NodeId> = self.children_of(root).iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
-            if matches!(self.nodes[id].kind, NodeKind::Element { .. }) {
+            if matches!(
+                self.nodes.get(id).map(|n| &n.kind),
+                Some(NodeKind::Element { .. })
+            ) {
                 out.push(id);
-                stack.extend(self.nodes[id].children.iter().rev().copied());
+                stack.extend(self.children_of(id).iter().rev().copied());
             }
         }
         out
@@ -642,14 +653,16 @@ impl Dom {
             .collect()
     }
 
-    /// Concatenated text of a node and its descendants.
+    /// Concatenated text of a node and its descendants; empty for an id
+    /// that is not in the tree.
     pub fn text_content(&self, id: NodeId) -> String {
         let mut out = String::new();
         let mut stack = vec![id];
         while let Some(node) = stack.pop() {
-            match &self.nodes[node].kind {
-                NodeKind::Text(text) => out.push_str(text),
-                _ => stack.extend(self.nodes[node].children.iter().rev().copied()),
+            match self.nodes.get(node).map(|n| &n.kind) {
+                Some(NodeKind::Text(text)) => out.push_str(text),
+                Some(_) => stack.extend(self.children_of(node).iter().rev().copied()),
+                None => {}
             }
         }
         out
@@ -678,11 +691,12 @@ impl Dom {
     }
 
     /// Element and text nodes under `root` (excluding `root`) in post-order:
-    /// every node after all of its descendants.
+    /// every node after all of its descendants. Empty for an id that is not
+    /// in the tree.
     pub fn post_order(&self, root: NodeId) -> Vec<NodeId> {
         let mut out = Vec::new();
-        let mut stack: Vec<(NodeId, bool)> = self.nodes[root]
-            .children
+        let mut stack: Vec<(NodeId, bool)> = self
+            .children_of(root)
             .iter()
             .rev()
             .map(|c| (*c, false))
@@ -693,7 +707,7 @@ impl Dom {
                 continue;
             }
             stack.push((id, true));
-            stack.extend(self.nodes[id].children.iter().rev().map(|c| (*c, false)));
+            stack.extend(self.children_of(id).iter().rev().map(|c| (*c, false)));
         }
         out
     }
