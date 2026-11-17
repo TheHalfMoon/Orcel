@@ -13,6 +13,7 @@ package semantic
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,42 @@ func TestDiffReportsOnlyRefKeyedChanges(t *testing.T) {
 	if !strings.Contains(text, `~ button "OK" [ref=r2] -> button "OK" [disabled=true] [ref=r2]`) ||
 		!strings.Contains(text, `- checkbox "Remember" [checked=true] [ref=r5]`) {
 		t.Fatalf("diff text:\n%s", text)
+	}
+}
+
+// Orcel: the diff text stays within the Rust adapter's 64 KiB bound and is
+// cut on a change boundary with a truncation note.
+func TestDiffTextIsBoundedOnAChangeBoundary(t *testing.T) {
+	long := strings.Repeat("x", 2000)
+	diff := &Diff{Omitted: 9}
+	for index := 0; index < MaxDiffChanges; index++ {
+		diff.Changes = append(diff.Changes, DiffChange{
+			Kind: DiffChanged, Ref: "r" + strconv.Itoa(index+1),
+			Before: `text "` + long + `"`, After: `text "` + long + `" [ref=r` + strconv.Itoa(index+1) + `]`,
+		})
+	}
+	text := diff.Text()
+	if len(text) > MaxDiffTextBytes {
+		t.Fatalf("diff text is %d bytes, over %d", len(text), MaxDiffTextBytes)
+	}
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("too few lines: %d", len(lines))
+	}
+	kept := len(lines) - 2
+	wantTruncated := MaxDiffChanges - kept
+	if lines[len(lines)-2] != "~ note: "+strconv.Itoa(wantTruncated)+" changes truncated by the output budget" ||
+		lines[len(lines)-1] != "~ note: 9 more changes omitted" {
+		t.Fatalf("notes: %q / %q", lines[len(lines)-2], lines[len(lines)-1])
+	}
+	for _, line := range lines[:kept] {
+		if !strings.HasPrefix(line, "~ text \"") || !strings.HasSuffix(line, "]") {
+			t.Fatalf("a change was cut mid line: %q", line[len(line)-20:])
+		}
+	}
+	small := &Diff{Changes: []DiffChange{{Kind: DiffAdded, Ref: "r1", After: "button \"OK\" [ref=r1]"}}}
+	if got := small.Text(); got != "+ button \"OK\" [ref=r1]\n" {
+		t.Fatalf("small diff text = %q", got)
 	}
 }
 

@@ -132,22 +132,41 @@ func refNumber(ref string) uint64 {
 	return value
 }
 
+// MaxDiffTextBytes bounds Text: the Rust adapter rejects a whole
+// observation whose diff text exceeds 64 KiB (MAX_REF_TREE_TEXT_BYTES).
+const MaxDiffTextBytes = 64 * 1024
+
+// diffTextNoteReserve keeps room for the truncation and omission notes.
+const diffTextNoteReserve = 128
+
 // Text renders a diff compactly: "+ label" for added, "- label" for
-// removed and "~ before -> after" for a changed ref.
+// removed and "~ before -> after" for a changed ref. The output never
+// exceeds MaxDiffTextBytes: it is cut on a change boundary and ends with a
+// truncation note instead.
 func (diff *Diff) Text() string {
 	if diff == nil {
 		return ""
 	}
 	var builder strings.Builder
-	for _, change := range diff.Changes {
+	truncated := 0
+	for index, change := range diff.Changes {
+		var line string
 		switch change.Kind {
 		case DiffAdded:
-			builder.WriteString("+ " + change.After + "\n")
+			line = "+ " + change.After + "\n"
 		case DiffRemoved:
-			builder.WriteString("- " + change.Before + "\n")
+			line = "- " + change.Before + "\n"
 		default:
-			builder.WriteString("~ " + change.Before + " -> " + change.After + "\n")
+			line = "~ " + change.Before + " -> " + change.After + "\n"
 		}
+		if builder.Len()+len(line) > MaxDiffTextBytes-diffTextNoteReserve {
+			truncated = len(diff.Changes) - index
+			break
+		}
+		builder.WriteString(line)
+	}
+	if truncated > 0 {
+		builder.WriteString("~ note: " + strconv.Itoa(truncated) + " changes truncated by the output budget\n")
 	}
 	if diff.Omitted > 0 {
 		builder.WriteString("~ note: " + strconv.Itoa(diff.Omitted) + " more changes omitted\n")

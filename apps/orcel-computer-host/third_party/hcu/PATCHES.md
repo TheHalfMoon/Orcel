@@ -48,7 +48,11 @@ surroundings. Every file in `semantic/` names the donor blobs it adapts.
    printed; unnamed, stateless group or generic nodes with no action pattern
    are flattened; the output has a byte budget with an omission note.
 6. Diff: nodes are matched by ref only; the weak-duplicate LCS matching and
-   order changes are not ported.
+   order changes are not ported. `Diff.Text()` is capped at
+   `MaxDiffTextBytes` (64 KiB, the Rust adapter's `MAX_REF_TREE_TEXT_BYTES`):
+   it is cut on a change boundary and ends with a
+   `~ note: N changes truncated by the output budget` line, so an oversized
+   diff no longer makes the adapter reject the whole observation.
 7. Layout: the frame covers the bound window (rectangle, client rectangle,
    DPI) and the virtual desktop, not every top-level window, because Orcel
    input is window-relative.

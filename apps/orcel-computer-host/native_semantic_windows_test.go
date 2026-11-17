@@ -4,9 +4,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // W2-01 native qualification of the HCU-derived semantic layer against a
-// disposable Windows Forms window this test launches. The default tests
-// only read: UIA observation of the test window, its layout, and a
-// test-only move of the test window itself. No input is sent. The live
+// disposable Windows Forms window this test launches. It runs only when
+// ORCEL_W201_NATIVE_TESTS=1 (set in CI) and then only reads: UIA
+// observation of the test window, its layout, and a test-only move of the
+// test window itself. No input is sent. The live
 // identity check of a semantic action calls a UIA pattern on the test
 // window and runs only when ORCEL_W201_SEMANTIC_ACTIONS=1 (set in CI, on a
 // disposable runner).
@@ -67,6 +68,9 @@ func runtimeIDFor(t *testing.T, elements []elementFact, name string) string {
 }
 
 func TestW201RefTreeAgainstDisposableWindow(t *testing.T) {
+	if os.Getenv("ORCEL_W201_NATIVE_TESTS") != "1" {
+		t.Skip("set ORCEL_W201_NATIVE_TESTS=1 to run the W2-01 native qualification against a disposable window (set in CI)")
+	}
 	if err := requireInteractiveStation(); err != nil {
 		t.Fatalf("native qualification requires the interactive WinSta0 session: %v", err)
 	}

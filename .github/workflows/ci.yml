@@ -164,6 +164,7 @@ jobs:
       - name: Go computer host tests
         shell: bash
         env:
+          ORCEL_W201_NATIVE_TESTS: ${{ runner.os == 'Windows' && '1' || '' }}
           ORCEL_W201_SEMANTIC_ACTIONS: ${{ runner.os == 'Windows' && '1' || '' }}
         run: |
           set -euo pipefail

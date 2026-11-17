@@ -511,8 +511,16 @@ struct HostRefEntry {
 const MAX_REF_TREE_TEXT_BYTES: usize = 64 * 1024;
 const MAX_SNAPSHOT_ID_BYTES: usize = 64;
 const MAX_LAYOUT_FRAME_BYTES: usize = 80;
-/// Bound of the remembered element identities, over all windows.
+/// Bound of the remembered element identities of one window. Narrowing is
+/// best-effort hardening, not a gate: elements past this bound (and windows
+/// past MAX_OBSERVED_WINDOWS, which clears the record) are sent without an
+/// expected identity, as before W2-01, and orceld's approval still applies.
 const MAX_OBSERVED_ELEMENTS: usize = 8192;
+/// Bound of the windows whose last read is remembered.
+const MAX_OBSERVED_WINDOWS: usize = 64;
+/// Age past which a remembered read no longer narrows an action: the action
+/// is sent without the expected identity and snapshot id, as before W2-01.
+const MAX_OBSERVATION_AGE: std::time::Duration = std::time::Duration::from_secs(300);
 
 fn is_short_ref(value: &str) -> bool {
     let digits = value.strip_prefix('r').unwrap_or("");
@@ -580,6 +588,9 @@ struct ObservedWindow {
     snapshot_id: Option<String>,
     snapshot_runtime_ids: std::collections::BTreeSet<String>,
     elements: std::collections::BTreeMap<String, (String, String, String)>,
+    /// When the record was started (the last whole-window read, or the
+    /// first subtree read); a subtree read never extends it.
+    observed_at: Option<std::time::Instant>,
 }
 
 fn remember_elements(
@@ -1014,12 +1025,15 @@ mod platform {
             let Ok(mut observed) = self.observed.lock() else {
                 return;
             };
-            if !observed.contains_key(&hwnd) && observed.len() >= 64 {
+            if !observed.contains_key(&hwnd) && observed.len() >= MAX_OBSERVED_WINDOWS {
                 observed.clear();
             }
             let window = observed.entry(hwnd).or_default();
             if whole_window {
                 *window = ObservedWindow::default();
+            }
+            if window.observed_at.is_none() {
+                window.observed_at = Some(std::time::Instant::now());
             }
             window.snapshot_id = snapshot.map(|tree| tree.snapshot_id.clone());
             window.snapshot_runtime_ids = snapshot
@@ -1047,6 +1061,12 @@ mod platform {
             let Some(window) = observed.get(&hwnd) else {
                 return (None, None);
             };
+            let fresh = window
+                .observed_at
+                .is_some_and(|at| at.elapsed() <= MAX_OBSERVATION_AGE);
+            if !fresh {
+                return (None, None);
+            }
             let snapshot = window
                 .snapshot_id
                 .clone()
@@ -1193,6 +1213,15 @@ mod platform {
                 last_input: Mutex::new(None),
                 observed: Mutex::new(BTreeMap::new()),
             })
+        }
+
+        /// Ages every remembered read by `by`, for the observation age test.
+        #[cfg(test)]
+        pub(crate) fn age_observations_for_test(&self, by: std::time::Duration) {
+            let mut observed = self.observed.lock().unwrap();
+            for window in observed.values_mut() {
+                window.observed_at = window.observed_at.and_then(|at| at.checked_sub(by));
+            }
         }
 
         #[cfg(test)]
@@ -3704,6 +3733,22 @@ mod tests {
         );
         assert!(sent[2].get("expected_element").is_none(), "never observed");
         assert!(sent[2].get("snapshot_id").is_none());
+    }
+
+    #[test]
+    fn w201_an_old_observation_no_longer_narrows_an_action() {
+        let (adapter, frames) = w201_windows_host(w201_refs());
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter.read_ref_tree(11).unwrap();
+        adapter.age_observations_for_test(
+            MAX_OBSERVATION_AGE + std::time::Duration::from_secs(1),
+        );
+        adapter.invoke_element(11, "42.2").unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].get("expected_element").is_none(), "too old");
+        assert!(sent[0].get("snapshot_id").is_none(), "too old");
     }
 
     #[test]
