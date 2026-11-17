@@ -224,6 +224,17 @@
         "docs/orcel/SOURCE_PERMISSIONS.md"
       ],
       "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "stagehand": {
+      "repo": "browserbase/stagehand",
+      "commit": "82827a219512f0399cb159720a63f7d271d21480",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/stagehand-MIT.txt",
+      "records": [
+        "docs/orcel/stagehand_provenance.json"
+      ],
+      "earlier_records": [],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
     }
   },
   "files": [
@@ -698,6 +709,67 @@
         "test-data/spreadsheet/WithVariousData.xlsx"
       ],
       "patches": "none"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/xpath.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/xpathUtils.ts",
+        "packages/extension/utils.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/dom-tree.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/domTree.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/a11y-tree.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/a11yTree.ts",
+        "packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/tree-format.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts",
+        "packages/extension/understudy/a11y/snapshot/capture.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/capture.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/capture.ts",
+        "packages/extension/understudy/a11y/snapshot/a11yTree.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/schema-extract.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/services/extractService.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/targets.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/services/actService.ts",
+        "packages/extension/services/observeService.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/dom-tree.test.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/domTree.test.ts"
+      ]
     }
   ],
   "references": [
@@ -836,6 +908,10 @@
     {
       "path": "apps/web/public/fonts/OFL-InstrumentSerif.txt",
       "reason": "Published SIL Open Font License text of Instrument Serif (Instrument/instrument-serif). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
+    },
+    {
+      "path": "crates/orcel-browser-host/src/worker_outline.rs",
+      "reason": "New Orcel code (W2-03 host policy gate and wire types; donor_path null in docs/orcel/stagehand_provenance.json); it names the Stagehand notice because the worker files it gates are Stagehand-derived."
     }
   ],
   "authorizations": {
