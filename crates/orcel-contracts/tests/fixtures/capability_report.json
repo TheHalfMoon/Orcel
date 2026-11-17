@@ -1,0 +1,46 @@
+{
+  "contract": "orcel.capability-report/1",
+  "device": {
+    "contract": "orcel.device/1",
+    "device_id": "dev-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "os": "windows",
+    "os_build": "10.0.26100",
+    "arch": "x86_64",
+    "device_epoch": 3
+  },
+  "build": "release",
+  "entries": [
+    {
+      "capability": "web/scrape",
+      "engine": "fetch",
+      "status": "available",
+      "component": {
+        "name": "orcel-firecrawl",
+        "license": "AGPL-3.0-only",
+        "isolation": "sidecar"
+      }
+    },
+    {
+      "capability": "web/scrape",
+      "engine": "chromium",
+      "status": "unavailable",
+      "reason": "no installed engine found"
+    },
+    {
+      "capability": "web/scrape",
+      "engine": "obscura",
+      "status": "unsupported",
+      "reason": "track B engine"
+    },
+    {
+      "capability": "web/scrape",
+      "status": "blocked",
+      "policy": "cloud-only"
+    },
+    {
+      "capability": "web/scrape",
+      "status": "permission_required",
+      "permission": "web.privacy.sensitive:geolocation_override"
+    }
+  ]
+}

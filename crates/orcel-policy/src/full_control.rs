@@ -18,29 +18,10 @@ pub const MIN_FULL_CONTROL_LEASE_MS: u64 = 60_000;
 pub const MAX_FULL_CONTROL_LEASE_MS: u64 = 12 * 60 * 60 * 1_000;
 pub const MAX_AUTHORITY_FIELD_BYTES: usize = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthorityMode {
-    Safe,
-    FullUser,
-    FullAdmin,
-    PersistentAdmin,
-    RemoteFullControl,
-}
-
-impl AuthorityMode {
-    pub const ALL: [Self; 5] = [
-        Self::Safe,
-        Self::FullUser,
-        Self::FullAdmin,
-        Self::PersistentAdmin,
-        Self::RemoteFullControl,
-    ];
-
-    pub fn is_default(self) -> bool {
-        self == Self::Safe
-    }
-}
+// Contracts v1 (WP1-02): the SG-000093 vocabularies live in
+// `orcel-contracts` with identical serde spellings and are re-exported here
+// so no caller changes.
+pub use orcel_contracts::{AuthorityMode, ExecutionState, ExecutorClass};
 
 /// Opaque proof that authority issuance came from Orcel's authenticated
 /// local-user control path. The private 256-bit secret is also the keying
@@ -81,20 +62,6 @@ pub enum ElevationState {
     ElevatedAdministrator,
     System,
     TrustedInstaller,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutorClass {
-    DesktopObservation,
-    DesktopInput,
-    ShellProcess,
-    Filesystem,
-    Browser,
-    Web,
-    VisualAgent,
-    Admin,
-    Remote,
 }
 
 const FULL_USER_CEILING: &[ExecutorClass] = &[
@@ -451,26 +418,6 @@ impl AuthorityEpoch {
             .ok_or_else(|| invalid("authority epoch overflow"))?;
         Ok(self.value)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionState {
-    NotStarted,
-    Dispatched,
-    Completed,
-    Cancelled,
-    OutcomeUnknown,
-}
-
-impl ExecutionState {
-    pub const ALL: [Self; 5] = [
-        Self::NotStarted,
-        Self::Dispatched,
-        Self::Completed,
-        Self::Cancelled,
-        Self::OutcomeUnknown,
-    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
