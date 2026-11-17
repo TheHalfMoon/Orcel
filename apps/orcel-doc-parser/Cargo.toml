@@ -16,8 +16,9 @@
 [workspace]
 resolver = "2"
 members = ["."]
-# The vendored lopdf is a patched dependency, not a member (#391).
-exclude = ["third_party"]
+# The vendored lopdf is a patched dependency, not a member (#391), and so is
+# the zip 8 re-export of zip 9 (compat/zip8-on-zip9).
+exclude = ["third_party", "compat"]
 
 [package]
 name = "orcel-doc-parser"
@@ -47,8 +48,10 @@ rayon = "1.10"
 # installs one logger that only watches pdf-inspector's input-changing paths
 # (src/pdf.rs, `parity`); nothing is printed.
 log = "0.4"
-# The donor's header and footer pass (deflate only, as in the donor).
-zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
+# The donor's header and footer pass (deflate only, as in the donor). zip 9
+# for RUSTSEC-2026-0545..0548; anydoc's zip 8 requirement is served by this
+# same zip through the patch below.
+zip ={ version = "=9.6.1", default-features = false, features = ["deflate"] }
 roxmltree = "=0.20.0"
 # The spec, bounds and stdout frame shared with orceld (std only).
 orcel-provider-process = { path = "../../crates/orcel-provider-process" }
@@ -60,6 +63,11 @@ orcel-provider-process = { path = "../../crates/orcel-provider-process" }
 # src/pdf.rs opens per document.
 [patch.crates-io]
 lopdf = { path = "third_party/lopdf" }
+# anydoc 0.2.2 requires zip ^8.6.0, and zip 8.6.0 carries RUSTSEC-2026-0545,
+# -0546, -0547 and -0548, fixed only in zip 9. This path crate is named zip at
+# 8.6.0 and re-exports zip 9.6.1, so the graph holds one zip, the audited 9.6.1
+# (compat/zip8-on-zip9/README.md). Remove it once anydoc accepts zip 9.
+zip = { path = "compat/zip8-on-zip9" }
 
 [dev-dependencies]
 tempfile = "3"
