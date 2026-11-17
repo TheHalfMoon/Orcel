@@ -299,8 +299,10 @@ fn the_agents_own_input_is_told_from_the_humans() {
         "a marker issued for another page vouches for nothing there"
     );
     assert_eq!(scene.state("b"), State::HumanOverride);
+    let mut tag = marker.tag;
+    tag[31] ^= 0x80;
     let forged = AgentMarker {
-        tag: marker.tag.wrapping_add(1),
+        tag,
         ..marker.clone()
     };
     assert_eq!(
@@ -354,6 +356,8 @@ fn a_challenge_is_handed_to_the_human_and_the_task_resumes_after_they_finish() {
         scene.state("login"),
         State::AwaitHumanVerification(ChallengeKind::Mfa)
     );
+    // The detector no longer sees the MFA prompt.
+    assert_eq!(scene.gate.challenge_cleared(&page("login")), Ok(true));
     // Three quiet seconds later the agent observes again and resumes.
     let basis = scene.settle_and_reobserve("login");
     assert!(scene.write("login", "click:continue", basis).is_ok());

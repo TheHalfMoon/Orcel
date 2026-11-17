@@ -11,7 +11,7 @@
 //!   RUNNING
 //!
 //!   any live state ── challenge detected or requested ──▶ AWAIT_HUMAN_VERIFICATION
-//!      ── challenge cleared, or the human acted, then 3000 ms quiet ──▶ REOBSERVE
+//!      ── the detector reports it cleared, then 3000 ms quiet ──▶ REOBSERVE
 //!   any live state ── pause ──▶ PAUSED ── resume ──▶ QUIET / REOBSERVE (or back to AWAIT)
 //!   any state ── cancel ──▶ CANCELLED (terminal)
 //! ```
@@ -52,6 +52,19 @@ use std::collections::{BTreeMap, BTreeSet};
 /// How long the human must be idle on a resource before the agent may look
 /// at it again.
 pub const QUIET_MS: u64 = 3_000;
+
+/// How long a write ticket may stay pending. A ticket never sent is
+/// dropped after it; a ticket sent whose outcome never came back is then
+/// treated as uncertain (a consequential one is never admitted again).
+pub const PENDING_TTL_MS: u64 = 120_000;
+
+/// The most writes pending on one resource. Past it new writes are
+/// refused (fail closed).
+pub const MAX_PENDING_WRITES: usize = 64;
+
+/// The most uncertain actions one resource remembers. Once full, every
+/// consequential write on it is refused (fail closed).
+pub const MAX_UNCERTAIN_ACTIONS: usize = 1_024;
 
 /// Whether an agent operation only reads the resource or may change it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,6 +248,8 @@ struct Pending {
     epoch: u64,
     key: ActionKey,
     class: ActionClass,
+    begun_at: Millis,
+    dispatched: bool,
 }
 
 /// One resource's session.
@@ -250,7 +265,6 @@ pub struct ResourceSession {
     observed_epoch: u64,
     paused_from: Option<State>,
     challenge_origin: Option<ChallengeOrigin>,
-    challenge_human_seen: bool,
     challenge_cleared_at: Option<Millis>,
     next_write: u64,
     pending: BTreeMap<u64, Pending>,
@@ -271,7 +285,6 @@ impl ResourceSession {
             observed_epoch: 0,
             paused_from: None,
             challenge_origin: None,
-            challenge_human_seen: false,
             challenge_cleared_at: None,
             next_write: 1,
             pending: BTreeMap::new(),
@@ -342,12 +355,36 @@ impl ResourceSession {
     fn enter_reobserve(&mut self) {
         self.state = State::Reobserve;
         self.challenge_origin = None;
-        self.challenge_human_seen = false;
         self.challenge_cleared_at = None;
+    }
+
+    fn remember_uncertain(&mut self, key: ActionKey) {
+        if self.uncertain.len() < MAX_UNCERTAIN_ACTIONS {
+            self.uncertain.insert(key);
+        }
+    }
+
+    /// Drop tickets past [`PENDING_TTL_MS`]: an unsent one is gone; a
+    /// sent consequential one becomes uncertain.
+    fn expire_pending(&mut self, now: Millis) {
+        let expired: Vec<u64> = self
+            .pending
+            .iter()
+            .filter(|(_, pending)| now.since(pending.begun_at) >= PENDING_TTL_MS)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in expired {
+            if let Some(pending) = self.pending.remove(&id) {
+                if pending.dispatched && pending.class == ActionClass::Consequential {
+                    self.remember_uncertain(pending.key);
+                }
+            }
+        }
     }
 
     /// Bring the session up to `now`: the transitions time alone makes.
     pub fn advance(&mut self, now: Millis) {
+        self.expire_pending(now);
         loop {
             match self.state {
                 State::HumanOverride
@@ -365,8 +402,10 @@ impl ResourceSession {
                     self.enter_reobserve();
                     return;
                 }
+                // Only the detector's report that the challenge is gone ends
+                // the wait; the human's events only push the resume back.
                 State::AwaitHumanVerification(_)
-                    if (self.challenge_human_seen || self.challenge_cleared_at.is_some())
+                    if self.challenge_cleared_at.is_some()
                         && self.quiet_elapsed(
                             self.last_human_at.max(self.challenge_cleared_at),
                             now,
@@ -419,8 +458,10 @@ impl ResourceSession {
                 self.state = State::HumanOverride;
             }
             State::Quiet => self.state = State::HumanOverride,
-            State::AwaitHumanVerification(_) => self.challenge_human_seen = true,
-            State::HumanOverride | State::Paused | State::Cancelled => {}
+            State::AwaitHumanVerification(_)
+            | State::HumanOverride
+            | State::Paused
+            | State::Cancelled => {}
         }
     }
 
@@ -509,9 +550,13 @@ impl ResourceSession {
             return Err(Reason::OutcomeUncertain);
         }
         if class == ActionClass::Consequential
-            && self.pending.values().any(|pending| pending.key == key)
+            && (self.uncertain.len() >= MAX_UNCERTAIN_ACTIONS
+                || self.pending.values().any(|pending| pending.key == key))
         {
             return Err(Reason::OutcomeUncertain);
+        }
+        if self.pending.len() >= MAX_PENDING_WRITES {
+            return Err(Reason::TargetStale);
         }
         // The first write planned on the fresh observation ends the replan.
         self.state = State::Running;
@@ -523,6 +568,8 @@ impl ResourceSession {
                 epoch: self.epoch,
                 key,
                 class,
+                begun_at: now,
+                dispatched: false,
             },
         );
         Ok(WriteTicket {
@@ -530,6 +577,53 @@ impl ResourceSession {
             id,
             epoch: self.epoch,
         })
+    }
+
+    /// Give a pending ticket the key of its stable action material, once
+    /// the caller knows it (after the target was bound). The idempotency
+    /// guard then applies to that key. A refused ticket is invalidated.
+    ///
+    /// # Errors
+    /// `TargetStale` for a ticket that is no longer pending or current;
+    /// `OutcomeUncertain` for a key whose earlier dispatch is uncertain, or
+    /// a consequential action with that key already pending.
+    pub fn rekey(
+        &mut self,
+        ticket: &WriteTicket,
+        key: ActionKey,
+        now: Millis,
+    ) -> Result<(), Reason> {
+        self.advance(now);
+        let Some(pending) = self.pending.get(&ticket.id) else {
+            return Err(Reason::TargetStale);
+        };
+        let class = pending.class;
+        let refusal = if pending.epoch != self.epoch || pending.dispatched {
+            Some(Reason::TargetStale)
+        } else if self.uncertain.contains(&key)
+            || (class == ActionClass::Consequential
+                && self
+                    .pending
+                    .iter()
+                    .any(|(id, other)| *id != ticket.id && other.key == key))
+        {
+            Some(Reason::OutcomeUncertain)
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            self.pending.remove(&ticket.id);
+            return Err(reason);
+        }
+        if let Some(pending) = self.pending.get_mut(&ticket.id) {
+            pending.key = key;
+        }
+        Ok(())
+    }
+
+    /// Drop a pending ticket the caller will not send.
+    pub fn invalidate(&mut self, ticket: &WriteTicket) -> bool {
+        self.pending.remove(&ticket.id).is_some()
     }
 
     /// Check again, right before sending, that the write may still go: the
@@ -558,24 +652,56 @@ impl ResourceSession {
                 self.pending.remove(&ticket.id);
                 Err(reason)
             }
-            None => Ok(()),
+            None => {
+                if let Some(pending) = self.pending.get_mut(&ticket.id) {
+                    pending.dispatched = true;
+                }
+                Ok(())
+            }
         }
     }
 
     /// A write finished with `outcome`. A consequential write with an
     /// uncertain outcome is never admitted again until reconciled.
     pub fn finish_write(&mut self, ticket: &WriteTicket, outcome: WriteOutcome) -> WriteFate {
+        self.finish_write_keyed(ticket, outcome).0
+    }
+
+    /// As [`Self::finish_write`], also returning the key it recorded as
+    /// uncertain, if it recorded one.
+    pub fn finish_write_keyed(
+        &mut self,
+        ticket: &WriteTicket,
+        outcome: WriteOutcome,
+    ) -> (WriteFate, Option<ActionKey>) {
         let Some(pending) = self.pending.remove(&ticket.id) else {
-            return WriteFate::NotPending;
+            return (WriteFate::NotPending, None);
         };
-        if outcome == WriteOutcome::Uncertain && pending.class == ActionClass::Consequential {
-            self.uncertain.insert(pending.key);
-        }
-        if pending.epoch == self.epoch {
+        let fate = if pending.epoch == self.epoch {
             WriteFate::Recorded
         } else {
             WriteFate::Superseded
+        };
+        if outcome == WriteOutcome::Uncertain && pending.class == ActionClass::Consequential {
+            self.remember_uncertain(pending.key.clone());
+            return (fate, Some(pending.key));
         }
+        (fate, None)
+    }
+
+    /// What the session knows to be uncertain when it ends: the keys it
+    /// recorded, and every consequential write sent whose outcome never
+    /// came back. A caller that outlives the session keeps them.
+    #[must_use]
+    pub fn into_uncertain(self) -> Vec<ActionKey> {
+        let mut keys: Vec<ActionKey> = self.uncertain.into_iter().collect();
+        keys.extend(
+            self.pending
+                .into_values()
+                .filter(|pending| pending.dispatched && pending.class == ActionClass::Consequential)
+                .map(|pending| pending.key),
+        );
+        keys
     }
 
     /// The outcome of `key`'s uncertain dispatch was established (by a
@@ -600,12 +726,18 @@ impl ResourceSession {
                 self.start_intervention(now);
                 self.state = State::HumanOverride;
             }
-            State::Quiet | State::Paused => {
-                self.paused_from = None;
-                self.state = State::HumanOverride;
+            // A paused challenge stays a challenge: the person holds the
+            // page, and only the detector's report ends the wait.
+            State::Paused => {
+                self.state = match self.paused_from.take() {
+                    Some(State::AwaitHumanVerification(kind)) => {
+                        State::AwaitHumanVerification(kind)
+                    }
+                    _ => State::HumanOverride,
+                };
             }
-            State::AwaitHumanVerification(_) => self.challenge_human_seen = true,
-            State::HumanOverride | State::Cancelled => {}
+            State::Quiet => self.state = State::HumanOverride,
+            State::AwaitHumanVerification(_) | State::HumanOverride | State::Cancelled => {}
         }
         Ok(())
     }
@@ -685,17 +817,17 @@ impl ResourceSession {
             State::Cancelled => Err(ControlError::Cancelled),
             State::AwaitHumanVerification(_) => Ok(()),
             State::Paused => {
-                self.paused_from = Some(State::AwaitHumanVerification(kind));
-                self.challenge_origin = Some(origin);
-                self.challenge_human_seen = false;
-                self.challenge_cleared_at = None;
+                if !matches!(self.paused_from, Some(State::AwaitHumanVerification(_))) {
+                    self.paused_from = Some(State::AwaitHumanVerification(kind));
+                    self.challenge_origin = Some(origin);
+                    self.challenge_cleared_at = None;
+                }
                 Ok(())
             }
             _ => {
                 self.start_intervention(now);
                 self.state = State::AwaitHumanVerification(kind);
                 self.challenge_origin = Some(origin);
-                self.challenge_human_seen = false;
                 self.challenge_cleared_at = None;
                 Ok(())
             }
@@ -704,9 +836,13 @@ impl ResourceSession {
 
     /// The engine's challenge detector no longer sees the challenge. The
     /// session resumes once the human has been quiet for the quiet period.
-    /// Only the detector calls this; the agent cannot clear a challenge.
+    /// Only the detector calls this; the agent cannot clear a challenge,
+    /// and the human's own activity never does either.
     pub fn challenge_cleared(&mut self, now: Millis) -> bool {
-        if matches!(self.state, State::AwaitHumanVerification(_)) {
+        if matches!(self.state, State::AwaitHumanVerification(_))
+            || (self.state == State::Paused
+                && matches!(self.paused_from, Some(State::AwaitHumanVerification(_))))
+        {
             self.challenge_cleared_at = Some(now);
             true
         } else {

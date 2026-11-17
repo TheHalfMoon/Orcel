@@ -122,6 +122,9 @@ pub enum ControlError {
     NotPaused,
     /// Another task already owns the resource.
     OwnedByAnotherTask,
+    /// The gate tracks as many resources as it may; the caller must refuse
+    /// to act on a resource it could not claim.
+    Full,
 }
 
 impl fmt::Display for ControlError {
@@ -131,6 +134,7 @@ impl fmt::Display for ControlError {
             Self::Cancelled => "the task was cancelled",
             Self::NotPaused => "the resource is not paused",
             Self::OwnedByAnotherTask => "another task owns that resource",
+            Self::Full => "the gate tracks as many resources as it may",
         })
     }
 }
