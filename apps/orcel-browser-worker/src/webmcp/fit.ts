@@ -21,8 +21,9 @@ export interface Fitted {
 
 export function fitTools(discId: number, url: string, truncated: boolean, tools: readonly DeclaredTool[], max = MAX_FRAME_BYTES): Fitted {
   // The envelope is measured with `truncated: false`, the longer spelling,
-  // so the bound holds whichever value is sent.
-  let used = Buffer.byteLength(JSON.stringify({ frame: "discovered", disc_id: discId, url, truncated: false, tools: [] }), "utf8");
+  // and the largest tab id (SG-000135 OB-03), so the bound holds whichever
+  // values are sent.
+  let used = Buffer.byteLength(JSON.stringify({ frame: "discovered", disc_id: discId, tab: 1_000_000, url, truncated: false, tools: [] }), "utf8");
   const kept: DeclaredTool[] = [];
   let cut = truncated;
   for (const tool of tools) {

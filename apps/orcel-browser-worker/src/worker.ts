@@ -79,19 +79,19 @@ export interface EngineSession {
   /// Navigate the primary page like `navigate` (the same routes and host
   /// decisions) and return the document's text when it is plain text or
   /// XML, bounded to one frame; rejects with NavigationError.
-  fetchText(url: string): Promise<{ url: string; status: number; media: string; text: string; truncated: boolean }>;
+  fetchText(url: string): Promise<{ tab: number; url: string; status: number; media: string; text: string; truncated: boolean }>;
   /// A bounded, value-free accessibility snapshot of the primary page.
   observe(): Promise<{ tab: number; url: string; snapshot: BoundedSnapshot }>;
   /// The primary page's declarative WebMCP tools, read without running
   /// page script; bounded so the reply frame fits.
-  discover(discId: number): Promise<{ url: string; truncated: boolean; tools: DeclaredTool[] }>;
+  discover(discId: number): Promise<{ tab: number; url: string; truncated: boolean; tools: DeclaredTool[] }>;
   /// The primary page's rendered content as Markdown, read from an engine
   /// snapshot without running page script, in frame-sized pieces.
   extract(options: { links: boolean; images: boolean }): Promise<{ tab: number; url: string; truncated: boolean; pieces: Piece[] }>;
   /// Fill the declared tool form with host-validated fields, click its
   /// default submit button and wait for the resulting document; returns it
   /// with its structured data. Rejects with NavigationError.
-  execute(tool: string, fields: ExecField[]): Promise<{ url: string; status: number; structured: string[]; structuredComplete: boolean }>;
+  execute(tool: string, fields: ExecField[]): Promise<{ tab: number; url: string; status: number; structured: string[]; structuredComplete: boolean }>;
   /// Click the element with this snapshot ref (or, when the ref went
   /// stale, the one element matching the approved target) and wait for the
   /// resulting navigation to load; rejects with NavigationError.
@@ -99,7 +99,7 @@ export interface EngineSession {
   /// Click the element with this snapshot ref (or the one matching the
   /// approved target), expect a download, and save it to `path` (which must
   /// not exist); rejects with NavigationError.
-  download(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string; name: string; media: string; bytes: number }>;
+  download(ref: string, path: string, target?: ApprovedTarget): Promise<{ tab: number; url: string; name: string; media: string; bytes: number }>;
   /// BR-02: one approved form action on the element with this snapshot ref
   /// (or the one matching the approved target); resolves with the page's
   /// URL afterwards; rejects with NavigationError.
@@ -112,10 +112,10 @@ export interface EngineSession {
   takeDialogs(): { dialogs: DismissedDialog[]; truncated: boolean };
   /// BR-03: set the approved file input to the host-staged file at `path`;
   /// resolves with the page's URL; rejects with NavigationError.
-  upload(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string }>;
+  upload(ref: string, path: string, target?: ApprovedTarget): Promise<{ tab: number; url: string }>;
   /// BR-02: whether text became visible (or stopped being visible) on the
   /// primary page within the bound; read-only.
-  waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ url: string; met: boolean }>;
+  waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ tab: number; url: string; met: boolean }>;
   /// BR-07: read-only probes of the primary page, one result per probe.
   verify(probes: VerifyProbe[]): Promise<{ tab: number; url: string; results: VerifyResult[] }>;
   /// SG-000135 OB-03: a bounded PNG of the active tab's page (the
@@ -304,8 +304,8 @@ export class Worker {
       case "discover": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         try {
-          const { url, truncated, tools } = await this.session.discover(frame.disc_id);
-          this.send({ frame: "discovered", disc_id: frame.disc_id, url, truncated, tools });
+          const { tab, url, truncated, tools } = await this.session.discover(frame.disc_id);
+          this.send({ frame: "discovered", disc_id: frame.disc_id, tab, url, truncated, tools });
         } catch {
           this.send({ frame: "discovery_failed", disc_id: frame.disc_id });
         }
@@ -578,8 +578,8 @@ export class Worker {
   private async runUpload(session: EngineSession, upId: number, ref: string, path: string, target?: ApprovedTarget): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const { url } = await session.upload(ref, path, target);
-      outcome = { frame: "uploaded", up_id: upId, url };
+      const { tab, url } = await session.upload(ref, path, target);
+      outcome = { frame: "uploaded", up_id: upId, tab, url };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "upload_failed", up_id: upId, reason };
@@ -591,8 +591,8 @@ export class Worker {
   private async runWait(session: EngineSession, waitId: number, text: string, appear: boolean, timeoutMs: number): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const { url, met } = await session.waitForText(text, appear, timeoutMs);
-      outcome = { frame: "waited", wait_id: waitId, url, met };
+      const { tab, url, met } = await session.waitForText(text, appear, timeoutMs);
+      outcome = { frame: "waited", wait_id: waitId, tab, url, met };
     } catch {
       outcome = { frame: "wait_failed", wait_id: waitId };
     }
@@ -628,6 +628,7 @@ export class Worker {
       outcome = {
         frame: "executed",
         exec_id: execId,
+        tab: result.tab,
         url: result.url,
         status: result.status,
         structured: result.structured,

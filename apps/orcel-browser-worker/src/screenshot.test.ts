@@ -132,7 +132,8 @@ test("OB-03: captures of one page run one at a time", async () => {
 test("OB-03: every frame's secret fields are masked, and a failed capture is never an unmasked one", async () => {
   const calls: Array<Record<string, unknown>> = [];
   const located: string[] = [];
-  const locators = [0, 1, 2].map((index) => ({ frame: index, count: async () => 1 }));
+  const box = (y: number) => ({ boundingBox: async () => ({ x: 0, y, width: 10, height: 10 }) });
+  const locators = [0, 1, 2].map((index) => ({ frame: index, all: async () => [box(index)] }));
   const framesOf = [0, 1, 2].map((index) => ({ locator: (selector: string) => (located.push(`${index}:${selector}`), locators[index] as (typeof locators)[number]) }));
   const page = (fail: boolean): ShotPage => ({
     frames: () => framesOf,
@@ -168,42 +169,69 @@ test("OB-03: a capture during which a frame or a secret field appeared is refuse
       return error.reason;
     }
   };
+  const at = (y: number) => ({ boundingBox: async () => ({ x: 40, y, width: 320, height: 48 }) });
+  const frameWith = (fields: () => Array<{ boundingBox: () => Promise<{ x: number; y: number; width: number; height: number } | null> }>) => ({
+    locator: () => ({ all: async () => fields() })
+  });
   // A frame attached while the capture ran.
-  const frames: Array<{ locator: () => { count: () => Promise<number> } }> = [{ locator: () => ({ count: async () => 0 }) }];
+  const frames = [frameWith(() => [])];
   assert.equal(
     await reason({
       frames: () => [...frames],
       screenshot: async () => {
-        frames.push({ locator: () => ({ count: async () => 1 }) });
+        frames.push(frameWith(() => [at(0)]));
         return png(10, 10);
       }
     }),
     "busy"
   );
   // A secret field added in a frame while the capture ran.
-  let fields = 0;
+  let fields = [at(100)];
+  // One frame object throughout: only the fields differ.
+  const frame = frameWith(() => fields);
   assert.equal(
     await reason({
-      frames: () => [{ locator: () => ({ count: async () => fields }) }],
+      frames: () => [frame],
       screenshot: async () => {
-        fields += 1;
+        fields = [at(100), at(180)];
         return png(10, 10);
       }
     }),
     "busy"
   );
-  // A frame that cannot be counted fails closed before any capture.
-  let captured = false;
+  // One added and another removed: the same count, other places. Refused.
+  fields = [at(100), at(180)];
   assert.equal(
     await reason({
-      frames: () => [{ locator: () => ({ count: async () => Promise.reject(new Error("detached")) }) }],
+      frames: () => [frame],
       screenshot: async () => {
-        captured = true;
+        fields = [at(100), at(260)];
         return png(10, 10);
       }
     }),
-    "failed"
+    "busy"
   );
+  // Unchanged places: the capture stands.
+  fields = [at(100), at(180)];
+  assert.equal(await reason({ frames: () => [frame], screenshot: async () => png(10, 10) }), "ok");
+  // A frame that cannot be read, or one with too many fields, fails closed
+  // before any capture.
+  let captured = false;
+  for (const broken of [
+    { locator: () => ({ all: async () => Promise.reject(new Error("detached")) }) },
+    frameWith(() => Array.from({ length: 257 }, (_, index) => at(index)))
+  ]) {
+    assert.equal(
+      await reason({
+        frames: () => [broken],
+        screenshot: async () => {
+          captured = true;
+          return png(10, 10);
+        }
+      }),
+      "failed"
+    );
+  }
   assert.equal(captured, false);
   // The widened selector names the new kinds.
   for (const part of ['[style*="text-security" i]', '[contenteditable]:not([contenteditable="false" i])', 'input[name*="pin" i]', 'input[name*="ssn" i]', 'input[name*="cc-" i]', 'input[id*="iban" i]']) {

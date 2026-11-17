@@ -117,16 +117,19 @@ const playwrightLauncher: Launcher = {
       workerClosed.add(page);
       await page.close().catch(() => {});
     };
-    // A tab whose page closed itself (window.close, a crash) is gone, and no
-    // other tab is made active in its place: every action fails until the
-    // host sends a tab request and learns the tabs.
+    // A tab whose page closed itself (window.close from page script) or
+    // whose renderer crashed is gone, and no other tab is made active in
+    // its place: every action fails until the host sends a tab request and
+    // learns the tabs.
     const watchPage = (page: Page) => {
       watches.set(page, new NavigationWatch(page));
-      page.on("close", () => {
+      const gone = () => {
         if (workerClosed.has(page)) return;
         const id = tabs.idOf(page);
         if (id !== null) tabs.dropClosed(id);
-      });
+      };
+      page.on("close", gone);
+      page.on("crash", gone);
     };
     /// The active tab and its page, or a typed "stale" refusal when no tab
     /// is active.
@@ -239,10 +242,10 @@ const playwrightLauncher: Launcher = {
         return { tab, url: page.url(), status: response?.status() ?? 0 };
       },
       async fetchText(url: string) {
-        const { page, response } = await open(url);
+        const { tab, page, response } = await open(url);
         const status = response?.status() ?? 0;
         const media = (response?.headers()["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
-        if (!response || !FETCH_TEXT_MEDIA.includes(media)) return { url: page.url(), status, media, text: "", truncated: false };
+        if (!response || !FETCH_TEXT_MEDIA.includes(media)) return { tab, url: page.url(), status, media, text: "", truncated: false };
         let body: Buffer;
         try {
           body = await response.body();
@@ -254,14 +257,14 @@ const playwrightLauncher: Launcher = {
         const text = safeText(new TextDecoder("utf-8").decode(body.subarray(0, 4 * MAX_FETCH_TEXT_BYTES)));
         const { pieces } = toPieces([{ content: text, index: 0, total: 1, start: 0, end: text.length, overlap: "", hasMore: false }], MAX_FETCH_TEXT_BYTES, 1);
         const kept = pieces[0]?.content ?? "";
-        return { url: page.url(), status, media, text: kept, truncated: kept.length < text.length || body.length > 4 * MAX_FETCH_TEXT_BYTES };
+        return { tab, url: page.url(), status, media, text: kept, truncated: kept.length < text.length || body.length > 4 * MAX_FETCH_TEXT_BYTES };
       },
       async activate(ref: string, target?: ApprovedTarget) {
         const { tab, page } = activeTab();
         return { tab, ...(await clickAndLoad(page, await approvedElement(page, ref, target), routes.refusals)) };
       },
       async execute(tool: string, fields: ExecField[]) {
-        const page = primary;
+        const { tab, page } = activeTab();
         // Host-built selectors only: the tool name is [A-Za-z0-9_.-] and
         // field names are quoted as CSS strings.
         const quoted = (value: string): string => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -349,11 +352,11 @@ const playwrightLauncher: Launcher = {
           structured = [];
           structuredComplete = false;
         }
-        return { url, status, structured, structuredComplete };
+        return { tab, url, status, structured, structuredComplete };
       },
       async download(ref: string, path: string, target?: ApprovedTarget) {
         if (existsSync(path)) throw new NavigationError("failed");
-        const page = primary;
+        const { tab, page } = activeTab();
         // Resolved before the capture is armed: a stale target clicks nothing.
         const element = await approvedElement(page, ref, target);
         const guard = await routes.guardReady(page);
@@ -391,6 +394,7 @@ const playwrightLauncher: Launcher = {
         if (document.status < 200 || document.status >= 300) return fail("http_status");
         writeFileSync(path, document.body, { flag: "wx" });
         return {
+          tab,
           url: document.url,
           name: suggestedName(document.url, document.disposition),
           media: document.media,
@@ -401,12 +405,14 @@ const playwrightLauncher: Launcher = {
         return dialogs.take();
       },
       async upload(ref, path, target) {
-        await uploadFile(primary, ref, path, target);
-        return { url: primary.url() };
+        const { tab, page } = activeTab();
+        await uploadFile(page, ref, path, target);
+        return { tab, url: page.url() };
       },
       async waitForText(text, appear, timeoutMs) {
-        const met = await waitForText(primary, text, appear, timeoutMs);
-        return { url: primary.url(), met };
+        const { tab, page } = activeTab();
+        const met = await waitForText(page, text, appear, timeoutMs);
+        return { tab, url: page.url(), met };
       },
       async formAction(ref, act, target, acceptConfirm) {
         const { tab, page } = activeTab();
@@ -440,8 +446,9 @@ const playwrightLauncher: Launcher = {
         // The engine serialises its own DOM: no page script runs. The whole
         // call (capture, discovery, fit) stays inside DISCOVERY_TOTAL_MS.
         const started = Date.now();
-        const before = primary.url();
-        const session = await context.newCDPSession(primary);
+        const { tab, page } = activeTab();
+        const before = page.url();
+        const session = await context.newCDPSession(page);
         // Playwright's protocol typings name this result differently;
         // documentModel reads every field defensively (missing arrays are
         // empty, a missing document throws into discovery_failed).
@@ -455,11 +462,11 @@ const playwrightLauncher: Launcher = {
         const model = documentModel(captured);
         // The snapshot must be of the page's document: if the page moved
         // during the capture, the result is stale and is refused.
-        const url = primary.url();
+        const url = page.url();
         if (model.url !== url || before !== url) throw new Error("the document changed during discovery");
         const remaining = Math.max(0, DISCOVERY_TOTAL_MS - CAPTURE_TIMEOUT_MS / 2 - (Date.now() - started));
         const found = discoverDeclarativeTools(model.root, Math.min(DISCOVERY_BUDGET_MS, remaining), model.encoding);
-        return fitTools(discId, url, model.truncated || found.truncated, found.tools);
+        return { tab, ...fitTools(discId, url, model.truncated || found.truncated, found.tools) };
       },
       async extract(options: { links: boolean; images: boolean }) {
         // The engine serialises its own DOM and layout: no page script runs,

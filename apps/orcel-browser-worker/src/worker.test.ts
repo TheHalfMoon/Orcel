@@ -23,8 +23,8 @@ class FakeEngine implements EngineSession {
     text: "User-agent: *",
     truncated: false
   });
-  fetchText(url: string): Promise<{ url: string; status: number; media: string; text: string; truncated: boolean }> {
-    return this.fetchBehavior(url);
+  async fetchText(url: string): Promise<{ tab: number; url: string; status: number; media: string; text: string; truncated: boolean }> {
+    return { tab: this.tab, ...(await this.fetchBehavior(url)) };
   }
   tab = 1;
   async navigate(url: string): Promise<{ tab: number; url: string; status: number }> {
@@ -43,8 +43,8 @@ class FakeEngine implements EngineSession {
     truncated: false,
     tools: []
   });
-  discover(): Promise<{ url: string; truncated: boolean; tools: never[] }> {
-    return this.discoverBehavior();
+  async discover(): Promise<{ tab: number; url: string; truncated: boolean; tools: never[] }> {
+    return { tab: this.tab, ...(await this.discoverBehavior()) };
   }
   extractBehavior: () => Promise<{ url: string; truncated: boolean; pieces: Piece[] }> = async () => ({
     url: "https://fixture.test/",
@@ -61,9 +61,9 @@ class FakeEngine implements EngineSession {
     structured: ['{"results":1}'],
     structuredComplete: true
   });
-  execute(tool: string, fields: unknown): Promise<{ url: string; status: number; structured: string[]; structuredComplete: boolean }> {
+  async execute(tool: string, fields: unknown): Promise<{ tab: number; url: string; status: number; structured: string[]; structuredComplete: boolean }> {
     this.executions.push({ tool, fields });
-    return this.executeBehavior();
+    return { tab: this.tab, ...(await this.executeBehavior()) };
   }
   activations: string[] = [];
   activateBehavior: (ref: string) => Promise<{ url: string; status: number }> = async () => ({ url: "https://fixture.test/next", status: 200 });
@@ -77,8 +77,8 @@ class FakeEngine implements EngineSession {
     media: "application/pdf",
     bytes: 10
   });
-  download(ref: string, path: string): Promise<{ url: string; name: string; media: string; bytes: number }> {
-    return this.downloadBehavior(ref, path);
+  async download(ref: string, path: string): Promise<{ tab: number; url: string; name: string; media: string; bytes: number }> {
+    return { tab: this.tab, ...(await this.downloadBehavior(ref, path)) };
   }
   verifyBehavior: (probes: VerifyProbe[]) => Promise<{ url: string; results: VerifyResult[] }> = async (probes) => ({
     url: "https://fixture.test/",
@@ -98,13 +98,13 @@ class FakeEngine implements EngineSession {
   }
   uploads: Array<{ ref: string; path: string }> = [];
   uploadBehavior: () => Promise<{ url: string }> = async () => ({ url: "https://fixture.test/upload" });
-  upload(ref: string, path: string): Promise<{ url: string }> {
+  async upload(ref: string, path: string): Promise<{ tab: number; url: string }> {
     this.uploads.push({ ref, path });
-    return this.uploadBehavior();
+    return { tab: this.tab, ...(await this.uploadBehavior()) };
   }
   waitBehavior: () => Promise<{ url: string; met: boolean }> = async () => ({ url: "https://fixture.test/form", met: true });
-  waitForText(): Promise<{ url: string; met: boolean }> {
-    return this.waitBehavior();
+  async waitForText(): Promise<{ tab: number; url: string; met: boolean }> {
+    return { tab: this.tab, ...(await this.waitBehavior()) };
   }
   formActions: Array<{ ref: string; act: FormAction; acceptConfirm?: string }> = [];
   formBehavior: () => Promise<{ url: string; navigated?: boolean }> = async () => ({ url: "https://fixture.test/form" });
@@ -559,7 +559,7 @@ test("BR-02: a bounded wait runs outside the queue, one at a time, and reports w
   assert.deepEqual(sent.at(-1), { frame: "wait_failed", wait_id: 2 });
   release();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(sent.at(-1), { frame: "waited", wait_id: 1, url: "https://fixture.test/form", met: false });
+  assert.deepEqual(sent.at(-1), { frame: "waited", wait_id: 1, tab: 1, url: "https://fixture.test/form", met: false });
 });
 
 test("BR-03: an upload runs outside the queue and reports a typed outcome", async () => {
@@ -569,7 +569,7 @@ test("BR-03: an upload runs outside the queue and reports a typed outcome", asyn
   await worker.receive(validLaunch());
   await worker.receive({ frame: "upload", up_id: 1, ref: "e3", path: "C:\\staging\\up-1\\report.txt" });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(sent.at(-1), { frame: "uploaded", up_id: 1, url: "https://fixture.test/upload" });
+  assert.deepEqual(sent.at(-1), { frame: "uploaded", up_id: 1, tab: 1, url: "https://fixture.test/upload" });
   assert.deepEqual(engine.uploads, [{ ref: "e3", path: "C:\\staging\\up-1\\report.txt" }]);
   engine.uploadBehavior = async () => {
     throw new NavigationError("denied");
@@ -630,7 +630,7 @@ test("downloads report the captured document or a typed failure", async () => {
   const { worker, sent, engine } = await launched();
   await worker.receive({ frame: "download", dl_id: 1, ref: "e5", path: "C:\\s\\dl-1.part" });
   await settle();
-  assert.deepEqual(sent.at(-1), { frame: "downloaded", dl_id: 1, url: "https://fixture.test/r.pdf", name: "r.pdf", media: "application/pdf", bytes: 10 });
+  assert.deepEqual(sent.at(-1), { frame: "downloaded", dl_id: 1, tab: 1, url: "https://fixture.test/r.pdf", name: "r.pdf", media: "application/pdf", bytes: 10 });
   engine.downloadBehavior = async () => {
     throw new NavigationError("timeout");
   };
@@ -643,7 +643,7 @@ test("discover reports bounded tools or a typed failure, and needs a launch", as
   const { worker, sent, engine } = await launched();
   engine.discoverBehavior = async () => ({ url: "https://fixture.test/t", truncated: true, tools: [] });
   await worker.receive({ frame: "discover", disc_id: 2 });
-  assert.deepEqual(sent.at(-1), { frame: "discovered", disc_id: 2, url: "https://fixture.test/t", truncated: true, tools: [] });
+  assert.deepEqual(sent.at(-1), { frame: "discovered", disc_id: 2, tab: 1, url: "https://fixture.test/t", truncated: true, tools: [] });
   engine.discoverBehavior = async () => {
     throw new Error("snapshot failed");
   };
@@ -659,7 +659,7 @@ test("a text fetch reports the document's text or a typed failure, and is busy d
   const { worker, sent, engine } = await launched();
   await worker.receive({ frame: "fetch_text", fetch_id: 3, url: "https://fixture.test/robots.txt" });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(sent.at(-1), { frame: "fetched_text", fetch_id: 3, url: "https://fixture.test/robots.txt", status: 200, media: "text/plain", text: "User-agent: *", truncated: false });
+  assert.deepEqual(sent.at(-1), { frame: "fetched_text", fetch_id: 3, tab: 1, url: "https://fixture.test/robots.txt", status: 200, media: "text/plain", text: "User-agent: *", truncated: false });
   engine.fetchBehavior = async () => {
     throw new NavigationError("denied");
   };
@@ -722,7 +722,7 @@ test("execution runs outside the queue and reports the opened document or a type
   await worker.receive({ frame: "execute", exec_id: 1, tool: "search", fields });
   await settle();
   assert.deepEqual(engine.executions, [{ tool: "search", fields }]);
-  assert.deepEqual(sent.at(-1), { frame: "executed", exec_id: 1, url: "https://fixture.test/search?q=rust", status: 200, structured: ['{"results":1}'], structured_complete: true });
+  assert.deepEqual(sent.at(-1), { frame: "executed", exec_id: 1, tab: 1, url: "https://fixture.test/search?q=rust", status: 200, structured: ['{"results":1}'], structured_complete: true });
   // An outcome too large to send becomes a typed failure, not a crash.
   engine.executeBehavior = async () => ({ url: "https://fixture.test/x", status: 200, structured: ["x".repeat(70_000)], structuredComplete: true });
   await worker.receive({ frame: "execute", exec_id: 3, tool: "search", fields });
@@ -849,6 +849,24 @@ test("OB-03: tab frames reach the engine and answer the tabs or a typed failure"
 test("OB-03: every action reply names the tab it acted on", async () => {
   const { worker, sent, engine } = await launched();
   engine.tab = 3;
+  const tabOf = () => (sent.at(-1) as { tab?: number }).tab;
+  await worker.receive({ frame: "discover", disc_id: 9 });
+  assert.equal(tabOf(), 3, "discovered");
+  await worker.receive({ frame: "fetch_text", fetch_id: 9, url: "https://fixture.test/robots.txt" });
+  await settle();
+  assert.equal(tabOf(), 3, "fetched_text");
+  await worker.receive({ frame: "execute", exec_id: 9, tool: "search", fields: [] });
+  await settle();
+  assert.equal(tabOf(), 3, "executed");
+  await worker.receive({ frame: "download", dl_id: 9, ref: "e1", path: "C:\\s\\a.part" });
+  await settle();
+  assert.equal(tabOf(), 3, "downloaded");
+  await worker.receive({ frame: "upload", up_id: 9, ref: "e1", path: "C:\\s\\a.txt" });
+  await settle();
+  assert.equal(tabOf(), 3, "uploaded");
+  await worker.receive({ frame: "wait_for", wait_id: 9, text: "x", appear: true, timeout_ms: 10 });
+  await settle();
+  assert.equal(tabOf(), 3, "waited");
   await worker.receive({ frame: "observe", obs_id: 9 });
   assert.equal((sent.at(-1) as { tab: number }).tab, 3);
   await worker.receive({ frame: "screenshot", shot_id: 9, full_page: false });

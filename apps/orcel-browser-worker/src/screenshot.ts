@@ -154,8 +154,34 @@ export async function runExclusive<T>(key: object, task: () => Promise<T>): Prom
 }
 
 /// The page surface a screenshot uses (a Playwright `Page`, or a test stub).
+export interface ShotBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export interface ShotElement {
+  boundingBox(): Promise<ShotBox | null>;
+}
 export interface ShotLocator {
-  count(): Promise<number>;
+  all(): Promise<ShotElement[]>;
+}
+
+/// The most secret fields per frame whose places are compared before and
+/// after a capture; a frame with more is refused.
+export const MAX_CENSUS_FIELDS = 256;
+
+/// Where each secret field of one frame is (rounded CSS pixels; "none" for
+/// one not rendered), in document order.
+async function placesOf(locator: ShotLocator): Promise<string[]> {
+  const elements = await locator.all();
+  if (elements.length > MAX_CENSUS_FIELDS) throw new ScreenshotError("failed");
+  const places: string[] = [];
+  for (const element of elements) {
+    const box = await element.boundingBox();
+    places.push(box === null ? "none" : [box.x, box.y, box.width, box.height].map((value) => Math.round(value)).join(","));
+  }
+  return places;
 }
 export interface ShotFrame {
   locator(selector: string): ShotLocator;
@@ -170,13 +196,15 @@ export interface ShotPage {
 /// A failed capture (masking included) is a typed failure, never an
 /// unmasked picture.
 export async function capturePng(page: ShotPage, clip?: { x: number; y: number; width: number; height: number }): Promise<{ png: Buffer; width: number; height: number }> {
-  // The frames and the secret fields in each, right before the capture
-  // (Playwright resolves the mask locators inside the capture itself).
+  // The frames and where each secret field in each is, right before the
+  // capture (Playwright resolves the mask locators inside the capture
+  // itself). Places, not counts: a field added and another removed during
+  // the capture still differ.
   const frames = page.frames();
   const mask = frames.map((frame) => frame.locator(SECRET_FIELD_SELECTOR));
-  const census = async (): Promise<number[]> => {
+  const census = async (): Promise<string> => {
     try {
-      return await Promise.all(mask.map((locator) => locator.count()));
+      return JSON.stringify(await Promise.all(mask.map(placesOf)));
     } catch {
       throw new ScreenshotError("failed");
     }
@@ -201,7 +229,7 @@ export async function capturePng(page: ShotPage, clip?: { x: number; y: number; 
   // while the capture ran: it may hold an unmasked field. Refused.
   const after = page.frames();
   const sameFrames = after.length === frames.length && after.every((frame, index) => frame === frames[index]);
-  if (!sameFrames || (await census()).some((count, index) => count !== before[index])) {
+  if (!sameFrames || (await census()) !== before) {
     throw new ScreenshotError("busy");
   }
   return { png, ...checkCapture(png) };

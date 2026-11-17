@@ -45,8 +45,9 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// generation 19 SG-000135 OB-03: bounded page screenshots with secret fields
 /// masked (`screenshot`, `screenshot_more`) and tabs (`tab_new`,
 /// `tab_switch`, `tab_close`, `tabs`); the replies of navigate, observe,
-/// activate, form_action, verify, extract and screenshot name the tab they
-/// acted on (`tab`), which the host checks against its own.
+/// activate, form_action, verify, extract, screenshot, fetch_text, discover,
+/// execute, download, upload and wait_for name the tab they acted on
+/// (`tab`), which the host checks against its own.
 export const WORKER_PROTOCOL_GENERATION = 19;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host; SG-000122: one option of a native select).
@@ -224,24 +225,24 @@ export type WorkerFrame =
     }
   | { frame: "navigated"; nav_id: number; tab: number; url: string; status: number }
   | { frame: "navigation_failed"; nav_id: number; reason: NavigationFailure }
-  | { frame: "fetched_text"; fetch_id: number; url: string; status: number; media: string; text: string; truncated: boolean }
+  | { frame: "fetched_text"; fetch_id: number; tab: number; url: string; status: number; media: string; text: string; truncated: boolean }
   | { frame: "fetch_failed"; fetch_id: number; reason: NavigationFailure }
   | { frame: "observed"; obs_id: number; tab: number; url: string; truncated: boolean; nodes: SnapshotNode[] }
   | { frame: "observation_failed"; obs_id: number }
-  | { frame: "discovered"; disc_id: number; url: string; truncated: boolean; tools: DeclaredTool[] }
+  | { frame: "discovered"; disc_id: number; tab: number; url: string; truncated: boolean; tools: DeclaredTool[] }
   | { frame: "discovery_failed"; disc_id: number }
   | { frame: "extracted"; ext_id: number; tab: number; url: string; truncated: boolean; piece: number; total: number; chunk: number; content: string }
   | { frame: "extraction_failed"; ext_id: number }
-  | { frame: "executed"; exec_id: number; url: string; status: number; structured: string[]; structured_complete: boolean }
+  | { frame: "executed"; exec_id: number; tab: number; url: string; status: number; structured: string[]; structured_complete: boolean }
   | { frame: "execution_failed"; exec_id: number; reason: NavigationFailure }
   | { frame: "activated"; act_id: number; tab: number; url: string; status: number }
   | { frame: "activation_failed"; act_id: number; reason: NavigationFailure }
-  | { frame: "downloaded"; dl_id: number; url: string; name: string; media: string; bytes: number }
+  | { frame: "downloaded"; dl_id: number; tab: number; url: string; name: string; media: string; bytes: number }
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
   | { frame: "verified"; ver_id: number; tab: number; url: string; results: VerifyResult[] }
   | { frame: "form_done"; form_id: number; tab: number; url: string; navigated?: boolean }
-  | { frame: "waited"; wait_id: number; url: string; met: boolean }
-  | { frame: "uploaded"; up_id: number; url: string }
+  | { frame: "waited"; wait_id: number; tab: number; url: string; met: boolean }
+  | { frame: "uploaded"; up_id: number; tab: number; url: string }
   | { frame: "dialogs_seen"; dlg_id: number; dialogs: DismissedDialog[]; truncated: boolean }
   | { frame: "upload_failed"; up_id: number; reason: NavigationFailure }
   | { frame: "wait_failed"; wait_id: number }

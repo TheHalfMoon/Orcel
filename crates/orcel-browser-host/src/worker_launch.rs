@@ -634,6 +634,7 @@ pub(crate) enum WorkerReply {
     },
     FetchedText {
         fetch_id: u64,
+        tab: u32,
         url: String,
         status: u16,
         media: String,
@@ -656,6 +657,7 @@ pub(crate) enum WorkerReply {
     },
     Discovered {
         disc_id: u64,
+        tab: u32,
         url: String,
         truncated: bool,
         tools: Vec<crate::webmcp::WireTool>,
@@ -688,6 +690,7 @@ pub(crate) enum WorkerReply {
     },
     Downloaded {
         dl_id: u64,
+        tab: u32,
         url: String,
         name: String,
         media: String,
@@ -699,6 +702,7 @@ pub(crate) enum WorkerReply {
     },
     Executed {
         exec_id: u64,
+        tab: u32,
         url: String,
         status: u16,
         structured: Vec<String>,
@@ -725,11 +729,13 @@ pub(crate) enum WorkerReply {
     },
     Waited {
         wait_id: u64,
+        tab: u32,
         url: String,
         met: bool,
     },
     Uploaded {
         up_id: u64,
+        tab: u32,
         url: String,
     },
     DialogsSeen {
@@ -792,15 +798,49 @@ pub(crate) fn reply_tab_check(
     active: Option<u32>,
     reply: &WorkerReply,
 ) -> Result<Option<u32>, UnavailableReason> {
+    // Every reply kind is named here (no catch-all): a new reply must be
+    // classified before it compiles.
     let (tab, acted) = match reply {
+        // Writes: they may have changed the page they ran on.
         WorkerReply::Navigated { tab, .. }
         | WorkerReply::Activated { tab, .. }
-        | WorkerReply::FormDone { tab, .. } => (*tab, true),
+        | WorkerReply::FormDone { tab, .. }
+        | WorkerReply::Executed { tab, .. }
+        | WorkerReply::Downloaded { tab, .. }
+        | WorkerReply::Uploaded { tab, .. } => (*tab, true),
+        // Reads (a text fetch navigates, but its document is only read).
         WorkerReply::Observed { tab, .. }
         | WorkerReply::Extracted { tab, .. }
         | WorkerReply::Verified { tab, .. }
-        | WorkerReply::ScreenshotPiece { tab, .. } => (*tab, false),
-        _ => return Ok(active),
+        | WorkerReply::ScreenshotPiece { tab, .. }
+        | WorkerReply::FetchedText { tab, .. }
+        | WorkerReply::Discovered { tab, .. }
+        | WorkerReply::Waited { tab, .. } => (*tab, false),
+        // No page: the lifecycle, the route stack, typed failures (nothing
+        // was done), the dialog log (every page's) and the tab reports
+        // (which `tab_request` checks and follows itself).
+        WorkerReply::Hello { .. }
+        | WorkerReply::Launched {}
+        | WorkerReply::Pong { .. }
+        | WorkerReply::Bye {}
+        | WorkerReply::RouteRequest { .. }
+        | WorkerReply::NavigationFailed { .. }
+        | WorkerReply::FetchFailed { .. }
+        | WorkerReply::ObservationFailed { .. }
+        | WorkerReply::DiscoveryFailed { .. }
+        | WorkerReply::ExtractionFailed { .. }
+        | WorkerReply::ActivationFailed { .. }
+        | WorkerReply::DownloadFailed { .. }
+        | WorkerReply::ExecutionFailed { .. }
+        | WorkerReply::VerificationFailed { .. }
+        | WorkerReply::FormFailed { .. }
+        | WorkerReply::WaitFailed { .. }
+        | WorkerReply::UploadFailed { .. }
+        | WorkerReply::DialogsSeen { .. }
+        | WorkerReply::ScreenshotFailed { .. }
+        | WorkerReply::TabsState { .. }
+        | WorkerReply::TabFailed { .. }
+        | WorkerReply::Error { .. } => return Ok(active),
     };
     if tab == 0 || tab > crate::page_capture::MAX_TAB_ID {
         return Err(UnavailableReason::ProtocolViolation);
@@ -2319,6 +2359,7 @@ mod platform {
                     media,
                     text: body,
                     truncated,
+                    ..
                 } if text && done == id => {
                     let bad = |ch: char| {
                         (ch.is_control() && !matches!(ch, '\n' | '\t' | '\r'))
@@ -3167,6 +3208,7 @@ mod platform {
                 WorkerReply::Uploaded {
                     up_id: done,
                     url: after,
+                    ..
                 } if done == up_id => {
                     if after != url {
                         self.host_nodes.clear();
@@ -3243,6 +3285,7 @@ mod platform {
                     wait_id: done,
                     url: seen,
                     met,
+                    ..
                 } if done == wait_id => {
                     if seen != url {
                         return Err(HostError::Invalid(
@@ -3386,6 +3429,7 @@ mod platform {
                     url,
                     truncated,
                     tools,
+                    ..
                 } if done == disc_id => (url, truncated, tools),
                 WorkerReply::DiscoveryFailed { disc_id: done } if done == disc_id => {
                     return Err(HostError::Unavailable(UnavailableReason::ActionFailed))
@@ -3781,6 +3825,7 @@ mod platform {
                     status,
                     structured,
                     structured_complete,
+                    ..
                 } if done == exec_id => (url, status, structured, structured_complete),
                 WorkerReply::ExecutionFailed {
                     exec_id: done,
@@ -4110,6 +4155,7 @@ mod platform {
                     name: _,
                     media,
                     bytes,
+                    ..
                 } if done == dl_id => (url, media, bytes),
                 WorkerReply::DownloadFailed {
                     dl_id: done,
@@ -4899,10 +4945,10 @@ mod tests {
             r#"{"frame":"download","dl_id":1,"ref":"e5","path":"C:\\s\\dl-1.part"}"#
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
-        assert!(reply(r#"{"frame":"downloaded","dl_id":1,"url":"https://fixture.test/r.pdf","name":"r.pdf","media":"application/pdf","bytes":8}"#).is_ok());
+        assert!(reply(r#"{"frame":"downloaded","dl_id":1,"tab":1,"url":"https://fixture.test/r.pdf","name":"r.pdf","media":"application/pdf","bytes":8}"#).is_ok());
         assert!(reply(r#"{"frame":"download_failed","dl_id":1,"reason":"denied"}"#).is_ok());
         assert!(reply(
-            r#"{"frame":"downloaded","dl_id":1,"url":"u","name":"n","media":"m","bytes":1,"x":0}"#
+            r#"{"frame":"downloaded","dl_id":1,"tab":1,"url":"u","name":"n","media":"m","bytes":1,"x":0}"#
         )
         .is_err());
         let _ = std::fs::remove_dir_all(&root);
@@ -5417,7 +5463,7 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(matches!(
-            reply(r#"{"frame":"executed","exec_id":3,"url":"https://fixture.test/search?q=rust","status":200,"structured":["{}"],"structured_complete":true}"#).unwrap(),
+            reply(r#"{"frame":"executed","exec_id":3,"tab":1,"url":"https://fixture.test/search?q=rust","status":200,"structured":["{}"],"structured_complete":true}"#).unwrap(),
             WorkerReply::Executed { exec_id: 3, status: 200, .. }
         ));
         assert!(matches!(
@@ -5425,7 +5471,7 @@ mod tests {
             WorkerReply::ExecutionFailed { exec_id: 3, .. }
         ));
         assert!(reply(
-            r#"{"frame":"executed","exec_id":3,"url":"u","status":200,"structured":[],"structured_complete":true,"extra":1}"#
+            r#"{"frame":"executed","exec_id":3,"tab":1,"url":"u","status":200,"structured":[],"structured_complete":true,"extra":1}"#
         )
         .is_err());
     }
@@ -5479,7 +5525,7 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(matches!(
-            reply(r#"{"frame":"fetched_text","fetch_id":4,"url":"https://fixture.test/robots.txt","status":200,"media":"text/plain","text":"User-agent: *","truncated":false}"#).unwrap(),
+            reply(r#"{"frame":"fetched_text","fetch_id":4,"tab":1,"url":"https://fixture.test/robots.txt","status":200,"media":"text/plain","text":"User-agent: *","truncated":false}"#).unwrap(),
             WorkerReply::FetchedText { fetch_id: 4, status: 200, .. }
         ));
         assert!(matches!(
@@ -5487,7 +5533,7 @@ mod tests {
             WorkerReply::FetchFailed { fetch_id: 4, .. }
         ));
         assert!(reply(
-            r#"{"frame":"fetched_text","fetch_id":4,"url":"u","status":200,"media":"text/plain","text":"","truncated":false,"body":"x"}"#
+            r#"{"frame":"fetched_text","fetch_id":4,"tab":1,"url":"u","status":200,"media":"text/plain","text":"","truncated":false,"body":"x"}"#
         )
         .is_err());
     }
@@ -5537,7 +5583,7 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         let tools = match reply(
-            r#"{"frame":"discovered","disc_id":2,"url":"https://fixture.test/t","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[]}]}"#,
+            r#"{"frame":"discovered","disc_id":2,"tab":1,"url":"https://fixture.test/t","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[]}]}"#,
         )
         .unwrap()
         {
@@ -5551,7 +5597,7 @@ mod tests {
         ));
         // Unknown fields anywhere in a tool are refused.
         assert!(reply(
-            r#"{"frame":"discovered","disc_id":2,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
+            r#"{"frame":"discovered","disc_id":2,"tab":1,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
         )
         .is_err());
     }
@@ -5607,14 +5653,16 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert_eq!(
-            reply(r#"{"frame":"uploaded","up_id":3,"url":"https://fixture.test/upload"}"#).unwrap(),
+            reply(r#"{"frame":"uploaded","up_id":3,"tab":1,"url":"https://fixture.test/upload"}"#)
+                .unwrap(),
             WorkerReply::Uploaded {
                 up_id: 3,
+                tab: 1,
                 url: "https://fixture.test/upload".into()
             }
         );
         assert!(reply(r#"{"frame":"upload_failed","up_id":3,"reason":"denied"}"#).is_ok());
-        assert!(reply(r#"{"frame":"uploaded","up_id":3,"url":"u","path":"x"}"#).is_err());
+        assert!(reply(r#"{"frame":"uploaded","up_id":3,"tab":1,"url":"u","path":"x"}"#).is_err());
     }
 
     /// BR-02: the form-action frames, as both sides write them.
@@ -5720,9 +5768,10 @@ mod tests {
             r#"{"frame":"wait_for","wait_id":1,"text":"Saved","appear":true,"timeout_ms":2000}"#
         );
         assert_eq!(
-            reply(r#"{"frame":"waited","wait_id":1,"url":"u","met":false}"#).unwrap(),
+            reply(r#"{"frame":"waited","wait_id":1,"tab":1,"url":"u","met":false}"#).unwrap(),
             WorkerReply::Waited {
                 wait_id: 1,
+                tab: 1,
                 url: "u".into(),
                 met: false
             }
@@ -6135,6 +6184,52 @@ mod tests {
             reply_tab_check(Some(1), &WorkerReply::Pong { nonce: "n".into() }),
             Ok(Some(1))
         );
+        // Every reply that names a tab is checked: the writes (execute,
+        // download, upload) as outcome unknown, the reads as stale.
+        let other = |text: &str| {
+            let parsed: WorkerReply = serde_json::from_str(text).unwrap();
+            reply_tab_check(Some(1), &parsed)
+        };
+        for write in [
+            r#"{"frame":"executed","exec_id":1,"tab":2,"url":"u","status":200,"structured":[],"structured_complete":true}"#,
+            r#"{"frame":"downloaded","dl_id":1,"tab":2,"url":"u","name":"n","media":"m","bytes":1}"#,
+            r#"{"frame":"uploaded","up_id":1,"tab":2,"url":"u"}"#,
+            r#"{"frame":"activated","act_id":1,"tab":2,"url":"u","status":200}"#,
+            r#"{"frame":"form_done","form_id":1,"tab":2,"url":"u"}"#,
+        ] {
+            assert_eq!(
+                other(write),
+                Err(UnavailableReason::OutcomeUnknown),
+                "{write}"
+            );
+        }
+        for read in [
+            r#"{"frame":"fetched_text","fetch_id":1,"tab":2,"url":"u","status":200,"media":"text/plain","text":"","truncated":false}"#,
+            r#"{"frame":"discovered","disc_id":1,"tab":2,"url":"u","truncated":false,"tools":[]}"#,
+            r#"{"frame":"waited","wait_id":1,"tab":2,"url":"u","met":true}"#,
+            r#"{"frame":"verified","ver_id":1,"tab":2,"url":"u","results":[]}"#,
+            r#"{"frame":"extracted","ext_id":1,"tab":2,"url":"u","truncated":false,"piece":0,"total":1,"chunk":0,"content":""}"#,
+        ] {
+            assert_eq!(other(read), Err(UnavailableReason::TargetStale), "{read}");
+        }
+        // The same tab passes, and none of them parses without a tab.
+        assert_eq!(
+            other(r#"{"frame":"uploaded","up_id":1,"tab":1,"url":"u"}"#),
+            Ok(Some(1))
+        );
+        for untabbed in [
+            r#"{"frame":"executed","exec_id":1,"url":"u","status":200,"structured":[],"structured_complete":true}"#,
+            r#"{"frame":"downloaded","dl_id":1,"url":"u","name":"n","media":"m","bytes":1}"#,
+            r#"{"frame":"uploaded","up_id":1,"url":"u"}"#,
+            r#"{"frame":"fetched_text","fetch_id":1,"url":"u","status":200,"media":"text/plain","text":"","truncated":false}"#,
+            r#"{"frame":"discovered","disc_id":1,"url":"u","truncated":false,"tools":[]}"#,
+            r#"{"frame":"waited","wait_id":1,"url":"u","met":true}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<WorkerReply>(untabbed).is_err(),
+                "{untabbed}"
+            );
+        }
         assert_eq!(
             screenshot_failure("busy"),
             UnavailableReason::NavigationInFlight
