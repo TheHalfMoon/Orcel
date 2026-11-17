@@ -148,6 +148,8 @@ class OrchestratorConfig:
     observe_arguments: dict[str, Any] = field(default_factory=dict)
     tree_tool: str = "desktop_window_tree"
     close_tool: str = "desktop_window_action"
+    #: The run's workspace: a recovery call may name only this one (or none).
+    workspace_id: Optional[str] = None
     #: Agent-S re-plans after every completed subtask; kept as the default.
     replan_on_subtask_done: bool = True
     enable_reflection: bool = True
@@ -431,6 +433,10 @@ class TaskOrchestrator:
             return None
         if kind == "recover" and self._recovery is not None:
             self._recovery.attempts += 1
+            # The next attempt re-reads the dialog's tree: an approved action
+            # may have replaced its elements or tree generation.
+            self._recovery.tree_read = False
+            self._recovery.tree = None
             self._need_observe = True
             return None
         if kind == "verify":
@@ -640,7 +646,7 @@ class TaskOrchestrator:
         action = parse_action(reply) if reply is not None else None
         if not isinstance(action, ToolCall):
             return None
-        if not recovery_call_is_safe(action.tool, action.arguments, dialog, tree):
+        if not recovery_call_is_safe(action.tool, action.arguments, dialog, tree, self.config.workspace_id):
             self._emit("dialog_recovery_refused", window_id=dialog.window_id, tool=action.tool)
             return None
         if json.dumps([action.tool, action.arguments], sort_keys=True) in recovery.proposed:

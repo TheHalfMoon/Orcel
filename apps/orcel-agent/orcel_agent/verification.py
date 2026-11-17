@@ -186,13 +186,17 @@ DISMISS_NAMES: frozenset[str] = frozenset({"cancel", "close", "dismiss"})
 _INVOKE_KEYS = frozenset({"element_id", "tree_generation", "control_type", "workspace_id"})
 
 
-def recovery_call_is_safe(tool: str, arguments: Any, dialog: Window, tree: Optional[DialogTree] = None) -> bool:
+def recovery_call_is_safe(tool: str, arguments: Any, dialog: Window, tree: Optional[DialogTree] = None,
+                          workspace_id: Optional[str] = None) -> bool:
     """A model-proposed recovery action is accepted only if it targets the
     detected dialog itself, and only to close it or press a Cancel, Close or
-    Dismiss element orceld issued in that dialog's latest tree (same tree
-    generation and control type). Never OK, Yes, No, Allow or anything that
-    may confirm or discard."""
+    Dismiss button orceld issued in that dialog's latest tree (same tree
+    generation, control type Button). Never OK, Yes, No, Allow or anything
+    that may confirm or discard. A `workspace_id` argument must be absent or
+    equal to the run's configured workspace."""
     if not isinstance(arguments, dict):
+        return False
+    if "workspace_id" in arguments and (workspace_id is None or arguments["workspace_id"] != workspace_id):
         return False
     if tool == "desktop_window_action":
         return (set(arguments) <= {"window_id", "window_generation", "action", "workspace_id"}
@@ -205,6 +209,7 @@ def recovery_call_is_safe(tool: str, arguments: Any, dialog: Window, tree: Optio
         element = tree.elements.get(arguments.get("element_id"))  # type: ignore[arg-type]
         return (element is not None
                 and arguments.get("tree_generation") == tree.tree_generation
+                and element.control_type == "Button"
                 and arguments.get("control_type") == element.control_type
                 and element.name.strip().lower() in DISMISS_NAMES)
     return False

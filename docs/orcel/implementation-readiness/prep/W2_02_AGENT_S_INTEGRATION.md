@@ -99,7 +99,11 @@ What was missing:
        real `desktop_element_invoke` shape (`element_id`, `tree_generation`,
        `control_type`, optional `workspace_id`). The element must be one
        orceld issued in that dialog's own latest tree, with the same tree
-       generation and control type.
+       generation, and its control type must be `Button`.
+     - Either way, a `workspace_id` argument must be absent or equal to the
+       run's configured workspace (`OrchestratorConfig.workspace_id`).
+   - After each recovery action, the next attempt re-reads the dialog's
+     tree before acting.
    - OK, Yes, Allow and Install are refused. So are No, Skip, Not now and
      Later, because they can discard work (No on "Save changes?" discards
      it).
