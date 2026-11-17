@@ -142,6 +142,18 @@ impl fmt::Debug for InjectionLedger {
     }
 }
 
+impl Drop for InjectionLedger {
+    /// Zero the HMAC key. Best effort without unsafe code: `black_box`
+    /// keeps the compiler from dropping the writes as dead stores.
+    fn drop(&mut self) {
+        if let Some(key) = self.key.as_mut() {
+            key.fill(0);
+            std::hint::black_box(&*key);
+        }
+        self.key = None;
+    }
+}
+
 impl Default for InjectionLedger {
     fn default() -> Self {
         Self::new()

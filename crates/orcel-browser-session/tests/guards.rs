@@ -8,6 +8,7 @@ use orcel_browser_session::{
     ActionClass, ControlError, InputKind, InputPhase, InputVerdict, ManualClock, ObservedInput,
     Reason, SessionGate, TaskId, UncertainLedger, WriteFate, WriteOutcome, MARKER_TTL_MS,
     MAX_LEDGER_ACTIONS, MAX_PENDING_WRITES, MAX_RESOURCES, MAX_UNCERTAIN_ACTIONS, PENDING_TTL_MS,
+    UNSENT_TTL_MS,
 };
 
 /// The stable key of "press Enter in the textbox named Search on
@@ -145,6 +146,8 @@ fn an_unsent_ticket_expires_and_a_sent_one_becomes_uncertain() {
     };
     assert_eq!(scene.gate.confirm_dispatch(&sent), Ok(()));
     scene.advance(PENDING_TTL_MS);
+    // The unsent ticket waits for its approval much longer.
+    scene.advance(UNSENT_TTL_MS - PENDING_TTL_MS);
     assert_eq!(
         scene.gate.confirm_dispatch(&unsent).map_err(|r| r.reason),
         Err(Reason::TargetStale)
@@ -163,6 +166,81 @@ fn an_unsent_ticket_expires_and_a_sent_one_becomes_uncertain() {
     assert!(scene
         .write_as("a", "enter:unsent", ActionClass::Consequential, 0)
         .is_ok());
+}
+
+#[test]
+fn a_slow_approval_does_not_age_the_sent_write() {
+    let mut scene = Scene::new(&["a"]);
+    let Ok(ticket) = scene.write_as("a", "enter:slow", ActionClass::Consequential, 0) else {
+        panic!("running admits the write");
+    };
+    // The person takes ten minutes over the approval prompt.
+    scene.advance(10 * 60 * 1_000);
+    assert_eq!(scene.gate.confirm_dispatch(&ticket), Ok(()));
+    // The outcome timer started at the confirmation.
+    scene.advance(PENDING_TTL_MS - 1);
+    assert_eq!(
+        scene.gate.finish_write(&ticket, WriteOutcome::Done),
+        WriteFate::Recorded
+    );
+    assert!(scene
+        .write_as("a", "enter:slow", ActionClass::Consequential, 0)
+        .is_ok());
+}
+
+#[test]
+fn an_uncertain_action_lost_to_a_full_ledger_stays_refused_until_reconciled() {
+    let ledger = UncertainLedger::shared();
+    if let Ok(mut held) = ledger.lock() {
+        for index in 0..MAX_LEDGER_ACTIONS - 1 {
+            let _ = held.record(&TaskId::new("elsewhere"), key(&index.to_string()));
+        }
+    }
+    let mut gate = SessionGate::with_ledger(
+        ManualClock::at(0),
+        orcel_browser_session::Reads::Block,
+        ledger.clone(),
+    );
+    let task = TaskId::new("task");
+    let _ = gate.claim(page("a"), task.clone());
+    // Two submits are sent; the first fills the ledger, the second is lost
+    // to it (it overflows) when its page closes.
+    let tickets: Vec<_> = ["submit:1", "submit:2"]
+        .iter()
+        .filter_map(|action| {
+            gate.begin_write(&page("a"), key(action), ActionClass::Consequential, 0)
+                .ok()
+                .flatten()
+        })
+        .collect();
+    assert_eq!(tickets.len(), 2);
+    for ticket in &tickets {
+        assert_eq!(gate.confirm_dispatch(ticket), Ok(()));
+    }
+    let _ = gate.release(&page("a"));
+    // Room frees up elsewhere; the lost submit is still not admitted.
+    if let Ok(mut held) = ledger.lock() {
+        assert!(held.reconcile(&TaskId::new("elsewhere"), &key("0")));
+        assert!(held.reconcile(&TaskId::new("elsewhere"), &key("1")));
+    }
+    let _ = gate.claim(page("b"), task.clone());
+    let refused = gate.begin_write(&page("b"), key("submit:2"), ActionClass::Consequential, 0);
+    assert_eq!(refused.map_err(|r| r.reason), Err(Reason::OutcomeUncertain));
+    let other = gate.begin_write(&page("b"), key("submit:3"), ActionClass::Consequential, 0);
+    assert_eq!(
+        other.map_err(|r| r.reason),
+        Err(Reason::OutcomeUncertain),
+        "the task cannot know which action was lost"
+    );
+    assert!(matches!(
+        gate.begin_write(&page("b"), key("fill"), ActionClass::Repeatable, 0),
+        Ok(Some(_))
+    ));
+    assert!(gate.reconcile_overflow(&task));
+    assert!(matches!(
+        gate.begin_write(&page("b"), key("submit:3"), ActionClass::Consequential, 0),
+        Ok(Some(_))
+    ));
 }
 
 #[test]

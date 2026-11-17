@@ -53,10 +53,14 @@ use std::collections::{BTreeMap, BTreeSet};
 /// at it again.
 pub const QUIET_MS: u64 = 3_000;
 
-/// How long a write ticket may stay pending. A ticket never sent is
-/// dropped after it; a ticket sent whose outcome never came back is then
-/// treated as uncertain (a consequential one is never admitted again).
+/// How long a sent write may wait for its outcome, counted from the moment
+/// it was confirmed for sending. Past it, a consequential write is treated
+/// as uncertain (never admitted again until reconciled).
 pub const PENDING_TTL_MS: u64 = 120_000;
+
+/// How long a write may stay pending before it is sent (a person may take
+/// a while over its approval prompt). Past it, the unsent ticket is dropped.
+pub const UNSENT_TTL_MS: u64 = 30 * 60 * 1_000;
 
 /// The most writes pending on one resource. Past it new writes are
 /// refused (fail closed).
@@ -364,13 +368,22 @@ impl ResourceSession {
         }
     }
 
-    /// Drop tickets past [`PENDING_TTL_MS`]: an unsent one is gone; a
-    /// sent consequential one becomes uncertain.
+    /// Drop expired tickets: an unsent one past [`UNSENT_TTL_MS`] from when
+    /// it was begun is gone; a sent one past [`PENDING_TTL_MS`] from when it
+    /// was confirmed for sending is dropped, and a consequential one becomes
+    /// uncertain.
     fn expire_pending(&mut self, now: Millis) {
         let expired: Vec<u64> = self
             .pending
             .iter()
-            .filter(|(_, pending)| now.since(pending.begun_at) >= PENDING_TTL_MS)
+            .filter(|(_, pending)| {
+                let ttl = if pending.dispatched {
+                    PENDING_TTL_MS
+                } else {
+                    UNSENT_TTL_MS
+                };
+                now.since(pending.begun_at) >= ttl
+            })
             .map(|(id, _)| *id)
             .collect();
         for id in expired {
@@ -654,7 +667,10 @@ impl ResourceSession {
             }
             None => {
                 if let Some(pending) = self.pending.get_mut(&ticket.id) {
+                    // The outcome timer starts now, not when the write was
+                    // begun: a slow approval does not make it stale.
                     pending.dispatched = true;
+                    pending.begun_at = now;
                 }
                 Ok(())
             }

@@ -279,9 +279,7 @@ impl<C: Clock> SessionGate<C> {
         };
         {
             let ledger = uncertain::lock(&self.uncertain);
-            if ledger.contains(&owned.task, &key)
-                || (class == ActionClass::Consequential && ledger.is_full())
-            {
+            if ledger.refuses(&owned.task, &key, class == ActionClass::Consequential) {
                 return Err(Self::refusal(resource, Reason::OutcomeUncertain));
             }
         }
@@ -367,6 +365,12 @@ impl<C: Clock> SessionGate<C> {
             any |= owned.session.reconcile(key);
         }
         uncertain::lock(&self.uncertain).reconcile(task, key) || any
+    }
+
+    /// Every uncertain outcome of `task` was established, including any the
+    /// full ledger could not record: its consequential writes may go again.
+    pub fn reconcile_overflow(&mut self, task: &TaskId) -> bool {
+        uncertain::lock(&self.uncertain).reconcile_overflow(task)
     }
 
     fn control(
