@@ -199,14 +199,34 @@ test("SG-000094 and SG-000095 are closed and SG-000096 and SG-000097 are the onl
   // them by founder decision (issue #753) and is closed. SG-000130 (ORCEL-F5,
   // workbook sources in the report task) ran beside them by founder go-ahead
   // (issue #760) and is closed. SG-000119 (ORCEL-CR, the read-only Tauri 2
-  // Control Room skeleton on Windows) runs beside them by founder decision
-  // of 2026-11-16 (issue #773). SG-000131, SG-000132, SG-000133 and
-  // SG-000134 (ORCEL-UP, the unified platform's Wave 1) and SG-000097
+  // Control Room skeleton on Windows) ran beside them by founder decision
+  // of 2026-11-16 (issue #773) and is closed. SG-000131, SG-000132, SG-000133
+  // and SG-000134 (ORCEL-UP, the unified platform's Wave 1) and SG-000097
   // (DESKAL-P20, full filesystem access, out of the P20 sequential order) run
   // beside them by founder decision of 2026-11-17, given in the Claude Code
   // session with no tracking issue; no other grain may be open, and
   // SG-000101 and SG-000102 stay reserved.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000097", "SG-000119", "SG-000127", "SG-000128", "SG-000131", "SG-000132", "SG-000133", "SG-000134"]);
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000097", "SG-000127", "SG-000128", "SG-000131", "SG-000132", "SG-000133", "SG-000134"]);
+  const sg119 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    dependencies: string[];
+    implementation_pr: number;
+    qualified_head: string;
+    qualified_tree: string;
+    implementation_merge: string;
+  }>(".specgrain/specs/SG-000119.json");
+  assert.equal(sg119.program, "ORCEL-CR");
+  assert.equal(sg119.state, "CLOSED");
+  assert.equal(sg119.planning_issue, 773);
+  assert.equal(sg119.base, "b155d9486bb51fd4640692ca0a81627eb5a6c039");
+  assert.deepEqual(sg119.dependencies, ["SG-000122", "SG-000126", "SG-000130"]);
+  assert.equal(sg119.implementation_pr, 787);
+  assert.equal(sg119.qualified_head, "e83b071217ae49c6f19a5488dd9978fe61f42ace");
+  assert.equal(sg119.qualified_tree, "c978bed79f6d011ce884eece35b97f21cc87accc");
+  assert.equal(sg119.implementation_merge, "1baec23dafa14d991321c118701af533ca7f2824");
   // The unified-platform activation grants nothing: every grain is a GRAIN
   // copied from its prep draft without the draft note, its activation delta
   // is "None.", and no tracking issue is claimed.

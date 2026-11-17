@@ -14,7 +14,7 @@ States:
 - **Blocked** means the next step needs a founder decision, a person present, or external hardware.
 - **Not started** means no merged work yet.
 
-Last updated: 2026-11-16, main at `b155d948` (#771; includes the SG-000122 closeout, #770), plus branch `browser/denial-attribution` (PR #772, open). Open PRs: #342 and #328 (other work).
+Last updated: 2026-11-17, main at `4a8491c9` (#789; SG-000119 A5 merged as `1baec23d`, #787), plus the SG-000119 closeout on branch `sg119/closeout` (not merged). Open PRs: #785, #342 and #328 (other work).
 
 ## Approval and security UX
 
@@ -83,7 +83,7 @@ Last updated: 2026-11-16, main at `b155d948` (#771; includes the SG-000122 close
 | Native host X11 latency scroll never shows its effect (#700) | Open, evidence only | Seen once on #699; #747 → `fa97f5c4` prints the host's reply, the journal's events and the window system's focus at the deadline | Read those lines on the next recurrence |
 | Jev review needs the PR to contain current main | Known | its merge-base check | Update a PR to main before its review gate runs |
 | Jev review runs `git diff --check` | Known | a CRLF file fails it (#692) | Write repository files with LF line endings |
-| macOS jobs cancelled before a runner is assigned (#524) | Recurring | seen on #704, #705 and #707, and on main after #703 and #705 (both green on re-run), 2026-11-10 | Re-run the job; no code cause |
+| macOS jobs cancelled before a runner is assigned (#524) | Recurring | seen on #704, #705 and #707, and on main after #703 and #705 (both green on re-run), 2026-11-10; on main after #781 (Contained tier, 43886198190; attempt 2 success) and on #787's exact head (Native host, 43966740349; attempt 2 success), 2026-11-16 | Re-run the job; no code cause |
 | `workspace list` held the CLI lifecycle lock | Fixed | #705 → `bb959446` | none |
 | Windows browser download tests: fixture never contacted (#584) | Recurring | seen again on #708, 2026-11-10; a related read timeout (`a_page_is_extracted_as_untrusted_markdown_in_pieces_without_hidden_text`) on #717 and `a_staged_file_never_outlives_a_worker_that_dies_or_hangs` on #723, 2026-11-11, green on re-run; #742 → `3fd9706d` adds diagnostics: on every failed navigation the worker logs the engine's `net::ERR_*` code (never the URL) and its stage timeline, and the test prints them with the engine processes; seen on #640, 2026-11-13, with those lines: in each timeout the engine never issued the request (the timeline ends at `goto`), the fixture was listening with 0 connections, the runner was at 7% CPU, and fewer renderers ran than after a passing navigation (details on #584) | Re-run the job; next, log renderer crashes and exit codes at `goto` and at the deadline to confirm or refute a renderer that never started; cause not confirmed |
 | `orcel-approval` `recovery_refuses_missing_verified_or_busy_ledgers` could not take the writer lock with zero wait | Fix merged, watching | seen on #725 and #738 (Ubuntu); #739 → `e5cd033d` makes the tests that take the lock wait up to 5 s (a forked test child keeps a copy of the lock descriptor until it execs) | Close if it stays green |
