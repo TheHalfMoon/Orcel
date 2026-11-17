@@ -76,7 +76,9 @@ pub const WORKER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(10);
 pub const WORKER_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(20);
 /// SG-000135 OB-03: a screenshot (the worker's own budget is 10 s, plus a
 /// full page's layout metrics) and a tab request (a new page and its guard).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const WORKER_SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const WORKER_TAB_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// One node of a worker snapshot: ref, role, accessible name, (links
