@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Orcel Orca Eye accent icon on Signal Lime">
-  <rect width="256" height="256" rx="58" fill="#D4FF3F"/>
-  <g transform="translate(48 48) scale(.625)"><path class="orcel-orca-eye" fill-rule="evenodd" d="M128 24 A104 104 0 1 1 127.9 24 Z M60 136 C80 92 150 70 206 82 C178 114 120 140 60 136 Z" fill="#080808"/></g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Orcel accent icon on lavender">
+  <rect width="256" height="256" rx="58" fill="#A6ACE6"/>
+  <g transform="translate(36 36) scale(.71875)"><g class="orcel-night-window"><rect x="28" y="40" width="200" height="176" rx="52" fill="none" stroke="#090C12" stroke-width="22"/><path d="M66 82H102" stroke="#090C12" stroke-width="16" stroke-linecap="round"/><path d="M128 96A50 50 0 0 1 128 196Z" fill="#090C12"/></g></g>
 </svg>

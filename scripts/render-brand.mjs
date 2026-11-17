@@ -40,15 +40,15 @@ if(fails.length){console.error(fails.join("\n"));process.exit(1)}
 // The overview composites the same canonical icon assets used by the product.
 const previewSvg=Buffer.from(
  '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">'+
- '<rect width="1600" height="1050" fill="#080808"/>'+
+ '<rect width="1600" height="1050" fill="#090C12"/>'+
  '<text x="68" y="98" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="48" font-weight="700" letter-spacing="5">ORCEL</text>'+
  '<text x="70" y="137" fill="#B8BCC1" font-family="Arial,sans-serif" font-size="20" letter-spacing="3">BRAND SYSTEM   /   SIGNAL IDENTITY   /   2026</text>'+
  '<line x1="70" y1="177" x2="1530" y2="177" stroke="#3E4144"/>'+
  '<rect x="70" y="210" width="710" height="600" rx="28" fill="#17191B"/>'+
  '<rect x="800" y="210" width="730" height="600" rx="28" fill="#F5F6F7"/>'+
  '<text x="108" y="760" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="22" letter-spacing="2">DARK  /  PRIMARY APP ICON</text>'+
- '<text x="840" y="760" fill="#080808" font-family="Arial,sans-serif" font-size="22" letter-spacing="2">LIGHT  /  INVERSE ICON</text>'+
- '<text x="80" y="875" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="29" font-weight="600">One distinctive wordmark. One consistent signal.</text>'+
+ '<text x="840" y="760" fill="#090C12" font-family="Arial,sans-serif" font-size="22" letter-spacing="2">LIGHT  /  INVERSE ICON</text>'+
+ '<text x="80" y="875" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="29" font-weight="600">A window on your computer. A Halfmoon product.</text>'+
  '<text x="80" y="927" fill="#B8BCC1" font-family="Arial,sans-serif" font-size="25">Your computer, your terms.</text>'+
  '<text x="815" y="870" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="21">16px</text>'+
  '<text x="930" y="870" fill="#FFFFFF" font-family="Arial,sans-serif" font-size="21">32px</text>'+
