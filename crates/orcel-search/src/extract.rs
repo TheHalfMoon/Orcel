@@ -8,7 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::highlights::collapse_whitespace;
-use crate::html::{self, Dom, NodeId};
+use crate::html::{self, Dom, HtmlLimit, NodeId, NodeKind, ParseStats};
 use crate::tokenize::fold_diacritics;
 use crate::types::{ContentBlock, DocCategory};
 use crate::url;
@@ -85,6 +85,18 @@ pub struct ExtractedPage {
     pub description: Option<String>,
     /// Declared `og:type`, such as `article`, `website` or `profile`.
     pub open_graph_type: Option<String>,
+    /// Deterministic work counters, for bounding the cost in tests.
+    pub stats: ExtractStats,
+}
+
+/// Work counters of one extraction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExtractStats {
+    pub parse: ParseStats,
+    /// Nodes in the tree.
+    pub nodes: usize,
+    /// Node and child-edge visits of the post-order analysis.
+    pub analysis_steps: usize,
 }
 
 fn is_dropped(dom: &Dom, id: NodeId) -> bool {
@@ -102,12 +114,13 @@ fn is_block(dom: &Dom, id: NodeId) -> bool {
     dom.tag(id).is_some_and(|t| BLOCK_TAGS.contains(&t))
 }
 
-fn meta(dom: &Dom, names: &[&str]) -> Option<String> {
+fn meta(dom: &Dom, metas: &[NodeId], names: &[&str]) -> Option<String> {
     for name in names {
         for attribute in ["property", "name", "itemprop"] {
-            let found = dom.find(0, |d, id| {
-                d.tag(id) == Some("meta") && d.attr(id, attribute) == Some(name)
-            });
+            let found = metas
+                .iter()
+                .copied()
+                .find(|id| dom.attr(*id, attribute) == Some(name));
             if let Some(id) = found {
                 let value = dom.attr(id, "content").unwrap_or("").trim().to_string();
                 if !value.is_empty() {
@@ -258,15 +271,115 @@ fn json_ld_author(node: &Value) -> Option<String> {
     }
 }
 
-fn text_len(dom: &Dom, id: NodeId) -> usize {
-    dom.text_content(id).trim().chars().count()
+/// Text measures of one subtree, combined bottom-up so the trimmed text
+/// length of every node is known after one post-order pass.
+#[derive(Debug, Clone, Copy, Default)]
+struct Span {
+    chars: usize,
+    leading_ws: usize,
+    trailing_ws: usize,
+    all_ws: bool,
 }
 
-fn pick_longest(dom: &Dom, predicate: impl Fn(&Dom, NodeId) -> bool) -> Option<NodeId> {
+impl Span {
+    fn of_text(text: &str) -> Self {
+        let chars = text.chars().count();
+        let leading_ws = text.chars().take_while(|c| c.is_whitespace()).count();
+        if leading_ws == chars {
+            return Self {
+                chars,
+                leading_ws,
+                trailing_ws: chars,
+                all_ws: true,
+            };
+        }
+        Self {
+            chars,
+            leading_ws,
+            trailing_ws: text.chars().rev().take_while(|c| c.is_whitespace()).count(),
+            all_ws: false,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            all_ws: true,
+            ..Self::default()
+        }
+    }
+
+    fn then(self, next: Self) -> Self {
+        Self {
+            chars: self.chars + next.chars,
+            leading_ws: if self.all_ws {
+                self.chars + next.leading_ws
+            } else {
+                self.leading_ws
+            },
+            trailing_ws: if next.all_ws {
+                next.chars + self.trailing_ws
+            } else {
+                next.trailing_ws
+            },
+            all_ws: self.all_ws && next.all_ws,
+        }
+    }
+
+    /// Characters of the subtree text after trimming whitespace.
+    fn trimmed(self) -> usize {
+        if self.all_ws {
+            0
+        } else {
+            self.chars - self.leading_ws - self.trailing_ws
+        }
+    }
+}
+
+/// Per-node facts from one post-order pass: trimmed text length and whether
+/// a block element sits below the node.
+struct Analysis {
+    span: Vec<Span>,
+    block_below: Vec<bool>,
+    steps: usize,
+}
+
+fn analyse(dom: &Dom) -> Analysis {
+    let mut span = vec![Span::empty(); dom.nodes.len()];
+    let mut block_below = vec![false; dom.nodes.len()];
+    let mut steps = 0;
+    let mut order = dom.post_order(0);
+    order.push(0);
+    for id in order {
+        steps += 1 + dom.nodes[id].children.len();
+        if let NodeKind::Text(text) = &dom.nodes[id].kind {
+            span[id] = Span::of_text(text);
+            continue;
+        }
+        let mut acc = Span::empty();
+        let mut below = false;
+        for &child in &dom.nodes[id].children {
+            acc = acc.then(span[child]);
+            below = below || block_below[child] || is_block(dom, child);
+        }
+        span[id] = acc;
+        block_below[id] = below;
+    }
+    Analysis {
+        span,
+        block_below,
+        steps,
+    }
+}
+
+fn pick_longest(
+    dom: &Dom,
+    facts: &Analysis,
+    predicate: impl Fn(&Dom, NodeId) -> bool,
+) -> Option<NodeId> {
     let mut best = None;
     let mut best_length = 0;
     for id in dom.find_all(0, predicate) {
-        let length = text_len(dom, id);
+        let length = facts.span[id].trimmed();
         if length > best_length {
             best = Some(id);
             best_length = length;
@@ -275,13 +388,15 @@ fn pick_longest(dom: &Dom, predicate: impl Fn(&Dom, NodeId) -> bool) -> Option<N
     best
 }
 
-fn choose_root(dom: &Dom) -> NodeId {
+fn choose_root(dom: &Dom, facts: &Analysis) -> NodeId {
     let candidates = [
-        pick_longest(dom, |d, id| d.tag(id) == Some("article")),
-        pick_longest(dom, |d, id| d.tag(id) == Some("main")),
-        pick_longest(dom, |d, id| d.attr(id, "role") == Some("main")),
-        pick_longest(dom, |d, id| d.attr(id, "itemprop") == Some("articleBody")),
-        pick_longest(dom, |d, id| {
+        pick_longest(dom, facts, |d, id| d.tag(id) == Some("article")),
+        pick_longest(dom, facts, |d, id| d.tag(id) == Some("main")),
+        pick_longest(dom, facts, |d, id| d.attr(id, "role") == Some("main")),
+        pick_longest(dom, facts, |d, id| {
+            d.attr(id, "itemprop") == Some("articleBody")
+        }),
+        pick_longest(dom, facts, |d, id| {
             ["post-content", "entry-content", "article-body", "content"]
                 .iter()
                 .any(|c| d.has_class(id, c))
@@ -289,9 +404,9 @@ fn choose_root(dom: &Dom) -> NodeId {
         }),
     ];
     let mut best = dom.body().or_else(|| dom.document_element()).unwrap_or(0);
-    let mut best_length = text_len(dom, best);
+    let mut best_length = facts.span[best].trimmed();
     for candidate in candidates.into_iter().flatten() {
-        let length = text_len(dom, candidate);
+        let length = facts.span[candidate].trimmed();
         // A container wins only when it is dense enough to be the content.
         if length > 100 && length as f64 >= best_length as f64 * 0.5 {
             best = candidate;
@@ -360,12 +475,13 @@ struct Block {
     heading: bool,
 }
 
-fn collect_blocks(dom: &Dom, root: NodeId, drop_title: &str) -> Vec<Block> {
+fn collect_blocks(dom: &Dom, facts: &Analysis, root: NodeId, drop_title: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for id in dom.find_all(root, is_block) {
         // Keep the leaf-most block: a <p> inside <li> is the block, not the <li>.
-        if dom.find(id, is_block).is_some() {
+        // Leaf blocks never nest, so reading their text is linear overall.
+        if facts.block_below[id] {
             continue;
         }
         let text = collapse_whitespace(&dom.text_content(id));
@@ -401,19 +517,22 @@ fn collect_blocks(dom: &Dom, root: NodeId, drop_title: &str) -> Vec<Block> {
 }
 
 /// Extracts title, metadata and main content from `html` fetched at `url`.
-pub fn extract_page(html_source: &str, page_url: &str) -> ExtractedPage {
-    let mut dom = html::parse(html_source);
+/// Refuses input past the [`html::MAX_HTML_BYTES`] and [`html::MAX_NODES`]
+/// limits; otherwise the work is linear in the input.
+pub fn extract_page(html_source: &str, page_url: &str) -> Result<ExtractedPage, HtmlLimit> {
+    let mut dom = html::parse(html_source)?;
     // JSON-LD lives inside <script>, so it is read before scripts are dropped.
     let json_ld = collect_json_ld(&dom);
-    for id in dom.find_all(0, is_dropped) {
-        dom.remove(id);
-    }
+    let dropped = dom.find_all(0, is_dropped);
+    dom.remove_all(&dropped);
+    let facts = analyse(&dom);
+    let metas = dom.find_all(0, |d, id| d.tag(id) == Some("meta"));
 
     let non_empty = |value: String| {
         let value = collapse_whitespace(&value);
         (!value.is_empty()).then_some(value)
     };
-    let og_title = meta(&dom, &["og:title", "twitter:title"]);
+    let og_title = meta(&dom, &metas, &["og:title", "twitter:title"]);
     let h1 = dom
         .find(0, |d, id| d.tag(id) == Some("h1"))
         .and_then(|id| non_empty(dom.text_content(id)));
@@ -429,6 +548,7 @@ pub fn extract_page(html_source: &str, page_url: &str) -> ExtractedPage {
 
     let published_date = meta(
         &dom,
+        &metas,
         &[
             "article:published_time",
             "datePublished",
@@ -458,29 +578,40 @@ pub fn extract_page(html_source: &str, page_url: &str) -> ExtractedPage {
             .and_then(normalise_date)
     });
 
-    let author = meta(&dom, &["author", "article:author", "twitter:creator"]).or_else(|| {
+    let author = meta(
+        &dom,
+        &metas,
+        &["author", "article:author", "twitter:creator"],
+    )
+    .or_else(|| {
         json_ld
             .iter()
             .filter_map(json_ld_author)
             .find(|name| !name.is_empty())
     });
-    let site_name = meta(&dom, &["og:site_name"]);
-    let description = meta(&dom, &["description", "og:description"]);
+    let site_name = meta(&dom, &metas, &["og:site_name"]);
+    let description = meta(&dom, &metas, &["description", "og:description"]);
     let language = dom
         .document_element()
         .and_then(|id| dom.attr(id, "lang"))
         .map(str::to_string);
-    let open_graph_type = meta(&dom, &["og:type"]);
+    let open_graph_type = meta(&dom, &metas, &["og:type"]);
 
-    let root = choose_root(&dom);
-    let blocks = collect_blocks(&dom, root, &title);
+    let root = choose_root(&dom, &facts);
+    let blocks = collect_blocks(&dom, &facts, root, &title);
     let final_title = if title.is_empty() {
         h1.unwrap_or_else(|| page_url.to_string())
     } else {
         title
     };
 
-    ExtractedPage {
+    let stats = ExtractStats {
+        parse: dom.stats,
+        nodes: dom.nodes.len(),
+        analysis_steps: facts.steps,
+    };
+    Ok(ExtractedPage {
+        stats,
         title: final_title,
         // Headings stay in markdown (where they also boost the index) but are
         // kept out of text so citations quote sentences, not section titles.
@@ -502,7 +633,7 @@ pub fn extract_page(html_source: &str, page_url: &str) -> ExtractedPage {
         language,
         description,
         open_graph_type,
-    }
+    })
 }
 
 fn host_is(host: &str, domain: &str) -> bool {

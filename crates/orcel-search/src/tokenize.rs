@@ -12,6 +12,11 @@ then there these they this to was were what when where which who will with you y
 also any can could do does did not we our us more most other some such only own same so than too very \
 s t just don should now";
 
+/// Longest query accepted, in bytes.
+pub const MAX_QUERY_BYTES: usize = 2 * 1024;
+/// Most index terms a query may carry.
+pub const MAX_QUERY_TERMS: usize = 64;
+
 fn stopwords() -> &'static HashSet<&'static str> {
     static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
     SET.get_or_init(|| STOPWORD_LIST.split_whitespace().collect())

@@ -37,6 +37,7 @@ pub fn load_fixtures() -> Vec<CorpusDoc> {
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("https://fixtures.orcel.local/{name}"));
             ingest_html(&url, &read_fixture(name), "local-corpus", FIXED_NOW_MS)
+                .expect("fixture extracts")
         })
         .collect()
 }

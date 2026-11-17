@@ -36,6 +36,64 @@ pub struct Node {
 #[derive(Debug, Clone)]
 pub struct Dom {
     pub nodes: Vec<Node>,
+    /// Work counters, so tests can bound the cost deterministically.
+    pub stats: ParseStats,
+}
+
+/// Largest HTML input accepted, in bytes.
+pub const MAX_HTML_BYTES: usize = 5 * 1024 * 1024;
+/// Most nodes (elements and text runs) one document may build.
+pub const MAX_NODES: usize = 200_000;
+/// Deepest open-element stack; elements past it are attached but not opened.
+pub const MAX_OPEN_DEPTH: usize = 512;
+/// Most attributes kept per tag; the rest are parsed and discarded.
+pub const MAX_ATTRIBUTES: usize = 256;
+/// Longest attribute value kept, in bytes (cut at a character boundary).
+pub const MAX_ATTRIBUTE_VALUE_BYTES: usize = 8 * 1024;
+
+/// Deterministic work counters of one parse.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ParseStats {
+    /// Input bytes.
+    pub input_bytes: usize,
+    /// Tag lookups made by implied-end and end-tag rules (constant per tag).
+    pub stack_steps: usize,
+    /// Deepest open-element stack reached.
+    pub max_depth: usize,
+    /// Attributes discarded past [`MAX_ATTRIBUTES`].
+    pub dropped_attributes: usize,
+}
+
+/// Why a document was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HtmlLimit {
+    /// The input exceeds [`MAX_HTML_BYTES`].
+    InputTooLarge { bytes: usize },
+    /// The tree would exceed [`MAX_NODES`].
+    TooManyNodes,
+}
+
+impl std::fmt::Display for HtmlLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InputTooLarge { bytes } => write!(
+                f,
+                "HTML input of {bytes} bytes exceeds the {MAX_HTML_BYTES}-byte limit"
+            ),
+            Self::TooManyNodes => write!(f, "HTML input builds more than {MAX_NODES} nodes"),
+        }
+    }
+}
+
+fn truncate_to_boundary(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut end = max_bytes;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 const VOID: [&str; 14] = [
@@ -168,6 +226,10 @@ fn decode_reference(name: &str) -> Option<String> {
 struct Builder {
     dom: Dom,
     stack: Vec<NodeId>,
+    /// Stack depths of the open elements of each tag, innermost last, so a
+    /// rule finds its nearest tag and boundary without scanning the stack.
+    open: std::collections::HashMap<String, Vec<usize>>,
+    over_limit: bool,
 }
 
 impl Builder {
@@ -178,6 +240,10 @@ impl Builder {
     fn append(&mut self, kind: NodeKind) -> NodeId {
         let parent = self.current();
         let id = self.dom.nodes.len();
+        if id >= MAX_NODES {
+            self.over_limit = true;
+            return parent;
+        }
         self.dom.nodes.push(Node {
             kind,
             parent: Some(parent),
@@ -201,21 +267,49 @@ impl Builder {
         self.append(NodeKind::Text(text));
     }
 
-    fn tag_of(&self, id: NodeId) -> &str {
-        self.dom.tag(id).unwrap_or("")
+    /// Depth of the innermost open element whose tag is in `names`.
+    fn nearest(&self, names: &[&str]) -> Option<usize> {
+        names
+            .iter()
+            .filter_map(|name| {
+                self.open
+                    .get(*name)
+                    .and_then(|depths| depths.last().copied())
+            })
+            .max()
+    }
+
+    /// Depth of the nearest open element whose tag is in `tags`, unless an
+    /// element in `boundaries` is closer. Constant work per call (one lookup
+    /// per name), with no stack scan and no allocation.
+    fn find_open(&mut self, tags: &[&str], boundaries: &[&str]) -> Option<usize> {
+        self.dom.stats.stack_steps += tags.len() + boundaries.len();
+        let found = self.nearest(tags)?;
+        match self.nearest(boundaries) {
+            Some(boundary) if boundary > found => None,
+            _ => Some(found),
+        }
     }
 
     /// Pops up to and including the nearest open `tag`, unless a `boundary`
     /// element is closer.
     fn close_open(&mut self, tags: &[&str], boundaries: &[&str]) {
-        for depth in (0..self.stack.len()).rev() {
-            let tag = self.tag_of(self.stack[depth]).to_string();
-            if tags.contains(&tag.as_str()) {
-                self.stack.truncate(depth);
-                return;
-            }
-            if boundaries.contains(&tag.as_str()) {
-                return;
+        if let Some(depth) = self.find_open(tags, boundaries) {
+            self.pop_to(depth);
+        }
+    }
+
+    /// Pops every element at `depth` and above. Each element is pushed once,
+    /// so pops are linear over the whole parse.
+    fn pop_to(&mut self, depth: usize) {
+        while self.stack.len() > depth {
+            let Some(id) = self.stack.pop() else {
+                break;
+            };
+            if let Some(tag) = self.dom.tag(id) {
+                if let Some(depths) = self.open.get_mut(tag) {
+                    depths.pop();
+                }
             }
         }
     }
@@ -240,8 +334,21 @@ impl Builder {
         }
         let void = VOID.contains(&tag.as_str());
         let id = self.append(NodeKind::Element { tag, attrs });
-        if !void && !self_closing {
+        if self.over_limit {
+            return;
+        }
+        if !void && !self_closing && self.stack.len() < MAX_OPEN_DEPTH {
+            if let Some(tag) = self.dom.tag(id) {
+                let depth = self.stack.len();
+                match self.open.get_mut(tag) {
+                    Some(depths) => depths.push(depth),
+                    None => {
+                        self.open.insert(tag.to_string(), vec![depth]);
+                    }
+                }
+            }
             self.stack.push(id);
+            self.dom.stats.max_depth = self.dom.stats.max_depth.max(self.stack.len());
         }
     }
 
@@ -249,13 +356,7 @@ impl Builder {
         if matches!(tag, "html" | "body" | "head") {
             return;
         }
-        if let Some(depth) = self
-            .stack
-            .iter()
-            .rposition(|id| self.dom.tag(*id) == Some(tag))
-        {
-            self.stack.truncate(depth);
-        }
+        self.close_open(&[tag], &[]);
     }
 }
 
@@ -268,10 +369,21 @@ fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
     (0..=hay.len() - pin.len()).find(|&i| hay[i..i + pin.len()].eq_ignore_ascii_case(pin))
 }
 
-/// A parsed start tag: tag, attributes, self-closing flag, bytes consumed.
-type StartTag = (String, Vec<(String, String)>, bool, usize);
+/// A parsed start tag.
+struct StartTag {
+    tag: String,
+    attrs: Vec<(String, String)>,
+    self_closing: bool,
+    /// Bytes consumed from the `<`.
+    consumed: usize,
+    /// Attributes discarded past [`MAX_ATTRIBUTES`].
+    dropped: usize,
+}
 
-/// Parses the start tag at `input[0] == '<'`.
+/// Parses the start tag at `input[0] == '<'`. Attribute names are
+/// deduplicated through a set (first one wins), at most
+/// [`MAX_ATTRIBUTES`] are kept and values are cut to
+/// [`MAX_ATTRIBUTE_VALUE_BYTES`] before decoding, so the cost is linear.
 fn parse_start_tag(input: &str) -> Option<StartTag> {
     let bytes = input.as_bytes();
     let mut i = 1;
@@ -284,16 +396,27 @@ fn parse_start_tag(input: &str) -> Option<StartTag> {
     }
     let tag = input[name_start..i].to_ascii_lowercase();
     let mut attrs = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut dropped = 0usize;
     let mut self_closing = false;
     loop {
         while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
             i += 1;
         }
+        let done = |consumed: usize, attrs, self_closing| {
+            Some(StartTag {
+                tag: tag.clone(),
+                attrs,
+                self_closing,
+                consumed,
+                dropped,
+            })
+        };
         if i >= bytes.len() {
-            return Some((tag, attrs, self_closing, bytes.len()));
+            return done(bytes.len(), attrs, self_closing);
         }
         match bytes[i] {
-            b'>' => return Some((tag, attrs, self_closing, i + 1)),
+            b'>' => return done(i + 1, attrs, self_closing),
             b'/' => {
                 self_closing = true;
                 i += 1;
@@ -309,11 +432,11 @@ fn parse_start_tag(input: &str) -> Option<StartTag> {
         {
             i += 1;
         }
-        let name = input[attr_start..i].to_ascii_lowercase();
+        let raw_name = &input[attr_start..i];
         while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
             i += 1;
         }
-        let mut value = String::new();
+        let mut raw_value = "";
         if i < bytes.len() && bytes[i] == b'=' {
             i += 1;
             while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
@@ -326,7 +449,7 @@ fn parse_start_tag(input: &str) -> Option<StartTag> {
                     .bytes()
                     .position(|b| b == quote)
                     .map_or(bytes.len(), |p| value_start + p);
-                value = decode_entities(&input[value_start..value_end]);
+                raw_value = &input[value_start..value_end];
                 i = (value_end + 1).min(bytes.len());
             } else {
                 let value_start = i;
@@ -336,18 +459,33 @@ fn parse_start_tag(input: &str) -> Option<StartTag> {
                 {
                     i += 1;
                 }
-                value = decode_entities(&input[value_start..i]);
+                raw_value = &input[value_start..i];
             }
         }
-        if !name.is_empty() && !attrs.iter().any(|(n, _)| *n == name) {
+        if raw_name.is_empty() {
+            continue;
+        }
+        if attrs.len() >= MAX_ATTRIBUTES {
+            dropped += 1;
+            continue;
+        }
+        let name = raw_name.to_ascii_lowercase();
+        if seen.insert(name.clone()) {
+            let value = decode_entities(truncate_to_boundary(raw_value, MAX_ATTRIBUTE_VALUE_BYTES));
             attrs.push((name, value));
         }
     }
 }
 
-/// Parses `html` into a [`Dom`]. Never fails: malformed markup degrades to
-/// text or is skipped.
-pub fn parse(html: &str) -> Dom {
+/// Parses `html` into a [`Dom`]. Malformed markup degrades to text or is
+/// skipped; only the size limits refuse: more than [`MAX_HTML_BYTES`] of
+/// input or more than [`MAX_NODES`] nodes. Every scan moves forward through
+/// the input, and stack rules are bounded by [`MAX_OPEN_DEPTH`], so the work
+/// is linear in the input.
+pub fn parse(html: &str) -> Result<Dom, HtmlLimit> {
+    if html.len() > MAX_HTML_BYTES {
+        return Err(HtmlLimit::InputTooLarge { bytes: html.len() });
+    }
     let mut builder = Builder {
         dom: Dom {
             nodes: vec![Node {
@@ -355,13 +493,22 @@ pub fn parse(html: &str) -> Dom {
                 parent: None,
                 children: Vec::new(),
             }],
+            stats: ParseStats {
+                input_bytes: html.len(),
+                ..ParseStats::default()
+            },
         },
         stack: Vec::new(),
+        open: std::collections::HashMap::new(),
+        over_limit: false,
     };
     let mut i = 0usize;
     let bytes = html.as_bytes();
     let mut text_start = 0usize;
     while i < bytes.len() {
+        if builder.over_limit {
+            return Err(HtmlLimit::TooManyNodes);
+        }
         if bytes[i] != b'<' {
             i += 1;
             continue;
@@ -394,10 +541,18 @@ pub fn parse(html: &str) -> Dom {
             i = end;
             text_start = i;
         } else if next.is_ascii_alphabetic() {
-            let Some((tag, attrs, self_closing, consumed)) = parse_start_tag(rest) else {
+            let Some(StartTag {
+                tag,
+                attrs,
+                self_closing,
+                consumed,
+                dropped,
+            }) = parse_start_tag(rest)
+            else {
                 i += 1;
                 continue;
             };
+            builder.dom.stats.dropped_attributes += dropped;
             flush(&mut builder, text_start, i);
             i += consumed;
             let raw = matches!(tag.as_str(), "script" | "style" | "noscript");
@@ -427,7 +582,10 @@ pub fn parse(html: &str) -> Dom {
     if text_start < html.len() {
         builder.text(decode_entities(&html[text_start..]));
     }
-    builder.dom
+    if builder.over_limit {
+        return Err(HtmlLimit::TooManyNodes);
+    }
+    Ok(builder.dom)
 }
 
 impl Dom {
@@ -497,11 +655,47 @@ impl Dom {
         out
     }
 
-    /// Detaches a node from its parent; it no longer appears in traversals.
-    pub fn remove(&mut self, id: NodeId) {
-        if let Some(parent) = self.nodes[id].parent.take() {
-            self.nodes[parent].children.retain(|child| *child != id);
+    /// Detaches every node in `ids` from its parent in one pass over the
+    /// tree; removed subtrees no longer appear in traversals.
+    pub fn remove_all(&mut self, ids: &[NodeId]) {
+        if ids.is_empty() {
+            return;
         }
+        let mut removed = vec![false; self.nodes.len()];
+        for &id in ids {
+            if let Some(flag) = removed.get_mut(id) {
+                *flag = true;
+            }
+        }
+        for (id, node) in self.nodes.iter_mut().enumerate() {
+            if removed[id] {
+                node.parent = None;
+            }
+            if node.children.iter().any(|child| removed[*child]) {
+                node.children.retain(|child| !removed[*child]);
+            }
+        }
+    }
+
+    /// Element and text nodes under `root` (excluding `root`) in post-order:
+    /// every node after all of its descendants.
+    pub fn post_order(&self, root: NodeId) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut stack: Vec<(NodeId, bool)> = self.nodes[root]
+            .children
+            .iter()
+            .rev()
+            .map(|c| (*c, false))
+            .collect();
+        while let Some((id, expanded)) = stack.pop() {
+            if expanded {
+                out.push(id);
+                continue;
+            }
+            stack.push((id, true));
+            stack.extend(self.nodes[id].children.iter().rev().map(|c| (*c, false)));
+        }
+        out
     }
 
     /// The parent element, if any.

@@ -166,15 +166,15 @@ pub fn contents_evidence(
     targets: &[String],
     origin: &str,
     now_ms: u64,
-) -> Vec<Evidence> {
+) -> Result<Vec<Evidence>, EngineInputError> {
     let options = ContentsOptions {
         text: Some(TextOption::Flag(true)),
         ..ContentsOptions::default()
     };
-    engine
-        .contents(targets, &options)
+    Ok(engine
+        .contents(targets, &options)?
         .results
         .into_iter()
         .map(|item| evidence(engine, item, origin, now_ms))
-        .collect()
+        .collect())
 }

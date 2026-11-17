@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::tokenize::{fold_diacritics, index_terms};
+use crate::tokenize::{fold_diacritics, index_terms, MAX_QUERY_BYTES, MAX_QUERY_TERMS};
 
 const ABBREVIATIONS: [&str; 19] = [
     "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "inc", "ltd", "co", "corp", "vs", "etc", "e.g",
@@ -47,13 +47,16 @@ pub fn split_sentences(text: &str) -> Vec<Sentence> {
         if !boundary {
             continue;
         }
-        let candidate: String = cleaned[start..=i]
-            .iter()
-            .collect::<String>()
-            .trim()
-            .to_string();
-        let raw_last = candidate.split_whitespace().last().unwrap_or("");
-        let raw_last = raw_last.strip_suffix('.').unwrap_or(raw_last);
+        // The last word runs back to the previous space. Every boundary is
+        // followed by a space, so these backward scans never overlap and the
+        // whole split stays linear; the sentence string is built only when
+        // the split is taken.
+        let mut word_start = i;
+        while word_start > start && cleaned[word_start - 1] != ' ' {
+            word_start -= 1;
+        }
+        let raw_last: String = cleaned[word_start..=i].iter().collect();
+        let raw_last = raw_last.strip_suffix('.').unwrap_or(&raw_last);
         if ABBREVIATIONS.contains(&raw_last.to_lowercase().as_str()) {
             continue;
         }
@@ -66,6 +69,11 @@ pub fn split_sentences(text: &str) -> Vec<Sentence> {
         if i > 0 && cleaned[i - 1].is_ascii_digit() {
             continue;
         }
+        let candidate: String = cleaned[start..=i]
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_string();
         if !candidate.is_empty() {
             sentences.push(Sentence {
                 index: sentences.len(),
@@ -144,11 +152,21 @@ pub fn extract_highlights(text: &str, options: &HighlightOptions) -> Vec<Highlig
     if sentences.is_empty() {
         return Vec::new();
     }
-    let query = options.query.trim();
+    // The query is bounded here too (the engine also refuses long queries),
+    // so per-sentence scoring costs at most MAX_QUERY_TERMS passes.
+    let mut query = options.query.trim();
+    if query.len() > MAX_QUERY_BYTES {
+        let mut end = MAX_QUERY_BYTES;
+        while !query.is_char_boundary(end) {
+            end -= 1;
+        }
+        query = &query[..end];
+    }
     let mut seen = HashSet::new();
     let terms: Vec<String> = index_terms(query)
         .into_iter()
         .filter(|t| seen.insert(t.clone()))
+        .take(MAX_QUERY_TERMS)
         .collect();
     let num_sentences = options.num_sentences.unwrap_or(5);
     let max_characters = options.max_characters.unwrap_or(usize::MAX);

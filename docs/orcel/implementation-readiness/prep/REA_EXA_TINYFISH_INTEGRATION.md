@@ -26,9 +26,12 @@ Recorded honestly, not available and not claimed:
 - **Private source.** None was accessed: the configured identity has no membership in `exa-labs` or `tinyfish-io`
   (`00_access_and_identity.md`). Nothing in Orcel depends on private source.
 
-Excluded by licence: `exa-browser` (third-party, no licence), `exa-deepseek-chat` and `openapi-spec` (no licence) are
-reference only, with zero copied lines; `bigset-oss` (AGPL-3.0) is never linked or copied. No telemetry is carried over
-(Exa `trackMCP`, TinyFish `connect-event`). Nothing calls Exa's or TinyFish's hosted APIs by default.
+Licences: this packet copies no donor code. `exa-browser` (third-party, no licence), `exa-deepseek-chat` and
+`openapi-spec` (no licence) were used as reference only, and nothing from `bigset-oss` (AGPL-3.0) is linked or copied.
+The founder's decision of 2026-11-17 is that licences no longer block copying; provenance records stay mandatory, so
+any later copy carries its repository, commit, paths, licence and notice through the WP1-01 provenance gate. No
+telemetry is carried over (Exa `trackMCP`, TinyFish `connect-event`). Nothing calls Exa's or TinyFish's hosted APIs by
+default.
 
 ## 2. Reconciling the REA plan with Orcel's architecture
 
@@ -129,13 +132,25 @@ scope, to be recorded by the activation owner:
 | `src/server/cli.ts` | not ported (no listener) |
 | new | `src/formats.rs` (`html`, `json`), `src/url.rs` |
 
-Tests: 64 Rust tests. 46 of the 48 PoC behaviours are ported one to one (`tests/engine.rs` 15, `tests/ranking.rs`
+Tests: 76 Rust tests. 46 of the 48 PoC behaviours are ported one to one (`tests/engine.rs` 15, `tests/ranking.rs`
 11, `tests/extract.rs` 6, `tests/provenance_cost.rs` 8, `tests/exa_surface.rs` 6). The three `exa-js` round trips run
 at the JSON-body level (the bodies `exa-js` sends and the fields it reads); the live HTTP round trip moves to the
 packet that mounts the route on `orceld`. Of the remaining two, the loopback-only assertion is covered by the
 no-network-surface test (the crate's dependency set and source), and the 401 for a wrong key moves to `orceld` (auth is
 its job). New tests: 3 extraction checks for the tree builder, hidden content and dates, 2 for the route table and Exa
-bodies with unknown fields, and 13 for the P-1 items (`tests/p1_items.rs`).
+bodies with unknown fields, 13 for the P-1 items (`tests/p1_items.rs`), and 12 for hostile input
+(`tests/adversarial.rs`).
+
+Hostile-input bounds (security review of the first P-1 commit): input over 5 MiB (`MAX_HTML_BYTES`) or a tree over
+200 000 nodes (`MAX_NODES`) is refused with `content_too_large`; the open-element stack stops growing at 512, and
+implied-end and end-tag rules find their tag and boundary through per-tag depth lists, never a stack scan; at most 256
+attributes per tag are kept, names are deduplicated through a set and values are cut to 8 KiB; dropped elements are
+removed in one pass; trimmed text lengths and leaf-block flags come from one post-order pass; sentence splitting reads
+each word once; queries are limited to 2 KiB and 64 terms; `contents` enforces the 10-target limit; `/answer`
+`numResults` is clamped. `ETag` and `Last-Modified` values with anything but visible ASCII and spaces, or over 256
+bytes, are dropped at ingest and again when conditional-request headers are built, so a stored value cannot inject a
+header line. The adversarial tests assert deterministic work counters (node count, rule lookups, analysis visits), not
+wall-clock time.
 
 Known differences from the PoC: diacritic folding covers combining marks, Latin-1, Latin Extended-A, Latin ligatures
 and fullwidth ASCII rather than full NFKD; lengths count Unicode scalar values rather than UTF-16 units; request ids are

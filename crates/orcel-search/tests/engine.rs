@@ -232,12 +232,16 @@ fn contents_returns_stored_documents_and_reports_urls_it_has_never_ingested() {
         text: Some(TextOption::Flag(true)),
         ..Default::default()
     };
-    let hit = engine.contents(&[BM25_URL.to_string()], &text);
+    let hit = engine
+        .contents(&[BM25_URL.to_string()], &text)
+        .expect("contents");
     assert_eq!(hit.results.len(), 1);
     assert_eq!(hit.results[0].url, BM25_URL);
     assert!(hit.results[0].text.as_ref().expect("text").len() > 100);
 
-    let miss = engine.contents(&["https://never-seen.example/x".to_string()], &text);
+    let miss = engine
+        .contents(&["https://never-seen.example/x".to_string()], &text)
+        .expect("contents");
     assert!(miss.results.is_empty());
     assert!(miss.notices.iter().any(|n| n.kind == "not_found"));
 }
@@ -388,7 +392,7 @@ fn index_and_document_store_stay_addressable_by_id() {
     index.add(&doc.id, &doc.title, &doc.text);
     assert!(index.term_vector(&doc.id).len() > 5);
     // Same id rule as the proof of concept: 12 hex chars of sha256(url).
-    let again = ingest_html(&doc.url, "<p>x</p>", "local-corpus", 0);
+    let again = ingest_html(&doc.url, "<p>x</p>", "local-corpus", 0).expect("doc");
     assert_eq!(again.id, doc.id);
     assert_eq!(doc.id.len(), 12);
 }

@@ -21,6 +21,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::extract::{content_hash, extract_page, infer_category};
+use crate::html::{HtmlLimit, MAX_HTML_BYTES};
 use crate::types::CorpusDoc;
 use crate::url;
 
@@ -67,17 +68,38 @@ impl ConditionalRequest {
         self.if_none_match.is_some() || self.if_modified_since.is_some()
     }
 
-    /// Header pairs for the governed fetch, in a stable order.
+    /// Header pairs for the governed fetch, in a stable order. A value that
+    /// is not a safe validator (see [`sanitize_validator`]) is left out, so a
+    /// stored or hand-built value can never inject a header line.
     pub fn headers(&self) -> Vec<(&'static str, String)> {
         let mut out = Vec::new();
-        if let Some(etag) = &self.if_none_match {
-            out.push(("If-None-Match", etag.clone()));
+        if let Some(etag) = self.if_none_match.as_deref().and_then(sanitize_validator) {
+            out.push(("If-None-Match", etag));
         }
-        if let Some(date) = &self.if_modified_since {
-            out.push(("If-Modified-Since", date.clone()));
+        if let Some(date) = self
+            .if_modified_since
+            .as_deref()
+            .and_then(sanitize_validator)
+        {
+            out.push(("If-Modified-Since", date));
         }
         out
     }
+}
+
+/// Longest `ETag` or `Last-Modified` value kept, in bytes.
+pub const MAX_VALIDATOR_BYTES: usize = 256;
+
+/// Returns the trimmed validator when it is non-empty, at most
+/// [`MAX_VALIDATOR_BYTES`] long and made only of visible ASCII and spaces
+/// (0x20 to 0x7E). Anything else, including CR, LF, NUL, tabs, other control
+/// characters and non-ASCII, drops the validator entirely.
+pub fn sanitize_validator(value: &str) -> Option<String> {
+    let trimmed = value.trim_matches(' ');
+    let safe = !trimmed.is_empty()
+        && trimmed.len() <= MAX_VALIDATOR_BYTES
+        && trimmed.bytes().all(|b| (0x20..=0x7e).contains(&b));
+    safe.then(|| trimmed.to_string())
 }
 
 impl IngestRecord {
@@ -138,6 +160,8 @@ pub enum RefusalReason {
     /// The page extracted to no text (a script-rendered shell, for example).
     /// Returned as an error, never as an empty success.
     EmptyContent,
+    /// The body exceeds the HTML size or node limits.
+    ContentTooLarge,
 }
 
 impl RefusalReason {
@@ -147,6 +171,7 @@ impl RefusalReason {
             Self::UnsupportedScheme => "unsupported_scheme",
             Self::UnsupportedContentType => "unsupported_content_type",
             Self::EmptyContent => "empty_content",
+            Self::ContentTooLarge => "content_too_large",
         }
     }
 }
@@ -319,12 +344,25 @@ pub enum IngestOutcome {
     NotModified(CorpusDoc),
 }
 
+fn too_large(page_url: &str, limit: HtmlLimit) -> IngestError {
+    IngestError::Refused {
+        reason: RefusalReason::ContentTooLarge,
+        url: page_url.to_string(),
+        message: format!("{page_url}: {limit}"),
+    }
+}
+
 /// Builds a corpus document from HTML (the proof of concept's `makeDoc`).
 /// The document id is the first 12 hex characters of the URL's SHA-256.
-pub fn document_from_html(page_url: &str, html: &str, record: IngestRecord) -> CorpusDoc {
-    let page = extract_page(html, page_url);
+/// Refuses with `content_too_large` past the HTML size or node limits.
+pub fn document_from_html(
+    page_url: &str,
+    html: &str,
+    record: IngestRecord,
+) -> Result<CorpusDoc, IngestError> {
+    let page = extract_page(html, page_url).map_err(|limit| too_large(page_url, limit))?;
     let category = infer_category(page_url, page.open_graph_type.as_deref());
-    CorpusDoc {
+    Ok(CorpusDoc {
         id: content_hash(page_url)[..12].to_string(),
         url: page_url.to_string(),
         title: page.title,
@@ -338,12 +376,17 @@ pub fn document_from_html(page_url: &str, html: &str, record: IngestRecord) -> C
         language: page.language,
         category,
         ingest: record,
-    }
+    })
 }
 
 /// Ingests a local HTML file's contents under a synthetic URL (the proof of
 /// concept's `ingestFile`). Reading the file is the caller's job.
-pub fn ingest_html(page_url: &str, html: &str, origin: &str, fetched_at_ms: u64) -> CorpusDoc {
+pub fn ingest_html(
+    page_url: &str,
+    html: &str,
+    origin: &str,
+    fetched_at_ms: u64,
+) -> Result<CorpusDoc, IngestError> {
     document_from_html(
         page_url,
         html,
@@ -363,8 +406,12 @@ pub fn ingest_response(
     prior: Option<&CorpusDoc>,
 ) -> Result<IngestOutcome, IngestError> {
     check_target(&response.url)?;
-    let etag = response.header("etag").map(str::to_string);
-    let last_modified = response.header("last-modified").map(str::to_string);
+    // Validators are replayed as request headers later, so only safe values
+    // are kept (no CR/LF or other control characters).
+    let etag = response.header("etag").and_then(sanitize_validator);
+    let last_modified = response
+        .header("last-modified")
+        .and_then(sanitize_validator);
 
     if response.status == 304 {
         if let Some(prior) = prior {
@@ -385,6 +432,15 @@ pub fn ingest_response(
             http_status: Some(304),
             message: "304 Not Modified without a stored document to revalidate".to_string(),
         });
+    }
+
+    if response.body.len() > MAX_HTML_BYTES {
+        return Err(too_large(
+            &response.url,
+            HtmlLimit::InputTooLarge {
+                bytes: response.body.len(),
+            },
+        ));
     }
 
     if let Some(kind) = classify_response(response) {
@@ -426,7 +482,7 @@ pub fn ingest_response(
         fetched_at_ms: response.fetched_at_ms,
         revalidated_at_ms: None,
     };
-    let doc = document_from_html(&response.url, &response.body, record);
+    let doc = document_from_html(&response.url, &response.body, record)?;
     if doc.text.trim().is_empty() {
         return Err(IngestError::Refused {
             reason: RefusalReason::EmptyContent,

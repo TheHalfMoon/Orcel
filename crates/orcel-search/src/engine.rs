@@ -16,6 +16,7 @@ use crate::extract::content_hash;
 use crate::formats::{render_html, render_json};
 use crate::highlights::{extract_highlights, lead_sentences, round_to, HighlightOptions};
 use crate::ingest::IngestError;
+use crate::tokenize::{index_terms, MAX_QUERY_BYTES, MAX_QUERY_TERMS};
 use crate::types::{
     AnswerCitation, AnswerRequest, AnswerResponse, AnswerStatus, ContentFormat, ContentStatus,
     ContentStatusError, ContentsOptions, ContentsRequest, ContentsResponse, CorpusDoc,
@@ -104,6 +105,40 @@ impl Default for LocalSearchEngine {
 fn clamp_count(value: Option<i64>, default: usize) -> usize {
     let value = value.unwrap_or(default as i64);
     value.clamp(1, MAX_RESULTS as i64) as usize
+}
+
+fn check_batch(count: usize) -> Result<(), EngineInputError> {
+    if count == 0 {
+        return Err(EngineInputError::new(
+            "contents requires a non-empty urls or ids array",
+        ));
+    }
+    if count > MAX_BATCH_URLS {
+        return Err(EngineInputError::new(format!(
+            "contents accepts at most {MAX_BATCH_URLS} urls or ids per request (got {count})"
+        )));
+    }
+    Ok(())
+}
+
+/// Trims the query and refuses an empty one, one over [`MAX_QUERY_BYTES`]
+/// or one with more than [`MAX_QUERY_TERMS`] index terms.
+fn validate_query(raw: &str) -> Result<&str, EngineInputError> {
+    let query = raw.trim();
+    if query.is_empty() {
+        return Err(EngineInputError::new("query must be a non-empty string"));
+    }
+    if query.len() > MAX_QUERY_BYTES {
+        return Err(EngineInputError::new(format!(
+            "query must be at most {MAX_QUERY_BYTES} bytes"
+        )));
+    }
+    if index_terms(query).len() > MAX_QUERY_TERMS {
+        return Err(EngineInputError::new(format!(
+            "query must have at most {MAX_QUERY_TERMS} terms"
+        )));
+    }
+    Ok(query)
 }
 
 fn truncate_at_word(text: &str, max_characters: usize) -> String {
@@ -232,10 +267,7 @@ impl LocalSearchEngine {
 
     /// Ranked search with Exa filters and optional pagination.
     pub fn search(&self, request: &SearchRequest) -> Result<SearchResponse, EngineInputError> {
-        let query = request.query.trim();
-        if query.is_empty() {
-            return Err(EngineInputError::new("query must be a non-empty string"));
-        }
+        let query = validate_query(&request.query)?;
         let mut notices = Vec::new();
         if matches!(
             request.search_type,
@@ -340,10 +372,16 @@ impl LocalSearchEngine {
         })
     }
 
-    /// Stored pages by URL or id (the proof of concept's `contents`): no
-    /// batch limit, unknown targets reported as `not_in_corpus`.
-    pub fn contents(&self, targets: &[String], options: &ContentsOptions) -> ContentsResponse {
-        self.contents_inner(targets, options, &BTreeMap::new())
+    /// Stored pages by URL or id (the proof of concept's `contents`), with
+    /// the same 1 to [`MAX_BATCH_URLS`] limit as [`Self::contents_batch`];
+    /// unknown targets are reported as `not_in_corpus`.
+    pub fn contents(
+        &self,
+        targets: &[String],
+        options: &ContentsOptions,
+    ) -> Result<ContentsResponse, EngineInputError> {
+        check_batch(targets.len())?;
+        Ok(self.contents_inner(targets, options, &BTreeMap::new()))
     }
 
     /// `POST /contents`: 1 to [`MAX_BATCH_URLS`] targets, one `statuses[]`
@@ -357,17 +395,7 @@ impl LocalSearchEngine {
         fetch_failures: &BTreeMap<String, IngestError>,
     ) -> Result<ContentsResponse, EngineInputError> {
         let targets = request.targets();
-        if targets.is_empty() {
-            return Err(EngineInputError::new(
-                "contents requires a non-empty urls or ids array",
-            ));
-        }
-        if targets.len() > MAX_BATCH_URLS {
-            return Err(EngineInputError::new(format!(
-                "contents accepts at most {MAX_BATCH_URLS} urls or ids per request (got {})",
-                targets.len()
-            )));
-        }
+        check_batch(targets.len())?;
         Ok(self.contents_inner(&targets, &request.options(), fetch_failures))
     }
 
@@ -444,13 +472,10 @@ impl LocalSearchEngine {
     /// Extractive answer with `[n]` citation markers; abstains with
     /// `no_support` when the evidence is weak. Nothing is generated.
     pub fn answer(&self, request: &AnswerRequest) -> Result<AnswerResponse, EngineInputError> {
-        let query = request.query.trim();
-        if query.is_empty() {
-            return Err(EngineInputError::new("query must be a non-empty string"));
-        }
+        let query = validate_query(&request.query)?;
         let ranked = self.index.search(query);
         let threshold = self.support_threshold(query);
-        let consider = request.num_results.unwrap_or(5).max(3) as usize;
+        let consider = clamp_count(request.num_results, 5).max(3);
 
         let mut passages: Vec<(&CorpusDoc, String, f64)> = Vec::new();
         for hit in ranked.iter().take(consider) {
@@ -485,9 +510,7 @@ impl LocalSearchEngine {
         }
 
         passages.sort_by(|a, b| b.2.total_cmp(&a.2));
-        let limit = passages
-            .len()
-            .min(request.num_results.unwrap_or(3).max(0) as usize);
+        let limit = passages.len().min(clamp_count(request.num_results, 3));
         let mut used: Vec<&CorpusDoc> = Vec::new();
         let mut lines: Vec<String> = Vec::new();
         for (doc, sentence, _) in passages.iter().take(limit) {

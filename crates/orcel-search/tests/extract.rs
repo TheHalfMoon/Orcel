@@ -38,7 +38,7 @@ fn json_ld_supplies_author_and_date_when_meta_tags_are_absent() {
     let html = r#"<!doctype html><html><head><title>T</title>
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"NewsArticle","datePublished":"2025-11-02T10:00:00Z","author":{"@type":"Person","name":"A. Writer"}}</script>
     </head><body><article><h1>T</h1><p>Body text long enough to be selected as the main block by the density rule.</p></article></body></html>"#;
-    let page = extract_page(html, "https://example.org/t");
+    let page = extract_page(html, "https://example.org/t").expect("extracts");
     assert_eq!(page.author.as_deref(), Some("A. Writer"));
     assert_eq!(page.published_date.as_deref(), Some("2025-11-02"));
 }
@@ -48,7 +48,7 @@ fn markdown_output_preserves_headings_lists_and_code_fences() {
     let html = "<!doctype html><html><body><main>
     <h2>Steps</h2><ul><li>first</li><li>second</li></ul><pre><code>npm install</code></pre>
     <p>Closing paragraph.</p></main></body></html>";
-    let page = extract_page(html, "https://example.org/x");
+    let page = extract_page(html, "https://example.org/x").expect("extracts");
     assert!(page.markdown.contains("## Steps"));
     assert!(page.markdown.contains("- first"));
     assert!(page.markdown.contains("```\nnpm install"));
@@ -57,14 +57,15 @@ fn markdown_output_preserves_headings_lists_and_code_fences() {
 #[test]
 fn content_hash_is_stable_for_identical_text_and_differs_for_changed_text() {
     let html = "<html><body><article><p>Alpha beta gamma.</p></article></body></html>";
-    let a = ingest_html("https://example.org/a", html, "local-corpus", 1);
-    let b = ingest_html("https://example.org/a", html, "local-corpus", 2);
+    let a = ingest_html("https://example.org/a", html, "local-corpus", 1).expect("doc");
+    let b = ingest_html("https://example.org/a", html, "local-corpus", 2).expect("doc");
     let c = ingest_html(
         "https://example.org/a",
         &html.replace("Alpha", "Delta"),
         "local-corpus",
         3,
-    );
+    )
+    .expect("doc");
     assert_eq!(a.content_hash, b.content_hash);
     assert_ne!(a.content_hash, c.content_hash);
     assert_eq!(a.content_hash.len(), 64);
@@ -108,7 +109,7 @@ fn category_inference_uses_the_url_host_and_the_declared_open_graph_type() {
 #[test]
 fn tree_builder_closes_implied_paragraphs_and_list_items() {
     let html = "<body><main><p>One<p>Two<ul><li>a<li>b</ul><p>Three &amp; four &#8212; &#x41;</main></body>";
-    let page = extract_page(html, "https://example.org/p");
+    let page = extract_page(html, "https://example.org/p").expect("extracts");
     let texts: Vec<String> = page
         .blocks
         .iter()
@@ -132,7 +133,7 @@ fn hidden_and_aria_hidden_elements_and_comments_are_dropped() {
     let html = "<body><article><p>Visible text stays.</p><p hidden>secret one</p>\
 <div aria-hidden=\"true\"><p>secret two</p></div><!-- <p>secret three</p> -->\
 <div id=\"comments\"><p>secret four</p></div><script>var x = '<p>secret five</p>';</script></article></body>";
-    let page = extract_page(html, "https://example.org/h");
+    let page = extract_page(html, "https://example.org/h").expect("extracts");
     assert!(page.text.contains("Visible text stays."));
     assert!(!page.text.contains("secret"), "{}", page.text);
 }
