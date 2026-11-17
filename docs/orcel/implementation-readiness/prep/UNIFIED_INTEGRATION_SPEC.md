@@ -552,6 +552,12 @@ Granted with STRONG presence for one identified client and one declared task; sh
 covers is authorized and audited individually with its id; ended by stop, lease end or expiry; never covers `Admin`,
 remote callers, out-of-scope targets or another client. Without one, each action keeps its own approval.
 
+Amended 2026-11-17 by founder decision, recorded in SG-000135 (`.specgrain/specs/SG-000135.json`): for the remote
+`browser_full` capability profile only, a browser lease or browser standing approval issued by the owner may cover
+the remote caller that is the identified client named in it, through the Secure MCP Tunnel, within its origins,
+profiles, sessions, action families and expiry, and only when the authority service issued it. Every other remote
+caller, executor and profile keeps the rule above.
+
 ### 4.16 Sensitive web features (FD-UP-2 decided)
 
 | Class | Features | Default | Gate |

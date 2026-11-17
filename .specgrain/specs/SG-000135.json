@@ -1,0 +1,394 @@
+{
+  "id": "SG-000135",
+  "title": "Orcel Browser Session Broker, browser-full profile and Full Access browser leases",
+  "program": "ORCEL-BROWSER",
+  "state": "GRAIN",
+  "risk": "high",
+  "created": "2026-11-17",
+  "base": "48ae7a1247d5d793775c5b753d325dcff051b5e6",
+  "planning_issue": null,
+  "dependencies": [
+    "SG-000131",
+    "SG-000132",
+    "SG-000108",
+    "SG-000122",
+    "SG-000075",
+    "SG-000079",
+    "SG-000120"
+  ],
+  "dependency_notes": {
+    "SG-000131": "Contracts v1 (PR #794, WP1-02: LeaseRef, DispatchAuthority, StandingApproval, ToolEntry with lease_gate and standing_approvable, session and event types) and the WP1-03 audit hash chain. No packet that consumes a lease or writes a receipt merges before #794 and WP1-03 are on main; this grain adds BrowserSession, BrowserProfileRef and BrowserLeaseScope to orcel-contracts only after #794 merges.",
+    "SG-000132": "Active. The lease-consuming dispatcher, standing approvals and Stop. This grain enables the Browser executor class under it and defines the browser lease scope; the interim issuance on the existing full-control store and its migration are recorded in decisions and in the SG-000132 amendment entry.",
+    "SG-000108": "Closed. The live Playwright-core worker, host-verified engine, pipe attachment, confinement, navigation layers and Job Object supervision are reused. Its single-lifetime, single-page, headless, ephemeral-profile and one-origin-per-launch rules are superseded inside this grain only, as recorded in closed_grain_amendments.",
+    "SG-000122": "Closed. Fill, select, check, Enter, text waits and the verifier are reused as browser-full tools. Its exclusions of tabs (E6), keys other than Enter and click beyond links are superseded inside this grain only; its refusal of secret fields is kept.",
+    "SG-000075": "Closed. Public HTTPS, DNS re-resolution, redirect revalidation, private-network and unsafe-scheme denial, and frame, popup and worker mediation hold unchanged for every broker session, Shadow or Visible.",
+    "SG-000079": "Closed. The rule that browser tools change only through one reviewed profile update across discovery, documentation, OAuth scope tables and runtime holds. Its 'no remote mapping' rule is superseded for the browser_full profile only, by work packet OB-09, as recorded in closed_grain_amendments.",
+    "SG-000120": "Closed. The intent journal and reconciliation: outcome_unknown is never retried, which is the basis of the never-auto-repeat-an-uncertain-submit rule."
+  },
+  "objective": "Make Orcel Browser a real headed Chromium browser that a person can use without any agent, and let agents run browser sessions on it under one Orcel Browser Session Broker in orceld and one authorization system for every engine. The broker replaces the single thread-local LiveBrowser slot (crates/orceld/src/live_dispatch.rs) with a map of sessions, each bound to a task, a client principal, an Orcel-managed persistent profile and an execution mode (Shadow: isolated profile and context with no OS mouse, keyboard, clipboard or focus use; Visible: a headed window the person can see and take over), with per-task budgets and several concurrent agent tasks. A new local browser_full MCP profile exposes session, tab, snapshot, screenshot, click, type, fill, select, extract, verify, pause, takeover, resume, close and status tools. Full Access is an owner-enabled, revocable, scope- and time-bounded browser lease: routine in-lease actions dispatch with no repeated prompt through real lease caching in orceld; an out-of-lease action asks once for the missing scope; high-impact actions need an explicit narrow standing policy. Human input on an agent-owned page pauses that resource, waits 3000 ms after the last human event, re-observes and replans with human edits authoritative. MFA, passkeys and CAPTCHAs are never bypassed: the session shows Needs you and resumes after the person finishes. Every action yields a verifiable evidence receipt. A remote browser_full capability profile for ChatGPT through the Secure MCP Tunnel follows local stdio, under a founder amendment of spec section 4.15. Founder inputs and code map: docs/orcel/implementation-readiness/prep/SG-000135_ORCEL_BROWSER.md.",
+  "scope": {
+    "include": [
+      "OB-00 (this packet): activate the contract only; the grain, its prep summary, CURRENT.md's record and the open-grain pins land together. No code.",
+      "Broker: crates/orceld/src/browser_broker.rs owning BrokerSession {session_id, task_id, client principal, profile_id, mode Shadow or Visible, LiveBrowser, state}; session ids bound to orcel_session_id so a restart invalidates them; per-task and device budgets (concurrent sessions, hosts, RAM ceiling, idle expiry, per-client caps) configured locally only; per-session dispatch so concurrent tasks run while policy evaluation stays serialised; an admitted-origin set per session.",
+      "Persistent Orcel-managed profiles: profiles/<profile_id> under the Orcel state root (adopt_profile instead of the ephemeral profile), one per declared identity, never a user's default personal browser profile and never its user-data-dir; per-task contexts inside a profile; leftover sweep; cross-profile isolation of cookies, storage, downloads and secrets.",
+      "browser_full MCP profile, local stdio first: browser_session_create, browser_open, browser_tabs, browser_snapshot, browser_screenshot, browser_click, browser_type, browser_fill, browser_select (with check and Enter), browser_download, browser_extract (on PR #797's outline and extract_schema plus the worker's extract frames, never a second extract path), browser_verify, browser_pause, browser_takeover, browser_resume, browser_close and browser_task_status; ToolSurfaceProfile, SURFACE_PROFILES, LOCAL_TOOL_SURFACE_PROFILES, profile_gate.rs, exposure.rs, README and TOOL_CONTRACT change together (SG-000079 rule).",
+      "Tabs (several pages per session, opened, listed, switched and closed by the broker; popups mediated by SG-000075 and opened as tabs only when admitted) and a bounded page screenshot frame (PNG, size-capped, secret fields masked) under the WPB-01 capture contract.",
+      "Shadow and Visible execution modes as an explicit broker property: Shadow is headless or offscreen and never uses OS input, clipboard, focus or foreground windows; Visible is a headed window of the host-verified engine with a separately reviewed headed argv set.",
+      "Evidence receipts: one per action {session_id, task_id, action, target node, page generation and URL before and after, authority (lease id, standing policy id or grant), verifier results, screenshot digest, outcome or outcome_unknown}, appended to the SG-000131 audit chain and returned by browser_task_status; no model summary is ever a receipt.",
+      "Human takeover state machine RUNNING -> HUMAN_OVERRIDE -> QUIET_3_SECONDS -> REOBSERVE -> REPLAN -> RUNNING, plus AWAIT_HUMAN_VERIFICATION, PAUSED and CANCELLED, scoped to the touched session or tab.",
+      "Challenge handoff: a read-only classifier for CAPTCHA widgets, one-time-code fields, WebAuthn and passkey prompts and authentication interstitials that moves the session to AWAIT_HUMAN_VERIFICATION, shows Needs you without taking focus, and resumes after the person completes it. Login uses the browser's own saved-password autofill in the Orcel-managed profile or the person's hand; no secret reaches the model.",
+      "Full Access browser leases: BrowserLeaseScope {lease id, epoch, principal, client, task, profile ids, session ids, origins, action families, expiry, optional budget}; an epoch-checked in-memory cache in orceld consulted before any approval request; one scope-extension prompt for a missing origin or family; standing policies for high-impact families; invalidation on revoke, emergency stop, epoch advance, session end and human interruption.",
+      "Remote browser_full mapping (after local acceptance): a REMOTE_PROVIDER_PROFILES entry, a tunnel transport context that can carry browser_full, an OAuth scope for browser actions, the profile gate relaxed for a remote caller holding a locally issued browser lease, and the remote lease checks of SG-000055 and SG-000084.",
+      "Consent-based profile import from Chrome, Edge and Firefox (preview, per-item consent, backup and rollback, original browser untouched; passwords only through the platform's supported export into the browser credential vault) and the BrowserOS-based human browser build, packaging and installer: OB-10, last, on a build volume with room for a Chromium build, never on the constrained C: or D: drives."
+    ],
+    "exclude": [
+      "Attaching to, reading or exporting a user's default personal browser profile or its user-data-dir; attaching remote debugging to the person's ordinary browser.",
+      "Any CAPTCHA, MFA, passkey, WebAuthn or OS-presence bypass, solving or spoofing, including BrowserOS solve_captcha, neo-captcha and any virtual authenticator.",
+      "For now (later grains): BrowserOS credentials and payment_cards tools, evaluate_in_page and run page scripting, and any tool that returns a password, cookie, token or card value; arbitrary JavaScript, generic CDP or DevTools passthrough stay excluded as in SG-000108.",
+      "Typing into a secret field (password type, secret-looking autocomplete, name or id, one-time-code); credentials enter only through the browser's own autofill vault or the person.",
+      "--remote-debugging-port, a remote debugging address or any CDP listener in any engine adapter, BrowserOS and claw-server code included.",
+      "An unauthenticated listener of any kind; a second user-facing MCP endpoint (claw-server is never exposed as one).",
+      "BrowserOS run_policy or browseros-decide as an authority, BrowserOS billing, hosted-api, PostHog, Sentry and other hosted or paid features.",
+      "Native Desktop Shadow (separate OS session or VM): a P1 successor grain; a non-isolated desktop never advertises no-interference.",
+      "Release builds, signing, installers or distribution before SG-000106 and a separately governed release decision.",
+      "macOS and Linux execution (the macOS parity track picks this up after Windows).",
+      "Remote Full Control of the desktop (SG-000105) and every executor class other than Browser."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None.",
+    "broker": "Proposed: several concurrent orceld-owned browser sessions with per-task budgets, replacing the single live browser slot; orceld stays the sole authority and the host keeps its pipe-only, no-evaluate rules.",
+    "profiles": "Proposed: persistent Orcel-managed browser profiles under the Orcel state root; consented import later (OB-10); never the user's personal profile.",
+    "mcp": "Proposed: a local browser_full profile with the tools listed in scope; remote mapping only through OB-09.",
+    "leases": "Proposed: the Browser executor class enabled under a Full User lease; owner-issued browser leases cover routine in-lease actions without per-action prompts; high-impact families only under explicit standing policies.",
+    "remote": "Proposed: a remote browser_full capability profile for ChatGPT through the Secure MCP Tunnel, covered by a locally issued browser lease (founder amendment of spec 4.15 for this profile only).",
+    "release": "None. Development builds only until SG-000106 and a separate release decision."
+  },
+  "decisions": [
+    {
+      "question": "Product: a real browser plus agent sessions",
+      "status": "DECIDED (founder, 2026-11-17)",
+      "decision": "Founder decision of 2026-11-17, given in the Claude Code session and written in the founder's Orcel Browser architecture decision of 2026-11-17 (ORCEL_BROWSER_MASTER_DECISION.md, summarised in docs/orcel/implementation-readiness/prep/SG-000135_ORCEL_BROWSER.md): Orcel must contain \"a *real daily-use Chromium browser*, not merely a headless scraper, remote Chrome control driver or artificial webview\", and Orcel Browser Human is usable \"even without AI\". Shadow Mode is, from the founder's Shadow Mode and collaboration requirements of 2026-11-17 (SHADOW_MODE_AND_COLLABORATION_SPEC.md, same summary), \"a separate browser profile/context/session and target; never commandeer current Chrome/Edge window, mouse, keyboard focus, global hotkeys or system clipboard\". Visible Mode is allowed: \"Owner can choose Visible Mode to use the actual desktop, or Shadow Mode for independently controlled browser/VM sessions.\" Shadow Mode \"changes the *execution location*, not the permissions\"."
+    },
+    {
+      "question": "One broker and one authorization system for all engines",
+      "status": "DECIDED (founder, 2026-11-17)",
+      "decision": "From the founder's architecture decision: \"BrowserOS+neo as chassis, Browser Harness for consented logged-in attach, agent-browser for fast deterministic actions, Stagehand for page understanding, Obscura for separate headless workers. One unified Orcel session broker and access policy.\" and \"No second privileged policy engine.\" Engines are adapters behind the broker; BrowserOS run_policy and browseros-decide are mapped onto orceld leases, never transplanted as an authority."
+    },
+    {
+      "question": "Profiles, import and passwords",
+      "status": "DECIDED (founder, 2026-11-17)",
+      "decision": "From the founder's Shadow spec: \"Never attach Chrome remote debug to its ordinary personal default profile; use consented Orcel-managed persistent browser profile.\" From the architecture decision: import after preview and owner consent, and \"Passwords go into OS-backed/browser credential vault, NEVER into prompts, logs or agent stdout.\" Encrypted cookie and passkey transfer is not promised."
+    },
+    {
+      "question": "Full Access lease behaviour",
+      "status": "DECIDED (founder, 2026-11-17)",
+      "decision": "From the founder decision \"Full Access is the product promise\" (Shadow spec): \"No approval request per routine click, text entry, window action, scrolling, navigation, file operation or session reuse already included in the active Full Access grant. Implement actual lease caching and pre-authorized task execution across tools, not cosmetic prompt suppression.\" For high-impact effects, \"allow explicit standing user policies for narrowly defined scopes; when outside the lease, ask only for the missing authority once, then resume. Never silently expand a lease or treat a model's statement as owner approval.\" MFA, passkey, biometric presence and CAPTCHA \"cannot be overridden by the Orcel lease\". Routine families in this grain: click, type, navigate, scroll, fill, select (with check and Enter), and session reuse; download is a family the owner may include; upload, payment, purchase, publish, new-party communication and sending secrets are high-impact."
+    },
+    {
+      "question": "Human intervention",
+      "status": "DECIDED (founder, 2026-11-17)",
+      "decision": "From the Shadow spec: \"immediately suppress agent actions targeted to that resource. Reset a 3-second QUIET timer after each user event. After 3 full idle seconds, obtain a new accessibility/DOM/screenshot snapshot, compare with pre-intervention, treat human edits as authoritative, invalidate stale targets and pending writes\". From the architecture decision: \"Never auto-repeat an uncertain form submission, purchase or publication.\" Unrelated Shadow missions continue."
+    },
+    {
+      "question": "Remote browser-full for ChatGPT and the amendment of spec 4.15",
+      "status": "DECIDED (founder, 2026-11-17)",
+      "decision": "From the architecture decision: \"Expose a distinct browser-full authority profile under owner control, with origin/profile/session/expiry bounds; standard repeated clicks already inside lease do not require repeated Orcel popups.\" and \"The current README's remote 26-tool profile does not expose browser actions, so a new separately scoped authorization/profile is needed; never claim it works today without testing.\" and \"Orcel cannot silently enable product-disallowed tools. Provide local stdio MCP for Claude/Codex/OpenCode etc as additional paths.\" Spec section 4.15 of docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md says a standing approval \"never covers `Admin`, remote callers, out-of-scope targets or another client\". By the founder's decision of 2026-11-17, given in the Claude Code session, that rule is lifted for the remote browser_full capability profile only: a browser lease or browser standing policy issued locally by the owner may cover a remote caller that is the identified client named in it, through the Secure MCP Tunnel, within its origins, profiles, sessions, families and expiry. Every other remote caller, executor and profile keeps the 4.15 rule. Local stdio ships first, and acceptance D is claimed only after a real end-to-end ChatGPT run."
+    },
+    {
+      "question": "Concurrency and evidence",
+      "status": "DECIDED (founder, 2026-11-17)",
+      "decision": "From the architecture decision: \"Multiple tasks bound by resource budgets\", \"Test multi-agent parallelism, no interference\" and acceptance J, \"Measured performance, no fake completion, fully clear receipts.\" From the Shadow spec: \"Never manufacture fake 100% completion: verify outcomes and surface uncertainty.\""
+    },
+    {
+      "question": "Where browser leases are issued before the Windows authority service exists",
+      "status": "DECIDED (this grain, recorded before implementation)",
+      "decision": "Browser leases start on the existing Hello-gated full-control store (crates/orcel-policy/src/full_control_store.rs, the SG-000093/SG-000095 STRONG grant path), extended with a BrowserLeaseScope, and migrate into the SG-000132 authority service when WP1-10 lands, with the same scope schema and no silent widening at migration (an in-flight interim lease is ended, not converted). The interim store never issues a lease that covers a remote caller: OB-09 waits for leases issued by the authority service with the SG-000132 grant window, narrow default scope and Event Log scope record, mirroring SG-000132's successor requirement for SG-000105. The authority change in OB-08 needs an independent fresh-context security judge; d1-local is advisory only and never clears it."
+    },
+    {
+      "question": "Engine attachment and donor processes",
+      "status": "DECIDED (coordinator input from the B0 inventory, 2026-11-17, recorded before implementation)",
+      "decision": "Every engine adapter keeps Orcel's --remote-debugging-pipe attachment (SG-000108 decision 'Engine launch and attachment') and never uses --remote-debugging-port; BrowserOS and claw-server code is adapted to the pipe or to an orceld-held channel. Donor code run as a separate process (for example claw-server, whose /mcp has no token and only refuses requests carrying Origin or Sec-Fetch-Site) runs behind orceld only, reached through a pipe or loopback with an orceld-held per-launch token, never as an unauthenticated listener or a second user-facing MCP endpoint. BrowserOS pins Chromium 155.0.8059.26; Orcel qualifies engines by major version (discovery.rs QUALIFIED_WORKER_ENGINES) and Chromium 155 is qualified, so a BrowserOS build on 155 needs no new major qualification, but still its own native-suite run as a new engine kind."
+    },
+    {
+      "question": "Open design choices left to their packets",
+      "status": "OPEN (each recorded in its packet before merge, fail closed until then)",
+      "decision": "(1) Multi-origin model: relaunch per admitted-origin set (default, SG-000108 confinement unchanged) versus resolver rules widened by the lease; (2) the human-event source for takeover in Visible mode (host-side input hooks scoped to the browser window versus a CDP-observed signal), since page script stays forbidden; (3) the headed argv set for Visible mode; (4) the exact high-impact detection signals (payment autocomplete, publish and send controls), with the effect of a submit stated as a recorded limit as in SG-000122."
+    }
+  ],
+  "closed_grain_amendments": [
+    {
+      "grain": "SG-000108",
+      "state": "CLOSED (not edited; superseded here, as SG-000122 recorded its SG-000108 rule changes and WP1-01 recorded its SG-000119 change)",
+      "rule": "One live browser lifetime and one page per orceld (live_dispatch.rs thread-local slot; live_browser.rs one lifetime, one lifetime_origin, one page); --headless always (confinement.rs argv); a fresh throwaway profile per launch with no persistent profile mode (profile.rs); one admitted origin per lifetime.",
+      "change": "For browser_full sessions only: several broker sessions and several tabs per session; a headed argv set for Visible mode, reviewed in OB-04; persistent Orcel-managed profiles (OB-01); an admitted-origin set per session, widened only by relaunch or by a lease-reviewed mechanism (open choice 1). Pipe-only attachment, no-evaluate, host-verified engines, the navigation layers, managed-policy refusal and Job Object supervision are unchanged. browser_structured keeps SG-000108 behaviour exactly."
+    },
+    {
+      "grain": "SG-000122",
+      "state": "CLOSED (not edited; superseded here)",
+      "rule": "E6 (tabs and popups) excluded; every key other than Enter excluded; click only on links (browser.dom/click); each action SOFT-approved one at a time.",
+      "change": "For browser_full only: tabs (OB-03); browser_type with free text and named keys on a focused non-secret editable target; click on any observed actionable node, not only links; under a valid browser lease, routine actions dispatch without a per-action prompt (OB-08), otherwise SOFT per action as today. Kept: secret fields are still refused for fill and typing (isSecretField), credentials enter only through the browser's autofill vault or the person, values never leave the browser except as bound in a prompt, and browser_structured keeps SG-000122 behaviour exactly."
+    },
+    {
+      "grain": "SG-000079",
+      "state": "CLOSED (not edited; superseded here)",
+      "rule": "No remote mapping of browser tools (exposure.rs remote_browser_mapping_enabled() -> false; profile_gate.rs remote refusal).",
+      "change": "For the browser_full profile only, in OB-09, after local acceptance and under the spec 4.15 amendment: remote mapping through the Secure MCP Tunnel for a caller holding a locally issued browser lease. browser_structured stays local-only."
+    }
+  ],
+  "active_grain_amendments": [
+    {
+      "grain": "SG-000132",
+      "entry": "An amendment entry is added to SG-000132's own amendments list (the SG-000096 convention for an active grain): the Browser executor class is enabled under its dispatcher for Orcel-managed browser profiles, with a browser lease scope of profiles, origins, sessions, action families and expiry; browser leases start on the existing full-control store and migrate into the service; its exclusion of browser automation of the user's own profiles (SG-000100) stays."
+    }
+  ],
+  "invariants": [
+    "Fail closed: with no valid lease, every browser_full action keeps its own fresh SOFT approval; a missing, unparseable, expired, revoked or epoch-drifted lease, budget or profile refuses before dispatch; every browser_structured request and response is unchanged.",
+    "No authority from the model: page content, model text, tool arguments or a model-supplied approval field never grant, widen, renew or prove a lease or approval; the profile is chosen by local configuration, never by a tool argument.",
+    "A lease or standing policy is issued only by the owner through the STRONG grant path; an agent, a model or a remote caller can never self-issue, extend or widen one.",
+    "Secrets never reach prompts, model replies, logs, receipts, audit records or stdout: no password, cookie, token, card value or one-time code is read, returned or typed by the agent; secret fields are refused; screenshots mask secret fields.",
+    "Emergency stop, revoke, expiry, epoch advance and session lock revoke the browser lease cache at once; the next action fails LEASE_INVALID and in-flight actions end as outcome_unknown, never retried.",
+    "Human input wins: a human event on an agent-owned page suspends that resource immediately, restarts a 3000 ms quiet timer on each further event, and the agent never overwrites a human edit or steals back a resource the person is still using.",
+    "No CAPTCHA, MFA, passkey, WebAuthn or presence bypass or spoofing; the session waits in AWAIT_HUMAN_VERIFICATION until the person completes it.",
+    "An uncertain submit, purchase or publication is never repeated automatically; outcome_unknown is never retried.",
+    "Shadow mode never calls OS input, the clipboard, focus or foreground APIs; a mode that cannot guarantee isolation never advertises no-interference.",
+    "Sessions, profiles and tasks are isolated: no cookie, storage, download, secret or grant crosses profiles or tasks; a session id does not survive an orceld restart.",
+    "Engines attach only through --remote-debugging-pipe or an orceld-held channel; no --remote-debugging-port, no unauthenticated listener, no second user-facing MCP endpoint.",
+    "SG-000075 navigation mediation and SG-000108 confinement apply to every session, Shadow or Visible.",
+    "Never claim a capability (remote ChatGPT use, the human browser, import) works without a recorded end-to-end run; Orcel cannot enable a tool the client product disallows."
+  ],
+  "acceptance": [
+    {
+      "id": "A0",
+      "claim": "Activation: this spec, its prep summary, the SG-000132 amendment entry, CURRENT.md's record and the open-grain pins land together; no code, tool, dependency, listener or authority changes."
+    },
+    {
+      "id": "FA-A",
+      "claim": "Founder A, ordinary daily browser: five real sites with tabs, history, bookmarks, extensions where the engine allows them and downloads, surviving a restart, on Windows first, with no agent running (OB-10)."
+    },
+    {
+      "id": "FA-B",
+      "claim": "Founder B, consent-based import from Chrome, Edge and Firefox: preview and per-item consent, the original browser byte-for-byte unchanged, passwords only into the credential vault and never in logs, unsupported items listed (OB-10)."
+    },
+    {
+      "id": "FA-C",
+      "claim": "Founder C, local stdio MCP end to end: a real client opens a real page in a broker session and performs a real action with a receipt (OB-01, OB-02)."
+    },
+    {
+      "id": "FA-D",
+      "claim": "Founder D, Secure MCP Tunnel and ChatGPT where the product permits: a real browse-act-verify mission through the remote browser_full profile, not a read-only fetch or a simulated action; if the workspace plan forbids write tools, recorded as not available, never as passed (OB-09)."
+    },
+    {
+      "id": "FA-E",
+      "claim": "Founder E and Full Access test 1: Full Access and Shadow on, 25 routine actions finish with zero repeated Orcel prompts (counted on a counting broker in CI and observed in the founder run), foreground window, cursor and clipboard digest unchanged, every action receipted within the lease (OB-04, OB-08)."
+    },
+    {
+      "id": "FA-F",
+      "claim": "Founder F: the person's normal browsing in another browser during two parallel agent missions shows no interference in either direction (OB-01, OB-04)."
+    },
+    {
+      "id": "FA-G",
+      "claim": "Founder G, Shadow tests 3 and 4, Full Access test 2: takeover pauses on the first human event, the 3000 ms timer restarts on each event, re-observe and replan keep the human edits, a still-active person keeps the resource, and other missions continue (OB-06)."
+    },
+    {
+      "id": "FA-H",
+      "claim": "Founder H: after an orceld or machine restart a named task reopens in its own profile with no cross-profile session leak and old session ids refused (OB-01, OB-05)."
+    },
+    {
+      "id": "FA-I",
+      "claim": "Founder I, Shadow test 6, Full Access test 3: a real challenge is handed to the person and the task resumes; saved-login autofill succeeds through the browser vault, a spoofed origin fails, and no secret appears in prompts, logs or receipts; no CAPTCHA bypass exists in code (OB-07)."
+    },
+    {
+      "id": "FA-J",
+      "claim": "Founder J and Shadow test 9: measured latency and memory per session are recorded, and receipts state what completed, what is uncertain and what needs the person (OB-05)."
+    },
+    {
+      "id": "FA-K",
+      "claim": "Founder K: every copied donor directory carries pinned provenance and its notices (SG-000131 gates); owner-asserted authorization recorded; trademark and redistribution scope checked before any changed public terms (OB-10 and every donor-copying packet)."
+    },
+    {
+      "id": "FA-L",
+      "claim": "Founder L: the browser, broker and UI run self-hosted at no cost with no required hosted service (all packets)."
+    },
+    {
+      "id": "SH-1",
+      "claim": "Shadow test 1: while a person types and moves the mouse for 10 minutes, a Shadow session finishes a two-page fixture form; foreground focus, clipboard, cursor and the person's typed text are unchanged (OB-04)."
+    },
+    {
+      "id": "SH-2",
+      "claim": "Shadow test 2: toggling Shadow mid-mission moves the task to an isolated session without repeating a prior submit and keeps its state (OB-04, OB-05)."
+    },
+    {
+      "id": "SH-5",
+      "claim": "Shadow test 5 and Full Access test 5: a bounded grant removes routine repeated prompts; a new origin, a new credential grant or a sensitive presence check still asks, once; a resumed job does not re-ask for unchanged ordinary actions (OB-08)."
+    },
+    {
+      "id": "SH-7",
+      "claim": "Shadow test 7: import with explicit consent never corrupts the original browser (OB-10)."
+    },
+    {
+      "id": "SH-8",
+      "claim": "Shadow test 8: several Shadow missions isolate cookies, secrets, profiles, file outputs and grants (OB-01)."
+    },
+    {
+      "id": "FX-4",
+      "claim": "Full Access test 4: scope violation or revocation stops the next action at once; a model-supplied approval, untrusted page text and UI approval spoofing change nothing; another client, an expired lease and a replay across restart are refused (OB-08)."
+    },
+    {
+      "id": "FX-6",
+      "claim": "Full Access test 6: Full Access works in Shadow and Visible; Visible never advertises no-interference (OB-04, OB-08)."
+    },
+    {
+      "id": "GATES",
+      "claim": "Each packet: exact-head CI (Windows, macOS and Linux legs), Review Gates (Jev Semantic Review, Alibaba OpenCodeReview delegation), a fresh-context security judge on OB-01, OB-04, OB-06, OB-07, OB-08, OB-09 and OB-10, native Windows runs on a qualified unmanaged engine; d1-local advisory only."
+    }
+  ],
+  "work_packets": [
+    {
+      "id": "OB-00",
+      "title": "Governance activation (this packet)",
+      "depends_on": [],
+      "acceptance": [
+        "A0"
+      ]
+    },
+    {
+      "id": "OB-01",
+      "title": "Session Broker with persistent Orcel-managed profiles and budgets; the existing 12 browser_structured shapes run through it unchanged",
+      "depends_on": [
+        "OB-00",
+        "PR #794 merged"
+      ],
+      "acceptance": [
+        "FA-C",
+        "FA-F",
+        "FA-H",
+        "SH-8"
+      ]
+    },
+    {
+      "id": "OB-02",
+      "title": "Local browser_full profile and the tools that map to existing shapes",
+      "depends_on": [
+        "OB-01"
+      ],
+      "acceptance": [
+        "FA-C"
+      ]
+    },
+    {
+      "id": "OB-03",
+      "title": "Page screenshot frame and tabs in the worker, host and broker",
+      "depends_on": [
+        "OB-02"
+      ],
+      "acceptance": [
+        "FA-C"
+      ]
+    },
+    {
+      "id": "OB-04",
+      "title": "Shadow and Visible execution modes, including the headed argv set",
+      "depends_on": [
+        "OB-03"
+      ],
+      "acceptance": [
+        "FA-E",
+        "FA-F",
+        "SH-1",
+        "SH-2",
+        "FX-6"
+      ]
+    },
+    {
+      "id": "OB-05",
+      "title": "Evidence receipts on the SG-000131 audit chain and browser_task_status",
+      "depends_on": [
+        "OB-04",
+        "WP1-03 merged"
+      ],
+      "acceptance": [
+        "FA-H",
+        "FA-J",
+        "SH-2"
+      ]
+    },
+    {
+      "id": "OB-06",
+      "title": "Human takeover state machine with the 3000 ms quiet timer",
+      "depends_on": [
+        "OB-05"
+      ],
+      "acceptance": [
+        "FA-G"
+      ]
+    },
+    {
+      "id": "OB-07",
+      "title": "Challenge handoff (Needs you) and saved-login autofill through the browser vault",
+      "depends_on": [
+        "OB-06"
+      ],
+      "acceptance": [
+        "FA-I"
+      ]
+    },
+    {
+      "id": "OB-08",
+      "title": "Full Access browser lease caching in orceld on the interim full-control store, migrating to the SG-000132 service",
+      "depends_on": [
+        "OB-07",
+        "PR #794 merged"
+      ],
+      "acceptance": [
+        "FA-E",
+        "SH-5",
+        "FX-4",
+        "FX-6"
+      ]
+    },
+    {
+      "id": "OB-09",
+      "title": "Remote browser_full mapping through the Secure MCP Tunnel for ChatGPT",
+      "depends_on": [
+        "OB-08",
+        "SG-000132 grant window, narrow default scope and Event Log scope record qualified"
+      ],
+      "acceptance": [
+        "FA-D"
+      ]
+    },
+    {
+      "id": "OB-10",
+      "title": "BrowserOS human browser build, packaging and consented import (later)",
+      "depends_on": [
+        "OB-04",
+        "a build volume sized for Chromium",
+        "SG-000106 for any release"
+      ],
+      "acceptance": [
+        "FA-A",
+        "FA-B",
+        "FA-K",
+        "SH-7"
+      ]
+    }
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on OB-01, OB-04, OB-06, OB-07, OB-08, OB-09, OB-10 and on closeout; d1-local advisory only and never clears a gate",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "credentials_and_cards": "A later grain for a credential broker and payment-card handling (BrowserOS credentials and payment_cards), never returning secrets to the model.",
+    "page_scripting": "A later grain, if ever, for evaluate_in_page or run under Full Access.",
+    "native_desktop_shadow": "P1 grain for a real separate OS session or VM.",
+    "release": "SG-000106 and a separately governed release decision before any release build carries the browser.",
+    "cross_platform": "The macOS parity track after Windows acceptance."
+  },
+  "activation_note": "Activated by the founder's go-ahead of 2026-11-17, given in the Claude Code session, on the founder's Orcel Browser decisions of the same day; no tracking issue was opened, so planning_issue stays null. No code, dependency, tool, route, listener, network, service or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about Orcel Browser.",
+  "done_when": "OB-01 to OB-10 merge with exact-head qualification, every acceptance item above passes (FA-D recorded as passed only after a real ChatGPT run), and the canonical record names this grain CLOSED. The founder may move OB-10 to a successor grain; this grain then closes on OB-01 to OB-09 with FA-A, FA-B, FA-K and SH-7 carried to it."
+}
