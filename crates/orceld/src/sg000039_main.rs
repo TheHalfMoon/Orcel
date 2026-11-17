@@ -1,4 +1,7 @@
-use orcel_approval::{ApprovalBroker, ApprovalClass, LocalApprovalBroker};
+use orcel_approval::{ApprovalBroker, ApprovalClass};
+// The OB-01 harness build constructs its broker in its own module.
+#[cfg_attr(feature = "browser-full-scripted-consent", allow(unused_imports))]
+use orcel_approval::LocalApprovalBroker;
 use orcel_audit::{default_audit_path, AuditLogger};
 use orcel_contracts::{
     FailureCode, RemoteRequestEnvelope, RequestEnvelope, ResponseEnvelope,
@@ -26,6 +29,23 @@ mod browser;
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_broker;
 mod browser_full;
+// SG-000135 OB-01 end-to-end harness, test builds only: the scripted SOFT
+// consent. Compiled only with both live browser features and the harness
+// feature, never in a development or release build.
+#[cfg(all(
+    windows,
+    feature = "browser-full-scripted-consent",
+    feature = "live-browser-test",
+    feature = "live-browser-dev"
+))]
+mod browser_full_e2e_consent;
+#[cfg(all(
+    feature = "browser-full-scripted-consent",
+    not(all(windows, feature = "live-browser-test", feature = "live-browser-dev"))
+))]
+compile_error!(
+    "browser-full-scripted-consent is the OB-01 harness's test-only consent: build it only on Windows with live-browser-test and live-browser-dev"
+);
 mod clipboard;
 mod contained_tier;
 #[cfg(test)]
@@ -124,8 +144,18 @@ fn run() -> Result<(), String> {
     let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
     let audit =
         AuditLogger::new(audit_path).map_err(|error| format!("initialize audit log: {error}"))?;
+    #[cfg(not(feature = "browser-full-scripted-consent"))]
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;
+    // OB-01 harness builds only (see the module): the real broker and
+    // ledger, with the SOFT consent scripted and recorded.
+    #[cfg(all(
+        windows,
+        feature = "browser-full-scripted-consent",
+        feature = "live-browser-test",
+        feature = "live-browser-dev"
+    ))]
+    let approval = browser_full_e2e_consent::broker()?;
     let workspace_set = remote_lease::WorkspaceSet::from_environment();
     // SG-000120 RJ-02: approved file mutations are journaled; what an
     // exited orceld left open is reconciled now.

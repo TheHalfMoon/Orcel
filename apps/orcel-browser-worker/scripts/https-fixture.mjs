@@ -217,6 +217,15 @@ const FORM = `<!doctype html><meta charset="utf-8"><title>Profile</title>
 <p id="out"></p>
 <a href="/menu" onmouseover="document.getElementById('tip').textContent = 'Menu open'">Menu</a>
 <p id="tip"></p>`;
+// SG-000135 OB-01 end-to-end mission (scripts/browser-full-e2e.mjs): a text
+// field, a native select and a link to a second page on the same origin.
+const OB01_FORM = `<!doctype html><meta charset="utf-8"><title>OB-01 mission</title>
+<h1>Orcel Browser mission</h1>
+<label>Full name <input type="text" name="full_name"></label>
+<label>City <select name="city"><option>Lisbon</option><option>Porto</option><option>Faro</option></select></label>
+<p><a href="/ob01-done">Continue to the second page</a></p>`;
+const OB01_DONE = `<!doctype html><meta charset="utf-8"><title>OB-01 done</title>
+<h1>Second page</h1><p id="result">OB-01 mission second page reached</p>`;
 // SG-000122 slice A5: form-control names. The control-character name uses
 // U+0081, a C1 control that HTML's numeric-reference rule keeps (&#x85;
 // becomes U+2026 there) and that the accessible-name computation does not
@@ -555,7 +564,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
   if (path === "/form-names") response.setHeader("content-type", "text/html; charset=utf-8");
-  const pages = { "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
+  const pages = { "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });

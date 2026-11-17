@@ -856,7 +856,8 @@ mod tests {
         let poisoned = ledger.clone();
         let _ = std::thread::spawn(move || {
             let _guard = poisoned.lock();
-            panic!("poison the ledger lock");
+            // Unwinds (as a panic would) while the guard is held.
+            std::panic::resume_unwind(Box::new("poison the ledger lock"));
         })
         .join();
         assert!(ledger.is_poisoned());

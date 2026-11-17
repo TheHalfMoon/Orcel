@@ -501,6 +501,8 @@ fn the_live_browser_test_feature_never_reaches_a_release_build() {
             // enables nothing.
             || relative == "crates/orceld/src/document_parse.rs"
             || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
+            // SG-000135 OB-01: the end-to-end harness builds with it.
+            || relative == "scripts/browser-full-e2e.mjs"
             || relative.starts_with("docs/");
         if !allowed {
             hits.push(relative);
@@ -546,6 +548,52 @@ fn the_live_browser_test_feature_never_reaches_a_release_build() {
         host_dependencies,
         ["orcel-browser-host = { path = \"../orcel-browser-host\", optional = true }"],
         "orceld depends on the browser host exactly once, and only optionally"
+    );
+}
+
+/// SG-000135 OB-01: the end-to-end harness's scripted SOFT consent
+/// (`browser-full-scripted-consent`) never reaches a development or release
+/// build. Only orceld's manifest (its own definition, enabling nothing but
+/// the approval crate's test support), orceld's entry point and the consent
+/// module, the harness script and documentation may name it (no workflow or
+/// other build surface), and it is never a default feature.
+#[test]
+fn the_browser_full_scripted_consent_feature_never_reaches_a_release_build() {
+    let root = repo_root();
+    let mut hits = Vec::new();
+    for (relative, text) in text_files(&root) {
+        if !text.contains("browser-full-scripted-consent") {
+            continue;
+        }
+        let allowed = relative == "crates/orceld/Cargo.toml"
+            || relative == "crates/orceld/src/sg000039_main.rs"
+            || relative == "crates/orceld/src/browser_full_e2e_consent.rs"
+            || relative == "scripts/browser-full-e2e.mjs"
+            || relative.starts_with("docs/");
+        if !allowed {
+            hits.push(relative);
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "browser-full-scripted-consent is named outside its test-only places:\n{}",
+        hits.join("\n")
+    );
+    let orceld = fs::read_to_string(root.join("crates/orceld/Cargo.toml")).unwrap();
+    let naming: Vec<&str> = orceld
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("browser-full-scripted-consent") && !line.starts_with('#'))
+        .collect();
+    assert_eq!(
+        naming,
+        ["browser-full-scripted-consent = [\"orcel-approval/test-support\"]"],
+        "orceld may only define browser-full-scripted-consent, never enable it by default"
+    );
+    // The entry point refuses to compile it without both live features.
+    let main = fs::read_to_string(root.join("crates/orceld/src/sg000039_main.rs")).unwrap();
+    assert!(
+        main.contains("\"browser-full-scripted-consent is the OB-01 harness's test-only consent")
     );
 }
 
@@ -595,8 +643,14 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
             || relative == "crates/orceld/src/document_parse.rs"
             || relative == "crates/orceld/src/live_browser.rs"
             || relative == "crates/orceld/src/live_dispatch.rs"
+            // SG-000135 OB-01/B1: only in cfg_attr(.., allow(dead_code)),
+            // which enables nothing.
+            || relative == "crates/orceld/src/browser_full.rs"
+            || relative == "crates/orceld/src/takeover_gate.rs"
             || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
             || relative == "apps/orcel-browser-worker/scripts/dev-pin.mjs"
+            // SG-000135 OB-01: the end-to-end harness builds with it.
+            || relative == "scripts/browser-full-e2e.mjs"
             || relative.starts_with("docs/")
             // Grain specs are governance records, not build input: they may name the
             // feature they confine a grain to (SG-000122). Build surfaces stay guarded above.
