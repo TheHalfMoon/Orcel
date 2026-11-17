@@ -41,7 +41,7 @@ use orcel_contracts::FailureCode;
 use orcel_provider_fs::ProviderError;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, PoisonError};
 
 /// Whether the gate is on in this build. Off until SG-000135 is merged.
 pub(crate) const ENABLED: bool = cfg!(feature = "browser-takeover-gate");
@@ -277,8 +277,8 @@ impl<C: Clock> TakeoverGate<C> {
             let consequential = self.pending_class == Some(ActionClass::Consequential);
             let refuses = ledger
                 .lock()
-                .map(|ledger| ledger.refuses(&task, &client_key, consequential))
-                .unwrap_or(true);
+                .unwrap_or_else(PoisonError::into_inner)
+                .refuses(&task, &client_key, consequential);
             if refuses {
                 return Err(ProviderError::new(
                     FailureCode::TargetStale,
@@ -290,6 +290,43 @@ impl<C: Clock> TakeoverGate<C> {
             }
         }
         Ok(())
+    }
+
+    /// SG-000135 OB-01: the outcome of this client's uncertain action
+    /// (`origin`, `url`, `kind`, `material`, as `rekey` named it) was
+    /// established: the client may send it again. Like the session
+    /// reconcile, it is never automatic; until it is called the action
+    /// stays refused. False when nothing was recorded.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn reconcile_client(
+        &mut self,
+        origin: &str,
+        url: Option<&str>,
+        kind: &str,
+        material: &str,
+    ) -> bool {
+        let (Some(client), Some(ledger)) = (&self.client, &self.ledger) else {
+            return false;
+        };
+        let task = Self::client_task(client);
+        let key = stable_key(task.as_str(), origin, url_path(url), kind, material);
+        ledger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .reconcile(&task, &key)
+    }
+
+    /// SG-000135 OB-01: every uncertain outcome of this client was
+    /// established, including any a full ledger could not record.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn reconcile_client_overflow(&mut self) -> bool {
+        let (Some(client), Some(ledger)) = (&self.client, &self.ledger) else {
+            return false;
+        };
+        ledger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .reconcile_overflow(&Self::client_task(client))
     }
 
     /// Right before the write's approval is spent and the frame is sent.
@@ -312,9 +349,10 @@ impl<C: Clock> TakeoverGate<C> {
         self.pending_class = None;
         if let (Some(key), Some(client), Some(ledger)) = (client_key, &self.client, &self.ledger) {
             if ticket.is_some() && !matches!(outcome, "done" | "failed") {
-                if let Ok(mut ledger) = ledger.lock() {
-                    let _ = ledger.record(&Self::client_task(client), key);
-                }
+                let _ = ledger
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .record(&Self::client_task(client), key);
             }
         }
         if let (Some(gate), Some(ticket)) = (self.gate.as_mut(), ticket) {
@@ -803,6 +841,31 @@ mod tests {
         // Another client doing the same: admitted.
         let mut other = session("client-b", "bs-0123456789abcdef-4-0001020304050607", "p3");
         assert!(matches!(enter_on(&mut other, "p3", "n1"), Ok(Some(_))));
+        // Reconciled under the client (never automatically), the client
+        // may send it again from a new session.
+        assert!(second.reconcile_client(
+            "https://shop.test",
+            Some("https://shop.test/checkout?step=2#pay"),
+            "form",
+            "enter\u{0}textbox\u{0}Search\u{0}1/1\u{0}",
+        ));
+        assert!(!second.reconcile_client_overflow());
+        let mut third = session("client-a", "bs-0123456789abcdef-6-0001020304050607", "p5");
+        assert!(matches!(enter_on(&mut third, "p5", "n1"), Ok(Some(_))));
+        // A poisoned ledger lock still records and refuses (fail closed).
+        let poisoned = ledger.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.lock();
+            panic!("poison the ledger lock");
+        })
+        .join();
+        assert!(ledger.is_poisoned());
+        let mut fourth = session("client-c", "bs-0123456789abcdef-7-0001020304050607", "p6");
+        let ticket = enter_on(&mut fourth, "p6", "n1").ok().flatten();
+        assert!(fourth.before_dispatch(ticket.as_ref()).is_ok());
+        fourth.after_write(ticket, "unknown");
+        let mut fifth = session("client-c", "bs-0123456789abcdef-8-0001020304050607", "p7");
+        assert!(enter_on(&mut fifth, "p7", "n1").is_err());
         // A done or failed action leaves nothing under the client.
         let ticket = enter_on(&mut other, "p3", "n1").ok().flatten();
         other.after_write(ticket, "failed");

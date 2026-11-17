@@ -781,13 +781,13 @@ mod full {
                     ProviderError::new(FailureCode::InvalidRequest, "session_id is required")
                 })?;
                 with_broker(|broker| {
-                    broker.check_epoch(probe())?;
-                    let baseline = probe();
+                    // One read: the epoch checked is the epoch kept.
+                    let baseline = crate::browser_broker::checked_baseline(broker, probe())?;
                     let session = broker.session(client, id)?;
                     session.begin_action()?;
                     // Checked once more right before the action runs; an
                     // approval minted before a revoke also fails at consume.
-                    let current = || baseline.is_some() && probe() == baseline;
+                    let current = || probe() == Some(baseline);
                     let result =
                         run_recorded(workspace, approval, request, session, other, &current);
                     if !current() {

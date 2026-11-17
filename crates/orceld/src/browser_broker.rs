@@ -243,6 +243,23 @@ pub(crate) fn verified_epoch(approval: &impl orcel_approval::ApprovalBroker) -> 
     approval.verified_revoke_epoch()
 }
 
+/// Check `seen` (one read of the approval epoch) and return it as the
+/// baseline the action is checked against again right before it runs. The
+/// epoch is read once, so a revoke landing between two reads can never
+/// become the baseline.
+pub(crate) fn checked_baseline<W: SessionWorker>(
+    broker: &mut Broker<W>,
+    seen: Option<u64>,
+) -> Result<u64, ProviderError> {
+    broker.check_epoch(seen)?;
+    seen.ok_or_else(|| {
+        ProviderError::new(
+            FailureCode::ApprovalUnavailable,
+            "the approval ledger could not be verified just now",
+        )
+    })
+}
+
 /// Why a session ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EndReason {
@@ -1481,6 +1498,27 @@ mod tests {
         }
         // The new epoch is the baseline from now on.
         assert!(broker.check_epoch(Some(4)).is_ok());
+    }
+
+    /// The epoch is read once per action: a revoke that lands after the
+    /// check is not taken as the baseline, so the re-check right before the
+    /// action sees the change and the action never runs.
+    #[test]
+    fn the_baseline_is_the_epoch_that_was_checked() {
+        let mut scene = Scene::new("baseline");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let reads = std::cell::RefCell::new(vec![Some(5u64), Some(6)]);
+        let probe = || reads.borrow_mut().remove(0);
+        assert_eq!(checked_baseline(&mut broker, probe()).ok(), Some(5));
+        let id = scene.create(&mut broker, "client-a", "1").unwrap();
+        let baseline = checked_baseline(&mut broker, Some(5)).unwrap();
+        // The revoke lands now; the re-check before the action reads 6.
+        let current = probe() == Some(baseline);
+        assert!(!current, "the action is refused before it runs");
+        // And the next check ends every session.
+        assert!(broker.check_epoch(Some(6)).is_err());
+        assert!(broker.session("client-a", &id).is_err());
+        assert!(checked_baseline(&mut broker, None).is_err());
     }
 
     /// A busy or unverifiable ledger gives no verified epoch: every session
