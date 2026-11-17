@@ -1,8 +1,10 @@
-// WP1-01 definition of done: "a fixture crate with an AGPL dependency ...
-// fails". Runs cargo-deny 0.20.2 with the root deny.toml against throwaway
+// Runs cargo-deny 0.20.2 with the root deny.toml against throwaway
 // workspaces whose only dependency is a local path crate, so nothing is
-// downloaded. Without cargo-deny the tests skip, unless
-// ORCEL_REQUIRE_CARGO_DENY=1 (CI), which turns a missing tool into a failure.
+// downloaded. Founder decision of 2026-11-17: a licence type blocks nothing,
+// so CI checks bans and sources only; these tests prove an AGPL-licensed or
+// unlicensed dependency passes and the AD-16 bans still refuse. Without
+// cargo-deny the tests skip, unless ORCEL_REQUIRE_CARGO_DENY=1 (CI), which
+// turns a missing tool into a failure.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -20,33 +22,26 @@ const required = process.env.ORCEL_REQUIRE_CARGO_DENY === "1";
 const skip = !available && !required ? "cargo-deny is not installed" : false;
 
 function manifest(name, license, dependency) {
-  const lines = [
-    "[package]",
-    `name = "${name}"`,
-    'version = "0.1.0"',
-    'edition = "2021"',
-    `license = "${license}"`,
-    "publish = false",
-    "",
-  ];
+  const lines = ["[package]", `name = "${name}"`, 'version = "0.1.0"', 'edition = "2021"'];
+  if (license) lines.push(`license = "${license}"`);
+  lines.push("publish = false", "");
   if (dependency) lines.push("[dependencies]", `${dependency} = { path = "../${dependency}" }`, "");
   return lines.join("\n");
 }
 
-// A two-crate workspace: `core` (Apache-2.0, like every crates/* unit)
-// depending on `dep` under the given licence.
-function deny(depLicense) {
+// A two-crate workspace: `core` (Apache-2.0) depending on `dep`.
+function deny(depName, depLicense) {
   const root = makeTree({
-    "Cargo.toml": '[workspace]\nresolver = "2"\nmembers = ["core", "dep"]\n',
-    "core/Cargo.toml": manifest("fixture-core", "Apache-2.0", "dep"),
-    "core/src/lib.rs": "pub use dep::f;\n",
-    "dep/Cargo.toml": manifest("dep", depLicense),
-    "dep/src/lib.rs": "pub fn f() {}\n",
+    "Cargo.toml": `[workspace]\nresolver = "2"\nmembers = ["core", "${depName}"]\n`,
+    "core/Cargo.toml": manifest("fixture-core", "Apache-2.0", depName),
+    "core/src/lib.rs": `pub use ${depName.replace(/-/g, "_")}::f;\n`,
+    [`${depName}/Cargo.toml`]: manifest(depName, depLicense),
+    [`${depName}/src/lib.rs`]: "pub fn f() {}\n",
   });
   try {
     const result = spawnSync(
       "cargo",
-      ["deny", "--manifest-path", join(root, "Cargo.toml"), "--config", DENY, "--workspace", "check", "licenses"],
+      ["deny", "--manifest-path", join(root, "Cargo.toml"), "--config", DENY, "--workspace", "check", "bans", "sources"],
       { encoding: "utf8", env: { ...process.env, CARGO_TARGET_DIR: join(root, "target") } },
     );
     return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
@@ -59,21 +54,15 @@ test("cargo-deny is available where the gate requires it", { skip: required ? fa
   assert.equal(available, true, `cargo deny --version failed: ${probe.stderr ?? probe.error}`);
 });
 
-test("the root deny.toml admits a permissive path dependency", { skip }, () => {
-  const { status, output } = deny("MIT");
-  assert.equal(status, 0, output);
-});
-
-test("the root deny.toml refuses a fixture crate with an AGPL dependency", { skip }, () => {
-  const { status, output } = deny("AGPL-3.0-only");
-  assert.notEqual(status, 0, output);
-  assert.match(output, /AGPL-3\.0-only/);
-  assert.match(output, /licenses FAILED/);
-});
-
-test("GPL, LGPL, SSPL, BUSL, FSL and MPL dependencies are refused too", { skip }, () => {
-  for (const license of ["GPL-3.0-only", "LGPL-2.1-or-later", "SSPL-1.0", "BUSL-1.1", "FSL-1.1-MIT", "MPL-2.0"]) {
-    const { status, output } = deny(license);
-    assert.notEqual(status, 0, `${license} passed:\n${output}`);
+test("the root deny.toml no longer judges licences: AGPL, commercial and unlicensed dependencies pass", { skip }, () => {
+  for (const license of ["MIT", "AGPL-3.0-only", "LicenseRef-Commercial", null]) {
+    const { status, output } = deny("dep", license);
+    assert.equal(status, 0, `${license}:\n${output}`);
   }
+});
+
+test("the root deny.toml still bans tokio in the main graph (AD-16)", { skip }, () => {
+  const { status, output } = deny("tokio", "MIT");
+  assert.notEqual(status, 0, output);
+  assert.match(output, /bans FAILED/);
 });

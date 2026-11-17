@@ -32,4 +32,24 @@ recording agent's summary of the relayed answer, not the founder's verbatim text
 ## What it does not change
 
 Notices, attribution, provenance with SHAs, licence gates, dependency admission, and every security, review and
-release gate are unchanged.
+release gate are unchanged. (The licence gates are changed by the later decision below.)
+
+## Later the same day: owner-asserted authorization for every source
+
+Status: **RECORDED founder decision**, typed by the founder and relayed to the engineering agent by the coordinating
+agent on 2026-11-17. Verbatim:
+
+> all sources i have sent to you and all sources in the repo are legally and i have permission to copy all of them and re name them to orcel. so not worry about the licness anymore
+
+How it is recorded and applied:
+
+- The authorization reference is **OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17**. It is owner-asserted: no
+  copyright-holder-signed grant is in the repository, and the engineering agent has not reviewed the underlying
+  permissions. It covers every source the founder has sent and every source in the repository, including renaming to
+  Orcel.
+- A licence type no longer blocks any change: the WP1-01 gates no longer refuse AGPL, GPL, LGPL, MPL, SSPL, BUSL, FSL,
+  commercial or unlicensed code or dependencies, and they no longer enforce the isolated-component reading above.
+- What stays: every copied donor file keeps its provenance (source repository, pinned commit, source path, the
+  original licence recorded as it is, the original copyright or attribution notice preserved, and this authorization
+  reference) in `docs/orcel/notices/donor-provenance.json`, checked by `scripts/check-donor-provenance.mjs`.
+  `docs/orcel/notices/licence-policy.json` records the same decision. Dependency licences are reported, not judged.

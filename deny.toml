@@ -1,50 +1,17 @@
 # cargo-deny configuration for the main workspace (crates/*), WP1-01 of
 # docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md.
-# CI runs `cargo deny check licenses bans sources` (job licence-gates, all
-# three OS legs, with -D license-exception-not-encountered). It mirrors the per-app files (apps/*/deny.toml); the same
-# allowlist is applied per crate by crates/orceld/tests/dependency_direction.rs
-# (section 3.2 rule 5) and to npm lockfiles by scripts/check-npm-licenses.mjs.
 #
-# Every crate in the resolved graph (all targets, all platforms) must carry a
-# license on the allow list below, or a named exception. Everything else is
-# refused, so AGPL-*, GPL-*, LGPL-*, SSPL-*, BUSL-*, FSL-* and unknown or
-# missing licenses fail. An `OR` expression passes when one branch is allowed
-# (r-efi's "MIT OR Apache-2.0 OR LGPL-2.1-or-later" is taken as MIT).
-# MPL-2.0 is admitted only by a named exception; there is none today.
+# Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-
+# attestation.md, owner-asserted): a licence type blocks nothing, so this
+# file has no [licenses] policy and CI runs `cargo deny check bans sources`
+# (job licence-gates, all three OS legs). Licences are reported, not judged:
+# CI prints `cargo deny list`. The architecture rules of section 3.2 are in
+# crates/orceld/tests/dependency_direction.rs.
+
 [graph]
 # Every feature of every workspace crate, so no feature-gated dependency
-# (test-only and development features included) escapes the check.
+# (test-only and development features included) escapes the checks.
 all-features = true
-
-[licenses]
-confidence-threshold = 0.93
-allow = [
-  "Apache-2.0",
-  "MIT",
-  "BSD-2-Clause",
-  "BSD-3-Clause",
-  "ISC",
-  "Unicode-3.0",
-  "Zlib",
-  "0BSD",
-]
-# The allow list is a policy, not an inventory: an entry no crate uses today
-# is not an error.
-unused-allowed-license = "allow"
-exceptions = [
-  # Boost Software License 1.0 (permissive; not the Business Source License).
-  # clipboard-win and its error-code reach orcel-provider-clipboard through
-  # arboard on Windows only.
-  # Each exception names the exact version, so an upgrade is re-reviewed.
-  # CI runs with -D license-exception-not-encountered, so an exception no
-  # crate uses fails; dependency_direction.rs checks the same.
-  { crate = "clipboard-win@5.4.1", allow = ["BSL-1.0"] },
-  { crate = "error-code@3.4.0", allow = ["BSL-1.0"] },
-]
-
-[licenses.private]
-# Workspace crates are checked like any other (all are Apache-2.0).
-ignore = false
 
 [bans]
 # Duplicate versions are reported, not refused (the per-app files do the same).

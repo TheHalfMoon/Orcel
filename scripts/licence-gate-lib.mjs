@@ -1,10 +1,11 @@
-// Shared pieces of the WP1-01 licence gates (check-npm-licenses.mjs,
+// Shared pieces of the WP1-01 provenance gates (check-npm-licenses.mjs,
 // check-agpl-markers.mjs, check-donor-provenance.mjs): the policy files,
-// the repository file list, SPDX expression evaluation and the restricted
-// licence families. See docs/orcel/notices/licence-policy.json.
+// the repository file list, SPDX expression parsing and the licence-marker
+// patterns. Since the founder decision of 2026-11-17 a licence type blocks
+// nothing; markers and notices are evidence the gates use to require and
+// verify provenance. See docs/orcel/notices/licence-policy.json.
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -105,26 +106,10 @@ export function readText(root, path) {
   return readScan(root, path).text ?? null;
 }
 
-/** SHA-256 of the file with CRLF folded to LF, so a pin holds on every OS checkout. */
-export function contentSha256(root, path) {
-  const text = readFileSync(join(root, path)).toString("latin1").replace(/\r\n/g, "\n");
-  return createHash("sha256").update(Buffer.from(text, "latin1")).digest("hex");
-}
-
-/**
- * A pinned allowlist: one "<sha256>  <path>" per line (sha256sum format,
- * LF-normalized content); blank lines and '#' comments are ignored.
- */
-export function readPinnedList(root, path) {
-  return readList(root, path).map((line) => {
-    const match = /^([0-9a-f]{64})\s+(\S+)$/.exec(line);
-    return match ? { sha256: match[1], path: match[2] } : { sha256: null, path: line };
-  });
-}
-
-// Text a donor's licence file or notice must contain for its declared
-// licence, so a manifest cannot name one licence while the copied notice
-// carries another.
+// Notice preservation: when the recorded original licence is one of these,
+// the preserved licence file or notice must carry its text, so the record
+// and the preserved notice cannot disagree. The licence is recorded, not
+// judged.
 const LICENCE_TEXT = {
   MIT: /Permission is hereby granted, free of charge/i,
   "Apache-2.0": /Apache License,?\s+Version 2\.0/i,
@@ -139,8 +124,9 @@ const LICENCE_TEXT = {
 
 /** Null when `text` carries the licence text of `licence`, else why not. */
 export function licenceTextProblem(licence, text) {
+  if (!text.trim()) return "is empty";
   const pattern = LICENCE_TEXT[licence];
-  if (!pattern) return `no licence-text check is defined for ${licence}`;
+  if (!pattern) return null;
   return pattern.test(text) ? null : `does not contain the ${licence} licence text`;
 }
 
@@ -241,7 +227,7 @@ export function spdxIds(expression) {
   }
 }
 
-// ------------------------------------------------- restricted families
+// ---------------------------------------------------- licence families
 
 /** The licence family of one SPDX id, or null when it is not restricted. */
 export function familyOfId(id) {
@@ -266,8 +252,8 @@ export function familiesOfExpression(expression, allowed) {
   return families.size ? [...families].sort() : ["OTHER"];
 }
 
-// Text markers of restricted licences. "SPDX-License-Identifier:" lines are
-// judged by their expression instead (see markerFamilies).
+// Text markers of third-party licences. "SPDX-License-Identifier:" lines are
+// read by their expression instead (see markerFamilies).
 const TEXT_MARKERS = [
   ["AGPL", /GNU\s+AFFERO|Affero\s+General\s+Public|\bAGPL/i],
   ["LGPL", /GNU\s+(?:LESSER|LIBRARY)\s+GENERAL\s+PUBLIC|\bLGPL/i],

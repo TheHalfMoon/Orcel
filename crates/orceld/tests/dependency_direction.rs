@@ -3,9 +3,8 @@
 //! section 3.2, enforced over `cargo metadata` of the main workspace.
 //!
 //! 1. No kernel crate (`crates/*`) depends on an `apps/*`, `tests/*`,
-//!    `packages/*` or `third_party/*` unit, nor on an isolated component of
-//!    `docs/orcel/notices/licence-policy.json`; every `crates/*` directory is
-//!    a workspace member, so no crate escapes these rules.
+//!    `packages/*` or `third_party/*` unit; every `crates/*` directory is a
+//!    workspace member, so no crate escapes these rules.
 //! 2. `orcel-contracts` depends on `serde` and `serde_json` only (dev:
 //!    `schemars`), has no target-specific dependency and no platform code:
 //!    no `cfg(..)`, `cfg!(..)` or `cfg_attr(..)` naming `windows`, `unix` or
@@ -19,10 +18,10 @@
 //! 4. The separate workspaces stay separate: none is a member here, each has
 //!    its own `[workspace]` and lockfile, and tokio and V8 never enter this
 //!    graph (AD-16).
-//! 5. Every workspace crate's licence set (its own and its resolved
-//!    dependencies', all targets, all features) passes the allowlist and
-//!    named exceptions of the root `deny.toml`; every exception names a
-//!    crate version that is in the graph (no stale exception).
+//! 5. (Licence sets.) Not enforced: by the founder decision of 2026-11-17
+//!    (`docs/orcel/grants/2026-11-17-founder-attestation.md`, owner-asserted)
+//!    a licence type blocks nothing. CI reports licences with
+//!    `cargo deny list`; this test checks architecture only.
 //! 6. No registry dependency uses a wildcard version requirement (the root
 //!    `deny.toml` leaves wildcards to this test, see its `[bans]`).
 //! 7. Nothing redirects the graph around these rules: the root Cargo.toml
@@ -118,125 +117,9 @@ fn relative(root: &str, path: &str) -> String {
     }
 }
 
-/// The licence policy of the root `deny.toml`: the `[licenses]` allow list
-/// and the per-crate exceptions.
-#[derive(Debug, Default)]
-struct LicencePolicy {
-    allow: BTreeSet<String>,
-    exceptions: BTreeMap<String, BTreeSet<String>>,
-}
-
-fn quoted(text: &str) -> Vec<String> {
-    text.split('"')
-        .enumerate()
-        .filter(|(index, _)| index % 2 == 1)
-        .map(|(_, value)| value.to_string())
-        .collect()
-}
-
-fn parse_deny_toml(text: &str) -> LicencePolicy {
-    let mut policy = LicencePolicy::default();
-    let mut section = String::new();
-    let mut in_allow = false;
-    let mut in_exceptions = false;
-    for raw in text.lines() {
-        let line = raw.split('#').next().unwrap_or("").trim();
-        if line.starts_with('[') && !in_allow && !in_exceptions {
-            section = line.to_string();
-            continue;
-        }
-        if section != "[licenses]" {
-            continue;
-        }
-        if line.starts_with("allow = [") {
-            in_allow = true;
-        } else if line.starts_with("exceptions = [") {
-            in_exceptions = true;
-            continue;
-        }
-        if in_allow {
-            policy.allow.extend(quoted(line));
-            if line.ends_with(']') {
-                in_allow = false;
-            }
-        } else if in_exceptions {
-            if line == "]" {
-                in_exceptions = false;
-            } else if let Some(rest) = line.strip_prefix("{ crate = ") {
-                let values = quoted(rest);
-                if let Some((name, allowed)) = values.split_first() {
-                    policy
-                        .exceptions
-                        .entry(name.clone())
-                        .or_default()
-                        .extend(allowed.iter().cloned());
-                }
-            }
-        }
-    }
-    policy
-}
-
-/// True when an SPDX expression is satisfiable from `allowed`: `OR` (and
-/// the legacy `/`) needs one branch, `AND` every branch, `A WITH B` the
-/// exact pair. Malformed expressions are not satisfiable.
-fn spdx_allowed(expression: &str, allowed: &BTreeSet<String>) -> bool {
-    let spaced = expression
-        .replace('(', " ( ")
-        .replace(')', " ) ")
-        .replace('/', " OR ");
-    let tokens: Vec<&str> = spaced.split_whitespace().collect();
-    let mut index = 0;
-    let result = spdx_or(&tokens, &mut index, allowed);
-    matches!(result, Some(value) if index == tokens.len() && value)
-}
-
-fn spdx_or(tokens: &[&str], index: &mut usize, allowed: &BTreeSet<String>) -> Option<bool> {
-    let mut value = spdx_and(tokens, index, allowed)?;
-    while tokens.get(*index) == Some(&"OR") {
-        *index += 1;
-        let next = spdx_and(tokens, index, allowed)?;
-        value = value || next;
-    }
-    Some(value)
-}
-
-fn spdx_and(tokens: &[&str], index: &mut usize, allowed: &BTreeSet<String>) -> Option<bool> {
-    let mut value = spdx_primary(tokens, index, allowed)?;
-    while tokens.get(*index) == Some(&"AND") {
-        *index += 1;
-        let next = spdx_primary(tokens, index, allowed)?;
-        value = value && next;
-    }
-    Some(value)
-}
-
-fn spdx_primary(tokens: &[&str], index: &mut usize, allowed: &BTreeSet<String>) -> Option<bool> {
-    let token = *tokens.get(*index)?;
-    *index += 1;
-    if token == "(" {
-        let value = spdx_or(tokens, index, allowed)?;
-        if tokens.get(*index) != Some(&")") {
-            return None;
-        }
-        *index += 1;
-        return Some(value);
-    }
-    if matches!(token, ")" | "AND" | "OR" | "WITH") {
-        return None;
-    }
-    if tokens.get(*index) == Some(&"WITH") {
-        let exception = *tokens.get(*index + 1)?;
-        *index += 2;
-        return Some(allowed.contains(&format!("{token} WITH {exception}")));
-    }
-    Some(allowed.contains(token))
-}
-
 struct Package<'a> {
     name: &'a str,
     version: &'a str,
-    license: Option<&'a str>,
     /// Directory of the manifest, relative to the workspace root.
     dir: String,
     value: &'a Value,
@@ -255,7 +138,6 @@ fn packages<'a>(meta: &'a Value, root: &str) -> BTreeMap<&'a str, Package<'a>> {
             Package {
                 name: value["name"].as_str().unwrap_or(""),
                 version: value["version"].as_str().unwrap_or(""),
-                license: value["license"].as_str(),
                 dir,
                 value,
             },
@@ -266,15 +148,13 @@ fn packages<'a>(meta: &'a Value, root: &str) -> BTreeMap<&'a str, Package<'a>> {
 
 /// Every rule above over one `cargo metadata` document. `contracts_sources`
 /// holds `(path, text)` of `crates/orcel-contracts/src`; `crate_dirs` the
-/// `crates/*` directories that hold a Cargo.toml; `isolated` the isolated
-/// component paths; `separate` the separate workspaces that exist, with
+/// `crates/*` directories that hold a Cargo.toml; `separate` the separate
+/// workspaces that exist, with
 /// whether each has its own `[workspace]` table and lockfile.
 fn violations(
     meta: &Value,
-    policy: &LicencePolicy,
     contracts_sources: &[(String, String)],
     crate_dirs: &[String],
-    isolated: &[String],
     separate: &[(String, bool)],
 ) -> Vec<String> {
     let mut out = Vec::new();
@@ -316,15 +196,6 @@ fn violations(
                         "rule 1: {} depends on {name} at {target}, outside crates/",
                         member.name
                     ));
-                }
-                for component in isolated {
-                    let component = normalize(component);
-                    if target == component || target.starts_with(&format!("{component}/")) {
-                        out.push(format!(
-                            "rule 1: {} depends on the isolated component {component}",
-                            member.name
-                        ));
-                    }
                 }
             }
             // Rule 6.
@@ -422,77 +293,6 @@ fn violations(
             out.push(format!(
                 "rule 4: {} {} is in the main workspace graph",
                 package.name, package.version
-            ));
-        }
-    }
-
-    // Rule 5: each member's licence set, over the resolved graph (dev edges
-    // only from the member itself, as cargo resolves them).
-    let mut edges: BTreeMap<&str, Vec<(&str, bool)>> = BTreeMap::new();
-    for node in meta["resolve"]["nodes"].as_array().into_iter().flatten() {
-        let id = node["id"].as_str().unwrap_or("");
-        let deps = node["deps"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|dep| {
-                let dev_only = dep["dep_kinds"].as_array().is_some_and(|kinds| {
-                    !kinds.is_empty() && kinds.iter().all(|k| k["kind"].as_str() == Some("dev"))
-                });
-                (dep["pkg"].as_str().unwrap_or(""), dev_only)
-            })
-            .collect();
-        edges.insert(id, deps);
-    }
-    for member in &members {
-        let start = member.value["id"].as_str().unwrap_or("");
-        let mut seen = BTreeSet::from([start]);
-        let mut stack = vec![start];
-        while let Some(id) = stack.pop() {
-            for (dep, dev_only) in edges.get(id).into_iter().flatten() {
-                if (*dev_only && id != start) || !seen.insert(dep) {
-                    continue;
-                }
-                stack.push(dep);
-            }
-        }
-        for id in seen {
-            let Some(package) = all.get(id) else {
-                out.push(format!(
-                    "rule 5: {} reaches unknown package {id}",
-                    member.name
-                ));
-                continue;
-            };
-            let mut allowed = policy.allow.clone();
-            for key in [
-                package.name.to_string(),
-                format!("{}@{}", package.name, package.version),
-            ] {
-                if let Some(extra) = policy.exceptions.get(&key) {
-                    allowed.extend(extra.iter().cloned());
-                }
-            }
-            match package.license {
-                Some(license) if spdx_allowed(license, &allowed) => {}
-                Some(license) => out.push(format!(
-                    "rule 5: {} reaches {} {} under \"{license}\", not on the deny.toml allowlist",
-                    member.name, package.name, package.version
-                )),
-                None => out.push(format!(
-                    "rule 5: {} reaches {} {} with no declared licence",
-                    member.name, package.name, package.version
-                )),
-            }
-        }
-    }
-    for key in policy.exceptions.keys() {
-        let used = all
-            .values()
-            .any(|p| *key == p.name || *key == format!("{}@{}", p.name, p.version));
-        if !used {
-            out.push(format!(
-                "rule 5: deny.toml exception {key} matches no crate in the graph; remove it"
             ));
         }
     }
@@ -658,23 +458,6 @@ fn crate_dirs(root: &Path) -> Vec<String> {
     out
 }
 
-fn isolated_components(root: &Path) -> Vec<String> {
-    let text = fs::read_to_string(root.join("docs/orcel/notices/licence-policy.json"))
-        .expect("read licence-policy.json");
-    let policy: Value = serde_json::from_str(&text).expect("licence-policy.json");
-    policy["isolated_components"]
-        .as_array()
-        .expect("isolated_components array")
-        .iter()
-        .map(|c| {
-            c["path"]
-                .as_str()
-                .expect("isolated component path")
-                .to_string()
-        })
-        .collect()
-}
-
 fn separate_workspaces(root: &Path) -> Vec<(String, bool)> {
     SEPARATE_WORKSPACES
         .iter()
@@ -692,18 +475,10 @@ fn separate_workspaces(root: &Path) -> Vec<(String, bool)> {
 fn the_main_workspace_keeps_the_section_3_2_dependency_direction() {
     let root = repo_root();
     let meta = cargo_metadata(&root);
-    let deny = fs::read_to_string(root.join("deny.toml")).expect("read the root deny.toml");
-    let policy = parse_deny_toml(&deny);
-    assert!(
-        policy.allow.contains("Apache-2.0") && policy.allow.contains("MIT"),
-        "deny.toml allow list not read: {policy:?}"
-    );
     let mut found = violations(
         &meta,
-        &policy,
         &rust_sources(&root, "crates/orcel-contracts/src"),
         &crate_dirs(&root),
-        &isolated_components(&root),
         &separate_workspaces(&root),
     );
     let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("read the root Cargo.toml");
@@ -720,59 +495,6 @@ fn the_main_workspace_keeps_the_section_3_2_dependency_direction() {
         found.is_empty(),
         "section 3.2 violations:\n{}",
         found.join("\n")
-    );
-}
-
-#[test]
-fn the_deny_toml_allowlist_is_the_wp1_01_allowlist() {
-    let deny = fs::read_to_string(repo_root().join("deny.toml")).unwrap();
-    let policy = parse_deny_toml(&deny);
-    let expected: BTreeSet<String> = [
-        "Apache-2.0",
-        "MIT",
-        "BSD-2-Clause",
-        "BSD-3-Clause",
-        "ISC",
-        "Unicode-3.0",
-        "Zlib",
-        "0BSD",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(policy.allow, expected);
-    // Every exception pins the crate version it was reviewed at.
-    for krate in policy.exceptions.keys() {
-        assert!(
-            krate.contains('@'),
-            "deny.toml exception {krate} must name crate@version"
-        );
-    }
-    // MPL-2.0 only by named exception, and none of the refused families at all.
-    for (krate, licences) in &policy.exceptions {
-        for licence in licences {
-            let upper = licence.to_uppercase();
-            assert!(
-                !["AGPL", "GPL", "LGPL", "SSPL", "BUSL", "FSL"]
-                    .iter()
-                    .any(|f| upper.starts_with(f)),
-                "deny.toml exception {krate}: {licence} is a refused family"
-            );
-        }
-    }
-    let licence_policy: Value = serde_json::from_str(
-        &fs::read_to_string(repo_root().join("docs/orcel/notices/licence-policy.json")).unwrap(),
-    )
-    .unwrap();
-    let npm: BTreeSet<String> = licence_policy["allowed_licences"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(
-        npm, expected,
-        "licence-policy.json and deny.toml must agree"
     );
 }
 
@@ -841,16 +563,6 @@ fn metadata(members: Vec<Value>, others: Vec<Value>, edges: &[(&str, &str)]) -> 
     })
 }
 
-fn policy() -> LicencePolicy {
-    parse_deny_toml("[licenses]\nallow = [\n  \"Apache-2.0\",\n  \"MIT\",\n]\n")
-}
-
-fn boost_policy() -> LicencePolicy {
-    parse_deny_toml(
-        "[licenses]\nallow = [\n  \"Apache-2.0\",\n  \"MIT\",\n]\nexceptions = [\n  { crate = \"boost\", allow = [\"BSL-1.0\"] },\n]\n",
-    )
-}
-
 fn check(meta: &Value) -> Vec<String> {
     let dirs: Vec<String> = meta["workspace_members"]
         .as_array()
@@ -861,14 +573,7 @@ fn check(meta: &Value) -> Vec<String> {
             format!("crates/{}", name.split('@').next().unwrap())
         })
         .collect();
-    violations(
-        meta,
-        &policy(),
-        &[],
-        &dirs,
-        &["apps/firecrawl-sidecar/".into()],
-        &[],
-    )
+    violations(meta, &[], &dirs, &[])
 }
 
 fn sound_graph() -> Value {
@@ -944,7 +649,7 @@ fn a_forbidden_dependency_edge_fails() {
 }
 
 #[test]
-fn a_kernel_crate_depending_on_an_app_or_isolated_component_fails() {
+fn a_kernel_crate_depending_on_an_app_fails() {
     let mut meta = sound_graph();
     meta["packages"][2]["dependencies"]
         .as_array_mut()
@@ -953,7 +658,7 @@ fn a_kernel_crate_depending_on_an_app_or_isolated_component_fails() {
     meta["packages"][2]["dependencies"]
         .as_array_mut()
         .unwrap()
-        .push(path_dep("firecrawl-sidecar", "apps/firecrawl-sidecar"));
+        .push(path_dep("firecrawl", "apps/orcel-firecrawl"));
     let found = check(&meta);
     assert!(
         found
@@ -965,7 +670,7 @@ fn a_kernel_crate_depending_on_an_app_or_isolated_component_fails() {
     assert!(
         found
             .iter()
-            .any(|v| v.contains("depends on the isolated component apps/firecrawl-sidecar")),
+            .any(|v| v.contains("rule 1: orceld depends on firecrawl at apps/orcel-firecrawl")),
         "{found:?}"
     );
 }
@@ -1004,7 +709,7 @@ fn contracts_gaining_a_dependency_or_platform_code_fails() {
         "crates/orcel-contracts/src/lib.rs".to_string(),
         "#[cfg(target_os = \"windows\")]\nfn f() {}\n".to_string(),
     )];
-    let found = violations(&sound_graph(), &policy(), &sources, &[], &[], &[]);
+    let found = violations(&sound_graph(), &sources, &[], &[]);
     assert!(
         found.iter().any(|v| v
             .contains("platform code in orcel-contracts at crates/orcel-contracts/src/lib.rs:1")),
@@ -1013,71 +718,26 @@ fn contracts_gaining_a_dependency_or_platform_code_fails() {
 }
 
 #[test]
-fn an_agpl_dependency_anywhere_in_a_crates_graph_fails() {
+fn a_dependency_licence_is_not_judged() {
+    // Founder decision of 2026-11-17: licences block nothing. An AGPL,
+    // unlicensed or commercial crate reached from every kernel crate leaves
+    // the architecture rules satisfied.
     let mut meta = sound_graph();
-    let agpl = registry_package("agpl-html", "AGPL-3.0-only");
-    meta["packages"].as_array_mut().unwrap().push(agpl.clone());
-    meta["resolve"]["nodes"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({ "id": agpl["id"], "deps": [] }));
-    // serde -> agpl-html: reached transitively from every crate.
-    let serde = meta["resolve"]["nodes"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|n| n["id"].as_str().unwrap().contains("#serde@"))
-        .unwrap();
-    serde["deps"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({ "pkg": agpl["id"], "dep_kinds": [{ "kind": null }] }));
-    let found = check(&meta);
-    for krate in ["orcel-contracts", "orcel-web", "orceld"] {
-        assert!(
-            found.iter().any(|v| v.starts_with(&format!(
-                "rule 5: {krate} reaches agpl-html 1.0.0 under \"AGPL-3.0-only\""
-            ))),
-            "{krate}: {found:?}"
-        );
-    }
-}
-
-#[test]
-fn licence_exceptions_are_per_crate_and_or_expressions_need_one_branch() {
-    let allowed = policy().allow;
-    assert!(spdx_allowed("MIT OR LGPL-2.1-or-later", &allowed));
-    assert!(spdx_allowed("(MIT OR Apache-2.0) AND MIT", &allowed));
-    assert!(spdx_allowed("MIT/Apache-2.0", &allowed));
-    assert!(!spdx_allowed("MIT AND GPL-3.0-only", &allowed));
-    assert!(!spdx_allowed("Apache-2.0 WITH LLVM-exception", &allowed));
-    assert!(!spdx_allowed("MIT OR", &allowed));
-    assert!(!spdx_allowed("(MIT", &allowed));
-
-    let mut meta = sound_graph();
-    for name in ["boost", "other-boost"] {
-        let p = registry_package(name, "BSL-1.0");
+    for (name, license) in [
+        ("agpl-html", "AGPL-3.0-only"),
+        ("vendor-sdk", "LicenseRef-Commercial"),
+    ] {
+        let p = registry_package(name, license);
         meta["packages"].as_array_mut().unwrap().push(p.clone());
         meta["resolve"]["nodes"]
             .as_array_mut()
             .unwrap()
             .push(json!({ "id": p["id"], "deps": [] }));
-        let orceld = meta["resolve"]["nodes"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|n| n["id"].as_str().unwrap().contains("#orceld@"))
-            .unwrap();
-        orceld["deps"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({ "pkg": p["id"], "dep_kinds": [{ "kind": null }] }));
     }
-    let found = violations(&meta, &boost_policy(), &[], &[], &[], &[]);
-    assert_eq!(
-        found,
-        vec!["rule 5: orceld reaches other-boost 1.0.0 under \"BSL-1.0\", not on the deny.toml allowlist".to_string()]
-    );
+    let mut unlicensed = registry_package("no-licence", "MIT");
+    unlicensed["license"] = Value::Null;
+    meta["packages"].as_array_mut().unwrap().push(unlicensed);
+    assert_eq!(check(&meta), Vec::<String>::new());
 }
 
 #[test]
@@ -1116,7 +776,7 @@ fn a_crate_outside_the_workspace_or_a_merged_separate_workspace_fails() {
         "crates/orcel-stray".to_string(),
     ];
     let separate = vec![("apps/orcel-doc-parser".to_string(), false)];
-    let found = violations(&meta, &policy(), &[], &dirs, &[], &separate);
+    let found = violations(&meta, &[], &dirs, &separate);
     assert!(
         found
             .iter()
@@ -1186,48 +846,6 @@ fn a_path_package_outside_crates_in_the_graph_fails() {
         found
             .iter()
             .any(|v| v.contains("rule 7: path package shim at apps/shim is in the main graph")),
-        "{found:?}"
-    );
-}
-
-#[test]
-fn a_stale_or_version_mismatched_deny_exception_fails() {
-    let mut meta = sound_graph();
-    let boost = registry_package("boost", "BSL-1.0");
-    meta["packages"].as_array_mut().unwrap().push(boost.clone());
-    meta["resolve"]["nodes"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({ "id": boost["id"], "deps": [] }));
-    let orceld = meta["resolve"]["nodes"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|n| n["id"].as_str().unwrap().contains("#orceld@"))
-        .unwrap();
-    orceld["deps"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({ "pkg": boost["id"], "dep_kinds": [{ "kind": null }] }));
-    let pinned = parse_deny_toml(
-        "[licenses]\nallow = [\"Apache-2.0\", \"MIT\"]\nexceptions = [\n  { crate = \"boost@1.0.0\", allow = [\"BSL-1.0\"] },\n  { crate = \"gone@2.0.0\", allow = [\"BSL-1.0\"] },\n]\n",
-    );
-    let found = violations(&meta, &pinned, &[], &[], &[], &[]);
-    assert_eq!(
-        found,
-        vec![
-            "rule 5: deny.toml exception gone@2.0.0 matches no crate in the graph; remove it"
-                .to_string()
-        ]
-    );
-    let wrong_version = parse_deny_toml(
-        "[licenses]\nallow = [\"Apache-2.0\", \"MIT\"]\nexceptions = [\n  { crate = \"boost@0.9.0\", allow = [\"BSL-1.0\"] },\n]\n",
-    );
-    let found = violations(&meta, &wrong_version, &[], &[], &[], &[]);
-    assert!(
-        found
-            .iter()
-            .any(|v| v.contains("orceld reaches boost 1.0.0 under \"BSL-1.0\"")),
         "{found:?}"
     );
 }
