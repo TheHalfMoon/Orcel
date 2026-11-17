@@ -84,18 +84,39 @@ What was missing:
    slept, also becomes a fresh observation.
 2. **Unexpected-dialog recovery** (`verification.py`). A dialog-class window
    (`#32770` and similar) counts as unexpected when two things hold: it was
-   absent from the first observation, and its title matches no
-   `expected_windows` pattern. Recovery then works like this:
+   absent from the first observation, and no `ExpectedWindow` matches it.
+   An `ExpectedWindow` matches on the exact title plus the window class
+   and/or the executable name; an empty title, or a title without a class
+   or executable, is refused. Recovery then works like this:
    - The orchestrator reads the dialog's own UIA tree.
    - It asks the model, under the `recovery` role, for one dismiss action.
-   - It accepts only closing that exact window and generation, or invoking a
-     Cancel, Close, No, Not now, Dismiss, Skip or Later element of that
-     dialog. OK, Yes, Allow and Install are refused.
+     Every application-controlled field it shows (titles, classes,
+     executable names, element names) is sanitised: control and bidi
+     characters replaced, bounded, and quoted with `repr()`.
+   - It accepts only two things:
+     - closing that exact window and generation;
+     - invoking a Cancel, Close or Dismiss element of that dialog, in the
+       real `desktop_element_invoke` shape (`element_id`, `tree_generation`,
+       `control_type`, optional `workspace_id`). The element must be one
+       orceld issued in that dialog's own latest tree, with the same tree
+       generation and control type.
+   - OK, Yes, Allow and Install are refused. So are No, Skip, Not now and
+     Later, because they can discard work (No on "Save changes?" discards
+     it).
    - If no safe action comes back, it falls back to
      `desktop_window_action close`.
    - It allows at most 2 attempts per dialog. After that the run stops with
      `dialog_unrecovered`.
    - Every recovery action is an orceld call with approval, like any other.
+   - **Residual risk:** an application can name its Install button
+     "Cancel". The label rule cannot see what a button does. Only the
+     person's SOFT approval of that exact element in orceld stops it.
+   - **Untrusted model text:** the worker prompt marks subtask names,
+     subtask details and reflections as model-written from untrusted
+     observations, authorizing nothing. `window_present`, `window_absent`
+     and `element_value_equals` match application-controlled text; they
+     take optional `window_class`/`exe_name` (or `window_id`/`control_type`)
+     filters to bind a check to the owning application.
 3. **Completion verification that refuses unverified claims.**
    - All of these are only claims:
      - a worker's DONE;
@@ -160,12 +181,16 @@ Every adapted module names its sources and the pin in its header.
 
 ## Step 4: tests
 
-`apps/orcel-agent/tests/test_orchestrator.py` holds 21 tests. Ten of them are
+`apps/orcel-agent/tests/test_orchestrator.py` holds 26 tests. Ten of them are
 the deterministic synthetic multi-window tasks. Each one runs the real
-`Agent` gate with a `FakeDesktop`, a scripted orceld tool layer that has:
+`Agent` gate with a `FakeDesktop`, a scripted orceld tool layer that uses
+the real argument and result shapes of `apps/orcel-mcp/src/desktop.ts` and
+orceld's UIA provider:
 
-- typed windows with generations;
-- UIA-like elements;
+- `uia-win-` window ids with generations;
+- `uia-el-` element ids issued by tree reads and bound to that read's
+  `tree_generation` and `control_type`; element actions carry no window id;
+- a stale or foreign identity is refused with `TARGET_STALE`;
 - a modal-dialog block;
 - hooks.
 
@@ -175,9 +200,10 @@ asked to do:
 1. Two windows, success; a cyclic plan graph is fed back and repaired.
 2. Copy a value between windows after a read. The worker sees the real
    result, labelled untrusted.
-3. An expected Save As dialog is used, not dismissed.
-4. An unexpected update dialog: the model dismisses it with Later, and the
-   task completes.
+3. An expected Save As dialog (exact title, dialog class, editor
+   executable) is used, not dismissed.
+4. An unexpected update dialog: the model dismisses it with Cancel, using
+   the dialog's own tree generation, and the task completes.
 5. An unsafe recovery (Allow) is refused; the fallback close is used.
 6. A dialog that will not close: the run stops with `dialog_unrecovered`,
    and no work continues behind it.
@@ -189,13 +215,18 @@ asked to do:
 10. No success checks: the finish carries `completion_unverified`, never a
     clean finish.
 
-The other 11 tests cover:
+The other 16 tests cover:
 
 - the task-graph primitives;
 - the action parser;
 - formatted retries;
-- the recovery safety matrix;
-- dialog detection;
+- the recovery safety matrix (no confirming or discarding labels);
+- binding recovery to the dialog's own latest tree;
+- dialog tree parsing;
+- expected-window matching;
+- prompt sanitisation;
+- owner-bound checks;
+- the untrusted labels in the worker prompt;
 - read-only checks;
 - trajectory flushing;
 - the `observation_tools` gate;
@@ -206,10 +237,10 @@ Results, Windows 11, Python 3.12.13:
 - **Stdlib only:** `test_agent`, `test_chat_planner`, `test_checkpoint`,
   `test_compaction`, `test_dependencies`, `test_failures`,
   `test_loop_detection`, `test_output_budget`, `test_restart`, `test_todos`
-  and `test_orchestrator` ran 248 tests: 0 failures, 0 errors, 91 skipped
+  and `test_orchestrator` ran 253 tests: 0 failures, 0 errors, 91 skipped
   (the locked dependency environment).
 - **Locked environment** (`ORCEL_AGENT_DEPS=1`, hash-locked wheels, 55 MB
-  venv outside the repo, deleted afterwards): 248 run, 0 failures, 0
+  venv outside the repo, deleted afterwards): 253 run, 0 failures, 0
   errors, 12 skipped. The skips are Unix-only, macOS-only and Linux
   seccomp/netns tests.
 - **Store location:** the store's ancestor rule refuses this host's
