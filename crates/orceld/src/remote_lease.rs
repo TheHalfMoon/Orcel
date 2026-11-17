@@ -82,8 +82,11 @@ fn trust_revision_fn(trust_store: &trust::TrustStore) -> impl Fn(&str) -> Option
     }
 }
 
+/// Local lease management: the SG-000055 remote-session leases and the
+/// SG-000135 OB-08 Full Access browser leases (`browser_lease`, which
+/// `handle_envelope` routes before any remote or workspace step).
 pub fn is_lease_management(capability: &str) -> bool {
-    capability.starts_with("remote.lease.")
+    capability.starts_with("remote.lease.") || crate::browser_lease::is_management(capability)
 }
 
 fn string_arg(arguments: &Value, name: &str) -> Result<String, ProviderError> {

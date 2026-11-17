@@ -226,6 +226,19 @@ const OB01_FORM = `<!doctype html><meta charset="utf-8"><title>OB-01 mission</ti
 <p><a href="/ob01-done">Continue to the second page</a></p>`;
 const OB01_DONE = `<!doctype html><meta charset="utf-8"><title>OB-01 done</title>
 <h1>Second page</h1><p id="result">OB-01 mission second page reached</p>`;
+// SG-000135 OB-08 (scripts/browser-full-e2e.mjs): the Full Access routine
+// page: a text field, a list, an ordinary link to a next page and a link
+// named as a submit, which a routine lease never covers.
+const OB08_FORM = `<!doctype html><meta charset="utf-8"><title>OB-08 Full Access</title>
+<h1>Full Access routine page</h1>
+<label>Full name <input type="text" name="full_name"></label>
+<label>City <select name="city"><option>Lisbon</option><option>Porto</option><option>Faro</option></select></label>
+<p><a href="/ob08-next">Continue to the next page</a></p>
+<p><a href="/ob08-submitted">Submit order</a></p>`;
+const OB08_NEXT = `<!doctype html><meta charset="utf-8"><title>OB-08 next</title>
+<h1>Next page</h1><p id="result">OB-08 next page reached</p>`;
+const OB08_SUBMITTED = `<!doctype html><meta charset="utf-8"><title>OB-08 submitted</title>
+<h1>Submitted</h1><p id="result">OB-08 order submitted</p>`;
 // SG-000135 OB-03: the second tab's page. Each field is a green box at a
 // fixed place, holding a value: the ordinary one must stay green in the
 // screenshot, the secret ones (password, one-time code, card number, a
@@ -579,7 +592,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
   if (path === "/form-names") response.setHeader("content-type", "text/html; charset=utf-8");
-  const pages = { "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/ob03-secret": OB03_SECRET, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
+  const pages = { "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/ob03-secret": OB03_SECRET, "/ob08-form": OB08_FORM, "/ob08-next": OB08_NEXT, "/ob08-submitted": OB08_SUBMITTED, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });

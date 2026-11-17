@@ -461,7 +461,7 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
   },
   browser_task_status: {
     capability: "browser.session", operation: "status", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "the session's state, budgets and at most 128 provisional receipts",
+    outputBound: "the session's state, budgets, at most 128 provisional receipts and its Full Access lease status (read-only)",
     annotations: read("Read isolated browser session status")
   }
 };

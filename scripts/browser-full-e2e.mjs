@@ -17,8 +17,16 @@
 // page, a navigation with its own approval), browser_tabs list,
 // browser_screenshot of the second tab (its secret fields must be painted
 // over, checked on the decoded pixels), browser_tabs switch back,
-// browser_verify, browser_tabs close (the second tab), then
-// browser_task_status and browser_close. Then: the provisional receipts chain is recomputed here,
+// browser_verify, browser_tabs close (the second tab), then (SG-000135
+// OB-08) Full Access: the owner's local path (a second orceld, no tool
+// surface profile, like the lifecycle CLI) issues a browser lease for this
+// session on https://fixture.test with STRONG presence; 25 routine actions
+// (open, fill, select, click on an ordinary link) then finish with zero
+// Orcel prompts, each receipted with the lease; a click on a link named
+// "Submit order" still asks; the owner revokes the lease, the very next
+// action is refused lease_invalid with nothing sent, and the one after asks
+// again. Then browser_task_status and browser_close. Then: the provisional
+// receipts chain is recomputed here,
 // the session's folder (its profile) must be gone, no Edge of this run may
 // be left, and orceld must end when the MCP session ends.
 //
@@ -29,6 +37,8 @@
 //                       decided by the approval crate's existing test-support
 //                       soft decider (approve only the mission's four action
 //                       titles whose whole target is https://fixture.test;
+//                       OB-08: STRONG presence for exactly the Full
+//                       Access lease issuance on https://fixture.test;
 //                       deny everything else) and every
 //                       prompt's dialog text recorded. No dialog is shown.
 //                       This is scripted consent, not human acceptance.
@@ -73,12 +83,19 @@ const EXPECTED_TOOLS = [
   "browser_close", "browser_task_status"
 ];
 /// The mission's approved actions: open, fill, select, click, and the new
-/// tab's navigation (OB-03).
-const APPROVED_ACTIONS = 5;
+/// tab's navigation (OB-03), then (OB-08) the submit link and the open after
+/// the revoke. The 25 routine actions under the lease ask nothing.
+const APPROVED_ACTIONS = 7;
+/// SG-000135 OB-08: the Full Access pages and the routine actions to run.
+const OB08_FORM_URL = `${FIXTURE}/ob08-form`;
+const OB08_NEXT_URL = `${FIXTURE}/ob08-next`;
+const OB08_SUBMITTED_URL = `${FIXTURE}/ob08-submitted`;
+const OB08_ROUTINE_ACTIONS = 25;
+const LEASE_FAMILIES = ["navigate", "click", "type", "select", "read", "tabs"];
 // Longer than the MCP edge's own 10-minute approval timeout, so a dialog that
 // waits for a person ends as orceld's answer, not as this client giving up.
 const CALL_TIMEOUT_MS = 11 * 60_000;
-const RECEIPT_DOMAIN = "orcel-ob01-receipt/1";
+const RECEIPT_DOMAIN = "orcel-ob01-receipt/2";
 /** The MCP session of this run, ended on every exit path. */
 let activeClient = null;
 
@@ -243,6 +260,39 @@ class McpClient {
   }
 }
 
+/// SG-000135 OB-08: the owner's local lease management, as the lifecycle
+/// CLI would send it: a second orceld of this build, on this run's state,
+/// with no tool surface profile, one request, then its input closes. In a
+/// founder run its STRONG prompt is the real Windows Hello the founder
+/// answers; this script never answers it.
+async function ownerRequest(paths, env, capability, operation, args) {
+  const ownerEnv = { ...env, ORCEL_APP_API: "off" };
+  delete ownerEnv.ORCEL_TOOL_SURFACE_PROFILE;
+  const child = spawn(paths.orceld, [], { cwd: repo, stdio: ["pipe", "pipe", "pipe"], env: ownerEnv, windowsHide: true });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => (stderr += chunk.toString("utf8")));
+  const exited = new Promise((resolvePromise) => child.on("exit", (code) => resolvePromise(code)));
+  const line = await new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => reject(new Error(`the owner's ${capability} timed out: ${stderr}`)), CALL_TIMEOUT_MS);
+    createInterface({ input: child.stdout }).once("line", (text) => {
+      clearTimeout(timer);
+      resolvePromise(text);
+    });
+    child.stdin.write(`${JSON.stringify({
+      version: 1,
+      request_id: `ob08-owner-${operation}`,
+      client_session_id: "ob08-owner",
+      workspace_id: "default",
+      capability,
+      operation,
+      arguments: args
+    })}\n`);
+  });
+  child.stdin.end();
+  await exited;
+  return JSON.parse(line);
+}
+
 /// Every node of a snapshot, flattened.
 function flatten(nodes, out = []) {
   for (const node of nodes ?? []) {
@@ -260,7 +310,7 @@ function receiptDigest(receipt) {
     RECEIPT_DOMAIN, String(receipt.seq), receipt.session_id, receipt.action, optional(receipt.page_id),
     optional(receipt.generation_before), optional(receipt.generation_after), receipt.outcome,
     optional(receipt.failure_code), receipt.evidence_kind, optional(receipt.evidence_sha256),
-    optional(receipt.record_id), String(receipt.at_ms), receipt.previous_sha256
+    optional(receipt.record_id), optional(receipt.lease_id), String(receipt.at_ms), receipt.previous_sha256
   ];
   const hash = createHash("sha256");
   for (const part of parts) {
@@ -407,7 +457,7 @@ async function mission(options, paths, fixtureSpki, fixture) {
     const log = existsSync(paths.consentLog) ? readFileSync(paths.consentLog, "utf8") : "";
     require_(log.includes("\"scripted_consent_started\""), "orceld is not the scripted-consent build (no consent log header); stopping before any approval");
   } else {
-    process.stdout.write("OB01-E2E founder run: 5 Orcel approval dialogs follow (open, fill, select, click, open the second tab). Read each and answer it yourself.\n");
+    process.stdout.write("OB01-E2E founder run: 5 Orcel approval dialogs follow (open, fill, select, click, open the second tab), then (OB-08) one Windows Hello prompt for Full Access and two more dialogs (the submit link, the open after the revoke). Read each and answer it yourself.\n");
   }
 
   const open = await client.call("browser_open", { session_id: session, url: FORM_URL });
@@ -545,6 +595,112 @@ async function mission(options, paths, fixtureSpki, fixture) {
     tabs_after_close: afterClose.tabs.length
   };
 
+  // SG-000135 OB-08: Full Access. The owner issues a lease for this session
+  // through the local path (STRONG presence); the agent can only read it.
+  const softPrompts = () =>
+    options.consent === "scripted" && existsSync(paths.consentLog)
+      ? readFileSync(paths.consentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((line) => line.event === "soft_prompt")
+      : [];
+  const clientRef = expectOk(create, "browser_session_create").client_ref;
+  require_(/^cl-[0-9a-f]{32}$/.test(clientRef ?? ""), `the session names its client reference: ${clientRef}`);
+  if (options.consent === "founder") {
+    process.stdout.write("OB08-E2E founder run: one Windows Hello prompt follows (grant Full Access to this Orcel browser session on https://fixture.test). Read it and answer it yourself.\n");
+  }
+  const issued = await ownerRequest(paths, env, "browser.lease.issue", "issue", {
+    session_id: session,
+    client_ref: clientRef,
+    origins: [FIXTURE],
+    families: LEASE_FAMILIES,
+    minutes: 30
+  });
+  require_(issued.ok === true, `the owner issued the lease: ${JSON.stringify(issued.error)}`);
+  const leaseId = issued.result.lease_id;
+  require_(/^bl-[0-9a-f]{64}$/.test(leaseId) && JSON.stringify(issued.result.origins) === JSON.stringify([FIXTURE]), `the lease names the fixture origin: ${JSON.stringify(issued.result)}`);
+  const leased = await client.call("browser_task_status", { session_id: session });
+  record(leased);
+  const leaseStatus = expectOk(leased, "browser_task_status (lease)").full_access;
+  require_(leaseStatus?.active === true && leaseStatus.lease_id === leaseId && leaseStatus.routine_only === true, `the agent reads the lease, read-only: ${JSON.stringify(leaseStatus)}`);
+  require_(!JSON.stringify(leaseStatus).includes("S-1-"), "the status names no Windows user");
+
+  const promptsBefore = softPrompts().length;
+  let routine = 0;
+  const openForm = async () => {
+    const step = await client.call("browser_open", { session_id: session, url: OB08_FORM_URL });
+    record(step);
+    const result = expectOk(step, "browser_open (lease)");
+    require_(result.url === OB08_FORM_URL && result.receipt?.lease_id === leaseId && result.receipt?.record_id === null, `the open ran under the lease: ${JSON.stringify(result.receipt)}`);
+    routine += 1;
+    return result;
+  };
+  const formNodes = async () => {
+    const step = await client.call("browser_snapshot", { session_id: session });
+    record(step);
+    const snapped = expectOk(step, "browser_snapshot (lease)");
+    const all = flatten(snapped.nodes);
+    const field = all.find((node) => node.role === "textbox" && node.untrusted_name?.text === "Full name");
+    const list = all.find((node) => node.role === "combobox" && node.untrusted_name?.text === "City");
+    const formLinks = all.filter((node) => node.role === "link");
+    require_(field && list && formLinks.length === 2, `the routine page shows its field, list and two links: ${JSON.stringify(all.map((node) => [node.node_id, node.role]))}`);
+    return { generation: snapped.generation, field, list, next: formLinks[0], submit: formLinks[1] };
+  };
+  for (let round = 0; round < 6; round += 1) {
+    await openForm();
+    const form = await formNodes();
+    const fillStep = await client.call("browser_fill", { session_id: session, node_id: form.field.node_id, value: `Round ${round}`, expected_generation: form.generation });
+    record(fillStep);
+    const filled = expectOk(fillStep, "browser_fill (lease)");
+    require_(filled.approval === "lease" && filled.lease_id === leaseId && filled.record_id === null, `the fill ran under the lease: ${JSON.stringify(filled)}`);
+    routine += 1;
+    const selectStep = await client.call("browser_select", { session_id: session, node_id: form.list.node_id, option: round % 2 === 0 ? "Porto" : "Faro", expected_generation: form.generation });
+    record(selectStep);
+    const selected = expectOk(selectStep, "browser_select (lease)");
+    require_(selected.approval === "lease" && selected.lease_id === leaseId, `the select ran under the lease: ${JSON.stringify(selected)}`);
+    routine += 1;
+    const nextStep = await client.call("browser_click", { session_id: session, node_id: form.next.node_id, expected_generation: form.generation });
+    record(nextStep);
+    const nexted = expectOk(nextStep, "browser_click (lease)");
+    require_(nexted.url === OB08_NEXT_URL && nexted.receipt?.lease_id === leaseId, `the ordinary link ran under the lease: ${JSON.stringify(nexted)}`);
+    routine += 1;
+  }
+  await openForm();
+  require_(routine === OB08_ROUTINE_ACTIONS, `${OB08_ROUTINE_ACTIONS} routine actions ran under the lease: ${routine}`);
+  const routinePrompts = softPrompts().length - promptsBefore;
+  require_(routinePrompts === 0, `the routine actions raised no Orcel prompt: ${routinePrompts}`);
+
+  // A link named as a submit is never routine: it asks, once.
+  const submitForm = await formNodes();
+  const submitStep = await client.call("browser_click", { session_id: session, node_id: submitForm.submit.node_id, expected_generation: submitForm.generation });
+  record(submitStep);
+  const submitted = expectOk(submitStep, "browser_click (submit)");
+  require_(submitted.url === OB08_SUBMITTED_URL && submitted.receipt?.lease_id === null && typeof submitted.receipt?.record_id === "string", `the submit asked and ran on its own approval: ${JSON.stringify(submitted.receipt)}`);
+  const submitPrompts = softPrompts().slice(promptsBefore);
+  if (options.consent === "scripted") {
+    require_(submitPrompts.length === 1 && submitPrompts[0].target === OB08_SUBMITTED_URL, `the submit raised exactly one prompt: ${JSON.stringify(submitPrompts)}`);
+  }
+
+  // The owner revokes: the very next action is refused, nothing sent.
+  const revoked = await ownerRequest(paths, env, "browser.lease.revoke", "revoke", { lease_id: leaseId });
+  require_(revoked.ok === true && revoked.result.revoked === 1, `the owner revoked the lease: ${JSON.stringify(revoked)}`);
+  const afterRevoke = await client.call("browser_open", { session_id: session, url: OB08_FORM_URL });
+  record(afterRevoke);
+  require_(!afterRevoke.ok && afterRevoke.body?.error?.code === "CAPABILITY_DENIED" && /lease_invalid/.test(afterRevoke.body?.error?.message ?? ""), `the next action after the revoke is refused lease_invalid: ${JSON.stringify(afterRevoke.body)}`);
+  const askedAgain = await client.call("browser_open", { session_id: session, url: OB08_FORM_URL });
+  record(askedAgain);
+  const reopened = expectOk(askedAgain, "browser_open (after revoke)");
+  require_(reopened.receipt?.lease_id === null && typeof reopened.receipt?.record_id === "string", `after the revoke the open asks again: ${JSON.stringify(reopened.receipt)}`);
+  if (options.consent === "scripted") {
+    require_(softPrompts().length - promptsBefore === 2, "the submit and the open after the revoke are the only prompts since the lease");
+  }
+  const ob08 = {
+    lease_id: leaseId,
+    lease_session: session,
+    routine_actions: routine,
+    routine_prompts: routinePrompts,
+    submit_asked: true,
+    revoke_refused: afterRevoke.body?.error?.message,
+    asked_after_revoke: true
+  };
+
   const status = await client.call("browser_task_status", { session_id: session });
   record(status);
   const state = expectOk(status, "browser_task_status");
@@ -553,18 +709,26 @@ async function mission(options, paths, fixtureSpki, fixture) {
   for (const receipt of receipts) {
     require_(receipt.provisional === true && receipt.previous_sha256 === previous, `receipt ${receipt.seq} chains to the one before`);
     require_(receiptDigest(receipt) === receipt.receipt_sha256, `receipt ${receipt.seq}'s digest recomputes`);
-    require_(receipt.outcome === "done", `receipt ${receipt.seq} (${receipt.action}) is done: ${receipt.outcome}`);
+    // OB-08: the one action after the revoke is refused, nothing sent.
+    const refusedAfterRevoke = receipt.outcome === "refused" && receipt.failure_code === "CAPABILITY_DENIED" && receipt.action === "browser_open";
+    require_(receipt.outcome === "done" || refusedAfterRevoke, `receipt ${receipt.seq} (${receipt.action}) is done: ${receipt.outcome}`);
+    require_(!(receipt.record_id && receipt.lease_id), `receipt ${receipt.seq} names an approval or a lease, never both`);
     previous = receipt.receipt_sha256;
   }
   const actions = receipts.map((receipt) => receipt.action);
+  const ob08Round = ["browser_open", "browser_snapshot", "browser_fill", "browser_select", "browser_click"];
   const expectedActions = [
     "browser_open", "browser_snapshot", "browser_fill", "browser_select", "browser_verify", "browser_click", "browser_verify", "browser_extract",
-    "browser_screenshot", "browser_tabs", "browser_tabs", "browser_screenshot", "browser_tabs", "browser_verify", "browser_tabs"
+    "browser_screenshot", "browser_tabs", "browser_tabs", "browser_screenshot", "browser_tabs", "browser_verify", "browser_tabs",
+    ...Array.from({ length: 6 }, () => ob08Round).flat(),
+    "browser_open", "browser_snapshot", "browser_click", "browser_open", "browser_open"
   ];
   require_(JSON.stringify(actions) === JSON.stringify(expectedActions), `the receipts are the mission's actions: ${actions.join(", ")}`);
   require_(state.last_receipt_sha256 === previous, "the chain head is the last receipt");
   const approved = receipts.filter((receipt) => receipt.record_id);
-  require_(approved.length === APPROVED_ACTIONS, `five actions carry an approval record (open, fill, select, click, the new tab): ${approved.length}`);
+  require_(approved.length === APPROVED_ACTIONS, `seven actions carry an approval record (open, fill, select, click, the new tab, the submit, the open after the revoke): ${approved.length}`);
+  const leasedReceipts = receipts.filter((receipt) => receipt.lease_id);
+  require_(leasedReceipts.length === OB08_ROUTINE_ACTIONS && leasedReceipts.every((receipt) => receipt.lease_id === ob08.lease_id && receipt.outcome === "done"), `every routine action is receipted with the lease: ${leasedReceipts.length}`);
   // OB-03: a screenshot's receipt keeps its digest only.
   const shotReceipts = receipts.filter((receipt) => receipt.action === "browser_screenshot");
   require_(
@@ -606,7 +770,8 @@ async function mission(options, paths, fixtureSpki, fixture) {
     edge_left: leftEdge.length,
     session_folders_left: leftSessions.length,
     ob03,
-    fixture_hits: fixture.hits.filter((hit) => hit.includes("/ob01-"))
+    ob08,
+    fixture_hits: fixture.hits.filter((hit) => hit.includes("/ob01-") || hit.includes("/ob08-"))
   };
 }
 
@@ -638,9 +803,14 @@ async function main() {
     const ledger = join(root, ".orcel");
     summary.approval_ledger_files = existsSync(ledger) ? readdirSync(ledger) : [];
     if (options.consent === "scripted") {
-      const prompts = readFileSync(paths.consentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((line) => line.event === "soft_prompt");
-      require_(prompts.length === APPROVED_ACTIONS && prompts.every((prompt) => prompt.decision === "approved"), `five scripted SOFT prompts, each approved: ${prompts.length}`);
+      const lines = readFileSync(paths.consentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      const prompts = lines.filter((line) => line.event === "soft_prompt");
+      require_(prompts.length === APPROVED_ACTIONS && prompts.every((prompt) => prompt.decision === "approved"), `seven scripted SOFT prompts, each approved: ${prompts.length}`);
       summary.scripted_prompts = prompts.map((prompt) => ({ action: prompt.action, target: prompt.target }));
+      // OB-08: one STRONG prompt, the lease issuance, scripted only here.
+      const strong = lines.filter((line) => line.event === "strong_presence");
+      require_(strong.length === 1 && strong[0].decision === "approved" && strong[0].target === summary.ob08.lease_session, `one scripted STRONG prompt, the lease issuance: ${JSON.stringify(strong)}`);
+      summary.scripted_strong = strong.map((line) => ({ action: line.action, target: line.target, summary: line.summary }));
     }
     writeFileSync(join(evidenceDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
     const steps = summary.steps.map((step) => `${step.tool}=${step.ok ? "ok" : "refused"}/${step.ms}ms`).join(" ");

@@ -181,6 +181,15 @@ impl<C: Clock> TakeoverGate<C> {
         self.gate.as_mut()
     }
 
+    /// SG-000135 OB-08: the page's intervention epoch (each human
+    /// intervention advances it), which a Full Access lease's use is pinned
+    /// to; `None` while the switch is off or the page is not tracked.
+    pub(crate) fn intervention_epoch(&self, page_id: &str) -> Option<u64> {
+        self.gate
+            .as_ref()
+            .and_then(|gate| gate.epoch(&ResourceId::new(page_id)))
+    }
+
     /// The live page opened: the live task owns it.
     pub(crate) fn page_opened(&mut self, page_id: &str) {
         if let Some(gate) = self.gate.as_mut() {
