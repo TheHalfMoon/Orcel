@@ -1,0 +1,231 @@
+{
+  "schema": "orcel-adapted-source-provenance/1",
+  "task": "W2-03 (Stagehand browser intelligence into the browser worker: accessibility outline, schema-driven extraction, outline targets)",
+  "donor": {
+    "id": "stagehand",
+    "repo": "browserbase/stagehand",
+    "commit": "82827a219512f0399cb159720a63f7d271d21480",
+    "license": "MIT (LICENSE blob 683c709c95b54b899bb1a49207cd5bff296ba087; Copyright (c) 2024 Browserbase Inc.)",
+    "notice": "docs/orcel/notices/stagehand-MIT.txt"
+  },
+  "method": "COPY_ADAPT",
+  "dependencies": {},
+  "staged_donor_provenance_entry": {
+    "note": "Entry in the WP1-01 central manifest format (docs/orcel/notices/donor-provenance.json on origin/wp1/licence-gates), staged here until that manifest lands on main: merge 'donors' into its donors map and 'files' into its files list.",
+    "donors": {
+      "stagehand": {
+        "repo": "browserbase/stagehand",
+        "commit": "82827a219512f0399cb159720a63f7d271d21480",
+        "licence": "MIT",
+        "notice": "docs/orcel/notices/stagehand-MIT.txt",
+        "records": [
+          "docs/orcel/stagehand_provenance.json"
+        ],
+        "earlier_records": [],
+        "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+      }
+    },
+    "files": [
+      {
+        "path": "apps/orcel-browser-worker/src/outline/xpath.ts",
+        "donor": "stagehand",
+        "source": [
+          "packages/extension/understudy/a11y/snapshot/xpathUtils.ts",
+          "packages/extension/utils.ts"
+        ]
+      },
+      {
+        "path": "apps/orcel-browser-worker/src/outline/dom-tree.ts",
+        "donor": "stagehand",
+        "source": [
+          "packages/extension/understudy/a11y/snapshot/domTree.ts"
+        ]
+      },
+      {
+        "path": "apps/orcel-browser-worker/src/outline/a11y-tree.ts",
+        "donor": "stagehand",
+        "source": [
+          "packages/extension/understudy/a11y/snapshot/a11yTree.ts",
+          "packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts"
+        ]
+      },
+      {
+        "path": "apps/orcel-browser-worker/src/outline/tree-format.ts",
+        "donor": "stagehand",
+        "source": [
+          "packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts",
+          "packages/extension/understudy/a11y/snapshot/capture.ts"
+        ]
+      },
+      {
+        "path": "apps/orcel-browser-worker/src/outline/capture.ts",
+        "donor": "stagehand",
+        "source": [
+          "packages/extension/understudy/a11y/snapshot/capture.ts",
+          "packages/extension/understudy/a11y/snapshot/a11yTree.ts"
+        ]
+      },
+      {
+        "path": "apps/orcel-browser-worker/src/outline/schema-extract.ts",
+        "donor": "stagehand",
+        "source": [
+          "packages/extension/services/extractService.ts"
+        ]
+      },
+      {
+        "path": "apps/orcel-browser-worker/src/outline/targets.ts",
+        "donor": "stagehand",
+        "source": [
+          "packages/extension/services/actService.ts",
+          "packages/extension/services/observeService.ts"
+        ]
+      },
+      {
+        "path": "apps/orcel-browser-worker/src/outline/dom-tree.test.ts",
+        "donor": "stagehand",
+        "source": [
+          "packages/extension/understudy/a11y/snapshot/domTree.test.ts"
+        ]
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "apps/orcel-browser-worker/src/outline/xpath.ts",
+      "donor_path": "packages/extension/understudy/a11y/snapshot/xpathUtils.ts",
+      "donor_blob": "a5b8d34230e4e33a2e3829a64919e4bac3c8ef61",
+      "adapted": "prefixXPath, normalizeXPath, buildChildXPathSegments, joinXPath (copied); trimTrailingTextNode from utils.ts (blob ade45fa134cb6f19773376ff4be48d6ff603c8af)",
+      "row": "W2-03",
+      "changes": "own minimal CdpDomNode type (no devtools-protocol); buildAbsoluteXPathFromChain and absoluteXPathForBackendNode not copied (they run a function in the page with Runtime.callFunctionOn); boundXPath (new) keeps only element-step paths within 1024 bytes"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/dom-tree.ts",
+      "donor_path": "packages/extension/understudy/a11y/snapshot/domTree.ts",
+      "donor_blob": "02c589d7f9799ba9c66894cd7ba9a4ae99d6aabf",
+      "adapted": "shouldExpandNode, mergeDomNodes, collectDomTraversalTargets, hydrateDomTree, getDomTreeWithFallback, buildSessionDomIndex, relativizeXPath, enrichedTagName, findNodeByBackendId",
+      "row": "W2-03",
+      "changes": "Progress replaced by an absolute deadline (OutlineTimeout); index bounded at 50,000 nodes with a truncated flag; enrichedTagName names only a known input type; domMapsForSession not copied (main document only)"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/a11y-tree.ts",
+      "donor_path": "packages/extension/understudy/a11y/snapshot/a11yTree.ts",
+      "donor_blob": "2d3a626f9645f29b817a7a30a7cfbc3343da9c5e",
+      "adapted": "decorateRoles, buildHierarchicalTree, isStructural, extractUrlFromAXNode, toBooleanValue, extractBooleanProperty; removeRedundantStaticTextChildren from treeFormatUtils.ts (blob 4928894ca32684f7cc854578c3ddaee9d6305a1a)",
+      "row": "W2-03",
+      "changes": "no value and no description kept; withholdNames (new) clears the name of every control or editable node, every node inside or holding one, every node named through another element (relatedElement or aria-labelledby) and every non-text node whose name source is unreported; generic nodes take only a plain HTML tag as role; synchronous build; a11yForFrame's focus-locator scoping not copied"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/tree-format.ts",
+      "donor_path": "packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts",
+      "donor_blob": "4928894ca32684f7cc854578c3ddaee9d6305a1a",
+      "adapted": "formatTreeLine, injectSubtrees, indentBlock, diffCombinedTrees, cleanText, normaliseSpaces",
+      "row": "W2-03",
+      "changes": "node type is the outline's own; untrustedText (new) applies capture.ts's toWellFormed repair (blob 6706bef9c7bd654bfd161129ae8be8cb78dffaba), strips C0/C1 controls, bidi overrides and isolates, zero-width and format characters, folds line breaks, and cuts to a byte bound"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/capture.ts",
+      "donor_path": "packages/extension/understudy/a11y/snapshot/capture.ts",
+      "donor_blob": "6706bef9c7bd654bfd161129ae8be8cb78dffaba",
+      "adapted": "captureHybridSnapshot, collectPerFrameMaps and mergeFramesIntoSnapshot (main-frame path), with a11yForFrame from a11yTree.ts",
+      "row": "W2-03",
+      "changes": "one CDP session behind readOnlyCdp (allowlist: DOM.enable, DOM.getDocument, DOM.describeNode, Accessibility.enable, Accessibility.getFullAXTree); main document only (an iframe is a leaf); no focus or ignore locators; output is bounded OutlineNode trees (512 nodes, depth 32, 512-byte names, 1024-byte XPaths, 56 KiB) instead of a text outline plus id maps; link URLs only absolute http(s) without credentials; no checked or selected state on the wire"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/schema-extract.ts",
+      "donor_path": "packages/extension/services/extractService.ts",
+      "donor_blob": "3193fbe656b1af3bca0a0a4c0d3e076e9d1cc731",
+      "adapted": "the snapshot-then-schema design and the id-to-URL resolution through the snapshot URL map (transformUrlStringsToNumericIds, injectUrls)",
+      "row": "W2-03",
+      "changes": "inference.extract replaced by exact matching: fields name a role (and optional exact name) or an outline XPath and take text, texts or url; values come only from the bounded, withheld outline; zod, screenshots, the server cache and all model calls not ported"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/targets.ts",
+      "donor_path": "packages/extension/services/actService.ts",
+      "donor_blob": "17187189c111f8a668da90099da16bff0efeaa77",
+      "adapted": "normalizeActInferenceElement's element-id check and id-to-XPath lookup with trimTrailingTextNode; the same lookup in observeService.ts (blob 9d042ffa191a2af222d8ed4b0094c457c8db8086)",
+      "row": "W2-03",
+      "changes": "resolve only, never act: takeDeterministicAction, performUnderstudyMethod, self-heal, variable substitution, drag-and-drop and the LLM calls not ported; actions remain the existing approved worker actions"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/dom-tree.test.ts",
+      "donor_path": "packages/extension/understudy/a11y/snapshot/domTree.test.ts",
+      "donor_blob": "b5764e92f51f900170575b8c5b53fb40314456bd",
+      "adapted": "the retry tests (last getDocument error, last describeNode error, non-retryable rethrow) and the iframe and shadow traversal test",
+      "row": "W2-03",
+      "changes": "vitest to node:test; the two fake-timer Progress tests replaced by a deadline test; Orcel tests for bounds, hydration and enriched tags added"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/outline.test.ts",
+      "donor_path": null,
+      "donor_blob": null,
+      "adapted": "Orcel tests for the outline, untrusted text, schema extraction, targets and the no-network rule",
+      "row": "W2-03",
+      "changes": "new code; includes behaviour checks of the copied formatTreeLine, diffCombinedTrees, injectSubtrees, removeRedundantStaticTextChildren and the toWellFormed repair"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/protocol.ts",
+      "donor_path": null,
+      "donor_blob": null,
+      "adapted": "worker protocol generation 18: outline, outlined, outline_failed, extract_schema, schema_extracted, schema_extraction_failed",
+      "row": "W2-03",
+      "changes": "new code; closed, exact, bounded schema fields (one target each)"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/worker.ts",
+      "donor_path": null,
+      "donor_blob": null,
+      "adapted": "the outline and extract_schema handlers",
+      "row": "W2-03",
+      "changes": "new code; refused while a navigation runs; URL bound; one value per field"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/entry.ts",
+      "donor_path": null,
+      "donor_blob": null,
+      "adapted": "takeOutline: a read-only CDP session on the primary page",
+      "row": "W2-03",
+      "changes": "new code; captureWithin deadline; stale-page refusal"
+    },
+    {
+      "path": "crates/orcel-browser-host/src/worker_outline.rs",
+      "donor_path": null,
+      "donor_blob": null,
+      "adapted": "host policy gate and wire types",
+      "row": "W2-03",
+      "changes": "new code; admit() denies both capabilities by default (SG-000076 amendment for the outline, SG-000133 amendment for schema extraction); validate_schema, check_outline and check_values re-check every bound"
+    },
+    {
+      "path": "crates/orcel-browser-host/src/worker_launch.rs",
+      "donor_path": null,
+      "donor_blob": null,
+      "adapted": "generation 18 frames and the gated outline and extract_schema methods",
+      "row": "W2-03",
+      "changes": "new code; each method calls the gate before anything is sent"
+    }
+  ],
+  "not_copied": [
+    {
+      "source": "packages/extension/services/cacheService.ts (blob fc33550073cb6e82960e67b8f230cdfc842c7b32)",
+      "why": "Browserbase server-side cache client (cloud); deterministic paths need no cache"
+    },
+    {
+      "source": "packages/extension/llm/, inference.ts, prompt.ts, services/llmService.ts",
+      "why": "model calls; any model step belongs to orceld with the user's own key, never the worker"
+    },
+    {
+      "source": "packages/extension/understudy/a11y/snapshot/focusSelectors.ts, coordinateResolver.ts, activeElement.ts",
+      "why": "they resolve selectors or coordinates by running code in the page"
+    },
+    {
+      "source": "packages/extension/understudy/a11y/snapshot/capture.ts multi-frame stitching (computeFramePrefixes, per-frame sessions)",
+      "why": "the outline covers the main document only"
+    },
+    {
+      "source": "telemetry, tracing, metrics, Browserbase transports",
+      "why": "cloud and telemetry are excluded by the architecture"
+    }
+  ],
+  "tests": {
+    "upstream_vitest": "NOT RUN: the donor clone has no node_modules and is read-only; its vitest suites import Stagehand's Page, Progress and CDP stack and would need the pnpm workspace installed. The applicable tests were ported to node:test (outline/dom-tree.test.ts)."
+  }
+}
