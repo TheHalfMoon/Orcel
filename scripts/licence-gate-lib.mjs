@@ -286,9 +286,13 @@ const TEXT_MARKERS = [
   ["BUSL", /Business\s+Source\s+License/i],
   ["FSL", /Functional\s+Source\s+License/i],
   ["OTHER", /Permission\s+is\s+hereby\s+granted,\s+free\s+of\s+charge|Redistribution\s+and\s+use\s+in\s+source\s+and\s+binary\s+forms/i],
+  ["APACHE", /Licensed\s+under\s+the\s+Apache\s+License/i],
+  ["ISC", /Permission\s+to\s+use,\s+copy,\s+modify,\s+and\/or\s+distribute/i],
+  ["BSL", /Boost\s+Software\s+License/i],
+  ["UNLICENSE", /This\s+is\s+free\s+and\s+unencumbered\s+software\s+released\s+into\s+the\s+public\s+domain/i],
 ];
 
-export const FAMILIES = ["AGPL", "LGPL", "GPL", "MPL", "SSPL", "BUSL", "FSL", "COMMERCIAL", "OTHER"];
+export const FAMILIES = ["AGPL", "LGPL", "GPL", "MPL", "SSPL", "BUSL", "FSL", "APACHE", "ISC", "BSL", "UNLICENSE", "COMMERCIAL", "OTHER"];
 
 /** Restricted licence families a line of text names. */
 export function markerFamilies(line, allowed) {

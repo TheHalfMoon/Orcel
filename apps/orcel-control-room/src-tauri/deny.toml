@@ -1,8 +1,9 @@
 # cargo-deny configuration for the Control Room shell workspace only
 # (SG-000119 slice A2, founder decision 3). CI runs
 # `cargo deny check sources bans advisories` on every change, beside
-# `cargo audit` (licences reported, not judged; see [licenses] below). Every crate in the resolved graph (all targets) is checked,
-# including the Linux and macOS crates this Windows-only grain never builds.
+# `cargo audit` (licences reported, not judged; see [licenses] below).
+# Every crate in the resolved graph (all targets) is checked, including the
+# Linux and macOS crates this Windows-only grain never builds.
 
 [graph]
 all-features = false

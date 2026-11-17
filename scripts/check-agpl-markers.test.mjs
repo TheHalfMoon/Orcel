@@ -157,3 +157,24 @@ test("--root without a directory exits with a clear message", () => {
     assert.match(bogus.stderr, /is not a directory/);
   }
 });
+
+test("Apache header text, the ISC grant, Boost and the Unlicense are markers that require provenance", () => {
+  const cases = {
+    APACHE: " * Licensed under the Apache License, Version 2.0 (the \"License\");",
+    ISC: "Permission to use, copy, modify, and/or distribute this software for any",
+    BSL: "Distributed under the Boost Software License, Version 1.0.",
+    UNLICENSE: "This is free and unencumbered software released into the public domain.",
+  };
+  for (const [family, line] of Object.entries(cases)) {
+    assert.deepEqual(markerFamilies(line, OWN), [family], family);
+    const errors = run(base({ "apps/tool/src/copied.js": `${line}\n` }));
+    assert.equal(errors.length, 1, `${family}: ${errors}`);
+    assert.ok(errors[0].includes(`${family} licence marker in a file with no provenance entry`), errors[0]);
+    const covered = [
+      { path: "crates/core/src/port.rs", donor: "x" },
+      { path: "apps/tool/src/copied.js", donor: "x" },
+    ];
+    assert.deepEqual(run(base({ "apps/tool/src/copied.js": `${line}\n` }, {}, covered)), [], family);
+  }
+  assert.deepEqual(markerFamilies("// Orcel is Apache-licensed; Boost and ISC crates are reported", OWN), []);
+});

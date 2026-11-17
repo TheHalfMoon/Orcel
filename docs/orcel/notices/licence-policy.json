@@ -9,8 +9,17 @@
     "record": "docs/orcel/grants/2026-11-17-founder-attestation.md",
     "nature": "Owner-asserted: typed by the founder and relayed to the engineering agent. No copyright-holder-signed grant is in the repository and the underlying permissions were not reviewed by the engineering agent."
   },
-  "note": "Since the founder decision of 2026-11-17 a licence type blocks nothing: no gate refuses a file, crate or npm package because of its licence family. The gates instead require provenance for every copied donor file: source repository, pinned commit (or registry release with SHA-256), source path, original licence (recorded, not judged), the original copyright or attribution notice preserved in the repository, and the authorization reference above (docs/orcel/notices/donor-provenance.json, scripts/check-donor-provenance.mjs). A licence marker (AGPL, GPL, LGPL, MPL, SSPL, BUSL, FSL text, or an SPDX identifier other than orcel_licence) in a scanned file is evidence of copied code and requires that file to have a provenance or reviewed reference entry (scripts/check-agpl-markers.mjs). A file the scan cannot read (binary, archive, over 4 MiB) needs a provenance entry or an unreadable_exceptions entry. Licences of dependencies are reported, not judged (cargo deny list, scripts/check-npm-licenses.mjs); lockfile, source, ban, patch and dependency-direction rules stay.",
+  "note": "Since the founder decision of 2026-11-17 a licence type blocks nothing: no gate refuses a file, crate or npm package because of its licence family. The gates instead require provenance for every copied donor file: source repository, pinned commit (or registry release with SHA-256), source path, original licence (recorded, not judged), the original copyright or attribution notice preserved in the repository, and the authorization reference above (docs/orcel/notices/donor-provenance.json, scripts/check-donor-provenance.mjs). A licence marker in a scanned file is evidence of copied code and requires that file to have a provenance or reviewed reference entry (scripts/check-agpl-markers.mjs). A marker is an SPDX-License-Identifier other than orcel_licence, or a phrase from a licence text or header: the GNU AGPL, GPL or LGPL title, \"This program is free software\", the Mozilla, Server Side, Business Source, Functional Source or Boost licence title, the Apache header \"Licensed under the Apache License\", the MIT grant, the ISC grant, the BSD redistribution clause, or the Unlicense dedication. A bare licence name in Orcel's own prose is not a marker. A file the scan cannot read (binary, archive, over 4 MiB) needs a provenance entry or an unreadable_exceptions entry. Licences of dependencies are reported, not judged (cargo deny list, scripts/check-npm-licenses.mjs); lockfile, source, ban, patch and dependency-direction rules stay.",
   "orcel_licence": "Apache-2.0",
-  "scan_roots": ["crates/", "apps/", "packages/", "tests/", "distribution/", "examples/", "scripts/", "third_party/"],
+  "scan_roots": [
+    "crates/",
+    "apps/",
+    "packages/",
+    "tests/",
+    "distribution/",
+    "examples/",
+    "scripts/",
+    "third_party/"
+  ],
   "unreadable_exceptions": []
 }

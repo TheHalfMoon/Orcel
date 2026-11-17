@@ -14,10 +14,11 @@
 // reviewed "references" entry for files that only quote a licence.
 // A marker is an SPDX-License-Identifier other than Orcel's own licence, or
 // a phrase from a licence text or header (the GNU AGPL, GPL or LGPL title,
-// "This program is free software", the Mozilla, Server Side, Business Source
-// or Functional Source licence titles, the MIT grant, the BSD redistribution
-// clause). A bare licence name in Orcel's own prose ("unlike GPLv3 tools")
-// is not a marker.
+// "This program is free software", the Mozilla, Server Side, Business Source,
+// Functional Source and Boost licence titles, the Apache header "Licensed
+// under the Apache License", the MIT grant, the ISC grant, the BSD
+// redistribution clause, the Unlicense dedication). A bare licence name in
+// Orcel's own prose ("unlike GPLv3 tools") is not a marker.
 // A file the scan cannot read (binary, archive, larger than 4 MiB) needs a
 // provenance entry or an unreadable_exceptions entry in licence-policy.json.
 // UTF-16 with a byte-order mark is read. Lockfiles are left to the
