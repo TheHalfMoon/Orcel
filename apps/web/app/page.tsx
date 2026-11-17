@@ -98,7 +98,7 @@ export default function Home() {
       <header className="site-header">
         <div className="header-inner">
           <a className="brand" href="#" aria-label="Orcel home">
-            <img className="brand-wordmark" src={brandWordmarkUrl} width="138" height="32" alt="Orcel" />
+            <img className="brand-wordmark" src={brandWordmarkUrl} width="138" height="38" alt="Orcel" />
           </a>
           <nav className="desktop-nav" aria-label="Primary navigation">
             <a href="#product">Product</a>
@@ -245,7 +245,7 @@ export default function Home() {
       <footer className="site-footer">
         <div className="section-shell footer-inner">
           <div className="footer-brand">
-            <span className="brand"><img className="brand-wordmark" src={brandWordmarkUrl} width="138" height="32" alt="Orcel" /></span>
+            <span className="brand"><img className="brand-wordmark" src={brandWordmarkUrl} width="138" height="38" alt="Orcel" /></span>
             <p>Your computer, on your terms.</p>
           </div>
           <div className="footer-links">
@@ -257,7 +257,7 @@ export default function Home() {
             <a href={releases}>Releases</a>
             <a href={github}>GitHub</a>
           </div>
-          <p className="footer-meta">Apache-2.0 · Local-first by design</p>
+          <p className="footer-meta">Apache-2.0 · Local-first by design · A Halfmoon product</p>
         </div>
       </footer>
     </main>

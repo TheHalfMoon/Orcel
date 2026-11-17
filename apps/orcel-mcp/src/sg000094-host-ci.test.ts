@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
-import { once } from "node:events";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import test from "node:test";
 
 const repo = resolve(import.meta.dirname, "..", "..", "..");
 const hostDir = join(repo, "apps", "orcel-computer-host");
+
+// Every host reply and the host's exit are awaited with a bound, so a host
+// that stops answering or never exits fails this test in seconds instead of
+// holding the Node / windows-latest job until its timeout.
+const replyTimeoutMs = 20_000;
+const exitTimeoutMs = 10_000;
 
 function go(args: string[], cwd = hostDir) {
   return spawnSync("go", args, {
@@ -17,6 +22,97 @@ function go(args: string[], cwd = hostDir) {
     env: { ...process.env, GOTOOLCHAIN: "go1.25.0" },
     timeout: 180_000,
   });
+}
+
+function hasExited(child: ChildProcessWithoutNullStreams): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+// Resolves true once the child has exited, or false after ms.
+function waitForExit(child: ChildProcessWithoutNullStreams, ms: number): Promise<boolean> {
+  if (hasExited(child)) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolveExit) => {
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolveExit(hasExited(child));
+    }, ms);
+    const onExit = () => {
+      clearTimeout(timer);
+      resolveExit(true);
+    };
+    child.once("exit", onExit);
+  });
+}
+
+// Stops a host that a failed assertion left running: close stdin (the host
+// exits on EOF), then kill the process tree, and return only once it is gone
+// so the binary in the temporary directory is no longer locked.
+async function stopHost(child: ChildProcessWithoutNullStreams): Promise<boolean> {
+  if (hasExited(child)) {
+    return true;
+  }
+  child.stdin.end();
+  if (await waitForExit(child, exitTimeoutMs)) {
+    return true;
+  }
+  if (child.pid !== undefined) {
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { timeout: 30_000 });
+  }
+  child.kill();
+  return waitForExit(child, exitTimeoutMs);
+}
+
+// Reads the host's stdout one line at a time. Lines that arrive before they
+// are asked for are queued; each read is bounded and fails fast when the
+// host exits first.
+function lineReader(child: ChildProcessWithoutNullStreams, stderr: string[]) {
+  const queued: string[] = [];
+  let waiting: ((line: string) => void) | undefined;
+  let closed = false;
+  let onClose: (() => void) | undefined;
+  const lines = createInterface({ input: child.stdout });
+  lines.on("line", (line) => {
+    if (waiting !== undefined) {
+      const deliver = waiting;
+      waiting = undefined;
+      deliver(line);
+    } else {
+      queued.push(line);
+    }
+  });
+  lines.on("close", () => {
+    closed = true;
+    onClose?.();
+  });
+  return (what: string): Promise<string> => {
+    const next = queued.shift();
+    if (next !== undefined) {
+      return Promise.resolve(next);
+    }
+    return new Promise((resolveLine, reject) => {
+      const fail = (message: string) => {
+        waiting = undefined;
+        onClose = undefined;
+        reject(new Error(`${message} waiting for ${what}; host stderr: ${stderr.join("")}`));
+      };
+      if (closed) {
+        fail("host stdout closed");
+        return;
+      }
+      const timer = setTimeout(() => fail(`timed out after ${replyTimeoutMs}ms`), replyTimeoutMs);
+      onClose = () => {
+        clearTimeout(timer);
+        fail("host stdout closed");
+      };
+      waiting = (line) => {
+        clearTimeout(timer);
+        onClose = undefined;
+        resolveLine(line);
+      };
+    });
+  };
 }
 
 test("SG-000094 Windows host builds with pinned Go and speaks only private stdio protocol", { timeout: 240_000 }, async (t) => {
@@ -41,11 +137,13 @@ test("SG-000094 Windows host builds with pinned Go and speaks only private stdio
 
   const dir = mkdtempSync(join(tmpdir(), "orcel-sg94-"));
   const binary = join(dir, "orcel-computer-host.exe");
+  let child: ChildProcessWithoutNullStreams | undefined;
+  let passed = false;
   try {
     const build = go(["build", "-trimpath", "-o", binary, "."]);
     assert.equal(build.status, 0, build.stdout + build.stderr);
 
-    const child = spawn(binary, [], {
+    const host = spawn(binary, [], {
       stdio: ["pipe", "pipe", "pipe"],
       env: Object.fromEntries(
         ["SystemRoot", "WINDIR", "COMSPEC", "TEMP", "TMP", "PATH"]
@@ -54,37 +152,42 @@ test("SG-000094 Windows host builds with pinned Go and speaks only private stdio
       ),
       windowsHide: true,
     });
-    const lines = createInterface({ input: child.stdout });
+    child = host;
+    const stderr: string[] = [];
+    host.stderr.setEncoding("utf8");
+    host.stderr.on("data", (chunk: string) => stderr.push(chunk));
+    const nextLine = lineReader(host, stderr);
+    const reply = async (what: string) => JSON.parse(await nextLine(what));
 
     const request = (id: number, op: string) => {
-      child.stdin.write(JSON.stringify({ id, protocol: "orcel-computer-host/1", op }) + "\n");
+      host.stdin.write(JSON.stringify({ id, protocol: "orcel-computer-host/1", op }) + "\n");
     };
 
     request(1, "hello");
-    const hello = JSON.parse((await once(lines, "line"))[0] as string);
+    const hello = await reply("hello");
     assert.deepEqual(
       { ok: hello.ok, protocol: hello.protocol, host: hello.host },
       { ok: true, protocol: "orcel-computer-host/1", host: "orcel-windows-computer-host" },
     );
 
     request(2, "ping");
-    const pong = JSON.parse((await once(lines, "line"))[0] as string);
+    const pong = await reply("ping");
     assert.equal(pong.ok, true);
     assert.equal(pong.pong, true);
 
-    child.stdin.write(
+    host.stdin.write(
       JSON.stringify({ id: 3, protocol: "orcel-computer-host/1", op: "click" }) + "\n",
     );
-    const denied = JSON.parse((await once(lines, "line"))[0] as string);
+    const denied = await reply("click refusal");
     assert.equal(denied.ok, false);
     assert.equal(denied.error?.code, "capability_denied");
 
     // XP-04: the same live host also answers the orcel-computer-host/2 hello
     // that the Rust adapter offers first, with one capability per operation.
-    child.stdin.write(
+    host.stdin.write(
       JSON.stringify({ id: 5, protocol: "orcel-computer-host/2", op: "hello" }) + "\n",
     );
-    const helloV2 = JSON.parse((await once(lines, "line"))[0] as string);
+    const helloV2 = await reply("/2 hello");
     assert.deepEqual(
       {
         id: helloV2.id,
@@ -118,37 +221,61 @@ test("SG-000094 Windows host builds with pinned Go and speaks only private stdio
       "observe_window",
       "ping",
       "semantic_action",
+      "semantic_batch",
       "shutdown",
       "window_action",
     ]);
     assert.equal(helloV2.capabilities.input_click.support, "foreground_only");
+    // W2-01: batched semantic actions are named in the table but refused
+    // until a grain amendment admits them.
+    assert.deepEqual(helloV2.capabilities.semantic_batch, {
+      support: "refused",
+      reason: "grain_amendment_required",
+    });
 
-    child.stdin.write(
+    host.stdin.write(
       JSON.stringify({ id: 6, protocol: "orcel-computer-host/2", op: "ping", extra: true }) + "\n",
     );
-    const strictV2 = JSON.parse((await once(lines, "line"))[0] as string);
+    const strictV2 = await reply("strict /2 refusal");
     assert.deepEqual(
       { id: strictV2.id, ok: strictV2.ok, protocol: strictV2.protocol, code: strictV2.error?.code },
       { id: 6, ok: false, protocol: "orcel-computer-host/2", code: "invalid_request" },
     );
 
-    child.stdin.write(
+    host.stdin.write(
       JSON.stringify({ id: 7, protocol: "orcel-computer-host/1", op: "ping", window: "x" }) + "\n",
     );
     assert.equal(
-      (await once(lines, "line"))[0],
+      await nextLine("/1 ping with window"),
       '{"id":7,"ok":true,"protocol":"orcel-computer-host/1","host":"orcel-windows-computer-host","pong":true}',
     );
 
     request(4, "shutdown");
-    const shutdown = JSON.parse((await once(lines, "line"))[0] as string);
+    const shutdown = await reply("shutdown");
     assert.equal(shutdown.ok, true);
-    await once(child, "exit");
+    assert.equal(await waitForExit(host, exitTimeoutMs), true, "host did not exit after shutdown");
+    assert.equal(host.exitCode, 0, `host exit code; stderr: ${stderr.join("")}`);
+    passed = true;
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    const stopped = child === undefined || (await stopHost(child));
+    // The image can stay locked briefly after the process is gone; retry.
+    // A cleanup failure never masks the assertion that failed first.
+    let cleanupError: unknown;
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (passed) {
+      assert.equal(stopped, true, "host process could not be stopped");
+      if (cleanupError !== undefined) {
+        throw cleanupError;
+      }
+    } else if (!stopped || cleanupError !== undefined) {
+      t.diagnostic(`cleanup after failure: stopped=${stopped} rm=${String(cleanupError)}`);
+    }
   }
 });
-
 
 test("SG-000094 production host source contains no desktop mutation or public listener surface", () => {
   for (const forbidden of [

@@ -1,0 +1,47 @@
+[
+  {
+    "contract": "orcel.tool/1",
+    "name": "web_scrape",
+    "capability": "web",
+    "operation": "scrape",
+    "effect": "network",
+    "approval": "SOFT",
+    "lease_gate": null,
+    "standing_approvable": false,
+    "remote": "local_only",
+    "profiles": [
+      "core"
+    ],
+    "platforms": [
+      "windows"
+    ],
+    "input_schema": "docs/orcel/contracts/schema/web_scrape_request.schema.json",
+    "output_bound": "1 MiB document",
+    "since": "SG-000101"
+  },
+  {
+    "contract": "orcel.tool/1",
+    "name": "fs_read",
+    "capability": "fs.read",
+    "operation": "read",
+    "effect": "read",
+    "approval": "none",
+    "lease_gate": "filesystem",
+    "standing_approvable": true,
+    "remote": [
+      "orcel.read"
+    ],
+    "profiles": [
+      "core",
+      "desktop_structured"
+    ],
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "input_schema": "docs/orcel/contracts/schema/fs_read.input.json",
+    "output_bound": "256 KiB",
+    "since": "SG-000065"
+  }
+]

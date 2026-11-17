@@ -1,7 +1,7 @@
 {
   "schema": "orcel-donor-provenance/1",
   "packet": "Orcel Browser B1",
-  "note": "Provenance of the BrowserOS code adapted into the human-intervention state machine (crates/orcel-browser-session). Same shape as docs/orcel/notices/donor-provenance.json: the donor records the source repository, the 40-hex pin, the original licence as recorded upstream (recorded, not judged), the notice and the authorization; each file entry names its donor, its source path(s) and blob(s) at that pin, and the method (ADAPT: code copied and changed; PORT: behaviour and tests carried over in Orcel's own code). 'references' lists files that hold the notice or name the adapted crate without being donor code. To be folded into donor-provenance.json once that manifest is on main.",
+  "note": "Provenance of the BrowserOS code adapted into the human-intervention state machine (crates/orcel-browser-session). Same shape as docs/orcel/notices/donor-provenance.json: the donor records the source repository, the 40-hex pin, the original licence as recorded upstream (recorded, not judged), the notice and the authorization; each file entry names its donor, its source path(s) and blob(s) at that pin, and the method (ADAPT: code copied and changed; PORT: behaviour and tests carried over in Orcel's own code). 'references' lists files that hold the notice or name the adapted crate without being donor code. Consolidated by the browseros donor in docs/orcel/notices/donor-provenance.json.",
   "donors": {
     "browseros": {
       "repo": "browseros-ai/BrowserOS",

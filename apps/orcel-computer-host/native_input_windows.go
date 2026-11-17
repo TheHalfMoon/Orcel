@@ -477,6 +477,11 @@ func nativeRawInput(req hostRequest) hostResponse {
 	if err != nil {
 		return failure(req.ID, "target_stale", err.Error())
 	}
+	// W2-01: pointer input planned against another window layout is refused
+	// before the window is focused and before any input is sent.
+	if err := checkLayoutFrame(req); err != nil {
+		return failure(req.ID, "target_stale", err.Error())
+	}
 	if err := requireExpectedLastInput(req); err != nil {
 		return failure(req.ID, "cancelled", err.Error())
 	}

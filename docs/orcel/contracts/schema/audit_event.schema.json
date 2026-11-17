@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AuditEvent",
+  "type": "object",
+  "properties": {
+    "asserted_by_session": {
+      "description": "True when the request fields (action, capability, operation,\nprincipal, task) are claims made by the user session rather than\nfacts the writer observed itself (C-27 e).",
+      "type": "boolean"
+    },
+    "at_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "authority": {
+      "description": "Lease id, binding digest and epoch for every Full Control dispatch\n(C-05).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DispatchAuthority"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "caller_image": {
+      "description": "Caller image path the authority service observed on its pipe.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "caller_pid": {
+      "description": "Caller process id the authority service observed on its pipe.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "default": null,
+      "minimum": 0
+    },
+    "capability": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "contract": {
+      "description": "`\"orcel.audit-event/1\"`.",
+      "type": "string"
+    },
+    "detail": {
+      "description": "Bounded and redacted; argv, URLs and query strings appear only as\nSHA-256 digests."
+    },
+    "digest": {
+      "description": "SHA-256 of `digest_input()`.",
+      "type": "string"
+    },
+    "job_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "kind": {
+      "$ref": "#/$defs/AuditEventKind"
+    },
+    "operation": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "prev_digest": {
+      "description": "Digest of `seq - 1`; for `seq` 0 the last digest of the previous\nfile, or `GENESIS_PREV_DIGEST`.",
+      "type": "string"
+    },
+    "principal_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "request_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "seq": {
+      "description": "0-based, gapless per log file.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutionState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "seq",
+    "prev_digest",
+    "at_ms",
+    "kind",
+    "asserted_by_session",
+    "detail",
+    "digest"
+  ],
+  "$defs": {
+    "ApprovalClass": {
+      "description": "Approval class. The wire spellings are the existing ones of the MCP tool\ncatalog (`\"none\"`, `\"SOFT\"`, `\"STRONG\"`) and of `orcel-approval`, so the\nRust tool mirror and the TypeScript catalog compare equal.",
+      "type": "string",
+      "enum": [
+        "none",
+        "SOFT",
+        "STRONG"
+      ]
+    },
+    "AuditEventKind": {
+      "type": "string",
+      "enum": [
+        "request",
+        "decision",
+        "approval",
+        "dispatch",
+        "state",
+        "lease",
+        "standing",
+        "emergency_stop",
+        "sidecar",
+        "rotation",
+        "anchor"
+      ]
+    },
+    "AuthorityMode": {
+      "description": "SG-000093 authority mode. Moved from `orcel-policy` with identical serde\nspellings; `orcel-policy` re-exports it.",
+      "type": "string",
+      "enum": [
+        "safe",
+        "full_user",
+        "full_admin",
+        "persistent_admin",
+        "remote_full_control"
+      ]
+    },
+    "DispatchAuthority": {
+      "description": "Attached by `orceld` to every dispatch and audit event.",
+      "type": "object",
+      "properties": {
+        "authorization_id": {
+          "description": "The authority service's `Authorize` decision id (section 4.13);\n`Some` for every Full Control dispatch.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "grant": {
+          "description": "`Some` for every per-action approved dispatch, with or without a\nlease (C-04).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GrantRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lease": {
+          "description": "`Some` for every Full Control dispatch (C-05).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeaseRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mode": {
+          "$ref": "#/$defs/AuthorityMode"
+        },
+        "standing": {
+          "description": "The standing approval id (section 4.15) that covered the dispatch\ninstead of a per-action grant.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ]
+    },
+    "ExecutionState": {
+      "description": "SG-000093 execution state. Moved from `orcel-policy` with identical serde\nspellings; `orcel-policy` re-exports it.",
+      "type": "string",
+      "enum": [
+        "not_started",
+        "dispatched",
+        "completed",
+        "cancelled",
+        "outcome_unknown"
+      ]
+    },
+    "GrantRef": {
+      "description": "A per-action approval: an existing `orcel-approval` one-shot nonce,\nbound to the client principal and the Orcel session.",
+      "type": "object",
+      "properties": {
+        "action_digest": {
+          "description": "What was approved, exactly (canonical JSON SHA-256 for new shapes).",
+          "type": "string"
+        },
+        "approval_class": {
+          "$ref": "#/$defs/ApprovalClass"
+        },
+        "contract": {
+          "description": "`\"orcel.grant-ref/1\"`.",
+          "type": "string"
+        },
+        "nonce_id": {
+          "description": "One-shot, short expiry (SG-000018).",
+          "type": "string"
+        },
+        "orcel_session_id": {
+          "description": "Bound: a restart invalidates every outstanding grant (S10).",
+          "type": "string"
+        },
+        "principal_id": {
+          "description": "The client principal the approval was given to; another client\ncannot use it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "approval_class",
+        "action_digest",
+        "nonce_id",
+        "orcel_session_id",
+        "principal_id"
+      ]
+    },
+    "LeaseRef": {
+      "type": "object",
+      "properties": {
+        "authority_epoch": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "binding_digest": {
+          "type": "string"
+        },
+        "lease_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "lease_id",
+        "binding_digest",
+        "authority_epoch"
+      ]
+    }
+  }
+}

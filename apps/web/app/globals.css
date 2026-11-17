@@ -1,26 +1,29 @@
-/* Orcel website — Orca Eye identity. Near-black ground, single-color mark,
-   Signal Lime reserved for actions. System fonts only: no third-party requests. */
+/* Orcel website — identity v4, a Halfmoon product. Halfmoon palette and type (self-hosted
+   at build time), the Night Window mark, lavender for the moon, red only to stop. */
 :root {
   color-scheme: dark;
-  --bg: #0a0a0b;
-  --surface: #111113;
-  --surface-2: #0e0e10;
-  --line: #1f1f23;
-  --line-strong: #2a2a2f;
-  --text: #f2f2ee;
-  --muted: #a6a6ac;
-  --muted-2: #8e8e94;
-  --muted-3: #6e6e75;
-  --accent-a: #D4FF3F;
-  --accent-b: #E2FF7A;
-  --accent-c: #F0FFB8;
-  --accent-soft: rgba(212, 255, 63, 0.12);
-  --danger: #ff8a7a;
-  --on-accent: #0a0a0b;
+  --bg: #090C12;
+  --surface: #10141C;
+  --surface-2: #0D1118;
+  --line: #232833;
+  --line-strong: #2E3442;
+  --text: #FFFFFF;
+  --muted: #C9CBD2;
+  --muted-2: #9499A6;
+  --muted-3: #8A8F9C;
+  --accent-a: #A6ACE6;
+  --accent-b: #C3C7F0;
+  --accent-c: #E2E4F8;
+  --accent-soft: rgba(166, 172, 230, 0.14);
+  --danger: #F06A6A;
+  --on-accent: #090C12;
+  --lunar: #F5F4F0;
   --max: 1240px;
-  --radius: 24px;
-  --sans: Manrope, Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  --radius: 16px;
+  --display: var(--font-display), "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --sans: var(--font-text), Geist, Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: var(--font-mono), "Geist Mono", ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  --serif: var(--font-serif), "Instrument Serif", Georgia, serif;
 }
 
 * {
@@ -69,7 +72,8 @@ h1,
 h2,
 h3 {
   margin: 0;
-  font-weight: 700;
+  font-family: var(--display);
+  font-weight: 600;
   letter-spacing: -0.035em;
 }
 
@@ -82,7 +86,14 @@ p {
 }
 
 .muted-line {
-  color: var(--muted-3);
+  color: var(--muted-2);
+}
+
+.hero .muted-line {
+  font-family: var(--serif);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  color: var(--accent-a);
 }
 
 .accent {
@@ -189,15 +200,15 @@ p {
   min-height: 44px;
   padding: 0 20px;
   border-radius: 999px;
-  background: var(--accent-a);
+  background: var(--text);
   color: var(--on-accent);
   font-size: 0.875rem;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
 }
 
 .header-cta:hover {
-  background: var(--accent-b);
+  background: var(--lunar);
 }
 
 .mobile-nav {
@@ -282,12 +293,12 @@ p {
 }
 
 .button-primary {
-  background: var(--accent-a);
+  background: var(--text);
   color: var(--on-accent);
 }
 
 .button-primary:hover {
-  background: var(--accent-b);
+  background: var(--lunar);
 }
 
 .button-secondary {
@@ -350,7 +361,7 @@ p {
   height: 8px;
   border-radius: 999px;
   background: var(--accent-a);
-  box-shadow: 0 0 0 4px rgba(212, 255, 63, 0.16);
+  box-shadow: 0 0 0 4px rgba(166, 172, 230, 0.18);
 }
 
 .section-index {
@@ -431,8 +442,8 @@ p {
 .hero h1 {
   font-size: clamp(3.2rem, 8vw, 7rem);
   line-height: 0.94;
-  font-weight: 800;
-  letter-spacing: -0.055em;
+  font-weight: 600;
+  letter-spacing: -0.045em;
 }
 
 .hero-copy {
@@ -563,12 +574,12 @@ p {
 }
 
 .diff-add {
-  background: rgba(212, 255, 63, 0.08);
+  background: rgba(166, 172, 230, 0.1);
   color: var(--accent-a);
 }
 
 .diff-del {
-  background: rgba(255, 138, 122, 0.08);
+  background: rgba(240, 106, 106, 0.1);
   color: var(--danger);
 }
 
@@ -594,7 +605,7 @@ p {
 
 .fake-button-primary {
   flex: 1.4;
-  background: var(--accent-a);
+  background: var(--text);
   color: var(--on-accent);
   font-weight: 700;
 }
@@ -631,10 +642,11 @@ p {
 }
 
 .stats strong {
+  font-family: var(--display);
   font-size: clamp(2.5rem, 4.5vw, 3.5rem);
   line-height: 1;
-  font-weight: 800;
-  letter-spacing: -0.05em;
+  font-weight: 600;
+  letter-spacing: -0.04em;
 }
 
 .stats span {
@@ -693,7 +705,7 @@ p {
 
 .card-accent .card-index,
 .card-accent p {
-  color: #2b3300;
+  color: #1E2240;
 }
 
 /* Security */
@@ -965,12 +977,12 @@ p {
 .final-cta h2 {
   font-size: clamp(3rem, 7vw, 6.5rem);
   line-height: 0.92;
-  font-weight: 800;
-  letter-spacing: -0.055em;
+  font-weight: 600;
+  letter-spacing: -0.045em;
 }
 
 .final-copy p {
-  color: #2b3300;
+  color: #1E2240;
   font-size: 1.05rem;
 }
 
@@ -983,7 +995,7 @@ p {
   grid-column: 1 / -1;
   max-width: 640px;
   font-size: 0.82rem;
-  color: #3d4700;
+  color: #2A2F55;
 }
 
 /* Footer */

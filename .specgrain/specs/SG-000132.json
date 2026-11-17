@@ -105,5 +105,20 @@
     "remote": "SG-000105 (Remote Full Control) must not ship before the grant window, narrow default scope and Event Log scope record are implemented and qualified."
   },
   "activation_note": "Activated by the founder's go-ahead of 2026-11-17, given in the Claude Code session and quoted in docs/canonical/CURRENT.md; no tracking issue was opened, so planning_issue stays null as drafted. No code, dependency, tool, route, listener, network, service or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about Windows Full Control.",
+  "amendments": [
+    {
+      "title": "SG-000132 amendment by SG-000135: the Browser executor and browser lease scope",
+      "created": "2026-11-17",
+      "base": "48ae7a1247d5d793775c5b753d325dcff051b5e6",
+      "decision": "DECIDED (founder, 2026-11-17, Orcel Browser decisions recorded in SG-000135): Full Access covers routine browser actions (the founder's decision; the interim issuance in the changes below is an SG-000135 grain decision) under an owner-issued, revocable, scope- and time-bounded browser lease with real lease caching in orceld.",
+      "note": "Applied with the SG-000135 activation by the founder's go-ahead of 2026-11-17, given in the Claude Code session and quoted in docs/canonical/CURRENT.md. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself; SG-000135 work packet OB-08 implements it.",
+      "changes": [
+        "The Browser executor class is enabled under a Full User lease through this grain's dispatcher, for Orcel-managed browser profiles only; the exclusion of browser automation of the user's own profiles (SG-000100) stays.",
+        "A browser lease scope: profile ids, browser session ids, origins, action families (SG-000135's mapping of the founder's lists, not a founder quote; routine: click on a control not classified as high-impact, type, navigate, scroll, fill, select, check, session reuse; optional: download), expiry and optional budget. Routine in-lease actions are covered by the lease as a standing approval for that client, task and scope; high-impact families (form submit including Enter in a form, a click on a submit, send, buy, publish or delete control, upload, payment, purchase, publish, new-party communication, sending secrets, irreversible deletion, and other destructive or high-risk actions) need an explicit narrow standing approval, and any unclassified action is outside the lease and asks.",
+        "Interim issuance (an SG-000135 grain decision, not a founder decision, pending the OB-08 independent security judge): until WP1-10 lands, browser leases are issued on the existing Hello-gated full-control store (orcel-policy full_control_store.rs, the SG-000093/SG-000095 STRONG grant) and migrate into the authority service with the same scope schema; an interim lease is ended at migration, never converted or widened. This is the only exception to the invariant that only the service issues leases, and it covers the Browser executor only.",
+        "Spec 4.15 is amended for the remote browser_full profile only: a browser lease or browser standing approval may cover the remote caller that is the identified client named in it. Pending founder confirmation, such coverage requires a lease issued by the authority service with the grant window, narrow default scope and Event Log scope record qualified, and the interim store never covers a remote caller; the alternative is remote coverage by an interim-store browser lease gated by the existing SG-000055 STRONG remote-session lease (SG-000135 decisions)."
+      ]
+    }
+  ],
   "done_when": "WP1-10, WP1-12 and WP1-14 merge with exact-head qualification, J-3 and J-3b pass on Windows, and the canonical record names this grain CLOSED."
 }

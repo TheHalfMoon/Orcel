@@ -1,0 +1,19 @@
+[
+  {
+    "os": "windows",
+    "user_sid": "S-1-5-21-1-2-3-1001",
+    "logon_session_luid": 123456
+  },
+  {
+    "os": "macos",
+    "uid": 501,
+    "audit_session_id": 100004,
+    "console_user": true
+  },
+  {
+    "os": "linux",
+    "uid": 1000,
+    "login_session_id": "2",
+    "seat": "seat0"
+  }
+]

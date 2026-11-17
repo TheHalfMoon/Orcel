@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OsIdentityBinding",
+  "description": "The OS identity a lease binds (spec section 4.2).\n\nWave 1 implements `Windows` only, and `orcel-full-control-lease/1`\nleases keep their existing `windows_user_sid` and `logon_session_id`\nfields byte for byte. This enum is the shape `orcel-full-control-lease/2`\nwill carry in Wave 2; until a reader exists for an OS, Full User is\nrefused there with `LEASE_UNSUPPORTED_PLATFORM`.",
+  "oneOf": [
+    {
+      "description": "`TokenUser` plus `TokenStatistics.AuthenticationId`.",
+      "type": "object",
+      "properties": {
+        "logon_session_luid": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "os": {
+          "type": "string",
+          "const": "windows"
+        },
+        "user_sid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "user_sid",
+        "logon_session_luid"
+      ]
+    },
+    {
+      "description": "`getuid` plus `getaudit_addr` `ai_asid` (Wave 2).",
+      "type": "object",
+      "properties": {
+        "audit_session_id": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "console_user": {
+          "type": "boolean"
+        },
+        "os": {
+          "type": "string",
+          "const": "macos"
+        },
+        "uid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "uid",
+        "audit_session_id",
+        "console_user"
+      ]
+    },
+    {
+      "description": "`sd_pid_get_session` / logind (Wave 2).",
+      "type": "object",
+      "properties": {
+        "login_session_id": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string",
+          "const": "linux"
+        },
+        "seat": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "uid",
+        "login_session_id"
+      ]
+    }
+  ]
+}
