@@ -53,8 +53,16 @@ use std::path::{Path, PathBuf};
 /// 5 adds SG-000122 slice A1's form actions, text waits and verification;
 /// 6 is observation contract 2 (SG-000122 slice A5): an observed node may
 /// carry `untrusted_name`; 7 (SG-000122 slice A6): `form_done` says whether
-/// an Enter's submission committed a new document (`navigation`).
-pub const WORKER_HOST_GENERATION: u32 = 7;
+/// an Enter's submission committed a new document (`navigation`); 8
+/// (SG-000135 OB-02): `extract`, the committed page's rendered content as
+/// bounded, untrusted page text, for the `browser_full` profile's
+/// `browser_extract`.
+pub const WORKER_HOST_GENERATION: u32 = 8;
+
+/// SG-000135 OB-02: the most page text one `extracted` reply carries, in
+/// characters. The worker's extraction is cut here, on a chunk or
+/// character boundary, and the reply says `truncated`.
+pub const MAX_EXTRACT_REPLY_CHARS: usize = 32 * 1024;
 
 /// The observation contract an `observed` reply follows. 1 (SG-000108 slice
 /// 1a): node identities, roles and keyed digests only; no name, value or
@@ -233,6 +241,11 @@ pub enum WorkerHostRequest {
     Verify {
         checks: Vec<crate::verify::Postcondition>,
     },
+    /// SG-000135 OB-02: the committed main document's rendered content as
+    /// Markdown (the worker's existing extraction, no links or images),
+    /// read-only and without approval, cut at `MAX_EXTRACT_REPLY_CHARS`.
+    /// The text is the page's own: untrusted, and it grants nothing.
+    Extract {},
     /// End the current lifetime (profile removed); the host keeps serving.
     Close {},
     Shutdown {},
@@ -435,6 +448,14 @@ pub enum WorkerHostReply {
         results: Vec<WireCheck>,
         verified: bool,
         evidence_sha256: String,
+    },
+    /// SG-000135 OB-02: the extraction: the committed URL and document
+    /// generation, whether anything was cut, and the untrusted page text.
+    Extracted {
+        url: String,
+        document_generation: u64,
+        truncated: bool,
+        text: String,
     },
     Closed {
         job_empty: bool,
@@ -837,6 +858,26 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
             },
             Err(err) => refusal(&err),
         },
+        WorkerHostRequest::Extract {} => {
+            match live
+                .worker
+                .extract_page(crate::extraction::ExtractOptions::default())
+            {
+                Ok(extraction) => {
+                    let (text, cut) = bounded_text(
+                        extraction.chunks.iter().map(|chunk| chunk.untrusted()),
+                        MAX_EXTRACT_REPLY_CHARS,
+                    );
+                    WorkerHostReply::Extracted {
+                        url: extraction.url,
+                        document_generation: extraction.document_generation,
+                        truncated: extraction.truncated || cut,
+                        text,
+                    }
+                }
+                Err(err) => refusal(&err),
+            }
+        }
         // Handled by the caller; unreachable here by construction.
         #[cfg(feature = "live-browser-test")]
         WorkerHostRequest::Open { .. } => error("invalid"),
@@ -846,6 +887,43 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
         | WorkerHostRequest::Close {}
         | WorkerHostRequest::Shutdown {} => error("invalid"),
     }
+}
+
+/// SG-000135 OB-02: join chunks with blank lines up to `max` characters,
+/// cutting the last one on a character boundary; true when anything was
+/// left out.
+fn bounded_text<'a>(chunks: impl Iterator<Item = &'a str>, max: usize) -> (String, bool) {
+    let mut text = String::new();
+    let mut count = 0usize;
+    for chunk in chunks {
+        let separator = if text.is_empty() { 0 } else { 2 };
+        let size = chunk.chars().count();
+        if count + separator + size <= max {
+            if separator > 0 {
+                text.push_str(
+                    "
+
+",
+                );
+            }
+            text.push_str(chunk);
+            count += separator + size;
+            continue;
+        }
+        let room = max.saturating_sub(count + separator);
+        if room > 0 {
+            if separator > 0 {
+                text.push_str(
+                    "
+
+",
+                );
+            }
+            text.extend(chunk.chars().take(room));
+        }
+        return (text, true);
+    }
+    (text, false)
 }
 
 fn error(code: &str) -> WorkerHostReply {
@@ -1434,9 +1512,53 @@ mod tests {
     /// SG-000122: the form, wait and verify frames are closed: only the four
     /// form kinds, Enter without a key, one select label, no hover and no
     /// other key; each round-trips.
+    /// SG-000135 OB-02: `extract` takes nothing, its reply round-trips, and
+    /// the text is cut at the bound on a character boundary.
+    #[test]
+    fn ob02_extract_takes_no_fields_and_its_text_is_bounded() {
+        let request: WorkerHostRequest = serde_json::from_str(r#"{"frame":"extract"}"#).unwrap();
+        assert_eq!(request, WorkerHostRequest::Extract {});
+        for extra in [
+            r#"{"frame":"extract","links":true}"#,
+            r#"{"frame":"extract","schema":{}}"#,
+            r#"{"frame":"outline"}"#,
+            r#"{"frame":"extract_schema"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<WorkerHostRequest>(extra).is_err(),
+                "{extra}"
+            );
+        }
+        let reply = WorkerHostReply::Extracted {
+            url: "https://fixture.test/".into(),
+            document_generation: 2,
+            truncated: false,
+            text: "# Title".into(),
+        };
+        let line = serde_json::to_string(&reply).unwrap();
+        assert_eq!(
+            serde_json::from_str::<WorkerHostReply>(&line).unwrap(),
+            reply
+        );
+        assert_eq!(
+            bounded_text(["a", "b"].into_iter(), 10),
+            ("a\n\nb".into(), false)
+        );
+        assert_eq!(
+            bounded_text(["abc", "def"].into_iter(), 6),
+            ("abc\n\nd".into(), true)
+        );
+        assert_eq!(bounded_text(["ééé"].into_iter(), 2), ("éé".into(), true));
+        assert_eq!(bounded_text(std::iter::empty(), 4), (String::new(), false));
+        let long = "x".repeat(MAX_EXTRACT_REPLY_CHARS + 5);
+        let (text, cut) = bounded_text([long.as_str()].into_iter(), MAX_EXTRACT_REPLY_CHARS);
+        assert!(cut);
+        assert_eq!(text.chars().count(), MAX_EXTRACT_REPLY_CHARS);
+    }
+
     #[test]
     fn sg122_the_form_vocabulary_is_closed_and_round_trips() {
-        assert_eq!(WORKER_HOST_GENERATION, 7);
+        assert_eq!(WORKER_HOST_GENERATION, 8);
         assert_eq!(OBSERVATION_CONTRACT, 2);
         // SG-000122 slice A6: the reply names what happened to the document,
         // from a closed vocabulary.

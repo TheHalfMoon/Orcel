@@ -205,7 +205,7 @@ test("only local configuration selects the profile, and only a local one", () =>
   for (const value of ["core", "developer", "coordinate_fallback", "Browser_Structured", "__proto__", " browser_structured"]) {
     assert.throws(() => localProfileFromConfig(value), /TOOL_SURFACE_DENIED/, value);
   }
-  assert.deepEqual([...LOCAL_TOOL_SURFACE_PROFILES], ["desktop_structured", "browser_structured"]);
+  assert.deepEqual([...LOCAL_TOOL_SURFACE_PROFILES], ["desktop_structured", "browser_structured", "browser_full"]);
   assert.equal(localTransportContext({}).toolSurfaceProfile, "desktop_structured");
   assert.equal(
     localTransportContext({ [TOOL_SURFACE_PROFILE_ENV]: "browser_structured" }).toolSurfaceProfile,

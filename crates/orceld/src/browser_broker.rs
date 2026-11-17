@@ -1,0 +1,1087 @@
+//! SG-000135 OB-01: the Orcel Browser Session Broker.
+//!
+//! The broker replaces the single thread-local live browser for the
+//! `browser_full` profile only (`browser_structured` keeps its own slot in
+//! `live_dispatch.rs`, unchanged). It holds a map of broker sessions:
+//!
+//! - Each session id is minted here, never by a caller, and carries this
+//!   orceld's instance id (the `orcel_session_id`, random per process), so
+//!   an id from an earlier orceld run is refused as stale and never reaches
+//!   another session.
+//! - Each session is bound to the MCP session that created it (the
+//!   request's `client_session_id`); another client naming its id is
+//!   refused.
+//! - Each session owns one worker lifetime (its own supervised browser
+//!   host) and one Orcel-managed profile directory under the broker's root
+//!   in orceld's protected browser state, never a personal browser profile.
+//!   Profiles are ephemeral in this packet: the directory is removed when
+//!   the session ends (persistent profiles are packet OB-04).
+//! - Budgets: a per-client cap on open sessions, a device-wide cap held as
+//!   locked slot files (so every orceld on the device counts, and a crashed
+//!   orceld's slot frees itself), and a per-session action budget with a
+//!   bounded receipt list.
+//! - Sessions end on `browser_close`, when the MCP session ends (orceld's
+//!   input closes), and on emergency stop; every end shuts the worker down
+//!   and removes the session's profile directory.
+//!
+//! Every action yields a provisional receipt (session, page, generation
+//! before and after, action, outcome, evidence digest), chained by digest
+//! within the session and returned by `browser_task_status`. Receipts are
+//! orceld's own records of what it dispatched; the SG-000131 audit chain
+//! (OB-05) is not here yet.
+//!
+//! The broker grants nothing: profile gate, policy, the takeover gate and
+//! the approval broker still decide every action. It is generic over the
+//! worker so its rules are tested without a browser.
+
+use orcel_contracts::FailureCode;
+use orcel_provider_fs::ProviderError;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, VecDeque};
+use std::fs::File;
+use std::path::{Path, PathBuf};
+
+/// The prefix of every broker session id.
+pub(crate) const SESSION_ID_PREFIX: &str = "bs-";
+/// Hex characters of the instance id and of a session id's random part.
+const ID_HEX_CHARS: usize = 16;
+/// The longest session counter a well-formed id carries.
+const MAX_COUNTER_DIGITS: usize = 6;
+/// The longest task label a caller may give a session.
+pub(crate) const MAX_TASK_CHARS: usize = 64;
+/// Ended sessions remembered so a late request learns why its session ended.
+const ENDED_MEMORY: usize = 64;
+/// Domain separation for receipt digests.
+const RECEIPT_DOMAIN: &str = "orcel-ob01-receipt/1";
+
+/// The broker's budgets. Configured by orceld only; never a caller's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Budgets {
+    /// Open sessions one client (one MCP session) may hold at once.
+    pub per_client: usize,
+    /// Open sessions on the whole device, across every orceld.
+    pub device: usize,
+    /// Actions one session may run in its lifetime.
+    pub actions_per_session: u64,
+    /// Receipts one session keeps (the oldest are dropped and counted).
+    pub receipts_per_session: usize,
+}
+
+impl Budgets {
+    /// The defaults of this packet: two sessions per client, four per
+    /// device, 512 actions and 128 receipts per session.
+    pub(crate) const DEFAULT: Self = Self {
+        per_client: 2,
+        device: 4,
+        actions_per_session: 512,
+        receipts_per_session: 128,
+    };
+}
+
+/// What the broker needs from a session's worker.
+pub(crate) trait SessionWorker {
+    /// Whether the worker still answers.
+    fn is_usable(&mut self) -> bool;
+    /// End the worker; true when its process family is confirmed gone.
+    fn shutdown(self) -> bool;
+}
+
+/// Where one session keeps its state: everything under its own directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionDirs {
+    /// The session's directory; removed when the session ends.
+    pub root: PathBuf,
+    /// The Orcel-managed profile root the session's host creates its
+    /// ephemeral profiles in.
+    pub profiles: PathBuf,
+    pub staging: PathBuf,
+    pub host: PathBuf,
+    pub pages: PathBuf,
+    pub intents: PathBuf,
+}
+
+impl SessionDirs {
+    fn under(root: PathBuf) -> Self {
+        Self {
+            profiles: root.join("profiles"),
+            staging: root.join("staging"),
+            host: root.join("host"),
+            pages: root.join("pages.jsonl"),
+            intents: root.join("intents.jsonl"),
+            root,
+        }
+    }
+
+    fn create(&self) -> Result<(), ProviderError> {
+        for dir in [&self.profiles, &self.staging, &self.host] {
+            std::fs::create_dir_all(dir).map_err(|_| {
+                ProviderError::new(
+                    FailureCode::ProviderUnavailable,
+                    "the browser session's state could not be created",
+                )
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// Why a session ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EndReason {
+    Closed,
+    McpSessionEnded,
+    EmergencyStop,
+    HostLost,
+}
+
+impl EndReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Closed => "closed",
+            Self::McpSessionEnded => "mcp_session_ended",
+            Self::EmergencyStop => "emergency_stop",
+            Self::HostLost => "host_lost",
+        }
+    }
+}
+
+/// What ending a session did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EndReport {
+    pub session_id: String,
+    pub reason: EndReason,
+    /// The worker's process family is confirmed gone.
+    pub worker_ended: bool,
+    /// The session's profile directory no longer exists.
+    pub profile_removed: bool,
+}
+
+impl EndReport {
+    pub(crate) fn to_json(&self) -> Value {
+        json!({
+            "session_id": self.session_id,
+            "reason": self.reason.as_str(),
+            "worker_ended": self.worker_ended,
+            "profile_removed": self.profile_removed,
+        })
+    }
+}
+
+/// One provisional receipt: what orceld dispatched and what became of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Receipt {
+    pub seq: u64,
+    pub session_id: String,
+    pub action: String,
+    pub page_id: Option<String>,
+    pub generation_before: Option<u64>,
+    pub generation_after: Option<u64>,
+    /// `done`, `denied`, `refused`, `not_dispatched`, `failed` or `unknown`.
+    pub outcome: String,
+    pub failure_code: Option<String>,
+    /// `observe`, `verify`, `reply` or `none`: where the evidence digest
+    /// comes from.
+    pub evidence_kind: String,
+    pub evidence_sha256: Option<String>,
+    /// The approval broker's record id, for an approved action.
+    pub record_id: Option<String>,
+    pub at_ms: u64,
+    /// The previous receipt's digest in this session (empty for the first).
+    pub previous_sha256: String,
+    pub receipt_sha256: String,
+}
+
+impl Receipt {
+    pub(crate) fn to_json(&self) -> Value {
+        json!({
+            "seq": self.seq,
+            "session_id": self.session_id,
+            "action": self.action,
+            "page_id": self.page_id,
+            "generation_before": self.generation_before,
+            "generation_after": self.generation_after,
+            "outcome": self.outcome,
+            "failure_code": self.failure_code,
+            "evidence_kind": self.evidence_kind,
+            "evidence_sha256": self.evidence_sha256,
+            "record_id": self.record_id,
+            "at_ms": self.at_ms,
+            "previous_sha256": self.previous_sha256,
+            "receipt_sha256": self.receipt_sha256,
+            "provisional": true,
+        })
+    }
+}
+
+/// What a caller of the broker reports about one action.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ActionRecord {
+    pub action: String,
+    pub page_id: Option<String>,
+    pub generation_before: Option<u64>,
+    pub generation_after: Option<u64>,
+    pub outcome: String,
+    pub failure_code: Option<String>,
+    pub evidence_kind: String,
+    pub evidence_sha256: Option<String>,
+    pub record_id: Option<String>,
+}
+
+/// A device-wide session slot: an exclusive lock on one slot file, held
+/// while the session lives and released by the OS if orceld dies.
+struct DeviceSlot {
+    _file: File,
+}
+
+fn acquire_slot(dir: &Path, slots: usize) -> Result<DeviceSlot, ProviderError> {
+    std::fs::create_dir_all(dir).map_err(|_| {
+        ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "the browser session slots could not be created",
+        )
+    })?;
+    for index in 0..slots {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dir.join(format!("slot-{index}.lock")))
+            .map_err(|_| {
+                ProviderError::new(
+                    FailureCode::ProviderUnavailable,
+                    "a browser session slot could not be opened",
+                )
+            })?;
+        match fs4::FileExt::try_lock(&file) {
+            Ok(()) => return Ok(DeviceSlot { _file: file }),
+            Err(fs4::TryLockError::WouldBlock) => continue,
+            Err(fs4::TryLockError::Error(_)) => {
+                return Err(ProviderError::new(
+                    FailureCode::ProviderUnavailable,
+                    "a browser session slot could not be locked",
+                ));
+            }
+        }
+    }
+    Err(ProviderError::new(
+        FailureCode::OutputLimit,
+        format!("the device already runs {slots} browser sessions; close one first"),
+    ))
+}
+
+/// One broker session.
+pub(crate) struct BrokerSession<W> {
+    pub id: String,
+    pub client: String,
+    pub task: Option<String>,
+    pub dirs: SessionDirs,
+    pub created_ms: u64,
+    pub worker: W,
+    /// The session's page id in its worker's page store, once opened.
+    pub page_id: Option<String>,
+    actions: u64,
+    actions_budget: u64,
+    receipts: VecDeque<Receipt>,
+    receipts_budget: usize,
+    receipts_dropped: u64,
+    last_receipt_sha256: String,
+    next_seq: u64,
+    _slot: DeviceSlot,
+}
+
+impl<W> BrokerSession<W> {
+    /// Count one action against the session's budget, before it runs.
+    pub(crate) fn begin_action(&mut self) -> Result<(), ProviderError> {
+        if self.actions >= self.actions_budget {
+            return Err(ProviderError::new(
+                FailureCode::OutputLimit,
+                "the browser session used its action budget; close it and create a new one",
+            ));
+        }
+        self.actions += 1;
+        Ok(())
+    }
+
+    /// Append the receipt of one action, chained to the previous one.
+    pub(crate) fn record(&mut self, record: ActionRecord, at_ms: u64) -> Receipt {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        let previous = self.last_receipt_sha256.clone();
+        let mut receipt = Receipt {
+            seq,
+            session_id: self.id.clone(),
+            action: record.action,
+            page_id: record.page_id,
+            generation_before: record.generation_before,
+            generation_after: record.generation_after,
+            outcome: record.outcome,
+            failure_code: record.failure_code,
+            evidence_kind: record.evidence_kind,
+            evidence_sha256: record.evidence_sha256,
+            record_id: record.record_id,
+            at_ms,
+            previous_sha256: previous,
+            receipt_sha256: String::new(),
+        };
+        receipt.receipt_sha256 = receipt_digest(&receipt);
+        self.last_receipt_sha256 = receipt.receipt_sha256.clone();
+        if self.receipts.len() >= self.receipts_budget {
+            self.receipts.pop_front();
+            self.receipts_dropped += 1;
+        }
+        self.receipts.push_back(receipt.clone());
+        receipt
+    }
+
+    pub(crate) fn receipts(&self) -> impl Iterator<Item = &Receipt> {
+        self.receipts.iter()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn actions(&self) -> u64 {
+        self.actions
+    }
+}
+
+/// The digest of a receipt's fields (length-prefixed, so no two receipts
+/// share one).
+fn receipt_digest(receipt: &Receipt) -> String {
+    let optional = |value: &Option<String>| value.clone().unwrap_or_else(|| "-".to_owned());
+    let number = |value: Option<u64>| {
+        value
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "-".to_owned())
+    };
+    let mut hasher = Sha256::new();
+    for part in [
+        RECEIPT_DOMAIN.to_owned(),
+        receipt.seq.to_string(),
+        receipt.session_id.clone(),
+        receipt.action.clone(),
+        optional(&receipt.page_id),
+        number(receipt.generation_before),
+        number(receipt.generation_after),
+        receipt.outcome.clone(),
+        optional(&receipt.failure_code),
+        receipt.evidence_kind.clone(),
+        optional(&receipt.evidence_sha256),
+        optional(&receipt.record_id),
+        receipt.at_ms.to_string(),
+        receipt.previous_sha256.clone(),
+    ] {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    hex(&hasher.finalize())
+}
+
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The broker: every open session of this orceld.
+pub(crate) struct Broker<W> {
+    /// This orceld's instance id (the `orcel_session_id`).
+    instance: String,
+    /// The broker's root in orceld's protected browser state.
+    root: PathBuf,
+    budgets: Budgets,
+    sessions: BTreeMap<String, BrokerSession<W>>,
+    ended: VecDeque<(String, EndReason)>,
+    counter: u64,
+}
+
+impl<W: SessionWorker> Broker<W> {
+    /// A broker rooted at `root` (orceld's own state, never a caller's),
+    /// for the orceld instance `instance` (16 lowercase hex characters).
+    pub(crate) fn new(root: PathBuf, instance: String, budgets: Budgets) -> Self {
+        Self {
+            instance,
+            root,
+            budgets,
+            sessions: BTreeMap::new(),
+            ended: VecDeque::new(),
+            counter: 0,
+        }
+    }
+
+    pub(crate) fn instance(&self) -> &str {
+        &self.instance
+    }
+
+    /// Where this instance's sessions keep their directories.
+    fn sessions_root(&self) -> PathBuf {
+        self.root.join("sessions").join(&self.instance)
+    }
+
+    /// Open a session for `client`, whose worker `start` launches on the
+    /// session's own directories. `random` is 8 fresh random bytes.
+    pub(crate) fn create(
+        &mut self,
+        client: &str,
+        task: Option<&str>,
+        random: [u8; 8],
+        now_ms: u64,
+        start: impl FnOnce(&str, &SessionDirs) -> Result<W, ProviderError>,
+    ) -> Result<&mut BrokerSession<W>, ProviderError> {
+        if let Some(task) = task {
+            check_task(task)?;
+        }
+        let held = self
+            .sessions
+            .values()
+            .filter(|session| session.client == client)
+            .count();
+        if held >= self.budgets.per_client {
+            return Err(ProviderError::new(
+                FailureCode::OutputLimit,
+                format!(
+                    "this client already holds {} browser sessions; close one first",
+                    self.budgets.per_client
+                ),
+            ));
+        }
+        let slot = acquire_slot(&self.root.join("slots"), self.budgets.device)?;
+        self.counter += 1;
+        let id = format!(
+            "{SESSION_ID_PREFIX}{}-{}-{}",
+            self.instance,
+            self.counter,
+            hex(&random)
+        );
+        let dirs = SessionDirs::under(self.sessions_root().join(&id));
+        if dirs.root.exists() {
+            return Err(ProviderError::new(
+                FailureCode::InternalError,
+                "a new browser session's directory already exists",
+            ));
+        }
+        dirs.create()?;
+        let worker = match start(&id, &dirs) {
+            Ok(worker) => worker,
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&dirs.root);
+                return Err(error);
+            }
+        };
+        let session = BrokerSession {
+            id: id.clone(),
+            client: client.to_owned(),
+            task: task.map(str::to_owned),
+            dirs,
+            created_ms: now_ms,
+            worker,
+            page_id: None,
+            actions: 0,
+            actions_budget: self.budgets.actions_per_session,
+            receipts: VecDeque::new(),
+            receipts_budget: self.budgets.receipts_per_session,
+            receipts_dropped: 0,
+            last_receipt_sha256: String::new(),
+            next_seq: 1,
+            _slot: slot,
+        };
+        Ok(self.sessions.entry(id).or_insert(session))
+    }
+
+    /// The open session `id`, if `client` owns it and its worker still
+    /// answers. A session whose worker is gone ends here.
+    pub(crate) fn session(
+        &mut self,
+        client: &str,
+        id: &str,
+    ) -> Result<&mut BrokerSession<W>, ProviderError> {
+        self.check_owned(client, id)?;
+        let usable = self
+            .sessions
+            .get_mut(id)
+            .map(|session| session.worker.is_usable())
+            .unwrap_or(false);
+        if !usable {
+            self.end(id, EndReason::HostLost);
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "the browser session's worker ended; create a new session",
+            ));
+        }
+        self.sessions.get_mut(id).ok_or_else(unknown_session)
+    }
+
+    /// The open session `id`, for reading only (no liveness probe).
+    pub(crate) fn peek(&self, client: &str, id: &str) -> Result<&BrokerSession<W>, ProviderError> {
+        self.check_owned(client, id)?;
+        self.sessions.get(id).ok_or_else(unknown_session)
+    }
+
+    fn check_owned(&self, client: &str, id: &str) -> Result<(), ProviderError> {
+        let instance = parse_session_id(id)?;
+        if instance != self.instance {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "that browser session belongs to an earlier orceld run; create a new session",
+            ));
+        }
+        let Some(session) = self.sessions.get(id) else {
+            if let Some((_, reason)) = self.ended.iter().find(|(ended, _)| ended == id) {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    format!("that browser session ended: {}", reason.as_str()),
+                ));
+            }
+            return Err(unknown_session());
+        };
+        if session.client != client {
+            return Err(ProviderError::new(
+                FailureCode::CapabilityDenied,
+                "that browser session belongs to another client",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Close `client`'s session `id`.
+    pub(crate) fn close(&mut self, client: &str, id: &str) -> Result<EndReport, ProviderError> {
+        self.check_owned(client, id)?;
+        self.end(id, EndReason::Closed).ok_or_else(unknown_session)
+    }
+
+    /// The MCP session `client` ended: every session it holds ends. Each
+    /// local MCP session starts its own orceld, which ends every session
+    /// when its input closes (`end_all`); this is the per-client form for a
+    /// transport whose orceld outlives one client.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn end_client(&mut self, client: &str) -> Vec<EndReport> {
+        let ids: Vec<String> = self
+            .sessions
+            .values()
+            .filter(|session| session.client == client)
+            .map(|session| session.id.clone())
+            .collect();
+        ids.iter()
+            .filter_map(|id| self.end(id, EndReason::McpSessionEnded))
+            .collect()
+    }
+
+    /// End every session (emergency stop, or orceld's input closed).
+    pub(crate) fn end_all(&mut self, reason: EndReason) -> Vec<EndReport> {
+        let ids: Vec<String> = self.sessions.keys().cloned().collect();
+        let reports = ids.iter().filter_map(|id| self.end(id, reason)).collect();
+        // Nothing of this instance is left; its directory goes too.
+        let _ = std::fs::remove_dir(self.sessions_root());
+        reports
+    }
+
+    fn end(&mut self, id: &str, reason: EndReason) -> Option<EndReport> {
+        let session = self.sessions.remove(id)?;
+        let root = session.dirs.root.clone();
+        let worker_ended = session.worker.shutdown();
+        // The worker removes its own profile on a clean shutdown; the
+        // session's directory (profiles, staging, page store) goes here.
+        let _ = std::fs::remove_dir_all(&root);
+        let profile_removed = !root.exists();
+        if self.ended.len() >= ENDED_MEMORY {
+            self.ended.pop_front();
+        }
+        self.ended.push_back((id.to_owned(), reason));
+        Some(EndReport {
+            session_id: id.to_owned(),
+            reason,
+            worker_ended,
+            profile_removed,
+        })
+    }
+
+    /// The open sessions of `client`, in id order.
+    #[cfg(test)]
+    pub(crate) fn client_sessions(&self, client: &str) -> Vec<&BrokerSession<W>> {
+        self.sessions
+            .values()
+            .filter(|session| session.client == client)
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_count(&self) -> usize {
+        self.sessions.len()
+    }
+
+    /// `browser_task_status`: the session, its budgets and its receipts.
+    pub(crate) fn status(&self, client: &str, id: &str) -> Result<Value, ProviderError> {
+        let session = self.peek(client, id)?;
+        Ok(json!({
+            "session_id": session.id,
+            "task": session.task,
+            "state": "open",
+            "page_id": session.page_id,
+            "created_at_ms": session.created_ms,
+            "actions_used": session.actions,
+            "actions_budget": session.actions_budget,
+            "receipts": session.receipts().map(Receipt::to_json).collect::<Vec<_>>(),
+            "receipts_dropped": session.receipts_dropped,
+            "last_receipt_sha256": session.last_receipt_sha256,
+            "profile_mode": "ephemeral",
+        }))
+    }
+}
+
+fn unknown_session() -> ProviderError {
+    ProviderError::new(
+        FailureCode::TargetStale,
+        "no such browser session; create one with browser_session_create",
+    )
+}
+
+/// The instance part of a well-formed session id
+/// (`bs-<16 hex>-<counter>-<16 hex>`), or a typed refusal.
+pub(crate) fn parse_session_id(id: &str) -> Result<&str, ProviderError> {
+    let malformed = || ProviderError::new(FailureCode::InvalidRequest, "session_id is malformed");
+    let rest = id.strip_prefix(SESSION_ID_PREFIX).ok_or_else(malformed)?;
+    let mut parts = rest.split('-');
+    let (Some(instance), Some(counter), Some(random), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(malformed());
+    };
+    let lower_hex = |part: &str| {
+        part.len() == ID_HEX_CHARS
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    let counter_ok = !counter.is_empty()
+        && counter.len() <= MAX_COUNTER_DIGITS
+        && counter.bytes().all(|b| b.is_ascii_digit())
+        && !counter.starts_with('0');
+    if !lower_hex(instance) || !counter_ok || !lower_hex(random) {
+        return Err(malformed());
+    }
+    Ok(instance)
+}
+
+/// A task label: short, printable, one line. It names the session for
+/// the person; it grants nothing.
+pub(crate) fn check_task(task: &str) -> Result<(), ProviderError> {
+    if task.is_empty()
+        || task.chars().count() > MAX_TASK_CHARS
+        || task.chars().any(|c| c.is_control())
+    {
+        return Err(ProviderError::new(
+            FailureCode::InvalidRequest,
+            format!("task is one line of 1 to {MAX_TASK_CHARS} characters"),
+        ));
+    }
+    Ok(())
+}
+
+/// A fresh instance id for this orceld: 16 lowercase hex characters.
+pub(crate) fn instance_id(random: [u8; 8]) -> String {
+    hex(&random)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// A test worker: it writes a marker into its session's profile root
+    /// (as a host's profile would hold cookies) and records its shutdown.
+    struct TestWorker {
+        profile_marker: PathBuf,
+        usable: Rc<RefCell<bool>>,
+        shutdowns: Rc<RefCell<Vec<PathBuf>>>,
+    }
+
+    impl SessionWorker for TestWorker {
+        fn is_usable(&mut self) -> bool {
+            *self.usable.borrow()
+        }
+        fn shutdown(self) -> bool {
+            self.shutdowns
+                .borrow_mut()
+                .push(self.profile_marker.clone());
+            true
+        }
+    }
+
+    struct Scene {
+        root: PathBuf,
+        shutdowns: Rc<RefCell<Vec<PathBuf>>>,
+        usable: Rc<RefCell<bool>>,
+        seed: u8,
+    }
+
+    impl Scene {
+        fn new(name: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let root = std::env::temp_dir()
+                .join(format!("orcel-ob01-{name}-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            Self {
+                root,
+                shutdowns: Rc::new(RefCell::new(Vec::new())),
+                usable: Rc::new(RefCell::new(true)),
+                seed: 0,
+            }
+        }
+
+        fn broker(&self, instance: &str, budgets: Budgets) -> Broker<TestWorker> {
+            Broker::new(self.root.join("broker"), instance.to_owned(), budgets)
+        }
+
+        fn random(&mut self) -> [u8; 8] {
+            self.seed = self.seed.wrapping_add(1);
+            [self.seed, 1, 2, 3, 4, 5, 6, 7]
+        }
+
+        fn create(
+            &mut self,
+            broker: &mut Broker<TestWorker>,
+            client: &str,
+            secret: &str,
+        ) -> Result<String, ProviderError> {
+            let (shutdowns, usable) = (Rc::clone(&self.shutdowns), Rc::clone(&self.usable));
+            let random = self.random();
+            broker
+                .create(client, Some("task"), random, 1, move |_, dirs| {
+                    let marker = dirs.profiles.join("cookies.txt");
+                    std::fs::write(&marker, secret).unwrap();
+                    Ok(TestWorker {
+                        profile_marker: marker,
+                        usable,
+                        shutdowns,
+                    })
+                })
+                .map(|session| session.id.clone())
+        }
+    }
+
+    impl Drop for Scene {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    const INSTANCE: &str = "0123456789abcdef";
+    const OTHER_INSTANCE: &str = "fedcba9876543210";
+
+    #[test]
+    fn create_mints_a_bound_id_and_a_private_profile_dir_under_the_broker_root() {
+        let mut scene = Scene::new("create");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let id = scene.create(&mut broker, "client-a", "a-cookie").unwrap();
+        assert_eq!(parse_session_id(&id).unwrap(), INSTANCE);
+        let session = broker.peek("client-a", &id).unwrap();
+        assert_eq!(session.task.as_deref(), Some("task"));
+        assert!(session
+            .dirs
+            .profiles
+            .starts_with(scene.root.join("broker").join("sessions").join(INSTANCE)));
+        assert!(session.dirs.profiles.join("cookies.txt").exists());
+        assert_eq!(session.page_id, None);
+        let status = broker.status("client-a", &id).unwrap();
+        assert_eq!(status["state"], "open");
+        assert_eq!(status["profile_mode"], "ephemeral");
+        assert_eq!(status["receipts"], json!([]));
+    }
+
+    #[test]
+    fn close_shuts_the_worker_down_and_removes_the_profile() {
+        let mut scene = Scene::new("close");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let id = scene.create(&mut broker, "client-a", "a-cookie").unwrap();
+        let root = broker.peek("client-a", &id).unwrap().dirs.root.clone();
+        let report = broker.close("client-a", &id).unwrap();
+        assert_eq!(report.reason, EndReason::Closed);
+        assert!(report.worker_ended);
+        assert!(report.profile_removed);
+        assert!(!root.exists());
+        assert_eq!(scene.shutdowns.borrow().len(), 1);
+        // The id is now refused, with the reason.
+        let again = broker.close("client-a", &id).unwrap_err();
+        assert_eq!(again.code, FailureCode::TargetStale);
+        assert!(again.message.contains("closed"), "{}", again.message);
+        assert!(broker.session("client-a", &id).is_err());
+        assert_eq!(broker.open_count(), 0);
+    }
+
+    #[test]
+    fn per_client_and_device_budgets_refuse_before_any_worker_starts() {
+        let mut scene = Scene::new("limits");
+        let budgets = Budgets {
+            per_client: 2,
+            device: 3,
+            ..Budgets::DEFAULT
+        };
+        let mut broker = scene.broker(INSTANCE, budgets);
+        let a1 = scene.create(&mut broker, "client-a", "1").unwrap();
+        scene.create(&mut broker, "client-a", "2").unwrap();
+        let refused = scene.create(&mut broker, "client-a", "3").unwrap_err();
+        assert_eq!(refused.code, FailureCode::OutputLimit);
+        assert!(refused.message.contains("client"));
+        // Another client still fits under the device cap of three...
+        scene.create(&mut broker, "client-b", "4").unwrap();
+        // ...and a second orceld on the device shares that cap: its slot
+        // files are the same, so it finds them all locked.
+        let mut second = scene.broker(OTHER_INSTANCE, budgets);
+        let device = scene.create(&mut second, "client-c", "5").unwrap_err();
+        assert_eq!(device.code, FailureCode::OutputLimit);
+        assert!(device.message.contains("device"));
+        assert_eq!(scene.shutdowns.borrow().len(), 0, "nothing started");
+        // Closing one frees its slot for the other orceld.
+        broker.close("client-a", &a1).unwrap();
+        scene.create(&mut second, "client-c", "6").unwrap();
+    }
+
+    #[test]
+    fn a_failed_worker_start_leaves_no_directory_and_no_slot() {
+        let mut scene = Scene::new("failstart");
+        let budgets = Budgets {
+            device: 1,
+            ..Budgets::DEFAULT
+        };
+        let mut broker = scene.broker(INSTANCE, budgets);
+        let failed = broker
+            .create("client-a", None, [9; 8], 1, |_, _| {
+                Err::<TestWorker, _>(ProviderError::new(
+                    FailureCode::ProviderUnavailable,
+                    "no engine",
+                ))
+            })
+            .map(|_| ());
+        assert_eq!(failed.unwrap_err().code, FailureCode::ProviderUnavailable);
+        let sessions = scene.root.join("broker").join("sessions").join(INSTANCE);
+        assert_eq!(
+            std::fs::read_dir(&sessions).map(|d| d.count()).unwrap_or(0),
+            0
+        );
+        // The single device slot is free again.
+        scene.create(&mut broker, "client-a", "ok").unwrap();
+    }
+
+    #[test]
+    fn sessions_are_isolated_from_each_other_and_from_other_clients() {
+        let mut scene = Scene::new("isolation");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let a = scene.create(&mut broker, "client-a", "a-secret").unwrap();
+        let b = scene.create(&mut broker, "client-b", "b-secret").unwrap();
+        let (a_dirs, b_dirs) = (
+            broker.peek("client-a", &a).unwrap().dirs.clone(),
+            broker.peek("client-b", &b).unwrap().dirs.clone(),
+        );
+        assert_ne!(a_dirs.root, b_dirs.root);
+        assert!(!a_dirs.root.starts_with(&b_dirs.root) && !b_dirs.root.starts_with(&a_dirs.root));
+        assert_eq!(
+            std::fs::read_to_string(a_dirs.profiles.join("cookies.txt")).unwrap(),
+            "a-secret"
+        );
+        assert_eq!(
+            std::fs::read_to_string(b_dirs.profiles.join("cookies.txt")).unwrap(),
+            "b-secret"
+        );
+        // Another client never reaches a session it does not own.
+        for result in [
+            broker.session("client-b", &a).map(|_| ()),
+            broker.peek("client-b", &a).map(|_| ()),
+            broker.close("client-b", &a).map(|_| ()),
+            broker.status("client-b", &a).map(|_| ()),
+        ] {
+            assert_eq!(result.unwrap_err().code, FailureCode::CapabilityDenied);
+        }
+        // Receipts stay with their session.
+        broker
+            .session("client-a", &a)
+            .unwrap()
+            .record(record("browser_open", "done"), 5);
+        assert_eq!(broker.peek("client-a", &a).unwrap().receipts().count(), 1);
+        assert_eq!(broker.peek("client-b", &b).unwrap().receipts().count(), 0);
+        // Closing one leaves the other's profile untouched.
+        broker.close("client-a", &a).unwrap();
+        assert!(!a_dirs.root.exists());
+        assert!(b_dirs.profiles.join("cookies.txt").exists());
+        assert!(broker.session("client-b", &b).is_ok());
+    }
+
+    #[test]
+    fn an_id_from_an_earlier_orceld_or_a_malformed_id_is_refused() {
+        let mut scene = Scene::new("restart");
+        let mut first = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let id = scene.create(&mut first, "client-a", "x").unwrap();
+        first.end_all(EndReason::McpSessionEnded);
+        // A restarted orceld has a new instance id: the old id is stale.
+        let mut second = scene.broker(OTHER_INSTANCE, Budgets::DEFAULT);
+        let stale = second.session("client-a", &id).map(|_| ()).unwrap_err();
+        assert_eq!(stale.code, FailureCode::TargetStale);
+        assert!(stale.message.contains("earlier orceld"));
+        for bad in [
+            "",
+            "bs-",
+            "bs-0123456789abcdef-1",
+            "bs-0123456789ABCDEF-1-0001020304050607",
+            "bs-0123456789abcdef-01-0001020304050607",
+            "bs-0123456789abcdef-1-0001020304050607-x",
+            "bs-0123456789abcdef-1234567-0001020304050607",
+            "pg-0123456789abcdef-1-0001020304050607",
+            "bs-0123456789abcdef-1-../../profile0",
+        ] {
+            assert_eq!(
+                second
+                    .session("client-a", bad)
+                    .map(|_| ())
+                    .unwrap_err()
+                    .code,
+                FailureCode::InvalidRequest,
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn emergency_stop_ends_every_session_of_every_client() {
+        let mut scene = Scene::new("estop");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let a = scene.create(&mut broker, "client-a", "1").unwrap();
+        let b = scene.create(&mut broker, "client-b", "2").unwrap();
+        let reports = broker.end_all(EndReason::EmergencyStop);
+        assert_eq!(reports.len(), 2);
+        assert!(reports
+            .iter()
+            .all(|r| r.reason == EndReason::EmergencyStop && r.worker_ended && r.profile_removed));
+        assert_eq!(broker.open_count(), 0);
+        assert!(!scene
+            .root
+            .join("broker")
+            .join("sessions")
+            .join(INSTANCE)
+            .exists());
+        for (client, id) in [("client-a", &a), ("client-b", &b)] {
+            let refused = broker.session(client, id).map(|_| ()).unwrap_err();
+            assert!(
+                refused.message.contains("emergency_stop"),
+                "{}",
+                refused.message
+            );
+        }
+        // The broker serves new sessions afterwards.
+        scene.create(&mut broker, "client-a", "3").unwrap();
+    }
+
+    #[test]
+    fn the_end_of_an_mcp_session_ends_only_its_own_sessions() {
+        let mut scene = Scene::new("mcpend");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let a1 = scene.create(&mut broker, "client-a", "1").unwrap();
+        let a2 = scene.create(&mut broker, "client-a", "2").unwrap();
+        let b = scene.create(&mut broker, "client-b", "3").unwrap();
+        let reports = broker.end_client("client-a");
+        assert_eq!(reports.len(), 2);
+        assert!(reports
+            .iter()
+            .all(|r| r.reason == EndReason::McpSessionEnded && r.profile_removed));
+        for id in [&a1, &a2] {
+            let refused = broker.session("client-a", id).map(|_| ()).unwrap_err();
+            assert!(refused.message.contains("mcp_session_ended"));
+        }
+        assert!(broker.session("client-b", &b).is_ok());
+        assert_eq!(broker.client_sessions("client-a").len(), 0);
+        assert_eq!(broker.client_sessions("client-b").len(), 1);
+    }
+
+    #[test]
+    fn a_session_whose_worker_died_ends_and_is_refused() {
+        let mut scene = Scene::new("hostlost");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let id = scene.create(&mut broker, "client-a", "1").unwrap();
+        let root = broker.peek("client-a", &id).unwrap().dirs.root.clone();
+        *scene.usable.borrow_mut() = false;
+        let refused = broker.session("client-a", &id).map(|_| ()).unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale);
+        assert!(!root.exists(), "its profile is removed");
+        let again = broker.session("client-a", &id).map(|_| ()).unwrap_err();
+        assert!(again.message.contains("host_lost"));
+    }
+
+    fn record(action: &str, outcome: &str) -> ActionRecord {
+        ActionRecord {
+            action: action.to_owned(),
+            page_id: Some("pg-1".into()),
+            generation_before: Some(0),
+            generation_after: Some(1),
+            outcome: outcome.to_owned(),
+            evidence_kind: "reply".into(),
+            evidence_sha256: Some("ab".repeat(32)),
+            ..ActionRecord::default()
+        }
+    }
+
+    #[test]
+    fn receipts_chain_by_digest_and_stay_bounded() {
+        let mut scene = Scene::new("receipts");
+        let budgets = Budgets {
+            receipts_per_session: 3,
+            actions_per_session: 4,
+            ..Budgets::DEFAULT
+        };
+        let mut broker = scene.broker(INSTANCE, budgets);
+        let id = scene.create(&mut broker, "client-a", "1").unwrap();
+        let session = broker.session("client-a", &id).unwrap();
+        let mut previous = String::new();
+        for n in 0..4u64 {
+            session.begin_action().unwrap();
+            let receipt = session.record(record("browser_click", "done"), 10 + n);
+            assert_eq!(receipt.seq, n + 1);
+            assert_eq!(receipt.previous_sha256, previous);
+            assert_eq!(receipt.receipt_sha256, receipt_digest(&receipt));
+            assert_eq!(receipt.receipt_sha256.len(), 64);
+            previous = receipt.receipt_sha256.clone();
+        }
+        // The action budget is spent.
+        assert_eq!(
+            session.begin_action().unwrap_err().code,
+            FailureCode::OutputLimit
+        );
+        assert_eq!(session.actions(), 4);
+        let status = broker.status("client-a", &id).unwrap();
+        assert_eq!(status["receipts"].as_array().map(Vec::len), Some(3));
+        assert_eq!(status["receipts_dropped"], 1);
+        assert_eq!(status["receipts"][0]["seq"], 2);
+        assert_eq!(status["receipts"][0]["provisional"], true);
+        assert_eq!(status["last_receipt_sha256"], previous);
+        // A change to any field changes the digest.
+        let mut receipt = broker
+            .peek("client-a", &id)
+            .unwrap()
+            .receipts()
+            .last()
+            .cloned()
+            .unwrap();
+        let digest = receipt.receipt_sha256.clone();
+        receipt.outcome = "failed".into();
+        assert_ne!(receipt_digest(&receipt), digest);
+    }
+
+    #[test]
+    fn a_task_label_is_one_short_line() {
+        let mut scene = Scene::new("task");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        for bad in ["", "a\nb", &"x".repeat(MAX_TASK_CHARS + 1)] {
+            let refused = broker
+                .create("client-a", Some(bad), [1; 8], 1, |_, _| {
+                    Err::<TestWorker, _>(ProviderError::new(
+                        FailureCode::InternalError,
+                        "unreached",
+                    ))
+                })
+                .map(|_| ())
+                .unwrap_err();
+            assert_eq!(refused.code, FailureCode::InvalidRequest, "{bad:?}");
+        }
+        assert!(check_task("Book a table").is_ok());
+        let _ = scene.random();
+    }
+}

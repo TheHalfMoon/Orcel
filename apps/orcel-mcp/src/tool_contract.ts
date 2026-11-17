@@ -21,7 +21,7 @@ import type { OAuthScope } from "./oauth_authorization.js";
  *   peers) or runs a registered executable whose effects are not modelled.
  */
 
-export type ToolSurfaceProfile = "core" | "desktop_structured" | "browser_structured";
+export type ToolSurfaceProfile = "core" | "desktop_structured" | "browser_structured" | "browser_full";
 
 export type EffectClass =
   | "read"
@@ -387,6 +387,88 @@ export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([
 ]);
 
 /**
+ * SG-000135 OB-02: the `browser_full` profile's own contract, served only
+ * when local configuration selects `browser_full`, never remote. Each tool
+ * forwards one `browser.session` shape to orceld's Orcel Browser Session
+ * Broker, which maps it onto the existing live host action with that
+ * action's own approval (SOFT for open, click, fill and select). Four names
+ * are shared with `browser_structured` (`browser_click`, `browser_fill`,
+ * `browser_select`, `browser_verify`): under `browser_full` they are these
+ * broker tools, which take `session_id`; the two profiles never serve each
+ * other's form. The list must equal `BROWSER_FULL_SHAPES` in
+ * `crates/orceld/src/profile_gate.rs` and `BROWSER_FULL_MCP_TOOLS` in
+ * `crates/orcel-browser-host/src/exposure.rs` (browser-full.test.ts).
+ * Session create and close change only Orcel's own isolated state (as
+ * `browser_page_open` does) and ask nothing.
+ */
+export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
+  browser_session_create: {
+    capability: "browser.session", operation: "create", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "one broker session id, its task label and the orceld instance id",
+    annotations: { ...read("Create isolated browser session"), idempotentHint: false }
+  },
+  browser_open: {
+    capability: "browser.session", operation: "open", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the session's page id, the committed URL, status and generation, and one provisional receipt",
+    annotations: change("Open URL in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
+  },
+  browser_snapshot: {
+    capability: "browser.session", operation: "snapshot", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one provisional receipt",
+    annotations: read("Snapshot isolated browser session page")
+  },
+  browser_click: {
+    capability: "browser.session", operation: "click", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the opened URL, status and generation, and one provisional receipt",
+    annotations: change("Open a link in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
+  },
+  browser_fill: {
+    capability: "browser.session", operation: "fill", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the page id, generation, node id, committed URL, record id and one provisional receipt; never the value",
+    annotations: change("Fill a text field in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
+  },
+  browser_select: {
+    capability: "browser.session", operation: "select", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the page id, generation, node id, committed URL, record id and one provisional receipt; never the option label",
+    annotations: change("Choose an option in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
+  },
+  browser_verify: {
+    capability: "browser.session", operation: "verify", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "at most 16 pass or fail results with fixed evidence words and counts, the committed URL, a report digest and one provisional receipt",
+    annotations: read("Verify isolated browser session page")
+  },
+  browser_extract: {
+    capability: "browser.session", operation: "extract", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one provisional receipt",
+    annotations: read("Extract isolated browser session page")
+  },
+  browser_close: {
+    capability: "browser.session", operation: "close", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "whether the session's worker ended and its profile was removed",
+    annotations: { ...read("Close isolated browser session"), idempotentHint: false }
+  },
+  browser_task_status: {
+    capability: "browser.session", operation: "status", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "the session's state, budgets and at most 128 provisional receipts",
+    annotations: read("Read isolated browser session status")
+  }
+};
+
+/** SG-000135 OB-02: the `browser_full` broker tools, in contract order. */
+export const BROWSER_FULL_TOOLS: readonly string[] = Object.freeze(Object.keys(BROWSER_FULL_CONTRACT));
+
+/**
+ * The contract entry a tool has under `profile`: its `browser_full` entry
+ * there, its canonical entry everywhere else.
+ */
+export function contractEntryFor(name: string, profile: ToolSurfaceProfile): ToolContractEntry | undefined {
+  if (profile === "browser_full" && Object.hasOwn(BROWSER_FULL_CONTRACT, name)) {
+    return BROWSER_FULL_CONTRACT[name];
+  }
+  return Object.hasOwn(TOOL_CONTRACT, name) ? TOOL_CONTRACT[name] : undefined;
+}
+
+/**
  * `desktop_structured`, listed explicitly instead of every contract key, so
  * that adding a tool to the contract (a browser tool in particular) never
  * widens it.
@@ -449,7 +531,9 @@ export const DESKTOP_STRUCTURED_TOOLS: readonly string[] = Object.freeze([
 export const SURFACE_PROFILES: Readonly<Record<ToolSurfaceProfile, readonly string[]>> = {
   core: REMOTE_TOOL_NAMES,
   desktop_structured: DESKTOP_STRUCTURED_TOOLS,
-  browser_structured: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...LIVE_BROWSER_TOOLS])
+  browser_structured: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...LIVE_BROWSER_TOOLS]),
+  // SG-000135 OB-02: local configuration only; never remote.
+  browser_full: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...BROWSER_FULL_TOOLS])
 };
 
 /** The environment variable a local MCP client configuration sets. */
@@ -458,7 +542,8 @@ export const TOOL_SURFACE_PROFILE_ENV = "ORCEL_TOOL_SURFACE_PROFILE";
 /** The profiles a local transport may serve. */
 export const LOCAL_TOOL_SURFACE_PROFILES: readonly ToolSurfaceProfile[] = Object.freeze([
   "desktop_structured",
-  "browser_structured"
+  "browser_structured",
+  "browser_full"
 ] as const);
 
 /**

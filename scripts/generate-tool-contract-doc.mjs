@@ -7,10 +7,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const contract = await import(pathToFileURL(join(repo, "apps", "orcel-mcp", "dist", "tool_contract.js")).href);
-const { TOOL_CONTRACT, SURFACE_PROFILES, REMOTE_PROVIDER_PROFILES } = contract;
+const { TOOL_CONTRACT, SURFACE_PROFILES, REMOTE_PROVIDER_PROFILES, BROWSER_FULL_CONTRACT } = contract;
 
 const yes = (value) => (value ? "yes" : "no");
 const names = Object.keys(TOOL_CONTRACT).sort();
+const row = (name, e) => {
+  const a = e.annotations;
+  const remote = e.remote === "local_only" ? "local-only" : e.remote.join(" ");
+  return `| \`${name}\` | \`${e.capability}/${e.operation}\` | ${e.effect} | ${e.approval} | ${remote} | ${yes(a.readOnlyHint)} | ${yes(a.destructiveHint)} | ${yes(a.idempotentHint)} | ${yes(a.openWorldHint)} | ${e.outputBound} |`;
+};
 const lines = [
   "# Orcel Tool Contract",
   "",
@@ -47,12 +52,18 @@ const lines = [
   "",
   "| Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |",
   "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-  ...names.map((name) => {
-    const e = TOOL_CONTRACT[name];
-    const a = e.annotations;
-    const remote = e.remote === "local_only" ? "local-only" : e.remote.join(" ");
-    return `| \`${name}\` | \`${e.capability}/${e.operation}\` | ${e.effect} | ${e.approval} | ${remote} | ${yes(a.readOnlyHint)} | ${yes(a.destructiveHint)} | ${yes(a.idempotentHint)} | ${yes(a.openWorldHint)} | ${e.outputBound} |`;
-  }),
+  ...names.map((name) => row(name, TOOL_CONTRACT[name])),
+  "",
+  "## browser_full (SG-000135, local only)",
+  "",
+  "Served by stdio and loopback HTTP only when local configuration selects it (`ORCEL_TOOL_SURFACE_PROFILE=browser_full`);",
+  `never remote. It holds ${SURFACE_PROFILES.browser_full.length} tools: \`desktop_structured\` plus the Orcel Browser Session Broker tools below,`,
+  "which orceld's broker maps onto the existing live host actions. Under this profile `browser_click`, `browser_fill`,",
+  "`browser_select` and `browser_verify` are the broker tools listed here; `browser_structured` keeps its own forms.",
+  "",
+  "| Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |",
+  "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+  ...Object.keys(BROWSER_FULL_CONTRACT).map((name) => row(name, BROWSER_FULL_CONTRACT[name])),
   ""
 ];
 writeFileSync(join(repo, "docs", "p16", "TOOL_CONTRACT.md"), lines.join("\n"));

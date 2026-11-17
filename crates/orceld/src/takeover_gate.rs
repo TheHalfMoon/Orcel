@@ -52,6 +52,9 @@ pub(crate) struct TakeoverGate<C: Clock = SystemClock> {
     /// next write is planned on. orceld cannot see the agent's plan, so the
     /// latest observation stands for it.
     basis: HashMap<String, u64>,
+    /// The task that owns the pages this gate claims: the live browser's
+    /// one task, or (SG-000135 OB-01) the broker session's id.
+    task: String,
 }
 
 impl TakeoverGate<SystemClock> {
@@ -71,6 +74,7 @@ impl<C: Clock> TakeoverGate<C> {
         Self {
             gate: None,
             basis: HashMap::new(),
+            task: LIVE_TASK.to_owned(),
         }
     }
 
@@ -79,7 +83,16 @@ impl<C: Clock> TakeoverGate<C> {
         Self {
             gate: Some(SessionGate::new(clock)),
             basis: HashMap::new(),
+            task: LIVE_TASK.to_owned(),
         }
+    }
+
+    /// SG-000135 OB-01: pages opened from now on belong to `task` (a broker
+    /// session's id), so the gate's ownership is per session. A page
+    /// already claimed keeps its owner.
+    #[cfg_attr(not(feature = "live-browser-dev"), allow(dead_code))]
+    pub(crate) fn set_task(&mut self, task: &str) {
+        self.task = task.to_owned();
     }
 
     /// The session gate, for the engine adapter that reports input events
@@ -95,7 +108,7 @@ impl<C: Clock> TakeoverGate<C> {
     pub(crate) fn page_opened(&mut self, page_id: &str) {
         if let Some(gate) = self.gate.as_mut() {
             if gate
-                .claim(ResourceId::new(page_id), TaskId::new(LIVE_TASK))
+                .claim(ResourceId::new(page_id), TaskId::new(self.task.as_str()))
                 .is_ok()
             {
                 self.basis.insert(page_id.to_owned(), 0);
@@ -355,6 +368,22 @@ mod tests {
             matches!(gate.before_read("page-1"), Ok(None)),
             "an unowned page is not the gate's"
         );
+    }
+
+    /// SG-000135 OB-01: a broker session's gate claims its pages for the
+    /// session's own task, and still refuses while a person holds the page.
+    #[test]
+    fn a_session_task_owns_its_pages_and_the_gate_still_refuses() {
+        let clock = ManualClock::at(0);
+        let mut gate = TakeoverGate::on(clock);
+        gate.set_task("bs-0123456789abcdef-1-0001020304050607");
+        gate.page_opened("page-s");
+        assert!(matches!(gate.before_read("page-s"), Ok(Some(_))));
+        human(&mut gate, "page-s");
+        assert!(gate.before_read("page-s").is_err());
+        assert!(gate
+            .before_write("page-s", "click", "n1", ActionClass::Repeatable)
+            .is_err());
     }
 
     #[test]

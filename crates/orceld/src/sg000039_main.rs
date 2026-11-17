@@ -19,6 +19,13 @@ mod bm02_tier_b_tests;
 #[cfg(all(test, windows))]
 mod bm02_tier_c_act_tests;
 mod browser;
+// SG-000135 OB-01: the Orcel Browser Session Broker (generic over its
+// worker) and the browser_full request forms. Only the Windows
+// live-browser-dev build drives a real worker through them; other builds
+// validate browser_full requests and answer typed unavailable.
+#[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+mod browser_broker;
+mod browser_full;
 mod clipboard;
 mod contained_tier;
 #[cfg(test)]
@@ -256,6 +263,9 @@ fn run() -> Result<(), String> {
             .map_err(|error| format!("flush response: {error}"))?;
     }
 
+    // SG-000135 OB-01: orceld's input closed, so its MCP session ended:
+    // every browser_full session ends with it, its profile removed.
+    live_dispatch::end_browser_sessions(browser_broker::EndReason::McpSessionEnded);
     Ok(())
 }
 
@@ -390,6 +400,11 @@ fn handle_envelope(
     // the live browser, never to the model-only browser shapes.
     if profile_gate::is_live_shape(&request) {
         return handle_live(policy, audit, approval, request);
+    }
+    // SG-000135 OB-02: a broker shape the gate admitted (local,
+    // `browser_full`) runs through the Orcel Browser Session Broker.
+    if profile_gate::is_browser_full_shape(&request) {
+        return handle_browser_full(policy, audit, approval, request);
     }
     // XP-19: secrets are local-only and never reach workspace dispatch.
     if secret_store::is_secret_request(&request.capability) {
@@ -612,6 +627,41 @@ fn handle_live(
     };
     let result = live_dispatch::dispatch(&decision.workspace, approval, &request);
     finish(audit, request, decision.policy_revision, result)
+}
+
+/// SG-000135 OB-02: a `browser_full` broker shape, after the profile gate.
+/// Its own form is checked, then (for an action that maps onto a live host
+/// action) that action's live form, before anything runs.
+fn handle_browser_full(
+    policy: &PolicyEngine,
+    audit: &AuditLogger,
+    approval: &impl ApprovalBroker,
+    request: RequestEnvelope,
+) -> ResponseEnvelope {
+    let deny = |request: RequestEnvelope, error: ProviderError| {
+        let _ = audit.record(&request, POLICY_REVISION, "DENIED");
+        ResponseEnvelope::failure(request.request_id, error.code, error.message)
+    };
+    let action = match browser_full::parse(&request) {
+        Ok(action) => action,
+        Err(error) => return deny(request, error),
+    };
+    if let Some(live) = action.live_request(&request, browser_full::VALIDATION_PAGE_ID, 0) {
+        if let Err(error) = policy.authorize_live_browser(&live) {
+            return deny(request, ProviderError::new(error.code, error.message));
+        }
+    }
+    let Some(workspace) = policy.workspace(&request.workspace_id).cloned() else {
+        return deny(
+            request,
+            ProviderError::new(
+                FailureCode::WorkspaceDenied,
+                "requested workspace is not configured",
+            ),
+        );
+    };
+    let result = live_dispatch::dispatch_full(&workspace, approval, &request, &action);
+    finish(audit, request, POLICY_REVISION, result)
 }
 
 fn handle_request(
@@ -927,6 +977,8 @@ fn dispatch_trust(
                     ),
                 )
             })?;
+            // SG-000135 OB-01: every browser_full session ends at once.
+            live_dispatch::end_browser_sessions(browser_broker::EndReason::EmergencyStop);
             Ok(Some(json!({
                 "workspace_id": request.workspace_id,
                 "revoke_epoch": epoch,
@@ -2823,6 +2875,159 @@ mod sg000055_envelope_tests {
                 capability, operation, "default"
             )));
         }
+        let audited = std::fs::read_to_string(audit.path()).unwrap_or_default();
+        assert!(audited.contains("PROFILE_DENIED"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// SG-000135 OB-02: the broker shapes reach the broker only through the
+    /// gate: a local `browser_full` request. There, the broker form and the
+    /// mapped live form are checked (unknown fields, a malformed session id,
+    /// a non-HTTPS URL, an unknown workspace), and every build without the
+    /// live browser answers typed unavailable, before any approval or any
+    /// worker. `browser_structured` shapes stay out of `browser_full`.
+    #[test]
+    fn ob02_browser_full_shapes_reach_the_broker_only_through_the_gate() {
+        let (policy, audit, root) = fixture();
+        let workspaces =
+            remote_lease::WorkspaceSet::from_pairs(&[("default".into(), root.join("workspace"))]);
+        let approval = FixedApprovalBroker(ApprovalDecision::Approved);
+        let full = |operation: &str, workspace: &str, arguments: Value| {
+            let mut request = request("browser.session", operation, workspace);
+            request.target = None;
+            request.arguments = arguments;
+            request
+        };
+        let send =
+            |request: RequestEnvelope, profile: Option<&str>, remote: Option<RemoteContext>| {
+                handle_envelope(
+                    &policy,
+                    &audit,
+                    &approval,
+                    &workspaces,
+                    RemoteRequestEnvelope {
+                        request,
+                        remote,
+                        profile: profile.map(str::to_owned),
+                    },
+                )
+            };
+        let session = "bs-0123456789abcdef-1-0001020304050607";
+        let shapes = [
+            ("create", json!({"task": "fixture form"})),
+            (
+                "open",
+                json!({"session_id": session, "url": "https://example.org/"}),
+            ),
+            ("snapshot", json!({"session_id": session})),
+            (
+                "click",
+                json!({"session_id": session, "node_id": "d1-e2", "expected_generation": 1}),
+            ),
+            (
+                "fill",
+                json!({"session_id": session, "node_id": "d1-e2", "value": "Ada", "expected_generation": 1}),
+            ),
+            (
+                "select",
+                json!({"session_id": session, "node_id": "d1-e2", "option": "Two", "expected_generation": 1}),
+            ),
+            (
+                "verify",
+                json!({"session_id": session, "checks": [{"kind": "element_visible", "node_id": "d1-e2"}], "expected_generation": 1}),
+            ),
+            (
+                "extract",
+                json!({"session_id": session, "expected_generation": 1}),
+            ),
+            ("close", json!({"session_id": session})),
+            ("status", json!({"session_id": session})),
+        ];
+        assert_eq!(shapes.len(), profile_gate::BROWSER_FULL_SHAPES.len());
+        let full_profile = Some(profile_gate::BROWSER_FULL_PROFILE);
+        for (operation, arguments) in shapes {
+            let shape = || full(operation, "default", arguments.clone());
+            for profile in [
+                None,
+                Some("browser_structured"),
+                Some("desktop_structured"),
+                Some("core"),
+            ] {
+                assert_eq!(
+                    code(&send(shape(), profile, None)),
+                    FailureCode::CapabilityDenied,
+                    "{operation} {profile:?}"
+                );
+            }
+            assert_eq!(
+                code(&send(shape(), full_profile, Some(remote()))),
+                FailureCode::CapabilityDenied
+            );
+            assert_eq!(
+                code(&send(
+                    full(operation, "missing", arguments.clone()),
+                    full_profile,
+                    None
+                )),
+                FailureCode::WorkspaceDenied,
+                "{operation}"
+            );
+            let mut widened = arguments.clone();
+            widened["profile_root"] =
+                json!("C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data");
+            assert_eq!(
+                code(&send(
+                    full(operation, "default", widened),
+                    full_profile,
+                    None
+                )),
+                FailureCode::InvalidRequest,
+                "{operation}"
+            );
+            #[cfg(not(all(windows, feature = "live-browser-dev")))]
+            {
+                let response = send(shape(), full_profile, None);
+                assert_eq!(
+                    code(&response),
+                    FailureCode::ProviderUnavailable,
+                    "{operation}"
+                );
+                assert!(response
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.message.contains("live-browser-dev")));
+            }
+        }
+        // The mapped live form is checked before anything runs.
+        for (operation, arguments) in [
+            (
+                "open",
+                json!({"session_id": session, "url": "http://example.org/"}),
+            ),
+            (
+                "open",
+                json!({"session_id": "bs-1", "url": "https://example.org/"}),
+            ),
+            (
+                "fill",
+                json!({"session_id": session, "node_id": "d1-e2", "value": "a\u{202e}b", "expected_generation": 1}),
+            ),
+        ] {
+            let response = send(full(operation, "default", arguments), full_profile, None);
+            assert!(!response.ok);
+            assert_ne!(
+                code(&response),
+                FailureCode::ProviderUnavailable,
+                "{operation}"
+            );
+        }
+        // browser_structured's shapes are refused under browser_full.
+        let mut structured = request("browser.page", "open", "default");
+        structured.target = None;
+        assert_eq!(
+            code(&send(structured, full_profile, None)),
+            FailureCode::CapabilityDenied
+        );
         let audited = std::fs::read_to_string(audit.path()).unwrap_or_default();
         assert!(audited.contains("PROFILE_DENIED"));
         let _ = std::fs::remove_dir_all(root);

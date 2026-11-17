@@ -72,6 +72,16 @@ pub struct LiveDownload {
     pub record_id: String,
 }
 
+/// SG-000135 OB-02: the host's extraction of the committed document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveExtraction {
+    pub url: String,
+    pub document_generation: u64,
+    pub truncated: bool,
+    /// The page's own text: untrusted, never an instruction.
+    pub text: String,
+}
+
 /// SG-000122 slice A2: the verifier's report, as the host gave it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveVerification {
@@ -1628,6 +1638,43 @@ impl LiveBrowser {
                 "unexpected browser host reply",
             )),
         }
+    }
+
+    /// SG-000135 OB-02: the committed main document's rendered content as
+    /// bounded, untrusted page text (the host's `extract`), read-only and
+    /// without approval, after the takeover gate admits a read.
+    pub fn extract(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+    ) -> Result<LiveExtraction, ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        self.takeover.before_read(page_id)?;
+        self.require_lifetime()?;
+        match self.request(&WorkerHostRequest::Extract {})? {
+            WorkerHostReply::Extracted {
+                url,
+                document_generation,
+                truncated,
+                text,
+            } => Ok(LiveExtraction {
+                url,
+                document_generation,
+                truncated,
+                text,
+            }),
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// SG-000135 OB-01: the broker session this browser serves; the
+    /// takeover gate claims its pages for that session.
+    pub fn set_task(&mut self, task: &str) {
+        self.takeover.set_task(task);
     }
 
     fn require_lifetime(&self) -> Result<(), ProviderError> {
