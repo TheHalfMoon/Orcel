@@ -20,10 +20,20 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { listFiles } from "./licence-gate-lib.mjs";
+import { listFiles, rootFromArgs } from "./licence-gate-lib.mjs";
 
 const OTHER_LOCKS = /(^|\/)(npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/;
 const DEPENDENCY_KEYS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+
+/** True when `dir` matches an npm workspace pattern (a literal path, or one with single-segment `*`). */
+export function inWorkspace(dir, patterns) {
+  return patterns.some((pattern) => {
+    const clean = pattern.replace(/^\.\//, "").replace(/\/$/, "");
+    if (clean.includes("**")) return false;
+    const regex = new RegExp(`^${clean.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]+")}$`);
+    return regex.test(dir);
+  });
+}
 
 function packageName(key) {
   const marker = "node_modules/";
@@ -53,7 +63,7 @@ export function unlockedPackages(root) {
     const declares = DEPENDENCY_KEYS.some((key) => manifest[key] && Object.keys(manifest[key]).length);
     if (!declares) continue;
     const lock = dir === "." ? "package-lock.json" : `${dir}/package-lock.json`;
-    const member = workspaces.includes(dir) && locks.has("package-lock.json");
+    const member = inWorkspace(dir, workspaces) && locks.has("package-lock.json");
     if (!locks.has(lock) && !member) errors.push(`${path}: declares dependencies but has no package-lock.json`);
   }
   return errors;
@@ -89,8 +99,7 @@ export function checkNpmLockfiles(root) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const flag = process.argv.indexOf("--root");
-  const root = flag > 0 ? resolve(process.argv[flag + 1]) : resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const root = rootFromArgs(process.argv, resolve(dirname(fileURLToPath(import.meta.url)), ".."), "check-npm-licenses");
   const { errors, lockfiles: locks, report } = checkNpmLockfiles(root);
   if (process.argv.includes("--report")) {
     for (const row of report) console.log(`${row.lockfile}\t${row.name}\t${row.version ?? ""}\t${row.licence ?? "(none declared)"}`);

@@ -7,12 +7,17 @@
 //
 // A licence type no longer blocks anything. A licence marker is evidence of
 // copied code, so it now requires provenance instead: every file under the
-// policy's scan_roots that carries a third-party licence marker (AGPL, GPL,
-// LGPL, MPL, SSPL, BUSL, FSL text, or an SPDX-License-Identifier other than
-// Orcel's own licence) must be covered by an entry in
+// policy's scan_roots that carries a third-party licence marker must be
+// covered by an entry in
 // docs/orcel/notices/donor-provenance.json: a donor file entry (pinned
 // source, original licence and notice, owner-asserted authorization), or a
-// reviewed "references" entry for files that only mention a licence.
+// reviewed "references" entry for files that only quote a licence.
+// A marker is an SPDX-License-Identifier other than Orcel's own licence, or
+// a phrase from a licence text or header (the GNU AGPL, GPL or LGPL title,
+// "This program is free software", the Mozilla, Server Side, Business Source
+// or Functional Source licence titles, the MIT grant, the BSD redistribution
+// clause). A bare licence name in Orcel's own prose ("unlike GPLv3 tools")
+// is not a marker.
 // A file the scan cannot read (binary, archive, larger than 4 MiB) needs a
 // provenance entry or an unreadable_exceptions entry in licence-policy.json.
 // UTF-16 with a byte-order mark is read. Lockfiles are left to the
@@ -23,7 +28,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { listFiles, markerFamilies, PROVENANCE_PATH, readJson, readPolicy, readScan, underAny } from "./licence-gate-lib.mjs";
+import { listFiles, markerFamilies, PROVENANCE_PATH, readJson, readPolicy, readScan, rootFromArgs, underAny } from "./licence-gate-lib.mjs";
 
 const LOCKFILE = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|[^/]*\.lock|pnpm-lock\.yaml|bun\.lockb)$/;
 
@@ -76,8 +81,7 @@ export function checkMarkers(root) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const flag = process.argv.indexOf("--root");
-  const root = flag > 0 ? resolve(process.argv[flag + 1]) : resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const root = rootFromArgs(process.argv, resolve(dirname(fileURLToPath(import.meta.url)), ".."), "check-agpl-markers");
   const { errors, scanned, marked } = checkMarkers(root);
   if (errors.length) {
     for (const error of errors) console.error(`check-agpl-markers: ${error}`);

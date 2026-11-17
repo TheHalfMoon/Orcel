@@ -408,6 +408,11 @@ fn platform_cfgs(text: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// The main workspace's metadata with every feature, for every platform (no
+/// `--filter-platform`: the rules hold for all three OS legs at once).
+/// `--locked` keeps the resolution to Cargo.lock, but cargo may still fetch
+/// the index and crate manifests it lacks; CI fetches them anyway, and
+/// nothing is compiled.
 fn cargo_metadata(root: &Path) -> Value {
     let output = Command::new(env!("CARGO"))
         .args([

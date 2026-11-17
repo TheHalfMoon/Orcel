@@ -7,7 +7,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 export const POLICY_PATH = "docs/orcel/notices/licence-policy.json";
 export const PROVENANCE_PATH = "docs/orcel/notices/donor-provenance.json";
@@ -72,6 +72,25 @@ export function listFiles(root) {
   return [...new Set(files.map((path) => path.split(sep).join("/")))].sort();
 }
 
+/**
+ * The repository root from `--root <dir>` in `argv`, else `fallback`. Exits
+ * with a clear message when `--root` has no value or names no directory.
+ */
+export function rootFromArgs(argv, fallback, name) {
+  const flag = argv.indexOf("--root");
+  if (flag < 0) return fallback;
+  const value = argv[flag + 1];
+  if (!value || value.startsWith("--")) {
+    console.error(`${name}: --root needs a directory`);
+    process.exit(2);
+  }
+  if (!existsSync(value) || !statSync(value).isDirectory()) {
+    console.error(`${name}: --root ${value} is not a directory`);
+    process.exit(2);
+  }
+  return resolve(value);
+}
+
 export function underAny(path, prefixes) {
   return prefixes.some((prefix) => path.startsWith(prefix));
 }
@@ -88,7 +107,9 @@ const ARCHIVE = /\.(jar|war|whl|egg|tgz|tar|gz|bz2|xz|zst|zip|7z|rar|nupkg|crate
 export function readScan(root, path) {
   if (ARCHIVE.test(path)) return { unreadable: "archive" };
   const full = join(root, path);
-  if (statSync(full).size > MAX_TEXT_BYTES) return { unreadable: "larger than 4 MiB" };
+  const stat = statSync(full);
+  if (stat.isDirectory()) return { unreadable: "a directory (a symbolic link to a directory)" };
+  if (stat.size > MAX_TEXT_BYTES) return { unreadable: "larger than 4 MiB" };
   const bytes = readFileSync(full);
   if (bytes[0] === 0xff && bytes[1] === 0xfe) return { text: bytes.subarray(2).toString("utf16le") };
   if (bytes[0] === 0xfe && bytes[1] === 0xff) {
@@ -252,16 +273,19 @@ export function familiesOfExpression(expression, allowed) {
   return families.size ? [...families].sort() : ["OTHER"];
 }
 
-// Text markers of third-party licences. "SPDX-License-Identifier:" lines are
-// read by their expression instead (see markerFamilies).
+// Licence-text markers: phrases from the licence texts and headers
+// themselves, not bare licence names, so Orcel's own prose ("unlike GPLv3
+// tools", "an AGPL-3.0 port") is not a marker. "SPDX-License-Identifier:"
+// lines are read by their expression instead (see markerFamilies).
 const TEXT_MARKERS = [
-  ["AGPL", /GNU\s+AFFERO|Affero\s+General\s+Public|\bAGPL/i],
-  ["LGPL", /GNU\s+(?:LESSER|LIBRARY)\s+GENERAL\s+PUBLIC|\bLGPL/i],
-  ["GPL", /GNU\s+GENERAL\s+PUBLIC\s+LICEN[CS]E|\bGPL(?:v?\d|-\d|\b)/i],
-  ["MPL", /Mozilla\s+Public\s+License|\bMPL-?\d/i],
-  ["SSPL", /Server\s+Side\s+Public\s+License|\bSSPL\b/i],
-  ["BUSL", /Business\s+Source\s+License|\bBUSL\b/i],
-  ["FSL", /Functional\s+Source\s+License|\bFSL-\d/i],
+  ["AGPL", /GNU\s+AFFERO\s+GENERAL\s+PUBLIC\s+LICEN[CS]E/i],
+  ["LGPL", /GNU\s+(?:LESSER|LIBRARY)\s+GENERAL\s+PUBLIC\s+LICEN[CS]E/i],
+  ["GPL", /GNU\s+GENERAL\s+PUBLIC\s+LICEN[CS]E|This\s+program\s+is\s+free\s+software/i],
+  ["MPL", /Mozilla\s+Public\s+License/i],
+  ["SSPL", /Server\s+Side\s+Public\s+License/i],
+  ["BUSL", /Business\s+Source\s+License/i],
+  ["FSL", /Functional\s+Source\s+License/i],
+  ["OTHER", /Permission\s+is\s+hereby\s+granted,\s+free\s+of\s+charge|Redistribution\s+and\s+use\s+in\s+source\s+and\s+binary\s+forms/i],
 ];
 
 export const FAMILIES = ["AGPL", "LGPL", "GPL", "MPL", "SSPL", "BUSL", "FSL", "COMMERCIAL", "OTHER"];

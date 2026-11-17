@@ -56,6 +56,18 @@
       ],
       "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
     },
+    "cua-bench": {
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "licence": "MIT",
+      "notice": "tests/benchmarks/LICENSE-cua-bench.txt",
+      "records": [],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
     "playwright": {
       "repo": "microsoft/playwright",
       "commit": "1b025d7e20a026371cd5f98ba0cdce48892737c8",
@@ -394,6 +406,28 @@
       "donor": "cua-driver-clipboard",
       "source": [
         "libs/cua-driver/rust/crates/platform-linux/src/clipboard.rs"
+      ]
+    },
+    {
+      "path": "tests/benchmarks/orcel_bench/task.py",
+      "donor": "cua-bench",
+      "source": [
+        "libs/cua-bench/cua_bench/core.py",
+        "libs/cua-bench/cua_bench/decorators.py"
+      ]
+    },
+    {
+      "path": "tests/benchmarks/orcel_bench/runner.py",
+      "donor": "cua-bench",
+      "source": [
+        "libs/cua-bench/cua_bench/runner/episode.py"
+      ]
+    },
+    {
+      "path": "tests/benchmarks/tasks/orcel/hello-file/main.py",
+      "donor": "cua-bench",
+      "source": [
+        "libs/cua-bench/example_tasks/hello_file_env/main.py"
       ]
     },
     {
@@ -786,6 +820,10 @@
     {
       "path": "scripts/licence-gate-fixture.mjs",
       "reason": "The gates' test helper."
+    },
+    {
+      "path": "tests/benchmarks/LICENSE-cua-bench.txt",
+      "reason": "The preserved MIT licence of the cua-bench donor (blob 98422212), cited by the cua-bench donor entry."
     }
   ],
   "authorizations": {

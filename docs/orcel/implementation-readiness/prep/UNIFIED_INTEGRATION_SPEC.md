@@ -235,7 +235,7 @@ Win+L, the indicator's Stop, the CLI or expiry make the service advance the epoc
 | orceld | `crates/orceld` | exists | W1 | Apache-2.0 | kernel crates | Web and job dispatch, Full Control dispatcher (service client), executors |
 | orcel-authority-service | `apps/orcel-authority-service` | **new** | W1 (Windows), X | Apache-2.0 | orcel-authority | Windows service (`NT SERVICE\OrcelAuthority`); macOS LaunchDaemon and Linux systemd unit in track X |
 | orcel-indicator | `apps/orcel-indicator` | **new** | W1 | Apache-2.0 | service pipe, orceld pipe | Disclosure and Stop |
-| orcel-firecrawl | `apps/orcel-firecrawl` (own workspace) | **new** | W1 (native), W2 (extract) | **AGPL-3.0** (upstream) | none in-process | Isolated copy-first Firecrawl component |
+| orcel-firecrawl | `apps/orcel-firecrawl` (own workspace) | **new** | W1 (native), W2 (extract) | **AGPL-3.0** (recorded upstream licence; not a boundary, rev 9) | none in-process | Isolated copy-first Firecrawl component |
 | orcel-mcp | `apps/orcel-mcp` | exists | W1, W2 | Apache-2.0 | orceld over a pipe | Catalog, MCP tools, REST routes, OpenAPI (W2) |
 | orcel-doc-parser | `apps/orcel-doc-parser` | exists | W2 | Apache-2.0 (+ FD-06 notice) | provider-process (test) | `/v2/parse` documents |
 | orcel-browser-worker | `apps/orcel-browser-worker` | exists | B | Apache-2.0 (+ MIT notice) | browser host pipe | Engine-neutral refs and actions |

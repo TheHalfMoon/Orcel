@@ -168,3 +168,11 @@ test("every file entry names its source path(s) and an existing path with the ri
   expectOne(errors, "file apps/tool/src: a directory entry must end in '/'");
   expectOne(errors, 'file apps/tool/third_party/: a directory entry needs "patches"');
 });
+
+test("a manifest entry with no path is reported, not a crash", () => {
+  const files = [...manifest().files, { donor: "upstream", source: ["x"] }];
+  const references = [...manifest().references, { reason: "no path" }];
+  const errors = run(base({}, { files, references }));
+  expectOne(errors, `file entry 4 of ${MANIFEST} has no "path"`);
+  expectOne(errors, `reference entry 2 of ${MANIFEST} has no "path"`);
+});

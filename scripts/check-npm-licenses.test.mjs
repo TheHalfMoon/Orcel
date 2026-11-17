@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkNpmLockfiles } from "./check-npm-licenses.mjs";
+import { checkNpmLockfiles, inWorkspace } from "./check-npm-licenses.mjs";
 import { makeTree, removeTree } from "./licence-gate-fixture.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -91,4 +91,17 @@ test("a package.json with dependencies but no package-lock.json fails; workspace
     "package-lock.json": lock({ "packages/sdk": { name: "sdk" } }),
   };
   assert.deepEqual(run(member).errors, []);
+});
+
+test("npm workspace patterns with a single-segment * are expanded", () => {
+  assert.equal(inWorkspace("apps/x", ["apps/*"]), true);
+  assert.equal(inWorkspace("apps/x/y", ["apps/*"]), false);
+  assert.equal(inWorkspace("apps/x", ["./apps/*/"]), true);
+  assert.equal(inWorkspace("apps/orcel-mcp", ["apps/orcel-mcp"]), true);
+  const tree = {
+    "packages/sdk/package.json": { name: "sdk", dependencies: { left: "1.0.0" } },
+    "package.json": { name: "root", private: true, workspaces: ["packages/*"] },
+    "package-lock.json": lock({ "packages/sdk": { name: "sdk" } }),
+  };
+  assert.deepEqual(run(tree).errors, []);
 });

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { dirname, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkMarkers } from "./check-agpl-markers.mjs";
 import { basePolicy, makeTree, removeTree, writeTree } from "./licence-gate-fixture.mjs";
-import { markerFamilies } from "./licence-gate-lib.mjs";
+import { markerFamilies, readScan } from "./licence-gate-lib.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OWN = new Set(["Apache-2.0"]);
@@ -79,19 +81,26 @@ test("every licence family, and any non-Orcel SPDX identifier, requires provenan
 });
 
 test("a reviewed reference entry covers a file that only mentions a licence", () => {
-  const notes = { "apps/tool/NOTICES.md": "| cssparser | MPL-2.0 |\n" };
+  const notes = { "apps/tool/NOTICES.md": "cssparser: Mozilla Public License, v. 2.0\n" };
   assert.equal(run(base(notes)).length, 1);
   const references = [{ path: "apps/tool/NOTICES.md", reason: "dependency inventory" }];
   assert.deepEqual(run(base(notes, {}, undefined, references)), []);
 });
 
-test("Orcel's own SPDX identifier and ordinary words are not markers", () => {
+test("Orcel's own SPDX identifier and prose naming a licence are not markers", () => {
   assert.deepEqual(markerFamilies("// SPDX-License-Identifier: Apache-2.0", OWN), []);
   assert.deepEqual(markerFamilies('"// SPDX-License-Identifier: Apache-2.0\\npub mod x;",', OWN), []);
   assert.deepEqual(markerFamilies("let gplot = sample_1 + simple_2; // the GPU", OWN), []);
-  assert.deepEqual(markerFamilies("an AGPL-3.0 port", OWN), ["AGPL"]);
-  assert.deepEqual(markerFamilies("LGPL-2.1+", OWN), ["LGPL"]);
+  assert.deepEqual(markerFamilies("// unlike GPLv3 tools, this is Orcel's own code", OWN), []);
+  assert.deepEqual(markerFamilies("an AGPL-3.0 port, LGPL-2.1+ and MPL-2.0 dependencies", OWN), []);
   assert.deepEqual(markerFamilies("// SPDX-License-Identifier: MIT", OWN), ["OTHER"]);
+  assert.deepEqual(markerFamilies("Permission is hereby granted, free of charge, to any person", OWN), ["OTHER"]);
+  assert.deepEqual(markerFamilies(" * This program is free software: you can redistribute it", OWN), ["GPL"]);
+});
+
+test("an Orcel comment such as 'unlike GPLv3 tools' needs no provenance", () => {
+  const prose = { "crates/core/src/notes.rs": "// Orcel's own code: unlike GPLv3 tools, nothing here is copied.\n" };
+  assert.deepEqual(run(base(prose)), []);
 });
 
 test("binary, archive and oversized files fail unless provenance or an exception covers them", () => {
@@ -125,4 +134,26 @@ test("UTF-16 text with a byte-order mark is read, not skipped", () => {
 test("lockfiles are left to the dependency checks", () => {
   const lock = { "apps/web/package-lock.json": '{"packages":{"node_modules/x":{"license":"LGPL-3.0-or-later"}}}\n' };
   assert.deepEqual(run(base(lock)), []);
+});
+
+test("a directory in the file list (a tracked symlink to a directory) is reported, not a crash", () => {
+  const root = makeTree(base());
+  try {
+    mkdirSync(join(root, "apps/tool/linked"), { recursive: true });
+    assert.deepEqual(readScan(root, "apps/tool/linked"), { unreadable: "a directory (a symbolic link to a directory)" });
+  } finally {
+    removeTree(root);
+  }
+});
+
+test("--root without a directory exits with a clear message", () => {
+  for (const script of ["check-agpl-markers.mjs", "check-npm-licenses.mjs", "check-donor-provenance.mjs"]) {
+    const path = join(REPO, "scripts", script);
+    const missing = spawnSync(process.execPath, [path, "--root"], { encoding: "utf8" });
+    assert.equal(missing.status, 2, `${script}: ${missing.stderr}`);
+    assert.match(missing.stderr, /--root needs a directory/);
+    const bogus = spawnSync(process.execPath, [path, "--root", join(REPO, "no-such-dir")], { encoding: "utf8" });
+    assert.equal(bogus.status, 2, `${script}: ${bogus.stderr}`);
+    assert.match(bogus.stderr, /is not a directory/);
+  }
 });

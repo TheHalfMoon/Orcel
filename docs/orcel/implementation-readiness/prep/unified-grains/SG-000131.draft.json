@@ -1,9 +1,9 @@
 {
   "id": "SG-000131",
-  "title": "Unified platform contracts v1, audit hash chain with Event Log anchors, and licence and provenance gates (inert)",
+  "title": "Unified platform contracts v1, audit hash chain with Event Log anchors, and provenance and dependency gates (inert)",
   "program": "ORCEL-UP",
   "state": "GRAIN",
-  "draft_note": "Activation-ready draft under prep/ (revision 6). It becomes active only when the activation PR (WP1-00) copies it into .specgrain/specs/ with this field removed, the founder decisions of 2026-11-17 recorded in CURRENT.md and planning_issue set.",
+  "draft_note": "Draft mirror of .specgrain/specs/SG-000131.json, which governs. Its licence text was brought in line with the active spec's 2026-11-17 amendment (licence type no longer blocks; provenance, preserved notices and the owner-asserted authorization reference are required).",
   "risk": "medium",
   "created": "2026-11-17",
   "base": "1f0b2d4658f0420aaedb5d1e14fb2a1a2de83095",
@@ -14,10 +14,10 @@
   "dependency_notes": {
     "SG-000093": "Closed. AuthorityMode, ExecutorClass and ExecutionState move to orcel-contracts with identical serde spellings and are re-exported by orcel-policy; lease ids and binding digests keep their encodings."
   },
-  "objective": "Give every unified-platform grain one set of versioned wire contracts in crates/orcel-contracts (principal and device, per-OS identity binding, lease view, grant reference bound to session and client, standing approval, session, tool registry entry, capability discovery with unsupported and permission_required, the job state machine reusing not_started|dispatched|completed|cancelled|outcome_unknown, the audit event, sidecar IPC, web crawl request with scope, headers, privacy profile and declared task, and additive failure codes with a complete HTTP mapping); a SHA-256 hash chain in orcel-audit written before every dispatch and anchored in the Windows Event Log; `orcel audit verify` checking every anchor still in the log; and CI gates for licences per crate, package and component, AGPL markers outside the isolated Firecrawl component and FD-06 paths, provenance of every copied directory, and the kernel dependency direction. Nothing becomes reachable by any client. Spec: docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md sections 3, 4.0 to 4.10, 8.2 (WP1-01, WP1-02, WP1-03).",
+  "objective": "Give every unified-platform grain one set of versioned wire contracts in crates/orcel-contracts (principal and device, per-OS identity binding, lease view, grant reference bound to session and client, standing approval, session, tool registry entry, capability discovery with unsupported and permission_required, the job state machine reusing not_started|dispatched|completed|cancelled|outcome_unknown, the audit event, sidecar IPC, web crawl request with scope, headers, privacy profile and declared task, and additive failure codes with a complete HTTP mapping); a SHA-256 hash chain in orcel-audit written before every dispatch and anchored in the Windows Event Log; `orcel audit verify` checking every anchor still in the log; and CI gates requiring pinned provenance, preserved notices and the owner-asserted authorization reference for every copied donor file, provenance for every file carrying a licence marker, pinned lockfiles, and the kernel dependency direction (a licence type blocks nothing, founder decision of 2026-11-17). Nothing becomes reachable by any client. Spec: docs/orcel/implementation-readiness/prep/UNIFIED_INTEGRATION_SPEC.md sections 3, 4.0 to 4.10, 8.2 (WP1-01, WP1-02, WP1-03).",
   "scope": {
     "include": [
-      "WP1-01: root deny.toml; scripts/check-npm-licenses.mjs, check-agpl-markers.mjs (allowed only under apps/orcel-firecrawl/ and docs/orcel/notices/fd06-files.txt paths) and check-provenance.mjs (PROVENANCE.json for every upstream, third_party or vendor directory), each with tests; crates/orceld/tests/dependency_direction.rs; ci.yml wiring.",
+      "WP1-01 (amended 2026-11-17): root deny.toml (bans and sources; licences reported with cargo deny list, not judged); docs/orcel/notices/licence-policy.json and donor-provenance.json; scripts/check-donor-provenance.mjs (pinned provenance, source paths, preserved notice and the owner-asserted authorization reference for every copied file, including files under upstream, vendor, vendored or third_party directories), check-agpl-markers.mjs (a file with a licence marker, or an unreadable file, needs a provenance entry) and check-npm-licenses.mjs (every package pinned, licences reported), each with tests; crates/orceld/tests/dependency_direction.rs; ci.yml wiring.",
       "WP1-02: the contract modules listed in section 8.2 of the spec, golden fixtures, schemars =1.2.3 as a dev-dependency with a schema drift test, canonical_json with the SG-000093/SG-000018/SG-000019/SG-000040 exemptions, the FailureCode variants of section 4.10 and FailureCode::http_status.",
       "WP1-03: chain.rs, verify.rs and anchor.rs in orcel-audit; write-before-dispatch in orceld with refusal on failure; Event Log anchors (event id 4100) through the registered source when the authority service is installed, otherwise an unregistered per-user source proven under a standard account; `orcel audit verify`; digests only for argv, URLs, query strings and header values."
     ],
@@ -32,7 +32,7 @@
     "activation": "None.",
     "contracts": "None. Wire types only.",
     "audit": "None in what is permitted; adds integrity evidence and refuses a dispatch whose evidence cannot be written.",
-    "ci": "Refusing gates only."
+    "ci": "Refusing gates only (provenance, lockfile, source, ban and dependency-direction rules; no licence-type refusal)."
   },
   "decisions": [
     {
@@ -41,7 +41,7 @@
     },
     {
       "question": "Licensing approach",
-      "status": "DECIDED (founder, 2026-11-17, FD-UP-1): core independently licensed; copy-first AGPL code only in the isolated component; founder attestation recorded separately (docs/orcel/grants/2026-11-17-founder-attestation.md)."
+      "status": "DECIDED (founder, 2026-11-17, FD-UP-1), then AMENDED the same day (see amendments): a licence type no longer blocks; the gates require provenance, preserved notices and the owner-asserted authorization reference; isolating a component is an architecture choice, not a licence requirement."
     }
   ],
   "invariants": [
@@ -50,8 +50,8 @@
     "Inbound authority-bearing objects refuse unknown fields; LeaseView is never proof.",
     "No dispatch runs without its audit record durably written first.",
     "Audit records never contain a raw SID, token, credential, header value, argv, URL or page content.",
-    "No kernel crate depends on an app, test, package or third_party unit, and no Apache unit links an AGPL unit.",
-    "Every copied directory carries a pinned PROVENANCE.json and its licence text."
+    "No kernel crate depends on an app, test, package or third_party unit.",
+    "Every copied file or directory has a pinned provenance entry (repository, commit or release with SHA-256, source paths, original licence recorded, preserved notice, owner-asserted authorization reference)."
   ],
   "acceptance": [
     "Every contract type round-trips its golden fixture; unknown fields refused where required; schema drift fails CI; every FailureCode is mapped.",
@@ -59,7 +59,7 @@
     "Edits, deletions, reorders and tail truncation are reported by `orcel audit verify`; a conflicting anchor record is a break; rotation keeps continuity.",
     "A simulated audit write failure refuses the dispatch.",
     "The anchor write and read-back succeed and clearing the log is refused under a temporary standard account on the Windows runner.",
-    "The licence, AGPL-marker, provenance and dependency-direction gates pass on main and fail on their fixtures."
+    "The provenance, licence-marker, lockfile and dependency-direction gates pass on main and fail on their fixtures; a planted AGPL file with a provenance entry passes and without one fails."
   ],
   "review": {
     "jev_semantic_review": true,
@@ -69,9 +69,26 @@
     "cross_platform_ci": "Windows, macOS and Linux legs"
   },
   "successor_requirements": {
-    "SG-000133": "Uses the web, capability and error contracts and the licence gates for the Firecrawl component.",
+    "SG-000133": "Uses the web, capability and error contracts; copied Firecrawl code needs provenance entries (the component boundary is architecture, not licence).",
     "SG-000134": "Uses the job contracts and audit chain.",
     "SG-000132": "Uses LeaseRef, DispatchAuthority, StandingApproval and the anchor; the authority service registers the Event Log source at install."
   },
-  "done_when": "WP1-00 to WP1-03 merge with exact-head qualification and the canonical record names this grain CLOSED."
+  "done_when": "WP1-00 to WP1-03 merge with exact-head qualification and the canonical record names this grain CLOSED.",
+  "amendments": [
+    {
+      "title": "SG-000131 WP1-01: provenance instead of licence blocking",
+      "created": "2026-11-17",
+      "base": "884c99623de8783a43ad70f6d2823570f036b42a",
+      "decision": "DECIDED (founder, 2026-11-17), typed by the founder, verbatim: \"all sources i have sent to you and all sources in the repo are legally and i have permission to copy all of them and re name them to orcel. so not worry about the licness anymore\"",
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md; no copyright-holder-signed grant is in the repository)",
+      "note": "The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself; the gates it describes are implemented on branch wp1/licence-gates.",
+      "changes": [
+        "A licence type no longer blocks: no gate refuses AGPL, GPL, LGPL, MPL, SSPL, BUSL, FSL, commercial or unlicensed code or dependencies; dependency licences are reported.",
+        "The gates require, for every copied donor file: source repository, pinned commit (or registry release with SHA-256), source path, original licence recorded as it is, the original copyright or attribution notice preserved, and the owner-asserted authorization reference.",
+        "A file carrying a licence marker, and a file the scan cannot read, needs a provenance or reviewed reference entry.",
+        "Isolating a component (apps/orcel-firecrawl) is an architecture choice, not a licence requirement; the fd06-files.txt allowlist and the 'no Apache unit links an AGPL unit' invariant are withdrawn.",
+        "UNIFIED_INTEGRATION_SPEC.md revision 9 amends C-15, C-16, C-17, C-20, sections 3.2, 5.6 and 6.1, WP1-01 and G-2 to match."
+      ]
+    }
+  ]
 }

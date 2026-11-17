@@ -44,6 +44,7 @@ import {
   readPolicy,
   readText,
   underAny,
+  rootFromArgs,
 } from "./licence-gate-lib.mjs";
 
 const SHA1 = /^[0-9a-f]{40}$/;
@@ -117,8 +118,17 @@ export function checkProvenance(root) {
   const donors = manifest.donors ?? {};
   for (const [id, donor] of Object.entries(donors)) checkDonor(root, id, donor, authorizations, required, errors);
 
-  const entries = manifest.files ?? [];
-  const references = manifest.references ?? [];
+  const entries = [];
+  const references = [];
+  for (const [list, out, kind] of [[manifest.files ?? [], entries, "file"], [manifest.references ?? [], references, "reference"]]) {
+    for (const [index, entry] of list.entries()) {
+      if (typeof entry?.path !== "string" || !entry.path) {
+        errors.push(`${kind} entry ${index + 1} of ${PROVENANCE_PATH} has no "path"`);
+      } else {
+        out.push(entry);
+      }
+    }
+  }
   for (const entry of entries) {
     if (!donors[entry.donor]) errors.push(`file ${entry.path}: unknown donor ${entry.donor}`);
     const sources = Array.isArray(entry.source) ? entry.source : [];
@@ -186,8 +196,7 @@ export function checkProvenance(root) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const flag = process.argv.indexOf("--root");
-  const root = flag > 0 ? resolve(process.argv[flag + 1]) : resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const root = rootFromArgs(process.argv, resolve(dirname(fileURLToPath(import.meta.url)), ".."), "check-donor-provenance");
   const { errors, donors, entries, required } = checkProvenance(root);
   if (errors.length) {
     for (const error of errors) console.error(`check-donor-provenance: ${error}`);
