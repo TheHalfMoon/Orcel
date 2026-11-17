@@ -108,8 +108,9 @@ The run surface (`/agent/runs`) answers `501` until Orcel's own planner exists.
 
 ## 3. Grain scope
 
-This work extends **SG-000133** (web intelligence) beyond Firecrawl parity. Recommended amendment line for the grain's
-scope, to be recorded by the activation owner:
+This work extends **SG-000133** (web intelligence) beyond Firecrawl parity. The P-1 crate is inert (no tool, route,
+listener, network or authority), so this PR does not amend the grain. The amendment belongs with the dispatch packet
+that first wires the crate into `orceld` (MCP tools or the loopback route). Recommended line for the grain's scope:
 
 > Include: Exa-compatible local search (REA P-1 to P-4): the pure `crates/orcel-search` engine (lexical, $0, no
 > network), its MCP tools `orcel_search`/`orcel_fetch`/`orcel_answer`/`orcel_similar` and an Exa-shaped `orceld`
@@ -132,14 +133,14 @@ scope, to be recorded by the activation owner:
 | `src/server/cli.ts` | not ported (no listener) |
 | new | `src/formats.rs` (`html`, `json`), `src/url.rs` |
 
-Tests: 76 Rust tests. 46 of the 48 PoC behaviours are ported one to one (`tests/engine.rs` 15, `tests/ranking.rs`
+Tests: 79 Rust tests. 46 of the 48 PoC behaviours are ported one to one (`tests/engine.rs` 15, `tests/ranking.rs`
 11, `tests/extract.rs` 6, `tests/provenance_cost.rs` 8, `tests/exa_surface.rs` 6). The three `exa-js` round trips run
 at the JSON-body level (the bodies `exa-js` sends and the fields it reads); the live HTTP round trip moves to the
 packet that mounts the route on `orceld`. Of the remaining two, the loopback-only assertion is covered by the
 no-network-surface test (the crate's dependency set and source), and the 401 for a wrong key moves to `orceld` (auth is
 its job). New tests: 3 extraction checks for the tree builder, hidden content and dates, 2 for the route table and Exa
-bodies with unknown fields, 13 for the P-1 items (`tests/p1_items.rs`), and 12 for hostile input
-(`tests/adversarial.rs`).
+bodies with unknown fields, 13 for the P-1 items (`tests/p1_items.rs`), and 15 for hostile input and
+cost bounds (`tests/adversarial.rs`).
 
 Hostile-input bounds (security review of the first P-1 commit): input over 5 MiB (`MAX_HTML_BYTES`) or a tree over
 200 000 nodes (`MAX_NODES`) is refused with `content_too_large`; the open-element stack stops growing at 512, and
@@ -149,8 +150,10 @@ removed in one pass; trimmed text lengths and leaf-block flags come from one pos
 each word once; queries are limited to 2 KiB and 64 terms; `contents` enforces the 10-target limit; `/answer`
 `numResults` is clamped. `ETag` and `Last-Modified` values with anything but visible ASCII and spaces, or over 256
 bytes, are dropped at ingest and again when conditional-request headers are built, so a stored value cannot inject a
-header line. The adversarial tests assert deterministic work counters (node count, rule lookups, analysis visits), not
-wall-clock time.
+header line. Corpus eviction at the 5000-document cap is O(1) amortized (an insertion-order queue with generation
+tags), `findSimilar` reuses cached term vectors until the corpus changes, and `Dom` traversals return empty results for
+ids outside the tree. The adversarial tests assert deterministic work counters (node count, rule lookups, analysis
+visits), not wall-clock time.
 
 Known differences from the PoC: diacritic folding covers combining marks, Latin-1, Latin Extended-A, Latin ligatures
 and fullwidth ASCII rather than full NFKD; lengths count Unicode scalar values rather than UTF-16 units; request ids are
