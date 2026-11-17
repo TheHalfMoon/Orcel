@@ -292,13 +292,12 @@ mod tests {
             (WorkerCapability::SchemaExtract, "SG-000133"),
         ] {
             assert!(!admitted(capability));
-            match admit(capability) {
-                Err(HostError::Invalid(why)) => {
-                    assert!(why.contains("denied by default"), "{why}");
-                    assert!(why.contains(grain), "{why}");
-                }
-                other => panic!("not denied: {other:?}"),
-            }
+            let result = admit(capability);
+            assert!(
+                matches!(&result, Err(HostError::Invalid(why))
+                    if why.contains("denied by default") && why.contains(grain)),
+                "not denied with {grain}: {result:?}"
+            );
         }
     }
 
