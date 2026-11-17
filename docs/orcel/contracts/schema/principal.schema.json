@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Principal",
+  "type": "object",
+  "properties": {
+    "client_profile_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "contract": {
+      "description": "`\"orcel.principal/1\"`.",
+      "type": "string"
+    },
+    "display": {
+      "description": "Bounded; escaped by `prompt_display` before any prompt shows it.",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/PrincipalKind"
+    },
+    "principal_id": {
+      "description": "Opaque. `LocalUser`: SHA-256 of the OS identity binding;\n`RestClient`: the token id.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "kind",
+    "principal_id",
+    "display"
+  ],
+  "$defs": {
+    "PrincipalKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "mcp_client",
+            "rest_client",
+            "remote_principal"
+          ]
+        },
+        {
+          "description": "The only kind that can issue a lease (C-03).",
+          "type": "string",
+          "const": "local_user"
+        },
+        {
+          "description": "Recorded for attribution and job ownership, never as authority.",
+          "type": "string",
+          "const": "agent_runtime"
+        },
+        {
+          "description": "Recorded for attribution, never as authority.",
+          "type": "string",
+          "const": "sidecar"
+        }
+      ]
+    }
+  }
+}

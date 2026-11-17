@@ -17,6 +17,26 @@ decisions and roadmap:
   - a license table and an advisory audit;
   - tracing forced off.
 
+## Task orchestration (W2-02, Agent S primitives)
+
+`orcel_agent/orchestrator.py` (`TaskOrchestrator`) is a `Planner` adapted
+from Agent S at `0fff0e634869dab72027435b4586e62300185d41` (Apache-2.0;
+`docs/orcel/agent_s_provenance.json`):
+
+- **Plan.** It decomposes the goal into a subtask DAG (`task_graph.py`).
+- **Work.** It works through the subtasks with a reflecting worker, and
+  re-plans when a subtask fails.
+- **Recover.** It recovers from unexpected dialogs by closing them or
+  pressing a dismiss-type button, through orceld.
+- **Finish.** It finishes clean only when caller-supplied read-only success
+  checks pass on real orceld results (`verification.py`). A DONE, an empty
+  plan or a reflection is only a claim.
+
+Every action is still one proposal to the Agent gate and one orceld call.
+The model is any object with `complete(role, messages)`, supplied by the
+caller (BYOK, opt-in). Map, decisions and test results:
+`docs/orcel/implementation-readiness/prep/W2_02_AGENT_S_INTEGRATION.md`.
+
 ## Evaluation (SG-000129 M3 slice 6)
 
 `python -m orcel_bench agent-eval` (`tests/benchmarks/orcel_bench/agent_eval.py`)

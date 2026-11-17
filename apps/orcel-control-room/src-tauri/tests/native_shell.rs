@@ -562,7 +562,7 @@ fn assert_order(finished: &Finished) {
 fn probes() {
     let finished = finish(
         spawn(&mut scenario_command("probes")),
-        Duration::from_secs(120),
+        Duration::from_secs(180),
     );
     finished.show("probe scenario");
     assert_eq!(finished.code, Some(0));
@@ -637,6 +637,43 @@ fn scenario_probes() -> i32 {
     })
 }
 
+/// How long the probe waits for the shell to record one awaited event. Eleven
+/// waits at most, so a run where every one times out still exits (and reports)
+/// within the parent's limit.
+const EVENT_WAIT: Duration = Duration::from_secs(10);
+
+/// Waits until the shell's own report (read in this process: the same
+/// counters the exit report prints) satisfies `seen`, polling for up to
+/// [`EVENT_WAIT`]. On a timeout it says so on stderr and goes on; the parent's
+/// assertions on the exit report then fail with the counts as they were.
+fn wait_for(what: &str, seen: impl Fn(&[String]) -> bool) {
+    let start = Instant::now();
+    loop {
+        if seen(&orcel_control_room_shell::report::lines()) {
+            return;
+        }
+        if start.elapsed() > EVENT_WAIT {
+            eprintln!("probe: {what} not seen within {EVENT_WAIT:?}");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The number right after `prefix` in the report line starting with it, or
+/// zero.
+fn reported(lines: &[String], prefix: &str) -> usize {
+    lines
+        .iter()
+        .find_map(|line| line.strip_prefix(prefix))
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Each step waits until the shell has recorded what it expects before the
+/// next starts, so the report the parent reads is complete when the window
+/// closes, however slowly WebView2 runs.
 fn probe(window: tauri::WebviewWindow) {
     let pause = |ms: u64| std::thread::sleep(Duration::from_millis(ms));
     let eval = |script: &str| {
@@ -644,7 +681,10 @@ fn probe(window: tauri::WebviewWindow) {
             eprintln!("eval failed: {error}");
         }
     };
-    pause(800);
+    // The view's own calls when it loads.
+    wait_for("the page's own command calls", |lines| {
+        reported(lines, "SG119-IPC commands=") >= PAGE_CALLS
+    });
     // A3: each served command call is counted; a command the ACL refuses is
     // not (it never reaches a handler). Without orceld, app_status answers a
     // typed "unavailable".
@@ -652,18 +692,33 @@ fn probe(window: tauri::WebviewWindow) {
         eval("window.__TAURI__.core.invoke('app_status').catch(function () {});");
     }
     eval("window.__TAURI__.core.invoke('sg119_native_probe').catch(function () {});");
-    pause(1500);
+    wait_for("the probe's command calls", |lines| {
+        reported(lines, "SG119-IPC commands=") >= PAGE_CALLS + COMMAND_CALLS
+    });
+    // Nothing counts the refused sg119_native_probe (it never reaches a
+    // handler); give it a moment to be refused before the page moves on.
+    pause(500);
     eval("window.open('https://tauri.localhost/index.html');");
     eval("window.open('https://example.invalid/');");
     eval(
         "(function () { var a = document.createElement('a'); a.href = 'https://tauri.localhost/index.html'; \
          a.target = '_blank'; a.textContent = 'x'; document.body.appendChild(a); a.click(); a.remove(); })();",
     );
-    pause(1500);
-    for (url, _) in NAVIGATIONS {
+    wait_for("three new-window requests", |lines| {
+        reported(lines, "SG119-NEWWINDOW requests=") >= 3
+    });
+    // One navigation at a time: the next starts only once the shell has
+    // refused this one, so a later assignment to `location` cannot supersede
+    // an attempt before its NavigationStarting reached the shell.
+    for (url, described) in NAVIGATIONS {
         eval(&format!("window.location.href = '{url}';"));
-        pause(800);
+        let refusal = format!("SG119-NAV-REFUSED {described}");
+        wait_for(&format!("the refusal of {url}"), |lines| {
+            lines.contains(&refusal)
+        });
     }
+    // Chromium may stop these before the shell sees them, so there is no
+    // event to wait for; the page must stay on the asset origin either way.
     for url in BLOCKED_ANYWAY {
         eval(&format!("window.location.href = '{url}';"));
         pause(800);
@@ -673,7 +728,11 @@ fn probe(window: tauri::WebviewWindow) {
          a.href = URL.createObjectURL(new Blob(['sg119'], { type: 'text/plain' })); \
          a.download = 'sg119-download-probe.txt'; document.body.appendChild(a); a.click(); a.remove(); })();",
     );
-    pause(2500);
+    wait_for("the download request", |lines| {
+        reported(lines, "SG119-DOWNLOAD requests=") >= 1
+    });
+    // Let the refused download settle before the URL is read.
+    pause(500);
     let url = window
         .url()
         .map(|url| url.to_string())

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Orcel Orca Eye dark application icon">
-  <rect width="256" height="256" rx="58" fill="#080808"/>
-  <g transform="translate(48 48) scale(.625)"><path class="orcel-orca-eye" fill-rule="evenodd" d="M128 24 A104 104 0 1 1 127.9 24 Z M60 136 C80 92 150 70 206 82 C178 114 120 140 60 136 Z" fill="#FFFFFF"/></g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Orcel Moon Tile dark application icon">
+  <rect width="256" height="256" rx="58" fill="#090C12"/>
+  <g transform="translate(40 40) scale(.6875)"><g class="orcel-moon-tile"><path fill-rule="evenodd" d="M80 30H176A56 56 0 0 1 232 86V170A56 56 0 0 1 176 226H80A56 56 0 0 1 24 170V86A56 56 0 0 1 80 30ZM70 74H98A8 8 0 0 1 106 82V82A8 8 0 0 1 98 90H70A8 8 0 0 1 62 82V82A8 8 0 0 1 70 74ZM136 96A50 50 0 0 1 136 196Z" fill="#FFFFFF"/><path d="M144 112A34 34 0 0 1 144 180Z" fill="#A6ACE6"/></g></g>
 </svg>

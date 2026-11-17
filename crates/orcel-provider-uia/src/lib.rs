@@ -974,6 +974,29 @@ pub struct NativeElement {
     pub children: Vec<NativeElement>,
 }
 
+/// W2-01: one short ref of a compact ref tree and the element it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactRef {
+    pub reference: String,
+    pub runtime_id: String,
+    pub role: String,
+}
+
+/// W2-01: the compact ref tree (HCU semantic layer) the Windows computer
+/// host derives from one bounded tree read: the model-facing text with short
+/// `rN` refs, the refs, the semantic diff from the previous read of the same
+/// window, and the layout frame id GUI coordinates were observed against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactRefTree {
+    pub snapshot_id: String,
+    pub text: String,
+    pub truncated: bool,
+    pub refs: Vec<CompactRef>,
+    pub diff_text: Option<String>,
+    pub layout_frame_id: Option<String>,
+    pub adapter: String,
+}
+
 /// One window-scoped capture as reported by an adapter. Adapters report
 /// raw pixels for the exact target window only; scope enforcement,
 /// identity binding, bounds, and protected-surface exclusion live in the
@@ -1003,6 +1026,16 @@ pub trait UiaAdapter {
         Err(UiaError::new(
             FailureCode::ProviderUnavailable,
             "scoped subtree observation is unavailable in this adapter",
+        ))
+    }
+    /// W2-01: read the bounded tree of the live window `hwnd` together with
+    /// the compact ref tree the host derived from that same read (HCU
+    /// semantic layer). Only the Windows computer host serves it; the
+    /// default refuses.
+    fn read_ref_tree(&self, _hwnd: u64) -> Result<(Vec<NativeElement>, CompactRefTree), UiaError> {
+        Err(UiaError::new(
+            FailureCode::CapabilityDenied,
+            "the compact ref tree is served only by the Windows computer host",
         ))
     }
     /// Perform one structured InvokePattern actuation against the live
@@ -1915,6 +1948,40 @@ impl UiaRegistry {
             window_id,
             expected_window_generation,
             None,
+            false,
+            max_depth,
+            max_nodes,
+            workspace_id,
+            policy_revision,
+        )
+    }
+
+    /// W2-01: `observe_tree` plus the compact ref tree (HCU semantic layer)
+    /// the Windows computer host derived from the same read. The elements
+    /// are registered exactly as `observe_tree` registers them; the result
+    /// adds `ref_tree` with the text and, for each short ref, the element id
+    /// this registry issued for it (refs whose element fell outside the
+    /// registered bounds are left out). This is an observation only and
+    /// grants nothing: actions still go through the element ids, approvals
+    /// and stale checks of this registry. orceld exposes it only when its
+    /// grain gate allows (denied by default).
+    #[allow(clippy::too_many_arguments)]
+    pub fn observe_ref_tree(
+        &mut self,
+        adapter: &impl UiaAdapter,
+        window_id: &str,
+        expected_window_generation: u64,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+        policy_revision: &str,
+    ) -> Result<Value, UiaError> {
+        self.observe_tree_from(
+            adapter,
+            window_id,
+            expected_window_generation,
+            None,
+            true,
             max_depth,
             max_nodes,
             workspace_id,
@@ -1947,6 +2014,7 @@ impl UiaRegistry {
             window_id,
             expected_window_generation,
             Some((root_element_id, expected_tree_generation)),
+            false,
             max_depth,
             max_nodes,
             workspace_id,
@@ -2015,6 +2083,7 @@ impl UiaRegistry {
         window_id: &str,
         expected_window_generation: u64,
         root: Option<(&str, u64)>,
+        want_ref_tree: bool,
         max_depth: Option<u64>,
         max_nodes: Option<u64>,
         workspace_id: &str,
@@ -2082,7 +2151,22 @@ impl UiaRegistry {
         }
         // SG-000128: a scoped root is validated (and the budget checked)
         // before anything is read, bumped or replaced.
+        let mut compact: Option<CompactRefTree> = None;
         let natives = match root {
+            None if want_ref_tree => {
+                let (natives, tree) = adapter.read_ref_tree(record.hwnd).map_err(|error| {
+                    let code = match error.code {
+                        FailureCode::CapabilityDenied => error.code,
+                        _ => FailureCode::ProviderUnavailable,
+                    };
+                    UiaError::new(
+                        code,
+                        format!("uia ref tree observation is unavailable: {}", error.message),
+                    )
+                })?;
+                compact = Some(tree);
+                natives
+            }
             None => adapter.read_tree(record.hwnd).map_err(|error| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
@@ -2147,7 +2231,7 @@ impl UiaRegistry {
                 stack.push((child, depth + 1));
             }
         }
-        let result = json!({
+        let mut result = json!({
             "schema": UIA_SCHEMA,
             "window_id": record.window_id,
             "window_generation": record.window_generation,
@@ -2159,6 +2243,31 @@ impl UiaRegistry {
             "workspace_id": workspace_id,
             "policy_revision": policy_revision,
         });
+        if let Some(tree) = compact {
+            // Each short ref maps to the element id this registry issued in
+            // this tree generation, the only identity actions accept.
+            let mut refs = serde_json::Map::new();
+            for entry in &tree.refs {
+                let element_id = allocate_element_id(window_id, &entry.runtime_id);
+                if self
+                    .elements
+                    .get(&element_id)
+                    .is_some_and(|element| element.tree_generation == tree_generation)
+                {
+                    refs.insert(entry.reference.clone(), json!(element_id));
+                }
+            }
+            result["ref_tree"] = json!({
+                "schema": "orcel-uia-ref-tree/1",
+                "snapshot_id": tree.snapshot_id,
+                "text": tree.text,
+                "truncated": tree.truncated,
+                "refs": refs,
+                "diff": tree.diff_text,
+                "layout_frame_id": tree.layout_frame_id,
+                "adapter": tree.adapter,
+            });
+        }
         enforce_response_bytes(&result)
     }
 

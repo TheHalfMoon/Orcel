@@ -62,6 +62,7 @@ mod webmcp;
 pub mod worker_host;
 mod worker_launch;
 mod worker_navigation;
+mod worker_outline;
 #[cfg(windows)]
 mod worker_process;
 
@@ -205,4 +206,8 @@ pub use worker_launch::{
 };
 pub use worker_navigation::{
     decode_form, NavigationPolicy, RequestDetail, RouteKind, Submission, Submitted,
+};
+pub use worker_outline::{
+    admit as admit_worker_capability, validate_schema, Outline, OutlineNode, SchemaExtraction,
+    SchemaField, SchemaTake, SchemaValue, WorkerCapability,
 };

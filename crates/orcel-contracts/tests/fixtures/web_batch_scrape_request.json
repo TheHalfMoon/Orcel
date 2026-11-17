@@ -1,0 +1,29 @@
+{
+  "contract": "orcel.web-batch-scrape/1",
+  "urls": [
+    "https://example.com/a",
+    "https://example.com/b"
+  ],
+  "scope": {
+    "origins": [
+      "https://example.com"
+    ]
+  },
+  "extract": {
+    "formats": [
+      "html",
+      "raw_html",
+      "change_tracking"
+    ],
+    "only_main_content": false,
+    "include_tags": [],
+    "exclude_tags": []
+  },
+  "engine": "fetch",
+  "headers": [],
+  "privacy": {
+    "profile": "default",
+    "sensitive": []
+  },
+  "task": "Compare two product pages"
+}

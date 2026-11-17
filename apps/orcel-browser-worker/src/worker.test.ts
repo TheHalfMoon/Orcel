@@ -7,6 +7,8 @@ import type { VerifyProbe, VerifyResult } from "./verify.js";
 import type { FormAction } from "./actions/form.js";
 import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState, describeLaunchError } from "./worker.js";
 import { MAX_SCREENSHOT_PIECE_CHARS, ScreenshotError } from "./screenshot.js";
+import type { BoundedOutline } from "./outline/capture.js";
+import type { SchemaField, SchemaValue } from "./outline/schema-extract.js";
 
 class FakeEngine implements EngineSession {
   closed = 0;
@@ -37,6 +39,23 @@ class FakeEngine implements EngineSession {
   });
   async observe(): Promise<{ tab: number; url: string; snapshot: { nodes: never[]; truncated: boolean } }> {
     return { tab: this.tab, ...(await this.observeBehavior()) };
+  }
+  outlineBehavior: () => Promise<{ url: string; outline: BoundedOutline }> = async () => ({
+    url: "https://fixture.test/",
+    outline: { nodes: [{ id: "0-4", role: "heading", name: "Fees", xpath: "/html[1]/body[1]/h1[1]", children: [] }], truncated: false }
+  });
+  async outline(): Promise<{ tab: number; url: string; outline: BoundedOutline }> {
+    return { tab: this.tab, ...(await this.outlineBehavior()) };
+  }
+  schemaFields: SchemaField[][] = [];
+  schemaBehavior: (fields: SchemaField[]) => Promise<{ url: string; truncated: boolean; values: SchemaValue[] }> = async (fields) => ({
+    url: "https://fixture.test/",
+    truncated: false,
+    values: fields.map((field) => ({ key: field.key, found: true, text: "Fees" }))
+  });
+  async extractSchema(fields: SchemaField[]): Promise<{ tab: number; url: string; truncated: boolean; values: SchemaValue[] }> {
+    this.schemaFields.push(fields);
+    return { tab: this.tab, ...(await this.schemaBehavior(fields)) };
   }
   discoverBehavior: () => Promise<{ url: string; truncated: boolean; tools: never[] }> = async () => ({
     url: "https://fixture.test/",
@@ -193,7 +212,7 @@ test("hello, launch, ping and shutdown follow the closed lifecycle", async () =>
 });
 
 test("anything before hello, a wrong generation, or a second hello fails closed", async () => {
-  for (const first of [validLaunch(), { frame: "ping", nonce: "n" }, { frame: "hello", generation: 16 }, { frame: "hello", generation: 18 }, { frame: "bogus" }]) {
+  for (const first of [validLaunch(), { frame: "ping", nonce: "n" }, { frame: "hello", generation: 17 }, { frame: "hello", generation: 18 }, { frame: "bogus" }]) {
     const { worker, sent, exits, launches } = harness();
     await worker.receive(first);
     assert.deepEqual(sent, [{ frame: "error", code: "protocol_violation" }]);
@@ -594,6 +613,78 @@ test("BR-05: dismissed dialogs are reported once", async () => {
   });
   await worker.receive({ frame: "dialogs", dlg_id: 2 });
   assert.deepEqual(sent.at(-1), { frame: "dialogs_seen", dlg_id: 2, dialogs: [], truncated: false });
+});
+
+test("W2-03: outline reports bounded nodes or a typed failure, and never runs during a navigation", async () => {
+  const { worker, sent, engine } = await launched();
+  await worker.receive({ frame: "outline", out_id: 2 });
+  assert.deepEqual(sent.at(-1), {
+    frame: "outlined",
+    out_id: 2,
+    tab: 1,
+    url: "https://fixture.test/",
+    truncated: false,
+    nodes: [{ id: "0-4", role: "heading", name: "Fees", xpath: "/html[1]/body[1]/h1[1]", children: [] }]
+  });
+  engine.outlineBehavior = async () => {
+    throw new Error("the outline timed out");
+  };
+  await worker.receive({ frame: "outline", out_id: 3 });
+  assert.deepEqual(sent.at(-1), { frame: "outline_failed", out_id: 3 });
+  // A page URL longer than the bound fails instead of breaking the frame.
+  engine.outlineBehavior = async () => ({ url: `https://fixture.test/${"a".repeat(2100)}`, outline: { nodes: [], truncated: false } });
+  await worker.receive({ frame: "outline", out_id: 4 });
+  assert.deepEqual(sent.at(-1), { frame: "outline_failed", out_id: 4 });
+  // While a navigation runs, the document is being replaced.
+  let release: () => void = () => {};
+  engine.navigateBehavior = (url) => new Promise((resolve) => (release = () => resolve({ url, status: 200 })));
+  await worker.receive({ frame: "navigate", nav_id: 1, url: "https://fixture.test/next" });
+  await worker.receive({ frame: "outline", out_id: 5 });
+  assert.deepEqual(sent.at(-1), { frame: "outline_failed", out_id: 5 });
+  await worker.receive({ frame: "extract_schema", xs_id: 6, fields: [{ key: "title", take: "text", role: "heading" }] });
+  assert.deepEqual(sent.at(-1), { frame: "schema_extraction_failed", xs_id: 6 });
+  release();
+  await settle();
+});
+
+test("W2-03: extract_schema reports one value per field or a typed failure", async () => {
+  const { worker, sent, engine } = await launched();
+  const fields = [
+    { key: "title", take: "text", role: "heading", name: "Fees" },
+    { key: "rows", take: "texts", xpath: "/html[1]/body[1]/ul[1]" }
+  ];
+  await worker.receive({ frame: "extract_schema", xs_id: 7, fields });
+  assert.deepEqual(engine.schemaFields.at(-1), fields);
+  assert.deepEqual(sent.at(-1), {
+    frame: "schema_extracted",
+    xs_id: 7,
+    tab: 1,
+    url: "https://fixture.test/",
+    truncated: false,
+    values: [
+      { key: "title", found: true, text: "Fees" },
+      { key: "rows", found: true, text: "Fees" }
+    ]
+  });
+  // A session that answers with the wrong number of values fails the frame.
+  engine.schemaBehavior = async () => ({ url: "https://fixture.test/", truncated: false, values: [] });
+  await worker.receive({ frame: "extract_schema", xs_id: 8, fields });
+  assert.deepEqual(sent.at(-1), { frame: "schema_extraction_failed", xs_id: 8 });
+  engine.schemaBehavior = async () => {
+    throw new Error("the outline timed out");
+  };
+  await worker.receive({ frame: "extract_schema", xs_id: 9, fields });
+  assert.deepEqual(sent.at(-1), { frame: "schema_extraction_failed", xs_id: 9 });
+});
+
+test("W2-03: outline and extract_schema before launch fail closed", async () => {
+  for (const frame of [{ frame: "outline", out_id: 1 }, { frame: "extract_schema", xs_id: 1, fields: [{ key: "k", take: "text", role: "heading" }] }]) {
+    const { worker, sent, exits } = harness();
+    await worker.receive({ frame: "hello", generation: 19 });
+    await worker.receive(frame);
+    assert.deepEqual(sent.at(-1), { frame: "error", code: "not_ready" });
+    assert.deepEqual(exits, [1]);
+  }
 });
 
 test("observe before launch fails closed", async () => {
