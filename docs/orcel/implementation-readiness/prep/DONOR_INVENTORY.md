@@ -3,7 +3,9 @@
 **Status: INVENTORY ONLY.** This document imports, copies or sublicenses no donor code. It records what
 each donor repository contains at an exact commit, what licence terms its files carry, and how each
 capability could reach Orcel. It makes no legal decision. The machine-readable companion is
-[`capability_inventory.json`](capability_inventory.json) (96 records, one per feature).
+[`capability_inventory.json`](capability_inventory.json) (96 records at first; 140 after section 8). The master
+donor-to-feature transplant ledger for the 2026-11-17 master directive is section 8 and
+[`TRANSPLANT_LEDGER.json`](TRANSPLANT_LEDGER.json).
 
 - **Orcel base:** `origin/main` at `4dd5cfc93b524e3e99eed9097c3e81917676bee8`. Orcel is Apache-2.0.
 - **Planning input:** founder PR #785, `docs/orcel/UNIFIED_PLATFORM_BLUEPRINT_2026-11-16.md` and
@@ -426,3 +428,193 @@ inventory, also applied to `capability_inventory.json` (now 98 records: 13 TESTE
 - **Extended inventory:** Exa Browser (`exa_browser.unverified`) and TinyFish (`tinyfish.unverified`) are added as NOT
   STARTED with `SOURCE_UNVERIFIED`. The founder's separate REA effort (`D:\Orcel-REA`) has produced no outputs yet, so
   no repository, licence or SHA is recorded for either.
+
+## 8. Master transplant ledger (2026-11-17)
+
+The founder's master directive of 2026-11-17 names 50 sources in eight groups (A browser and web engines, B Exa, C TinyFish,
+D computer use and agents, E mobile, F remote and infrastructure, G agents and screen history, H evaluation). This section
+is the human-readable view of [`TRANSPLANT_LEDGER.json`](TRANSPLANT_LEDGER.json) (one record per source, plus the donors
+Orcel already tracks). `capability_inventory.json` gains one record per newly inventoried source (now 140 records:
+15 TESTED, 111 NOT STARTED, 14 BLOCKED). Nothing here imports, copies or sublicenses donor code.
+
+- **Method.** No clones. SHAs are `git ls-remote <repo> HEAD` on 2026-11-17. Metadata, languages, the recursive tree and
+  every LICENSE, NOTICE, THIRD_PARTY and manifest file at that SHA come from the GitHub API. Wave 1 and Wave 2 clone and
+  test evidence comes from the REA workspaces `D:\Orcel-REA` and `D:\Orcel-REA-W2` (read-only); every REA clone SHA
+  matches the HEAD read here. Model weights, datasets and binaries are recorded separately and were not downloaded.
+- **Statuses** (highest stage any part of the source has reached): NOT_ACQUIRED (API pin only), SOURCE_ACQUIRED (local
+  clone at the SHA), REA_VERIFIED (donor tests run by the REA), TRANSPLANTED, INTEGRATED, TESTED (Orcel tests on main),
+  RELEASE_QUALIFIED (none). Downloading never makes a source INTEGRATED.
+- **Rights** are recorded in two separate fields: the public licence, and the owner-asserted authorization recorded in
+  `docs/orcel/grants/2026-11-17-founder-attestation.md` (section "Master directive"), which is owner-asserted and not
+  independent legal verification. A public-redistribution flag never blocks private or local engineering.
+- **One owner per feature.** Each ledger module names one Orcel owner; "(new)" owners do not exist on main yet.
+
+### 8.1 Per-source table
+
+| Grp | Source | Repository | Pinned SHA | Licence | Status | Public redistribution | Orcel owner | P |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | Obscura | h4ckf0r0day/obscura | `0d9a2f764ffdb097269da048002c593865e83a9e` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | permissive | third_party/obscura + crates/orcel-browser-host (engine contract) | P2 |
+| A | browser-use | browser-use/browser-use | `4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134` | MIT | TESTED | permissive | apps/orcel-browser-worker | P1 |
+| A | Vercel browser-use/agent-desktop | vercel-labs/agent-desktop (NEEDS_FOUNDER_CONFIRMATION) | `8ffecc1d3d088727f8d84baf4dde0224aab2e8ad` | Apache-2.0 (candidate 2: MIT) | NOT_ACQUIRED | permissive | apps/orcel-native-host | P2 |
+| A | Crawlee | apify/crawlee | `7bec9ad5631f8e529ae067494f6841dba3c12683` | Apache-2.0 | NOT_ACQUIRED | permissive | crates/orcel-jobs (new) | P2 |
+| A | Scrapling | D4Vinci/Scrapling | `bb223f2f5fc8f743772751a5ce283ef7851ca6be` | BSD-3-Clause | NOT_ACQUIRED | permissive | crates/orcel-browser-host | P2 |
+| A | Firecrawl | firecrawl/firecrawl | `98a5630a0b7ad3d58653dfe4ceb21d444dd8e2d2` | AGPL-3.0 + per-directory terms | TESTED | copyleft, separate component | apps/orcel-firecrawl (new) | P1 |
+| A | Fleet | fleetdm/fleet | `6070ad340095cd9dbfdef75fb6d18c9ba14c4b82` | MIT + per-directory terms | NOT_ACQUIRED | mixed per directory | crates/orcel-fleet-report (new) | P3 |
+| A | Playwright | microsoft/playwright | `76b6fa645744699e982a54c48c3fc7971f4a1eef` | Apache-2.0 + per-directory terms | TESTED | permissive | apps/orcel-browser-worker | P1 |
+| B | exa-labs/exa-js | exa-labs/exa-js | `ec25f4016f5a7b514fae9947ca9fd191885eabab` | MIT | REA_VERIFIED | permissive | tests/exa-compat (new) | P1 |
+| B | exa-labs/exa-py | exa-labs/exa-py | `95647c10282cacc3f030440442805f337257d29f` | MIT | REA_VERIFIED | permissive | tests/exa-compat (new) | P2 |
+| B | exa-labs/exa-mcp-server | exa-labs/exa-mcp-server | `93c0d5e1fecfc1ec9bf70fa9f3633962a1f2fa8a` | MIT | REA_VERIFIED | permissive | apps/orcel-mcp | P1 |
+| B | exa-labs/agent-skills | exa-labs/agent-skills | `9d220cc035f17bc01ca707ffae4ea1114af081fd` | MIT | SOURCE_ACQUIRED | permissive | apps/orcel-mcp | P3 |
+| B | exa-labs/benchmarks | exa-labs/benchmarks | `a6a9590b1634fd4bf6f6ea7fd80b0084489c8e2b` | MIT | SOURCE_ACQUIRED | permissive | tests/benchmarks | P2 |
+| B | exa-labs/openapi-spec | exa-labs/openapi-spec | `ebdf275f7272274a8d8592d62c80f7dd0196e6aa` | NONE | SOURCE_ACQUIRED | **needs grant evidence** | crates/orcel-web (new) | P2 |
+| B | exa-labs/exa-deepseek-chat | exa-labs/exa-deepseek-chat | `f76f8e2f01d1bbfbea82af41011c102678156c30` | NONE | SOURCE_ACQUIRED | **needs grant evidence** | apps/orcel-control-room (reference only) | P3 |
+| B | adisinghstudent/exa-browser | adisinghstudent/exa-browser | `20a0cf9100879f234bd0036a3d9cae58e135265d` | NONE | SOURCE_ACQUIRED | **needs grant evidence** | apps/orcel-control-room (reference only) | P3 |
+| C | tinyfish-mcp-server | tinyfish-io/tinyfish-mcp-server | `7517089ca909fcdc61a083759f1729407de1a667` | MIT | REA_VERIFIED | permissive | apps/orcel-mcp | P1 |
+| C | tinyfish-cookbook | tinyfish-io/tinyfish-cookbook | `b7d98b7a69dc681aca30ffb369bfd78ba059862c` | MIT | SOURCE_ACQUIRED | permissive | tests/benchmarks | P3 |
+| C | tinyfish-web-agent-integrations | tinyfish-io/tinyfish-web-agent-integrations | `73402549446f4fb739a8a3b93073c0b0b1155a45` | MIT + per-directory terms | SOURCE_ACQUIRED | permissive | packages/orcel-sdk-py (new) | P3 |
+| C | agentql | tinyfish-io/agentql | `d6951d214c7ed84f1a53657f801f2a8dd65c91c7` | MIT | SOURCE_ACQUIRED | permissive | apps/orcel-browser-worker (reference only) | P3 |
+| C | agentql-mcp | tinyfish-io/agentql-mcp | `8d3ea0f04af7fae065b53cdde9e5effaafdc0b6a` | MIT | SOURCE_ACQUIRED | permissive | apps/orcel-mcp | P3 |
+| C | agentql-integrations | tinyfish-io/agentql-integrations | `cbb97f094c08a191dcab015a218afd1d91ed09c1` | MIT + per-directory terms | SOURCE_ACQUIRED | permissive | packages/orcel-sdk-py (new) | P3 |
+| C | bigset-oss | tinyfish-io/bigset-oss | `c6611085e2527bc0a5419db400caafa95abc751f` | AGPL-3.0 | SOURCE_ACQUIRED | copyleft, separate component | none (reference only) | P3 |
+| C | tf-playwright-stealth | tinyfish-io/tf-playwright-stealth | `e9adc20a53253d2043bd12b1d73f75bdb1fe5271` | MIT | REA_VERIFIED | permissive | apps/orcel-browser-worker | P2 |
+| D | microsoft Hybrid-Computer-Use | microsoft/Hybrid-Computer-Use | `00eaeebe8ac0d275e46f875bdb5347e5f326faa1` | MIT + per-directory terms | SOURCE_ACQUIRED | permissive | apps/orcel-computer-host | P0 |
+| D | simular-ai Agent-S (S2/S3/S4) | simular-ai/Agent-S | `0fff0e634869dab72027435b4586e62300185d41` | Apache-2.0 + per-directory terms | SOURCE_ACQUIRED | permissive | apps/orcel-agent | P0 |
+| D | browserbase/stagehand | browserbase/stagehand | `82827a219512f0399cb159720a63f7d271d21480` | MIT + per-directory terms | SOURCE_ACQUIRED | permissive | apps/orcel-browser-worker | P0 |
+| D | trycua/cua | trycua/cua | `494c3cdcc2768033bd75ba34745ce810fc55052d` | MIT + per-directory terms | TESTED | mixed per directory | apps/orcel-native-host | P1 |
+| D | microsoft/OmniParser | microsoft/OmniParser | `354021201345a96178360b28733573e27269f2de` | CC-BY-4.0 | NOT_ACQUIRED | mixed per directory | apps/orcel-vision (new) | P0 |
+| D | microsoft/playwright-mcp | microsoft/playwright-mcp | `a62ea28698af6d9bc89438bcec50c63377cef957` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | permissive | apps/orcel-mcp | P0 |
+| D | OpenAdaptAI/OpenAdapt | OpenAdaptAI/OpenAdapt | `2e98be86a802b0867b9513491c5f368ba98811d0` | MIT + per-directory terms | NOT_ACQUIRED | permissive | apps/orcel-agent | P1 |
+| D | OpenAdaptAI/openadapt-flow | OpenAdaptAI/openadapt-flow (archived) | `a8ef4744c47af5f17eaf946e6f5b945b97aa2457` | MIT + per-directory terms | NOT_ACQUIRED | permissive | apps/orcel-agent | P0 |
+| D | anthropics/claude-quickstarts | anthropics/claude-quickstarts | `4a4224bdf0e9cfb3332167b69c90457403813625` | MIT + per-directory terms | NOT_ACQUIRED | permissive | apps/orcel-agent | P2 |
+| D | alibaba/page-agent | alibaba/page-agent | `9eb6b6646500264d9034dd466a4270cb9fc1ef1e` | MIT | NOT_ACQUIRED | permissive | apps/orcel-browser-worker | P1 |
+| D | lightpanda-io/browser | lightpanda-io/browser | `88fb36db0a6ce4c0011c6cb31cf53e3d3b4a4fbf` | AGPL-3.0 + per-directory terms | NOT_ACQUIRED | copyleft, separate component | third_party/lightpanda (new) | P2 |
+| D | browseros-ai/BrowserOS | browseros-ai/BrowserOS | `81c8f6a35c0ae5a2fe8c7a1d3f7e871aa207f24c` | AGPL-3.0 + per-directory terms | NOT_ACQUIRED | copyleft, separate component | apps/orcel-mcp (MIT subpackages only) | P2 |
+| D | Skyvern-AI/skyvern | Skyvern-AI/skyvern | `3e8571338011b8df1c9c9db8fb20856de7b9d13f` | AGPL-3.0 | NOT_ACQUIRED | copyleft, separate component | none (reference only) | P3 |
+| E | Genymobile/scrcpy | Genymobile/scrcpy | `a60891aea193d92e7e5c3942700eca63f9d19a5f` | Apache-2.0 | NOT_ACQUIRED | permissive | crates/orcel-provider-mobile (new) | P1 |
+| E | appium/appium | appium/appium | `51cfc7b292ab834a4155525927139a62e1e67aec` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | permissive | crates/orcel-provider-mobile (new) | P1 |
+| E | X-PLUG/MobileAgent | X-PLUG/MobileAgent | `c4cd0a8f9ddedad24dd8a3daf3a56ca69343849f` | MIT + per-directory terms | NOT_ACQUIRED | permissive | apps/orcel-agent | P1 |
+| E | droidrun (verify org) | droidrun/mobilerun | `e34004270a9d7b68824b94a3a5ba6698cefea69d` | MIT | NOT_ACQUIRED | permissive | crates/orcel-provider-mobile (new) | P1 |
+| E | mobile-dev-inc/Maestro | mobile-dev-inc/Maestro | `0ccf5a9c5b1c48d4cb6211d9060d537e04745107` | Apache-2.0 | NOT_ACQUIRED | permissive | tests/mobile-flows (new) | P1 |
+| F | Ylianst/MeshCentral | Ylianst/MeshCentral | `03fe8529dc8ef0607ea6af78152dba8c70969464` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | mixed per directory | apps/orcel-relay | P2 |
+| F | rustdesk/rustdesk | rustdesk/rustdesk | `3e953e886a874956d8351d6c25e340ea82dd2343` | AGPL-3.0 + per-directory terms | NOT_ACQUIRED | copyleft, separate component | third_party/rustdesk (new) | P2 |
+| F | OpenSandbox (verify org) | opensandbox-group/OpenSandbox | `44e79a2dc3c99e26d82aa87fe13a73537d7e7812` | Apache-2.0 | NOT_ACQUIRED | permissive | apps/orcel-sandbox (new) | P0 |
+| F | CopilotKit/OpenBot | CopilotKit/OpenBot | `d88ff75ed691ab7a415c5c2d099371865c8ff61b` | MIT | NOT_ACQUIRED | permissive | apps/orcel-control-room | P2 |
+| G | NousResearch/hermes-agent | NousResearch/hermes-agent | `081e8d9b75b2bedae297a89232b04ef9be7b26a0` | MIT + per-directory terms | NOT_ACQUIRED | permissive | apps/orcel-agent | P1 |
+| G | screenpipe | screenpipe/screenpipe | `b8f09c879fddc807e9fd3aae7aae4f1a0accb1f6` | Screenpipe Commercial License | NOT_ACQUIRED | **needs grant evidence** | apps/orcel-native-host (reference only) | P3 |
+| H | xlang-ai/OSWorld | xlang-ai/OSWorld | `5123bfdbbc34b947bcffcff564abc62d0ab7072d` | Apache-2.0 | NOT_ACQUIRED | permissive | tests/benchmarks | P1 |
+| H | ServiceNow/BrowserGym | ServiceNow/BrowserGym | `27a90ce815098f43414e93491e06907af468e45b` | Apache-2.0 | NOT_ACQUIRED | permissive | tests/benchmarks | P2 |
+
+Donors already tracked by Orcel (outside the 50):
+
+| Donor | Pin | Licence | Status | Public redistribution | Orcel |
+| --- | --- | --- | --- | --- | --- |
+| vercel-labs/agent-browser | `b06e2533ba9b3823b8a96c859d455cb55f4d7893` | Apache-2.0; cli/src/native/a11y/axe.min.js MPL-2.0 | NOT_ACQUIRED | permissive | crates/orcel-browser-host/src/transfers.rs, crates/orcel-policy |
+| vercel-labs/remote-agent-browser | `8770ea28f3ab0e8822e104e12e0efb65339d235b` | No LICENSE file; package.json declares MIT; GitHub reports no licence | NOT_ACQUIRED | **needs grant evidence** | none |
+| wangzan101/Mika | `e956f5529ad4cfd7881aafaa630318097949f56a` | Apache-2.0 + NOTICE; bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed | NOT_ACQUIRED | mixed per directory | none |
+| phone-harness/phone-harness | `4bebff105af853215fb74c958c2c5e78bc275be2` | MIT | NOT_ACQUIRED | permissive | none |
+| netease-uuyc/uuremote-integration-guide | `181dee4540a8e4161a65e1053fbcf6ad223d24f8` | MIT (org not GitHub-verified) | NOT_ACQUIRED | permissive | none |
+| UU Remote (NetEase) | none | Proprietary; no official source repository found | NOT_ACQUIRED | **needs grant evidence** | none |
+| Vercel agent-use | none | Unknown; repository not identified | NOT_ACQUIRED | **needs grant evidence** | none |
+| bytedance/deer-flow | `81e1ab8dcc86574cfac0ecdfe3636b775a08c567` | MIT | TESTED | permissive | apps/orcel-agent/orcel_agent (tests: apps/orcel-agent/tests) |
+| BuilderIO/agent-native | `9c277b79cb87eb27da538e572dd710986e2fa06d` | MIT | TESTED | permissive | apps/orcel-control-room/src/agentkit; crates/orcel-journal/src/resume.rs (unit tests in the file) |
+| unclecode/crawl4ai | `94b67888ca8b335ff2121423a50e06dd27661922` | Apache-2.0 with an attribution requirement | TESTED | permissive | apps/orcel-browser-worker/src/extract/relevance.ts (relevance.test.ts) |
+| Panniantong/Agent-Reach | `a19a171fa980a0785849596492e0af4db800c82f` | MIT | TESTED | permissive | crates/orceld/src/search.rs (crates/orceld/tests/wi06_search.rs) |
+| WebMCP-org/npm-packages | `7db816b5a280c2d1d4b86559696e993c497c021a` | MIT | TESTED | permissive | apps/orcel-browser-worker/src/webmcp (declarative.test.ts) |
+| J-F-Liu/lopdf | `version 0.45.0` | MIT | TESTED | permissive | apps/orcel-doc-parser/third_party/lopdf (apps/orcel-doc-parser tests) |
+
+### 8.2 Resolution notes
+
+- **Vercel browser-use/agent-desktop** (NEEDS_FOUNDER_CONFIRMATION): The name mixes two organisations. Candidates: vercel-labs/agent-desktop (Apache-2.0, Rust computer-use CLI; admitted as a candidate by FD-UP-3) and browser-use/desktop (MIT, TypeScript desktop app, pinned f073b7574f7927185ebbebd87556391d5cb0cfd1). Neither is substituted for the other; vercel-labs/agent-desktop is the recorded candidate until the founder confirms.
+  - Candidate `vercel-labs/agent-desktop` at `8ffecc1d3d088727f8d84baf4dde0224aab2e8ad`: Apache-2.0, 3801 files.
+  - Candidate `browser-use/desktop` at `f073b7574f7927185ebbebd87556391d5cb0cfd1`: MIT, 554 files.
+- **Firecrawl** (RESOLVED): Founder pin in PR #785. HEAD moved again (2026-11-16 inventory: 42f4d669954649ce33466a2a50e8215c7f1f4d1c).
+- **Fleet** (RESOLVED): Founder pin in PR #785 (fleetdm/fleet). HEAD moved (2026-11-16 inventory: 99e64e6bbee9e7a9b5334fea2527303992f747f7).
+- **adisinghstudent/exa-browser** (RESOLVED): Named exactly in the directive. Third-party project, not Exa Labs; Exa Labs ships no product called Exa Browser (D:\Orcel-REA\reports\CURRENT_STATE.md).
+- **microsoft/playwright-mcp** (RESOLVED): Canonical Microsoft repository. It is a thin package (cli.js, index.js); the implementation lives in microsoft/playwright at 76b6fa645744699e982a54c48c3fc7971f4a1eef.
+- **OpenAdaptAI/openadapt-flow** (RESOLVED): Repository exists and is ARCHIVED; its README says the code now lives in OpenAdaptAI/OpenAdapt packages/flow. Transplant from OpenAdapt at 2e98be86a802b0867b9513491c5f368ba98811d0.
+- **droidrun (verify org)** (RESOLVED): droidrun/droidrun redirects (GitHub rename) to droidrun/mobilerun; the org is droidrun. qdrk/droidrun, named in REA_WAVE3_COPY_FIRST_PLAN.md, is a fork of droidrun/mobilerun and is not used.
+- **OpenSandbox (verify org)** (RESOLVED): alibaba/OpenSandbox redirects to opensandbox-group/OpenSandbox (GitHub transfer); REA_WAVE3_COPY_FIRST_PLAN.md names the same repository.
+- **CopilotKit/OpenBot** (RESOLVED): CopilotKit/OpenBot exists. Not to be confused with ob-f/OpenBot (formerly isl-org/OpenBot, a robotics project), which is not used.
+- **screenpipe** (RESOLVED): screenpipe/screenpipe (mediar-ai/screenpipe redirects here).
+- **Vercel agent-use** (tracked, NEEDS_FOUNDER_CONFIRMATION): still unidentified; `vercel-labs/agent-use` returns 404.
+
+### 8.3 Access blockers
+
+- **No private source is accessible.** The configured GitHub identity has no membership in `exa-labs` or `tinyfish-io`
+  and sees no private repositories there (`D:\Orcel-REA\reports\CURRENT_STATE.md` section 5). Unblocking needs an org
+  invitation or a fine-grained token with `Contents: read` on those orgs, and the exact `owner/repo` names. The hosted
+  Exa and TinyFish backends (ranking models, agent runtime, browser fleet, Websets, monitors) are not public.
+- **Not in any public repository:** Firecrawl's Fire-engine, AgentQL's query engine and SDK, Browserbase, Cua cloud,
+  Simular API, Skyvern cloud, Maestro Cloud, RustDesk Pro server, UU Remote. The Appium platform drivers, the droidrun
+  Portal app and the RustDesk relay server live in separate repositories that are not pinned here.
+- **Model weights are not in the trees:** OmniParser (Hugging Face), GUI-Owl for MobileAgent, Agent S grounding models.
+  Their model-card licences were not read and must be checked before any download.
+- **Disk:** no full clones were made for this ledger; the three Wave 2 clones and the Wave 1 clones stay outside the repo.
+
+### 8.4 PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE
+
+Publishing copied code from these sources in this public repository needs the stated evidence. Each needs a written
+grant from the copyright holder covering redistribution under Orcel's terms, naming the files and the pinned commit,
+stored under `docs/orcel/grants/` with the signer's identity. The founder's owner-asserted authorization is recorded but
+is not that evidence.
+
+- **fleetdm/fleet** (MIT + per-directory terms). Restricted part: ee/ (Fleet Enterprise Edition licence). Evidence: grant from Fleet Device Management Inc. for any file under ee/.
+- **exa-labs/openapi-spec** (NONE). Evidence: grant from Exa Labs, Inc. for the openapi-spec files.
+- **exa-labs/exa-deepseek-chat** (NONE). Evidence: grant from Exa Labs, Inc. for any file of exa-deepseek-chat.
+- **adisinghstudent/exa-browser** (NONE). Evidence: grant from the GitHub user adisinghstudent for any file of exa-browser.
+- **trycua/cua** (MIT + per-directory terms). Restricted part: apps/cua-spaces*, examples/{cua-bots-ios,cua-bots-macos,infinite-canvas-swift,openkoalabot-example-swift,openkoalabot-example-tauri}, libs/{cua-driver-bench,cua-spacesd,spaces-app-swift,spaces-notch-swift}, libs/cua/bench/streaming, libs/cua/crates/* (20 crates listed) (FSL-1.1-MIT). Evidence: grant from Cua AI, Inc. for the FSL-1.1-MIT directories listed above (FSL forbids competing use until each version converts to MIT two years after release).
+- **screenpipe/screenpipe** (Screenpipe Commercial License). Evidence: grant from Negentropy Labs, Inc. (dba Screenpipe) for any screenpipe file, and commercial and competing use.
+- **vercel-labs/remote-agent-browser** (No LICENSE file; package.json declares MIT; GitHub reports no licence). Evidence: grant from Vercel Inc. for the remote-agent-browser files (or a committed LICENSE file at a pinned commit).
+- **UU Remote (NetEase)** (Proprietary; no official source repository found). Evidence: grant from NetEase for any UU Remote source or binary.
+- **Vercel agent-use** (Unknown; repository not identified). Evidence: grant from the unidentified copyright holder for any file.
+
+### 8.5 Copyleft: separate components only
+
+AGPL/GPL code may be published only under its own licence as a separate component (own process and package, notices and
+source offer, no linking into the Apache-2.0 core):
+
+- firecrawl/firecrawl: whole repository.
+- tinyfish-io/bigset-oss: whole repository.
+- trycua/cua: libs/python/som (AGPL-3.0).
+- microsoft/OmniParser: Ultralytics-based icon_detect weights (v1, v1.5, v2) and the ultralytics==8.3.70 dependency (AGPL-3.0).
+- lightpanda-io/browser: whole repository.
+- browseros-ai/BrowserOS: whole repository.
+- Skyvern-AI/skyvern: whole repository.
+- Ylianst/MeshCentral: rdp/, public/mstsc/ (GPL-3.0).
+- rustdesk/rustdesk: whole repository.
+- wangzan101/Mika: PRoot, talloc, Alpine rootfs (GPL-2.0+, LGPL-3.0+, mixed).
+
+### 8.6 Priority 0: highest-value immediately transplantable modules
+
+Ordered by value against Orcel's current gaps. The listed paths carry MIT, Apache-2.0 or CC-BY-4.0 terms (see the
+cautions below); each still needs its own activated grain, provenance file and tests before any copy lands on main.
+
+1. **Stale-reference rejection and reference minting for desktop elements** (hcu, `microsoft/Hybrid-Computer-Use` at `00eaeebe8ac0d275e46f875bdb5347e5f326faa1`, SOURCE_ACQUIRED) to apps/orcel-computer-host (Go to Go, same language; denied by default, test UI only first):
+   `computer-use/internal/core/ax_ref_registry.go`, `computer-use/internal/core/ax_ref_minting.go`, `computer-use/internal/core/ax_ref_provider_continuity.go`, `computer-use/internal/core/ax_window_ref_registry.go`, `computer-use/internal/core/ax_app_ref_registry.go`, `computer-use/internal/core/ax_ref_snapshot_assignment.go`.
+2. **Compact AX diff after each action, batched actions with readback** (hcu, `microsoft/Hybrid-Computer-Use` at `00eaeebe8ac0d275e46f875bdb5347e5f326faa1`, SOURCE_ACQUIRED) to apps/orcel-computer-host:
+   `computer-use/internal/core/ax_semantic_diff.go`, `computer-use/internal/core/ax_semantic_diff_render.go`, `computer-use/internal/core/ax_batch.go`, `computer-use/internal/core/ax_batch_plan.go`, `computer-use/internal/core/ax_batch_observation.go`, `computer-use/internal/core/ax_action_readback.go`, `computer-use/internal/core/ax_action_stabilization.go`.
+3. **Local screen parsing for vision fallback (icon detection, OCR, set-of-marks)** (omniparser, `microsoft/OmniParser` at `354021201345a96178360b28733573e27269f2de`, NOT_ACQUIRED) to apps/orcel-vision (new, contained sidecar; only icon_detect_v3 + MIT caption weights; ultralytics and AGPL detectors excluded or isolated):
+   `util/omniparser.py`, `util/utils.py`, `util/box_annotator.py`, `util/yolov9.py`, `omnitool/omniparserserver/omniparserserver.py`.
+4. **Worker loop, procedural memory and behaviour judging** (agent_s, `simular-ai/Agent-S` at `0fff0e634869dab72027435b4586e62300185d41`, SOURCE_ACQUIRED) to apps/orcel-agent (provider-agnostic; paid providers opt-in):
+   `gui_agents/s3/agents/worker.py`, `gui_agents/s3/agents/agent_s.py`, `gui_agents/s3/core/engine.py`, `gui_agents/s3/core/mllm.py`, `gui_agents/s3/memory/procedural_memory.py`, `gui_agents/s3/bbon/behavior_narrator.py`, `gui_agents/s3/bbon/comparative_judge.py`, `gui_agents/s3/agents/grounding.py`.
+5. **Hybrid a11y/DOM snapshot and act/observe/extract with action cache** (stagehand, `browserbase/stagehand` at `82827a219512f0399cb159720a63f7d271d21480`, SOURCE_ACQUIRED) to apps/orcel-browser-worker (no Browserbase transport):
+   `packages/extension/understudy/a11y/snapshot/capture.ts`, `packages/extension/understudy/a11y/snapshot/a11yTree.ts`, `packages/extension/understudy/a11y/snapshot/domTree.ts`, `packages/extension/understudy/a11y/snapshot/xpathUtils.ts`, `packages/extension/services/actService.ts`, `packages/extension/services/observeService.ts`, `packages/extension/services/extractService.ts`, `packages/extension/services/cacheService.ts`.
+6. **Snapshot-ref MCP browser tools and tool registry** (playwright_mcp, `microsoft/playwright` at `76b6fa645744699e982a54c48c3fc7971f4a1eef`, NOT_ACQUIRED) to apps/orcel-mcp (tools) over apps/orcel-browser-worker:
+   `packages/playwright-core/src/tools/mcp`, `packages/playwright-core/src/tools/backend`, `packages/playwright-core/src/tools/utils`, `packages/playwright-core/src/entry/mcp.ts`, `tests/mcp`.
+7. **Record, compile, replay, verify and repair workflows** (openadapt_flow, `OpenAdaptAI/OpenAdapt` at `2e98be86a802b0867b9513491c5f368ba98811d0`, NOT_ACQUIRED) to apps/orcel-agent (flow package, new):
+   `packages/flow/openadapt_flow/ir.py`, `packages/flow/openadapt_flow/recorder.py`, `packages/flow/openadapt_flow/compiler`, `packages/flow/openadapt_flow/backend.py`, `packages/flow/openadapt_flow/backends`, `packages/flow/openadapt_flow/verify.py`, `packages/flow/openadapt_flow/verify_run.py`, `packages/flow/openadapt_flow/repair`.
+8. **Sandbox execution daemon and egress policy** (opensandbox, `opensandbox-group/OpenSandbox` at `44e79a2dc3c99e26d82aa87fe13a73537d7e7812`, NOT_ACQUIRED) to apps/orcel-sandbox (new; launched under apps/orcel-contain policy and the Orcel stop control):
+   `components/execd/pkg/runtime`, `components/execd/pkg/isolation`, `components/execd/pkg/lifecycle`, `components/egress`, `server/opensandbox_server/services`.
+
+Licence cautions for this list: OmniParser's repository is CC-BY-4.0 (attribution), its `requirements.txt` pins
+`ultralytics==8.3.70` (AGPL-3.0) and older icon detectors are AGPL-3.0, so Orcel takes the code paths above with the
+MIT `icon_detect_v3` and MIT caption weights only, or isolates the AGPL parts. HCU files under `osworld-overlay/` and
+`ax_records.py` carry Apache-2.0 and a Playwright NOTICE. OpenAdapt Flow is taken from `OpenAdaptAI/OpenAdapt`
+`packages/flow` because `openadapt-flow` is archived; its AGPL benchmark configuration is fetched at run time and stays out.
+
+### 8.7 Pin drift since 2026-11-16
+
+- `firecrawl/firecrawl`: `42f4d669954649ce33466a2a50e8215c7f1f4d1c` to `98a5630a0b7ad3d58653dfe4ceb21d444dd8e2d2`.
+- `fleetdm/fleet`: `99e64e6bbee9e7a9b5334fea2527303992f747f7` to `6070ad340095cd9dbfdef75fb6d18c9ba14c4b82`.
+- `vercel-labs/agent-browser`: `53384771fbafc261ba67608ac806dd5aa70b84f0` to `b06e2533ba9b3823b8a96c859d455cb55f4d7893`.
+- Sections 1 to 7 keep the 2026-11-16 pins; the ledger records the new HEADs. Every other pre-existing pin is unchanged.

@@ -9,7 +9,8 @@
   "Founder attestations (docs/orcel/grants/) are recorded separately from upstream licence terms; neither is decided here.",
   "Per-OS and surface fields: tested | implemented_untested | inert_stub | not_started | not_applicable; exposed:<tools> | not_exposed | not_started.",
   "method for NOT STARTED or BLOCKED rows is the planned method; integrated is true only for code in Orcel main.",
-  "2026-11-17: founder decisions FD-UP-1 to FD-UP-13 applied (UNIFIED_INTEGRATION_SPEC.md section 11). Founder attestation of 2026-11-17 recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, separately from upstream terms. Stealth records moved from BLOCKED to NOT STARTED behind the opt-in policy gate; agent-desktop admitted as a candidate; Exa Browser and TinyFish added as source-unverified."
+  "2026-11-17: founder decisions FD-UP-1 to FD-UP-13 applied (UNIFIED_INTEGRATION_SPEC.md section 11). Founder attestation of 2026-11-17 recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, separately from upstream terms. Stealth records moved from BLOCKED to NOT STARTED behind the opt-in policy gate; agent-desktop admitted as a candidate; Exa Browser and TinyFish added as source-unverified.",
+  "2026-11-17: master transplant ledger added (TRANSPLANT_LEDGER.json; DONOR_INVENTORY.md section 8). 42 records added for master-directive sources not already inventoried; exa_browser.unverified and tinyfish.unverified updated with the resolved repositories. Ledger statuses map to this vocabulary as stated in the ledger notes."
  ],
  "status_vocabulary": [
   "NOT STARTED",
@@ -83,6 +84,174 @@
   "Vercel agent-use": {
    "upstream_commit": null,
    "upstream_license": "Unknown; repository not identified"
+  },
+  "microsoft/playwright": {
+   "upstream_commit": "76b6fa645744699e982a54c48c3fc7971f4a1eef",
+   "upstream_license": "/: Apache-2.0 (+ NOTICE: code derived from Puppeteer, Apache-2.0); tests/assets/axe-core: MPL-2.0; tests/assets/wpt: BSD-3-Clause; tests/assets/to-do-notifications: CC0-1.0; packages/web/src/third_party/vscode: MIT; packages/playwright-core/src/server/bidi/third_party: Apache-2.0"
+  },
+  "exa-labs/exa-js": {
+   "upstream_commit": "ec25f4016f5a7b514fae9947ca9fd191885eabab",
+   "upstream_license": "/: MIT"
+  },
+  "exa-labs/exa-py": {
+   "upstream_commit": "95647c10282cacc3f030440442805f337257d29f",
+   "upstream_license": "/: MIT"
+  },
+  "exa-labs/exa-mcp-server": {
+   "upstream_commit": "93c0d5e1fecfc1ec9bf70fa9f3633962a1f2fa8a",
+   "upstream_license": "/: MIT"
+  },
+  "exa-labs/agent-skills": {
+   "upstream_commit": "9d220cc035f17bc01ca707ffae4ea1114af081fd",
+   "upstream_license": "/: MIT"
+  },
+  "exa-labs/benchmarks": {
+   "upstream_commit": "a6a9590b1634fd4bf6f6ea7fd80b0084489c8e2b",
+   "upstream_license": "/: MIT"
+  },
+  "exa-labs/openapi-spec": {
+   "upstream_commit": "ebdf275f7272274a8d8592d62c80f7dd0196e6aa",
+   "upstream_license": "/: NONE (no LICENSE file; GitHub reports no licence)"
+  },
+  "exa-labs/exa-deepseek-chat": {
+   "upstream_commit": "f76f8e2f01d1bbfbea82af41011c102678156c30",
+   "upstream_license": "/: NONE (no LICENSE file)"
+  },
+  "tinyfish-io/tinyfish-mcp-server": {
+   "upstream_commit": "7517089ca909fcdc61a083759f1729407de1a667",
+   "upstream_license": "/: MIT"
+  },
+  "tinyfish-io/tinyfish-cookbook": {
+   "upstream_commit": "b7d98b7a69dc681aca30ffb369bfd78ba059862c",
+   "upstream_license": "/: MIT (single LICENSE; sample folders carry none of their own)"
+  },
+  "tinyfish-io/tinyfish-web-agent-integrations": {
+   "upstream_commit": "73402549446f4fb739a8a3b93073c0b0b1155a45",
+   "upstream_license": "/: MIT; convex/, grok/, hermes/, langchain/, n8n/, pi/, kiro/tinyfish/: MIT (own LICENSE files)"
+  },
+  "tinyfish-io/agentql": {
+   "upstream_commit": "d6951d214c7ed84f1a53657f801f2a8dd65c91c7",
+   "upstream_license": "/: MIT"
+  },
+  "tinyfish-io/agentql-mcp": {
+   "upstream_commit": "8d3ea0f04af7fae065b53cdde9e5effaafdc0b6a",
+   "upstream_license": "/: MIT"
+  },
+  "tinyfish-io/agentql-integrations": {
+   "upstream_commit": "cbb97f094c08a191dcab015a218afd1d91ed09c1",
+   "upstream_license": "/: MIT; langchain/: MIT (own LICENSE)"
+  },
+  "tinyfish-io/bigset-oss": {
+   "upstream_commit": "c6611085e2527bc0a5419db400caafa95abc751f",
+   "upstream_license": "/: AGPL-3.0"
+  },
+  "tinyfish-io/tf-playwright-stealth": {
+   "upstream_commit": "e9adc20a53253d2043bd12b1d73f75bdb1fe5271",
+   "upstream_license": "/: MIT"
+  },
+  "microsoft/Hybrid-Computer-Use": {
+   "upstream_commit": "00eaeebe8ac0d275e46f875bdb5347e5f326faa1",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Hybrid Computer Use authors); pyproject declares MIT AND Apache-2.0; osworld-overlay/desktop_env/ (except cache.py, cdp.py), hcu/osworld/task_loader.py: Apache-2.0 (OSWorld-derived); computer-use/native/linux/provider/ax_records.py (StableIndexer portions): Apache-2.0 + Playwright NOTICE; computer-use/native/macos/: MIT portions from open-codex-computer-use (licenses/MIT-open-codex-computer-use.txt); more directories in TRANSPLANT_LEDGER.json"
+  },
+  "simular-ai/Agent-S": {
+   "upstream_commit": "0fff0e634869dab72027435b4586e62300185d41",
+   "upstream_license": "/: Apache-2.0; agent_s4/: Apache-2.0 (own LICENSE); osworld_setup/s4/agent_harness/prime-agent-runtime: MIT (Mario Zechner, Prime Intellect)"
+  },
+  "browserbase/stagehand": {
+   "upstream_commit": "82827a219512f0399cb159720a63f7d271d21480",
+   "upstream_license": "/: MIT (Copyright (c) 2024 Browserbase Inc.); packages/cli: MIT (own LICENSE)"
+  },
+  "trycua/cua": {
+   "upstream_commit": "494c3cdcc2768033bd75ba34745ce810fc55052d",
+   "upstream_license": "/: MIT (LICENSE.md, Cua AI, Inc.); apps/cua-spaces, apps/cua-spaces-desktop, apps/cua-spaces-macos, apps/cua-spaces-mobile, apps/cua-spaces-web: FSL-1.1-MIT; examples/cua-bots-ios, examples/cua-bots-macos, examples/infinite-canvas-swift, examples/openkoalabot-example-swift, examples/openkoalabot-example-tauri: FSL-1.1-MIT; libs/cua-driver-bench, libs/cua-spacesd, libs/spaces-app-swift, libs/spaces-notch-swift, libs/cua/bench/streaming: FSL-1.1-MIT; more directories in TRANSPLANT_LEDGER.json"
+  },
+  "microsoft/OmniParser": {
+   "upstream_commit": "354021201345a96178360b28733573e27269f2de",
+   "upstream_license": "/ (code and docs): CC-BY-4.0 (LICENSE file; GitHub SPDX CC-BY-4.0). The README badge says MIT; the LICENSE file is recorded as governing. Conflict recorded, not resolved"
+  },
+  "microsoft/playwright-mcp": {
+   "upstream_commit": "a62ea28698af6d9bc89438bcec50c63377cef957",
+   "upstream_license": "/: Apache-2.0; microsoft/playwright packages/playwright-core/src/tools: Apache-2.0"
+  },
+  "OpenAdaptAI/OpenAdapt": {
+   "upstream_commit": "2e98be86a802b0867b9513491c5f368ba98811d0",
+   "upstream_license": "/ and packages/{agent,capture,desktop,flow,privacy,program-graph,seal-view,tray,types,verify}: MIT (own LICENSE files); packages/desktop/third_party/flatbuffers: Apache-2.0; packages/desktop/third_party/loguru: MIT; packages/flow benchmarks (openIMIS config): AGPL-3.0 config fetched at run time, not stored (packages/flow/THIRD_PARTY_NOTICES.md)"
+  },
+  "OpenAdaptAI/openadapt-flow": {
+   "upstream_commit": "a8ef4744c47af5f17eaf946e6f5b945b97aa2457",
+   "upstream_license": "/: MIT (OpenAdapt.AI (MLDSAI Inc.)); benchmark/effectbench: MIT; benchmark/openimis_claims, benchmark/openemr_local: Third-party AGPL-3.0 configuration fetched at run time, not stored"
+  },
+  "anthropics/claude-quickstarts": {
+   "upstream_commit": "4a4224bdf0e9cfb3332167b69c90457403813625",
+   "upstream_license": "/: MIT (Anthropic); computer-use-demo/: MIT (own LICENSE); browser-use-demo/: MIT + NOTICE for modified Playwright files (Apache-2.0); managed-agents/self-hosted-sandboxes/openshell-policy/third_party/openshell, .../sandbox/openshell-skills: Apache-2.0 (NVIDIA); managed-agents/assistant-ui/components: MIT (assistant-ui notice)"
+  },
+  "alibaba/page-agent": {
+   "upstream_commit": "9eb6b6646500264d9034dd466a4270cb9fc1ef1e",
+   "upstream_license": "/: MIT (SimonLuvRamen; Alibaba Group Holding Limited)"
+  },
+  "lightpanda-io/browser": {
+   "upstream_commit": "88fb36db0a6ce4c0011c6cb31cf53e3d3b4a4fbf",
+   "upstream_license": "/: AGPL-3.0; src/rust/render/fonts: Bitstream Vera / DejaVu font licence"
+  },
+  "browseros-ai/BrowserOS": {
+   "upstream_commit": "81c8f6a35c0ae5a2fe8c7a1d3f7e871aa207f24c",
+   "upstream_license": "/ and packages/browseros-agent: AGPL-3.0; ungoogled-chromium patches under packages/browseros/series_patches (per LICENSE.ungoogled_chromium): BSD-3-Clause (LICENSE.ungoogled_chromium); packages/browseros-agent/packages/{acpx-ai-provider, agent-mcp-manager}: MIT (Dani Akash); packages/browseros-agent/packages/agent-cursor: MIT (Cua AI, Inc.); packages/browseros-agent/crates/neo-sdk/neo-playwright/third_party/{playwright, mime, yaml}: Apache-2.0, MIT, ISC; packages/browseros/bos_build/steps/patches/fixtures: BSD-3-Clause (Chromium)"
+  },
+  "Skyvern-AI/skyvern": {
+   "upstream_commit": "3e8571338011b8df1c9c9db8fb20856de7b9d13f",
+   "upstream_license": "/: AGPL-3.0"
+  },
+  "Genymobile/scrcpy": {
+   "upstream_commit": "a60891aea193d92e7e5c3942700eca63f9d19a5f",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "appium/appium": {
+   "upstream_commit": "51cfc7b292ab834a4155525927139a62e1e67aec",
+   "upstream_license": "/: Apache-2.0; packages/logger: ISC (npm, Inc.)"
+  },
+  "X-PLUG/MobileAgent": {
+   "upstream_commit": "c4cd0a8f9ddedad24dd8a3daf3a56ca69343849f",
+   "upstream_license": "/: MIT (mPLUG); Mobile-Agent-v3/android_world_v3, Mobile-Agent-v3.5/android_world_v3.5: Apache-2.0 (AndroidWorld); */android_world_*/apps/java/com/google/androidenv/miniwob/app/assets/html: MIT (OpenAI universe, Stanford); UI-S1/verl: No LICENSE file found in the tree path list; upstream verl licence not checked"
+  },
+  "droidrun/mobilerun": {
+   "upstream_commit": "e34004270a9d7b68824b94a3a5ba6698cefea69d",
+   "upstream_license": "/: MIT (Niels Schmidt)"
+  },
+  "mobile-dev-inc/Maestro": {
+   "upstream_commit": "0ccf5a9c5b1c48d4cb6211d9060d537e04745107",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "Ylianst/MeshCentral": {
+   "upstream_commit": "03fe8529dc8ef0607ea6af78152dba8c70969464",
+   "upstream_license": "/: Apache-2.0; rdp/: GPL-3.0; public/mstsc/: GPL-3.0; public/novnc/: MPL-2.0 core (noVNC; other noVNC parts carry their own terms); public/novnc/vendor/pako: MIT"
+  },
+  "rustdesk/rustdesk": {
+   "upstream_commit": "3e953e886a874956d8351d6c25e340ea82dd2343",
+   "upstream_license": "/: AGPL-3.0 (LICENCE); libs/enigo: MIT"
+  },
+  "opensandbox-group/OpenSandbox": {
+   "upstream_commit": "44e79a2dc3c99e26d82aa87fe13a73537d7e7812",
+   "upstream_license": "/ and cli/, server/, sdks/code-interpreter/python, sdks/sandbox/kotlin, sdks/sandbox/python, sdks/mcp/sandbox/python: Apache-2.0 (own LICENSE files)"
+  },
+  "CopilotKit/OpenBot": {
+   "upstream_commit": "d88ff75ed691ab7a415c5c2d099371865c8ff61b",
+   "upstream_license": "/: MIT (CopilotKit)"
+  },
+  "NousResearch/hermes-agent": {
+   "upstream_commit": "081e8d9b75b2bedae297a89232b04ef9be7b26a0",
+   "upstream_license": "/: MIT (Nous Research); plugins/security-guidance: Apache-2.0 (NOTICE: from claude-plugins-official); plugins/hermes-achievements: MIT; optional-skills/** (ported skills): MIT with per-skill authors and upstream commits"
+  },
+  "screenpipe/screenpipe": {
+   "upstream_commit": "b8f09c879fddc807e9fd3aae7aae4f1a0accb1f6",
+   "upstream_license": "/: Screenpipe Commercial License (Negentropy Labs, Inc.; all rights reserved): free for personal non-commercial use; commercial use needs an Enterprise licence; building a competing product is prohibited without one. GitHub reports NOASSERTION"
+  },
+  "xlang-ai/OSWorld": {
+   "upstream_commit": "5123bfdbbc34b947bcffcff564abc62d0ab7072d",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "ServiceNow/BrowserGym": {
+   "upstream_commit": "27a90ce815098f43414e93491e06907af468e45b",
+   "upstream_license": "/: Apache-2.0 (LICENSE with a ServiceNow copyright header; GitHub reports NOASSERTION)"
   }
  },
  "records": [
@@ -2819,9 +2988,11 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "Resolved by the master transplant ledger (TRANSPLANT_LEDGER.json id exa_browser): adisinghstudent/exa-browser at 20a0cf9100879f234bd0036a3d9cae58e135265d, no LICENSE file, third-party (not Exa Labs). Exa Labs repositories are recorded as ledger ids exa_js to exa_deepseek_chat."
+   ],
    "status": "NOT STARTED",
-   "blocking_issue": "SOURCE_UNVERIFIED: added to the extended inventory by founder decision FD-UP-3 (2026-11-17). The founder's separate REA effort (D:\\Orcel-REA) has produced no outputs yet; no repository, licence or SHA has been verified."
+   "blocking_issue": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE (no licence). Source resolved on 2026-11-17; see TRANSPLANT_LEDGER.json."
   },
   {
    "id": "tinyfish.unverified",
@@ -2842,9 +3013,1439 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "Resolved by the master transplant ledger: eight public tinyfish-io repositories pinned (TRANSPLANT_LEDGER.json ids tinyfish_mcp_server to tf_playwright_stealth); seven MIT, bigset-oss AGPL-3.0. No private TinyFish source is accessible (D:\\Orcel-REA\\reports\\CURRENT_STATE.md section 5)."
+   ],
    "status": "NOT STARTED",
-   "blocking_issue": "SOURCE_UNVERIFIED: added to the extended inventory by founder decision FD-UP-3 (2026-11-17). The founder's separate REA effort (D:\\Orcel-REA) has produced no outputs yet; no repository, licence or SHA has been verified."
+   "blocking_issue": "Hosted TinyFish agent and browser backend are not public (SOURCE_NOT_AVAILABLE). Public repositories resolved on 2026-11-17; see TRANSPLANT_LEDGER.json."
+  },
+  {
+   "id": "playwright.browser_actions",
+   "source": "microsoft/playwright",
+   "upstream_commit": "1b025d7e20a026371cd5f98ba0cdce48892737c8",
+   "upstream_license": "/: Apache-2.0 (+ NOTICE: code derived from Puppeteer, Apache-2.0); tests/assets/axe-core: MPL-2.0; tests/assets/wpt: BSD-3-Clause; tests/assets/to-do-notifications: CC0-1.0; packages/web/src/third_party/vscode: MIT; packages/playwright-core/src/server/bidi/third_party: Apache-2.0",
+   "upstream_paths": [
+    "packages/injected/src",
+    "packages/playwright-core/src/server"
+   ],
+   "upstream_tests": [
+    "1551 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Locators, actionability, form, upload, dialogs (already ported); MCP browser tools (see playwright_mcp)",
+   "classification": "already_in_orcel",
+   "orcel_destination": "apps/orcel-browser-worker",
+   "method": "adapted",
+   "integrated": true,
+   "windows": "tested",
+   "macos": "inert_stub",
+   "linux": "inert_stub",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [
+    "apps/orcel-browser-worker/src/actions/form.test.ts",
+    "apps/orcel-browser-worker/src/actions/upload.test.ts",
+    "apps/orcel-browser-worker/src/actions/dialogs.test.ts",
+    "apps/orcel-browser-worker/src/verify.test.ts"
+   ],
+   "evidence": [
+    "BR-02/03/05/07 ports at 1b025d7e are on main with tests (form.test.ts, upload.test.ts, dialogs.test.ts, verify.test.ts).",
+    "Transplanted commit 1b025d7e20a026371cd5f98ba0cdce48892737c8; current HEAD 76b6fa645744699e982a54c48c3fc7971f4a1eef (TRANSPLANT_LEDGER.json).",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "exa.exa_js",
+   "source": "exa-labs/exa-js",
+   "upstream_commit": "ec25f4016f5a7b514fae9947ca9fd191885eabab",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "src/index.ts",
+    "src/research",
+    "src/websets",
+    "src/monitors",
+    "test/unit"
+   ],
+   "upstream_tests": [
+    "37 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Exa client used as the compatibility test client for Orcel's local Exa-compatible API",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/exa-compat (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA; 420/420 tests (D:\\Orcel-REA\\reports\\08_tests_and_evidence.md EV-16).",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "exa.exa_py",
+   "source": "exa-labs/exa-py",
+   "upstream_commit": "95647c10282cacc3f030440442805f337257d29f",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "exa_py/api.py",
+    "exa_py/websets",
+    "exa_py/research",
+    "tests/unit"
+   ],
+   "upstream_tests": [
+    "40 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Python compatibility test client",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/exa-compat (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "829 passed, 2 failed (Windows-only timeout assertions), 42 skipped (EV-18).",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "exa.mcp_tools",
+   "source": "exa-labs/exa-mcp-server",
+   "upstream_commit": "93c0d5e1fecfc1ec9bf70fa9f3633962a1f2fa8a",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "src/tools",
+    "src/utils",
+    "tests/unit"
+   ],
+   "upstream_tests": [
+    "18 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: MCP web search tool specifications and schemas",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "269/269 tests, typecheck clean (EV-17).",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "exa.agent_skills",
+   "source": "exa-labs/agent-skills",
+   "upstream_commit": "9d220cc035f17bc01ca707ffae4ea1114af081fd",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "skills/exa-search",
+    "skills/exa-contents",
+    "skills/build-with-exa"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Agent skill prompts for search",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA (D:\\Orcel-REA\\reports\\source_clone_manifest_machine.json).",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "exa.benchmarks",
+   "source": "exa-labs/benchmarks",
+   "upstream_commit": "a6a9590b1634fd4bf6f6ea7fd80b0084489c8e2b",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "harness/searchers",
+    "harness/llm",
+    "benchmarks/graders",
+    "data"
+   ],
+   "upstream_tests": [
+    "3 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Search quality benchmark harness",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/benchmarks",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "exa.openapi_spec",
+   "source": "exa-labs/openapi-spec",
+   "upstream_commit": "ebdf275f7272274a8d8592d62c80f7dd0196e6aa",
+   "upstream_license": "/: NONE (no LICENSE file; GitHub reports no licence)",
+   "upstream_paths": [
+    "exa-openapi-spec.yaml",
+    "exa-websets-spec.yaml"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Exa API contract",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "crates/orcel-web (new)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA; REA guardrail: do not copy (no licence).",
+    "Rights: PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain. PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE for public copies."
+  },
+  {
+   "id": "exa.deepseek_chat",
+   "source": "exa-labs/exa-deepseek-chat",
+   "upstream_commit": "f76f8e2f01d1bbfbea82af41011c102678156c30",
+   "upstream_license": "/: NONE (no LICENSE file)",
+   "upstream_paths": [
+    "app/api",
+    "app/page.tsx"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Search-grounded chat demo (reference only)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "apps/orcel-control-room (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA; reference only.",
+    "Rights: PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain. PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE for public copies."
+  },
+  {
+   "id": "tinyfish.mcp_transport",
+   "source": "tinyfish-io/tinyfish-mcp-server",
+   "upstream_commit": "7517089ca909fcdc61a083759f1729407de1a667",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "src/core/errors.ts",
+    "src/core/session.ts",
+    "src/core/sse.ts",
+    "src/http"
+   ],
+   "upstream_tests": [
+    "11 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: MCP HTTP/SSE session handling",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "158/158 tests, typecheck clean (EV-13).",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "tinyfish.cookbook",
+   "source": "tinyfish-io/tinyfish-cookbook",
+   "upstream_commit": "b7d98b7a69dc681aca30ffb369bfd78ba059862c",
+   "upstream_license": "/: MIT (single LICENSE; sample folders carry none of their own)",
+   "upstream_paths": [
+    "skills",
+    "tinyskills"
+   ],
+   "upstream_tests": [
+    "12 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Web-agent task recipes (reference)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/benchmarks",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "tinyfish.integrations",
+   "source": "tinyfish-io/tinyfish-web-agent-integrations",
+   "upstream_commit": "73402549446f4fb739a8a3b93073c0b0b1155a45",
+   "upstream_license": "/: MIT; convex/, grok/, hermes/, langchain/, n8n/, pi/, kiro/tinyfish/: MIT (own LICENSE files)",
+   "upstream_paths": [
+    "langchain/langchain_tinyfish",
+    "n8n/nodes",
+    "dify/tools",
+    "hermes/tinyfish_hermes",
+    "mcp/skills"
+   ],
+   "upstream_tests": [
+    "34 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Framework adapters",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "packages/orcel-sdk-py (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "tinyfish.agentql",
+   "source": "tinyfish-io/agentql",
+   "upstream_commit": "d6951d214c7ed84f1a53657f801f2a8dd65c91c7",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "examples/python",
+    "examples/js"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Natural-language element queries (examples only)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-browser-worker (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "tinyfish.agentql_mcp",
+   "source": "tinyfish-io/agentql-mcp",
+   "upstream_commit": "8d3ea0f04af7fae065b53cdde9e5effaafdc0b6a",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "src/index.ts"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: MCP extract tool proxied to AgentQL",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "tinyfish.agentql_integrations",
+   "source": "tinyfish-io/agentql-integrations",
+   "upstream_commit": "cbb97f094c08a191dcab015a218afd1d91ed09c1",
+   "upstream_license": "/: MIT; langchain/: MIT (own LICENSE)",
+   "upstream_paths": [
+    "langchain/langchain_agentql",
+    "dify",
+    "zapier"
+   ],
+   "upstream_tests": [
+    "8 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Framework adapters",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "packages/orcel-sdk-py (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "tinyfish.bigset",
+   "source": "tinyfish-io/bigset-oss",
+   "upstream_commit": "c6611085e2527bc0a5419db400caafa95abc751f",
+   "upstream_license": "/: AGPL-3.0",
+   "upstream_paths": [
+    "backend/src",
+    "backend/prompts",
+    "frontend/convex"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Dataset-building web agent app (reference only)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Cloned at this SHA; build fails without paid keys (EV-15).",
+    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "tinyfish.stealth",
+   "source": "tinyfish-io/tf-playwright-stealth",
+   "upstream_commit": "e9adc20a53253d2043bd12b1d73f75bdb1fe5271",
+   "upstream_license": "/: MIT",
+   "upstream_paths": [
+    "playwright_stealth/js",
+    "playwright_stealth/properties",
+    "playwright_stealth/core"
+   ],
+   "upstream_tests": [
+    "14 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Fingerprint evasion scripts behind the opt-in sensitive-feature gate (FD-UP-2)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-browser-worker",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "34/34 tests (EV-14).",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "hcu.ax_ref_runtime",
+   "source": "microsoft/Hybrid-Computer-Use",
+   "upstream_commit": "00eaeebe8ac0d275e46f875bdb5347e5f326faa1",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Hybrid Computer Use authors); pyproject declares MIT AND Apache-2.0; osworld-overlay/desktop_env/ (except cache.py, cdp.py), hcu/osworld/task_loader.py: Apache-2.0 (OSWorld-derived); computer-use/native/linux/provider/ax_records.py (StableIndexer portions): Apache-2.0 + Playwright NOTICE; computer-use/native/macos/: MIT portions from open-codex-computer-use (licenses/MIT-open-codex-computer-use.txt); more directories in TRANSPLANT_LEDGER.json",
+   "upstream_paths": [
+    "computer-use/internal/core/ax_ref_registry.go",
+    "computer-use/internal/core/ax_ref_minting.go",
+    "computer-use/internal/core/ax_ref_provider_continuity.go",
+    "computer-use/internal/core/ax_window_ref_registry.go",
+    "computer-use/internal/core/ax_app_ref_registry.go",
+    "computer-use/internal/core/ax_semantic_diff.go",
+    "computer-use/internal/core/ax_semantic_diff_render.go",
+    "computer-use/internal/core/ax_batch_observation.go",
+    "computer-use/internal/core/app_snapshot.go",
+    "computer-use/internal/core/ax_batch.go",
+    "computer-use/internal/core/ax_batch_plan.go",
+    "computer-use/internal/core/ax_action_readback.go"
+   ],
+   "upstream_tests": [
+    "309 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Reference-based element IDs with live-staleness rejection; Compact AX diff observations after actions; Batched AX actions with readback and stabilisation",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-computer-host",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Shallow clone at this SHA in D:\\Orcel-REA-W2\\hybrid-computer-use (REA_ROUND2_PLAN.md); no donor tests run, no Orcel code from it.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "agent_s.planner_worker",
+   "source": "simular-ai/Agent-S",
+   "upstream_commit": "0fff0e634869dab72027435b4586e62300185d41",
+   "upstream_license": "/: Apache-2.0; agent_s4/: Apache-2.0 (own LICENSE); osworld_setup/s4/agent_harness/prime-agent-runtime: MIT (Mario Zechner, Prime Intellect)",
+   "upstream_paths": [
+    "gui_agents/s3/agents/worker.py",
+    "gui_agents/s3/agents/agent_s.py",
+    "gui_agents/s3/core/engine.py",
+    "gui_agents/s3/core/mllm.py",
+    "gui_agents/s3/memory/procedural_memory.py",
+    "gui_agents/s3/bbon/behavior_narrator.py",
+    "gui_agents/s3/bbon/comparative_judge.py",
+    "gui_agents/s3/agents/grounding.py",
+    "gui_agents/s3/agents/code_agent.py",
+    "gui_agents/s2/agents/manager.py",
+    "gui_agents/s2/core/knowledge.py",
+    "agent_s4"
+   ],
+   "upstream_tests": [
+    "80 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Worker loop with provider-agnostic engine; Procedural memory prompts; Behaviour best-of-N narration and judging (no hallucinated success)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Shallow clone at this SHA in D:\\Orcel-REA-W2\\agent-s; tests/test_providers.py not run.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "stagehand.act_observe_extract",
+   "source": "browserbase/stagehand",
+   "upstream_commit": "82827a219512f0399cb159720a63f7d271d21480",
+   "upstream_license": "/: MIT (Copyright (c) 2024 Browserbase Inc.); packages/cli: MIT (own LICENSE)",
+   "upstream_paths": [
+    "packages/extension/understudy/a11y/snapshot/capture.ts",
+    "packages/extension/understudy/a11y/snapshot/a11yTree.ts",
+    "packages/extension/understudy/a11y/snapshot/domTree.ts",
+    "packages/extension/understudy/a11y/snapshot/xpathUtils.ts",
+    "packages/extension/understudy/a11y/snapshot/focusSelectors.ts",
+    "packages/extension/understudy/a11y/snapshot/coordinateResolver.ts",
+    "packages/extension/services/actService.ts",
+    "packages/extension/services/observeService.ts",
+    "packages/extension/services/extractService.ts",
+    "packages/extension/dom/locatorScripts",
+    "packages/extension/services/cacheService.ts",
+    "packages/extension/clients/cacheClient.ts"
+   ],
+   "upstream_tests": [
+    "517 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Hybrid accessibility + DOM snapshot with xpath map; act / observe / extract; Action cache and replay",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-browser-worker",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "Shallow clone at this SHA in D:\\Orcel-REA-W2\\stagehand; no tests run.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "cua.driver",
+   "source": "trycua/cua",
+   "upstream_commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+   "upstream_license": "/: MIT (LICENSE.md, Cua AI, Inc.); apps/cua-spaces, apps/cua-spaces-desktop, apps/cua-spaces-macos, apps/cua-spaces-mobile, apps/cua-spaces-web: FSL-1.1-MIT; examples/cua-bots-ios, examples/cua-bots-macos, examples/infinite-canvas-swift, examples/openkoalabot-example-swift, examples/openkoalabot-example-tauri: FSL-1.1-MIT; libs/cua-driver-bench, libs/cua-spacesd, libs/spaces-app-swift, libs/spaces-notch-swift, libs/cua/bench/streaming: FSL-1.1-MIT; more directories in TRANSPLANT_LEDGER.json",
+   "upstream_paths": [
+    "libs/cua-driver/rust/crates"
+   ],
+   "upstream_tests": [
+    "2793 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Cross-platform driver (already transplanted); macOS/Linux VM and sandbox sessions; Benchmark task packs (already transplanted in part)",
+   "classification": "already_in_orcel",
+   "orcel_destination": "apps/orcel-native-host",
+   "method": "adapted",
+   "integrated": true,
+   "windows": "not_applicable",
+   "macos": "tested",
+   "linux": "tested",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [
+    "apps/orcel-native-host/tests/conformance_native.rs",
+    "apps/orcel-native-host/tests/live_input.rs",
+    "apps/orcel-native-host/src/cua_adapter/atspi_reread_tests.rs::xp11_live_atspi_reread_acts_on_the_live_toggle_state"
+   ],
+   "evidence": [
+    "cua-driver subset transplanted at a802eaf2 and covered by apps/orcel-native-host tests; the rest is not acquired.",
+    "Transplanted commit a802eaf26ca97616a6bf0de6a29729a9346fbb1f; current HEAD 494c3cdcc2768033bd75ba34745ce810fc55052d (TRANSPLANT_LEDGER.json).",
+    "Rights: MIXED_PER_DIRECTORY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "TESTED",
+   "blocking_issue": null
+  },
+  {
+   "id": "omniparser.screen_parse",
+   "source": "microsoft/OmniParser",
+   "upstream_commit": "354021201345a96178360b28733573e27269f2de",
+   "upstream_license": "/ (code and docs): CC-BY-4.0 (LICENSE file; GitHub SPDX CC-BY-4.0). The README badge says MIT; the LICENSE file is recorded as governing. Conflict recorded, not resolved",
+   "upstream_paths": [
+    "util/omniparser.py",
+    "util/utils.py",
+    "util/box_annotator.py",
+    "util/yolov9.py",
+    "omnitool/omniparserserver/omniparserserver.py",
+    "omnitool/gradio/agent",
+    "omnitool/gradio/tools",
+    "omnitool/omnibox"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Screen parsing: icon detection, OCR, box merge, set-of-marks labels; Local parsing server; VLM agent loop (reference only)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-vision (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: MIXED_PER_DIRECTORY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "playwright_mcp.tools",
+   "source": "microsoft/playwright-mcp",
+   "upstream_commit": "a62ea28698af6d9bc89438bcec50c63377cef957",
+   "upstream_license": "/: Apache-2.0; microsoft/playwright packages/playwright-core/src/tools: Apache-2.0",
+   "upstream_paths": [
+    "microsoft/playwright: packages/playwright-core/src/tools/mcp",
+    "microsoft/playwright: packages/playwright-core/src/entry/mcp.ts",
+    "microsoft/playwright: packages/playwright-core/src/tools/backend",
+    "microsoft/playwright: packages/playwright-core/src/tools/utils",
+    "microsoft/playwright: tests/mcp",
+    "playwright-mcp: tests"
+   ],
+   "upstream_tests": [
+    "10 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: MCP server, tool registry, capabilities; Snapshot-ref browser tools (navigate, click, type, snapshot, tabs); MCP tool tests",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "openadapt.capture_privacy",
+   "source": "OpenAdaptAI/OpenAdapt",
+   "upstream_commit": "2e98be86a802b0867b9513491c5f368ba98811d0",
+   "upstream_license": "/ and packages/{agent,capture,desktop,flow,privacy,program-graph,seal-view,tray,types,verify}: MIT (own LICENSE files); packages/desktop/third_party/flatbuffers: Apache-2.0; packages/desktop/third_party/loguru: MIT; packages/flow benchmarks (openIMIS config): AGPL-3.0 config fetched at run time, not stored (packages/flow/THIRD_PARTY_NOTICES.md)",
+   "upstream_paths": [
+    "packages/capture",
+    "packages/privacy",
+    "packages/flow"
+   ],
+   "upstream_tests": [
+    "1730 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Demonstration recording; PII scrubbing of recordings; See openadapt_flow",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "openadapt_flow.record_replay",
+   "source": "OpenAdaptAI/openadapt-flow",
+   "upstream_commit": "a8ef4744c47af5f17eaf946e6f5b945b97aa2457",
+   "upstream_license": "/: MIT (OpenAdapt.AI (MLDSAI Inc.)); benchmark/effectbench: MIT; benchmark/openimis_claims, benchmark/openemr_local: Third-party AGPL-3.0 configuration fetched at run time, not stored",
+   "upstream_paths": [
+    "OpenAdapt: packages/flow/openadapt_flow/ir.py",
+    "OpenAdapt: packages/flow/openadapt_flow/recorder.py",
+    "OpenAdapt: packages/flow/openadapt_flow/compiler",
+    "OpenAdapt: packages/flow/openadapt_flow/backend.py",
+    "OpenAdapt: packages/flow/openadapt_flow/backends",
+    "OpenAdapt: packages/flow/openadapt_flow/verify.py",
+    "OpenAdapt: packages/flow/openadapt_flow/verify_run.py",
+    "OpenAdapt: packages/flow/openadapt_flow/readback_ladder.py",
+    "OpenAdapt: packages/flow/openadapt_flow/repair",
+    "OpenAdapt: packages/flow/tests"
+   ],
+   "upstream_tests": [
+    "376 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Demonstration to program compilation; Replay backends (Playwright, Windows, Linux, macOS); Verification and auto-repair",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only (archived tree pinned; maintained source pinned in openadapt).",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "claude_quickstarts.reference",
+   "source": "anthropics/claude-quickstarts",
+   "upstream_commit": "4a4224bdf0e9cfb3332167b69c90457403813625",
+   "upstream_license": "/: MIT (Anthropic); computer-use-demo/: MIT (own LICENSE); browser-use-demo/: MIT + NOTICE for modified Playwright files (Apache-2.0); managed-agents/self-hosted-sandboxes/openshell-policy/third_party/openshell, .../sandbox/openshell-skills: Apache-2.0 (NVIDIA); managed-agents/assistant-ui/components: MIT (assistant-ui notice)",
+   "upstream_paths": [
+    "computer-use-demo/computer_use_demo/loop.py",
+    "computer-use-demo/computer_use_demo/tools",
+    "computer-use-best-practices/computer_use",
+    "browser-use-demo/browser_use_demo"
+   ],
+   "upstream_tests": [
+    "52 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Reference computer-use loop and tools; Reference browser tool",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "page_agent.in_page",
+   "source": "alibaba/page-agent",
+   "upstream_commit": "9eb6b6646500264d9034dd466a4270cb9fc1ef1e",
+   "upstream_license": "/: MIT (SimonLuvRamen; Alibaba Group Holding Limited)",
+   "upstream_paths": [
+    "packages/page-controller",
+    "packages/core",
+    "packages/page-agent",
+    "packages/mcp",
+    "packages/extension"
+   ],
+   "upstream_tests": [
+    "7 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: In-page DOM controller (no CDP); MCP and extension shells",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-browser-worker",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "lightpanda.engine",
+   "source": "lightpanda-io/browser",
+   "upstream_commit": "88fb36db0a6ce4c0011c6cb31cf53e3d3b4a4fbf",
+   "upstream_license": "/: AGPL-3.0; src/rust/render/fonts: Bitstream Vera / DejaVu font licence",
+   "upstream_paths": [
+    "src/browser",
+    "src/server",
+    "src/network",
+    "src/mcp"
+   ],
+   "upstream_tests": [
+    "786 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Alternative headless engine over CDP; MCP server (reference)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "third_party/lightpanda (new)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "browseros.reference",
+   "source": "browseros-ai/BrowserOS",
+   "upstream_commit": "81c8f6a35c0ae5a2fe8c7a1d3f7e871aa207f24c",
+   "upstream_license": "/ and packages/browseros-agent: AGPL-3.0; ungoogled-chromium patches under packages/browseros/series_patches (per LICENSE.ungoogled_chromium): BSD-3-Clause (LICENSE.ungoogled_chromium); packages/browseros-agent/packages/{acpx-ai-provider, agent-mcp-manager}: MIT (Dani Akash); packages/browseros-agent/packages/agent-cursor: MIT (Cua AI, Inc.); packages/browseros-agent/crates/neo-sdk/neo-playwright/third_party/{playwright, mime, yaml}: Apache-2.0, MIT, ISC; packages/browseros/bos_build/steps/patches/fixtures: BSD-3-Clause (Chromium)",
+   "upstream_paths": [
+    "packages/browseros",
+    "packages/browseros-agent"
+   ],
+   "upstream_tests": [
+    "1318 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Agentic Chromium build (reference); Browser agent and MCP server (reference; MIT subpackages reusable)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "apps/orcel-mcp (MIT subpackages only)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "skyvern.reference",
+   "source": "Skyvern-AI/skyvern",
+   "upstream_commit": "3e8571338011b8df1c9c9db8fb20856de7b9d13f",
+   "upstream_license": "/: AGPL-3.0",
+   "upstream_paths": [
+    "skyvern/forge",
+    "skyvern/services",
+    "skyvern/webeye"
+   ],
+   "upstream_tests": [
+    "1800 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Vision-LLM browser workflows (reference); Browser state and scraping (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "scrcpy.android_stream",
+   "source": "Genymobile/scrcpy",
+   "upstream_commit": "a60891aea193d92e7e5c3942700eca63f9d19a5f",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "server/src",
+    "app/src"
+   ],
+   "upstream_tests": [
+    "19 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Android screen encoding and device control server; Control message protocol, input injection, ADB tunnel",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-provider-mobile (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "appium.ios_bridge",
+   "source": "appium/appium",
+   "upstream_commit": "51cfc7b292ab834a4155525927139a62e1e67aec",
+   "upstream_license": "/: Apache-2.0; packages/logger: ISC (npm, Inc.)",
+   "upstream_paths": [
+    "packages/base-driver",
+    "packages/appium",
+    "packages/support"
+   ],
+   "upstream_tests": [
+    "264 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: WebDriver protocol and driver framework (iOS bridge)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-provider-mobile (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "mobile_agent.planner",
+   "source": "X-PLUG/MobileAgent",
+   "upstream_commit": "c4cd0a8f9ddedad24dd8a3daf3a56ca69343849f",
+   "upstream_license": "/: MIT (mPLUG); Mobile-Agent-v3/android_world_v3, Mobile-Agent-v3.5/android_world_v3.5: Apache-2.0 (AndroidWorld); */android_world_*/apps/java/com/google/androidenv/miniwob/app/assets/html: MIT (OpenAI universe, Stanford); UI-S1/verl: No LICENSE file found in the tree path list; upstream verl licence not checked",
+   "upstream_paths": [
+    "Mobile-Agent-v3/mobile_v3",
+    "Mobile-Agent-v3.5/mobile_use",
+    "Mobile-Agent-E/MobileAgentE",
+    "Mobile-Agent-v3/android_world_v3",
+    "Mobile-Agent-v3.5/android_world_v3.5"
+   ],
+   "upstream_tests": [
+    "128 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Mobile planning, reflection and notes; AndroidWorld benchmark harness",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "droidrun.android_tools",
+   "source": "droidrun/mobilerun",
+   "upstream_commit": "e34004270a9d7b68824b94a3a5ba6698cefea69d",
+   "upstream_license": "/: MIT (Niels Schmidt)",
+   "upstream_paths": [
+    "mobilerun/tools",
+    "mobilerun/agent",
+    "mobilerun/macro",
+    "mobilerun/mcp"
+   ],
+   "upstream_tests": [
+    "69 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Android accessibility-tree tools over ADB; Mobile agent loop and macro record/replay; MCP server",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-provider-mobile (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "maestro.flows",
+   "source": "mobile-dev-inc/Maestro",
+   "upstream_commit": "0ccf5a9c5b1c48d4cb6211d9060d537e04745107",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "maestro-orchestra/src",
+    "maestro-orchestra-models/src",
+    "maestro-android/src",
+    "maestro-ios-driver/src",
+    "maestro-ios-xctest-runner"
+   ],
+   "upstream_tests": [
+    "849 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Flow runner and YAML flow model; Android and iOS drivers (reference)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/mobile-flows (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "meshcentral.relay",
+   "source": "Ylianst/MeshCentral",
+   "upstream_commit": "03fe8529dc8ef0607ea6af78152dba8c70969464",
+   "upstream_license": "/: Apache-2.0; rdp/: GPL-3.0; public/mstsc/: GPL-3.0; public/novnc/: MPL-2.0 core (noVNC; other noVNC parts carry their own terms); public/novnc/vendor/pako: MIT",
+   "upstream_paths": [
+    "meshrelay.js",
+    "meshdesktopmultiplex.js",
+    "meshagent.js",
+    "meshuser.js",
+    "rdp/",
+    "public/mstsc"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Relay, desktop multiplexing, agent and user sessions (study pairing and auditing); RDP gateway (GPL-3.0; separate component only)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-relay",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: MIXED_PER_DIRECTORY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "rustdesk.remote",
+   "source": "rustdesk/rustdesk",
+   "upstream_commit": "3e953e886a874956d8351d6c25e340ea82dd2343",
+   "upstream_license": "/: AGPL-3.0 (LICENCE); libs/enigo: MIT",
+   "upstream_paths": [
+    "libs/scrap",
+    "libs/enigo",
+    "src/server",
+    "src/client"
+   ],
+   "upstream_tests": [
+    "52 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Cross-platform screen capture; Input simulation (MIT); Remote desktop transport (reference)",
+   "classification": "best_via_adapter",
+   "orcel_destination": "third_party/rustdesk (new)",
+   "method": "adapter",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "opensandbox.execd_egress",
+   "source": "opensandbox-group/OpenSandbox",
+   "upstream_commit": "44e79a2dc3c99e26d82aa87fe13a73537d7e7812",
+   "upstream_license": "/ and cli/, server/, sdks/code-interpreter/python, sdks/sandbox/kotlin, sdks/sandbox/python, sdks/mcp/sandbox/python: Apache-2.0 (own LICENSE files)",
+   "upstream_paths": [
+    "components/execd/pkg/runtime",
+    "components/execd/pkg/isolation",
+    "components/execd/pkg/lifecycle",
+    "components/execd/pkg/web",
+    "components/egress",
+    "server/opensandbox_server/services",
+    "server/opensandbox_server/api",
+    "examples/desktop",
+    "examples/chrome",
+    "examples/playwright",
+    "examples/windows",
+    "sdks/mcp/sandbox/python"
+   ],
+   "upstream_tests": [
+    "1100 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: In-sandbox execution daemon: commands, files, PTY, lifecycle; Egress policy proxy (nftables, DNS, credential vault); Sandbox lifecycle API",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-sandbox (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "openbot.device_grants",
+   "source": "CopilotKit/OpenBot",
+   "upstream_commit": "d88ff75ed691ab7a415c5c2d099371865c8ff61b",
+   "upstream_license": "/: MIT (CopilotKit)",
+   "upstream_paths": [
+    "app/src",
+    "desktop/src-tauri",
+    "extension/src",
+    "api/openapi",
+    "agent-claude-sdk",
+    "agent-langgraph-agui",
+    "agent-crewai"
+   ],
+   "upstream_tests": [
+    "955 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Per-agent device management, grants and audited control; Agent-framework adapters (reference)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-control-room",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "hermes_agent.skills_memory",
+   "source": "NousResearch/hermes-agent",
+   "upstream_commit": "081e8d9b75b2bedae297a89232b04ef9be7b26a0",
+   "upstream_license": "/: MIT (Nous Research); plugins/security-guidance: Apache-2.0 (NOTICE: from claude-plugins-official); plugins/hermes-achievements: MIT; optional-skills/** (ported skills): MIT with per-skill authors and upstream commits",
+   "upstream_paths": [
+    "agent",
+    "skills",
+    "tools",
+    "cron",
+    "gateway",
+    "acp_adapter"
+   ],
+   "upstream_tests": [
+    "11244 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Procedural skills, memory and tool orchestration; Scheduling and messaging gateways (reference)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "screenpipe.reference",
+   "source": "screenpipe/screenpipe",
+   "upstream_commit": "b8f09c879fddc807e9fd3aae7aae4f1a0accb1f6",
+   "upstream_license": "/: Screenpipe Commercial License (Negentropy Labs, Inc.; all rights reserved): free for personal non-commercial use; commercial use needs an Enterprise licence; building a competing product is prohibited without one. GitHub reports NOASSERTION",
+   "upstream_paths": [
+    "crates/screenpipe-screen",
+    "crates/screenpipe-engine",
+    "crates/screenpipe-db",
+    "packages/screenpipe-mcp"
+   ],
+   "upstream_tests": [
+    "1509 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Continuous screen capture and OCR; Local screen-history index and MCP (reference only)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "apps/orcel-native-host (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain. PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE for public copies."
+  },
+  {
+   "id": "osworld.harness",
+   "source": "xlang-ai/OSWorld",
+   "upstream_commit": "5123bfdbbc34b947bcffcff564abc62d0ab7072d",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "desktop_env",
+    "desktop_env/providers",
+    "desktop_env/evaluators",
+    "evaluation_examples/examples",
+    "evaluation_examples/examples_windows"
+   ],
+   "upstream_tests": [
+    "129 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Desktop task environment and evaluators; Task sets (369 + 49)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/benchmarks",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "browsergym.harness",
+   "source": "ServiceNow/BrowserGym",
+   "upstream_commit": "27a90ce815098f43414e93491e06907af468e45b",
+   "upstream_license": "/: Apache-2.0 (LICENSE with a ServiceNow copyright header; GitHub reports NOASSERTION)",
+   "upstream_paths": [
+    "browsergym/core",
+    "browsergym/experiments",
+    "browsergym/miniwob",
+    "browsergym/webarena",
+    "browsergym/visualwebarena",
+    "browsergym/assistantbench"
+   ],
+   "upstream_tests": [
+    "77 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Master ledger: Browser environment and experiment runner; Benchmark adapters",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/benchmarks",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
   }
  ]
 }
