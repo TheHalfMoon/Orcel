@@ -713,9 +713,11 @@ fn form_material(action: &BindAction, form: &BoundForm) -> String {
         BindAction::PressEnter { .. } => ("enter", String::new()),
         other => ("other", format!("{other:?}")),
     };
+    // The position only: a new, unrelated field of the same name changes
+    // the count, and must not make the same field look like a new action.
     let ordinal = form
         .ordinal
-        .map(|ordinal| format!("{}/{}", ordinal.position, ordinal.count))
+        .map(|ordinal| ordinal.position.to_string())
         .unwrap_or_default();
     [
         kind,
@@ -1799,7 +1801,13 @@ impl LiveBrowser {
         // B1: nothing is journaled or spent while a person holds the page,
         // nor for a download of the same link to the same name whose
         // earlier outcome is unknown.
-        self.gate_rekey("download", &format!("{target}\u{0}{relative}"))?;
+        self.gate_rekey(
+            "download",
+            &format!(
+                "{}\u{0}{relative}",
+                crate::takeover_gate::link_identity(&target)
+            ),
+        )?;
         self.gate_confirm()?;
         let record_id = token.record_id.clone();
         // The intent is durable before the approval is spent: if orceld
@@ -1931,6 +1939,38 @@ impl LiveBrowser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B1: a form action's stable material names the field by its position,
+    /// never the count of same-named fields, nor its node id.
+    #[test]
+    fn b1_form_material_keys_on_the_position_not_the_count() {
+        let field = |count: usize| BoundForm {
+            role: "textbox".into(),
+            name: "Search".into(),
+            name_cut: false,
+            ordinal: Some(orcel_browser_host::worker_host::FieldOrdinal { position: 1, count }),
+        };
+        let enter = |node: &str| BindAction::PressEnter {
+            node_id: node.into(),
+            role: "textbox".into(),
+        };
+        assert_eq!(
+            form_material(&enter("n7"), &field(2)),
+            form_material(&enter("n42"), &field(3)),
+            "an unrelated new field of the same name, and renumbered nodes, change nothing"
+        );
+        let second = BoundForm {
+            ordinal: Some(orcel_browser_host::worker_host::FieldOrdinal {
+                position: 2,
+                count: 3,
+            }),
+            ..field(3)
+        };
+        assert_ne!(
+            form_material(&enter("n7"), &field(3)),
+            form_material(&enter("n7"), &second)
+        );
+    }
 
     #[test]
     fn reconciliation_reports_what_is_at_the_destination_and_nothing_else() {

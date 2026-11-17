@@ -24,6 +24,10 @@ pub type SharedLedger = Arc<Mutex<UncertainLedger>>;
 pub struct UncertainLedger {
     by_task: BTreeMap<TaskId, BTreeSet<ActionKey>>,
     len: usize,
+    /// Tasks with an uncertain action the ledger could not record (it was
+    /// full). They stay refused for every consequential write until
+    /// [`UncertainLedger::reconcile_overflow`], even once room frees up.
+    overflowed: BTreeSet<TaskId>,
 }
 
 impl UncertainLedger {
@@ -39,13 +43,15 @@ impl UncertainLedger {
         Arc::new(Mutex::new(Self::new()))
     }
 
-    /// Remember `key` as uncertain for `task`. False if the ledger is full
-    /// (it then refuses every consequential write anyway).
+    /// Remember `key` as uncertain for `task`. False if the ledger is full:
+    /// the task is then marked overflowed and refused for every
+    /// consequential write until reconciled.
     pub fn record(&mut self, task: &TaskId, key: ActionKey) -> bool {
         if self.contains(task, &key) {
             return true;
         }
         if self.is_full() {
+            self.overflowed.insert(task.clone());
             return false;
         }
         self.by_task.entry(task.clone()).or_default().insert(key);
@@ -74,6 +80,26 @@ impl UncertainLedger {
             self.len -= 1;
         }
         removed
+    }
+
+    /// Whether `task` lost an uncertain action to a full ledger.
+    #[must_use]
+    pub fn is_overflowed(&self, task: &TaskId) -> bool {
+        self.overflowed.contains(task)
+    }
+
+    /// Whether a write of `key` by `task` must be refused: the key is
+    /// uncertain, or (for a consequential write) the ledger is full or the
+    /// task overflowed it.
+    #[must_use]
+    pub fn refuses(&self, task: &TaskId, key: &ActionKey, consequential: bool) -> bool {
+        self.contains(task, key) || (consequential && (self.is_full() || self.is_overflowed(task)))
+    }
+
+    /// Every uncertain outcome of `task`, recorded or lost to a full
+    /// ledger, was established: clear its overflow mark.
+    pub fn reconcile_overflow(&mut self, task: &TaskId) -> bool {
+        self.overflowed.remove(task)
     }
 
     /// Whether the ledger is full.
@@ -128,5 +154,13 @@ mod tests {
         }
         assert!(ledger.is_full());
         assert!(!ledger.record(&task, ActionKey::new("one more")));
+        assert!(ledger.is_overflowed(&task));
+        // Room frees up, but the lost key is not forgotten: the task stays
+        // refused for consequential writes until its overflow is reconciled.
+        assert!(ledger.reconcile(&task, &ActionKey::new("0")));
+        assert!(ledger.refuses(&task, &ActionKey::new("one more"), true));
+        assert!(!ledger.refuses(&task, &ActionKey::new("one more"), false));
+        assert!(ledger.reconcile_overflow(&task));
+        assert!(!ledger.refuses(&task, &ActionKey::new("one more"), true));
     }
 }

@@ -267,18 +267,34 @@ fn stable_key(origin: &str, path: &str, kind: &str, material: &str) -> ActionKey
     digest_key(&[STABLE_KEY_DOMAIN, LIVE_TASK, origin, path, kind, material])
 }
 
+/// Split `url` at the end of its authority: the authority ends at the
+/// first '/', '?' or '#' after the scheme. Returns the part before (scheme
+/// and authority) and the path without query or fragment ("/" if none).
+fn split_url(url: &str) -> (&str, &str) {
+    let start = url.find("://").map_or(0, |at| at + 3);
+    let authority_end = url[start..]
+        .find(['/', '?', '#'])
+        .map_or(url.len(), |at| start + at);
+    let rest = &url[authority_end..];
+    let path = match rest.find(['?', '#']) {
+        Some(0) | None if !rest.starts_with('/') => "/",
+        Some(end) => &rest[..end],
+        None => rest,
+    };
+    (&url[..authority_end], path)
+}
+
 /// The path of `url` (no query or fragment); empty when unknown.
 fn url_path(url: Option<&str>) -> &str {
-    let Some(url) = url else {
-        return "";
-    };
-    let after_scheme = url.find("://").map_or(url, |at| &url[at + 3..]);
-    let Some(slash) = after_scheme.find('/') else {
-        return "/";
-    };
-    let path = &after_scheme[slash..];
-    let end = path.find(['?', '#']).unwrap_or(path.len());
-    &path[..end]
+    url.map_or("", |url| split_url(url).1)
+}
+
+/// A link's identity for a download's stable key: its scheme, authority and
+/// path, without the query or fragment (a signed URL's changing query must
+/// not make the same download look new).
+pub(crate) fn link_identity(url: &str) -> String {
+    let (origin, path) = split_url(url);
+    format!("{origin}{path}")
 }
 
 /// A refusal as orceld's closed failure code. The contract has no paused
@@ -520,6 +536,56 @@ mod tests {
     }
 
     #[test]
+    fn a_download_link_is_keyed_without_its_query() {
+        assert_eq!(
+            link_identity("https://files.test/q3.pdf?sig=abc&exp=1"),
+            "https://files.test/q3.pdf"
+        );
+        assert_eq!(
+            link_identity("https://files.test/q3.pdf?sig=xyz#page=2"),
+            link_identity("https://files.test/q3.pdf")
+        );
+        assert_eq!(
+            link_identity("https://files.test?f=/q3.pdf"),
+            "https://files.test/"
+        );
+        assert_ne!(
+            link_identity("https://files.test/q3.pdf"),
+            link_identity("https://other.test/q3.pdf")
+        );
+    }
+
+    #[test]
+    fn a_lost_download_with_a_signed_url_is_refused_when_the_signature_changes() {
+        let ledger = UncertainLedger::shared();
+        let clock = ManualClock::at(0);
+        let download = |gate: &mut TakeoverGate<ManualClock>, link: &str| {
+            let ticket =
+                gate.before_write("page-1", "download", link, ActionClass::Consequential)?;
+            gate.rekey(
+                ticket.as_ref(),
+                "https://files.test",
+                Some("https://files.test/reports"),
+                "download",
+                &format!("{}\u{0}q3.pdf", link_identity(link)),
+            )?;
+            Ok::<_, ProviderError>(ticket)
+        };
+        let mut gate = TakeoverGate::on_with_ledger(clock, ledger);
+        gate.page_opened("page-1");
+        let ticket = download(&mut gate, "https://files.test/q3.pdf?sig=one")
+            .ok()
+            .flatten();
+        assert!(gate.before_dispatch(ticket.as_ref()).is_ok());
+        gate.after_write(ticket, "unknown");
+        let refused = download(&mut gate, "https://files.test/q3.pdf?sig=two");
+        assert!(
+            matches!(&refused, Err(e) if e.message.contains("outcome_uncertain")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
     fn a_lost_download_is_refused_after_a_host_restart() {
         let ledger = UncertainLedger::shared();
         let clock = ManualClock::at(0);
@@ -558,6 +624,11 @@ mod tests {
         assert_eq!(url_path(Some("https://a.test/x/y?q=1#f")), "/x/y");
         assert_eq!(url_path(Some("https://a.test")), "/");
         assert_eq!(url_path(None), "");
+        // The authority ends at '?' or '#', so a slash inside the query or
+        // fragment is never taken for the path.
+        assert_eq!(url_path(Some("https://a.test?next=/admin")), "/");
+        assert_eq!(url_path(Some("https://a.test#/route")), "/");
+        assert_eq!(url_path(Some("https://a.test/p?x=/y#/z")), "/p");
         assert_eq!(
             stable_key("https://a.test", "/x", "form", "m"),
             stable_key(

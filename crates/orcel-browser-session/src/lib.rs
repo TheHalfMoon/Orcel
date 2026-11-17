@@ -59,7 +59,7 @@ pub use input::{
 pub use machine::{
     ActionClass, ChallengeKind, ChallengeOrigin, Effect, ReadTicket, Reads, ResourceSession, State,
     Target, WriteFate, WriteOutcome, WriteTicket, MAX_PENDING_WRITES, MAX_UNCERTAIN_ACTIONS,
-    PENDING_TTL_MS, QUIET_MS,
+    PENDING_TTL_MS, QUIET_MS, UNSENT_TTL_MS,
 };
 pub use refusal::{ControlError, Reason, Refusal, RefusalClass};
 pub use uncertain::{SharedLedger, UncertainLedger, MAX_LEDGER_ACTIONS};
