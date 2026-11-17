@@ -824,6 +824,18 @@
     {
       "path": "tests/benchmarks/LICENSE-cua-bench.txt",
       "reason": "The preserved MIT licence of the cua-bench donor (blob 98422212), cited by the cua-bench donor entry."
+    },
+    {
+      "path": "apps/web/public/fonts/OFL-BricolageGrotesque.txt",
+      "reason": "Published SIL Open Font License text of Bricolage Grotesque (ateliertriay/bricolage). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
+    },
+    {
+      "path": "apps/web/public/fonts/OFL-Geist.txt",
+      "reason": "Published SIL Open Font License text of Geist and Geist Mono (vercel/geist-font). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
+    },
+    {
+      "path": "apps/web/public/fonts/OFL-InstrumentSerif.txt",
+      "reason": "Published SIL Open Font License text of Instrument Serif (Instrument/instrument-serif). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
     }
   ],
   "authorizations": {
