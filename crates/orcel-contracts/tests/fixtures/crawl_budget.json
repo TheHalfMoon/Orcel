@@ -1,0 +1,9 @@
+{
+  "max_pages": 50,
+  "max_depth": 5,
+  "max_duration_s": 600,
+  "max_remembered_urls": 1000,
+  "min_delay_ms": 250,
+  "max_batch_urls": 50,
+  "max_job_result_bytes": 20971520
+}

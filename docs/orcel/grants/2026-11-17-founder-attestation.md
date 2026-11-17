@@ -88,3 +88,32 @@ How Orcel records it:
   **OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17** (defined there and in `docs/orcel/notices/licence-policy.json`,
   both pointing at this record). No gate refuses AGPL, GPL, LGPL, MPL, SSPL, BUSL, FSL, commercial or unlicensed code or
   dependencies; the gates require provenance and preserved notices, and dependency licences are reported, not judged.
+
+## Vercel source expansion (2026-11-17)
+
+Status: **OWNER-ASSERTED AUTHORIZATION — 2026-11-17, labelled summary.** Recorded by the engineering agent on 2026-11-17 from the
+founder's Vercel source expansion as relayed by the coordinating agent. The wording is the recording agent's summary, not the
+founder's verbatim text. The founder can correct it. **This is not independent legal verification.**
+
+What the founder decided and asserts:
+
+- The open "Vercel agent-use" question is resolved as **both** `vercel-labs/agent-desktop` and `browser-use/desktop`. They are
+  separate donors. `browser-use/desktop` is owned by the browser-use organisation, not by Vercel.
+- All useful repositories of the `vercel` and `vercel-labs` GitHub organisations are in scope, including the 25 the founder named.
+- The founder states rights beyond the public licences for these sources. Under the founder decision above, licences do not block
+  copying. The original licence of each source is kept as information, provenance and notices.
+
+How Orcel records it:
+
+- Each record carries `authorization: OWNER-ASSERTED AUTHORIZATION — 2026-11-17` beside the informational `public_licence`. The
+  records are group I (founder-named) and group J (found by a discovery sweep) of
+  `docs/orcel/implementation-readiness/prep/TRANSPLANT_LEDGER.json`, with `vercel_expansion` in the same file and section 8.7 of
+  `DONOR_INVENTORY.md`.
+- **Owner-asserted, not independently verified.** No copyright-holder-signed grant is in the repository, and the engineering agent
+  did not review any underlying agreement.
+- Copies keep upstream copyright, licence and NOTICE texts and a provenance record (repository, SHA, paths). Third-party files inside
+  a donor keep their own notices, for example axe-core (MPL-2.0) in agent-browser, the GPL test fixtures in just-bash and Mbed TLS
+  (Apache-2.0 OR GPL-2.0-or-later) in quickjs-wasi.
+- Not covered: hosted services and their terms (Vercel Sandbox, AI Gateway, Workflow on Vercel, Vercel Connect), model weights and
+  trademarks. The Vercel Sandbox microVM backend is not public and is not made available by this record.
+- Security, review, dependency-admission and release gates are unchanged.

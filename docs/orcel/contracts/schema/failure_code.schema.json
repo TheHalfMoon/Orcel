@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FailureCode",
+  "oneOf": [
+    {
+      "type": "string",
+      "enum": [
+        "INVALID_REQUEST",
+        "CAPABILITY_DENIED",
+        "WORKSPACE_DENIED",
+        "PATH_ESCAPE",
+        "PATH_RACE_DETECTED",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_DENIED",
+        "APPROVAL_UNAVAILABLE",
+        "TARGET_STALE",
+        "PROVIDER_UNAVAILABLE",
+        "PROCESS_TIMEOUT",
+        "PROCESS_TERMINATION_UNVERIFIED",
+        "OUTPUT_LIMIT",
+        "POSTCONDITION_FAILED",
+        "INTERNAL_ERROR"
+      ]
+    },
+    {
+      "description": "SG-000055: a remote-context request without an exact active local\nremote-session lease. Never satisfiable by the remote side.",
+      "type": "string",
+      "const": "REMOTE_SESSION_INACTIVE"
+    },
+    {
+      "description": "Contracts v1: a lease-gated executor was asked for without an active\nlease.",
+      "type": "string",
+      "const": "LEASE_REQUIRED"
+    },
+    {
+      "description": "Contracts v1: a lease exists but a binding, the epoch, the policy\nrevision or the expiry does not match.",
+      "type": "string",
+      "const": "LEASE_INVALID"
+    },
+    {
+      "description": "Contracts v1: no identity binding exists on this OS yet.",
+      "type": "string",
+      "const": "LEASE_UNSUPPORTED_PLATFORM"
+    },
+    {
+      "description": "Contracts v1: Full Control dispatch refused because the protected\nindicator is not alive.",
+      "type": "string",
+      "const": "INDICATOR_UNAVAILABLE"
+    },
+    {
+      "description": "Contracts v1: the capability entry is `unsupported`.",
+      "type": "string",
+      "const": "UNSUPPORTED"
+    },
+    {
+      "description": "Contracts v1: the capability entry is `blocked` by policy.",
+      "type": "string",
+      "const": "POLICY_BLOCKED"
+    },
+    {
+      "description": "Contracts v1: the job is unknown, expired or not owned by the caller.",
+      "type": "string",
+      "const": "JOB_NOT_FOUND"
+    },
+    {
+      "description": "Contracts v1: a queue, store or pending-approval bound was reached.",
+      "type": "string",
+      "const": "QUEUE_FULL"
+    },
+    {
+      "description": "Contracts v1: a per-origin politeness budget is exhausted.",
+      "type": "string",
+      "const": "RATE_LIMITED"
+    },
+    {
+      "description": "Contracts v1: the job or unit ended in `outcome_unknown`; it is never\nretried automatically.",
+      "type": "string",
+      "const": "OUTCOME_UNKNOWN"
+    },
+    {
+      "description": "Contracts v1: the authority service is not installed or not\nanswering, so Full Control is unavailable.",
+      "type": "string",
+      "const": "AUTHORITY_UNAVAILABLE"
+    },
+    {
+      "description": "Contracts v1: an opt-in feature not granted to this client.",
+      "type": "string",
+      "const": "PERMISSION_REQUIRED"
+    }
+  ]
+}

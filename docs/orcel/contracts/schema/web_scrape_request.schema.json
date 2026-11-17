@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WebScrapeRequest",
+  "description": "The `arguments` of a `web/scrape` request envelope.",
+  "type": "object",
+  "properties": {
+    "contract": {
+      "description": "`\"orcel.web-scrape/1\"`.",
+      "type": "string"
+    },
+    "engine": {
+      "$ref": "#/$defs/Engine"
+    },
+    "extract": {
+      "$ref": "#/$defs/ExtractRequest"
+    },
+    "headers": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/HeaderSpec"
+      }
+    },
+    "privacy": {
+      "$ref": "#/$defs/PrivacyProfileRef",
+      "default": {
+        "profile": "default",
+        "sensitive": []
+      }
+    },
+    "timeout_ms": {
+      "description": "Capped by the engine's own timeouts.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "default": null,
+      "minimum": 0
+    },
+    "url": {
+      "type": "string"
+    },
+    "wait_for_ms": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "default": null,
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "url",
+    "extract",
+    "engine"
+  ],
+  "$defs": {
+    "Engine": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "fetch",
+            "chromium"
+          ]
+        },
+        {
+          "description": "Track B.",
+          "type": "string",
+          "const": "obscura"
+        }
+      ]
+    },
+    "ExtractFormat": {
+      "description": "Output formats Orcel produces in Wave 1 (section 5.3).",
+      "type": "string",
+      "enum": [
+        "markdown",
+        "html",
+        "raw_html",
+        "links",
+        "change_tracking"
+      ]
+    },
+    "ExtractRequest": {
+      "type": "object",
+      "properties": {
+        "exclude_tags": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "formats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExtractFormat"
+          }
+        },
+        "include_tags": {
+          "description": "CSS selectors, at most `MAX_PATH_FILTERS`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "only_main_content": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "formats"
+      ]
+    },
+    "HeaderSpec": {
+      "description": "A custom request header (FD-UP-8 decided).",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/HeaderValue"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "HeaderValue": {
+      "description": "A header value: a literal, or the name of a secret held in the OS secret\nstore and bound to its destination origins (section 4.12). On the wire:\n`{\"literal\": \"en\"}` or `{\"secret\": \"docs-token\"}`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "literal": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "literal"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "secret": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "secret"
+          ]
+        }
+      ]
+    },
+    "PrivacyProfileRef": {
+      "description": "The privacy profile a request runs under. `profile` names the\nprivacy-and-compatibility defaults (on by default, section 4.16);\n`sensitive` lists the opt-in features requested, empty by default.",
+      "type": "object",
+      "properties": {
+        "profile": {
+          "description": "`\"default\"` in Wave 1.",
+          "type": "string"
+        },
+        "sensitive": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SensitiveFeature"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "profile"
+      ]
+    },
+    "SensitiveFeature": {
+      "description": "Sensitive, opt-in web features (section 4.16). Each is off unless the\nrequest names it, and each needs the client permission\n`web.privacy.sensitive:<feature>`. CAPTCHA solving, login, paywall or\naccess-control bypass and ignoring robots rules are never offered and\nhave no variant.",
+      "type": "string",
+      "enum": [
+        "user_agent_override",
+        "device_emulation",
+        "locale_override",
+        "timezone_override",
+        "geolocation_override",
+        "user_proxy",
+        "fingerprint_randomisation",
+        "tls_impersonation"
+      ]
+    }
+  }
+}

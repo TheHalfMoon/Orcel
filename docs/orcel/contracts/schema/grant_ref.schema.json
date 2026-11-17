@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GrantRef",
+  "description": "A per-action approval: an existing `orcel-approval` one-shot nonce,\nbound to the client principal and the Orcel session.",
+  "type": "object",
+  "properties": {
+    "action_digest": {
+      "description": "What was approved, exactly (canonical JSON SHA-256 for new shapes).",
+      "type": "string"
+    },
+    "approval_class": {
+      "$ref": "#/$defs/ApprovalClass"
+    },
+    "contract": {
+      "description": "`\"orcel.grant-ref/1\"`.",
+      "type": "string"
+    },
+    "nonce_id": {
+      "description": "One-shot, short expiry (SG-000018).",
+      "type": "string"
+    },
+    "orcel_session_id": {
+      "description": "Bound: a restart invalidates every outstanding grant (S10).",
+      "type": "string"
+    },
+    "principal_id": {
+      "description": "The client principal the approval was given to; another client\ncannot use it.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "approval_class",
+    "action_digest",
+    "nonce_id",
+    "orcel_session_id",
+    "principal_id"
+  ],
+  "$defs": {
+    "ApprovalClass": {
+      "description": "Approval class. The wire spellings are the existing ones of the MCP tool\ncatalog (`\"none\"`, `\"SOFT\"`, `\"STRONG\"`) and of `orcel-approval`, so the\nRust tool mirror and the TypeScript catalog compare equal.",
+      "type": "string",
+      "enum": [
+        "none",
+        "SOFT",
+        "STRONG"
+      ]
+    }
+  }
+}
