@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CrawlBudget",
+  "description": "User-configurable crawl and batch budget (FD-UP-11 decided). The user\nchanges it from the local control path only; `DEFAULT` holds the\nshipped defaults. The only fixed limits are the resource-protection\nceilings checked by `check`.",
+  "type": "object",
+  "properties": {
+    "max_batch_urls": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "max_depth": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "max_duration_s": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "max_job_result_bytes": {
+      "description": "Result store bound per job.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "max_pages": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "max_remembered_urls": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "min_delay_ms": {
+      "description": "Politeness delay between requests to one origin.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "max_pages",
+    "max_depth",
+    "max_duration_s",
+    "max_remembered_urls",
+    "min_delay_ms",
+    "max_batch_urls",
+    "max_job_result_bytes"
+  ]
+}

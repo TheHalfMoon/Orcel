@@ -6,6 +6,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+
+	"github.com/TheHalfMoon/Orcel/apps/orcel-computer-host/third_party/hcu/semantic"
 )
 
 const (
@@ -35,6 +37,10 @@ const (
 	maxScrollTicks = 20
 	workerTimeoutMS = 8000
 	workerAttempts = 2
+	// W2-01: bounds of the HCU-derived semantic fields.
+	maxSnapshotIDBytes = 64
+	maxLayoutFrameBytes = 80
+	maxExpectedTextBytes = 4096
 )
 
 var allowedOperations = map[string]struct{}{
@@ -54,6 +60,11 @@ var allowedOperations = map[string]struct{}{
 	"input_key": {},
 	"input_hotkey": {},
 	"shutdown": {},
+	// W2-01: batched semantic actions are a new action kind. The host names
+	// the operation so its capability entry reports it refused, and
+	// validateRequest denies every request for it until a grain amendment
+	// (SG-000132, or an SG-000095 amendment) admits it.
+	"semantic_batch": {},
 }
 
 // windowRef is the /2 platform-tagged window reference. This host serves
@@ -92,6 +103,14 @@ type hostRequest struct {
 	Text string `json:"text,omitempty"`
 	Key string `json:"key,omitempty"`
 	ExpectedLastInputTick *uint32 `json:"expected_last_input_tick,omitempty"`
+	// W2-01 (HCU semantic layer). ref_tree asks observe_window for the
+	// compact ref tree; snapshot_id and expected_element narrow a
+	// semantic_action to the observed element; layout_frame_id narrows
+	// pointer input to the observed window layout. Each can only refuse.
+	RefTree bool `json:"ref_tree,omitempty"`
+	SnapshotID string `json:"snapshot_id,omitempty"`
+	ExpectedElement *semantic.Expectation `json:"expected_element,omitempty"`
+	LayoutFrameID string `json:"layout_frame_id,omitempty"`
 }
 
 // v2Frame is the strict /2 request shape. The window reference lives only
@@ -184,6 +203,11 @@ type hostResponse struct {
 	Platform string `json:"platform,omitempty"`
 	Backend string `json:"backend,omitempty"`
 	Capabilities map[string]capabilityFact `json:"capabilities,omitempty"`
+	// W2-01: the compact ref tree of an observe_window with ref_tree.
+	RefTree *refTreeFact `json:"ref_tree,omitempty"`
+	// Layout is the worker's layout read for a ref_tree observation. The
+	// supervisor folds it into RefTree and never forwards it.
+	Layout *semantic.Layout `json:"layout,omitempty"`
 }
 
 func success(id uint64) hostResponse {
@@ -215,6 +239,7 @@ var windowsCapabilities = map[string]capabilityFact{
 	"input_type_text": {Support: "foreground_only", Delivery: "foreground"},
 	"input_key": {Support: "foreground_only", Delivery: "foreground"},
 	"input_hotkey": {Support: "foreground_only", Delivery: "foreground"},
+	"semantic_batch": {Support: "refused", Reason: "grain_amendment_required"},
 }
 
 // helloV2 answers a /2 hello with the platform, backend and capability table.
@@ -273,10 +298,18 @@ func respondFailure(req hostRequest, code, message string) hostResponse {
 	return resp
 }
 
+// defaultSupervisor holds the ref registry of this host process.
+var defaultSupervisor = newSupervisor()
+
+// handleFrame answers one request line with the process supervisor.
+func handleFrame(line []byte, dispatch func(hostRequest) hostResponse) (hostResponse, bool) {
+	return defaultSupervisor.handleFrame(line, dispatch)
+}
+
 // handleFrame answers one request line. dispatch runs native operations;
 // it always receives a normalized /1 request so the sacrificial worker and
 // its response binding stay unchanged. stop reports a completed shutdown.
-func handleFrame(line []byte, dispatch func(hostRequest) hostResponse) (resp hostResponse, stop bool) {
+func (s *supervisor) handleFrame(line []byte, dispatch func(hostRequest) hostResponse) (resp hostResponse, stop bool) {
 	req, problem := decodeRequest(line)
 	if problem == nil {
 		problem = validateRequest(req)
@@ -299,7 +332,7 @@ func handleFrame(line []byte, dispatch func(hostRequest) hostResponse) (resp hos
 	default:
 		native := req
 		native.Protocol = protocolGeneration
-		resp = dispatch(native)
+		resp = s.dispatch(native, dispatch)
 	}
 	if encodedSize(resp) > maxResponseBytes {
 		resp = failure(req.ID, "output_limit", "host response exceeds the bounded private IPC size")
@@ -339,6 +372,12 @@ func validateRequest(req hostRequest) *hostError {
 		if req.ExpectedPID == nil || req.ExpectedStartGeneration == nil || req.ExpectedWindowNonce == nil {
 			return &hostError{Code: "invalid_request", Message: "exact window binding is required"}
 		}
+	}
+	if req.Op == "semantic_batch" {
+		return &hostError{Code: "capability_denied", Message: "batched semantic actions are denied until a grain amendment enables them"}
+	}
+	if problem := validateSemanticFields(req); problem != nil {
+		return problem
 	}
 	if req.MaxNodes < 0 || req.MaxDepth < 0 {
 		return &hostError{Code: "invalid_request", Message: "tree bounds must be non-negative"}

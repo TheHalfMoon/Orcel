@@ -17,9 +17,17 @@
 // adapter takes the armed approval for each action, so one approval covers
 // one action, and compares the window's binding (pid, start generation and
 // nonce) with the one the approval was armed on. Windows is unchanged.
+//
+// W2-01 (HCU semantic layer, Windows host only): the adapter remembers the
+// identity (control type, automation id, name) of every element it read and
+// sends it with a semantic action, so the host refuses an action whose live
+// target is no longer the observed element; after a ref-tree read it also
+// sends the snapshot id, so an action planned against an older observation
+// is refused. Both only narrow what orceld already approved.
 
 use crate::{
-    CapturedImage, NativeElement, NativeProcess, NativeWindow, SignatureState, UiaAdapter, UiaError,
+    CapturedImage, CompactRef, CompactRefTree, NativeElement, NativeProcess, NativeWindow,
+    SignatureState, UiaAdapter, UiaError,
 };
 use orcel_contracts::FailureCode;
 use serde::{Deserialize, Serialize};
@@ -274,7 +282,21 @@ struct HostRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     expected_last_input_tick: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    ref_tree: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_element: Option<HostExpectedElement<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     window: Option<HostWindowRef>,
+}
+
+/// W2-01: the observed identity of a semantic action's target.
+#[derive(Debug, Clone, Copy, Serialize)]
+struct HostExpectedElement<'a> {
+    control_type: &'a str,
+    automation_id: &'a str,
+    name: &'a str,
 }
 
 /// The `/2` platform-tagged window reference, of the kind the negotiated
@@ -315,6 +337,9 @@ impl<'a> HostRequest<'a> {
             text: None,
             key: None,
             expected_last_input_tick: None,
+            ref_tree: None,
+            snapshot_id: None,
+            expected_element: None,
             window: None,
         }
     }
@@ -451,6 +476,141 @@ struct HostResponse {
     cursor: Option<HostCursor>,
     action: Option<HostAction>,
     error: Option<HostError>,
+    #[serde(default)]
+    ref_tree: Option<HostRefTree>,
+}
+
+/// W2-01: the compact ref tree the Windows host returns for an
+/// observe_window with ref_tree.
+#[derive(Debug, Deserialize)]
+struct HostRefTree {
+    snapshot_id: String,
+    text: String,
+    #[serde(default)]
+    truncated: bool,
+    #[serde(default)]
+    refs: Vec<HostRefEntry>,
+    #[serde(default)]
+    diff_text: Option<String>,
+    #[serde(default)]
+    layout_frame_id: Option<String>,
+    #[serde(default)]
+    adapter: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HostRefEntry {
+    #[serde(rename = "ref")]
+    reference: String,
+    runtime_id: String,
+    #[serde(default)]
+    role: String,
+}
+
+/// Bounds of a ref tree reply.
+const MAX_REF_TREE_TEXT_BYTES: usize = 64 * 1024;
+const MAX_SNAPSHOT_ID_BYTES: usize = 64;
+const MAX_LAYOUT_FRAME_BYTES: usize = 80;
+/// Bound of the remembered element identities of one window. Narrowing is
+/// best-effort hardening, not a gate: elements past this bound (and windows
+/// past MAX_OBSERVED_WINDOWS, which clears the record) are sent without an
+/// expected identity, as before W2-01, and orceld's approval still applies.
+const MAX_OBSERVED_ELEMENTS: usize = 8192;
+/// Bound of the windows whose last read is remembered.
+const MAX_OBSERVED_WINDOWS: usize = 64;
+/// Age past which a remembered read no longer narrows an action: the action
+/// is sent without the expected identity and snapshot id, as before W2-01.
+const MAX_OBSERVATION_AGE: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn is_short_ref(value: &str) -> bool {
+    let digits = value.strip_prefix('r').unwrap_or("");
+    !digits.is_empty()
+        && digits.len() <= 9
+        && !digits.starts_with('0')
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn collect_runtime_ids<'a>(
+    elements: &'a [HostElement],
+    out: &mut std::collections::BTreeSet<&'a str>,
+) {
+    for element in elements {
+        out.insert(element.runtime_id.as_str());
+        collect_runtime_ids(&element.children, out);
+    }
+}
+
+/// Validates a ref tree against the element tree of the same reply: every
+/// ref is well formed, unique, and names an element that reply contains.
+fn validate_ref_tree(tree: &HostRefTree, elements: &[HostElement]) -> Result<(), UiaError> {
+    let malformed = |what: &str| {
+        UiaError::new(
+            FailureCode::ProviderUnavailable,
+            format!("computer host returned a malformed ref tree: {what}"),
+        )
+    };
+    if tree.snapshot_id.is_empty()
+        || tree.snapshot_id.len() > MAX_SNAPSHOT_ID_BYTES
+        || !tree.snapshot_id.is_ascii()
+    {
+        return Err(malformed("snapshot id"));
+    }
+    if tree.text.len() > MAX_REF_TREE_TEXT_BYTES
+        || tree
+            .diff_text
+            .as_ref()
+            .is_some_and(|diff| diff.len() > MAX_REF_TREE_TEXT_BYTES)
+    {
+        return Err(malformed("text exceeds the bounded size"));
+    }
+    if let Some(frame) = &tree.layout_frame_id {
+        if frame.len() > MAX_LAYOUT_FRAME_BYTES || !frame.starts_with("l1:") {
+            return Err(malformed("layout frame id"));
+        }
+    }
+    let mut present = std::collections::BTreeSet::new();
+    collect_runtime_ids(elements, &mut present);
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in &tree.refs {
+        if !is_short_ref(&entry.reference) || !seen.insert(entry.reference.as_str()) {
+            return Err(malformed("ref"));
+        }
+        if !present.contains(entry.runtime_id.as_str()) {
+            return Err(malformed("a ref names an element outside the reply"));
+        }
+    }
+    Ok(())
+}
+
+/// What the adapter remembers of one window's last read (W2-01).
+#[derive(Debug, Default)]
+struct ObservedWindow {
+    snapshot_id: Option<String>,
+    snapshot_runtime_ids: std::collections::BTreeSet<String>,
+    elements: std::collections::BTreeMap<String, (String, String, String)>,
+    /// When the record was started (the last whole-window read, or the
+    /// first subtree read); a subtree read never extends it.
+    observed_at: Option<std::time::Instant>,
+}
+
+fn remember_elements(
+    elements: &[HostElement],
+    out: &mut std::collections::BTreeMap<String, (String, String, String)>,
+) {
+    for element in elements {
+        if out.len() >= MAX_OBSERVED_ELEMENTS {
+            return;
+        }
+        out.insert(
+            element.runtime_id.clone(),
+            (
+                element.control_type.clone(),
+                element.automation_id.clone(),
+                element.name.clone(),
+            ),
+        );
+        remember_elements(&element.children, out);
+    }
 }
 
 fn map_host_error(error: HostError) -> UiaError {
@@ -845,9 +1005,134 @@ mod platform {
         armed: Mutex<Option<ArmedSemantic>>,
         armed_input: Mutex<Option<ArmedInput>>,
         last_input: Mutex<Option<std::time::Instant>>,
+        /// W2-01: per window, the identities of the elements last read and
+        /// the host snapshot they belong to.
+        observed: Mutex<BTreeMap<u64, ObservedWindow>>,
     }
 
     impl ComputerHostAdapter {
+        /// W2-01: records the identities a read returned. A whole-window
+        /// read replaces the window's record (with the snapshot id of a
+        /// ref-tree read); a subtree read adds its elements and drops the
+        /// snapshot id, which no longer describes everything remembered.
+        fn remember_read(
+            &self,
+            hwnd: u64,
+            elements: &[HostElement],
+            whole_window: bool,
+            snapshot: Option<&HostRefTree>,
+        ) {
+            let Ok(mut observed) = self.observed.lock() else {
+                return;
+            };
+            if !observed.contains_key(&hwnd) && observed.len() >= MAX_OBSERVED_WINDOWS {
+                observed.clear();
+            }
+            let window = observed.entry(hwnd).or_default();
+            if whole_window {
+                *window = ObservedWindow::default();
+            }
+            if window.observed_at.is_none() {
+                window.observed_at = Some(std::time::Instant::now());
+            }
+            window.snapshot_id = snapshot.map(|tree| tree.snapshot_id.clone());
+            window.snapshot_runtime_ids = snapshot
+                .map(|tree| {
+                    tree.refs
+                        .iter()
+                        .map(|entry| entry.runtime_id.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            remember_elements(elements, &mut window.elements);
+        }
+
+        /// W2-01: the observed identity and current snapshot id for one
+        /// target, if this adapter read it. After an action the snapshot no
+        /// longer describes the window (the host invalidates it too).
+        fn observed_target(
+            &self,
+            hwnd: u64,
+            runtime_id: &str,
+        ) -> (Option<(String, String, String)>, Option<String>) {
+            let Ok(observed) = self.observed.lock() else {
+                return (None, None);
+            };
+            let Some(window) = observed.get(&hwnd) else {
+                return (None, None);
+            };
+            let fresh = window
+                .observed_at
+                .is_some_and(|at| at.elapsed() <= MAX_OBSERVATION_AGE);
+            if !fresh {
+                return (None, None);
+            }
+            let snapshot = window
+                .snapshot_id
+                .clone()
+                .filter(|_| window.snapshot_runtime_ids.contains(runtime_id));
+            (window.elements.get(runtime_id).cloned(), snapshot)
+        }
+
+        fn forget_snapshot(&self, hwnd: u64) {
+            if let Ok(mut observed) = self.observed.lock() {
+                if let Some(window) = observed.get_mut(&hwnd) {
+                    window.snapshot_id = None;
+                    window.snapshot_runtime_ids.clear();
+                }
+            }
+        }
+
+        /// W2-01: the compact ref tree of one bound window, from the Windows
+        /// computer host only (the native macOS and Linux host does not
+        /// serve it). The reply is validated against its own element tree.
+        pub fn read_ref_tree_bounded(
+            &self,
+            hwnd: u64,
+        ) -> Result<(Vec<NativeElement>, CompactRefTree), UiaError> {
+            if self.is_native()? {
+                return Err(UiaError::new(
+                    FailureCode::CapabilityDenied,
+                    "the compact ref tree is served only by the Windows computer host",
+                ));
+            }
+            let binding = self.exact_binding(hwnd)?;
+            let mut request = HostRequest::new("observe_window");
+            request.bind_window(hwnd, binding);
+            request.max_nodes = Some(crate::MAX_TREE_NODES);
+            request.max_depth = Some(crate::MAX_TREE_DEPTH);
+            request.ref_tree = Some(true);
+            let response = self.checked_host(request)?;
+            let tree = response.ref_tree.as_ref().ok_or_else(|| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host omitted the requested ref tree",
+                )
+            })?;
+            validate_ref_tree(tree, &response.elements)?;
+            self.remember_read(hwnd, &response.elements, true, Some(tree));
+            let compact = CompactRefTree {
+                snapshot_id: tree.snapshot_id.clone(),
+                text: tree.text.clone(),
+                truncated: tree.truncated,
+                refs: tree
+                    .refs
+                    .iter()
+                    .map(|entry| CompactRef {
+                        reference: entry.reference.clone(),
+                        runtime_id: entry.runtime_id.clone(),
+                        role: entry.role.clone(),
+                    })
+                    .collect(),
+                diff_text: tree.diff_text.clone(),
+                layout_frame_id: tree.layout_frame_id.clone(),
+                adapter: tree.adapter.clone(),
+            };
+            Ok((
+                response.elements.into_iter().map(convert_element).collect(),
+                compact,
+            ))
+        }
         pub fn from_path(path: impl Into<PathBuf>) -> Result<Self, UiaError> {
             let path = path.into();
             let session = HostSession::spawn(&path)?;
@@ -858,6 +1143,7 @@ mod platform {
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
                 last_input: Mutex::new(None),
+                observed: Mutex::new(BTreeMap::new()),
             })
         }
 
@@ -892,6 +1178,7 @@ mod platform {
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
                 last_input: Mutex::new(None),
+                observed: Mutex::new(BTreeMap::new()),
             })
         }
 
@@ -924,7 +1211,17 @@ mod platform {
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
                 last_input: Mutex::new(None),
+                observed: Mutex::new(BTreeMap::new()),
             })
+        }
+
+        /// Ages every remembered read by `by`, for the observation age test.
+        #[cfg(test)]
+        pub(crate) fn age_observations_for_test(&self, by: std::time::Duration) {
+            let mut observed = self.observed.lock().unwrap();
+            for window in observed.values_mut() {
+                window.observed_at = window.observed_at.and_then(|at| at.checked_sub(by));
+            }
         }
 
         #[cfg(test)]
@@ -1445,18 +1742,38 @@ mod platform {
                 self.require_native_capability("semantic_action")?;
                 self.spend_semantic(hwnd, runtime_id, action, value, binding)?;
             }
+            // W2-01: the Windows host compares the observed identity with
+            // the live element (and the snapshot with its current one)
+            // before acting. The native host's strict /2 frames do not carry
+            // these fields.
+            let (expected, snapshot) = if self.is_native()? {
+                (None, None)
+            } else {
+                self.observed_target(hwnd, runtime_id)
+            };
             let mut request = HostRequest::new("semantic_action");
             request.bind_window(hwnd, binding);
             request.element_runtime_id = Some(runtime_id);
             request.semantic_action = Some(action);
             request.value = value;
+            request.expected_element =
+                expected
+                    .as_ref()
+                    .map(|(control_type, automation_id, name)| HostExpectedElement {
+                        control_type,
+                        automation_id,
+                        name,
+                    });
+            request.snapshot_id = snapshot.as_deref();
             if scroll_x != 0 {
                 request.scroll_x = Some(scroll_x);
             }
             if scroll_y != 0 {
                 request.scroll_y = Some(scroll_y);
             }
-            let response = self.checked_host(request)?;
+            let response = self.checked_host(request);
+            self.forget_snapshot(hwnd);
+            let response = response?;
             let action = response.action.ok_or_else(|| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
@@ -1525,7 +1842,16 @@ mod platform {
                 Some(crate::MAX_TREE_NODES),
                 Some(crate::MAX_TREE_DEPTH),
             )?;
+            self.remember_read(hwnd, &response.elements, true, None);
             Ok(response.elements.into_iter().map(convert_element).collect())
+        }
+
+        /// W2-01: the compact ref tree, from the Windows computer host.
+        fn read_ref_tree(
+            &self,
+            hwnd: u64,
+        ) -> Result<(Vec<NativeElement>, CompactRefTree), UiaError> {
+            self.read_ref_tree_bounded(hwnd)
         }
 
         /// SG-000128: the subtree below one element of the bound window, found
@@ -1560,6 +1886,7 @@ mod platform {
                     ))
                 }
             }
+            self.remember_read(hwnd, &response.elements, false, None);
             Ok(response.elements.into_iter().map(convert_element).collect())
         }
 
@@ -3265,5 +3592,248 @@ mod tests {
             FailureCode::CapabilityDenied
         );
         assert!(semantic_ops(&frames).is_empty());
+    }
+
+    /// W2-01: a Windows host that serves the compact ref tree. `refs` is
+    /// the ref list the host answers with.
+    fn w201_windows_host(refs: Value) -> (Result<ComputerHostAdapter, UiaError>, Frames) {
+        let reply = |frame: &Value, body: Value| {
+            let mut reply = json!({
+                "id": frame["id"],
+                "ok": true,
+                "protocol": "orcel-computer-host/2",
+                "host": "orcel-windows-computer-host",
+            });
+            if let (Some(reply), Some(body)) = (reply.as_object_mut(), body.as_object()) {
+                reply.extend(body.clone());
+            }
+            reply.to_string()
+        };
+        let tree = json!([{
+            "runtime_id": "42.1", "control_type": "Window", "automation_id": "", "name": "Editor",
+            "enabled": true, "selected": false, "toggled": false,
+            "scroll_horizontal_percent": 0, "scroll_vertical_percent": 0, "patterns": [],
+            "value": null, "value_is_password": false,
+            "children": [{
+                "runtime_id": "42.2", "control_type": "Button", "automation_id": "ok", "name": "OK",
+                "enabled": true, "selected": false, "toggled": false,
+                "scroll_horizontal_percent": 0, "scroll_vertical_percent": 0, "patterns": ["Invoke"],
+                "value": null, "value_is_password": false, "children": []
+            }]
+        }]);
+        scripted("windows", move |frame| match frame["op"].as_str() {
+            Some("hello") => Some(reply(
+                frame,
+                json!({
+                    "platform": "windows",
+                    "backend": "uia",
+                    "capabilities": {
+                        "list_windows": {"support": "delivered"},
+                        "observe_window": {"support": "delivered"},
+                        "semantic_action": {"support": "delivered", "delivery": "background"}
+                    }
+                }),
+            )),
+            Some("list_windows") => Some(reply(
+                frame,
+                json!({"windows": [window_fact(11, "Editor")]}),
+            )),
+            Some("observe_window") if frame["ref_tree"] == true => Some(reply(
+                frame,
+                json!({"elements": tree, "ref_tree": {
+                    "snapshot_id": "sabcd0123.1", "generation": 1,
+                    "text": "- window \"Editor\" [ref=r1]:\n - button \"OK\" [ref=r2]\n",
+                    "truncated": false, "refs": refs,
+                    "layout_frame_id": format!("l1:{}", "0".repeat(64)),
+                    "adapter": "windows/uia verified"
+                }}),
+            )),
+            Some("observe_window") => Some(reply(frame, json!({"elements": tree}))),
+            Some("semantic_action") => Some(reply(
+                frame,
+                json!({"action": {"state": "completed", "action": "semantic_invoke"}}),
+            )),
+            _ => Some(reply(frame, json!({}))),
+        })
+    }
+
+    fn w201_refs() -> Value {
+        json!([
+            {"ref": "r1", "runtime_id": "42.1", "role": "window", "fingerprint": "f1:00"},
+            {"ref": "r2", "runtime_id": "42.2", "role": "button", "fingerprint": "f1:01"}
+        ])
+    }
+
+    #[test]
+    fn w201_a_ref_tree_read_is_requested_validated_and_sends_no_action() {
+        let (adapter, frames) = w201_windows_host(w201_refs());
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        let (elements, tree) = adapter.read_ref_tree(11).unwrap();
+        assert_eq!(elements[0].runtime_id, "42.1");
+        assert_eq!(tree.snapshot_id, "sabcd0123.1");
+        assert!(tree.text.contains("button \"OK\" [ref=r2]"));
+        assert_eq!(tree.refs[1].reference, "r2");
+        assert_eq!(tree.refs[1].runtime_id, "42.2");
+        assert!(tree.layout_frame_id.as_deref().unwrap().starts_with("l1:"));
+        let observe = frames
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|frame| frame["op"] == "observe_window")
+            .cloned()
+            .unwrap();
+        assert_eq!(observe["ref_tree"], true);
+        assert!(observe.get("element_runtime_id").is_none());
+        // Observation never dispatches an action.
+        assert!(semantic_ops(&frames).is_empty());
+    }
+
+    #[test]
+    fn w201_a_malformed_ref_tree_is_refused() {
+        for refs in [
+            json!([{"ref": "r1", "runtime_id": "99.9", "role": "window"}]),
+            json!([{"ref": "r1", "runtime_id": "42.1"}, {"ref": "r1", "runtime_id": "42.2"}]),
+            json!([{"ref": "e1", "runtime_id": "42.1"}]),
+            json!([{"ref": "r01", "runtime_id": "42.1"}]),
+        ] {
+            let (adapter, _) = w201_windows_host(refs.clone());
+            let adapter = adapter.unwrap();
+            adapter.list_processes().unwrap();
+            let error = adapter.read_ref_tree(11).unwrap_err();
+            assert_eq!(error.code, FailureCode::ProviderUnavailable, "{refs}");
+            assert!(error.message.contains("malformed ref tree"), "{error:?}");
+        }
+    }
+
+    /// Existing actions reject stale targets: the action carries the
+    /// observed identity (and, after a ref-tree read, the snapshot) so the
+    /// host refuses a live target that changed. The snapshot is spent by
+    /// the first action.
+    #[test]
+    fn w201_semantic_actions_carry_the_observed_identity_and_snapshot() {
+        let (adapter, frames) = w201_windows_host(w201_refs());
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter.read_ref_tree(11).unwrap();
+        adapter.invoke_element(11, "42.2").unwrap();
+        adapter.invoke_element(11, "42.2").unwrap();
+        adapter.invoke_element(11, "42.77").unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 3);
+        assert_eq!(
+            sent[0]["expected_element"],
+            json!({"control_type": "Button", "automation_id": "ok", "name": "OK"})
+        );
+        assert_eq!(sent[0]["snapshot_id"], "sabcd0123.1");
+        assert_eq!(sent[1]["expected_element"]["name"], "OK");
+        assert!(
+            sent[1].get("snapshot_id").is_none(),
+            "the snapshot was spent"
+        );
+        assert!(sent[2].get("expected_element").is_none(), "never observed");
+        assert!(sent[2].get("snapshot_id").is_none());
+    }
+
+    #[test]
+    fn w201_an_old_observation_no_longer_narrows_an_action() {
+        let (adapter, frames) = w201_windows_host(w201_refs());
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter.read_ref_tree(11).unwrap();
+        adapter.age_observations_for_test(MAX_OBSERVATION_AGE + std::time::Duration::from_secs(1));
+        adapter.invoke_element(11, "42.2").unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].get("expected_element").is_none(), "too old");
+        assert!(sent[0].get("snapshot_id").is_none(), "too old");
+    }
+
+    #[test]
+    fn w201_a_plain_read_attaches_the_identity_without_a_snapshot() {
+        let (adapter, frames) = w201_windows_host(w201_refs());
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter.read_tree(11).unwrap();
+        adapter.invoke_element(11, "42.2").unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent[0]["expected_element"]["control_type"], "Button");
+        assert!(sent[0].get("snapshot_id").is_none());
+        let observe = frames
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|frame| frame["op"] == "observe_window")
+            .cloned()
+            .unwrap();
+        assert!(
+            observe.get("ref_tree").is_none(),
+            "a plain read asks for no ref tree"
+        );
+    }
+
+    #[test]
+    fn w201_a_native_host_never_receives_a_ref_tree_request() {
+        let (adapter, frames) = scripted("linux", linux_desktop);
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        let error = adapter.read_ref_tree(11).unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied, "{error:?}");
+        assert!(!ops(&frames).contains(&"observe_window".to_owned()));
+    }
+
+    /// The registry maps each short ref to the element id it issued, and
+    /// actions still go through its element ids and stale checks.
+    #[test]
+    fn w201_the_registry_maps_refs_to_its_own_element_ids() {
+        let (adapter, frames) = w201_windows_host(w201_refs());
+        let adapter = adapter.unwrap();
+        let mut registry = crate::UiaRegistry::new();
+        let windows = registry.list_windows(&adapter, "ws", "pol").unwrap();
+        let window_id = windows["windows"][0]["window_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let generation = windows["windows"][0]["window_generation"].as_u64().unwrap();
+        let observed = registry
+            .observe_ref_tree(&adapter, &window_id, generation, None, None, "ws", "pol")
+            .unwrap();
+        let tree = &observed["ref_tree"];
+        assert_eq!(tree["schema"], "orcel-uia-ref-tree/1");
+        let button = observed["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["control_type"] == "Button")
+            .unwrap();
+        assert_eq!(tree["refs"]["r2"], button["element_id"]);
+        assert_eq!(tree["refs"].as_object().unwrap().len(), 2);
+        let tree_generation = observed["tree_generation"].as_u64().unwrap();
+        registry
+            .invoke_element(
+                &adapter,
+                button["element_id"].as_str().unwrap(),
+                tree_generation,
+                "Button",
+                "ws",
+                "pol",
+            )
+            .unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["snapshot_id"], "sabcd0123.1");
+        assert_eq!(sent[0]["expected_element"]["automation_id"], "ok");
+        // The acted element is gone from the registry: a replay is stale.
+        assert!(registry
+            .invoke_element(
+                &adapter,
+                button["element_id"].as_str().unwrap(),
+                tree_generation,
+                "Button",
+                "ws",
+                "pol",
+            )
+            .is_err());
+        assert_eq!(semantic_ops(&frames).len(), 1);
     }
 }

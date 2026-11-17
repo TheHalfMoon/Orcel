@@ -305,8 +305,8 @@ async function launchDirect(
 nativeTest("the worker drives the installed engine with exactly the host argv and leaves nothing behind", async (t) => {
   const profile = profileFor(t, "native");
   const worker = new WorkerProcess(t);
-  worker.send({ frame: "hello", generation: 17 });
-  assert.deepEqual(await worker.reply(1), { frame: "hello", generation: 17, worker: "orcel-browser-worker" });
+  worker.send({ frame: "hello", generation: 18 });
+  assert.deepEqual(await worker.reply(1), { frame: "hello", generation: 18, worker: "orcel-browser-worker" });
   const launch = launchFrame(profile, FIXTURE);
   worker.send(launch);
   assert.deepEqual(await worker.reply(2), { frame: "launched" });
@@ -331,7 +331,7 @@ nativeTest("the worker drives the installed engine with exactly the host argv an
 nativeTest("killing the worker takes the engine down with its pipe", async (t) => {
   const profile = profileFor(t, "native-kill");
   const worker = new WorkerProcess(t);
-  worker.send({ frame: "hello", generation: 17 });
+  worker.send({ frame: "hello", generation: 18 });
   await worker.reply(1);
   worker.send(launchFrame(profile, FIXTURE));
   assert.deepEqual(await worker.reply(2), { frame: "launched" });
@@ -515,7 +515,7 @@ nativeTest("a same-user process cannot activate the worker's inspector when it r
   const attempt = async (flags: string[]) => {
     const worker = new WorkerProcess(t, flags);
     // The worker is fully started once it answers hello.
-    worker.send({ frame: "hello", generation: 17 });
+    worker.send({ frame: "hello", generation: 18 });
     await worker.reply(1);
     const before = await listening(9229);
     let threw = false;

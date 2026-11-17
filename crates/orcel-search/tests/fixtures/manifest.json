@@ -1,0 +1,8 @@
+{
+  "bm25_hybrid.html": "https://searchlab.example.org/notes/bm25-hybrid-retrieval",
+  "neural_retrieval.html": "https://searchlab.example.org/notes/neural-retrieval-embeddings",
+  "arxiv_abstract.html": "https://arxiv.org/abs/2601.00001",
+  "news_browser_agents.html": "https://www.reuters.com/technology/browser-agents-2026-03-14/",
+  "github_readme.html": "https://github.com/orcel-labs/obscura",
+  "extraction_bench.html": "https://bench.example.net/reports/html-extraction-2026"
+}

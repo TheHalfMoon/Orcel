@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Device",
+  "description": "Outbound description of this device (capability reports, sessions). It\nmay gain optional fields within its major, so unknown fields are not\nrefused.",
+  "type": "object",
+  "properties": {
+    "arch": {
+      "$ref": "#/$defs/Arch"
+    },
+    "contract": {
+      "description": "`\"orcel.device/1\"`.",
+      "type": "string"
+    },
+    "device_epoch": {
+      "description": "SG-000055 device epoch; remote leases bind it.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "device_id": {
+      "description": "`derive_device_id(authority key)` in `full_control_store.rs`.",
+      "type": "string"
+    },
+    "os": {
+      "$ref": "#/$defs/OsFamily"
+    },
+    "os_build": {
+      "description": "For example `\"10.0.26100\"`, `\"15.6\"`, `\"Ubuntu 24.04 6.8.0\"`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "contract",
+    "device_id",
+    "os",
+    "os_build",
+    "arch",
+    "device_epoch"
+  ],
+  "$defs": {
+    "Arch": {
+      "type": "string",
+      "enum": [
+        "x86_64",
+        "aarch64"
+      ]
+    },
+    "OsFamily": {
+      "type": "string",
+      "enum": [
+        "windows",
+        "macos",
+        "linux"
+      ]
+    }
+  }
+}

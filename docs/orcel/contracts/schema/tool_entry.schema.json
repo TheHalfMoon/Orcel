@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ToolEntry",
+  "type": "object",
+  "properties": {
+    "approval": {
+      "description": "Required in every mode (C-04).",
+      "$ref": "#/$defs/ApprovalClass"
+    },
+    "capability": {
+      "description": "For example `\"web\"`.",
+      "type": "string"
+    },
+    "contract": {
+      "description": "`\"orcel.tool/1\"`.",
+      "type": "string"
+    },
+    "effect": {
+      "$ref": "#/$defs/EffectClass"
+    },
+    "input_schema": {
+      "description": "Path of the input JSON Schema.",
+      "type": "string"
+    },
+    "lease_gate": {
+      "description": "Full Control executor class that additionally gates the call. It\nnever replaces the approval.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutorClass"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "name": {
+      "description": "MCP tool name, for example `\"web_scrape\"`.",
+      "type": "string"
+    },
+    "operation": {
+      "description": "For example `\"scrape\"`.",
+      "type": "string"
+    },
+    "output_bound": {
+      "type": "string"
+    },
+    "platforms": {
+      "description": "Where an implementation exists.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/OsFamily"
+      }
+    },
+    "profiles": {
+      "description": "Discovery only.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "remote": {
+      "$ref": "#/$defs/RemoteExposure"
+    },
+    "since": {
+      "description": "Grain id that introduced the entry.",
+      "type": "string"
+    },
+    "standing_approvable": {
+      "description": "Whether a standing approval (section 4.15) may cover this call\ninstead of a per-action approval.",
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "name",
+    "capability",
+    "operation",
+    "effect",
+    "approval",
+    "standing_approvable",
+    "remote",
+    "profiles",
+    "platforms",
+    "input_schema",
+    "output_bound",
+    "since"
+  ],
+  "$defs": {
+    "ApprovalClass": {
+      "description": "Approval class. The wire spellings are the existing ones of the MCP tool\ncatalog (`\"none\"`, `\"SOFT\"`, `\"STRONG\"`) and of `orcel-approval`, so the\nRust tool mirror and the TypeScript catalog compare equal.",
+      "type": "string",
+      "enum": [
+        "none",
+        "SOFT",
+        "STRONG"
+      ]
+    },
+    "EffectClass": {
+      "description": "Effect classes, spelled as in the TypeScript catalog.",
+      "type": "string",
+      "enum": [
+        "read",
+        "preview",
+        "write",
+        "destructive",
+        "execute",
+        "network",
+        "desktop_observe",
+        "desktop_capture",
+        "desktop_control",
+        "clipboard"
+      ]
+    },
+    "ExecutorClass": {
+      "description": "SG-000093 executor class. Moved from `orcel-policy` with identical serde\nspellings; `orcel-policy` re-exports it.",
+      "type": "string",
+      "enum": [
+        "desktop_observation",
+        "desktop_input",
+        "shell_process",
+        "filesystem",
+        "browser",
+        "web",
+        "visual_agent",
+        "admin",
+        "remote"
+      ]
+    },
+    "OsFamily": {
+      "type": "string",
+      "enum": [
+        "windows",
+        "macos",
+        "linux"
+      ]
+    },
+    "RemoteExposure": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "local_only"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  }
+}

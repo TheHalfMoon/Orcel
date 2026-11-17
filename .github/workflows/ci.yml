@@ -154,6 +154,40 @@ jobs:
         run: |
           apps/orcel-desktop-preview/tests/memory.ps1 -OutPath "$env:RUNNER_TEMP/wpf-memory.json"
           Get-Content "$env:RUNNER_TEMP/wpf-memory.json"
+      # W2-01: the Go computer host's own tests on every OS. Off Windows the
+      # untagged tests run (the host protocol and supervisor, and the
+      # HCU-derived semantic package, whose macOS and Linux adapters are
+      # UNVERIFIED); on Windows the native observation tests run too,
+      # against a disposable window, and the W2-01 live identity check of
+      # a semantic action on that window. The SG-000095 raw-input
+      # qualification tests are left to their own native qualification.
+      # macOS runners do not ship Go; pin the toolchain from go.mod on every OS.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: apps/orcel-computer-host/go.mod
+          cache: false
+      - name: Go computer host tests
+        shell: bash
+        env:
+          ORCEL_W201_NATIVE_TESTS: ${{ runner.os == 'Windows' && '1' || '' }}
+          ORCEL_W201_SEMANTIC_ACTIONS: ${{ runner.os == 'Windows' && '1' || '' }}
+        run: |
+          set -euo pipefail
+          cd apps/orcel-computer-host
+          go version
+          # gofmt reports every file on Windows, where checkout converts to
+          # CRLF; formatting is checked on the other two runners.
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            unformatted="$(gofmt -l third_party semantic_supervisor.go semantic_supervisor_test.go native_semantic_windows.go native_semantic_windows_test.go)"
+            if [ -n "$unformatted" ]; then echo "gofmt: $unformatted"; exit 1; fi
+          fi
+          go vet ./...
+          go test -count=1 -v -skip 'TestSG95' ./... 2>&1 | tee "$RUNNER_TEMP/go-host.log"
+          grep -q "^ok .*third_party/hcu/semantic" "$RUNNER_TEMP/go-host.log"
+          grep -q -- "--- PASS: TestStaleSnapshotTargetIsRefusedBeforeDispatch" "$RUNNER_TEMP/go-host.log"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            grep -q -- "--- PASS: TestW201RefTreeAgainstDisposableWindow" "$RUNNER_TEMP/go-host.log"
+          fi
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
       # negotiation test against the freshly built Go host, not a script. The
       # native-host job does the same with orcel-native-host on macOS and
@@ -684,9 +718,12 @@ jobs:
         if: runner.os == 'Linux'
         # Ignores, each with its reason: apps/orcel-native-host/.cargo/audit.toml.
         run: cargo audit
-      - name: License check of the native-host graph
+      # Founder decision of 2026-11-17: licences are reported, not judged.
+      - name: Ban and source check of the native-host graph (licences reported)
         if: runner.os == 'Linux'
-        run: cargo deny check licenses
+        run: |
+          cargo deny check bans sources
+          cargo deny list
 
   # XP-13: the contained tier's one-shot helper is its own Cargo workspace
   # (tokio stays out of the kernel lockfile, AD-16). Its end-to-end tests run
@@ -784,9 +821,12 @@ jobs:
       - name: Audit the orcel-contain lockfile
         if: runner.os == 'Linux'
         run: cargo audit
-      - name: License, ban and source check of the orcel-contain graph
+      # Founder decision of 2026-11-17: licences are reported, not judged.
+      - name: Ban and source check of the orcel-contain graph (licences reported)
         if: runner.os == 'Linux'
-        run: cargo deny check licenses bans sources
+        run: |
+          cargo deny check bans sources
+          cargo deny list
 
   # WI-05: the confined document parser is its own Cargo workspace (the PDF
   # and Office parsers never enter orceld's lockfile). Its end-to-end tests
@@ -870,9 +910,12 @@ jobs:
         if: runner.os == 'Linux'
         # Ignores, each with its reason: apps/orcel-doc-parser/.cargo/audit.toml.
         run: cargo audit
-      - name: License, ban and source check of the orcel-doc-parser graph
+      # Founder decision of 2026-11-17: licences are reported, not judged.
+      - name: Ban and source check of the orcel-doc-parser graph (licences reported)
         if: runner.os == 'Linux'
-        run: cargo deny check licenses bans sources
+        run: |
+          cargo deny check bans sources
+          cargo deny list
 
   # #389: the WI-05 acceptance item "fuzz 10 minutes without a crash escaping
   # the process", run on demand. A time-boxed mutation run of a wider fixture
@@ -969,8 +1012,11 @@ jobs:
           cargo install cargo-deny --locked --version 0.20.2
       - name: Audit the helper lockfile
         run: cargo audit
-      - name: License check of the helper graph
-        run: cargo deny check licenses
+      # Founder decision of 2026-11-17: licences are reported, not judged.
+      - name: Ban and source check of the helper graph (licences reported)
+        run: |
+          cargo deny check bans sources
+          cargo deny list
 
   # BM-02 Tier C C2a: the pinned GUI task's own Electron apps launched on
   # this disposable runner and observed only through this job's orceld
@@ -1218,8 +1264,12 @@ jobs:
         run: |
           cargo install cargo-audit --locked --version 0.22.2
           cargo install cargo-deny --locked --version 0.20.2
-      - name: Source, ban, license and advisory check of the shell graph
-        run: cargo deny check sources bans licenses advisories
+      # Founder decision of 2026-11-17 (licences never block) supersedes the
+      # licence check of SG-000119 decision 3; licences are reported.
+      - name: Source, ban and advisory check of the shell graph (licences reported)
+        run: |
+          cargo deny check sources bans advisories
+          cargo deny list
       - name: Audit the shell lockfile
         run: cargo audit
 
@@ -1881,6 +1931,52 @@ jobs:
         run: cargo install cargo-audit --locked --version 0.22.2
       - name: Audit locked Rust dependencies
         run: cargo audit
+
+  # WP1-01: provenance and dependency gates on every OS leg (cfg dependencies
+  # differ per OS). Founder decision of 2026-11-17
+  # (docs/orcel/grants/2026-11-17-founder-attestation.md, owner-asserted): a
+  # licence type blocks nothing; every copied donor file needs provenance, and
+  # dependency licences are reported. The section 3.2 dependency-direction
+  # test (crates/orceld/tests/dependency_direction.rs) runs in the Rust job's
+  # `cargo test --workspace` on the same three OSes.
+  licence-gates:
+    name: Licence gates / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        id: licence-gates-deny-cache
+        with:
+          path: ~/.cargo/bin/cargo-deny*
+          key: licence-gates-deny-0.20.2-${{ runner.os }}
+      - name: Install cargo-deny
+        if: steps.licence-gates-deny-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked --version 0.20.2
+      - name: Ban and source check of the main workspace graph (all features)
+        run: cargo deny check bans sources
+      - name: Report the licences of the main workspace graph (not judged)
+        run: cargo deny list
+      - name: Gate tests (AGPL file with and without provenance, missing provenance, unpinned lockfiles, bans)
+        env:
+          ORCEL_REQUIRE_CARGO_DENY: "1"
+        run: node --test scripts/check-agpl-markers.test.mjs scripts/check-npm-licenses.test.mjs scripts/check-donor-provenance.test.mjs scripts/check-cargo-deny-policy.test.mjs
+      - name: Every file with a licence marker has provenance
+        run: node scripts/check-agpl-markers.mjs
+      - name: npm lockfiles pin every package (licences reported)
+        run: node scripts/check-npm-licenses.mjs
+      - name: Every donor file has pinned, attributed provenance
+        run: node scripts/check-donor-provenance.mjs
 
   governance:
     name: Governance

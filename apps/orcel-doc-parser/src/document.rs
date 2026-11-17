@@ -106,6 +106,21 @@ fn foreign_families(expected: DocumentFormat) -> &'static [&'static str] {
     }
 }
 
+/// Every entry name in the archive's directory. zip 9 decodes a name when it
+/// is asked for (UTF-8, else CP437) and can fail; a name that doesn't decode
+/// refuses the package as malformed, so no entry is skipped unchecked.
+fn entry_names<R: Read + std::io::Seek>(
+    archive: &zip::ZipArchive<R>,
+) -> Result<Vec<String>, ParseRefusal> {
+    archive
+        .file_names()
+        .map(|name| {
+            name.map(std::borrow::Cow::into_owned)
+                .map_err(|_| ParseRefusal::Malformed)
+        })
+        .collect()
+}
+
 /// One package part for the sniff, within its per-part and total bounds.
 /// `None` if the package has no such part.
 fn sniffed_part<R: Read + std::io::Seek>(
@@ -206,7 +221,8 @@ pub fn sniff_package(bytes: &[u8], expected: DocumentFormat) -> Result<(), Parse
     if archive.len() > MAX_ARCHIVE_ENTRIES {
         return Err(ParseRefusal::ArchiveLimit);
     }
-    if archive.file_names().any(is_active_part) {
+    let entry_names = entry_names(&archive)?;
+    if entry_names.iter().any(|name| is_active_part(name)) {
         return Err(ParseRefusal::ActiveContent);
     }
     let mut budget = MAX_SNIFF_BYTES;
@@ -233,10 +249,9 @@ pub fn sniff_package(bytes: &[u8], expected: DocumentFormat) -> Result<(), Parse
         }
     }
 
-    let relationship_parts: Vec<String> = archive
-        .file_names()
+    let relationship_parts: Vec<String> = entry_names
+        .into_iter()
         .filter(|name| name.to_ascii_lowercase().ends_with(".rels"))
-        .map(str::to_owned)
         .collect();
     let mut main_parts = Vec::new();
     for name in relationship_parts {
@@ -372,7 +387,10 @@ fn preflight_archive(bytes: &[u8]) -> Result<usize, ParseRefusal> {
                 .by_index_raw(index)
                 .map_err(|_| ParseRefusal::Malformed)?;
             (
-                entry.name().to_owned(),
+                entry
+                    .name()
+                    .map_err(|_| ParseRefusal::Malformed)?
+                    .into_owned(),
                 entry.size(),
                 entry.compressed_size(),
                 entry.encrypted(),

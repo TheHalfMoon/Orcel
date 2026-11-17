@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HostToSidecar",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "frame": {
+          "type": "string",
+          "const": "hello"
+        },
+        "generation": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "limits": {
+          "$ref": "#/$defs/SidecarLimits"
+        },
+        "session_nonce": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "generation",
+        "session_nonce",
+        "limits"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "frame": {
+          "type": "string",
+          "const": "heartbeat"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "seq"
+      ]
+    },
+    {
+      "description": "Sidecar-specific body, closed per sidecar kind.",
+      "type": "object",
+      "properties": {
+        "body": true,
+        "frame": {
+          "type": "string",
+          "const": "request"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "id",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "frame": {
+          "type": "string",
+          "const": "cancel"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "id"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "deadline_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "frame": {
+          "type": "string",
+          "const": "shutdown"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "deadline_ms"
+      ]
+    }
+  ],
+  "$defs": {
+    "SidecarLimits": {
+      "description": "Limits the host declares to the sidecar in `hello`.",
+      "type": "object",
+      "properties": {
+        "cancel_grace_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "heartbeat_interval_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_data_frame_bytes": {
+          "description": "Per-sidecar data frame bound, at most `MAX_DATA_FRAME_BYTES`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_data_frame_bytes",
+        "heartbeat_interval_ms",
+        "cancel_grace_ms"
+      ]
+    }
+  }
+}

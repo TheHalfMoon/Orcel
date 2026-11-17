@@ -41,8 +41,9 @@ pub struct JobProcess {
 /// downloads; generation 16 is SG-000122 slice A1 (the `enter` form action,
 /// one select option, single-line fills, and form-control kinds in
 /// observed nodes); generation 17 is SG-000122 slice A5 (form-control nodes
-/// marked `named`).
-pub const WORKER_PROTOCOL_GENERATION: u32 = 17;
+/// marked `named`); generation 18 is W2-03 (the Stagehand-derived outline and
+/// schema extraction frames, `worker_outline`; denied by default).
+pub const WORKER_PROTOCOL_GENERATION: u32 = 18;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -557,6 +558,16 @@ pub(crate) enum WorkerRequest<'a> {
         ver_id: u64,
         probes: &'a [crate::verify::Probe],
     },
+    /// W2-03: the bounded accessibility outline (sent only once
+    /// `worker_outline::admit` allows it; denied by default).
+    Outline {
+        out_id: u64,
+    },
+    /// W2-03: a schema extraction from the outline (the same gate).
+    ExtractSchema {
+        xs_id: u64,
+        fields: &'a [crate::worker_outline::SchemaField],
+    },
     Shutdown,
 }
 
@@ -711,6 +722,26 @@ pub(crate) enum WorkerReply {
     },
     VerificationFailed {
         ver_id: u64,
+    },
+    /// W2-03: the outline's nodes (page text; never a value).
+    Outlined {
+        out_id: u64,
+        url: String,
+        truncated: bool,
+        nodes: Vec<crate::worker_outline::OutlineNode>,
+    },
+    OutlineFailed {
+        out_id: u64,
+    },
+    /// W2-03: one value per schema field (page text).
+    SchemaExtracted {
+        xs_id: u64,
+        url: String,
+        truncated: bool,
+        values: Vec<crate::worker_outline::SchemaValue>,
+    },
+    SchemaExtractionFailed {
+        xs_id: u64,
     },
     Error {
         code: String,
@@ -1613,6 +1644,8 @@ mod platform {
         /// lifetime, for download postconditions.
         last_download_sha256: Option<String>,
         next_disc: u64,
+        /// W2-03: outline and schema-extraction ids (used only once admitted).
+        next_out: u64,
         next_ext: u64,
         next_act: u64,
         next_dl: u64,
@@ -1741,6 +1774,7 @@ mod platform {
             text_budget: crate::verify::TextBudget::default(),
             last_download_sha256: None,
             next_disc: 0,
+            next_out: 0,
             next_ext: 0,
             next_act: 0,
             next_dl: 0,
@@ -3254,6 +3288,87 @@ mod platform {
             })
         }
 
+        /// W2-03: the bounded accessibility outline of the committed
+        /// document. Denied by default (`worker_outline::admit`): nothing is
+        /// sent to the worker until an SG-000076 amendment admits it. The
+        /// result stays host-internal page text.
+        pub fn outline(&mut self) -> Result<crate::worker_outline::Outline, HostError> {
+            crate::worker_outline::admit(crate::worker_outline::WorkerCapability::Outline)?;
+            let (url, generation) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document to outline".into()))?;
+            self.next_out += 1;
+            let out_id = self.next_out;
+            self.send(&WorkerRequest::Outline { out_id })?;
+            let (found_url, truncated, nodes) = match self.reply(WORKER_OBSERVATION_TIMEOUT)? {
+                WorkerReply::Outlined {
+                    out_id: done,
+                    url,
+                    truncated,
+                    nodes,
+                } if done == out_id => (url, truncated, nodes),
+                WorkerReply::OutlineFailed { out_id: done } if done == out_id => {
+                    return Err(HostError::Unavailable(UnavailableReason::ActionFailed))
+                }
+                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+            };
+            if found_url != url {
+                return Err(HostError::Invalid(
+                    "stale page: the document changed".into(),
+                ));
+            }
+            crate::worker_outline::check_outline(&nodes)?;
+            Ok(crate::worker_outline::Outline {
+                url,
+                document_generation: generation,
+                truncated,
+                nodes,
+            })
+        }
+
+        /// W2-03: one value per schema field from the committed document's
+        /// outline, with no model. Denied by default until an SG-000133
+        /// amendment admits it.
+        pub fn extract_schema(
+            &mut self,
+            fields: &[crate::worker_outline::SchemaField],
+        ) -> Result<crate::worker_outline::SchemaExtraction, HostError> {
+            crate::worker_outline::admit(crate::worker_outline::WorkerCapability::SchemaExtract)?;
+            crate::worker_outline::validate_schema(fields)?;
+            let (url, generation) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document to extract".into()))?;
+            self.next_out += 1;
+            let xs_id = self.next_out;
+            self.send(&WorkerRequest::ExtractSchema { xs_id, fields })?;
+            let (found_url, truncated, values) = match self.reply(WORKER_OBSERVATION_TIMEOUT)? {
+                WorkerReply::SchemaExtracted {
+                    xs_id: done,
+                    url,
+                    truncated,
+                    values,
+                } if done == xs_id => (url, truncated, values),
+                WorkerReply::SchemaExtractionFailed { xs_id: done } if done == xs_id => {
+                    return Err(HostError::Unavailable(UnavailableReason::ActionFailed))
+                }
+                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+            };
+            if found_url != url {
+                return Err(HostError::Invalid(
+                    "stale page: the document changed".into(),
+                ));
+            }
+            crate::worker_outline::check_values(fields, &values)?;
+            Ok(crate::worker_outline::SchemaExtraction {
+                url,
+                document_generation: generation,
+                truncated,
+                values,
+            })
+        }
+
         /// Map or crawl the admitted destination from `spec.start_url`
         /// (slice 7): every page is opened by the governed navigation, its
         /// links come from an observation under `scope`, and its content,
@@ -4118,6 +4233,25 @@ mod fallback {
 
         /// API parity: no worker ever exists off Windows.
         pub fn discover_tools(&mut self) -> Result<crate::webmcp::DiscoveredTools, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity (W2-03): the gate refuses first, as on Windows.
+        pub fn outline(&mut self) -> Result<crate::worker_outline::Outline, HostError> {
+            crate::worker_outline::admit(crate::worker_outline::WorkerCapability::Outline)?;
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity (W2-03): the gate refuses first, as on Windows.
+        pub fn extract_schema(
+            &mut self,
+            _fields: &[crate::worker_outline::SchemaField],
+        ) -> Result<crate::worker_outline::SchemaExtraction, HostError> {
+            crate::worker_outline::admit(crate::worker_outline::WorkerCapability::SchemaExtract)?;
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))
@@ -5463,6 +5597,66 @@ mod tests {
             document_generation: 8,
         };
         assert!(crate::observation::observe_snapshot(&scope, &page, &stale, &roots, 5).is_err());
+    }
+
+    #[test]
+    fn w2_03_outline_and_schema_frames_match_the_typescript_vocabulary() {
+        assert_eq!(WORKER_PROTOCOL_GENERATION, 18);
+        let json = |request: &WorkerRequest<'_>| serde_json::to_string(request).unwrap();
+        assert_eq!(
+            json(&WorkerRequest::Outline { out_id: 3 }),
+            r#"{"frame":"outline","out_id":3}"#
+        );
+        let fields = [
+            crate::worker_outline::SchemaField {
+                key: "title".into(),
+                take: crate::worker_outline::SchemaTake::Text,
+                role: Some("heading".into()),
+                name: Some("Fees".into()),
+                xpath: None,
+            },
+            crate::worker_outline::SchemaField {
+                key: "rows".into(),
+                take: crate::worker_outline::SchemaTake::Texts,
+                role: None,
+                name: None,
+                xpath: Some("/html[1]/body[1]/ul[1]".into()),
+            },
+        ];
+        assert_eq!(
+            json(&WorkerRequest::ExtractSchema {
+                xs_id: 4,
+                fields: &fields
+            }),
+            r#"{"frame":"extract_schema","xs_id":4,"fields":[{"key":"title","take":"text","role":"heading","name":"Fees"},{"key":"rows","take":"texts","xpath":"/html[1]/body[1]/ul[1]"}]}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert!(matches!(
+            reply(
+                r#"{"frame":"outlined","out_id":3,"url":"https://fixture.test/","truncated":false,"nodes":[{"id":"0-5","role":"heading","name":"Fees","xpath":"/html[1]/body[1]/h1[1]","children":[]}]}"#
+            ),
+            Ok(WorkerReply::Outlined { out_id: 3, .. })
+        ));
+        assert!(matches!(
+            reply(
+                r#"{"frame":"schema_extracted","xs_id":4,"url":"https://fixture.test/","truncated":false,"values":[{"key":"title","found":true,"text":"Fees"},{"key":"rows","found":false}]}"#
+            ),
+            Ok(WorkerReply::SchemaExtracted { xs_id: 4, .. })
+        ));
+        assert!(reply(r#"{"frame":"outline_failed","out_id":3}"#).is_ok());
+        assert!(reply(r#"{"frame":"schema_extraction_failed","xs_id":4}"#).is_ok());
+        // A value field, or any unknown field, is refused anywhere.
+        assert!(reply(r#"{"frame":"outlined","out_id":3,"url":"u","truncated":false,"nodes":[{"id":"0-1","role":"textbox","name":"","xpath":"/x","value":"hunter2","children":[]}]}"#).is_err());
+        assert!(reply(r#"{"frame":"outline_failed","out_id":3,"x":1}"#).is_err());
+        assert!(reply(r#"{"frame":"schema_extracted","xs_id":4,"url":"u","truncated":false,"values":[{"key":"k","found":true,"html":"<b>"}]}"#).is_err());
+        // The gate refuses both before anything could be sent.
+        assert!(
+            crate::worker_outline::admit(crate::worker_outline::WorkerCapability::Outline).is_err()
+        );
+        assert!(crate::worker_outline::admit(
+            crate::worker_outline::WorkerCapability::SchemaExtract
+        )
+        .is_err());
     }
 
     #[test]

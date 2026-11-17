@@ -14,6 +14,8 @@ import { MAX_VERIFY_PROBES, MAX_VERIFY_TEXT_BYTES, type VerifyProbe, type Verify
 import { PRESS_KEYS, type FormAction, type PressKey } from "./actions/form.js";
 import { MAX_WAIT_MS } from "./actions/wait.js";
 import type { DismissedDialog } from "./actions/dialogs.js";
+import type { OutlineNode } from "./outline/capture.js";
+import { MAX_SCHEMA_FIELDS, SCHEMA_TAKES, type SchemaField, type SchemaTake, type SchemaValue } from "./outline/schema-extract.js";
 
 /// One form field to enter when executing a tool (host-validated).
 export interface ExecField {
@@ -38,8 +40,10 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// generation 14 BR-05 dismissed-dialog reports, generation 15 BR-05 approved
 /// confirm answers, generation 16 SG-000122 slice A1 (the `enter` form action,
 /// one select option, single-line fills, form-control kinds in observations),
-/// generation 17 SG-000122 slice A5 (form-control nodes marked `named`).
-export const WORKER_PROTOCOL_GENERATION = 17;
+/// generation 17 SG-000122 slice A5 (form-control nodes marked `named`),
+/// generation 18 W2-03 (the Stagehand-derived accessibility outline and the
+/// schema-driven extraction; the host denies both by default).
+export const WORKER_PROTOCOL_GENERATION = 18;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host; SG-000122: one option of a native select).
 export const MAX_FORM_VALUE_BYTES = 1024;
@@ -119,6 +123,8 @@ export type HostFrame =
   | { frame: "wait_for"; wait_id: number; text: string; appear: boolean; timeout_ms: number }
   | { frame: "upload"; up_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "dialogs"; dlg_id: number }
+  | { frame: "outline"; out_id: number }
+  | { frame: "extract_schema"; xs_id: number; fields: SchemaField[] }
   | { frame: "shutdown" };
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
@@ -182,6 +188,35 @@ function verifyProbe(raw: unknown): VerifyProbe {
   }
 }
 
+/// W2-03: the longest role, name and XPath a schema field may name (the
+/// outline's own bounds).
+export const MAX_SCHEMA_ROLE_BYTES = 48;
+export const MAX_SCHEMA_NAME_BYTES = 512;
+export const MAX_SCHEMA_XPATH_BYTES = 1024;
+
+/// W2-03: one schema field, as the host sends it: a key, what to take, and
+/// exactly one target (a role with an optional exact name, or an XPath).
+function schemaField(raw: unknown): SchemaField {
+  if (!isPlainObject(raw)) throw new ProtocolViolation("schema field is not an object");
+  const byXpath = "xpath" in raw;
+  exactKeys(raw, byXpath ? ["key", "take", "xpath"] : "name" in raw ? ["key", "take", "role", "name"] : ["key", "take", "role"]);
+  if (typeof raw.key !== "string" || !/^[a-z][a-z0-9_]{0,39}$/.test(raw.key)) throw new ProtocolViolation("schema key is malformed");
+  if (typeof raw.take !== "string" || !(SCHEMA_TAKES as readonly string[]).includes(raw.take)) {
+    throw new ProtocolViolation("schema take is unknown");
+  }
+  const take = raw.take as SchemaTake;
+  if (byXpath) {
+    const xpath = boundedString(raw.xpath, MAX_SCHEMA_XPATH_BYTES, "schema xpath");
+    // The outline's own XPath alphabet: element names, positions, shadow hops.
+    if (!/^\/[A-Za-z0-9_\-/\[\]():.*=' ]*$/.test(xpath)) throw new ProtocolViolation("schema xpath is malformed");
+    return { key: raw.key, take, xpath };
+  }
+  const role = boundedString(raw.role, MAX_SCHEMA_ROLE_BYTES, "schema role");
+  if (!/^[A-Za-z][A-Za-z0-9 ,-]{0,47}$/.test(role)) throw new ProtocolViolation("schema role is malformed");
+  if (!("name" in raw)) return { key: raw.key, take, role };
+  return { key: raw.key, take, role, name: boundedString(raw.name, MAX_SCHEMA_NAME_BYTES, "schema name") };
+}
+
 export type ErrorCode = "protocol_violation" | "launch_refused" | "launch_failed" | "engine_exited" | "not_ready";
 
 export type WorkerFrame =
@@ -228,6 +263,10 @@ export type WorkerFrame =
   | { frame: "wait_failed"; wait_id: number }
   | { frame: "form_failed"; form_id: number; reason: NavigationFailure }
   | { frame: "verification_failed"; ver_id: number }
+  | { frame: "outlined"; out_id: number; url: string; truncated: boolean; nodes: OutlineNode[] }
+  | { frame: "outline_failed"; out_id: number }
+  | { frame: "schema_extracted"; xs_id: number; url: string; truncated: boolean; values: SchemaValue[] }
+  | { frame: "schema_extraction_failed"; xs_id: number }
   | { frame: "error"; code: ErrorCode };
 
 export class ProtocolViolation extends Error {}
@@ -442,6 +481,20 @@ export function parseHostFrame(raw: unknown): HostFrame {
         throw new ProtocolViolation("verify probes are malformed");
       }
       return { frame: "verify", ver_id: verId, probes: raw.probes.map(verifyProbe) };
+    }
+    case "outline": {
+      exactKeys(raw, ["frame", "out_id"]);
+      return { frame: "outline", out_id: positiveId(raw.out_id, "out_id") };
+    }
+    case "extract_schema": {
+      exactKeys(raw, ["frame", "xs_id", "fields"]);
+      const xsId = positiveId(raw.xs_id, "xs_id");
+      if (!Array.isArray(raw.fields) || raw.fields.length === 0 || raw.fields.length > MAX_SCHEMA_FIELDS) {
+        throw new ProtocolViolation("schema fields are malformed");
+      }
+      const fields = raw.fields.map(schemaField);
+      if (new Set(fields.map((field) => field.key)).size !== fields.length) throw new ProtocolViolation("schema keys repeat");
+      return { frame: "extract_schema", xs_id: xsId, fields };
     }
     case "observe": {
       exactKeys(raw, ["frame", "obs_id"]);

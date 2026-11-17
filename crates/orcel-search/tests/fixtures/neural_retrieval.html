@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Neural retrieval with embeddings: when dense vectors win</title>
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Search Lab Notes" />
+    <meta property="article:published_time" content="2026-01-22" />
+    <meta name="author" content="Priya Raghavan" />
+  </head>
+  <body>
+    <main>
+      <h1>Neural retrieval with embeddings: when dense vectors win</h1>
+      <p>
+        Embeddings map a passage and a query into the same vector space. Retrieval becomes nearest-neighbour search over
+        that space, which lets a query phrased in different words still find the passage that answers it.
+      </p>
+      <p>
+        Dense vectors are excellent for conceptual questions. Ask for "how do I stop a background job from running twice"
+        and a good bi-encoder will retrieve a page about idempotency keys that never uses the word job.
+      </p>
+      <h2>The cost side</h2>
+      <p>
+        Every embedding model is a fixed cost: disk for the weights, memory for the encoder, and time proportional to the
+        corpus size when you index. Approximate nearest neighbour structures such as HNSW add their own memory and their
+        own recall curve to tune.
+      </p>
+      <p>
+        For a desktop application that must work on a plane, the honest tradeoff is a small local encoder or none at all.
+        A hosted embedding endpoint turns an offline feature into a network dependency.
+      </p>
+      <h2>Failure modes</h2>
+      <p>
+        Dense retrieval is weak on long numbers, rare product names and exact code identifiers, because those tokens are
+        underrepresented in training data. Hybrid retrieval exists precisely because the two failure modes are opposites.
+      </p>
+    </main>
+  </body>
+</html>
