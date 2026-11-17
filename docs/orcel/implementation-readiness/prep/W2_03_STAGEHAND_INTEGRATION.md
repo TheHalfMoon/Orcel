@@ -114,9 +114,11 @@ name except a text node's own text is withheld, because a missing node may
 be a control whose value a name was computed from. The list counts as
 incomplete in any of these cases:
 
-- a child the engine names is missing (except an iframe's or frame's
-  child-document root, which lives in that frame's own list and is dropped
-  as a leaf);
+- a child the engine names is missing. The one exception is a single
+  missing child of a node the engine itself reports as a frame
+  (`Iframe` / `IframePresentational` role, never a DOM tag a page can
+  choose): that is the child document's root, which lives in that frame's
+  own list and is dropped as a leaf. A second missing child still counts;
 - the DOM index, or the hydration of a shallow DOM read, stopped at its
   50,000-node bound;
 - more than 100,000 AX nodes came back.

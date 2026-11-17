@@ -271,15 +271,42 @@ test("decorated roles and name withholding follow the module rules", () => {
   ];
   assert.equal(withholdNames(framed), 0);
   assert.deepEqual(framed.map((n) => n.name), ["Fees", "Fees", undefined]);
+  // The flag comes from the engine's role only, never from a DOM tag a page
+  // can choose (a namespaced element named "iframe").
   const iframeFlags = decorateRoles(
     [
       { nodeId: "a", role: { value: "Iframe" }, backendDOMNodeId: 1 },
-      { nodeId: "b", role: { value: "generic" }, backendDOMNodeId: 2 },
-      { nodeId: "c", role: { value: "generic" }, backendDOMNodeId: 3 }
+      { nodeId: "b", role: { value: "IframePresentational" }, backendDOMNodeId: 2 },
+      { nodeId: "c", role: { value: "heading" }, backendDOMNodeId: 3 },
+      { nodeId: "d", role: { value: "generic" }, backendDOMNodeId: 4 }
     ],
-    { tagNameMap: { "0-2": "frame", "0-3": "div" }, scrollableMap: {}, encode: (be: number) => `0-${be}` }
+    { tagNameMap: { "0-3": "iframe", "0-4": "frame" }, scrollableMap: {}, encode: (be: number) => `0-${be}` }
   );
-  assert.deepEqual(iframeFlags.map((n) => n.frameHost), [true, true, false]);
+  assert.deepEqual(iframeFlags.map((n) => n.frameHost), [true, true, false, false]);
+  // A namespaced "iframe" with role heading and a missing input child (cut
+  // past the depth bound): incomplete, so the heading's name is withheld.
+  const spoof = decorateRoles(
+    [
+      { nodeId: "h", role: { value: "heading" }, name: contents("Card 4111"), childIds: ["t", "input-past-depth"], backendDOMNodeId: 3 },
+      { nodeId: "t", role: { value: "StaticText" }, name: { value: "Card" }, parentId: "h", backendDOMNodeId: 5 }
+    ],
+    { tagNameMap: { "0-3": "iframe" }, scrollableMap: {}, encode: (be: number) => `0-${be}` }
+  );
+  withholdNames(spoof);
+  assert.deepEqual(spoof.map((n) => n.name), ["", "Card"]);
+  // A real Iframe with one missing child (its document's root): not a cut.
+  // With two missing children: incomplete.
+  const oneMissing: A11yNode[] = [
+    { nodeId: "h", role: "heading", name: "Fees" },
+    { nodeId: "f", role: "Iframe", frameHost: true, childIds: ["frame-root"] }
+  ];
+  assert.equal(withholdNames(oneMissing), 0);
+  const twoMissing: A11yNode[] = [
+    { nodeId: "h", role: "heading", name: "Fees" },
+    { nodeId: "f", role: "Iframe", frameHost: true, childIds: ["frame-root", "smuggled"] }
+  ];
+  assert.equal(withholdNames(twoMissing), 1);
+  assert.equal(twoMissing[0]?.name, "");
   // Stagehand's static-text dedupe.
   const parent: A11yNode = { nodeId: "x", role: "link", name: "Read  more" };
   const kids: A11yNode[] = [
