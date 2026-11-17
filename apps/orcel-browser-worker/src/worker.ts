@@ -36,6 +36,8 @@ import type { BoundedSnapshot } from "./snapshot.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
 import type { FormAction } from "./actions/form.js";
 import type { DismissedDialog } from "./actions/dialogs.js";
+import type { BoundedOutline } from "./outline/capture.js";
+import type { SchemaField, SchemaValue } from "./outline/schema-extract.js";
 
 export type LaunchSpec = Extract<HostFrame, { frame: "launch" }>;
 
@@ -63,6 +65,11 @@ export interface EngineSession {
   fetchText(url: string): Promise<{ url: string; status: number; media: string; text: string; truncated: boolean }>;
   /// A bounded, value-free accessibility snapshot of the primary page.
   observe(): Promise<{ url: string; snapshot: BoundedSnapshot }>;
+  /// W2-03: the bounded accessibility outline of the primary page's main
+  /// document, read through a read-only CDP session (no page script).
+  outline(): Promise<{ url: string; outline: BoundedOutline }>;
+  /// W2-03: one value per schema field, matched in that outline (no model).
+  extractSchema(fields: SchemaField[]): Promise<{ url: string; truncated: boolean; values: SchemaValue[] }>;
   /// The primary page's declarative WebMCP tools, read without running
   /// page script; bounded so the reply frame fits.
   discover(discId: number): Promise<{ url: string; truncated: boolean; tools: DeclaredTool[] }>;
@@ -364,6 +371,38 @@ export class Worker {
           this.send({ frame: "observed", obs_id: frame.obs_id, url, truncated: snapshot.truncated, nodes: snapshot.nodes });
         } catch {
           this.send({ frame: "observation_failed", obs_id: frame.obs_id });
+        }
+        return;
+      }
+      case "outline": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        // A document being replaced cannot be outlined.
+        if (this.navigating) {
+          this.send({ frame: "outline_failed", out_id: frame.out_id });
+          return;
+        }
+        try {
+          const { url, outline } = await this.session.outline();
+          if (Buffer.byteLength(url) > MAX_URL_BYTES) throw new Error("the page URL is too long");
+          this.send({ frame: "outlined", out_id: frame.out_id, url, truncated: outline.truncated, nodes: outline.nodes });
+        } catch {
+          this.send({ frame: "outline_failed", out_id: frame.out_id });
+        }
+        return;
+      }
+      case "extract_schema": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        if (this.navigating) {
+          this.send({ frame: "schema_extraction_failed", xs_id: frame.xs_id });
+          return;
+        }
+        try {
+          const { url, truncated, values } = await this.session.extractSchema(frame.fields);
+          if (Buffer.byteLength(url) > MAX_URL_BYTES) throw new Error("the page URL is too long");
+          if (values.length !== frame.fields.length) throw new Error("one value per field");
+          this.send({ frame: "schema_extracted", xs_id: frame.xs_id, url, truncated, values });
+        } catch {
+          this.send({ frame: "schema_extraction_failed", xs_id: frame.xs_id });
         }
         return;
       }
