@@ -15,7 +15,8 @@
 //! is unknown is not admitted again: its key is built from stable action
 //! material (origin, URL path, kind, and the target's role, name and ordinal
 //! or the link and file name), never a page or node id, and the uncertain
-//! actions live in one ledger per orceld process, so neither a closed page,
+//! actions live in one ledger per orceld process (entries kept per task: the
+//! live browser's task, or a broker session's id), so neither a closed page,
 //! a renumbered observation nor a host restart forgets them. With the gate
 //! on, a page it does not track (one it could not claim) is refused.
 //!
@@ -220,10 +221,11 @@ impl<C: Clock> TakeoverGate<C> {
         kind: &str,
         material: &str,
     ) -> Result<(), ProviderError> {
+        let key = stable_key(&self.task, origin, url_path(url), kind, material);
         match (self.gate.as_mut(), ticket) {
-            (Some(gate), Some(ticket)) => gate
-                .rekey(ticket, stable_key(origin, url_path(url), kind, material))
-                .map_err(|refusal| refused(&refusal)),
+            (Some(gate), Some(ticket)) => {
+                gate.rekey(ticket, key).map_err(|refusal| refused(&refusal))
+            }
             _ => Ok(()),
         }
     }
@@ -276,10 +278,13 @@ fn action_key(page_id: &str, kind: &str, material: &str) -> ActionKey {
     digest_key(&[ACTION_KEY_DOMAIN, page_id, kind, material])
 }
 
-/// A write's stable key: the task, the origin, the URL path, the kind and
-/// a stable target description. No page or node id.
-fn stable_key(origin: &str, path: &str, kind: &str, material: &str) -> ActionKey {
-    digest_key(&[STABLE_KEY_DOMAIN, LIVE_TASK, origin, path, kind, material])
+/// A write's stable key: the owning task (the live browser's one task, or
+/// SG-000135 OB-01 a broker session's id), the origin, the URL path, the
+/// kind and a stable target description. No page or node id. The ledger
+/// keeps its entries per task as well, so one broker session's uncertain
+/// action never blocks an unrelated session.
+fn stable_key(task: &str, origin: &str, path: &str, kind: &str, material: &str) -> ActionKey {
+    digest_key(&[STABLE_KEY_DOMAIN, task, origin, path, kind, material])
 }
 
 /// The path of `url` (no query or fragment); empty when unknown.
@@ -521,6 +526,7 @@ mod tests {
         // Reconciled (its outcome established), it may be sent again.
         if let Some(session) = second.session_gate() {
             let key = stable_key(
+                LIVE_TASK,
                 "https://shop.test",
                 "/checkout",
                 "form",
@@ -574,8 +580,9 @@ mod tests {
         assert_eq!(url_path(Some("https://a.test")), "/");
         assert_eq!(url_path(None), "");
         assert_eq!(
-            stable_key("https://a.test", "/x", "form", "m"),
+            stable_key(LIVE_TASK, "https://a.test", "/x", "form", "m"),
             stable_key(
+                LIVE_TASK,
                 "https://a.test",
                 url_path(Some("https://a.test/x?other")),
                 "form",
@@ -583,9 +590,47 @@ mod tests {
             )
         );
         assert_ne!(
-            stable_key("https://a.test", "/x", "form", "m"),
-            stable_key("https://b.test", "/x", "form", "m")
+            stable_key(LIVE_TASK, "https://a.test", "/x", "form", "m"),
+            stable_key(LIVE_TASK, "https://b.test", "/x", "form", "m")
         );
+    }
+
+    /// SG-000135 OB-01: the uncertain-action ledger is shared by every gate
+    /// of the process but keyed per task: one broker session's lost Enter
+    /// blocks that session (even after its host restarts) and never an
+    /// unrelated session doing the same action.
+    #[test]
+    fn one_sessions_uncertain_action_never_blocks_another_session() {
+        let ledger = UncertainLedger::shared();
+        let clock = ManualClock::at(0);
+        let session = |task: &str, page: &str| {
+            let mut gate = TakeoverGate::on_with_ledger(clock.clone(), ledger.clone());
+            gate.set_task(task);
+            gate.page_opened(page);
+            gate
+        };
+        let (a, b) = (
+            "bs-0123456789abcdef-1-0001020304050607",
+            "bs-0123456789abcdef-2-0706050403020100",
+        );
+        let mut first = session(a, "page-a");
+        let ticket = enter_on(&mut first, "page-a", "n1").ok().flatten();
+        assert!(first.before_dispatch(ticket.as_ref()).is_ok());
+        first.after_write(ticket, "unknown");
+        assert_ne!(
+            stable_key(a, "https://shop.test", "/checkout", "form", "m"),
+            stable_key(b, "https://shop.test", "/checkout", "form", "m")
+        );
+        // The same session, on a new page (a restarted host), is refused...
+        let mut again = session(a, "page-a2");
+        let refused = enter_on(&mut again, "page-a2", "n9");
+        assert!(
+            matches!(&refused, Err(e) if e.message.contains("outcome_uncertain")),
+            "{refused:?}"
+        );
+        // ...and an unrelated session doing the same action is not.
+        let mut other = session(b, "page-b");
+        assert!(matches!(enter_on(&mut other, "page-b", "n1"), Ok(Some(_))));
     }
 
     /// SG-000135 OB-01: a broker session's gate claims its pages for the

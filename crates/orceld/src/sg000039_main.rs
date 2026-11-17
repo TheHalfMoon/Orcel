@@ -204,6 +204,13 @@ fn run() -> Result<(), String> {
 
     let mut hello = live_sessions::Hello::new(sessions.clone());
 
+    // SG-000135 OB-01: however run() ends from here (input closed, a read
+    // error, a failed response write), the MCP session is over: every
+    // browser_full session ends with it and its profile is removed.
+    let _end_browser_sessions = OnExit::new(|| {
+        live_dispatch::end_browser_sessions(browser_broker::EndReason::McpSessionEnded);
+    });
+
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
 
@@ -263,10 +270,40 @@ fn run() -> Result<(), String> {
             .map_err(|error| format!("flush response: {error}"))?;
     }
 
-    // SG-000135 OB-01: orceld's input closed, so its MCP session ended:
-    // every browser_full session ends with it, its profile removed.
-    live_dispatch::end_browser_sessions(browser_broker::EndReason::McpSessionEnded);
     Ok(())
+}
+
+/// Runs its closure once when dropped: on every exit path of the scope that
+/// holds it, an early return or `?` included.
+struct OnExit<F: FnMut()> {
+    action: F,
+}
+
+impl<F: FnMut()> OnExit<F> {
+    fn new(action: F) -> Self {
+        Self { action }
+    }
+}
+
+impl<F: FnMut()> Drop for OnExit<F> {
+    fn drop(&mut self) {
+        (self.action)();
+    }
+}
+
+/// The emergency revoke's first step: advance the approval epoch, and the
+/// moment it advanced, end every browser_full session, before any later
+/// step that can fail. Other orceld processes see the new epoch before
+/// their next broker action and end theirs.
+fn advance_epoch_and_stop_browsers(
+    approval: &impl ApprovalBroker,
+    prompt: &orcel_approval::ApprovalPrompt,
+) -> Result<u64, ProviderError> {
+    let epoch = approval
+        .emergency_revoke(prompt)
+        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    live_dispatch::end_browser_sessions(browser_broker::EndReason::EmergencyStop);
+    Ok(epoch)
 }
 
 /// CR-01 `request.completed` event data: the request's shape and outcome,
@@ -952,9 +989,7 @@ fn dispatch_trust(
                 format!("workspace={} policy={POLICY_REVISION}", workspace.id),
                 digest.clone(),
             );
-            let epoch = approval
-                .emergency_revoke(&prompt)
-                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            let epoch = advance_epoch_and_stop_browsers(approval, &prompt)?;
             let full_control_epoch =
                 orcel_policy::full_control_store::revoke_default_if_present().map_err(|error| {
                     ProviderError::new(
@@ -977,8 +1012,6 @@ fn dispatch_trust(
                     ),
                 )
             })?;
-            // SG-000135 OB-01: every browser_full session ends at once.
-            live_dispatch::end_browser_sessions(browser_broker::EndReason::EmergencyStop);
             Ok(Some(json!({
                 "workspace_id": request.workspace_id,
                 "revoke_epoch": epoch,
@@ -2878,6 +2911,103 @@ mod sg000055_envelope_tests {
         let audited = std::fs::read_to_string(audit.path()).unwrap_or_default();
         assert!(audited.contains("PROFILE_DENIED"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// SG-000135 OB-01: the exit guard ends browser sessions on every exit
+    /// path, an early `?` return (a failed response write) included.
+    #[test]
+    fn ob01_every_exit_path_ends_browser_sessions() {
+        fn run_until(fail_write: bool) -> Result<(), String> {
+            let _guard = OnExit::new(|| {
+                live_dispatch::end_browser_sessions(browser_broker::EndReason::McpSessionEnded);
+            });
+            if fail_write {
+                return Err("write response: broken pipe".into());
+            }
+            Ok(())
+        }
+        for fail_write in [false, true] {
+            live_dispatch::ENDED_CALLS.with(|calls| calls.borrow_mut().clear());
+            let _ = run_until(fail_write);
+            let calls = live_dispatch::ENDED_CALLS.with(|calls| calls.borrow().clone());
+            assert_eq!(
+                calls,
+                vec![browser_broker::EndReason::McpSessionEnded],
+                "{fail_write}"
+            );
+        }
+        // run() holds the guard from before its request loop.
+        let source = include_str!("sg000039_main.rs");
+        let guard = source
+            .find("let _end_browser_sessions = OnExit::new")
+            .unwrap_or(usize::MAX);
+        let read_loop = source.find("for line in stdin.lock().lines()").unwrap_or(0);
+        assert!(
+            guard < read_loop,
+            "the guard is set before the request loop"
+        );
+    }
+
+    /// SG-000135 OB-01: the emergency revoke ends browser sessions as soon
+    /// as the epoch advanced, before any later step; a revoke the broker
+    /// refused ends nothing.
+    #[test]
+    fn ob01_emergency_revoke_ends_browser_sessions_right_after_the_epoch_moves() {
+        use orcel_approval::{ApprovalError, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
+        struct Revoker(Result<u64, FailureCode>);
+        impl ApprovalBroker for Revoker {
+            fn request_token(&self, _: &ApprovalPrompt) -> Result<ApprovedToken, ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalUnavailable,
+                    message: "test".into(),
+                })
+            }
+            fn consume(
+                &self,
+                _: &ApprovedToken,
+                _: &ConsumeExpectation,
+                _: u64,
+            ) -> Result<(), ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalUnavailable,
+                    message: "test".into(),
+                })
+            }
+            fn emergency_revoke(&self, _: &ApprovalPrompt) -> Result<u64, ApprovalError> {
+                self.0.clone().map_err(|code| ApprovalError {
+                    code,
+                    message: "refused".into(),
+                })
+            }
+        }
+        let prompt =
+            ApprovalPrompt::new_strong("default", "rev", "emergency revoke", "w", "s", "d");
+        live_dispatch::ENDED_CALLS.with(|calls| calls.borrow_mut().clear());
+        assert_eq!(
+            advance_epoch_and_stop_browsers(&Revoker(Ok(7)), &prompt).ok(),
+            Some(7)
+        );
+        let calls = live_dispatch::ENDED_CALLS.with(|calls| calls.borrow().clone());
+        assert_eq!(calls, vec![browser_broker::EndReason::EmergencyStop]);
+        live_dispatch::ENDED_CALLS.with(|calls| calls.borrow_mut().clear());
+        assert!(advance_epoch_and_stop_browsers(
+            &Revoker(Err(FailureCode::ApprovalDenied)),
+            &prompt
+        )
+        .is_err());
+        assert!(live_dispatch::ENDED_CALLS.with(|calls| calls.borrow().is_empty()));
+        // The dispatcher's revoke goes through it before the later steps.
+        let source = include_str!("sg000039_main.rs");
+        let arm = source
+            .find("(\"trust.revoke_emergency\", \"revoke\") => {")
+            .unwrap_or(0);
+        let stop = source[arm..]
+            .find("advance_epoch_and_stop_browsers(approval")
+            .map(|at| arm + at);
+        let later = source[arm..]
+            .find("revoke_default_if_present")
+            .map(|at| arm + at);
+        assert!(stop.is_some() && stop < later);
     }
 
     /// SG-000135 OB-02: the broker shapes reach the broker only through the

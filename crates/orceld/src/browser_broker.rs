@@ -15,14 +15,24 @@
 //!   host) and one Orcel-managed profile directory under the broker's root
 //!   in orceld's protected browser state, never a personal browser profile.
 //!   Profiles are ephemeral in this packet: the directory is removed when
-//!   the session ends (persistent profiles are packet OB-04).
+//!   the session ends. Persistent profiles, and routing the
+//!   `browser_structured` shapes through the broker, are deferred to the
+//!   packet the grain names for them (SG-000135 is being amended to place
+//!   both in OB-04, beside Shadow and Visible).
 //! - Budgets: a per-client cap on open sessions, a device-wide cap held as
 //!   locked slot files (so every orceld on the device counts, and a crashed
 //!   orceld's slot frees itself), and a per-session action budget with a
 //!   bounded receipt list.
 //! - Sessions end on `browser_close`, when the MCP session ends (orceld's
-//!   input closes), and on emergency stop; every end shuts the worker down
-//!   and removes the session's profile directory.
+//!   input closes, on every exit path), and on emergency stop, in this
+//!   orceld at once and in every other orceld before its next broker action
+//!   (each checks the approval epoch first); every end shuts the worker down
+//!   and removes the session's profile directory, retrying a removal that
+//!   failed.
+//! - Each orceld instance holds its own instance lock for its lifetime. At
+//!   start, the broker removes the session folders of every other instance
+//!   whose lock is free (a crashed or exited orceld), never following a
+//!   junction or symbolic link, and refuses state directories that are one.
 //!
 //! Every action yields a provisional receipt (session, page, generation
 //! before and after, action, outcome, evidence digest), chained by digest
@@ -48,6 +58,12 @@ pub(crate) const SESSION_ID_PREFIX: &str = "bs-";
 const ID_HEX_CHARS: usize = 16;
 /// The longest session counter a well-formed id carries.
 const MAX_COUNTER_DIGITS: usize = 6;
+/// The last counter an instance mints (the most `MAX_COUNTER_DIGITS`
+/// digits hold); past it, a new session is refused, never wrapped.
+const MAX_COUNTER: u64 = 999_999;
+/// Attempts to remove an ended session's directory before it is kept for a
+/// later retry.
+const REMOVAL_ATTEMPTS: u32 = 5;
 /// The longest task label a caller may give a session.
 pub(crate) const MAX_TASK_CHARS: usize = 64;
 /// Ended sessions remembered so a late request learns why its session ended.
@@ -114,16 +130,120 @@ impl SessionDirs {
     }
 
     fn create(&self) -> Result<(), ProviderError> {
+        real_dir(&self.root)?;
         for dir in [&self.profiles, &self.staging, &self.host] {
-            std::fs::create_dir_all(dir).map_err(|_| {
-                ProviderError::new(
-                    FailureCode::ProviderUnavailable,
-                    "the browser session's state could not be created",
-                )
-            })?;
+            real_dir(dir)?;
         }
         Ok(())
     }
+}
+
+/// Whether `metadata` (from `symlink_metadata`) is a reparse point: a
+/// symbolic link, a junction or any other Windows reparse point.
+fn is_reparse(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
+}
+
+/// Create `dir` if needed and require it to be a real directory, not a
+/// junction, a symbolic link or a file.
+fn real_dir(dir: &Path) -> Result<(), ProviderError> {
+    let refused = || {
+        ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "the browser session state could not be created as a real directory",
+        )
+    };
+    std::fs::create_dir_all(dir).map_err(|_| refused())?;
+    match std::fs::symlink_metadata(dir) {
+        Ok(metadata) if metadata.is_dir() && !is_reparse(&metadata) => Ok(()),
+        _ => Err(refused()),
+    }
+}
+
+/// Remove the tree at `path` without ever following a reparse point: a
+/// link or junction inside it is removed as a link, its target untouched.
+/// A `path` that is itself a reparse point is refused (left in place).
+/// True when nothing is left at `path`.
+fn remove_tree(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+        Ok(metadata) if is_reparse(&metadata) => false,
+        Ok(metadata) if !metadata.is_dir() => std::fs::remove_file(path).is_ok(),
+        Ok(_) => {
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let child = entry.path();
+                    match std::fs::symlink_metadata(&child) {
+                        Ok(metadata) if is_reparse(&metadata) => {
+                            // The link itself, never its target.
+                            if std::fs::remove_dir(&child).is_err() {
+                                let _ = std::fs::remove_file(&child);
+                            }
+                        }
+                        _ => {
+                            remove_tree(&child);
+                        }
+                    }
+                }
+            }
+            let _ = std::fs::remove_dir(path);
+            std::fs::symlink_metadata(path).is_err()
+        }
+    }
+}
+
+/// Try an exclusive lock on the lock file at `path` (created if missing).
+/// `Ok(Some)` holds it; `Ok(None)` means another process holds it.
+fn try_lock_file(path: &Path) -> Result<Option<File>, ProviderError> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|_| {
+            ProviderError::new(
+                FailureCode::ProviderUnavailable,
+                "a browser broker lock file could not be opened",
+            )
+        })?;
+    match fs4::FileExt::try_lock(&file) {
+        Ok(()) => Ok(Some(file)),
+        Err(fs4::TryLockError::WouldBlock) => Ok(None),
+        Err(fs4::TryLockError::Error(_)) => Err(ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "a browser broker lock file could not be locked",
+        )),
+    }
+}
+
+/// Whether `name` is an instance id (16 lowercase hex characters).
+fn is_instance_id(name: &str) -> bool {
+    name.len() == ID_HEX_CHARS
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// The approval epoch as the shared approval ledger records it: the newest
+/// record's epoch (an emergency revoke advances it), or 0 for an empty or
+/// unreadable ledger. orceld compares it before every broker action, so an
+/// emergency stop in any orceld ends this orceld's sessions too.
+pub(crate) fn approval_epoch(approval: &impl orcel_approval::ApprovalBroker) -> u64 {
+    approval
+        .history(1)
+        .first()
+        .map(|record| record.epoch)
+        .unwrap_or(0)
 }
 
 /// Why a session ended.
@@ -235,34 +355,10 @@ struct DeviceSlot {
 }
 
 fn acquire_slot(dir: &Path, slots: usize) -> Result<DeviceSlot, ProviderError> {
-    std::fs::create_dir_all(dir).map_err(|_| {
-        ProviderError::new(
-            FailureCode::ProviderUnavailable,
-            "the browser session slots could not be created",
-        )
-    })?;
+    real_dir(dir)?;
     for index in 0..slots {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(dir.join(format!("slot-{index}.lock")))
-            .map_err(|_| {
-                ProviderError::new(
-                    FailureCode::ProviderUnavailable,
-                    "a browser session slot could not be opened",
-                )
-            })?;
-        match fs4::FileExt::try_lock(&file) {
-            Ok(()) => return Ok(DeviceSlot { _file: file }),
-            Err(fs4::TryLockError::WouldBlock) => continue,
-            Err(fs4::TryLockError::Error(_)) => {
-                return Err(ProviderError::new(
-                    FailureCode::ProviderUnavailable,
-                    "a browser session slot could not be locked",
-                ));
-            }
+        if let Some(file) = try_lock_file(&dir.join(format!("slot-{index}.lock")))? {
+            return Ok(DeviceSlot { _file: file });
         }
     }
     Err(ProviderError::new(
@@ -348,11 +444,15 @@ impl<W> BrokerSession<W> {
 /// The digest of a receipt's fields (length-prefixed, so no two receipts
 /// share one).
 fn receipt_digest(receipt: &Receipt) -> String {
-    let optional = |value: &Option<String>| value.clone().unwrap_or_else(|| "-".to_owned());
-    let number = |value: Option<u64>| {
-        value
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "-".to_owned())
+    // A presence tag first, so an absent field never equals any present
+    // value (None is "\0", Some(v) is "\x01" then v).
+    let optional = |value: &Option<String>| match value {
+        Some(text) => format!("\u{1}{text}"),
+        None => "\u{0}".to_owned(),
+    };
+    let number = |value: Option<u64>| match value {
+        Some(n) => format!("\u{1}{n}"),
+        None => "\u{0}".to_owned(),
     };
     let mut hasher = Sha256::new();
     for part in [
@@ -391,19 +491,110 @@ pub(crate) struct Broker<W> {
     sessions: BTreeMap<String, BrokerSession<W>>,
     ended: VecDeque<(String, EndReason)>,
     counter: u64,
+    /// Ended sessions whose directory could not be removed yet.
+    pending_removal: Vec<PathBuf>,
+    /// The approval epoch this broker last saw.
+    epoch: Option<u64>,
+    /// This instance's lock, held for the broker's (orceld's) lifetime.
+    _instance_lock: File,
 }
 
 impl<W: SessionWorker> Broker<W> {
-    /// A broker rooted at `root` (orceld's own state, never a caller's),
-    /// for the orceld instance `instance` (16 lowercase hex characters).
-    pub(crate) fn new(root: PathBuf, instance: String, budgets: Budgets) -> Self {
-        Self {
+    /// Start a broker rooted at `root` (orceld's own state, never a
+    /// caller's) for the orceld instance `instance` (16 lowercase hex
+    /// characters): hold the instance's lock, then sweep what exited
+    /// instances left.
+    pub(crate) fn start(
+        root: PathBuf,
+        instance: String,
+        budgets: Budgets,
+    ) -> Result<Self, ProviderError> {
+        if !is_instance_id(&instance) {
+            return Err(ProviderError::new(
+                FailureCode::InternalError,
+                "the browser broker's instance id is malformed",
+            ));
+        }
+        real_dir(&root)?;
+        real_dir(&root.join("instances"))?;
+        real_dir(&root.join("sessions"))?;
+        let lock = try_lock_file(&root.join("instances").join(format!("{instance}.lock")))?
+            .ok_or_else(|| {
+                ProviderError::new(
+                    FailureCode::InternalError,
+                    "another browser broker holds this instance id",
+                )
+            })?;
+        let mut broker = Self {
             instance,
             root,
             budgets,
             sessions: BTreeMap::new(),
             ended: VecDeque::new(),
             counter: 0,
+            pending_removal: Vec::new(),
+            epoch: None,
+            _instance_lock: lock,
+        };
+        broker.sweep_leftovers();
+        Ok(broker)
+    }
+
+    /// Remove the session folders of every other instance whose lock is
+    /// free (its orceld exited or crashed), and their lock files. A folder
+    /// that is a junction or symbolic link, or whose name is not an
+    /// instance id, is skipped and left untouched. Returns how many
+    /// instances' folders were removed.
+    pub(crate) fn sweep_leftovers(&mut self) -> usize {
+        self.retry_pending_removal();
+        let sessions = self.root.join("sessions");
+        let instances = self.root.join("instances");
+        let Ok(entries) = std::fs::read_dir(&sessions) else {
+            return 0;
+        };
+        let mut swept = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == self.instance || !is_instance_id(&name) {
+                continue;
+            }
+            let path = entry.path();
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_dir() && !is_reparse(&metadata) => {}
+                _ => continue,
+            }
+            let lock_path = instances.join(format!("{name}.lock"));
+            // Held: that orceld still runs. Free: it is gone.
+            let Ok(Some(lock)) = try_lock_file(&lock_path) else {
+                continue;
+            };
+            if remove_tree(&path) {
+                swept += 1;
+                drop(lock);
+                let _ = std::fs::remove_file(&lock_path);
+            }
+        }
+        swept
+    }
+
+    /// Retry removing ended sessions' directories that were still busy.
+    fn retry_pending_removal(&mut self) {
+        self.pending_removal.retain(|path| !remove_tree(path));
+    }
+
+    /// The directories of ended sessions still waiting to be removed.
+    #[cfg(test)]
+    pub(crate) fn pending_removal(&self) -> &[PathBuf] {
+        &self.pending_removal
+    }
+
+    /// Compare the approval epoch before a broker action: when it moved (an
+    /// emergency revoke in this or any other orceld), every session ends
+    /// as by emergency stop.
+    pub(crate) fn observe_epoch(&mut self, epoch: u64) -> Vec<EndReport> {
+        match self.epoch.replace(epoch) {
+            Some(seen) if seen != epoch => self.end_all(EndReason::EmergencyStop),
+            _ => Vec::new(),
         }
     }
 
@@ -443,6 +634,15 @@ impl<W: SessionWorker> Broker<W> {
                 ),
             ));
         }
+        if self.counter >= MAX_COUNTER {
+            return Err(ProviderError::new(
+                FailureCode::OutputLimit,
+                "this orceld minted its last browser session id; restart the MCP session",
+            ));
+        }
+        self.retry_pending_removal();
+        let sessions_root = self.sessions_root();
+        real_dir(&sessions_root)?;
         let slot = acquire_slot(&self.root.join("slots"), self.budgets.device)?;
         self.counter += 1;
         let id = format!(
@@ -451,18 +651,21 @@ impl<W: SessionWorker> Broker<W> {
             self.counter,
             hex(&random)
         );
-        let dirs = SessionDirs::under(self.sessions_root().join(&id));
-        if dirs.root.exists() {
+        let dirs = SessionDirs::under(sessions_root.join(&id));
+        if std::fs::symlink_metadata(&dirs.root).is_ok() {
             return Err(ProviderError::new(
                 FailureCode::InternalError,
                 "a new browser session's directory already exists",
             ));
         }
-        dirs.create()?;
+        if let Err(error) = dirs.create() {
+            remove_tree(&dirs.root);
+            return Err(error);
+        }
         let worker = match start(&id, &dirs) {
             Ok(worker) => worker,
             Err(error) => {
-                let _ = std::fs::remove_dir_all(&dirs.root);
+                remove_tree(&dirs.root);
                 return Err(error);
             }
         };
@@ -568,6 +771,7 @@ impl<W: SessionWorker> Broker<W> {
     pub(crate) fn end_all(&mut self, reason: EndReason) -> Vec<EndReport> {
         let ids: Vec<String> = self.sessions.keys().cloned().collect();
         let reports = ids.iter().filter_map(|id| self.end(id, reason)).collect();
+        self.retry_pending_removal();
         // Nothing of this instance is left; its directory goes too.
         let _ = std::fs::remove_dir(self.sessions_root());
         reports
@@ -578,9 +782,24 @@ impl<W: SessionWorker> Broker<W> {
         let root = session.dirs.root.clone();
         let worker_ended = session.worker.shutdown();
         // The worker removes its own profile on a clean shutdown; the
-        // session's directory (profiles, staging, page store) goes here.
-        let _ = std::fs::remove_dir_all(&root);
-        let profile_removed = !root.exists();
+        // session's directory (profiles, staging, page store) goes here,
+        // retried while a just-ended process may still hold a file, then
+        // kept for a later retry.
+        let mut profile_removed = false;
+        for attempt in 0..REMOVAL_ATTEMPTS {
+            if remove_tree(&root) {
+                profile_removed = true;
+                break;
+            }
+            if attempt + 1 < REMOVAL_ATTEMPTS {
+                std::thread::sleep(std::time::Duration::from_millis(
+                    50 * u64::from(attempt + 1),
+                ));
+            }
+        }
+        if !profile_removed {
+            self.pending_removal.push(root);
+        }
         if self.ended.len() >= ENDED_MEMORY {
             self.ended.pop_front();
         }
@@ -731,7 +950,7 @@ mod tests {
         }
 
         fn broker(&self, instance: &str, budgets: Budgets) -> Broker<TestWorker> {
-            Broker::new(self.root.join("broker"), instance.to_owned(), budgets)
+            Broker::start(self.root.join("broker"), instance.to_owned(), budgets).unwrap()
         }
 
         fn random(&mut self) -> [u8; 8] {
@@ -1083,5 +1302,273 @@ mod tests {
         }
         assert!(check_task("Book a table").is_ok());
         let _ = scene.random();
+    }
+
+    /// A directory link at `link` to `target`: a junction on Windows (no
+    /// privilege needed), a symbolic link elsewhere. False if the OS
+    /// refused to make one.
+    fn dir_link(link: &Path, target: &Path) -> bool {
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|out| out.status.success())
+                .unwrap_or(false)
+        }
+        #[cfg(not(windows))]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+    }
+
+    const DEAD_INSTANCE: &str = "00000000000000aa";
+
+    /// A crashed orceld: its sessions' folders stay and its lock is free.
+    /// The next broker removes them; a live instance's folders and a link
+    /// planted among the instance folders are left alone, and the link's
+    /// target is never touched.
+    #[test]
+    fn start_sweeps_only_unlocked_instances_and_never_follows_links() {
+        let mut scene = Scene::new("sweep");
+        // The crashed one: a broker with a session, dropped without ending.
+        let crashed = {
+            let mut broker = scene.broker(DEAD_INSTANCE, Budgets::DEFAULT);
+            let id = scene.create(&mut broker, "client-a", "left").unwrap();
+            broker.peek("client-a", &id).unwrap().dirs.root.clone()
+        };
+        assert!(crashed.exists());
+        // A live one keeps its lock.
+        let mut live = scene.broker(OTHER_INSTANCE, Budgets::DEFAULT);
+        let live_id = scene.create(&mut live, "client-b", "kept").unwrap();
+        let live_root = live.peek("client-b", &live_id).unwrap().dirs.root.clone();
+        // A link named like an instance, pointing outside the broker.
+        let outside = scene.root.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep.txt"), "mine").unwrap();
+        let sessions = scene.root.join("broker").join("sessions");
+        let linked = dir_link(&sessions.join("00000000000000bb"), &outside);
+
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        assert!(!crashed.exists(), "the crashed instance's session is swept");
+        assert!(!sessions.join(DEAD_INSTANCE).exists());
+        assert!(!scene
+            .root
+            .join("broker")
+            .join("instances")
+            .join(format!("{DEAD_INSTANCE}.lock"))
+            .exists());
+        assert!(live_root.join("profiles").join("cookies.txt").exists());
+        assert!(outside.join("keep.txt").exists());
+        if linked {
+            assert!(std::fs::symlink_metadata(sessions.join("00000000000000bb")).is_ok());
+        }
+        // Sweeping again finds nothing new, and the live one still runs.
+        assert_eq!(broker.sweep_leftovers(), 0);
+        assert!(live.session("client-b", &live_id).is_ok());
+        let _ = scene.create(&mut broker, "client-c", "x").unwrap();
+    }
+
+    /// Removal never follows a link inside a session's tree.
+    #[test]
+    fn removal_removes_a_link_inside_the_tree_but_not_its_target() {
+        let scene = Scene::new("nofollow");
+        let tree = scene.root.join("tree");
+        let outside = scene.root.join("outside");
+        std::fs::create_dir_all(tree.join("profiles")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep.txt"), "mine").unwrap();
+        std::fs::write(tree.join("profiles").join("a.txt"), "a").unwrap();
+        let linked = dir_link(&tree.join("profiles").join("link"), &outside);
+        assert!(remove_tree(&tree));
+        assert!(!tree.exists());
+        assert!(outside.join("keep.txt").exists(), "linked: {linked}");
+        // A tree that is itself a link is refused and left.
+        let top = scene.root.join("top-link");
+        if dir_link(&top, &outside) {
+            assert!(!remove_tree(&top));
+            assert!(outside.join("keep.txt").exists());
+        }
+    }
+
+    /// A state directory that is a junction or link is refused.
+    #[test]
+    fn a_linked_state_directory_is_refused() {
+        let mut scene = Scene::new("linkedslots");
+        let outside = scene.root.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(scene.root.join("broker")).unwrap();
+        if !dir_link(&scene.root.join("broker").join("slots"), &outside) {
+            return;
+        }
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let refused = scene.create(&mut broker, "client-a", "x").unwrap_err();
+        assert_eq!(refused.code, FailureCode::ProviderUnavailable);
+        assert_eq!(
+            std::fs::read_dir(&outside).unwrap().count(),
+            0,
+            "nothing written through it"
+        );
+        let linked_root = Scene::new("linkedroot");
+        if dir_link(&linked_root.root.join("broker"), &outside) {
+            let started = Broker::<TestWorker>::start(
+                linked_root.root.join("broker"),
+                INSTANCE.into(),
+                Budgets::DEFAULT,
+            );
+            assert!(started.is_err());
+        }
+    }
+
+    /// A removal that fails (a file still held open) is kept and retried.
+    #[cfg(windows)]
+    #[test]
+    fn a_busy_profile_is_retried_until_removed() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut scene = Scene::new("busy");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let id = scene.create(&mut broker, "client-a", "x").unwrap();
+        let root = broker.peek("client-a", &id).unwrap().dirs.root.clone();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(root.join("profiles").join("cookies.txt"))
+            .unwrap();
+        let report = broker.close("client-a", &id).unwrap();
+        assert!(!report.profile_removed);
+        assert_eq!(broker.pending_removal(), std::slice::from_ref(&root));
+        drop(held);
+        broker.end_all(EndReason::McpSessionEnded);
+        assert!(broker.pending_removal().is_empty());
+        assert!(!root.exists());
+    }
+
+    /// An emergency revoke in any orceld moves the approval epoch; the next
+    /// broker action here sees it and ends every session first.
+    #[test]
+    fn a_moved_approval_epoch_ends_every_session() {
+        let mut scene = Scene::new("epoch");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        assert!(
+            broker.observe_epoch(3).is_empty(),
+            "the first sight is the baseline"
+        );
+        let a = scene.create(&mut broker, "client-a", "1").unwrap();
+        let b = scene.create(&mut broker, "client-b", "2").unwrap();
+        assert!(broker.observe_epoch(3).is_empty());
+        let ended = broker.observe_epoch(4);
+        assert_eq!(ended.len(), 2);
+        assert!(ended
+            .iter()
+            .all(|r| r.reason == EndReason::EmergencyStop && r.profile_removed));
+        for (client, id) in [("client-a", &a), ("client-b", &b)] {
+            let refused = broker.session(client, id).map(|_| ()).unwrap_err();
+            assert!(refused.message.contains("emergency_stop"));
+        }
+        // An unreadable ledger reads as epoch 0: also a change, fail closed.
+        let _c = scene.create(&mut broker, "client-a", "3").unwrap();
+        assert_eq!(broker.observe_epoch(0).len(), 1);
+    }
+
+    #[test]
+    fn the_approval_epoch_is_the_newest_ledger_records() {
+        use orcel_approval::{
+            ApprovalBroker, ApprovalClass, ApprovalError, ApprovalPrompt, ApprovalRecordSummary,
+            ApprovedToken, ConsumeExpectation, PresenceOutcome, RecordedDecision,
+        };
+        struct Ledger(Vec<ApprovalRecordSummary>);
+        impl ApprovalBroker for Ledger {
+            fn request_token(&self, _: &ApprovalPrompt) -> Result<ApprovedToken, ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalUnavailable,
+                    message: "test".into(),
+                })
+            }
+            fn consume(
+                &self,
+                _: &ApprovedToken,
+                _: &ConsumeExpectation,
+                _: u64,
+            ) -> Result<(), ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalUnavailable,
+                    message: "test".into(),
+                })
+            }
+            fn history(&self, limit: usize) -> Vec<ApprovalRecordSummary> {
+                self.0.iter().take(limit).cloned().collect()
+            }
+        }
+        let record = |epoch: u64| ApprovalRecordSummary {
+            id: "r".into(),
+            digest: "d".into(),
+            workspace_id: "w".into(),
+            policy_revision: "p".into(),
+            decision: RecordedDecision::Approved,
+            approval_class: ApprovalClass::Strong,
+            presence_outcome: PresenceOutcome::VerifiedStrong,
+            presence_method: "m".into(),
+            epoch,
+            is_revoke: true,
+            requested_at_ms: 0,
+            decided_at_ms: 0,
+            expires_at_ms: 0,
+            reuse_scope: "s".into(),
+            consumed: true,
+            origin: None,
+        };
+        assert_eq!(approval_epoch(&Ledger(Vec::new())), 0);
+        assert_eq!(approval_epoch(&Ledger(vec![record(5), record(4)])), 5);
+    }
+
+    #[test]
+    fn the_counter_is_refused_before_it_outgrows_the_id() {
+        let mut scene = Scene::new("counter");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        broker.counter = MAX_COUNTER - 1;
+        let last = scene.create(&mut broker, "client-a", "1").unwrap();
+        assert!(last.contains("-999999-"));
+        assert!(parse_session_id(&last).is_ok());
+        let refused = scene.create(&mut broker, "client-a", "2").unwrap_err();
+        assert_eq!(refused.code, FailureCode::OutputLimit);
+    }
+
+    #[test]
+    fn an_absent_receipt_field_never_digests_like_a_present_one() {
+        let mut scene = Scene::new("presence");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let id = scene.create(&mut broker, "client-a", "1").unwrap();
+        let session = broker.session("client-a", &id).unwrap();
+        let mut absent = session.record(record("browser_open", "done"), 1);
+        absent.page_id = None;
+        absent.generation_before = None;
+        let mut dash = absent.clone();
+        dash.page_id = Some("-".into());
+        assert_ne!(receipt_digest(&absent), receipt_digest(&dash));
+        let mut empty = absent.clone();
+        empty.page_id = Some(String::new());
+        assert_ne!(receipt_digest(&absent), receipt_digest(&empty));
+    }
+
+    #[test]
+    fn a_held_instance_id_cannot_start_twice() {
+        let scene = Scene::new("twice");
+        let _first = scene.broker(INSTANCE, Budgets::DEFAULT);
+        assert!(Broker::<TestWorker>::start(
+            scene.root.join("broker"),
+            INSTANCE.into(),
+            Budgets::DEFAULT
+        )
+        .is_err());
+        assert!(Broker::<TestWorker>::start(
+            scene.root.join("broker"),
+            "../x".into(),
+            Budgets::DEFAULT
+        )
+        .is_err());
     }
 }

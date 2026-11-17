@@ -98,6 +98,8 @@ pub fn dispatch_full(
 /// session ended). Returns how many ended; a build without the broker has
 /// none.
 pub fn end_browser_sessions(reason: crate::browser_broker::EndReason) -> usize {
+    #[cfg(test)]
+    ENDED_CALLS.with(|calls| calls.borrow_mut().push(reason));
     #[cfg(all(windows, feature = "live-browser-dev"))]
     {
         full::end_all(reason)
@@ -107,6 +109,14 @@ pub fn end_browser_sessions(reason: crate::browser_broker::EndReason) -> usize {
         let _ = reason;
         0
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test builds: every `end_browser_sessions` call on this thread, so
+    /// the exit and emergency paths can be checked in every build.
+    pub(crate) static ENDED_CALLS: std::cell::RefCell<Vec<crate::browser_broker::EndReason>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// What every build without the live browser answers.
@@ -667,7 +677,11 @@ mod full {
                     .map_err(|error| crate::state_unavailable("browser profile", &error))?
                     .join("live")
                     .join("broker");
-                *slot = Some(Broker::new(root, instance_id(random8()?), Budgets::DEFAULT));
+                *slot = Some(Broker::start(
+                    root,
+                    instance_id(random8()?),
+                    Budgets::DEFAULT,
+                )?);
             }
             match slot.as_mut() {
                 Some(broker) => action(broker),
@@ -724,6 +738,13 @@ mod full {
         action: &FullAction,
     ) -> Result<Value, ProviderError> {
         let client = request.client_session_id.as_str();
+        // An emergency revoke in this or any other orceld moved the
+        // approval epoch: every session ends before anything else runs.
+        let epoch = crate::browser_broker::approval_epoch(approval);
+        with_broker(|broker| {
+            broker.observe_epoch(epoch);
+            Ok(())
+        })?;
         match action {
             FullAction::Create { task } => with_broker(|broker| {
                 let random = random8()?;
