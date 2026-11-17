@@ -85,14 +85,19 @@ func Fingerprint(window string, role Role, automationID, name string) string {
 }
 
 // CheckLive compares the observed identity with the live element's. The
-// control type and a non-empty automation id must be equal and the names
-// equal after whitespace folding; anything else is ErrTargetChanged. As in
-// the donor's alias check, a conflict is never resolved in favour of acting.
+// control type must be equal, an expected automation id that is not empty
+// must equal the live one, and the names must be equal after whitespace
+// folding; anything else is ErrTargetChanged. An empty expected automation
+// id carries no identifier to compare (the expectation does not distinguish
+// "none observed" from "not sent"), so it is not compared with the live id,
+// as the donor's alias check compares control identifiers only when they are
+// not empty; the exact runtime id, the control type and the name still bind
+// the target. A conflict is never resolved in favour of acting.
 func CheckLive(expected Expectation, liveControlType, liveAutomationID, liveName string) error {
 	if strings.TrimSpace(expected.ControlType) != strings.TrimSpace(liveControlType) {
 		return fmt.Errorf("%w (control type)", ErrTargetChanged)
 	}
-	if strings.TrimSpace(expected.AutomationID) != strings.TrimSpace(liveAutomationID) {
+	if want := strings.TrimSpace(expected.AutomationID); want != "" && want != strings.TrimSpace(liveAutomationID) {
 		return fmt.Errorf("%w (automation id)", ErrTargetChanged)
 	}
 	if comparableText(expected.Name) != comparableText(liveName) {

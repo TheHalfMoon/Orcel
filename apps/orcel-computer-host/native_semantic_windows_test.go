@@ -48,23 +48,28 @@ func refTreeFrame(id int, fact windowFact) string {
 
 func runtimeIDFor(t *testing.T, elements []elementFact, name string) string {
 	t.Helper()
-	var walk func([]elementFact) string
-	walk = func(nodes []elementFact) string {
-		for _, node := range nodes {
-			if node.Name == name {
-				return node.RuntimeID
+	return elementNamed(t, elements, name).RuntimeID
+}
+
+func elementNamed(t *testing.T, elements []elementFact, name string) elementFact {
+	t.Helper()
+	var walk func([]elementFact) *elementFact
+	walk = func(nodes []elementFact) *elementFact {
+		for index := range nodes {
+			if nodes[index].Name == name {
+				return &nodes[index]
 			}
-			if found := walk(node.Children); found != "" {
+			if found := walk(nodes[index].Children); found != nil {
 				return found
 			}
 		}
-		return ""
+		return nil
 	}
-	if found := walk(elements); found != "" {
-		return found
+	if found := walk(elements); found != nil && found.RuntimeID != "" {
+		return *found
 	}
 	t.Fatalf("no element named %q", name)
-	return ""
+	return elementFact{}
 }
 
 func TestW201RefTreeAgainstDisposableWindow(t *testing.T) {
@@ -152,9 +157,22 @@ func TestW201RefTreeAgainstDisposableWindow(t *testing.T) {
 	if resp := nativeSemanticAction(action); resp.OK || resp.Error == nil || resp.Error.Code != "target_stale" {
 		t.Fatalf("a mismatched live target was not refused: %+v", resp)
 	}
+	// The WinForms button reports a non-empty UIA AutomationId (its control
+	// id). A different expected id is refused before the pattern is invoked.
+	observedButton := elementNamed(t, first.Elements, "SG94 Button")
+	action.ExpectedElement = &semantic.Expectation{ControlType: "Button", AutomationID: observedButton.AutomationID + "-changed", Name: "SG94 Button"}
+	if resp := nativeSemanticAction(action); resp.OK || resp.Error == nil || resp.Error.Code != "target_stale" {
+		t.Fatalf("a live target with another automation id was not refused: %+v", resp)
+	}
+	// An expectation without an automation id names the same element.
 	action.ExpectedElement = &semantic.Expectation{ControlType: "Button", Name: "SG94 Button"}
 	if resp := nativeSemanticAction(action); !resp.OK {
 		t.Fatalf("the matching live target was refused: %+v", resp.Error)
+	}
+	// The full observed identity, as orceld sends it, matches too.
+	action.ExpectedElement = &semantic.Expectation{ControlType: observedButton.ControlType, AutomationID: observedButton.AutomationID, Name: observedButton.Name}
+	if resp := nativeSemanticAction(action); !resp.OK {
+		t.Fatalf("the observed identity of the live target was refused: %+v", resp.Error)
 	}
 }
 

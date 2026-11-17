@@ -259,6 +259,37 @@ func TestCheckLiveRefusesAnyIdentityChange(t *testing.T) {
 	}
 }
 
+// A WinForms or Win32 control reports a non-empty UIA AutomationId (its
+// control id) even when the caller's expectation names only the control
+// type and name. Such an expectation matches the same live element; a
+// non-empty expected id must still equal the live one, including an
+// observed id that the live element lost.
+func TestCheckLiveComparesOnlyANonEmptyExpectedAutomationID(t *testing.T) {
+	partial := Expectation{ControlType: "Button", Name: "SG94 Button"}
+	for _, liveID := range []string{"1050418", "", "  "} {
+		if err := CheckLive(partial, "Button", liveID, "SG94 Button"); err != nil {
+			t.Fatalf("matching live element with automation id %q refused: %v", liveID, err)
+		}
+	}
+	for _, live := range [][3]string{
+		{"Edit", "1050418", "SG94 Button"},
+		{"Button", "1050418", "Not The Button"},
+	} {
+		if err := CheckLive(partial, live[0], live[1], live[2]); !errors.Is(err, ErrTargetChanged) {
+			t.Fatalf("changed live element %v admitted: %v", live, err)
+		}
+	}
+	observed := Expectation{ControlType: "Button", AutomationID: " 1050418 ", Name: "SG94 Button"}
+	if err := CheckLive(observed, "Button", "1050418", "SG94 Button"); err != nil {
+		t.Fatalf("matching live element refused: %v", err)
+	}
+	for _, liveID := range []string{"", "1050419", "1050418x"} {
+		if err := CheckLive(observed, "Button", liveID, "SG94 Button"); !errors.Is(err, ErrTargetChanged) {
+			t.Fatalf("live automation id %q admitted against an observed one: %v", liveID, err)
+		}
+	}
+}
+
 func TestFingerprintIsDonorShaped(t *testing.T) {
 	value := Fingerprint("w", "button", "ok", "OK")
 	if !strings.HasPrefix(value, "f1:") || len(value) != 3+24 {
