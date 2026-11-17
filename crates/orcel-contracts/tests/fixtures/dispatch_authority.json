@@ -1,0 +1,11 @@
+{
+  "mode": "full_user",
+  "lease": {
+    "lease_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "authority_epoch": 7
+  },
+  "grant": null,
+  "standing": "sa-01",
+  "authorization_id": "authz-0001"
+}

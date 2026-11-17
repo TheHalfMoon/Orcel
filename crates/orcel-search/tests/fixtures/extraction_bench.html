@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>HTML extraction benchmark 2026: readability versus model-based extraction</title>
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Benchmark Reports" />
+    <meta property="article:published_time" content="2026-02-28" />
+  </head>
+  <body>
+    <aside class="sidebar"><p>Related reports: crawl budgets, proxy pools, robots.txt.</p></aside>
+    <div class="content">
+      <h1>HTML extraction benchmark 2026: readability versus model-based extraction</h1>
+      <p>
+        We compared four HTML extraction strategies on five hundred pages: a readability-style density heuristic, a
+        model-based extractor, a headless-browser text dump, and a hand-written selector set per site.
+      </p>
+      <p>
+        The density heuristic was the cheapest and reached 0.91 word-level F1 against a human-labelled main-content
+        reference. The model-based extractor reached 0.94 F1 but cost roughly forty milliseconds of CPU per page. The
+        headless dump was the worst on structured pages because navigation text survives the dump.
+      </p>
+      <p>
+        Boilerplate removal mattered more than sentence segmentation. Pages that keep a cookie banner or a newsletter
+        block in the extracted text lose precision on every downstream retrieval query.
+      </p>
+      <h2>Token budget</h2>
+      <p>
+        Truncating an extracted page to ten thousand characters lost less than three percent of quotable spans, because
+        the main content almost always sorts early in the document. Truncation at two thousand characters began to cut
+        real evidence on long technical articles.
+      </p>
+      <h2>Reproduction</h2>
+      <p>
+        The harness, the labelled set and the per-page scores are published with the report. No proprietary model was
+        used; the model-based row refers to an open weights extractor.
+      </p>
+    </div>
+    <footer><p>Benchmark Reports is independent and takes no vendor funding.</p></footer>
+  </body>
+</html>

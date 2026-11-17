@@ -1,0 +1,15 @@
+{
+  "source": "D:\\Orcel-REA\\orcel-poc\\test\\fixtures (the founder's REA proof of concept; not a git repository)",
+  "author": "Orcel (REA run 2026-11-17); original synthetic pages, no donor content",
+  "licence": "Apache-2.0 (as the orcel-search crate)",
+  "copied": "2026-11-17, byte for byte; SHA-256 of each file below",
+  "files": {
+    "arxiv_abstract.html": "f72f6a462917bb91d45185347eff978c15d526b78c39f3e7a07198491df9c475",
+    "bm25_hybrid.html": "7054d5442f243d725ee864813125dc73eece919983f740ce71eb7c34f3d4c15c",
+    "extraction_bench.html": "d877abe4ec96fda4d4d4010e526ee82e1137604c83a80e7e641b6a776e9fa0fa",
+    "github_readme.html": "6669d5d15388c78c8e7bb3bb8460915ae4731eaba1c516c203bc6693bc07edfa",
+    "manifest.json": "f09638cc4623326147a2735c4cbb9f0e8ac345377f3557d13c34dc1ebca3f143",
+    "neural_retrieval.html": "ef43f9d7774cc7e20853ae5e08b537865778e47edc7463483d2ad1404aac84bc",
+    "news_browser_agents.html": "fc4ba1091e1efcf27653d2300f912b57ee8fe23ca4518e77656a9c4acb4d053f"
+  }
+}

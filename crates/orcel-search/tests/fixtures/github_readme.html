@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>GitHub - orcel-labs/obscura: a local-first browser engine with Chromium fallback</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="GitHub" />
+  </head>
+  <body>
+    <nav class="repo-nav"><a href="#readme">README</a><a href="#issues">Issues</a></nav>
+    <main>
+      <h1>obscura</h1>
+      <p>A local-first browser engine for agents, with a Chromium fallback when a page needs full rendering.</p>
+      <h2>Architecture</h2>
+      <p>
+        Obscura runs one process per profile. Each profile owns a cookie jar, a cache directory and a network policy. The
+        engine exposes a narrow command surface: navigate, click, type, scroll, read, screenshot, download.
+      </p>
+      <h2>Chromium fallback</h2>
+      <p>
+        When a page requires JavaScript that Obscura does not implement, the profile spawns a Chromium instance and
+        attaches over the Chrome DevTools Protocol. The fallback is per-tab, so a session can mix both engines.
+      </p>
+      <h2>Permissions</h2>
+      <p>
+        Every command passes a permission check before it reaches the engine. Full computer control is opt-in and can be
+        revoked by the device owner at any time. The permission log is append-only and records who asked for what.
+      </p>
+      <h2>Install</h2>
+      <pre><code>npm install @orcel/obscura</code></pre>
+      <h2>Status</h2>
+      <p>
+        Early. The CDP bridge is tested against Chromium 141. The native layout engine handles static HTML, forms and a
+        subset of CSS. No claims are made about full web compatibility.
+      </p>
+    </main>
+  </body>
+</html>

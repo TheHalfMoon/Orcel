@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Session",
+  "description": "One client session as `orceld` sees it. A lease and every new approval\nbind `orcel_session_id`, so an `orceld` restart invalidates them (C-02,\nS10). `client_session_id` is never authority.",
+  "type": "object",
+  "properties": {
+    "client_session_id": {
+      "description": "`RequestEnvelope.client_session_id`.",
+      "type": "string"
+    },
+    "contract": {
+      "description": "`\"orcel.session/1\"`.",
+      "type": "string"
+    },
+    "orcel_session_id": {
+      "description": "`validate_runtime_session`; replaced on restart.",
+      "type": "string"
+    },
+    "principal": {
+      "$ref": "#/$defs/Principal"
+    },
+    "remote": {
+      "description": "SG-000055, only from the uplink.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RemoteContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "started_at_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "tool_surface_profile": {
+      "description": "`core`, `desktop_structured` or `browser_structured`.",
+      "type": "string"
+    },
+    "transport": {
+      "$ref": "#/$defs/Transport"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "orcel_session_id",
+    "client_session_id",
+    "principal",
+    "transport",
+    "tool_surface_profile",
+    "started_at_ms"
+  ],
+  "$defs": {
+    "Principal": {
+      "type": "object",
+      "properties": {
+        "client_profile_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contract": {
+          "description": "`\"orcel.principal/1\"`.",
+          "type": "string"
+        },
+        "display": {
+          "description": "Bounded; escaped by `prompt_display` before any prompt shows it.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PrincipalKind"
+        },
+        "principal_id": {
+          "description": "Opaque. `LocalUser`: SHA-256 of the OS identity binding;\n`RestClient`: the token id.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "kind",
+        "principal_id",
+        "display"
+      ]
+    },
+    "PrincipalKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "mcp_client",
+            "rest_client",
+            "remote_principal"
+          ]
+        },
+        {
+          "description": "The only kind that can issue a lease (C-03).",
+          "type": "string",
+          "const": "local_user"
+        },
+        {
+          "description": "Recorded for attribution and job ownership, never as authority.",
+          "type": "string",
+          "const": "agent_runtime"
+        },
+        {
+          "description": "Recorded for attribution, never as authority.",
+          "type": "string",
+          "const": "sidecar"
+        }
+      ]
+    },
+    "RemoteContext": {
+      "description": "SG-000055 remote dispatch context.\n\nSupplied only by the local device uplink from an authenticated, verified\nrelay route; never derived from tool arguments. It grants nothing: it only\nselects the local remote-session lease that `orceld` must find active.",
+      "type": "object",
+      "properties": {
+        "clientProfileId": {
+          "type": "string"
+        },
+        "clientProfileRevision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "connectionId": {
+          "type": "string"
+        },
+        "deviceEpoch": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "principal": {
+          "type": "string"
+        },
+        "providerKind": {
+          "type": "string"
+        },
+        "remoteConnectionId": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "toolSurfaceProfile": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "remoteConnectionId",
+        "connectionId",
+        "deviceId",
+        "deviceEpoch",
+        "providerKind",
+        "clientProfileId",
+        "clientProfileRevision",
+        "toolSurfaceProfile",
+        "scopes"
+      ]
+    },
+    "Transport": {
+      "type": "string",
+      "enum": [
+        "stdio",
+        "loopback_mcp",
+        "loopback_rest",
+        "relay"
+      ]
+    }
+  }
+}
