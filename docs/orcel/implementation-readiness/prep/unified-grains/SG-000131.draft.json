@@ -89,6 +89,19 @@
         "Isolating a component (apps/orcel-firecrawl) is an architecture choice, not a licence requirement; the fd06-files.txt allowlist and the 'no Apache unit links an AGPL unit' invariant are withdrawn.",
         "UNIFIED_INTEGRATION_SPEC.md revision 9 amends C-15, C-16, C-17, C-20, sections 3.2, 5.6 and 6.1, WP1-01 and G-2 to match."
       ]
+    },
+    {
+      "title": "SG-000119 decision 3: the Control Room shell's licence check no longer blocks",
+      "created": "2026-11-17",
+      "base": "0729ff314f43594ed023787905f56ec1fed0dbf1",
+      "decision": "DECIDED (founder, 2026-11-17), verbatim: \"all sources i have sent to you and all sources in the repo are legally and i have permission to copy all of them and re name them to orcel. so not worry about the licness anymore\"",
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md)",
+      "applies_to": "SG-000119 (CLOSED), founder decision 3 and its dependency_review condition naming `cargo deny check sources bans licenses advisories`",
+      "note": "Recorded here, not in .specgrain/specs/SG-000119.json: SG-000119 is CLOSED with canonical evidence (qualified head and tree), and no CLOSED grain in this repository carries an amendment, so its record stays as qualified. The founder's statement is later than decision 3 and supersedes its licence check only; the source, ban and advisory checks and cargo audit stay.",
+      "changes": [
+        "ci.yml control-room-shell job: `cargo deny check sources bans advisories`, plus `cargo deny list` as a licence report.",
+        "apps/orcel-control-room/src-tauri/deny.toml: the [licenses] allowlist and exceptions are removed; the webview2-com-sys clarification stays so the report shows MIT AND LicenseRef-Microsoft-WebView2-SDK; founder decision 6 (no public distribution) is unchanged."
+      ]
     }
   ]
 }

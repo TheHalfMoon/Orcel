@@ -1230,8 +1230,12 @@ jobs:
         run: |
           cargo install cargo-audit --locked --version 0.22.2
           cargo install cargo-deny --locked --version 0.20.2
-      - name: Source, ban, license and advisory check of the shell graph
-        run: cargo deny check sources bans licenses advisories
+      # Founder decision of 2026-11-17 (licences never block) supersedes the
+      # licence check of SG-000119 decision 3; licences are reported.
+      - name: Source, ban and advisory check of the shell graph (licences reported)
+        run: |
+          cargo deny check sources bans advisories
+          cargo deny list
       - name: Audit the shell lockfile
         run: cargo audit
 
