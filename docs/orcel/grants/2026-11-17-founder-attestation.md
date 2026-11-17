@@ -84,6 +84,10 @@ How Orcel records it:
 - It gives no access to private source. Private repositories still need authorized credentials and exact names.
 - Architecture choices made for other reasons (for example the separate `apps/orcel-firecrawl` process in
   UNIFIED_INTEGRATION_SPEC.md) stay until changed by their own decision; they are no longer required by licence.
+- WP1-01 gates: every donor in `docs/orcel/notices/donor-provenance.json` cites the authorization reference
+  **OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17** (defined there and in `docs/orcel/notices/licence-policy.json`,
+  both pointing at this record). No gate refuses AGPL, GPL, LGPL, MPL, SSPL, BUSL, FSL, commercial or unlicensed code or
+  dependencies; the gates require provenance and preserved notices, and dependency licences are reported, not judged.
 
 ## Vercel source expansion (2026-11-17)
 
