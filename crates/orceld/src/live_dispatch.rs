@@ -804,7 +804,7 @@ mod full {
             "open a visible Orcel browser window",
             format!("orcel-browser-session:{session_id}"),
             format!(
-                "Open a browser window on your desktop for this agent session (MCP session {client}), titled Orcel agent session. The browser may bring it to the front, taking keyboard focus, when it opens and when it opens a page; you can minimise it. You will see it and may use it. Pages in it get no clipboard access and cannot open file dialogs."
+                "Open a browser window on your desktop for this agent session (MCP session {client}), titled Orcel agent session. The browser may bring it to the front, taking keyboard focus, when it opens and when it opens a page; you can minimise it. You will see it and may use it. Pages in it get no clipboard permission and cannot open file dialogs, but a page can still copy text to your clipboard after an approved click (the legacy copy command)."
             ),
             digest,
         );
@@ -892,9 +892,9 @@ mod full {
                     Some(name) => {
                         let store = profile_store()?;
                         store.check_acquire(name)?;
-                        if !broker.profile_approved(client, name) {
+                        if !broker.profile_approved(&workspace.id, client, name) {
                             approve_profile_use(workspace, approval, client, name)?;
-                            broker.note_profile_approved(client, name);
+                            broker.note_profile_approved(&workspace.id, client, name);
                         }
                         Some(store.acquire(name)?)
                     }

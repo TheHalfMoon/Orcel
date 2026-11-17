@@ -64,7 +64,7 @@ The fresh-context judge failed the first head. Each finding and what changed:
 
 1. **Blocking: another local client could drive a signed-in profile with no approval.** Fixed:
    - The first time an MCP session (`client_session_id`) uses a persistent profile, orceld asks a fresh SOFT approval. The title is `use an Orcel-managed browser profile in a session` and the target is `orcel-browser-profile:<name>`. The prompt names the profile and the client, and says the profile may be signed in to sites. The digest binds the workspace, the client and the name.
-   - The approval is remembered for that MCP session only (its orceld's life). The checks that need no prompt run first: the profile exists, no session holds it, no engine runs in it.
+   - The approval is remembered per workspace, client and profile, for that MCP session only, and is forgotten whenever every session ends: an emergency stop, an approval epoch that moved (an emergency revoke in any orceld) or could not be verified, or orceld's input closing. After a revoke, the same MCP session is asked again before it reuses a signed-in profile. The checks that need no prompt run first: the profile exists, no session holds it, no engine runs in it.
    - `profile.json` records `created_by_client`, the MCP session whose approved write created the profile. `browser_profiles` shows it, for display only; it grants nothing.
    - Every navigation, link click and new-tab prompt in a persistent profile names it: the first preview line says "Profile: the Orcel-managed browser profile <name>; it may be signed in to sites", and the summary ends with `profile=<name>`. Every fill and select prompt has the same preview line; its summary is the shown value and stays unchanged.
    - Every receipt carries `profile`. The receipt digest domain is now `orcel-ob04-receipt/2` and includes it.
@@ -87,7 +87,10 @@ The fresh-context judge failed the first head. Each finding and what changed:
 5. **Low: incomplete folders.** `browser_profile_delete` also removes a real folder of a valid name that an interrupted create left incomplete (no `profile.json`). It does so under the profile's lock and the store lock, never following a link.
 6. **Info: the 16-profile cap.** Create and delete take a store-wide lock (`locks/.store`, a name no profile can have), so the cap and the names hold across processes.
 
-## 3. Shadow: no OS input, clipboard, focus or foreground
+## 3. Shadow: Orcel uses no OS input, clipboard, focus or foreground
+
+This is about Orcel's own calls. A page is a different matter: it gets no async clipboard permission, but in Shadow as in Visible it can still copy text to the system clipboard with the legacy `execCommand("copy")` after an approved click (section 2a, item 2). The scripted mission's clipboard check covers the fixture pages, which do not do that.
+
 
 - `crates/orceld/tests/ob04_shadow_scan.rs` scans every non-test source on the browser path for foreground, activation, synthesized-input, cursor and clipboard calls (`SetForegroundWindow`, `SendInput`, `SetCursorPos`, `OpenClipboard`, `bringToFront`, `navigator.clipboard` and more). The scanned code is the browser host crate, the session-state crate, the browser provider, orceld's broker, profiles, live browser, dispatch and takeover gate, and the Node worker. It finds none. The test also checks that the host crate cannot compile those calls: its `windows-sys` has no keyboard-and-mouse, clipboard or windowing feature.
 - `apps/orcel-browser-worker/src/shadow.test.ts` does the same for the worker sources. It also checks that the headless decision comes only from the argv.

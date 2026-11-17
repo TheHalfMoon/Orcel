@@ -613,9 +613,12 @@ pub(crate) struct Broker<W> {
     /// SG-000135 OB-04: persistent profiles whose session's worker could not
     /// be confirmed gone, kept locked for this orceld's life.
     quarantined: Vec<crate::browser_profiles::ProfileLease>,
-    /// SG-000135 OB-04: (client, profile) pairs the owner approved for use
-    /// in this orceld (one MCP session's life).
-    profile_approvals: std::collections::BTreeSet<(String, String)>,
+    /// SG-000135 OB-04: (workspace, client, profile) the owner approved for
+    /// use in this orceld (one MCP session's life). Cleared whenever every
+    /// session ends (emergency stop, an approval epoch that moved or could
+    /// not be verified, orceld's input closing), so a revoke always asks
+    /// again before a signed-in profile is reused.
+    profile_approvals: std::collections::BTreeSet<(String, String, String)>,
     /// This instance's lock, held for the broker's (orceld's) lifetime.
     _instance_lock: File,
 }
@@ -923,7 +926,8 @@ impl<W: SessionWorker> Broker<W> {
     /// transport whose orceld outlives one client.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn end_client(&mut self, client: &str) -> Vec<EndReport> {
-        self.profile_approvals.retain(|(owner, _)| owner != client);
+        self.profile_approvals
+            .retain(|(_, owner, _)| owner != client);
         let ids: Vec<String> = self
             .sessions
             .values()
@@ -937,6 +941,9 @@ impl<W: SessionWorker> Broker<W> {
 
     /// End every session (emergency stop, or orceld's input closed).
     pub(crate) fn end_all(&mut self, reason: EndReason) -> Vec<EndReport> {
+        // SG-000135 OB-04: no profile approval outlives an emergency stop,
+        // a moved or unverifiable approval epoch, or the end of the sessions.
+        self.profile_approvals.clear();
         let ids: Vec<String> = self.sessions.keys().cloned().collect();
         let reports = ids.iter().filter_map(|id| self.end(id, reason)).collect();
         self.retry_pending_removal();
@@ -995,17 +1002,18 @@ impl<W: SessionWorker> Broker<W> {
     }
 
     /// SG-000135 OB-04: whether the owner already approved `client` using
-    /// the persistent profile `name` in this orceld.
-    pub(crate) fn profile_approved(&self, client: &str, name: &str) -> bool {
+    /// the persistent profile `name` in `workspace` in this orceld, since
+    /// the last time every session ended.
+    pub(crate) fn profile_approved(&self, workspace: &str, client: &str, name: &str) -> bool {
         self.profile_approvals
-            .contains(&(client.to_owned(), name.to_owned()))
+            .contains(&(workspace.to_owned(), client.to_owned(), name.to_owned()))
     }
 
     /// SG-000135 OB-04: record that the owner approved `client` using the
-    /// persistent profile `name` (for this orceld's life).
-    pub(crate) fn note_profile_approved(&mut self, client: &str, name: &str) {
+    /// persistent profile `name` in `workspace`.
+    pub(crate) fn note_profile_approved(&mut self, workspace: &str, client: &str, name: &str) {
         self.profile_approvals
-            .insert((client.to_owned(), name.to_owned()));
+            .insert((workspace.to_owned(), client.to_owned(), name.to_owned()));
     }
 
     /// The open sessions of `client`, in id order.
@@ -2043,11 +2051,13 @@ mod tests {
         let store = scene.store().map_err(boxed)?;
         store.create("work", "client-a", 1).map_err(boxed)?;
         let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
-        assert!(!broker.profile_approved("client-a", "work"));
-        broker.note_profile_approved("client-a", "work");
-        assert!(broker.profile_approved("client-a", "work"));
-        assert!(!broker.profile_approved("client-b", "work"));
-        assert!(!broker.profile_approved("client-a", "other"));
+        assert!(!broker.profile_approved("default", "client-a", "work"));
+        broker.note_profile_approved("default", "client-a", "work");
+        assert!(broker.profile_approved("default", "client-a", "work"));
+        assert!(!broker.profile_approved("default", "client-b", "work"));
+        assert!(!broker.profile_approved("default", "client-a", "other"));
+        // Another workspace asks again.
+        assert!(!broker.profile_approved("second", "client-a", "work"));
         let lease = store.acquire("work").map_err(boxed)?;
         let id = scene
             .create_in(
@@ -2068,7 +2078,36 @@ mod tests {
         assert_ne!(receipt_digest(&receipt), receipt_digest(&other));
         assert_eq!(receipt.to_json()["profile"], "work");
         broker.end_client("client-a");
-        assert!(!broker.profile_approved("client-a", "work"));
+        assert!(!broker.profile_approved("default", "client-a", "work"));
+        Ok(())
+    }
+
+    /// SG-000135 OB-04 re-judge: an emergency revoke (the approval epoch
+    /// moved), an epoch that cannot be verified, and an emergency stop all
+    /// forget every profile approval, so the same MCP session is asked again
+    /// before it reuses a signed-in profile.
+    #[test]
+    fn ob04_a_revoke_or_stop_forgets_every_profile_approval() -> Outcome {
+        let scene = Scene::new("revoke");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        broker.check_epoch(Some(1)).map_err(boxed)?;
+        broker.note_profile_approved("default", "client-a", "work");
+        broker.check_epoch(Some(1)).map_err(boxed)?;
+        assert!(
+            broker.profile_approved("default", "client-a", "work"),
+            "an unchanged epoch keeps it"
+        );
+        assert!(
+            broker.check_epoch(Some(2)).is_err(),
+            "the revoke moved the epoch"
+        );
+        assert!(!broker.profile_approved("default", "client-a", "work"));
+        broker.note_profile_approved("default", "client-a", "work");
+        assert!(broker.check_epoch(None).is_err());
+        assert!(!broker.profile_approved("default", "client-a", "work"));
+        broker.note_profile_approved("default", "client-a", "work");
+        broker.end_all(EndReason::EmergencyStop);
+        assert!(!broker.profile_approved("default", "client-a", "work"));
         Ok(())
     }
 }
