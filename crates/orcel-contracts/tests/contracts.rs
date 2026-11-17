@@ -7,7 +7,7 @@
 use orcel_contracts::capability::{CapabilityReport, CapabilityStatus};
 use orcel_contracts::event::{AnchorRef, AuditEvent, AuditEventKind, GENESIS_PREV_DIGEST};
 use orcel_contracts::identity::{Device, OsFamily, OsIdentityBinding, Principal, PrincipalKind};
-use orcel_contracts::job::{Job, JobKind, JobOutcome};
+use orcel_contracts::job::{Job, JobBudget, JobKind, JobOutcome};
 use orcel_contracts::lease::{
     ApprovalClass, AuthorityShapeError, DispatchAuthority, GrantRef, LeaseRef, LeaseView,
     StandingApproval,
@@ -206,7 +206,7 @@ fn job_audit_and_anchor_fixtures_round_trip() {
         })
     );
     assert!(job.outcome_matches_state());
-    assert_eq!(job.budget, CrawlBudget::DEFAULT);
+    assert_eq!(job.budget, JobBudget::from(CrawlBudget::DEFAULT));
     assert_eq!(job.authority.check(), Ok(()));
     let event: AuditEvent = round_trip_contract("audit_event");
     assert_eq!(event.kind, AuditEventKind::Dispatch);
@@ -781,6 +781,81 @@ fn standing_approvals_are_strong_and_never_cover_admin_or_remote() {
         ..base.clone()
     };
     assert!(long_task.check().is_err());
+}
+
+#[test]
+fn job_budget_tolerates_additive_fields_unlike_the_inbound_budget() {
+    let mut job = fixture("job");
+    job["budget"]["max_concurrent_fetches"] = json!(4);
+    let parsed: Job = serde_json::from_value(job.clone()).expect("older reader accepts");
+    assert_eq!(parsed.budget, JobBudget::from(CrawlBudget::DEFAULT));
+    assert!(serde_json::from_value::<CrawlBudget>(job["budget"].clone()).is_err());
+}
+
+#[test]
+fn empty_standing_scope_lists_cover_nothing() {
+    let base: StandingApproval = parse("standing_approval");
+    assert!(base.covers_command("git"));
+    assert!(!base.covers_command("cmd"));
+    assert!(base.covers_root("C:\\Users\\me\\src\\repo"));
+    assert!(!base.covers_origin("https://example.com"));
+    let none = StandingApproval {
+        commands: None,
+        ..base.clone()
+    };
+    assert_eq!(none.check(), Ok(()));
+    assert!(!none.covers_command("git"));
+    let empty = StandingApproval {
+        commands: Some(Vec::new()),
+        roots: Vec::new(),
+        ..base
+    };
+    assert!(!empty.covers_command("git"));
+    assert!(!empty.covers_root("C:\\"));
+}
+
+#[test]
+fn standing_filesystem_needs_roots_and_origins_and_task_are_validated() {
+    let base: StandingApproval = parse("standing_approval");
+    let mut no_roots = base.clone();
+    no_roots.executors.push(ExecutorClass::Filesystem);
+    no_roots.roots.clear();
+    assert_eq!(
+        no_roots.check(),
+        Err(AuthorityShapeError::StandingScopeInvalid)
+    );
+    let mut with_roots = base.clone();
+    with_roots.executors.push(ExecutorClass::Filesystem);
+    assert_eq!(with_roots.check(), Ok(()));
+    for bad in [
+        "http://example.com",
+        "https://example.com/",
+        "https://Example.com",
+        "x",
+    ] {
+        let origin = StandingApproval {
+            origins: vec![bad.to_owned()],
+            ..base.clone()
+        };
+        assert!(origin.check().is_err(), "{bad}");
+    }
+    let good_origin = StandingApproval {
+        origins: vec!["https://docs.example.com".to_owned()],
+        ..base.clone()
+    };
+    assert_eq!(good_origin.check(), Ok(()));
+    for bad in ["", "line\nbreak"] {
+        let task = StandingApproval {
+            task: bad.to_owned(),
+            ..base.clone()
+        };
+        assert!(task.check().is_err(), "{bad:?}");
+    }
+    let control_root = StandingApproval {
+        roots: vec!["C:\\a\u{0}".to_owned()],
+        ..base
+    };
+    assert!(control_root.check().is_err());
 }
 
 #[test]

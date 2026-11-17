@@ -39,10 +39,13 @@ impl Contract for CapabilityReport {
 pub enum ComponentIsolation {
     /// Orcel's own code, linked into an Orcel process.
     InProcess,
-    /// A separate supervised child over the sidecar protocol (section 4.9),
-    /// never linked into an Orcel process. Required for any component
-    /// whose licence is outside the kernel allowlist (for example an
-    /// AGPL-licensed component, which stays separately built and isolated).
+    /// A separate supervised child over the sidecar protocol (section 4.9)
+    /// or the contained JSON-over-stdio protocol (section 4.17), never
+    /// linked into an Orcel process. Chosen for architecture reasons:
+    /// donor runtimes and copy-first components run contained, with no
+    /// ambient network, their own resource limits and a crash boundary
+    /// away from `orceld` (C-09 to C-13), and a separately built component
+    /// keeps its own workspace and release packaging (C-17).
     Sidecar,
 }
 

@@ -10,6 +10,35 @@ use crate::lease::DispatchAuthority;
 #[cfg(doc)]
 use crate::lease::MAX_TASK_BYTES;
 use crate::web::CrawlBudget;
+
+/// Outbound copy of the budget a job was admitted under. Unlike the inbound
+/// `CrawlBudget` configuration it tolerates unknown fields, so adding a
+/// budget field later does not break older readers of `Job`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct JobBudget {
+    pub max_pages: u32,
+    pub max_depth: u32,
+    pub max_duration_s: u32,
+    pub max_remembered_urls: u32,
+    pub min_delay_ms: u32,
+    pub max_batch_urls: u32,
+    pub max_job_result_bytes: u64,
+}
+
+impl From<CrawlBudget> for JobBudget {
+    fn from(budget: CrawlBudget) -> Self {
+        Self {
+            max_pages: budget.max_pages,
+            max_depth: budget.max_depth,
+            max_duration_s: budget.max_duration_s,
+            max_remembered_urls: budget.max_remembered_urls,
+            min_delay_ms: budget.min_delay_ms,
+            max_batch_urls: budget.max_batch_urls,
+            max_job_result_bytes: budget.max_job_result_bytes,
+        }
+    }
+}
 use crate::{Contract, FailureCode};
 
 /// SG-000093 execution state. Moved from `orcel-policy` with identical serde
@@ -126,7 +155,7 @@ pub struct Job {
     pub authority: DispatchAuthority,
     pub progress: JobProgress,
     /// The effective budget the job was admitted under (section 4.11).
-    pub budget: CrawlBudget,
+    pub budget: JobBudget,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     pub expires_at_ms: u64,

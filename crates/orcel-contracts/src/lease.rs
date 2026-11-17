@@ -241,6 +241,12 @@ pub const MAX_STANDING_SCOPE_ITEMS: usize = 64;
 /// and audited individually with its id. It never covers `admin`, remote
 /// callers, out-of-scope targets or another client. Issued only by the
 /// service; this is the wire shape.
+///
+/// Every scope list narrows and nothing is implied: an empty `roots`,
+/// `origins` or `commands` list, and `commands: None`, cover nothing of
+/// that dimension, never "anything". The `covers_*` methods state this in
+/// code, and `check` refuses a `filesystem` executor without roots, since
+/// such an approval could cover no filesystem operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -255,14 +261,15 @@ pub struct StandingApproval {
     pub task: String,
     /// Never `admin` or `remote`.
     pub executors: Vec<ExecutorClass>,
-    /// Authorized roots (drives or folders).
+    /// Authorized roots (drives or folders); empty covers no path.
     #[serde(default)]
     pub roots: Vec<String>,
-    /// Exact origins for web operations.
+    /// Exact canonical origins (`https://host[:port]`) for web operations;
+    /// empty covers no origin.
     #[serde(default)]
     pub origins: Vec<String>,
-    /// Command names a shell executor may run; `None` means the
-    /// executor's declared scope only, never "anything".
+    /// Command names a shell executor may run; `None` or empty covers no
+    /// command.
     #[serde(default)]
     pub commands: Option<Vec<String>>,
     /// The presence class of the grant; only `STRONG` is valid.
@@ -280,9 +287,14 @@ fn bounded_id(value: &str) -> bool {
     !value.is_empty() && value.len() <= crate::MAX_ID_BYTES
 }
 
+fn bounded_item(value: &str) -> bool {
+    bounded_id(value) && !value.chars().any(char::is_control)
+}
+
 impl StandingApproval {
-    /// Shape check: STRONG only, no `admin` or `remote` executor, non-empty
-    /// bounded fields and a positive time box.
+    /// Shape check: STRONG only, no `admin` or `remote` executor, roots for
+    /// a `filesystem` executor, canonical origins, a valid declared task,
+    /// non-empty bounded fields and a positive time box.
     pub fn check(&self) -> Result<(), AuthorityShapeError> {
         if self.granted_with != ApprovalClass::Strong {
             return Err(AuthorityShapeError::StandingNotStrong);
@@ -303,20 +315,46 @@ impl StandingApproval {
             && self
                 .roots
                 .iter()
-                .chain(self.origins.iter())
                 .chain(commands.iter())
-                .all(|item| bounded_id(item));
+                .all(|item| bounded_item(item))
+            && self
+                .origins
+                .iter()
+                .all(|origin| crate::web::is_origin(origin));
+        let filesystem_without_roots =
+            self.executors.contains(&ExecutorClass::Filesystem) && self.roots.is_empty();
         if !lists_ok
+            || filesystem_without_roots
             || !bounded_id(&self.id)
             || !bounded_id(&self.lease_id)
             || !bounded_id(&self.principal_id)
-            || self.task.is_empty()
-            || self.task.len() > MAX_TASK_BYTES
+            || !crate::web::is_valid_task(&self.task)
             || self.expires_at_ms <= self.issued_at_ms
         {
             return Err(AuthorityShapeError::StandingScopeInvalid);
         }
         Ok(())
+    }
+
+    /// Whether `root` is one of the declared roots, exactly. An empty list
+    /// covers nothing. Path normalization and containment are the
+    /// filesystem provider's.
+    pub fn covers_root(&self, root: &str) -> bool {
+        self.roots.iter().any(|declared| declared == root)
+    }
+
+    /// Whether `origin` is one of the declared origins, exactly. An empty
+    /// list covers nothing.
+    pub fn covers_origin(&self, origin: &str) -> bool {
+        self.origins.iter().any(|declared| declared == origin)
+    }
+
+    /// Whether `command` is one of the declared commands, exactly. `None`
+    /// and an empty list cover nothing.
+    pub fn covers_command(&self, command: &str) -> bool {
+        self.commands
+            .as_deref()
+            .is_some_and(|commands| commands.iter().any(|declared| declared == command))
     }
 
     /// `check`, plus binding to the given lease: same lease id and an

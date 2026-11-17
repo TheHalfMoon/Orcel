@@ -162,7 +162,7 @@
           "const": "in_process"
         },
         {
-          "description": "A separate supervised child over the sidecar protocol (section 4.9),\nnever linked into an Orcel process. Required for any component\nwhose licence is outside the kernel allowlist (for example an\nAGPL-licensed component, which stays separately built and isolated).",
+          "description": "A separate supervised child over the sidecar protocol (section 4.9)\nor the contained JSON-over-stdio protocol (section 4.17), never\nlinked into an Orcel process. Chosen for architecture reasons:\ndonor runtimes and copy-first components run contained, with no\nambient network, their own resource limits and a crash boundary\naway from `orceld` (C-09 to C-13), and a separately built component\nkeeps its own workspace and release packaging (C-17).",
           "type": "string",
           "const": "sidecar"
         }

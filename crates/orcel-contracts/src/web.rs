@@ -407,8 +407,14 @@ fn check_filters(filters: &[String], field: &'static str) -> Result<(), WebContr
     Ok(())
 }
 
+/// A declared task: non-empty, at most `MAX_TASK_BYTES`, no control
+/// characters. Shared by web requests and standing approvals.
+pub(crate) fn is_valid_task(task: &str) -> bool {
+    !task.is_empty() && task.len() <= MAX_TASK_BYTES && !task.chars().any(char::is_control)
+}
+
 fn check_task(task: &str) -> Result<(), WebContractError> {
-    if task.is_empty() || task.len() > MAX_TASK_BYTES || task.chars().any(char::is_control) {
+    if !is_valid_task(task) {
         return Err(WebContractError::InvalidField("task"));
     }
     Ok(())
@@ -435,7 +441,9 @@ pub struct WebScope {
     pub origins: Vec<String>,
 }
 
-fn is_origin(origin: &str) -> bool {
+/// A canonical `https://host[:port]` origin (see `WebScope`). Shared by
+/// web scopes and standing approvals.
+pub(crate) fn is_origin(origin: &str) -> bool {
     let Some(authority) = origin.strip_prefix("https://") else {
         return false;
     };

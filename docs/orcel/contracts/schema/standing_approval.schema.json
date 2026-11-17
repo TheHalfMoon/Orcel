@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "StandingApproval",
-  "description": "A standing approval (section 4.15, FD-UP-10 decided): granted once with\nSTRONG presence by the authority service for one identified client and\none declared task, bound to a lease, with a declared scope and an expiry\nno later than the lease's. Every dispatch it covers is still authorized\nand audited individually with its id. It never covers `admin`, remote\ncallers, out-of-scope targets or another client. Issued only by the\nservice; this is the wire shape.",
+  "description": "A standing approval (section 4.15, FD-UP-10 decided): granted once with\nSTRONG presence by the authority service for one identified client and\none declared task, bound to a lease, with a declared scope and an expiry\nno later than the lease's. Every dispatch it covers is still authorized\nand audited individually with its id. It never covers `admin`, remote\ncallers, out-of-scope targets or another client. Issued only by the\nservice; this is the wire shape.\n\nEvery scope list narrows and nothing is implied: an empty `roots`,\n`origins` or `commands` list, and `commands: None`, cover nothing of\nthat dimension, never \"anything\". The `covers_*` methods state this in\ncode, and `check` refuses a `filesystem` executor without roots, since\nsuch an approval could cover no filesystem operation.",
   "type": "object",
   "properties": {
     "commands": {
-      "description": "Command names a shell executor may run; `None` means the\nexecutor's declared scope only, never \"anything\".",
+      "description": "Command names a shell executor may run; `None` or empty covers no\ncommand.",
       "type": [
         "array",
         "null"
@@ -48,7 +48,7 @@
       "type": "string"
     },
     "origins": {
-      "description": "Exact origins for web operations.",
+      "description": "Exact canonical origins (`https://host[:port]`) for web operations;\nempty covers no origin.",
       "type": "array",
       "default": [],
       "items": {
@@ -60,7 +60,7 @@
       "type": "string"
     },
     "roots": {
-      "description": "Authorized roots (drives or folders).",
+      "description": "Authorized roots (drives or folders); empty covers no path.",
       "type": "array",
       "default": [],
       "items": {
