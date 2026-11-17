@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FailureCode {
     InvalidRequest,
@@ -53,11 +54,16 @@ pub enum FailureCode {
     /// Contracts v1: the job or unit ended in `outcome_unknown`; it is never
     /// retried automatically.
     OutcomeUnknown,
+    /// Contracts v1: the authority service is not installed or not
+    /// answering, so Full Control is unavailable.
+    AuthorityUnavailable,
+    /// Contracts v1: an opt-in feature not granted to this client.
+    PermissionRequired,
 }
 
 impl FailureCode {
     /// Every variant, in declaration order.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 28] = [
         Self::InvalidRequest,
         Self::CapabilityDenied,
         Self::WorkspaceDenied,
@@ -84,6 +90,8 @@ impl FailureCode {
         Self::QueueFull,
         Self::RateLimited,
         Self::OutcomeUnknown,
+        Self::AuthorityUnavailable,
+        Self::PermissionRequired,
     ];
 
     /// The HTTP status a REST or Firecrawl-compatible front answers with
@@ -100,7 +108,8 @@ impl FailureCode {
             | Self::RemoteSessionInactive
             | Self::LeaseRequired
             | Self::LeaseInvalid
-            | Self::PolicyBlocked => 403,
+            | Self::PolicyBlocked
+            | Self::PermissionRequired => 403,
             Self::JobNotFound => 404,
             Self::ProcessTimeout => 408,
             Self::TargetStale | Self::PathRaceDetected => 409,
@@ -111,9 +120,10 @@ impl FailureCode {
             | Self::ProcessTerminationUnverified
             | Self::OutcomeUnknown => 500,
             Self::LeaseUnsupportedPlatform | Self::Unsupported => 501,
-            Self::ApprovalUnavailable | Self::ProviderUnavailable | Self::IndicatorUnavailable => {
-                503
-            }
+            Self::ApprovalUnavailable
+            | Self::ProviderUnavailable
+            | Self::IndicatorUnavailable
+            | Self::AuthorityUnavailable => 503,
         }
     }
 }

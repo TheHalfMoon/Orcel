@@ -1,30 +1,22 @@
 {
   "contract": "orcel.standing-approval/1",
-  "standing_approval_id": "sa-01",
+  "id": "sa-01",
+  "lease_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "principal_id": "mcp-client-7f3a",
-  "client_profile_id": "profile-claude-desktop",
-  "task": "Summarise the docs site",
-  "scope": {
-    "operations": [
-      "web/scrape",
-      "web/crawl_start"
-    ],
-    "executors": [
-      "web"
-    ],
-    "origins": [
-      "https://docs.example.com:443"
-    ],
-    "roots": []
-  },
-  "scope_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "task": "Tidy the build scripts in the repo",
+  "executors": [
+    "shell_process",
+    "desktop_input"
+  ],
+  "roots": [
+    "C:\\Users\\me\\src\\repo"
+  ],
+  "origins": [],
+  "commands": [
+    "pwsh",
+    "git"
+  ],
   "granted_with": "STRONG",
-  "lease": {
-    "lease_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "binding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "authority_epoch": 7
-  },
-  "orcel_session_id": "osess-01",
   "issued_at_ms": 1763300000000,
   "expires_at_ms": 1763301800000
 }

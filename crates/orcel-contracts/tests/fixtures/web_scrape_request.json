@@ -11,5 +11,10 @@
   },
   "engine": "chromium",
   "timeout_ms": 30000,
-  "wait_for_ms": null
+  "wait_for_ms": null,
+  "headers": [],
+  "privacy": {
+    "profile": "default",
+    "sensitive": []
+  }
 }

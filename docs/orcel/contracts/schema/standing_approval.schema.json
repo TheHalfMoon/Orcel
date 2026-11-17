@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StandingApproval",
+  "description": "A standing approval (section 4.15, FD-UP-10 decided): granted once with\nSTRONG presence by the authority service for one identified client and\none declared task, bound to a lease, with a declared scope and an expiry\nno later than the lease's. Every dispatch it covers is still authorized\nand audited individually with its id. It never covers `admin`, remote\ncallers, out-of-scope targets or another client. Issued only by the\nservice; this is the wire shape.",
+  "type": "object",
+  "properties": {
+    "commands": {
+      "description": "Command names a shell executor may run; `None` means the\nexecutor's declared scope only, never \"anything\".",
+      "type": [
+        "array",
+        "null"
+      ],
+      "default": null,
+      "items": {
+        "type": "string"
+      }
+    },
+    "contract": {
+      "description": "`\"orcel.standing-approval/1\"`.",
+      "type": "string"
+    },
+    "executors": {
+      "description": "Never `admin` or `remote`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExecutorClass"
+      }
+    },
+    "expires_at_ms": {
+      "description": "At most the lease's expiry.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "granted_with": {
+      "description": "The presence class of the grant; only `STRONG` is valid.",
+      "$ref": "#/$defs/ApprovalClass"
+    },
+    "id": {
+      "type": "string"
+    },
+    "issued_at_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "lease_id": {
+      "type": "string"
+    },
+    "origins": {
+      "description": "Exact origins for web operations.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
+    "principal_id": {
+      "description": "The one client the approval is for.",
+      "type": "string"
+    },
+    "roots": {
+      "description": "Authorized roots (drives or folders).",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
+    "task": {
+      "description": "Declared task, at most `MAX_TASK_BYTES`, escaped for prompts.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "id",
+    "lease_id",
+    "principal_id",
+    "task",
+    "executors",
+    "granted_with",
+    "issued_at_ms",
+    "expires_at_ms"
+  ],
+  "$defs": {
+    "ApprovalClass": {
+      "description": "Approval class. The wire spellings are the existing ones of the MCP tool\ncatalog (`\"none\"`, `\"SOFT\"`, `\"STRONG\"`) and of `orcel-approval`, so the\nRust tool mirror and the TypeScript catalog compare equal.",
+      "type": "string",
+      "enum": [
+        "none",
+        "SOFT",
+        "STRONG"
+      ]
+    },
+    "ExecutorClass": {
+      "description": "SG-000093 executor class. Moved from `orcel-policy` with identical serde\nspellings; `orcel-policy` re-exports it.",
+      "type": "string",
+      "enum": [
+        "desktop_observation",
+        "desktop_input",
+        "shell_process",
+        "filesystem",
+        "browser",
+        "web",
+        "visual_agent",
+        "admin",
+        "remote"
+      ]
+    }
+  }
+}

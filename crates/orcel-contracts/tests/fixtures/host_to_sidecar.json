@@ -17,8 +17,10 @@
     "frame": "request",
     "id": 1,
     "body": {
-      "op": "parse",
-      "format": "html"
+      "op": "transform_html",
+      "formats": [
+        "markdown"
+      ]
     }
   },
   {

@@ -3,5 +3,6 @@
   "approval_class": "SOFT",
   "action_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "nonce_id": "nonce-0001",
-  "orcel_session_id": "osess-01"
+  "orcel_session_id": "osess-01",
+  "principal_id": "mcp-client-7f3a"
 }

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::Contract;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PrincipalKind {
     /// The only kind that can issue a lease (C-03).
@@ -31,6 +32,7 @@ impl PrincipalKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Principal {
     /// `"orcel.principal/1"`.
@@ -50,6 +52,7 @@ impl Contract for Principal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum OsFamily {
     Windows,
@@ -58,6 +61,7 @@ pub enum OsFamily {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub enum Arch {
     #[serde(rename = "x86_64")]
     X86_64,
@@ -69,6 +73,7 @@ pub enum Arch {
 /// may gain optional fields within its major, so unknown fields are not
 /// refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Device {
     /// `"orcel.device/1"`.
     pub contract: String,
@@ -94,6 +99,7 @@ impl Contract for Device {
 /// will carry in Wave 2; until a reader exists for an OS, Full User is
 /// refused there with `LEASE_UNSUPPORTED_PLATFORM`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "os", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OsIdentityBinding {
     /// `TokenUser` plus `TokenStatistics.AuthenticationId`.

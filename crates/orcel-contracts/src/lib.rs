@@ -20,6 +20,9 @@ pub mod sidecar;
 pub mod tool;
 pub mod web;
 
+#[cfg(test)]
+mod schema_tests;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -29,6 +32,10 @@ pub use job::ExecutionState;
 pub use lease::{AuthorityMode, ExecutorClass};
 
 pub const INTERNAL_PROTOCOL_VERSION: u32 = 1;
+
+/// Identifiers are opaque strings of at most this many bytes (spec
+/// section 4.0).
+pub const MAX_ID_BYTES: usize = 256;
 
 /// A top-level contracts v1 wire object, which carries
 /// `"contract": "orcel.<name>/<major>"` (spec section 4.0). A major bump is
@@ -58,6 +65,7 @@ pub struct RequestEnvelope {
 /// relay route; never derived from tool arguments. It grants nothing: it only
 /// selects the local remote-session lease that `orceld` must find active.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemoteContext {
     pub principal: String,

@@ -1,14 +1,16 @@
-//! Contracts v1 (WP1-02): golden fixture round trips, unknown-field
-//! refusal on inbound authority-bearing types, frozen spellings, the job
-//! state machine, the FailureCode to HTTP mapping and canonical JSON.
+//! Contracts v1 (WP1-02, spec revision 8 section 4): golden fixture round
+//! trips, unknown-field refusal on inbound authority-bearing types, frozen
+//! spellings, the job state machine, the FailureCode to HTTP mapping,
+//! authority and standing-approval shape checks, web bounds and canonical
+//! JSON vectors.
 
 use orcel_contracts::capability::{CapabilityReport, CapabilityStatus};
-use orcel_contracts::event::{AuditEvent, AuditEventKind, GENESIS_PREV_DIGEST};
+use orcel_contracts::event::{AnchorRef, AuditEvent, AuditEventKind, GENESIS_PREV_DIGEST};
 use orcel_contracts::identity::{Device, OsFamily, OsIdentityBinding, Principal, PrincipalKind};
-use orcel_contracts::indicator::{IndicatorToOrceld, OrceldToIndicator, RevokeRequest, Visibility};
 use orcel_contracts::job::{Job, JobKind, JobOutcome};
 use orcel_contracts::lease::{
-    ApprovalClass, DispatchAuthority, GrantRef, LeaseView, StandingApproval,
+    ApprovalClass, AuthorityShapeError, DispatchAuthority, GrantRef, LeaseRef, LeaseView,
+    StandingApproval,
 };
 use orcel_contracts::session::Session;
 use orcel_contracts::sidecar::{
@@ -16,8 +18,8 @@ use orcel_contracts::sidecar::{
 };
 use orcel_contracts::tool::{RemoteExposure, ToolEntry};
 use orcel_contracts::web::{
-    CrawlBudget, HeaderValue, RequestHeader, StealthMode, WebBatchScrapeRequest, WebContractError,
-    WebCrawlRequest, WebScrapeRequest,
+    CrawlBudget, HeaderSpec, HeaderValue, Ids, PrivacyProfileRef, SensitiveFeature,
+    WebBatchScrapeRequest, WebContractError, WebCrawlRequest, WebScope, WebScrapeRequest,
 };
 use orcel_contracts::{
     canonical_json, canonical_json_value, AuthorityMode, CanonicalJsonError, Contract,
@@ -32,6 +34,10 @@ fn fixture(name: &str) -> Value {
     let path = format!("{}/tests/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"));
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+fn parse<T: DeserializeOwned>(name: &str) -> T {
+    serde_json::from_value(fixture(name)).unwrap_or_else(|e| panic!("fixture {name}: {e}"))
 }
 
 /// Parses the fixture as `T`, serializes it back and requires the exact
@@ -65,8 +71,7 @@ fn with_unknown_field(mut value: Value) -> Value {
 
 /// Inbound authority-bearing types refuse an unknown field.
 fn refuses_unknown<T: DeserializeOwned>(name: &str) {
-    let golden = fixture(name);
-    let items = match golden {
+    let items = match fixture(name) {
         Value::Array(items) => items,
         other => vec![other],
     };
@@ -91,6 +96,7 @@ fn tolerates_unknown<T: DeserializeOwned>(name: &str) {
 // ---------------------------------------------------------------- fixtures
 
 const FIXTURES: &[&str] = &[
+    "anchor_ref",
     "audit_event",
     "capability_report",
     "crawl_budget",
@@ -98,13 +104,11 @@ const FIXTURES: &[&str] = &[
     "dispatch_authority",
     "grant_ref",
     "host_to_sidecar",
-    "indicator_to_orceld",
+    "ids",
     "job",
     "lease_view",
-    "orceld_to_indicator",
     "os_identity_binding",
     "principal",
-    "revoke_request",
     "session",
     "sidecar_to_host",
     "standing_approval",
@@ -145,21 +149,12 @@ fn lease_and_grant_fixtures_round_trip() {
     assert_eq!(view.mode, AuthorityMode::FullUser);
     let grant: GrantRef = round_trip_contract("grant_ref");
     assert_eq!(grant.approval_class, ApprovalClass::Soft);
+    assert_eq!(grant.principal_id, "mcp-client-7f3a");
     let authority: DispatchAuthority = round_trip("dispatch_authority");
-    assert!(authority.lease.is_some() && authority.grant.is_some());
-    assert!(authority.standing_approval.is_some());
+    assert_eq!(authority.standing.as_deref(), Some("sa-01"));
+    assert_eq!(authority.check(), Ok(()));
     let standing: StandingApproval = round_trip_contract("standing_approval");
-    assert_eq!(standing.granted_with, ApprovalClass::Strong);
-    assert_eq!(standing.scope.executors, [ExecutorClass::Web]);
-    assert!(standing.lease.is_some());
-}
-
-#[test]
-fn dispatch_authority_omits_an_absent_standing_approval() {
-    let mut value = fixture("dispatch_authority");
-    value.as_object_mut().unwrap().remove("standing_approval");
-    let parsed: DispatchAuthority = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(serde_json::to_value(&parsed).unwrap(), value);
+    assert_eq!(standing.check_against_lease(&view), Ok(()));
 }
 
 #[test]
@@ -168,6 +163,7 @@ fn session_tool_and_capability_fixtures_round_trip() {
     assert!(session.remote.is_none());
     let tools: Vec<ToolEntry> = round_trip("tool_entry");
     assert_eq!(tools[0].remote, RemoteExposure::LocalOnly);
+    assert!(!tools[0].standing_approvable);
     assert_eq!(
         tools[1].remote,
         RemoteExposure::Scopes(vec!["orcel.read".to_owned()])
@@ -188,7 +184,7 @@ fn session_tool_and_capability_fixtures_round_trip() {
             Some(FailureCode::ProviderUnavailable),
             Some(FailureCode::Unsupported),
             Some(FailureCode::PolicyBlocked),
-            Some(FailureCode::Unsupported),
+            Some(FailureCode::PermissionRequired),
         ]
     );
 }
@@ -200,7 +196,7 @@ fn remote_exposure_refuses_other_strings() {
 }
 
 #[test]
-fn job_and_audit_fixtures_round_trip() {
+fn job_audit_and_anchor_fixtures_round_trip() {
     let job: Job = round_trip_contract("job");
     assert_eq!(job.kind, JobKind::WebCrawl);
     assert_eq!(
@@ -210,9 +206,17 @@ fn job_and_audit_fixtures_round_trip() {
         })
     );
     assert!(job.outcome_matches_state());
+    assert_eq!(job.budget, CrawlBudget::DEFAULT);
+    assert_eq!(job.authority.check(), Ok(()));
     let event: AuditEvent = round_trip_contract("audit_event");
     assert_eq!(event.kind, AuditEventKind::Dispatch);
     assert_eq!(event.prev_digest, GENESIS_PREV_DIGEST);
+    assert!(event.asserted_by_session);
+    let anchor: AnchorRef = round_trip("anchor_ref");
+    assert_eq!(
+        anchor.event_log_insertion().unwrap(),
+        format!("orcel-anchor/1|authority|audit-0001|31|{}", "a".repeat(64))
+    );
 }
 
 #[test]
@@ -221,25 +225,23 @@ fn ipc_fixtures_round_trip() {
     assert_eq!(host.len(), 5);
     let sidecar: Vec<SidecarToHost> = round_trip("sidecar_to_host");
     assert_eq!(sidecar.len(), 6);
-    let to_indicator: Vec<OrceldToIndicator> = round_trip("orceld_to_indicator");
-    assert_eq!(to_indicator.len(), 5);
-    let from_indicator: Vec<IndicatorToOrceld> = round_trip("indicator_to_orceld");
-    assert_eq!(from_indicator.len(), 5);
-    let _: RevokeRequest = round_trip_contract("revoke_request");
 }
 
 #[test]
 fn web_fixtures_round_trip() {
+    let none: &[String] = &[];
     let crawl: WebCrawlRequest = round_trip_contract("web_crawl_request");
-    assert_eq!(crawl.stealth, StealthMode::OptIn);
-    assert_eq!(CrawlBudget::WAVE1.admits(&crawl), Ok(()));
+    assert_eq!(crawl.check(&CrawlBudget::DEFAULT, none), Ok(()));
     let scrape: WebScrapeRequest = round_trip_contract("web_scrape_request");
-    assert_eq!(scrape.stealth, StealthMode::Off);
-    assert_eq!(scrape.check(), Ok(()));
+    assert_eq!(scrape.privacy, PrivacyProfileRef::default());
+    assert_eq!(scrape.check(none), Ok(()));
     let batch: WebBatchScrapeRequest = round_trip_contract("web_batch_scrape_request");
-    assert_eq!(CrawlBudget::WAVE1.admits_batch(&batch), Ok(()));
+    assert_eq!(batch.check(&CrawlBudget::DEFAULT, none), Ok(()));
     let budget: CrawlBudget = round_trip("crawl_budget");
-    assert_eq!(budget, CrawlBudget::WAVE1);
+    assert_eq!(budget, CrawlBudget::DEFAULT);
+    assert_eq!(budget.check(), Ok(()));
+    let ids: Ids = round_trip("ids");
+    assert_eq!(ids.check(), Ok(()));
 }
 
 // ---------------------------------------------------------- unknown fields
@@ -254,11 +256,10 @@ fn inbound_authority_bearing_types_refuse_unknown_fields() {
     refuses_unknown::<Session>("session");
     refuses_unknown::<ToolEntry>("tool_entry");
     refuses_unknown::<AuditEvent>("audit_event");
+    refuses_unknown::<AnchorRef>("anchor_ref");
     refuses_unknown::<HostToSidecar>("host_to_sidecar");
     refuses_unknown::<SidecarToHost>("sidecar_to_host");
-    refuses_unknown::<OrceldToIndicator>("orceld_to_indicator");
-    refuses_unknown::<IndicatorToOrceld>("indicator_to_orceld");
-    refuses_unknown::<RevokeRequest>("revoke_request");
+    refuses_unknown::<Ids>("ids");
     refuses_unknown::<WebCrawlRequest>("web_crawl_request");
     refuses_unknown::<WebScrapeRequest>("web_scrape_request");
     refuses_unknown::<WebBatchScrapeRequest>("web_batch_scrape_request");
@@ -266,15 +267,48 @@ fn inbound_authority_bearing_types_refuse_unknown_fields() {
 }
 
 #[test]
+fn revision_8_required_fields_are_required() {
+    refuses_missing::<GrantRef>("grant_ref", "principal_id");
+    refuses_missing::<StandingApproval>("standing_approval", "lease_id");
+    refuses_missing::<StandingApproval>("standing_approval", "granted_with");
+    refuses_missing::<AuditEvent>("audit_event", "asserted_by_session");
+    refuses_missing::<ToolEntry>("tool_entry", "standing_approvable");
+    refuses_missing::<WebCrawlRequest>("web_crawl_request", "scope");
+    refuses_missing::<WebCrawlRequest>("web_crawl_request", "task");
+    refuses_missing::<WebBatchScrapeRequest>("web_batch_scrape_request", "scope");
+    refuses_missing::<Ids>("ids", "principal_id");
+    refuses_missing::<Job>("job", "scope_digest");
+    refuses_missing::<Job>("job", "budget");
+}
+
+/// Inbound types refuse a missing required field (no silent default).
+fn refuses_missing<T: DeserializeOwned>(name: &str, field: &str) {
+    let mut value = fixture(name);
+    let object = match &mut value {
+        Value::Array(items) => items[0].as_object_mut().unwrap(),
+        other => other.as_object_mut().unwrap(),
+    };
+    object.remove(field);
+    let parsed = match value {
+        Value::Array(mut items) => serde_json::from_value::<T>(items.remove(0)),
+        other => serde_json::from_value::<T>(other),
+    };
+    assert!(parsed.is_err(), "fixture {name} accepted a missing {field}");
+}
+
+#[test]
 fn nested_authority_objects_refuse_unknown_fields() {
     let mut value = fixture("dispatch_authority");
     value["lease"]["trusted"] = json!(true);
     assert!(serde_json::from_value::<DispatchAuthority>(value).is_err());
-    let mut value = fixture("standing_approval");
-    value["scope"]["everything"] = json!(true);
-    assert!(serde_json::from_value::<StandingApproval>(value).is_err());
     let mut value = fixture("web_crawl_request");
-    value["headers"][1]["value"]["secret"] = json!("x");
+    value["scope"]["subdomains"] = json!(true);
+    assert!(serde_json::from_value::<WebCrawlRequest>(value).is_err());
+    let mut value = fixture("web_crawl_request");
+    value["privacy"]["captcha"] = json!(true);
+    assert!(serde_json::from_value::<WebCrawlRequest>(value).is_err());
+    let mut value = fixture("web_crawl_request");
+    value["headers"][1]["value"] = json!({"secret": "x", "value": "inline"});
     assert!(serde_json::from_value::<WebCrawlRequest>(value).is_err());
     let mut value = fixture("host_to_sidecar");
     value[0]["limits"]["unbounded"] = json!(true);
@@ -285,10 +319,10 @@ fn nested_authority_objects_refuse_unknown_fields() {
 fn unknown_frames_and_variants_are_refused() {
     assert!(serde_json::from_value::<HostToSidecar>(json!({"frame": "grant"})).is_err());
     assert!(serde_json::from_value::<SidecarToHost>(json!({"frame": "elevate"})).is_err());
-    assert!(serde_json::from_value::<IndicatorToOrceld>(json!({"frame": "grant"})).is_err());
-    assert!(serde_json::from_value::<OrceldToIndicator>(json!({"frame": "exec"})).is_err());
     let freebsd = json!({"os": "freebsd", "uid": 1});
     assert!(serde_json::from_value::<OsIdentityBinding>(freebsd).is_err());
+    assert!(serde_json::from_value::<SensitiveFeature>(json!("captcha_solving")).is_err());
+    assert!(serde_json::from_value::<HeaderValue>(json!({"inline": "x"})).is_err());
 }
 
 #[test]
@@ -362,6 +396,34 @@ fn approval_class_keeps_the_catalog_spellings() {
     .map(|c| serde_json::to_value(c).unwrap())
     .collect();
     assert_eq!(classes, ["none", "SOFT", "STRONG"]);
+}
+
+#[test]
+fn audit_event_kinds_include_standing() {
+    assert_eq!(
+        serde_json::to_value(AuditEventKind::Standing).unwrap(),
+        "standing"
+    );
+}
+
+#[test]
+fn sensitive_features_map_to_their_permissions() {
+    for feature in SensitiveFeature::ALL {
+        assert_eq!(
+            serde_json::to_value(feature).unwrap(),
+            feature.wire_name(),
+            "{feature:?}"
+        );
+        assert_eq!(
+            feature.permission(),
+            format!("web.privacy.sensitive:{}", feature.wire_name())
+        );
+    }
+    let crawl: WebCrawlRequest = parse("web_crawl_request");
+    assert_eq!(
+        crawl.privacy.required_permissions(),
+        ["web.privacy.sensitive:locale_override"]
+    );
 }
 
 fn spelling(code: &FailureCode) -> String {
@@ -455,6 +517,22 @@ fn outcome_unknown_has_the_frozen_wire_spelling() {
     assert_eq!(spelling(&FailureCode::OutcomeUnknown), "OUTCOME_UNKNOWN");
 }
 
+#[test]
+fn authority_unavailable_has_the_frozen_wire_spelling() {
+    assert_eq!(
+        spelling(&FailureCode::AuthorityUnavailable),
+        "AUTHORITY_UNAVAILABLE"
+    );
+}
+
+#[test]
+fn permission_required_has_the_frozen_wire_spelling() {
+    assert_eq!(
+        spelling(&FailureCode::PermissionRequired),
+        "PERMISSION_REQUIRED"
+    );
+}
+
 // ------------------------------------------------------------ HTTP mapping
 
 /// Compile-time completeness: adding a variant without listing it here
@@ -487,6 +565,8 @@ fn declared_index(code: &FailureCode) -> usize {
         FailureCode::QueueFull => 23,
         FailureCode::RateLimited => 24,
         FailureCode::OutcomeUnknown => 25,
+        FailureCode::AuthorityUnavailable => 26,
+        FailureCode::PermissionRequired => 27,
     }
 }
 
@@ -528,6 +608,8 @@ fn every_failure_code_maps_to_the_spec_http_status() {
         ("QUEUE_FULL", 429),
         ("RATE_LIMITED", 429),
         ("OUTCOME_UNKNOWN", 500),
+        ("AUTHORITY_UNAVAILABLE", 503),
+        ("PERMISSION_REQUIRED", 403),
     ];
     assert_eq!(
         table.len(),
@@ -542,10 +624,6 @@ fn every_failure_code_maps_to_the_spec_http_status() {
             .unwrap_or_else(|| panic!("{name} has no spec mapping"))
             .1;
         assert_eq!(code.http_status(), expected, "{name}");
-        assert!(
-            (400..600).contains(&code.http_status()),
-            "{name} is an error status"
-        );
     }
 }
 
@@ -599,103 +677,302 @@ fn restart_cancels_pending_jobs_and_marks_running_jobs_unknown() {
 
 #[test]
 fn job_outcome_is_present_exactly_when_completed() {
-    let mut job: Job = serde_json::from_value(fixture("job")).unwrap();
+    let mut job: Job = parse("job");
     assert!(job.outcome_matches_state());
     job.state = ExecutionState::Dispatched;
     assert!(!job.outcome_matches_state());
     job.outcome = None;
     assert!(job.outcome_matches_state());
-    job.state = ExecutionState::OutcomeUnknown;
-    assert!(job.outcome_matches_state());
     let text = serde_json::to_string(&job).unwrap();
     assert!(!text.contains("\"outcome\""), "{text}");
+}
+
+// ----------------------------------------------------- authority shapes
+
+#[test]
+fn full_control_dispatch_needs_a_lease_and_an_authorization_id() {
+    let base: DispatchAuthority = parse("dispatch_authority");
+    for mode in [
+        AuthorityMode::FullUser,
+        AuthorityMode::FullAdmin,
+        AuthorityMode::PersistentAdmin,
+        AuthorityMode::RemoteFullControl,
+    ] {
+        let mut no_lease = base.clone();
+        no_lease.mode = mode;
+        no_lease.lease = None;
+        assert_eq!(
+            no_lease.check(),
+            Err(AuthorityShapeError::LeaseMissing),
+            "{mode:?}"
+        );
+        let mut no_authz = base.clone();
+        no_authz.mode = mode;
+        no_authz.authorization_id = None;
+        assert_eq!(
+            no_authz.check(),
+            Err(AuthorityShapeError::AuthorizationMissing),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn safe_dispatch_carries_no_full_control_fields() {
+    let base: DispatchAuthority = parse("dispatch_authority");
+    let safe = DispatchAuthority {
+        mode: AuthorityMode::Safe,
+        lease: None,
+        grant: Some(parse("grant_ref")),
+        standing: None,
+        authorization_id: None,
+    };
+    assert_eq!(safe.check(), Ok(()));
+    let lease: LeaseRef = base.lease.clone().unwrap();
+    for tampered in [
+        DispatchAuthority {
+            lease: Some(lease),
+            ..safe.clone()
+        },
+        DispatchAuthority {
+            standing: Some("sa-01".to_owned()),
+            ..safe.clone()
+        },
+        DispatchAuthority {
+            authorization_id: Some("authz".to_owned()),
+            ..safe.clone()
+        },
+    ] {
+        assert_eq!(
+            tampered.check(),
+            Err(AuthorityShapeError::FullControlFieldInSafeMode)
+        );
+    }
+}
+
+#[test]
+fn standing_approvals_are_strong_and_never_cover_admin_or_remote() {
+    let base: StandingApproval = parse("standing_approval");
+    for class in [ApprovalClass::None, ApprovalClass::Soft] {
+        let weak = StandingApproval {
+            granted_with: class,
+            ..base.clone()
+        };
+        assert_eq!(weak.check(), Err(AuthorityShapeError::StandingNotStrong));
+    }
+    for executor in [ExecutorClass::Admin, ExecutorClass::Remote] {
+        let mut wide = base.clone();
+        wide.executors.push(executor);
+        assert_eq!(
+            wide.check(),
+            Err(AuthorityShapeError::StandingExecutorRefused)
+        );
+    }
+    let empty = StandingApproval {
+        executors: Vec::new(),
+        ..base.clone()
+    };
+    assert_eq!(
+        empty.check(),
+        Err(AuthorityShapeError::StandingScopeInvalid)
+    );
+    let long_task = StandingApproval {
+        task: "x".repeat(513),
+        ..base.clone()
+    };
+    assert!(long_task.check().is_err());
+}
+
+#[test]
+fn standing_approval_is_bound_to_its_lease_and_its_expiry() {
+    let base: StandingApproval = parse("standing_approval");
+    let lease: LeaseView = parse("lease_view");
+    let other = StandingApproval {
+        lease_id: "b".repeat(64),
+        ..base.clone()
+    };
+    assert!(other.check_against_lease(&lease).is_err());
+    let outlives = StandingApproval {
+        expires_at_ms: lease.expires_at_ms + 1,
+        ..base
+    };
+    assert!(outlives.check_against_lease(&lease).is_err());
+}
+
+#[test]
+fn anchor_insertion_refuses_separator_and_control_characters() {
+    let anchor: AnchorRef = parse("anchor_ref");
+    for bad in ["a|b", "", "a\nb"] {
+        let tampered = AnchorRef {
+            file_id: bad.to_owned(),
+            ..anchor.clone()
+        };
+        assert!(tampered.event_log_insertion().is_none(), "{bad:?}");
+    }
 }
 
 // ------------------------------------------------------------- web shapes
 
 #[test]
-fn crawl_budget_bounds_requests() {
-    let base: WebCrawlRequest = serde_json::from_value(fixture("web_crawl_request")).unwrap();
-    let budget = CrawlBudget::WAVE1;
-    let mut over = base.clone();
-    over.max_pages = 51;
-    assert_eq!(
-        budget.admits(&over),
-        Err(WebContractError::OverBudget("max_pages"))
-    );
-    let mut over = base.clone();
-    over.max_depth = 6;
-    assert_eq!(
-        budget.admits(&over),
-        Err(WebContractError::OverBudget("max_depth"))
-    );
-    let mut over = base.clone();
-    over.deadline_s = 601;
-    assert_eq!(
-        budget.admits(&over),
-        Err(WebContractError::OverBudget("deadline_s"))
-    );
-    let mut over = base.clone();
-    over.delay_ms = 249;
-    assert_eq!(
-        budget.admits(&over),
-        Err(WebContractError::OverBudget("delay_ms"))
-    );
-    let mut over = base.clone();
-    over.include_paths = vec!["^/a".to_owned(); 17];
-    assert_eq!(
-        budget.admits(&over),
-        Err(WebContractError::OverBudget("include_paths"))
-    );
-    let mut over = base.clone();
-    over.robots = false;
-    assert_eq!(budget.admits(&over), Err(WebContractError::RobotsRequired));
+fn crawl_requests_are_checked_against_the_user_budget() {
+    let none: &[String] = &[];
+    let base: WebCrawlRequest = parse("web_crawl_request");
+    let budget = CrawlBudget::DEFAULT;
+    let cases: Vec<(WebCrawlRequest, WebContractError)> = vec![
+        (
+            WebCrawlRequest {
+                max_pages: 51,
+                ..base.clone()
+            },
+            WebContractError::OverBudget("max_pages"),
+        ),
+        (
+            WebCrawlRequest {
+                max_depth: 6,
+                ..base.clone()
+            },
+            WebContractError::OverBudget("max_depth"),
+        ),
+        (
+            WebCrawlRequest {
+                deadline_s: 601,
+                ..base.clone()
+            },
+            WebContractError::OverBudget("deadline_s"),
+        ),
+        (
+            WebCrawlRequest {
+                delay_ms: 249,
+                ..base.clone()
+            },
+            WebContractError::OverBudget("delay_ms"),
+        ),
+        (
+            WebCrawlRequest {
+                include_paths: vec!["^/a".to_owned(); 17],
+                ..base.clone()
+            },
+            WebContractError::OverBudget("include_paths"),
+        ),
+        (
+            WebCrawlRequest {
+                task: String::new(),
+                ..base.clone()
+            },
+            WebContractError::InvalidField("task"),
+        ),
+        (
+            WebCrawlRequest {
+                start_url: "https://evil.example.com/".to_owned(),
+                ..base.clone()
+            },
+            WebContractError::OutOfScope("start_url"),
+        ),
+    ];
+    for (request, expected) in cases {
+        assert_eq!(request.check(&budget, none), Err(expected));
+    }
 
-    // A configured (decided) larger budget admits what WAVE1 refuses.
+    // A user-raised budget admits what the default refuses.
     let raised = CrawlBudget {
         max_pages: 500,
-        ..CrawlBudget::WAVE1
+        ..CrawlBudget::DEFAULT
     };
-    let mut big = base;
-    big.max_pages = 500;
-    assert_eq!(raised.admits(&big), Ok(()));
-    assert!(budget.admits(&big).is_err());
+    assert_eq!(raised.check(), Ok(()));
+    let big = WebCrawlRequest {
+        max_pages: 500,
+        ..base.clone()
+    };
+    assert_eq!(big.check(&raised, none), Ok(()));
+    assert!(big.check(&budget, none).is_err());
+
+    // The delay floor holds even when the user configures less.
+    let low = CrawlBudget {
+        min_delay_ms: 50,
+        ..CrawlBudget::DEFAULT
+    };
+    assert!(low.check().is_err());
+    let fast = WebCrawlRequest {
+        delay_ms: 99,
+        ..base
+    };
+    assert!(fast.check(&low, none).is_err());
 }
 
 #[test]
-fn batch_budget_bounds_url_count() {
-    let mut batch: WebBatchScrapeRequest =
-        serde_json::from_value(fixture("web_batch_scrape_request")).unwrap();
-    batch.urls = vec!["https://example.com/".to_owned(); 51];
-    assert_eq!(
-        CrawlBudget::WAVE1.admits_batch(&batch),
-        Err(WebContractError::OverBudget("urls"))
-    );
-    batch.urls.clear();
-    assert!(CrawlBudget::WAVE1.admits_batch(&batch).is_err());
+fn budget_ceilings_are_enforced() {
+    let over_store = CrawlBudget {
+        max_job_result_bytes: CrawlBudget::MAX_JOB_RESULT_BYTES_CEILING + 1,
+        ..CrawlBudget::DEFAULT
+    };
+    assert!(over_store.check().is_err());
+    let zero = CrawlBudget {
+        max_pages: 0,
+        ..CrawlBudget::DEFAULT
+    };
+    assert!(zero.check().is_err());
 }
 
-fn header(name: &str, value: HeaderValue) -> RequestHeader {
-    RequestHeader {
+#[test]
+fn batch_requests_bound_url_count_and_scope() {
+    let none: &[String] = &[];
+    let mut batch: WebBatchScrapeRequest = parse("web_batch_scrape_request");
+    batch.urls = vec!["https://example.com/".to_owned(); 51];
+    assert_eq!(
+        batch.check(&CrawlBudget::DEFAULT, none),
+        Err(WebContractError::OverBudget("urls"))
+    );
+    batch.urls = vec!["https://example.com.evil.test/".to_owned()];
+    assert_eq!(
+        batch.check(&CrawlBudget::DEFAULT, none),
+        Err(WebContractError::OutOfScope("urls"))
+    );
+    batch.urls.clear();
+    assert!(batch.check(&CrawlBudget::DEFAULT, none).is_err());
+}
+
+#[test]
+fn scope_origins_are_canonical_https_origins() {
+    for bad in [
+        "http://example.com",
+        "https://example.com/",
+        "https://Example.com",
+        "https://example.com:443",
+        "https://user@example.com",
+        "https://",
+    ] {
+        let scope = WebScope {
+            origins: vec![bad.to_owned()],
+        };
+        assert!(scope.check().is_err(), "{bad}");
+    }
+    let scope = WebScope {
+        origins: vec!["https://example.com:8443".to_owned()],
+    };
+    assert_eq!(scope.check(), Ok(()));
+    assert!(scope.contains_url("https://example.com:8443/x"));
+    assert!(!scope.contains_url("https://example.com:84430/x"));
+    assert!(WebScope { origins: vec![] }.check().is_err());
+}
+
+fn header(name: &str, value: HeaderValue) -> HeaderSpec {
+    HeaderSpec {
         name: name.to_owned(),
         value,
     }
 }
 
 fn literal(value: &str) -> HeaderValue {
-    HeaderValue::Literal {
-        value: value.to_owned(),
-    }
+    HeaderValue::Literal(value.to_owned())
 }
 
-fn credential(id: &str) -> HeaderValue {
-    HeaderValue::Credential {
-        credential_ref: id.to_owned(),
-    }
+fn secret(name: &str) -> HeaderValue {
+    HeaderValue::Secret(name.to_owned())
 }
 
 #[test]
-fn credential_bearing_headers_must_reference_a_protected_credential() {
+fn credential_like_headers_must_name_a_secret() {
+    let none: &[String] = &[];
     for name in [
         "Authorization",
         "COOKIE",
@@ -703,67 +980,115 @@ fn credential_bearing_headers_must_reference_a_protected_credential() {
         "X-Api-Key",
     ] {
         assert_eq!(
-            header(name, literal("secret")).check(),
+            header(name, literal("value")).check(none),
             Err(WebContractError::ProtectedHeaderLiteral),
             "{name}"
         );
-        assert_eq!(header(name, credential("cred-1")).check(), Ok(()), "{name}");
+        assert_eq!(
+            header(name, secret("docs-token")).check(none),
+            Ok(()),
+            "{name}"
+        );
     }
-    assert_eq!(header("Accept-Language", literal("en")).check(), Ok(()));
+    assert_eq!(header("Accept-Language", literal("en")).check(none), Ok(()));
+}
+
+#[test]
+fn protected_header_names_are_configurable() {
+    let configured = vec!["X-Session-Token".to_owned()];
+    assert_eq!(
+        header("x-session-token", literal("v")).check(&configured),
+        Err(WebContractError::ProtectedHeaderLiteral)
+    );
+    assert_eq!(header("x-session-token", literal("v")).check(&[]), Ok(()));
+}
+
+#[test]
+fn literal_values_allow_only_visible_ascii_space_and_tab() {
+    let none: &[String] = &[];
+    assert_eq!(header("X-Note", literal("a b\tc~")).check(none), Ok(()));
+    for bad in [
+        "a\r\nInjected: 1",
+        "a\u{0}",
+        "a\u{7f}",
+        "caf\u{e9}",
+        "a\u{b}",
+    ] {
+        assert_eq!(
+            header("X-Note", literal(bad)).check(none),
+            Err(WebContractError::InvalidField("headers.value")),
+            "{bad:?}"
+        );
+    }
 }
 
 #[test]
 fn transport_owned_and_malformed_headers_are_refused() {
+    let none: &[String] = &[];
     for name in [
         "Host",
         "content-length",
         "Transfer-Encoding",
-        "Proxy-Connection",
-        "proxy-foo",
+        "Connection",
+        "TE",
+        "Upgrade",
+        "Expect",
     ] {
         assert_eq!(
-            header(name, literal("x")).check(),
+            header(name, literal("x")).check(none),
             Err(WebContractError::ForbiddenHeader),
             "{name}"
         );
     }
-    assert!(header("Bad Name", literal("x")).check().is_err());
-    assert!(header("", literal("x")).check().is_err());
-    assert!(header("X-Note", literal("a\r\nInjected: 1"))
-        .check()
-        .is_err());
-    assert!(header("Authorization", credential("")).check().is_err());
-    assert!(!RequestHeader::is_forbidden_name("proxi\u{e9}-a"));
+    assert!(header("Bad Name", literal("x")).check(none).is_err());
+    assert!(header("", literal("x")).check(none).is_err());
+    assert!(header("Authorization", secret("")).check(none).is_err());
+    assert!(header("Authorization", secret("a b")).check(none).is_err());
+}
+
+#[test]
+fn firecrawl_secret_references_map_to_secret_values() {
+    assert_eq!(
+        HeaderValue::from_firecrawl("secret:docs-token"),
+        secret("docs-token")
+    );
+    assert_eq!(
+        HeaderValue::from_firecrawl("Bearer abc"),
+        literal("Bearer abc")
+    );
+    assert_eq!(
+        serde_json::to_value(secret("docs-token")).unwrap(),
+        json!({"secret": "docs-token"})
+    );
 }
 
 #[test]
 fn duplicate_and_excess_headers_are_refused() {
-    let mut scrape: WebScrapeRequest =
-        serde_json::from_value(fixture("web_scrape_request")).unwrap();
+    let none: &[String] = &[];
+    let mut scrape: WebScrapeRequest = parse("web_scrape_request");
     scrape.headers = vec![header("X-A", literal("1")), header("x-a", literal("2"))];
-    assert!(scrape.check().is_err());
+    assert!(scrape.check(none).is_err());
     scrape.headers = (0..33)
         .map(|i| header(&format!("X-H{i}"), literal("1")))
         .collect();
-    assert_eq!(scrape.check(), Err(WebContractError::OverBudget("headers")));
-}
-
-#[test]
-fn stealth_defaults_off_and_is_omitted_when_off() {
-    let mut value = fixture("web_crawl_request");
-    value.as_object_mut().unwrap().remove("stealth");
-    value.as_object_mut().unwrap().remove("headers");
-    let parsed: WebCrawlRequest = serde_json::from_value(value).unwrap();
-    assert_eq!(parsed.stealth, StealthMode::Off);
-    assert!(parsed.headers.is_empty());
-    let text = serde_json::to_string(&parsed).unwrap();
-    assert!(
-        !text.contains("stealth") && !text.contains("headers"),
-        "{text}"
+    assert_eq!(
+        scrape.check(none),
+        Err(WebContractError::OverBudget("headers"))
     );
 }
 
-// ---------------------------------------------------- sidecar and indicator
+#[test]
+fn privacy_and_headers_default_when_absent() {
+    let mut value = fixture("web_scrape_request");
+    value.as_object_mut().unwrap().remove("privacy");
+    value.as_object_mut().unwrap().remove("headers");
+    let parsed: WebScrapeRequest = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed.privacy, PrivacyProfileRef::default());
+    assert!(parsed.privacy.required_permissions().is_empty());
+    assert!(parsed.headers.is_empty());
+}
+
+// ---------------------------------------------------------------- sidecar
 
 #[test]
 fn sidecar_limits_respect_protocol_ceilings() {
@@ -787,20 +1112,11 @@ fn sidecar_limits_respect_protocol_ceilings() {
 }
 
 #[test]
-fn visibility_requires_all_five_checks() {
-    let all = Visibility {
-        topmost: true,
-        not_minimised: true,
-        not_cloaked: true,
-        on_monitor: true,
-        on_input_desktop: true,
-    };
-    assert!(all.all_pass());
-    assert!(!Visibility {
-        on_input_desktop: false,
-        ..all
-    }
-    .all_pass());
+fn indicator_heartbeat_goes_stale_after_five_seconds() {
+    assert_eq!(
+        orcel_contracts::indicator::INDICATOR_HEARTBEAT_STALE_MS,
+        5_000
+    );
 }
 
 #[test]
@@ -820,8 +1136,7 @@ fn only_a_local_user_may_issue_a_lease() {
 #[test]
 fn capability_status_is_flattened_into_the_entry() {
     let report = fixture("capability_report");
-    assert_eq!(report["entries"][2]["status"], "unsupported");
-    assert_eq!(report["entries"][2]["reason"], "Wave 2 engine");
+    assert_eq!(report["entries"][4]["status"], "permission_required");
     let status: CapabilityStatus =
         serde_json::from_value(json!({"status": "blocked", "policy": "cloud-only"})).unwrap();
     assert_eq!(status.failure_code(), Some(FailureCode::PolicyBlocked));
@@ -830,11 +1145,14 @@ fn capability_status_is_flattened_into_the_entry() {
 // ---------------------------------------------------------- canonical JSON
 
 #[test]
-fn canonical_json_sorts_keys_and_strips_whitespace() {
-    let value = json!({"b": [1, {"z": true, "a": null}], "a": "x", "\u{e9}": 0, "B": -5});
+fn canonical_json_sorts_keys_by_utf16_code_units() {
+    // U+1F600 encodes as D83D DE00, which sorts before U+E000 in UTF-16
+    // (RFC 8785) although its code point is larger.
+    let value =
+        json!({"\u{e000}": 1, "\u{1f600}": 2, "b": [1, {"z": true, "a": null}], "a": "x", "B": -5});
     assert_eq!(
         canonical_json_value(&value).unwrap(),
-        r#"{"B":-5,"a":"x","b":[1,{"a":null,"z":true}],"é":0}"#
+        "{\"B\":-5,\"a\":\"x\",\"b\":[1,{\"a\":null,\"z\":true}],\"\u{1f600}\":2,\"\u{e000}\":1}"
     );
 }
 
@@ -852,14 +1170,23 @@ fn canonical_json_uses_minimal_string_escapes() {
 }
 
 #[test]
-fn canonical_json_refuses_non_integers_and_keeps_large_integers_exact() {
+fn canonical_json_refuses_floats_and_integers_beyond_2_pow_53() {
+    let max = (1u64 << 53) - 1;
     assert_eq!(
         canonical_json_value(&json!({"x": 1.5})),
         Err(CanonicalJsonError::NonIntegerNumber)
     );
     assert_eq!(
-        canonical_json_value(&json!([u64::MAX, i64::MIN])).unwrap(),
-        format!("[{},{}]", u64::MAX, i64::MIN)
+        canonical_json_value(&json!(max + 1)),
+        Err(CanonicalJsonError::IntegerOutOfRange)
+    );
+    assert_eq!(
+        canonical_json_value(&json!(-(max as i64) - 1)),
+        Err(CanonicalJsonError::IntegerOutOfRange)
+    );
+    assert_eq!(
+        canonical_json_value(&json!([max, -(max as i64), 0])).unwrap(),
+        format!("[{max},-{max},0]")
     );
 }
 
@@ -868,7 +1195,7 @@ fn canonical_json_is_independent_of_input_key_order() {
     let a: Value = serde_json::from_str(r#"{"x":1,"y":{"q":2,"p":3}}"#).unwrap();
     let b: Value = serde_json::from_str(r#"{"y":{"p":3,"q":2},"x":1}"#).unwrap();
     assert_eq!(canonical_json_value(&a), canonical_json_value(&b));
-    let crawl: WebCrawlRequest = serde_json::from_value(fixture("web_crawl_request")).unwrap();
+    let crawl: WebCrawlRequest = parse("web_crawl_request");
     let text = canonical_json(&crawl).unwrap();
     assert_eq!(
         canonical_json_value(&serde_json::from_str(&text).unwrap()).unwrap(),
@@ -878,13 +1205,14 @@ fn canonical_json_is_independent_of_input_key_order() {
 
 #[test]
 fn audit_digest_input_excludes_the_digest_field() {
-    let event: AuditEvent = serde_json::from_value(fixture("audit_event")).unwrap();
+    let event: AuditEvent = parse("audit_event");
     let input = event.digest_input().unwrap();
     assert!(!input.contains("\"digest\""), "{input}");
     assert!(input.contains("\"prev_digest\""), "{input}");
+    assert!(input.contains("\"asserted_by_session\":true"), "{input}");
     let mut changed = event.clone();
     changed.digest = "f".repeat(64);
     assert_eq!(changed.digest_input().unwrap(), input);
-    changed.seq = 1;
+    changed.caller_pid = Some(1);
     assert_ne!(changed.digest_input().unwrap(), input);
 }

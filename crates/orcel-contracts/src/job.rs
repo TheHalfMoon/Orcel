@@ -7,11 +7,15 @@
 use serde::{Deserialize, Serialize};
 
 use crate::lease::DispatchAuthority;
+#[cfg(doc)]
+use crate::lease::MAX_TASK_BYTES;
+use crate::web::CrawlBudget;
 use crate::{Contract, FailureCode};
 
 /// SG-000093 execution state. Moved from `orcel-policy` with identical serde
 /// spellings; `orcel-policy` re-exports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionState {
     NotStarted,
@@ -67,6 +71,7 @@ impl ExecutionState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
     WebCrawl,
@@ -76,6 +81,7 @@ pub enum JobKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum JobOutcome {
     Succeeded,
@@ -87,6 +93,7 @@ pub enum JobOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct JobProgress {
     pub total: u64,
     pub completed: u64,
@@ -95,6 +102,7 @@ pub struct JobProgress {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct Job {
     /// `"orcel.job/1"`.
     pub contract: String,
@@ -104,6 +112,11 @@ pub struct Job {
     /// `Principal.principal_id`; only the owner may read or cancel (S7).
     pub owner: String,
     pub orcel_session_id: String,
+    /// Declared task, at most `MAX_TASK_BYTES`, escaped for prompts.
+    pub task: String,
+    /// SHA-256 of `canonical_json(scope)`: the destination scope the
+    /// approval binds (origins and their resolved-address sets).
+    pub scope_digest: String,
     /// SHA-256 of `canonical_json(spec)`; the approval binds it.
     pub spec_digest: String,
     pub state: ExecutionState,
@@ -112,6 +125,8 @@ pub struct Job {
     pub outcome: Option<JobOutcome>,
     pub authority: DispatchAuthority,
     pub progress: JobProgress,
+    /// The effective budget the job was admitted under (section 4.11).
+    pub budget: CrawlBudget,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     pub expires_at_ms: u64,

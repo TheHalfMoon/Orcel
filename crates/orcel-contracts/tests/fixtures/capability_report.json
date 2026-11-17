@@ -15,9 +15,9 @@
       "engine": "fetch",
       "status": "available",
       "component": {
-        "name": "orcel-fetch",
-        "license": "Apache-2.0",
-        "isolation": "in_process"
+        "name": "orcel-firecrawl",
+        "license": "AGPL-3.0-only",
+        "isolation": "sidecar"
       }
     },
     {
@@ -30,23 +30,17 @@
       "capability": "web/scrape",
       "engine": "obscura",
       "status": "unsupported",
-      "reason": "Wave 2 engine"
+      "reason": "track B engine"
     },
     {
-      "capability": "web/stealth",
+      "capability": "web/scrape",
       "status": "blocked",
-      "policy": "FD-UP-2 stealth"
+      "policy": "cloud-only"
     },
     {
-      "capability": "web/crawl_start",
-      "engine": "firecrawl",
-      "status": "unsupported",
-      "reason": "isolated component not installed",
-      "component": {
-        "name": "firecrawl-sidecar",
-        "license": "AGPL-3.0-only",
-        "isolation": "sidecar"
-      }
+      "capability": "web/scrape",
+      "status": "permission_required",
+      "permission": "web.privacy.sensitive:geolocation_override"
     }
   ]
 }

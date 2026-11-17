@@ -10,6 +10,7 @@ use crate::identity::Device;
 use crate::{Contract, FailureCode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BuildKind {
     Release,
@@ -18,6 +19,7 @@ pub enum BuildKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct CapabilityReport {
     /// `"orcel.capability-report/1"`.
     pub contract: String,
@@ -32,6 +34,7 @@ impl Contract for CapabilityReport {
 
 /// How a component that backs a capability is isolated from `orceld`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ComponentIsolation {
     /// Orcel's own code, linked into an Orcel process.
@@ -47,6 +50,7 @@ pub enum ComponentIsolation {
 /// see which code and licence a capability runs on. Informational: it never
 /// decides policy, admission or status (C-10).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct ComponentRef {
     /// For example `"orcel-fetch"`.
     pub name: String,
@@ -56,6 +60,7 @@ pub struct ComponentRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct CapabilityEntry {
     /// `capability/operation`, for example `"web/scrape"`.
     pub capability: String,
@@ -69,6 +74,7 @@ pub struct CapabilityEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CapabilityStatus {
     Available,
@@ -84,6 +90,11 @@ pub enum CapabilityStatus {
     Blocked {
         policy: String,
     },
+    /// An opt-in feature this client has not been granted, for example
+    /// `"web.privacy.sensitive:geolocation_override"`.
+    PermissionRequired {
+        permission: String,
+    },
 }
 
 impl CapabilityStatus {
@@ -95,6 +106,7 @@ impl CapabilityStatus {
             Self::Unavailable { .. } => Some(FailureCode::ProviderUnavailable),
             Self::Unsupported { .. } => Some(FailureCode::Unsupported),
             Self::Blocked { .. } => Some(FailureCode::PolicyBlocked),
+            Self::PermissionRequired { .. } => Some(FailureCode::PermissionRequired),
         }
     }
 }

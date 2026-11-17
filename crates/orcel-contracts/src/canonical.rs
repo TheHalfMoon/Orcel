@@ -1,8 +1,13 @@
 //! Canonical JSON for contracts v1 digests (spec section 4.0).
 //!
-//! UTF-8, object keys sorted by code point, no insignificant whitespace,
-//! integers without exponent and strings with minimal escaping (RFC 8785
-//! style). Only the new contracts' digests (`spec_digest`, `action_digest`,
+//! RFC 8785 (JCS) for the integer-only subset the contracts use: UTF-8
+//! output, object keys sorted by their UTF-16 code units, no insignificant
+//! whitespace, strings with minimal escaping, and integers written without
+//! exponent. Integers are bounded to the IEEE 754 exact range
+//! (`-(2^53 - 1)` to `2^53 - 1`), so every value has the same canonical form
+//! in Rust, JavaScript and any other JCS implementation; anything else
+//! (floats, larger integers) is refused rather than given an encoding that
+//! another implementation would not reproduce. Only the new contracts' digests (`spec_digest`, `action_digest`,
 //! the audit `digest`) use it. The SG-000093 lease identifiers and binding
 //! digests, the SG-000018/SG-000019 approval digests and the SG-000040
 //! approval digest keep their own domain-separated encodings and must never
@@ -15,12 +20,17 @@ use serde::Serialize;
 use serde_json::Value;
 use std::fmt;
 
+/// Largest integer magnitude canonical JSON accepts: `2^53 - 1`.
+pub const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanonicalJsonError {
-    /// A number that is not an integer representable as `i64` or `u64`.
-    /// Contract digests cover integers only, so a float is refused rather
-    /// than given an ambiguous encoding.
+    /// A number that is not an integer. Contract digests cover integers
+    /// only, so a float is refused rather than given an ambiguous encoding.
     NonIntegerNumber,
+    /// An integer outside `-(2^53 - 1)..=2^53 - 1`, which JCS
+    /// implementations based on IEEE 754 doubles cannot reproduce exactly.
+    IntegerOutOfRange,
     /// The value could not be converted to JSON.
     Unserializable(String),
 }
@@ -29,6 +39,9 @@ impl fmt::Display for CanonicalJsonError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NonIntegerNumber => f.write_str("canonical JSON refuses non-integer numbers"),
+            Self::IntegerOutOfRange => {
+                f.write_str("canonical JSON refuses integers beyond 2^53 - 1 in magnitude")
+            }
             Self::Unserializable(message) => write!(f, "value is not serializable: {message}"),
         }
     }
@@ -57,8 +70,14 @@ fn write_value(out: &mut String, value: &Value) -> Result<(), CanonicalJsonError
         Value::Bool(false) => out.push_str("false"),
         Value::Number(number) => {
             if let Some(unsigned) = number.as_u64() {
+                if unsigned > MAX_SAFE_INTEGER {
+                    return Err(CanonicalJsonError::IntegerOutOfRange);
+                }
                 out.push_str(&unsigned.to_string());
             } else if let Some(signed) = number.as_i64() {
+                if signed.unsigned_abs() > MAX_SAFE_INTEGER {
+                    return Err(CanonicalJsonError::IntegerOutOfRange);
+                }
                 out.push_str(&signed.to_string());
             } else {
                 return Err(CanonicalJsonError::NonIntegerNumber);
@@ -76,12 +95,12 @@ fn write_value(out: &mut String, value: &Value) -> Result<(), CanonicalJsonError
             out.push(']');
         }
         Value::Object(map) => {
-            // Sort explicitly: serde_json's map order depends on a crate
-            // feature that another workspace member could enable. Rust
-            // string order is byte order, which for UTF-8 is code point
-            // order.
+            // Sort explicitly by UTF-16 code units (RFC 8785 section
+            // 3.2.3): serde_json's map order depends on a crate feature,
+            // and Rust's byte order differs from UTF-16 order for keys
+            // with characters above U+FFFF.
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
+            keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
             out.push('{');
             for (index, key) in keys.into_iter().enumerate() {
                 if index > 0 {

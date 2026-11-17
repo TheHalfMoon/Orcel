@@ -21,6 +21,7 @@ pub const GENESIS_PREV_DIGEST: &str =
 pub const ANCHOR_INTERVAL_EVENTS: u64 = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AuditEventKind {
     Request,
@@ -29,6 +30,7 @@ pub enum AuditEventKind {
     Dispatch,
     State,
     Lease,
+    Standing,
     EmergencyStop,
     Sidecar,
     Rotation,
@@ -36,6 +38,7 @@ pub enum AuditEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct AuditEvent {
     /// `"orcel.audit-event/1"`.
@@ -63,6 +66,16 @@ pub struct AuditEvent {
     pub authority: Option<DispatchAuthority>,
     #[serde(default)]
     pub state: Option<ExecutionState>,
+    /// True when the request fields (action, capability, operation,
+    /// principal, task) are claims made by the user session rather than
+    /// facts the writer observed itself (C-27 e).
+    pub asserted_by_session: bool,
+    /// Caller process id the authority service observed on its pipe.
+    #[serde(default)]
+    pub caller_pid: Option<u32>,
+    /// Caller image path the authority service observed on its pipe.
+    #[serde(default)]
+    pub caller_image: Option<String>,
     /// Bounded and redacted; argv, URLs and query strings appear only as
     /// SHA-256 digests.
     pub detail: Value,
@@ -87,18 +100,42 @@ impl AuditEvent {
     }
 }
 
-/// Where an anchor points in the chain: `(file id, seq, digest)`.
+/// Where an anchor points in the chain: `(log, file id, seq, digest)`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct AnchorRef {
+    /// Which chain: for example `"orceld"` or `"authority"`.
+    pub log: String,
     pub file_id: String,
     pub seq: u64,
     pub digest: String,
 }
 
-/// Prefix of the anchor insertion string written to the Windows Event Log:
-/// `orcel-anchor/1|<file id>|<seq>|<digest>|<orcel_session_id>`.
+/// Prefix of the anchor insertion string written to the Windows Event Log.
 pub const EVENT_LOG_ANCHOR_PREFIX: &str = "orcel-anchor/1";
 
 /// Windows Event Log event id of an anchor record.
 pub const EVENT_LOG_ANCHOR_EVENT_ID: u32 = 4100;
+/// Event id of a granted Full Control scope record.
+pub const EVENT_LOG_GRANT_EVENT_ID: u32 = 4101;
+/// Event id of a grant intent and its confirmation answer.
+pub const EVENT_LOG_GRANT_INTENT_EVENT_ID: u32 = 4102;
+
+impl AnchorRef {
+    /// The Event Log insertion string
+    /// `orcel-anchor/1|<log>|<file id>|<seq>|<digest>` (section 4.8), or
+    /// `None` when a part is empty or contains the `|` separator or a
+    /// control character, which would make the record ambiguous.
+    pub fn event_log_insertion(&self) -> Option<String> {
+        let clean =
+            |part: &str| !part.is_empty() && !part.chars().any(|c| c == '|' || c.is_control());
+        if !(clean(&self.log) && clean(&self.file_id) && clean(&self.digest)) {
+            return None;
+        }
+        Some(format!(
+            "{EVENT_LOG_ANCHOR_PREFIX}|{}|{}|{}|{}",
+            self.log, self.file_id, self.seq, self.digest
+        ))
+    }
+}

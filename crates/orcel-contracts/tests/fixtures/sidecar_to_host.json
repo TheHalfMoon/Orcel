@@ -3,7 +3,7 @@
     "frame": "hello",
     "generation": 1,
     "session_nonce": "n-01",
-    "kind": "doc-parser",
+    "kind": "firecrawl",
     "version": "0.1.0"
   },
   {

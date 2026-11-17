@@ -1,17 +1,19 @@
 //! Authority vocabulary, lease views, grants and standing approvals (spec
-//! section 4.3; founder decision FD-UP-10 for standing approvals).
+//! sections 4.1 to 4.4 and 4.15; FD-UP-10 decided).
 //!
 //! Wire types only: no issuance, no checking and no secret material.
 //! Issuance and checking stay in `orcel-policy` and `orcel-approval`. A
 //! `LeaseView` is a projection and is never accepted as proof of authority.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::Contract;
 
 /// SG-000093 authority mode. Moved from `orcel-policy` with identical serde
 /// spellings; `orcel-policy` re-exports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityMode {
     Safe,
@@ -38,6 +40,7 @@ impl AuthorityMode {
 /// SG-000093 executor class. Moved from `orcel-policy` with identical serde
 /// spellings; `orcel-policy` re-exports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorClass {
     DesktopObservation,
@@ -66,6 +69,7 @@ impl ExecutorClass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum LeaseState {
     Active,
@@ -78,6 +82,7 @@ pub enum LeaseState {
 /// catalog (`"none"`, `"SOFT"`, `"STRONG"`) and of `orcel-approval`, so the
 /// Rust tool mirror and the TypeScript catalog compare equal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub enum ApprovalClass {
     #[serde(rename = "none")]
     None,
@@ -90,6 +95,7 @@ pub enum ApprovalClass {
 /// Wire projection of an SG-000093 lease. It carries no secret and is never
 /// accepted as proof of authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct LeaseView {
     /// `"orcel.lease-view/1"`.
     pub contract: String,
@@ -110,8 +116,10 @@ impl Contract for LeaseView {
     const CONTRACT: &'static str = "orcel.lease-view/1";
 }
 
-/// A per-action approval: an existing `orcel-approval` one-shot nonce.
+/// A per-action approval: an existing `orcel-approval` one-shot nonce,
+/// bound to the client principal and the Orcel session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GrantRef {
     /// `"orcel.grant-ref/1"`.
@@ -123,6 +131,9 @@ pub struct GrantRef {
     pub nonce_id: String,
     /// Bound: a restart invalidates every outstanding grant (S10).
     pub orcel_session_id: String,
+    /// The client principal the approval was given to; another client
+    /// cannot use it.
+    pub principal_id: String,
 }
 
 impl Contract for GrantRef {
@@ -130,6 +141,7 @@ impl Contract for GrantRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct LeaseRef {
     pub lease_id: String,
@@ -137,76 +149,44 @@ pub struct LeaseRef {
     pub authority_epoch: u64,
 }
 
-/// The scope a standing approval covers (FD-UP-10). Every list narrows: an
-/// empty list covers nothing of that dimension, never everything.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StandingApprovalScope {
-    /// `capability/operation` pairs, for example `"web/scrape"`.
-    pub operations: Vec<String>,
-    /// Executor classes the approval may be used with under a lease. It
-    /// never covers `admin` or `remote` (policy refuses such a grant).
-    #[serde(default)]
-    pub executors: Vec<ExecutorClass>,
-    /// Exact origins (`https://host:port`) for web operations.
-    #[serde(default)]
-    pub origins: Vec<String>,
-    /// Workspace roots, as workspace ids, for filesystem operations.
-    #[serde(default)]
-    pub roots: Vec<String>,
+/// Why an authority shape is inconsistent. Names the rule, never a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorityShapeError {
+    /// A non-Safe mode without a lease reference (C-05).
+    LeaseMissing,
+    /// A non-Safe mode without the authority service's authorization id
+    /// (C-05: no authorization record means no dispatch).
+    AuthorizationMissing,
+    /// Safe mode carrying a lease, a standing approval or an
+    /// authorization id, which exist only under Full Control.
+    FullControlFieldInSafeMode,
+    /// A standing approval not granted with STRONG presence.
+    StandingNotStrong,
+    /// A standing approval naming an executor it may never cover.
+    StandingExecutorRefused,
+    /// A standing approval that is empty, unbounded or outlives its lease.
+    StandingScopeInvalid,
 }
 
-/// A standing approval granted once for a declared task scope, per client,
-/// with an expiry (founder decision FD-UP-10, recommended safe form).
-///
-/// It is bound to the requesting principal and client profile (another MCP
-/// or REST client cannot use it), to `orcel_session_id` (a restart ends
-/// it), and, when granted under Full Control, to the lease (Stop, expiry or
-/// an epoch advance ends it). Every dispatch it covers is still audited
-/// individually. It never covers remote callers or out-of-scope targets.
-/// This is the wire shape only; whether and how it is honoured is decided
-/// by `orcel-policy` once FD-UP-10 is decided.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StandingApproval {
-    /// `"orcel.standing-approval/1"`.
-    pub contract: String,
-    pub standing_approval_id: String,
-    /// `Principal.principal_id` of the client the approval is for.
-    pub principal_id: String,
-    /// The client profile the approval is for, when the client has one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_profile_id: Option<String>,
-    /// Caller-supplied task label, shown in the prompt and on the indicator
-    /// (bounded, escaped by `prompt_display`). Informational only.
-    pub task: String,
-    pub scope: StandingApprovalScope,
-    /// SHA-256 of `canonical_json(scope)`; dispatches cite it.
-    pub scope_digest: String,
-    /// The class of the prompt that granted it (STRONG for Full Control).
-    pub granted_with: ApprovalClass,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lease: Option<LeaseRef>,
-    pub orcel_session_id: String,
-    pub issued_at_ms: u64,
-    /// No later than the lease's expiry when a lease is bound.
-    pub expires_at_ms: u64,
+impl fmt::Display for AuthorityShapeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::LeaseMissing => "a Full Control mode requires a lease reference",
+            Self::AuthorizationMissing => "a Full Control mode requires an authorization id",
+            Self::FullControlFieldInSafeMode => "Safe mode carries no lease or standing approval",
+            Self::StandingNotStrong => "a standing approval requires STRONG presence",
+            Self::StandingExecutorRefused => "a standing approval never covers admin or remote",
+            Self::StandingScopeInvalid => "a standing approval scope is empty or unbounded",
+        };
+        f.write_str(text)
+    }
 }
 
-impl Contract for StandingApproval {
-    const CONTRACT: &'static str = "orcel.standing-approval/1";
-}
-
-/// Reference to the standing approval a dispatch relied on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StandingApprovalRef {
-    pub standing_approval_id: String,
-    pub scope_digest: String,
-}
+impl std::error::Error for AuthorityShapeError {}
 
 /// Attached by `orceld` to every dispatch and audit event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct DispatchAuthority {
     pub mode: AuthorityMode,
@@ -217,8 +197,135 @@ pub struct DispatchAuthority {
     /// lease (C-04).
     #[serde(default)]
     pub grant: Option<GrantRef>,
-    /// `Some` when a standing approval (FD-UP-10) covered the dispatch
-    /// instead of a per-action grant. Omitted when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub standing_approval: Option<StandingApprovalRef>,
+    /// The standing approval id (section 4.15) that covered the dispatch
+    /// instead of a per-action grant.
+    #[serde(default)]
+    pub standing: Option<String>,
+    /// The authority service's `Authorize` decision id (section 4.13);
+    /// `Some` for every Full Control dispatch.
+    #[serde(default)]
+    pub authorization_id: Option<String>,
+}
+
+impl DispatchAuthority {
+    /// Shape check only: a non-Safe mode needs a lease and an
+    /// authorization id; Safe mode carries neither, nor a standing
+    /// approval (standing approvals are lease-bound). It decides nothing
+    /// about validity: the authority service checks the lease itself.
+    pub fn check(&self) -> Result<(), AuthorityShapeError> {
+        if self.mode == AuthorityMode::Safe {
+            if self.lease.is_some() || self.standing.is_some() || self.authorization_id.is_some() {
+                return Err(AuthorityShapeError::FullControlFieldInSafeMode);
+            }
+            return Ok(());
+        }
+        if self.lease.is_none() {
+            return Err(AuthorityShapeError::LeaseMissing);
+        }
+        if self.authorization_id.is_none() {
+            return Err(AuthorityShapeError::AuthorizationMissing);
+        }
+        Ok(())
+    }
+}
+
+/// Upper bound of a declared task text, in bytes.
+pub const MAX_TASK_BYTES: usize = 512;
+/// Upper bound of each declared scope list.
+pub const MAX_STANDING_SCOPE_ITEMS: usize = 64;
+
+/// A standing approval (section 4.15, FD-UP-10 decided): granted once with
+/// STRONG presence by the authority service for one identified client and
+/// one declared task, bound to a lease, with a declared scope and an expiry
+/// no later than the lease's. Every dispatch it covers is still authorized
+/// and audited individually with its id. It never covers `admin`, remote
+/// callers, out-of-scope targets or another client. Issued only by the
+/// service; this is the wire shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct StandingApproval {
+    /// `"orcel.standing-approval/1"`.
+    pub contract: String,
+    pub id: String,
+    pub lease_id: String,
+    /// The one client the approval is for.
+    pub principal_id: String,
+    /// Declared task, at most `MAX_TASK_BYTES`, escaped for prompts.
+    pub task: String,
+    /// Never `admin` or `remote`.
+    pub executors: Vec<ExecutorClass>,
+    /// Authorized roots (drives or folders).
+    #[serde(default)]
+    pub roots: Vec<String>,
+    /// Exact origins for web operations.
+    #[serde(default)]
+    pub origins: Vec<String>,
+    /// Command names a shell executor may run; `None` means the
+    /// executor's declared scope only, never "anything".
+    #[serde(default)]
+    pub commands: Option<Vec<String>>,
+    /// The presence class of the grant; only `STRONG` is valid.
+    pub granted_with: ApprovalClass,
+    pub issued_at_ms: u64,
+    /// At most the lease's expiry.
+    pub expires_at_ms: u64,
+}
+
+impl Contract for StandingApproval {
+    const CONTRACT: &'static str = "orcel.standing-approval/1";
+}
+
+fn bounded_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= crate::MAX_ID_BYTES
+}
+
+impl StandingApproval {
+    /// Shape check: STRONG only, no `admin` or `remote` executor, non-empty
+    /// bounded fields and a positive time box.
+    pub fn check(&self) -> Result<(), AuthorityShapeError> {
+        if self.granted_with != ApprovalClass::Strong {
+            return Err(AuthorityShapeError::StandingNotStrong);
+        }
+        if self
+            .executors
+            .iter()
+            .any(|e| matches!(e, ExecutorClass::Admin | ExecutorClass::Remote))
+        {
+            return Err(AuthorityShapeError::StandingExecutorRefused);
+        }
+        let commands = self.commands.as_deref().unwrap_or(&[]);
+        let lists_ok = !self.executors.is_empty()
+            && self.executors.len() <= MAX_STANDING_SCOPE_ITEMS
+            && self.roots.len() <= MAX_STANDING_SCOPE_ITEMS
+            && self.origins.len() <= MAX_STANDING_SCOPE_ITEMS
+            && commands.len() <= MAX_STANDING_SCOPE_ITEMS
+            && self
+                .roots
+                .iter()
+                .chain(self.origins.iter())
+                .chain(commands.iter())
+                .all(|item| bounded_id(item));
+        if !lists_ok
+            || !bounded_id(&self.id)
+            || !bounded_id(&self.lease_id)
+            || !bounded_id(&self.principal_id)
+            || self.task.is_empty()
+            || self.task.len() > MAX_TASK_BYTES
+            || self.expires_at_ms <= self.issued_at_ms
+        {
+            return Err(AuthorityShapeError::StandingScopeInvalid);
+        }
+        Ok(())
+    }
+
+    /// `check`, plus binding to the given lease: same lease id and an
+    /// expiry no later than the lease's.
+    pub fn check_against_lease(&self, lease: &LeaseView) -> Result<(), AuthorityShapeError> {
+        self.check()?;
+        if self.lease_id != lease.lease_id || self.expires_at_ms > lease.expires_at_ms {
+            return Err(AuthorityShapeError::StandingScopeInvalid);
+        }
+        Ok(())
+    }
 }

@@ -4,6 +4,8 @@
   "kind": "web_crawl",
   "owner": "mcp-client-7f3a",
   "orcel_session_id": "osess-01",
+  "task": "Summarise the docs site",
+  "scope_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "spec_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "state": "completed",
   "outcome": {
@@ -18,14 +20,26 @@
       "approval_class": "SOFT",
       "action_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "nonce_id": "nonce-0001",
-      "orcel_session_id": "osess-01"
-    }
+      "orcel_session_id": "osess-01",
+      "principal_id": "mcp-client-7f3a"
+    },
+    "standing": null,
+    "authorization_id": null
   },
   "progress": {
     "total": 50,
     "completed": 47,
     "failed": 2,
     "skipped": 1
+  },
+  "budget": {
+    "max_pages": 50,
+    "max_depth": 5,
+    "max_duration_s": 600,
+    "max_remembered_urls": 1000,
+    "min_delay_ms": 250,
+    "max_batch_urls": 50,
+    "max_job_result_bytes": 20971520
   },
   "created_at_ms": 1763300000000,
   "updated_at_ms": 1763300060000,

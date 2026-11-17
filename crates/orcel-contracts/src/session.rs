@@ -6,6 +6,7 @@ use crate::identity::Principal;
 use crate::{Contract, RemoteContext};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Transport {
     Stdio,
@@ -18,6 +19,7 @@ pub enum Transport {
 /// bind `orcel_session_id`, so an `orceld` restart invalidates them (C-02,
 /// S10). `client_session_id` is never authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Session {
     /// `"orcel.session/1"`.

@@ -10,11 +10,13 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::identity::OsFamily;
-use crate::lease::{ApprovalClass, ExecutorClass};
+pub use crate::lease::ApprovalClass;
+use crate::lease::ExecutorClass;
 use crate::Contract;
 
 /// Effect classes, spelled as in the TypeScript catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum EffectClass {
     Read,
@@ -80,7 +82,24 @@ impl<'de> Deserialize<'de> for RemoteExposure {
     }
 }
 
+#[cfg(test)]
+impl schemars::JsonSchema for RemoteExposure {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "RemoteExposure".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "oneOf": [
+                { "type": "string", "const": LOCAL_ONLY },
+                { "type": "array", "items": { "type": "string" } }
+            ]
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ToolEntry {
     /// `"orcel.tool/1"`.
@@ -98,6 +117,9 @@ pub struct ToolEntry {
     /// never replaces the approval.
     #[serde(default)]
     pub lease_gate: Option<ExecutorClass>,
+    /// Whether a standing approval (section 4.15) may cover this call
+    /// instead of a per-action approval.
+    pub standing_approvable: bool,
     pub remote: RemoteExposure,
     /// Discovery only.
     pub profiles: Vec<String>,

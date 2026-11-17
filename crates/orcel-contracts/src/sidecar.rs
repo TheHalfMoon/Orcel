@@ -32,6 +32,7 @@ pub const LISTENER_SCAN_INTERVAL_MS: u64 = 5_000;
 
 /// Limits the host declares to the sidecar in `hello`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SidecarLimits {
     /// Per-sidecar data frame bound, at most `MAX_DATA_FRAME_BYTES`.
@@ -51,6 +52,7 @@ impl SidecarLimits {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "frame", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostToSidecar {
     Hello {
@@ -75,6 +77,7 @@ pub enum HostToSidecar {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "frame", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SidecarToHost {
     Hello {

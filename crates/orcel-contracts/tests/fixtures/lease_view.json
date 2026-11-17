@@ -8,7 +8,8 @@
   "expires_at_ms": 1763303600000,
   "executors": [
     "desktop_observation",
-    "desktop_input"
+    "desktop_input",
+    "shell_process"
   ],
   "state": "active"
 }

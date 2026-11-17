@@ -1,7 +1,12 @@
 {
   "contract": "orcel.web-crawl/1",
   "mode": "crawl",
-  "start_url": "https://docs.example.com/",
+  "start_url": "https://docs.example.com/guide/",
+  "scope": {
+    "origins": [
+      "https://docs.example.com"
+    ]
+  },
   "include_paths": [
     "^/guide/"
   ],
@@ -12,7 +17,6 @@
   "max_depth": 5,
   "deadline_s": 600,
   "sitemap": "include",
-  "robots": true,
   "search": null,
   "extract": {
     "formats": [
@@ -31,17 +35,21 @@
     {
       "name": "Accept-Language",
       "value": {
-        "source": "literal",
-        "value": "en"
+        "literal": "en"
       }
     },
     {
       "name": "Authorization",
       "value": {
-        "source": "credential",
-        "credential_ref": "cred-docs-token"
+        "secret": "docs-token"
       }
     }
   ],
-  "stealth": "opt_in"
+  "privacy": {
+    "profile": "default",
+    "sensitive": [
+      "locale_override"
+    ]
+  },
+  "task": "Summarise the docs site"
 }

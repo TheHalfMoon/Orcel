@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CapabilityReport",
+  "type": "object",
+  "properties": {
+    "build": {
+      "$ref": "#/$defs/BuildKind"
+    },
+    "contract": {
+      "description": "`\"orcel.capability-report/1\"`.",
+      "type": "string"
+    },
+    "device": {
+      "$ref": "#/$defs/Device"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CapabilityEntry"
+      }
+    }
+  },
+  "required": [
+    "contract",
+    "device",
+    "build",
+    "entries"
+  ],
+  "$defs": {
+    "Arch": {
+      "type": "string",
+      "enum": [
+        "x86_64",
+        "aarch64"
+      ]
+    },
+    "BuildKind": {
+      "type": "string",
+      "enum": [
+        "release",
+        "live_browser_dev",
+        "live_browser_test"
+      ]
+    },
+    "CapabilityEntry": {
+      "type": "object",
+      "properties": {
+        "capability": {
+          "description": "`capability/operation`, for example `\"web/scrape\"`.",
+          "type": "string"
+        },
+        "component": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComponentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "engine": {
+          "description": "`\"fetch\"`, `\"chromium\"` or `\"obscura\"` where engines differ.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "available"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "description": "Could work here but is not ready (no engine found, disabled).",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ]
+        },
+        {
+          "description": "Not implemented on this OS or build; never a silent fallback.",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "unsupported"
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ]
+        },
+        {
+          "description": "Refused by policy, for example `\"FD-UP-2 stealth\"`, `\"cloud-only\"`.",
+          "type": "object",
+          "properties": {
+            "policy": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "blocked"
+            }
+          },
+          "required": [
+            "status",
+            "policy"
+          ]
+        },
+        {
+          "description": "An opt-in feature this client has not been granted, for example\n`\"web.privacy.sensitive:geolocation_override\"`.",
+          "type": "object",
+          "properties": {
+            "permission": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "permission_required"
+            }
+          },
+          "required": [
+            "status",
+            "permission"
+          ]
+        }
+      ],
+      "required": [
+        "capability"
+      ]
+    },
+    "ComponentIsolation": {
+      "description": "How a component that backs a capability is isolated from `orceld`.",
+      "oneOf": [
+        {
+          "description": "Orcel's own code, linked into an Orcel process.",
+          "type": "string",
+          "const": "in_process"
+        },
+        {
+          "description": "A separate supervised child over the sidecar protocol (section 4.9),\nnever linked into an Orcel process. Required for any component\nwhose licence is outside the kernel allowlist (for example an\nAGPL-licensed component, which stays separately built and isolated).",
+          "type": "string",
+          "const": "sidecar"
+        }
+      ]
+    },
+    "ComponentRef": {
+      "description": "The component that backs a capability entry, reported so the user can\nsee which code and licence a capability runs on. Informational: it never\ndecides policy, admission or status (C-10).",
+      "type": "object",
+      "properties": {
+        "isolation": {
+          "$ref": "#/$defs/ComponentIsolation"
+        },
+        "license": {
+          "description": "SPDX licence expression of the component itself.",
+          "type": "string"
+        },
+        "name": {
+          "description": "For example `\"orcel-fetch\"`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "license",
+        "isolation"
+      ]
+    },
+    "Device": {
+      "description": "Outbound description of this device (capability reports, sessions). It\nmay gain optional fields within its major, so unknown fields are not\nrefused.",
+      "type": "object",
+      "properties": {
+        "arch": {
+          "$ref": "#/$defs/Arch"
+        },
+        "contract": {
+          "description": "`\"orcel.device/1\"`.",
+          "type": "string"
+        },
+        "device_epoch": {
+          "description": "SG-000055 device epoch; remote leases bind it.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "device_id": {
+          "description": "`derive_device_id(authority key)` in `full_control_store.rs`.",
+          "type": "string"
+        },
+        "os": {
+          "$ref": "#/$defs/OsFamily"
+        },
+        "os_build": {
+          "description": "For example `\"10.0.26100\"`, `\"15.6\"`, `\"Ubuntu 24.04 6.8.0\"`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract",
+        "device_id",
+        "os",
+        "os_build",
+        "arch",
+        "device_epoch"
+      ]
+    },
+    "OsFamily": {
+      "type": "string",
+      "enum": [
+        "windows",
+        "macos",
+        "linux"
+      ]
+    }
+  }
+}
