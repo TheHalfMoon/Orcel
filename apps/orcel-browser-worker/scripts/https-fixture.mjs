@@ -226,6 +226,21 @@ const OB01_FORM = `<!doctype html><meta charset="utf-8"><title>OB-01 mission</ti
 <p><a href="/ob01-done">Continue to the second page</a></p>`;
 const OB01_DONE = `<!doctype html><meta charset="utf-8"><title>OB-01 done</title>
 <h1>Second page</h1><p id="result">OB-01 mission second page reached</p>`;
+// SG-000135 OB-03: the second tab's page. Each field is a green box at a
+// fixed place, holding a value: the ordinary one must stay green in the
+// screenshot, the secret ones (password, one-time code, card number, a
+// secret-looking name) must be painted over.
+const ob03Field = (top, attributes) =>
+  `<input ${attributes} value="hunter2-secret-value" style="position:absolute;left:40px;top:${top}px;width:320px;height:48px;border:0;margin:0;padding:0;outline:0;background:#00ff00;color:#00ff00;font-size:20px">`;
+const OB03_SECRET = `<!doctype html><meta charset="utf-8"><title>OB-03 secret fields</title>
+<body style="margin:0;background:#ffffff">
+${ob03Field(20, 'type="text" name="nickname" aria-label="Nickname"')}
+${ob03Field(100, 'type="password" name="pw" aria-label="Password"')}
+${ob03Field(180, 'type="text" autocomplete="one-time-code" name="code" aria-label="Code"')}
+${ob03Field(260, 'type="text" autocomplete="cc-number" name="number" aria-label="Card"')}
+${ob03Field(340, 'type="text" name="user_password_confirm" aria-label="Confirm"')}
+<p style="position:absolute;left:40px;top:420px">OB-03 second tab reached</p>
+</body>`;
 // SG-000122 slice A5: form-control names. The control-character name uses
 // U+0081, a C1 control that HTML's numeric-reference rule keeps (&#x85;
 // becomes U+2026 there) and that the accessible-name computation does not
@@ -564,7 +579,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
   if (path === "/form-names") response.setHeader("content-type", "text/html; charset=utf-8");
-  const pages = { "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
+  const pages = { "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/ob03-secret": OB03_SECRET, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });

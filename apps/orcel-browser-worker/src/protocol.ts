@@ -14,6 +14,8 @@ import { MAX_VERIFY_PROBES, MAX_VERIFY_TEXT_BYTES, type VerifyProbe, type Verify
 import { PRESS_KEYS, type FormAction, type PressKey } from "./actions/form.js";
 import { MAX_WAIT_MS } from "./actions/wait.js";
 import type { DismissedDialog } from "./actions/dialogs.js";
+import { MAX_SCREENSHOT_PIECES, type ScreenshotFailure } from "./screenshot.js";
+import type { TabInfo } from "./tabs.js";
 
 /// One form field to enter when executing a tool (host-validated).
 export interface ExecField {
@@ -38,8 +40,12 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// generation 14 BR-05 dismissed-dialog reports, generation 15 BR-05 approved
 /// confirm answers, generation 16 SG-000122 slice A1 (the `enter` form action,
 /// one select option, single-line fills, form-control kinds in observations),
-/// generation 17 SG-000122 slice A5 (form-control nodes marked `named`).
-export const WORKER_PROTOCOL_GENERATION = 17;
+/// generation 17 SG-000122 slice A5 (form-control nodes marked `named`),
+/// generation 18 W2-03's outline and extract_schema frames (PR #797, on main),
+/// generation 19 SG-000135 OB-03: bounded page screenshots with secret fields
+/// masked (`screenshot`, `screenshot_more`) and tabs (`tab_new`,
+/// `tab_switch`, `tab_close`, `tabs`).
+export const WORKER_PROTOCOL_GENERATION = 19;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host; SG-000122: one option of a native select).
 export const MAX_FORM_VALUE_BYTES = 1024;
@@ -119,7 +125,18 @@ export type HostFrame =
   | { frame: "wait_for"; wait_id: number; text: string; appear: boolean; timeout_ms: number }
   | { frame: "upload"; up_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "dialogs"; dlg_id: number }
+  | { frame: "screenshot"; shot_id: number; full_page: boolean }
+  | { frame: "screenshot_more"; shot_id: number; piece: number }
+  | { frame: "tab_new"; tab_req: number }
+  | { frame: "tab_switch"; tab_req: number; tab: number }
+  | { frame: "tab_close"; tab_req: number; tab: number }
+  | { frame: "tabs"; tab_req: number }
   | { frame: "shutdown" };
+
+/// SG-000135 OB-03: why a tab request failed. `last`: the only tab cannot
+/// be closed (the host ends the lifetime instead); `cap`: MAX_TABS tabs are
+/// open; `unknown_tab`: no such tab in this lifetime.
+export type TabFailure = "busy" | "unknown_tab" | "last" | "cap" | "failed";
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
 
@@ -228,6 +245,22 @@ export type WorkerFrame =
   | { frame: "wait_failed"; wait_id: number }
   | { frame: "form_failed"; form_id: number; reason: NavigationFailure }
   | { frame: "verification_failed"; ver_id: number }
+  | {
+      frame: "screenshot_piece";
+      shot_id: number;
+      piece: number;
+      total: number;
+      width: number;
+      height: number;
+      bytes: number;
+      truncated: boolean;
+      /// The base64 encoding of this piece's own bytes.
+      data: string;
+    }
+  | { frame: "screenshot_failed"; shot_id: number; reason: ScreenshotFailure }
+  /// `active` is 0 when no tab is active.
+  | { frame: "tabs_state"; tab_req: number; active: number; tabs: TabInfo[] }
+  | { frame: "tab_failed"; tab_req: number; reason: TabFailure }
   | { frame: "error"; code: ErrorCode };
 
 export class ProtocolViolation extends Error {}
@@ -411,6 +444,31 @@ export function parseHostFrame(raw: unknown): HostFrame {
         frame.accept_confirm = message;
       }
       return frame;
+    }
+    case "screenshot": {
+      exactKeys(raw, ["frame", "shot_id", "full_page"]);
+      if (typeof raw.full_page !== "boolean") throw new ProtocolViolation("screenshot full_page is not a boolean");
+      return { frame: "screenshot", shot_id: positiveId(raw.shot_id, "shot_id"), full_page: raw.full_page };
+    }
+    case "screenshot_more": {
+      exactKeys(raw, ["frame", "shot_id", "piece"]);
+      const piece = positiveId(raw.piece, "piece");
+      if (piece >= MAX_SCREENSHOT_PIECES) throw new ProtocolViolation("screenshot piece is out of range");
+      return { frame: "screenshot_more", shot_id: positiveId(raw.shot_id, "shot_id"), piece };
+    }
+    case "tab_new":
+    case "tabs": {
+      exactKeys(raw, ["frame", "tab_req"]);
+      return { frame: raw.frame, tab_req: positiveId(raw.tab_req, "tab_req") };
+    }
+    case "tab_switch":
+    case "tab_close": {
+      exactKeys(raw, ["frame", "tab_req", "tab"]);
+      const tab = positiveId(raw.tab, "tab");
+      // Tab ids are issued per lifetime and never reused; MAX_TABS bounds
+      // how many are open, not how many were issued.
+      if (tab > 1_000_000) throw new ProtocolViolation("tab id is out of range");
+      return { frame: raw.frame, tab_req: positiveId(raw.tab_req, "tab_req"), tab };
     }
     case "dialogs": {
       exactKeys(raw, ["frame", "dlg_id"]);

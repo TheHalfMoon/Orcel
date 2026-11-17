@@ -11,7 +11,7 @@ import { chromium, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
 import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
-import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
+import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, MAX_URL_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
@@ -33,7 +33,9 @@ import { nameControls } from "./actions/names.js";
 import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
-import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
+import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState } from "./worker.js";
+import { capturePng, fullPageClip, runExclusive, ScreenshotError } from "./screenshot.js";
+import { admitPopup, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
 if (startup !== null) {
@@ -74,20 +76,85 @@ const playwrightLauncher: Launcher = {
     // earlier refused navigation's error page late (even more than once),
     // which would interrupt a navigation in the same page. The previous
     // page is closed once the new one has its redirect guard.
-    let primary: Page = context.pages()[0] ?? (await context.newPage());
+    //
+    // SG-000135 OB-03: the pages are tabs (tabs.ts). `primary` is always the
+    // active tab's page, which every action below acts on; a navigation's
+    // fresh page takes over the active tab and keeps its id.
+    const own = new WeakSet<Page>();
+    const creating = new Set<Promise<Page>>();
+    const ownPage = async (): Promise<Page> => {
+      const pending = context.newPage();
+      creating.add(pending);
+      try {
+        const page = await pending;
+        own.add(page);
+        return page;
+      } finally {
+        creating.delete(pending);
+      }
+    };
+    const first = context.pages()[0];
+    let primary: Page = first ?? (await ownPage());
+    own.add(primary);
+    const tabs = new TabRegistry<Page>(MAX_URL_BYTES);
+    const watches = new WeakMap<Page, NavigationWatch>();
     // BR-05: every dialog, on every page, is answered as it opens and logged.
     const dialogs = new DialogLog();
     dialogs.listen(context);
     const routes = await installRoutes(context, () => primary, policy);
     let closing = false;
+    const syncPrimary = () => {
+      const active = tabs.activePage();
+      if (active) primary = active;
+    };
+    // A tab whose page closed itself (window.close, a crash) is gone.
+    const watchPage = (page: Page) => {
+      watches.set(page, new NavigationWatch(page));
+      page.on("close", () => {
+        const id = tabs.idOf(page);
+        if (id !== null) {
+          tabs.remove(id);
+          syncPrimary();
+        }
+      });
+    };
+    tabs.add(primary);
+    watchPage(primary);
+    const tabsState = (): TabsState => ({ active: tabs.active ?? 0, tabs: tabs.list() });
+    // A page the page itself opened (a popup) becomes a tab only once the
+    // host admitted its first document and the lifetime is under its cap;
+    // otherwise it is closed.
+    context.on("page", (page) => {
+      void (async () => {
+        await Promise.allSettled([...creating]);
+        if (own.has(page) || closing) return;
+        const admitted = await admitPopup(page);
+        if (!admitted || closing || page.isClosed() || tabs.add(page) === null) {
+          await page.close().catch(() => {});
+          return;
+        }
+        watchPage(page);
+      })().catch(() => {});
+    });
     // Each host navigation runs in a fresh page (see above).
     const open = async (url: string) => {
       traceStart();
       const previous = primary;
-      const page = await context.newPage();
+      const page = await ownPage();
       traceMark("page_created");
       await routes.guardReady(page);
       traceMark("guard_ready");
+      // The active tab keeps its id. When its page is gone (a failed
+      // download closes it), the fresh page is a new tab: never another
+      // tab's.
+      const held = tabs.idOf(previous);
+      const tab = held !== null && tabs.replace(held, page) ? held : tabs.add(page);
+      if (tab === null) {
+        await page.close().catch(() => {});
+        throw new NavigationError("failed");
+      }
+      tabs.activate(tab);
+      watchPage(page);
       primary = page;
       await previous.close().catch(() => {});
       traceMark("previous_closed");
@@ -379,6 +446,70 @@ const playwrightLauncher: Launcher = {
         if (extraction.url !== url || before !== url) throw new Error("the document changed during extraction");
         const { pieces, truncated } = toPieces(extraction.chunks, MAX_PIECE_BYTES, MAX_EXTRACT_PIECES);
         return { url, truncated: extraction.truncated || truncated, pieces };
+      },
+      async screenshot(fullPage: boolean) {
+        const page = primary;
+        if (page.isClosed()) throw new ScreenshotError("failed");
+        const loading = () => watches.get(page)?.loading === true;
+        if (loading()) throw new ScreenshotError("busy");
+        return runExclusive(page, async () => {
+          const before = page.url();
+          let clip: { x: number; y: number; width: number; height: number } | undefined;
+          let truncated = false;
+          if (fullPage) {
+            // The engine's own layout metrics: no page script runs.
+            const session = await context.newCDPSession(page);
+            let metrics: unknown;
+            try {
+              metrics = await session.send("Page.getLayoutMetrics");
+            } catch {
+              throw new ScreenshotError("failed");
+            } finally {
+              await session.detach().catch(() => {});
+            }
+            ({ clip, truncated } = fullPageClip(metrics));
+          }
+          const shot = await capturePng(page, clip);
+          // A capture that raced a navigation is of no one document.
+          if (loading() || page.isClosed() || page.url() !== before) throw new ScreenshotError("busy");
+          return { ...shot, truncated };
+        });
+      },
+      async tabNew() {
+        if (tabs.size >= MAX_TABS) throw new TabError("cap");
+        const page = await ownPage();
+        try {
+          await routes.guardReady(page);
+        } catch {
+          await page.close().catch(() => {});
+          throw new TabError("failed");
+        }
+        const id = tabs.add(page);
+        if (id === null) {
+          await page.close().catch(() => {});
+          throw new TabError("cap");
+        }
+        tabs.activate(id);
+        watchPage(page);
+        primary = page;
+        return tabsState();
+      },
+      async tabSwitch(tab: number) {
+        if (!tabs.activate(tab)) throw new TabError("unknown_tab");
+        syncPrimary();
+        return tabsState();
+      },
+      async tabClose(tab: number) {
+        const page = tabs.page(tab);
+        if (page === null) throw new TabError("unknown_tab");
+        if (tabs.size === 1) throw new TabError("last");
+        tabs.remove(tab);
+        syncPrimary();
+        await page.close().catch(() => {});
+        return tabsState();
+      },
+      tabs() {
+        return tabsState();
       },
       async close() {
         closing = true;

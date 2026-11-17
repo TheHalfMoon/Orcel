@@ -24,6 +24,13 @@ human-intervention state machine, crates/orcel-browser-session):
   open and released on close; the human-help request lifecycle used for the
   challenge handoff)
 
+For Orcel Browser packet OB-03 (SG-000135, page screenshots):
+
+- packages/browseros-agent/packages/browser-core/src/core/screenshot-queue.ts
+  (blob cf9e8d3da9ba7d03fc0317db056380b79e3a4d3d)
+  -> runExclusive in apps/orcel-browser-worker/src/screenshot.ts (captures of
+  one page run one at a time; keyed by the page, no annotation overlay)
+
 Each adapted file names its donor path and blob and lists Orcel's changes in
 its header; docs/orcel/browseros_provenance.json records the provenance.
 

@@ -7,6 +7,8 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import {
   browserExtractSchema,
   browserOpenSchema,
+  browserScreenshotSchema,
+  browserTabsSchema,
   browserSessionClickSchema,
   browserSessionCreateSchema,
   browserSessionFillSchema,
@@ -15,7 +17,8 @@ import {
   browserSessionVerifySchema,
   registerSessionBrokerTools
 } from "./browser_full.js";
-import type { KernelClient } from "./kernel.js";
+import type { KernelClient, KernelResponse } from "./kernel.js";
+import { projectScreenshotResult } from "./result.js";
 import { OAUTH_PROFILE_TOOL_CEILINGS, OAUTH_SCOPE_TOOL_MATRIX, UNMAPPED_REMOTE_PROFILES, authorizeToolByScopes } from "./oauth_authorization.js";
 import { allowedToolsFor, buildOrcelServer, localTransportContext, tunnelTransportContext, type TransportContext } from "./server.js";
 import {
@@ -50,9 +53,12 @@ const EXPECTED = [
   "browser_select",
   "browser_verify",
   "browser_extract",
+  "browser_screenshot",
+  "browser_tabs",
   "browser_close",
   "browser_task_status"
 ];
+const PAGE = "pg-0123456789abcdef0123456789abcdef";
 
 /** Read a literal Rust table of string tuples (or strings) defined exactly once. */
 function rustTuples(path: string, constant: string, width: number): string[][] {
@@ -129,7 +135,7 @@ test("browser_full is desktop_structured plus the broker tools, and only the fou
 });
 
 test("the broker contract follows the annotation, effect and approval rules", () => {
-  const soft = ["browser_open", "browser_click", "browser_fill", "browser_select"];
+  const soft = ["browser_open", "browser_click", "browser_fill", "browser_select", "browser_tabs"];
   for (const [name, entry] of Object.entries(BROWSER_FULL_CONTRACT)) {
     const a = entry.annotations;
     assert.equal(entry.remote, "local_only", name);
@@ -258,7 +264,8 @@ test("local discovery under browser_full lists the broker forms of the shared na
     }
     for (const tool of tools.filter((t) => BROWSER_FULL_TOOLS.includes(t.name))) {
       const properties = Object.keys(tool.inputSchema?.properties ?? {});
-      assert.equal(properties.includes("page_id"), false, tool.name);
+      // Only browser_tabs names a page: one of the session's own tabs.
+      assert.equal(properties.includes("page_id"), tool.name === "browser_tabs", tool.name);
       assert.equal(properties.includes("session_id"), tool.name !== "browser_session_create", tool.name);
     }
     for (const name of ["browser_page_open", "browser_navigate", "browser_observe", "browser_enter", "browser_check", "browser_download"]) {
@@ -298,6 +305,8 @@ test("each broker tool forwards exactly its broker shape and only its own fields
     browser_select: { session_id: SESSION, node_id: "d1-e3", option: "Porto", expected_generation: 1 },
     browser_verify: { session_id: SESSION, checks: [{ kind: "url_is", url: "https://example.org/done" }], expected_generation: 1 },
     browser_extract: { session_id: SESSION, expected_generation: 1 },
+    browser_screenshot: { session_id: SESSION, expected_generation: 1, full_page: true },
+    browser_tabs: { session_id: SESSION, action: "switch", page_id: PAGE },
     browser_close: { session_id: SESSION },
     browser_task_status: { session_id: SESSION }
   };
@@ -305,7 +314,7 @@ test("each broker tool forwards exactly its broker shape and only its own fields
     sent.length = 0;
     const handler = handlers.get(tool);
     assert.ok(handler, tool);
-    await handler({ workspace_id: "default", ...args[tool], page_id: "pg-a1", profile: "Default", selector: "#x" });
+    await handler({ workspace_id: "default", page_id: "pg-a1", profile: "Default", selector: "#x", hwnd: 7, ...args[tool] });
     assert.equal(sent.length, 1, tool);
     const entry = BROWSER_FULL_CONTRACT[tool];
     assert.equal(`${sent[0]?.capability}/${sent[0]?.operation}`, `${entry?.capability}/${entry?.operation}`, tool);
@@ -327,7 +336,11 @@ test("the broker schemas are strict and take a broker session id", () => {
     ["fill", browserSessionFillSchema("default"), { session_id: SESSION, node_id: "d1-e2", value: "Ada", expected_generation: 0 }],
     ["select", browserSessionSelectSchema("default"), { session_id: SESSION, node_id: "d1-e2", option: "A", expected_generation: 0 }],
     ["verify", browserSessionVerifySchema("default"), { session_id: SESSION, checks: [{ kind: "element_visible", node_id: "d1" }], expected_generation: 0 }],
-    ["extract", browserExtractSchema("default"), { session_id: SESSION, expected_generation: 0 }]
+    ["extract", browserExtractSchema("default"), { session_id: SESSION, expected_generation: 0 }],
+    ["screenshot", browserScreenshotSchema("default"), { session_id: SESSION, expected_generation: 0 }],
+    ["screenshot full", browserScreenshotSchema("default"), { session_id: SESSION, expected_generation: 0, full_page: true }],
+    ["tabs list", browserTabsSchema("default"), { session_id: SESSION, action: "list" }],
+    ["tabs new", browserTabsSchema("default"), { session_id: SESSION, action: "new", url: "https://example.org/b" }]
   ];
   for (const [name, schema, value] of ok) {
     assert.equal(schema.safeParse(value).success, true, name);
@@ -355,4 +368,52 @@ test("the contract document lists the browser_full profile and its broker tools"
     const row = `| \`${name}\` | \`${e.capability}/${e.operation}\` | ${e.effect} | ${e.approval} | local-only | ${yes(a.readOnlyHint)} | ${yes(a.destructiveHint)} | ${yes(a.idempotentHint)} | ${yes(a.openWorldHint)} | ${e.outputBound} |`;
     assert.ok(doc.includes(row), `${name} row is current`);
   }
+});
+
+test("OB-03: the screenshot and tabs schemas are strict and name nothing outside the session", () => {
+  const shot = browserScreenshotSchema("default");
+  for (const extra of [{ hwnd: 7 }, { window: "Edge" }, { page_id: PAGE }, { clip: { x: 0 } }, { mask: false }, { full_page: "yes" }]) {
+    assert.equal(shot.safeParse({ session_id: SESSION, expected_generation: 0, ...extra }).success, false, JSON.stringify(extra));
+  }
+  const tabs = browserTabsSchema("default");
+  for (const value of [
+    { session_id: SESSION, action: "switch", page_id: PAGE },
+    { session_id: SESSION, action: "close", page_id: PAGE },
+    { session_id: SESSION, action: "new" }
+  ]) {
+    assert.equal(tabs.safeParse(value).success, true, JSON.stringify(value));
+  }
+  for (const value of [
+    { session_id: SESSION, action: "group" },
+    { session_id: SESSION, action: "switch" },
+    { session_id: SESSION, action: "close", page_id: "pg-a1" },
+    { session_id: SESSION, action: "list", page_id: PAGE },
+    { session_id: SESSION, action: "switch", page_id: PAGE, url: "https://example.org/" },
+    { session_id: SESSION, action: "new", url: "http://example.org/" },
+    { session_id: SESSION, action: "new", page_id: PAGE },
+    { session_id: SESSION, action: "list", target: "other-session" }
+  ]) {
+    assert.equal(tabs.safeParse(value).success, false, JSON.stringify(value));
+  }
+});
+
+test("OB-03: a screenshot crosses as image content, and a malformed one never does", () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40, 1)]).toString("base64");
+  const ok = (result: Record<string, unknown>): KernelResponse => ({ version: 1, request_id: "r", ok: true, result });
+  const projected = projectScreenshotResult(ok({ page_id: PAGE, sha256: "ab", width: 1, height: 1, png_base64: png }));
+  assert.equal("isError" in projected, false);
+  assert.equal(projected.content.length, 2);
+  const [text, image] = projected.content;
+  assert.deepEqual(image, { type: "image", data: png, mimeType: "image/png" });
+  assert.equal(text?.type, "text");
+  const body = JSON.parse((text as { text: string }).text) as { result: Record<string, unknown> };
+  assert.equal(body.result.png_base64, undefined, "the image is never inside the JSON");
+  assert.equal(body.result.sha256, "ab");
+  for (const data of [undefined, 7, "", "not base64!", Buffer.from("GIF89a-not-a-png").toString("base64"), "A".repeat(3 * 1024 * 1024)]) {
+    const bad = projectScreenshotResult(ok({ png_base64: data }));
+    assert.equal("isError" in bad && bad.isError, true, String(data).slice(0, 20));
+    assert.equal(bad.content.length, 1);
+  }
+  const failed = projectScreenshotResult({ version: 1, request_id: "r", ok: false, error: { code: "TARGET_STALE", message: "busy" } });
+  assert.equal("isError" in failed && failed.isError, true);
 });

@@ -185,7 +185,7 @@ test("BR-07: verify probes are closed, bounded and exact", () => {
 });
 
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 17 }), { frame: "hello", generation: 17 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 19 }), { frame: "hello", generation: 19 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -193,11 +193,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 17 },
+    { generation: 19 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 17, extra: true },
+    { frame: "hello", generation: 19, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },
@@ -472,5 +472,42 @@ test("BR-01 activate and download frames may carry the approved role and name, b
     { frame: "download", dl_id: 2, ref: "e7", path, role: "link" }
   ]) {
     assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
+test("OB-03: screenshot and tab frames are exact and bounded; none names a window, a target or another page", () => {
+  for (const ok of [
+    { frame: "screenshot", shot_id: 1, full_page: false },
+    { frame: "screenshot", shot_id: 2, full_page: true },
+    { frame: "screenshot_more", shot_id: 2, piece: 63 },
+    { frame: "tab_new", tab_req: 1 },
+    { frame: "tabs", tab_req: 2 },
+    { frame: "tab_switch", tab_req: 3, tab: 1 },
+    { frame: "tab_close", tab_req: 4, tab: 1_000_000 }
+  ]) {
+    assert.deepEqual(parseHostFrame(ok), ok);
+  }
+  for (const bad of [
+    { frame: "screenshot", shot_id: 0, full_page: false },
+    { frame: "screenshot", shot_id: 1 },
+    { frame: "screenshot", shot_id: 1, full_page: "yes" },
+    { frame: "screenshot", shot_id: 1, full_page: false, hwnd: 42 },
+    { frame: "screenshot", shot_id: 1, full_page: false, target: "page-2" },
+    { frame: "screenshot", shot_id: 1, full_page: false, clip: { x: 0, y: 0, width: 1, height: 1 } },
+    { frame: "screenshot", shot_id: 1, full_page: false, mask: [] },
+    { frame: "screenshot_more", shot_id: 1, piece: 0 },
+    { frame: "screenshot_more", shot_id: 1, piece: 64 },
+    { frame: "tab_new", tab_req: 1, url: "https://fixture.test/" },
+    { frame: "tab_new", tab_req: 0 },
+    { frame: "tabs", tab_req: 1, all: true },
+    { frame: "tab_switch", tab_req: 1 },
+    { frame: "tab_switch", tab_req: 1, tab: 0 },
+    { frame: "tab_switch", tab_req: 1, tab: 1_000_001 },
+    { frame: "tab_close", tab_req: 1, tab: "1" },
+    { frame: "tab_close", tab_req: 1, tab: 1, force: true },
+    { frame: "capture_desktop", cap_id: 1 },
+    { frame: "target_attach", target: "x" }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad));
   }
 });

@@ -45,8 +45,10 @@ pub const BROWSER_FULL_PROFILE: &str = "browser_full";
 
 /// SG-000135 OB-02: the broker shapes of the `browser_full` profile, one
 /// per MCP tool: session create, open, snapshot, click, fill, select,
-/// verify, extract, close and task status. Each but create, close and
-/// status maps onto an existing live host action with that action's own
+/// verify, extract, screenshot, tabs, close and task status. SG-000135
+/// OB-03's screenshot is read-only with no approval; its tabs list asks
+/// nothing, and a new tab to a URL is a navigation with its own SOFT
+/// approval. Each but create, close, status, screenshot and tabs maps onto an existing live host action with that action's own
 /// approval (SOFT for open, click, fill and select; none for snapshot,
 /// verify and extract).
 pub const BROWSER_FULL_SHAPES: &[(&str, &str)] = &[
@@ -58,6 +60,8 @@ pub const BROWSER_FULL_SHAPES: &[(&str, &str)] = &[
     ("browser.session", "select"),
     ("browser.session", "verify"),
     ("browser.session", "extract"),
+    ("browser.session", "screenshot"),
+    ("browser.session", "tabs"),
     ("browser.session", "close"),
     ("browser.session", "status"),
 ];
@@ -275,7 +279,7 @@ mod tests {
     /// no remote request reaches either.
     #[test]
     fn ob02_browser_full_shapes_need_a_local_browser_full_request() {
-        assert_eq!(BROWSER_FULL_SHAPES.len(), 10);
+        assert_eq!(BROWSER_FULL_SHAPES.len(), 12);
         let remote = remote();
         for (capability, operation) in BROWSER_FULL_SHAPES {
             let full = request(capability, operation);

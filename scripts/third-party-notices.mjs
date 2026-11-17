@@ -82,6 +82,14 @@ const VENDORED_NOTICES = [
     license: "AGPL-3.0-or-later upstream; redistributed under the owner-asserted authorization the notice names",
     file: "docs/orcel/notices/browseros-AGPL-3.0.txt",
     copyright: "Upstream license: GNU Affero General Public License v3.0 or later"
+  },
+  // Orcel Browser OB-03: the browser worker and orceld port two functions
+  // from agent-browser (screenshot clip size, tab URL sanitising).
+  {
+    name: "agent-browser (vercel-labs/agent-browser@b06e2533ba9b3823b8a96c859d455cb55f4d7893, ported screenshot and tab helpers)",
+    license: "Apache-2.0",
+    file: "docs/orcel/notices/agent-browser-Apache-2.0.txt",
+    copyright: "Copyright 2025 Vercel Inc."
   }
 ].filter((notice) => !notice.windowsOnly || WINDOWS);
 // Registry crates published without any license file, keyed by exact

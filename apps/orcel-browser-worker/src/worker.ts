@@ -29,8 +29,11 @@ import {
   type ExecField,
   type HostFrame,
   type NavigationFailure,
+  type TabFailure,
   type WorkerFrame
 } from "./protocol.js";
+import { ScreenshotError, toBase64Pieces } from "./screenshot.js";
+import type { TabInfo } from "./tabs.js";
 import type { RouteQuery } from "./routing.js";
 import type { BoundedSnapshot } from "./snapshot.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
@@ -51,6 +54,20 @@ export class NavigationError extends Error {
   constructor(readonly reason: NavigationFailure) {
     super(reason);
   }
+}
+
+/// SG-000135 OB-03: a tab request the engine could not do.
+export class TabError extends Error {
+  constructor(readonly reason: TabFailure) {
+    super(reason);
+  }
+}
+
+/// SG-000135 OB-03: the lifetime's tabs after a tab request (`active` is 0
+/// when none is).
+export interface TabsState {
+  active: number;
+  tabs: TabInfo[];
 }
 
 export interface EngineSession {
@@ -99,6 +116,20 @@ export interface EngineSession {
   waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ url: string; met: boolean }>;
   /// BR-07: read-only probes of the primary page, one result per probe.
   verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }>;
+  /// SG-000135 OB-03: a bounded PNG of the active tab's page (the
+  /// viewport, or from the top of the page within the bounds when
+  /// `fullPage`), every secret field masked; rejects with ScreenshotError
+  /// ("busy" while a navigation of the page is in flight).
+  screenshot(fullPage: boolean): Promise<{ png: Buffer; width: number; height: number; truncated: boolean }>;
+  /// SG-000135 OB-03: open a blank tab and make it active; rejects with
+  /// TabError ("cap" at MAX_TABS).
+  tabNew(): Promise<TabsState>;
+  /// Make tab `tab` active; rejects with TabError.
+  tabSwitch(tab: number): Promise<TabsState>;
+  /// Close tab `tab` (never the only one: "last"); rejects with TabError.
+  tabClose(tab: number): Promise<TabsState>;
+  /// The lifetime's tabs.
+  tabs(): TabsState;
   /// Called once if the engine goes away without `close`.
   onUnexpectedExit(listener: () => void): void;
 }
@@ -107,12 +138,25 @@ export interface Launcher {
   launch(spec: LaunchSpec, policy: RoutePolicy): Promise<EngineSession>;
 }
 
+/// SG-000135 OB-03: a screenshot whose pieces the host has not all read.
+interface HeldShot {
+  shotId: number;
+  width: number;
+  height: number;
+  bytes: number;
+  truncated: boolean;
+  pieces: string[];
+}
+
 export type WorkerState = "awaiting_hello" | "ready" | "launched" | "closed";
 
 export class Worker {
   private state: WorkerState = "awaiting_hello";
   /// The last extraction's remaining pieces, until the host has read them.
   private extraction: { extId: number; url: string; truncated: boolean; pieces: Piece[] } | null = null;
+  /// SG-000135 OB-03: the last screenshot's remaining pieces, until the
+  /// host has read them.
+  private shot: HeldShot | null = null;
   private session: EngineSession | null = null;
   private launchedOnce = false;
   private queue: Promise<void> = Promise.resolve();
@@ -311,6 +355,61 @@ export class Worker {
         // Outside the queue: the action's requests need host decisions.
         this.navigating = true;
         void this.runFormAction(this.session, frame.form_id, frame.ref, frame.act, frame.target, frame.accept_confirm);
+        return;
+      }
+      case "screenshot": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        this.shot = null;
+        // A document being replaced is never captured.
+        if (this.navigating) {
+          this.send({ frame: "screenshot_failed", shot_id: frame.shot_id, reason: "busy" });
+          return;
+        }
+        try {
+          const { png, width, height, truncated } = await this.session.screenshot(frame.full_page);
+          const pieces = toBase64Pieces(png);
+          const shot: HeldShot = { shotId: frame.shot_id, width, height, bytes: png.length, truncated, pieces };
+          this.sendShotPiece(shot, 0);
+          // Kept only until the host has read every piece.
+          if (pieces.length > 1) this.shot = shot;
+        } catch (error) {
+          const reason = error instanceof ScreenshotError ? error.reason : "failed";
+          this.send({ frame: "screenshot_failed", shot_id: frame.shot_id, reason });
+        }
+        return;
+      }
+      case "screenshot_more": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        const kept = this.shot;
+        if (!kept || kept.shotId !== frame.shot_id || frame.piece >= kept.pieces.length) {
+          this.send({ frame: "screenshot_failed", shot_id: frame.shot_id, reason: "failed" });
+          return;
+        }
+        if (frame.piece === kept.pieces.length - 1) this.shot = null;
+        this.sendShotPiece(kept, frame.piece);
+        return;
+      }
+      case "tab_new":
+      case "tab_switch":
+      case "tab_close":
+      case "tabs": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        // Tabs never change while a document is being replaced.
+        if (this.navigating && frame.frame !== "tabs") {
+          this.send({ frame: "tab_failed", tab_req: frame.tab_req, reason: "busy" });
+          return;
+        }
+        try {
+          let state: TabsState;
+          if (frame.frame === "tab_new") state = await this.session.tabNew();
+          else if (frame.frame === "tab_switch") state = await this.session.tabSwitch(frame.tab);
+          else if (frame.frame === "tab_close") state = await this.session.tabClose(frame.tab);
+          else state = this.session.tabs();
+          this.send({ frame: "tabs_state", tab_req: frame.tab_req, active: state.active, tabs: state.tabs });
+        } catch (error) {
+          const reason = error instanceof TabError ? error.reason : "failed";
+          this.send({ frame: "tab_failed", tab_req: frame.tab_req, reason });
+        }
         return;
       }
       case "dialogs": {
@@ -535,6 +634,20 @@ export class Worker {
     }
     this.navigating = false;
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "execution_failed", exec_id: execId, reason: "failed" });
+  }
+
+  private sendShotPiece(shot: HeldShot, piece: number): void {
+    this.send({
+      frame: "screenshot_piece",
+      shot_id: shot.shotId,
+      piece,
+      total: shot.pieces.length,
+      width: shot.width,
+      height: shot.height,
+      bytes: shot.bytes,
+      truncated: shot.truncated,
+      data: shot.pieces[piece] ?? ""
+    });
   }
 
   /// Send an operation's outcome from a background run. If it cannot be

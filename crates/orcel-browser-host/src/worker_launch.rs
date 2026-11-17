@@ -42,7 +42,9 @@ pub struct JobProcess {
 /// one select option, single-line fills, and form-control kinds in
 /// observed nodes); generation 17 is SG-000122 slice A5 (form-control nodes
 /// marked `named`).
-pub const WORKER_PROTOCOL_GENERATION: u32 = 17;
+/// 18 is W2-03's outline and extract_schema (PR #797, on main); 19 is
+/// SG-000135 OB-03: `screenshot`, `screenshot_more` and the tab frames.
+pub const WORKER_PROTOCOL_GENERATION: u32 = 19;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -72,6 +74,10 @@ pub const WORKER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// case: a 5 s layout snapshot and a 4 s extraction budget). Later pieces
 /// are already computed and take `WORKER_REPLY_TIMEOUT` each.
 pub const WORKER_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(20);
+/// SG-000135 OB-03: a screenshot (the worker's own budget is 10 s, plus a
+/// full page's layout metrics) and a tab request (a new page and its guard).
+pub const WORKER_SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(20);
+pub const WORKER_TAB_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// One node of a worker snapshot: ref, role, accessible name, (links
 /// only) the link URL and (main-frame form controls only, SG-000122) the
@@ -557,6 +563,31 @@ pub(crate) enum WorkerRequest<'a> {
         ver_id: u64,
         probes: &'a [crate::verify::Probe],
     },
+    /// SG-000135 OB-03: a bounded PNG of the active tab, secret fields
+    /// masked; pieces after the first through `ScreenshotMore`.
+    Screenshot {
+        shot_id: u64,
+        full_page: bool,
+    },
+    ScreenshotMore {
+        shot_id: u64,
+        piece: u32,
+    },
+    /// SG-000135 OB-03: the lifetime's tabs.
+    TabNew {
+        tab_req: u64,
+    },
+    TabSwitch {
+        tab_req: u64,
+        tab: u32,
+    },
+    TabClose {
+        tab_req: u64,
+        tab: u32,
+    },
+    Tabs {
+        tab_req: u64,
+    },
     Shutdown,
 }
 
@@ -712,9 +743,54 @@ pub(crate) enum WorkerReply {
     VerificationFailed {
         ver_id: u64,
     },
+    ScreenshotPiece {
+        shot_id: u64,
+        piece: u32,
+        total: u32,
+        width: u32,
+        height: u32,
+        bytes: u64,
+        truncated: bool,
+        data: String,
+    },
+    ScreenshotFailed {
+        shot_id: u64,
+        reason: String,
+    },
+    TabsState {
+        tab_req: u64,
+        active: u32,
+        tabs: Vec<crate::page_capture::WorkerTab>,
+    },
+    TabFailed {
+        tab_req: u64,
+        reason: String,
+    },
     Error {
         code: String,
     },
+}
+
+/// SG-000135 OB-03: a worker's screenshot failure, typed.
+#[cfg(any(windows, test))]
+pub(crate) fn screenshot_failure(reason: &str) -> UnavailableReason {
+    match reason {
+        "busy" => UnavailableReason::NavigationInFlight,
+        "oversized" => UnavailableReason::CaptureOversized,
+        _ => UnavailableReason::ActionFailed,
+    }
+}
+
+/// SG-000135 OB-03: a worker's tab failure, typed.
+#[cfg(any(windows, test))]
+pub(crate) fn tab_failure(reason: &str) -> HostError {
+    match reason {
+        "busy" => HostError::Unavailable(UnavailableReason::NavigationInFlight),
+        "cap" => HostError::Unavailable(UnavailableReason::TabLimitReached),
+        "unknown_tab" => HostError::Unavailable(UnavailableReason::TargetStale),
+        "last" => HostError::Invalid("the only tab cannot be closed".into()),
+        _ => HostError::Unavailable(UnavailableReason::ActionFailed),
+    }
 }
 
 /// Map a worker error code onto the typed vocabulary.
@@ -1614,6 +1690,11 @@ mod platform {
         last_download_sha256: Option<String>,
         next_disc: u64,
         next_ext: u64,
+        /// SG-000135 OB-03: screenshot and tab request ids, and the tab
+        /// whose document `committed` names (None until a tab request).
+        next_shot: u64,
+        next_tab_req: u64,
+        active_tab: Option<u32>,
         next_act: u64,
         next_dl: u64,
         next_exec: u64,
@@ -1742,6 +1823,9 @@ mod platform {
             last_download_sha256: None,
             next_disc: 0,
             next_ext: 0,
+            next_shot: 0,
+            next_tab_req: 0,
+            active_tab: None,
             next_act: 0,
             next_dl: 0,
             next_exec: 0,
@@ -3340,6 +3424,162 @@ mod platform {
             }
         }
 
+        /// SG-000135 OB-03: a bounded PNG of the active tab's committed
+        /// document (the viewport, or with `full_page` the page from its
+        /// top within the bounds), secret fields masked by the worker. The
+        /// pieces are checked and joined here; see `page_capture`.
+        pub fn screenshot(
+            &mut self,
+            full_page: bool,
+        ) -> Result<crate::page_capture::PageScreenshot, HostError> {
+            if self.committed.is_none() {
+                return Err(HostError::Invalid(
+                    "no committed document to capture".into(),
+                ));
+            }
+            self.next_shot += 1;
+            let shot_id = self.next_shot;
+            self.send(&WorkerRequest::Screenshot { shot_id, full_page })?;
+            let violation = |_| HostError::Unavailable(UnavailableReason::ProtocolViolation);
+            let (header, piece, data) =
+                self.screenshot_piece(shot_id, WORKER_SCREENSHOT_TIMEOUT)?;
+            let mut assembly = crate::page_capture::ScreenshotAssembly::start(header, piece, &data)
+                .map_err(violation)?;
+            while let Some(piece) = assembly.next() {
+                self.send(&WorkerRequest::ScreenshotMore { shot_id, piece })?;
+                let (header, at, data) = self.screenshot_piece(shot_id, WORKER_REPLY_TIMEOUT)?;
+                assembly.push(header, at, &data).map_err(violation)?;
+            }
+            assembly.finish().map_err(violation)
+        }
+
+        /// One `screenshot_piece` for `shot_id`, or its typed failure.
+        fn screenshot_piece(
+            &mut self,
+            shot_id: u64,
+            timeout: Duration,
+        ) -> Result<(crate::page_capture::PieceHeader, u32, String), HostError> {
+            match self.reply(timeout)? {
+                WorkerReply::ScreenshotPiece {
+                    shot_id: done,
+                    piece,
+                    total,
+                    width,
+                    height,
+                    bytes,
+                    truncated,
+                    data,
+                } if done == shot_id => Ok((
+                    crate::page_capture::PieceHeader {
+                        total,
+                        width,
+                        height,
+                        bytes,
+                        truncated,
+                    },
+                    piece,
+                    data,
+                )),
+                WorkerReply::ScreenshotFailed {
+                    shot_id: done,
+                    reason,
+                } if done == shot_id => Err(HostError::Unavailable(screenshot_failure(&reason))),
+                _ => Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// SG-000135 OB-03: the active tab and the committed document's
+        /// generation, as this host knows them (what a tab request moves).
+        pub fn tabs_active(&self) -> (Option<u32>, Option<u64>) {
+            (
+                self.active_tab,
+                self.committed.as_ref().map(|(_, generation)| *generation),
+            )
+        }
+
+        /// SG-000135 OB-03: open a blank tab and make it active.
+        pub fn tab_new(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
+            self.tab_request(|tab_req| WorkerRequest::TabNew { tab_req })
+        }
+
+        /// SG-000135 OB-03: make tab `tab` active.
+        pub fn tab_switch(
+            &mut self,
+            tab: u32,
+        ) -> Result<crate::page_capture::TabsState, HostError> {
+            self.tab_request(|tab_req| WorkerRequest::TabSwitch { tab_req, tab })
+        }
+
+        /// SG-000135 OB-03: close tab `tab` (never the only one).
+        pub fn tab_close(&mut self, tab: u32) -> Result<crate::page_capture::TabsState, HostError> {
+            self.tab_request(|tab_req| WorkerRequest::TabClose { tab_req, tab })
+        }
+
+        /// SG-000135 OB-03: the lifetime's tabs.
+        pub fn tabs(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
+            self.tab_request(|tab_req| WorkerRequest::Tabs { tab_req })
+        }
+
+        /// One tab request and its checked report. When the active tab is
+        /// another than the one `committed` names, nothing observed holds
+        /// any more and the active tab's document is committed afresh (a new
+        /// document generation) when its URL is an https URL on the
+        /// committed origin, and is no committed document otherwise.
+        fn tab_request(
+            &mut self,
+            request: impl FnOnce(u64) -> WorkerRequest<'static>,
+        ) -> Result<crate::page_capture::TabsState, HostError> {
+            self.next_tab_req += 1;
+            let tab_req = self.next_tab_req;
+            self.send(&request(tab_req))?;
+            let state = match self.reply(WORKER_TAB_TIMEOUT)? {
+                WorkerReply::TabsState {
+                    tab_req: done,
+                    active,
+                    tabs,
+                } if done == tab_req => crate::page_capture::TabsState::checked(active, tabs)
+                    .map_err(|_| HostError::Unavailable(UnavailableReason::ProtocolViolation))?,
+                WorkerReply::TabFailed {
+                    tab_req: done,
+                    reason,
+                } if done == tab_req => return Err(tab_failure(&reason)),
+                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+            };
+            self.follow_active_tab(&state);
+            Ok(state)
+        }
+
+        fn follow_active_tab(&mut self, state: &crate::page_capture::TabsState) {
+            let active = (state.active != 0).then_some(state.active);
+            match self.active_tab {
+                // The first report names the tab the lifetime has been
+                // acting on: nothing moved.
+                None if state.tabs.len() <= 1 => {
+                    self.active_tab = active;
+                    return;
+                }
+                Some(known) if Some(known) == active => return,
+                _ => {}
+            }
+            self.active_tab = active;
+            self.host_nodes.clear();
+            self.host_tools.clear();
+            let url = state.active_url().unwrap_or("");
+            let on_origin = self.policy.committed_origin().is_some_and(|origin| {
+                crate::navigation::parse_navigation_url(url)
+                    .is_ok_and(|target| target.origin == origin)
+            });
+            self.committed = if on_origin {
+                let next = self
+                    .committed
+                    .as_ref()
+                    .map_or(1, |(_, generation)| generation + 1);
+                Some((url.to_owned(), next))
+            } else {
+                None
+            };
+        }
+
         /// The state an execution approval must name: the tool, a digest of
         /// its discovered record, its method and resolved action, and the
         /// canonical arguments, so the one-shot approval covers exactly what
@@ -4147,6 +4387,55 @@ mod fallback {
             &mut self,
             _options: crate::extraction::ExtractOptions,
         ) -> Result<crate::extraction::PageExtraction, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn screenshot(
+            &mut self,
+            _full_page: bool,
+        ) -> Result<crate::page_capture::PageScreenshot, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tabs_active(&self) -> (Option<u32>, Option<u64>) {
+            (None, None)
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tab_new(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tab_switch(
+            &mut self,
+            _tab: u32,
+        ) -> Result<crate::page_capture::TabsState, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tab_close(
+            &mut self,
+            _tab: u32,
+        ) -> Result<crate::page_capture::TabsState, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tabs(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))
@@ -5612,6 +5901,110 @@ mod tests {
         assert!(matches!(
             reply_error("anything"),
             HostError::Unavailable(UnavailableReason::ProtocolViolation)
+        ));
+    }
+
+    /// SG-000135 OB-03: the screenshot and tab frames match the
+    /// TypeScript vocabulary exactly; failures are typed.
+    #[test]
+    fn ob03_screenshot_and_tab_frames_are_exact() {
+        let json = |request: &WorkerRequest<'_>| serde_json::to_string(request).unwrap();
+        assert_eq!(WORKER_PROTOCOL_GENERATION, 19);
+        assert_eq!(
+            json(&WorkerRequest::Screenshot {
+                shot_id: 2,
+                full_page: true
+            }),
+            r#"{"frame":"screenshot","shot_id":2,"full_page":true}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::ScreenshotMore {
+                shot_id: 2,
+                piece: 1
+            }),
+            r#"{"frame":"screenshot_more","shot_id":2,"piece":1}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::TabNew { tab_req: 1 }),
+            r#"{"frame":"tab_new","tab_req":1}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::TabSwitch { tab_req: 2, tab: 3 }),
+            r#"{"frame":"tab_switch","tab_req":2,"tab":3}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::TabClose { tab_req: 3, tab: 3 }),
+            r#"{"frame":"tab_close","tab_req":3,"tab":3}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::Tabs { tab_req: 4 }),
+            r#"{"frame":"tabs","tab_req":4}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"screenshot_piece","shot_id":2,"piece":0,"total":1,"width":1280,"height":720,"bytes":3,"truncated":false,"data":"cG5n"}"#).unwrap(),
+            WorkerReply::ScreenshotPiece {
+                shot_id: 2,
+                piece: 0,
+                total: 1,
+                width: 1280,
+                height: 720,
+                bytes: 3,
+                truncated: false,
+                data: "cG5n".into()
+            }
+        );
+        assert!(reply(r#"{"frame":"screenshot_piece","shot_id":2,"piece":0,"total":1,"width":1280,"height":720,"bytes":3,"truncated":false,"data":"cG5n","hwnd":1}"#).is_err());
+        assert_eq!(
+            reply(r#"{"frame":"tabs_state","tab_req":1,"active":2,"tabs":[{"tab":1,"url":"https://fixture.test/"},{"tab":2,"url":"about:blank"}]}"#).unwrap(),
+            WorkerReply::TabsState {
+                tab_req: 1,
+                active: 2,
+                tabs: vec![
+                    crate::page_capture::WorkerTab {
+                        tab: 1,
+                        url: "https://fixture.test/".into()
+                    },
+                    crate::page_capture::WorkerTab {
+                        tab: 2,
+                        url: "about:blank".into()
+                    }
+                ]
+            }
+        );
+        assert!(reply(r#"{"frame":"tabs_state","tab_req":1,"active":1,"tabs":[{"tab":1,"url":"","title":"x"}]}"#).is_err());
+        assert_eq!(
+            reply(r#"{"frame":"tab_failed","tab_req":1,"reason":"cap"}"#).unwrap(),
+            WorkerReply::TabFailed {
+                tab_req: 1,
+                reason: "cap".into()
+            }
+        );
+        assert_eq!(
+            screenshot_failure("busy"),
+            UnavailableReason::NavigationInFlight
+        );
+        assert_eq!(
+            screenshot_failure("oversized"),
+            UnavailableReason::CaptureOversized
+        );
+        assert_eq!(screenshot_failure("other"), UnavailableReason::ActionFailed);
+        assert!(matches!(
+            tab_failure("cap"),
+            HostError::Unavailable(UnavailableReason::TabLimitReached)
+        ));
+        assert!(matches!(
+            tab_failure("busy"),
+            HostError::Unavailable(UnavailableReason::NavigationInFlight)
+        ));
+        assert!(matches!(
+            tab_failure("unknown_tab"),
+            HostError::Unavailable(UnavailableReason::TargetStale)
+        ));
+        assert!(matches!(tab_failure("last"), HostError::Invalid(_)));
+        assert!(matches!(
+            tab_failure("x"),
+            HostError::Unavailable(UnavailableReason::ActionFailed)
         ));
     }
 

@@ -74,6 +74,17 @@
       "donor_blob": [
         "b6bd7ff1ea702a3487d902ee4903740cce08bba7"
       ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/screenshot.ts",
+      "donor": "browseros",
+      "method": "ADAPT",
+      "source": [
+        "packages/browseros-agent/packages/browser-core/src/core/screenshot-queue.ts"
+      ],
+      "donor_blob": [
+        "cf9e8d3da9ba7d03fc0317db056380b79e3a4d3d"
+      ]
     }
   ],
   "references": [

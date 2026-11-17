@@ -115,6 +115,29 @@ Edge 157 (qualified), Node 24.19.0, Windows 11 Home 10.0.26300, no managed Edge 
 - A second run on the final code passed the same way: open 8450 ms (Edge launch included), snapshot 189, fill 142, select 73, verify 62, click 152, verify 44, extract 35, status 7, close 1297 ms; whole session 14548 ms; 8 receipts chained (head `5c1543e168f92f2b...`); nothing left.
 - A third run after the security judge's low fixes (exact action titles, whole-target match, per-mode target folders, `--locked`) passed the same way: open 13926 ms, close 1623 ms, whole session 20629 ms, 8 receipts chained (head `0c107e148e46f87f...`), nothing left.
 
+## OB-03 extension: screenshot and tabs (SG-000135 OB-03)
+
+After `browser_extract`, the mission adds seven steps:
+
+| # | Tool | What it does | Approval |
+|---|---|---|---|
+| 10 | `browser_screenshot` | Viewport PNG of the second page, as MCP image content; its SHA-256, size and byte count are checked against the reply | none |
+| 11 | `browser_tabs` new | A second tab on `https://fixture.test/ob03-secret` (a navigation, title `navigate isolated browser page`) | SOFT |
+| 12 | `browser_tabs` list | Two tabs, the first inactive, its URL without query or fragment | none |
+| 13 | `browser_screenshot` | The second tab: the PNG is decoded and the pixels read. The ordinary field stays green (positive control). The password, one-time-code, card-number and secret-named fields are black (masked) | none |
+| 14 | `browser_tabs` switch | Back to the first tab | none |
+| 15 | `browser_verify` | The first tab still holds the second page | none |
+| 16 | `browser_tabs` close | The second tab closes, and one tab is left | none |
+
+Then `browser_task_status` must show 15 chained receipts, 5 with an approval record (open, fill, select, click and the new tab), and both screenshot receipts must carry the image digest only (`evidence_kind: screenshot`). Scripted consent must show 5 prompts. A founder run now shows 5 dialogs; the fifth is `navigate isolated browser page` with target `https://fixture.test/ob03-secret`.
+
+Scripted run on this PC, 2026-11-17 (Edge 157, Node 24.19.0): every step passed.
+
+- Step times: open 8368 ms (Edge launch included), screenshot 111 ms, new tab 780 ms, list 5 ms, masked screenshot 179 ms, switch 7 ms, verify 839 ms, close tab 26 ms, close 4495 ms.
+- Whole session 19812 ms. 15 receipts chained, head `6813401cfaa44cfc...`. 5 approval records. No Edge process and no session folder left. MCP exit 0.
+- Mask pixels: ordinary `[0,255,0]`, password, one-time code, card number and secret name all `[0,0,0]`.
+- **Scripted consent, not human acceptance.**
+
 ## Not covered
 
 - The founder-present run (above).

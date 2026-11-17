@@ -21,6 +21,8 @@ mod leftovers;
 mod map_rank;
 mod navigation;
 mod observation;
+/// SG-000135 OB-03: page screenshots and tabs.
+pub mod page_capture;
 mod profile;
 mod proposal;
 mod proto;

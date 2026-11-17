@@ -455,6 +455,38 @@ pub fn recover_intents(journal: &Path) -> Result<Vec<Recovered>, ProviderError> 
     Ok(recovered)
 }
 
+/// SG-000135 OB-03: a bounded, masked page screenshot as orceld checked it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveScreenshot {
+    pub png: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub truncated: bool,
+    pub sha256: String,
+}
+
+/// SG-000135 OB-03: one tab as a tab report shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabView {
+    pub page_id: String,
+    pub generation: u64,
+    /// The tab's committed URL (orceld's record), if it has one.
+    pub url: Option<String>,
+    pub active: bool,
+}
+
+/// SG-000135 OB-03: a tab of the lifetime other than the active one: its
+/// own page-store page (own id and generation) and its worker tab id.
+#[derive(Debug, Clone)]
+struct BackgroundTab {
+    page: PageRecord,
+    worker_tab: u32,
+    url: Option<String>,
+}
+
+/// SG-000135 OB-03: the most tabs one session holds.
+pub const MAX_TABS: usize = orcel_browser_host::page_capture::MAX_TABS;
+
 /// One supervised worker-mode host and at most one lifetime.
 pub struct LiveBrowser {
     supervisor: Supervisor,
@@ -492,6 +524,11 @@ pub struct LiveBrowser {
     /// The page's latest committed URL (B1: the path in an action's
     /// stable key).
     page_url: Option<String>,
+    /// SG-000135 OB-03 (browser_full only; always empty for
+    /// browser_structured): the lifetime's other tabs, and the worker tab
+    /// id of `page`, once a tab request learned it.
+    background: Vec<BackgroundTab>,
+    active_tab: Option<u32>,
     /// Test builds only: a shorter reply budget for dispatched frames.
     #[cfg(test)]
     reply_timeout: Option<std::time::Duration>,
@@ -524,6 +561,11 @@ pub fn failure_for(code: &str) -> FailureCode {
         // before it left. (A refusal after the admitted document opened is
         // `unavailable:outcomeunknown`.)
         "unavailable:submissionrefused" => FailureCode::CapabilityDenied,
+        // SG-000135 OB-03: a navigation was in flight (nothing captured or
+        // changed; observe again), a screenshot past its bounds, or the
+        // lifetime's tab cap.
+        "unavailable:navigationinflight" => FailureCode::TargetStale,
+        "unavailable:captureoversized" | "unavailable:tablimitreached" => FailureCode::OutputLimit,
         code if code.starts_with("unavailable:") => FailureCode::ProviderUnavailable,
         _ => FailureCode::InternalError,
     }
@@ -545,6 +587,14 @@ fn host_error(error: orcel_browser_host::HostError) -> ProviderError {
 /// The page store's errors, as orceld's (same code and message).
 fn from_page(error: orcel_provider_browser::ProviderError) -> ProviderError {
     ProviderError::new(error.code, error.message)
+}
+
+/// SG-000135 OB-03: a tab id the session does not hold.
+fn unknown_tab() -> ProviderError {
+    ProviderError::new(
+        FailureCode::TargetStale,
+        "the browser session has no such tab; list its tabs again",
+    )
 }
 
 fn refused(code: &str) -> ProviderError {
@@ -835,6 +885,8 @@ impl LiveBrowser {
             takeover: TakeoverGate::from_switch(),
             gate_ticket: None,
             page_url: None,
+            background: Vec::new(),
+            active_tab: None,
             #[cfg(test)]
             reply_timeout: None,
             #[cfg(test)]
@@ -926,6 +978,7 @@ impl LiveBrowser {
     /// browser never acts on it again.
     fn close_page(&mut self) {
         self.observed_roles.clear();
+        self.close_background();
         if let Some(page) = self.page.take() {
             let _ = self.pages.close_page(&page.page_id);
             self.takeover.page_closed(&page.page_id);
@@ -1097,6 +1150,8 @@ impl LiveBrowser {
     /// and approval of the old lifetime is stale for good.
     fn end_lifetime(&mut self) {
         self.observed_roles.clear();
+        // SG-000135 OB-03: the other tabs die with the lifetime.
+        self.close_background();
         if self.lifetime.take().is_some() {
             self.lifetime_origin = None;
             let closed = self.request(&WorkerHostRequest::Close {});
@@ -1181,6 +1236,14 @@ impl LiveBrowser {
             .origin;
         let switched =
             self.lifetime.is_none() || self.lifetime_origin.as_deref() != Some(origin.as_str());
+        if switched && !self.background.is_empty() {
+            // SG-000135 OB-03: another site needs a new lifetime, which
+            // would end the other tabs; nothing is ended silently.
+            return Err(ProviderError::new(
+                FailureCode::CapabilityDenied,
+                "other tabs of this session are open on its current site; close them before opening another site",
+            ));
+        }
         if switched {
             // The old lifetime ends before the prompt, so the approval binds
             // the new lifetime and its host pin. The page's generation moves
@@ -1817,6 +1880,474 @@ impl LiveBrowser {
         }
     }
 
+    /// SG-000135 OB-03: drop every background tab (its page is stale for
+    /// good and the takeover gate releases it).
+    fn close_background(&mut self) {
+        for tab in std::mem::take(&mut self.background) {
+            let _ = self.pages.close_page(&tab.page.page_id);
+            self.takeover.page_closed(&tab.page.page_id);
+        }
+        self.active_tab = None;
+    }
+
+    /// SG-000135 OB-03: a bounded PNG of the live page (the viewport, or
+    /// with `full_page` the page from its top within the bounds), every
+    /// secret field masked by the worker; read-only and without approval,
+    /// after the takeover gate admits a read. The pieces are checked here
+    /// again (order, size, byte count, PNG size, digest).
+    pub fn screenshot(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+        full_page: bool,
+    ) -> Result<LiveScreenshot, ProviderError> {
+        use orcel_browser_host::page_capture::{PieceHeader, ScreenshotAssembly};
+        self.live_page(workspace, page_id, expected_generation)?;
+        self.takeover.before_read(page_id)?;
+        self.require_lifetime()?;
+        let malformed = |_| {
+            ProviderError::new(
+                FailureCode::InternalError,
+                "the browser host's screenshot is malformed",
+            )
+        };
+        let piece_of = |reply: WorkerHostReply, expected: u32| match reply {
+            WorkerHostReply::Screenshot {
+                piece,
+                total,
+                width,
+                height,
+                bytes,
+                sha256,
+                truncated,
+                data,
+            } if piece == expected => Ok((
+                PieceHeader {
+                    total,
+                    width,
+                    height,
+                    bytes,
+                    truncated,
+                },
+                sha256,
+                data,
+            )),
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        };
+        let first = self.request(&WorkerHostRequest::Screenshot { full_page })?;
+        let (header, digest, data) = piece_of(first, 0)?;
+        let mut assembly = ScreenshotAssembly::start(header, 0, &data).map_err(malformed)?;
+        while let Some(piece) = assembly.next() {
+            let reply = self.request(&WorkerHostRequest::ScreenshotMore { piece })?;
+            let (next, again, data) = piece_of(reply, piece)?;
+            if again != digest {
+                return Err(malformed("digest"));
+            }
+            assembly.push(next, piece, &data).map_err(malformed)?;
+        }
+        let shot = assembly.finish().map_err(malformed)?;
+        let sha256: String = Sha256::digest(&shot.png)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if sha256 != digest {
+            return Err(malformed("digest"));
+        }
+        Ok(LiveScreenshot {
+            png: shot.png,
+            width: shot.width,
+            height: shot.height,
+            truncated: shot.truncated,
+            sha256,
+        })
+    }
+
+    /// SG-000135 OB-03: send one tab frame and check the host's report.
+    fn tab_frame(
+        &mut self,
+        request: &WorkerHostRequest,
+    ) -> Result<orcel_browser_host::page_capture::TabsState, ProviderError> {
+        match self.request(request)? {
+            WorkerHostReply::Tabs { active, tabs } => {
+                orcel_browser_host::page_capture::TabsState::checked(active, tabs).map_err(|_| {
+                    ProviderError::new(
+                        FailureCode::InternalError,
+                        "the browser host's tab report is malformed",
+                    )
+                })
+            }
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// SG-000135 OB-03: bring orceld's tabs in line with the worker's:
+    /// a tab that is gone is closed for good; a tab the page opened that the
+    /// host admitted (a popup, on the lifetime's site) gets its own page;
+    /// and the active page is the worker's active tab.
+    fn reconcile_tabs(
+        &mut self,
+        workspace: &Workspace,
+        state: &orcel_browser_host::page_capture::TabsState,
+    ) -> Result<(), ProviderError> {
+        let present = |id: u32| state.tabs.iter().any(|tab| tab.tab == id);
+        if self.active_tab.is_none() && self.page.is_some() && state.active != 0 {
+            self.active_tab = Some(state.active);
+        }
+        let gone: Vec<BackgroundTab> = self
+            .background
+            .iter()
+            .filter(|tab| !present(tab.worker_tab))
+            .cloned()
+            .collect();
+        self.background.retain(|tab| present(tab.worker_tab));
+        for tab in gone {
+            let _ = self.pages.close_page(&tab.page.page_id);
+            self.takeover.page_closed(&tab.page.page_id);
+        }
+        if let Some(active) = self.active_tab {
+            if !present(active) {
+                // The active tab's page went away (it closed itself).
+                self.observed_roles.clear();
+                if let Some(page) = self.page.take() {
+                    let _ = self.pages.close_page(&page.page_id);
+                    self.takeover.page_closed(&page.page_id);
+                }
+                self.page_url = None;
+                self.active_tab = None;
+            }
+        }
+        let known: Vec<u32> = self
+            .background
+            .iter()
+            .map(|tab| tab.worker_tab)
+            .chain(self.active_tab)
+            .collect();
+        for tab in &state.tabs {
+            if known.contains(&tab.tab) {
+                continue;
+            }
+            // A tab orceld never opened: adopted only on the lifetime's
+            // site (the host already mediated it under SG-000075).
+            let origin = orcel_provider_browser::parse_destination_url(&tab.url)
+                .ok()
+                .map(|target| target.origin)
+                .filter(|origin| self.lifetime_origin.as_deref() == Some(origin.as_str()));
+            let Some(origin) = origin else {
+                continue;
+            };
+            let opened = self
+                .pages
+                .open_page(
+                    &workspace.id,
+                    &format!("live-host:{}-{}", self.host_pid, self.host_started),
+                    POLICY_REVISION,
+                )
+                .map_err(from_page)?;
+            let page = self
+                .pages
+                .apply_navigation(
+                    &opened.page_id,
+                    &opened.current_origin,
+                    opened.generation,
+                    &origin,
+                )
+                .map(|(next, _, _)| next)
+                .map_err(from_page)?;
+            self.takeover.page_opened(&page.page_id);
+            self.background.push(BackgroundTab {
+                page,
+                worker_tab: tab.tab,
+                url: Some(tab.url.clone()),
+            });
+        }
+        if state.active != 0 && self.active_tab != Some(state.active) {
+            if let Some(index) = self
+                .background
+                .iter()
+                .position(|tab| tab.worker_tab == state.active)
+            {
+                let target = self.background.remove(index);
+                self.make_active(target);
+            }
+        }
+        Ok(())
+    }
+
+    /// SG-000135 OB-03: `target` becomes the active tab; the active one, if
+    /// any, goes to the background. Nothing observed holds afterwards.
+    fn make_active(&mut self, target: BackgroundTab) {
+        self.observed_roles.clear();
+        if let (Some(page), Some(worker_tab)) = (self.page.take(), self.active_tab) {
+            self.background.push(BackgroundTab {
+                page,
+                worker_tab,
+                url: self.page_url.take(),
+            });
+        }
+        self.page = Some(target.page);
+        self.page_url = target.url;
+        self.active_tab = Some(target.worker_tab);
+    }
+
+    /// SG-000135 OB-03: every tab, read-only (the worker's tab list, which
+    /// also adopts admitted popups and drops tabs that closed themselves).
+    pub fn tabs(&mut self, workspace: &Workspace) -> Result<Vec<TabView>, ProviderError> {
+        if self.lifetime.is_some() {
+            let state = self.tab_frame(&WorkerHostRequest::Tabs {})?;
+            self.reconcile_tabs(workspace, &state)?;
+        }
+        Ok(self.tab_views())
+    }
+
+    pub fn tab_views(&self) -> Vec<TabView> {
+        let mut views: Vec<(u32, TabView)> = Vec::new();
+        if let Some(page) = &self.page {
+            views.push((
+                self.active_tab.unwrap_or(0),
+                TabView {
+                    page_id: page.page_id.clone(),
+                    generation: page.generation,
+                    url: self.page_url.clone(),
+                    active: true,
+                },
+            ));
+        }
+        for tab in &self.background {
+            views.push((
+                tab.worker_tab,
+                TabView {
+                    page_id: tab.page.page_id.clone(),
+                    generation: tab.page.generation,
+                    url: tab.url.clone(),
+                    active: false,
+                },
+            ));
+        }
+        views.sort_by_key(|(id, _)| *id);
+        views.into_iter().map(|(_, view)| view).collect()
+    }
+
+    /// SG-000135 OB-03: open a new tab, active and blank, on the open
+    /// lifetime (at most `MAX_TABS`), then, with `url`, navigate it there
+    /// through the ordinary approved navigation (a new tab to a URL is a
+    /// navigation: same SOFT approval, same host checks). `url` must be on
+    /// the lifetime's site. If the navigation is refused or fails, the new
+    /// tab is closed and the previous one is active again.
+    #[cfg(feature = "live-browser-dev")]
+    pub fn tab_new(
+        &mut self,
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        url: Option<&str>,
+    ) -> Result<(PageRecord, Option<(String, u16)>), ProviderError> {
+        self.require_lifetime()?;
+        if let Some(url) = url {
+            let origin = orcel_provider_browser::parse_destination_url(url)
+                .map_err(from_page)?
+                .origin;
+            if self.lifetime_origin.as_deref() != Some(origin.as_str()) {
+                return Err(ProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "a new tab opens only on the session's current site; open another site with browser_open in a session with one tab",
+                ));
+            }
+        }
+        let state = self.tab_frame(&WorkerHostRequest::Tabs {})?;
+        self.reconcile_tabs(workspace, &state)?;
+        if usize::from(self.page.is_some()) + self.background.len() >= MAX_TABS {
+            return Err(ProviderError::new(
+                FailureCode::OutputLimit,
+                format!("the browser session already holds {MAX_TABS} tabs; close one first"),
+            ));
+        }
+        let previous = self.active_tab;
+        let state = self.tab_frame(&WorkerHostRequest::TabNew {})?;
+        let known = self
+            .background
+            .iter()
+            .any(|tab| tab.worker_tab == state.active)
+            || self.active_tab == Some(state.active);
+        if state.active == 0 || known {
+            return Err(ProviderError::new(
+                FailureCode::InternalError,
+                "the browser host did not report the new tab",
+            ));
+        }
+        let page = self
+            .pages
+            .open_page(
+                &workspace.id,
+                &format!("live-host:{}-{}", self.host_pid, self.host_started),
+                POLICY_REVISION,
+            )
+            .map_err(from_page)?;
+        self.takeover.page_opened(&page.page_id);
+        self.make_active(BackgroundTab {
+            page: page.clone(),
+            worker_tab: state.active,
+            url: None,
+        });
+        self.reconcile_tabs(workspace, &state)?;
+        let Some(url) = url else {
+            return Ok((page, None));
+        };
+        match self.navigate_live(workspace, approval, &page.page_id, page.generation, url) {
+            Ok(done) => {
+                let page = self.page.clone().ok_or_else(|| {
+                    ProviderError::new(FailureCode::TargetStale, "no live browser page")
+                })?;
+                Ok((page, Some(done)))
+            }
+            Err(error) => {
+                // The new tab never held a document of its own: it closes,
+                // and the tab before it is active again.
+                if self.lifetime.is_some() {
+                    let _ = self.close_tab_inner(workspace, &page.page_id, previous);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// SG-000135 OB-03: make the tab with `page_id` active (after the
+    /// takeover gate admits a read of it). Its generation is unchanged;
+    /// nothing observed on any tab holds afterwards, so take a snapshot.
+    pub fn tab_switch(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+    ) -> Result<PageRecord, ProviderError> {
+        self.require_lifetime()?;
+        let state = self.tab_frame(&WorkerHostRequest::Tabs {})?;
+        self.reconcile_tabs(workspace, &state)?;
+        if let Some(page) = self.page.clone().filter(|page| page.page_id == page_id) {
+            return Ok(page);
+        }
+        let index = self
+            .background
+            .iter()
+            .position(|tab| tab.page.page_id == page_id)
+            .ok_or_else(unknown_tab)?;
+        self.takeover.before_read(page_id)?;
+        let worker_tab = self.background[index].worker_tab;
+        let state = self.tab_frame(&WorkerHostRequest::TabSwitch { tab: worker_tab })?;
+        if state.active != worker_tab {
+            return Err(ProviderError::new(
+                FailureCode::InternalError,
+                "the browser host did not switch to the tab",
+            ));
+        }
+        let target = self.background.remove(index);
+        self.make_active(target);
+        self.reconcile_tabs(workspace, &state)?;
+        self.page.clone().ok_or_else(unknown_tab)
+    }
+
+    /// SG-000135 OB-03: close the tab with `page_id` (after the takeover
+    /// gate admits a write on it). Closing the active tab makes the most
+    /// recently opened other tab active; closing the last tab ends the
+    /// lifetime and leaves the session open with no page (browser_open
+    /// opens a new one).
+    pub fn tab_close(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+    ) -> Result<Vec<TabView>, ProviderError> {
+        let is_page = self
+            .page
+            .as_ref()
+            .is_some_and(|page| page.page_id == page_id);
+        if self.lifetime.is_none() {
+            // A page with no document yet: closing it needs no host.
+            if !is_page {
+                return Err(unknown_tab());
+            }
+            self.gate_write(page_id, "tab_close", "tab", ActionClass::Repeatable)?;
+            self.close_page();
+            self.takeover.after_write(self.gate_ticket.take(), "done");
+            return Ok(Vec::new());
+        }
+        let state = self.tab_frame(&WorkerHostRequest::Tabs {})?;
+        self.reconcile_tabs(workspace, &state)?;
+        let known = self
+            .page
+            .as_ref()
+            .is_some_and(|page| page.page_id == page_id)
+            || self
+                .background
+                .iter()
+                .any(|tab| tab.page.page_id == page_id);
+        if !known {
+            return Err(unknown_tab());
+        }
+        self.gate_write(page_id, "tab_close", "tab", ActionClass::Repeatable)?;
+        let closed = self.close_tab_inner(workspace, page_id, None);
+        let outcome = if closed.is_ok() { "done" } else { "failed" };
+        self.takeover.after_write(self.gate_ticket.take(), outcome);
+        closed?;
+        Ok(self.tab_views())
+    }
+
+    /// Close one known tab; `prefer` names the worker tab to make active
+    /// when the active one closes (else the most recently opened other).
+    fn close_tab_inner(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        prefer: Option<u32>,
+    ) -> Result<(), ProviderError> {
+        let active = self
+            .page
+            .as_ref()
+            .is_some_and(|page| page.page_id == page_id);
+        if active {
+            if self.background.is_empty() {
+                // The last tab: the lifetime ends with it; the session stays.
+                self.end_lifetime();
+                self.close_page();
+                return Ok(());
+            }
+            let next = prefer
+                .filter(|id| self.background.iter().any(|tab| tab.worker_tab == *id))
+                .or_else(|| self.background.iter().map(|tab| tab.worker_tab).max())
+                .ok_or_else(unknown_tab)?;
+            let state = self.tab_frame(&WorkerHostRequest::TabSwitch { tab: next })?;
+            if let Some(index) = self
+                .background
+                .iter()
+                .position(|tab| tab.worker_tab == next)
+            {
+                let target = self.background.remove(index);
+                self.make_active(target);
+            }
+            self.reconcile_tabs(workspace, &state)?;
+        }
+        let index = self
+            .background
+            .iter()
+            .position(|tab| tab.page.page_id == page_id)
+            .ok_or_else(unknown_tab)?;
+        let worker_tab = self.background[index].worker_tab;
+        let state = self.tab_frame(&WorkerHostRequest::TabClose { tab: worker_tab })?;
+        if let Some(index) = self
+            .background
+            .iter()
+            .position(|tab| tab.worker_tab == worker_tab)
+        {
+            let tab = self.background.remove(index);
+            let _ = self.pages.close_page(&tab.page.page_id);
+            self.takeover.page_closed(&tab.page.page_id);
+        }
+        self.reconcile_tabs(workspace, &state)
+    }
+
     /// SG-000135 OB-01: the broker session this browser serves; the
     /// takeover gate claims its pages for that session.
     pub fn set_task(&mut self, task: &str) {
@@ -2187,9 +2718,99 @@ mod tests {
             takeover: TakeoverGate::from_switch(),
             gate_ticket: None,
             page_url: None,
+            background: Vec::new(),
+            active_tab: None,
             reply_timeout: None,
             after_consume: None,
         }
+    }
+
+    /// SG-000135 OB-03: orceld's tabs follow the worker's report: an
+    /// admitted popup on the lifetime's site gets its own page (own id and
+    /// generation), one on another site is never adopted, a tab that closed
+    /// itself is closed for good, and the active page is the worker's
+    /// active tab.
+    #[test]
+    fn ob03_tabs_follow_the_workers_report() {
+        use orcel_browser_host::page_capture::{TabsState, WorkerTab};
+        let dir = scratch("ob03-tabs");
+        let workspace = Workspace {
+            id: "default".into(),
+            root: dir.clone(),
+        };
+        let mut browser = hostless(false, None, &dir);
+        let opened = browser
+            .pages
+            .open_page("default", "live-host:0-0", POLICY_REVISION)
+            .unwrap();
+        let origin = orcel_provider_browser::parse_destination_url("https://fixture.test/a")
+            .unwrap()
+            .origin;
+        let (page, _, _) = browser
+            .pages
+            .apply_navigation(&opened.page_id, "", opened.generation, &origin)
+            .unwrap();
+        browser.page = Some(page.clone());
+        browser.page_workspace = Some("default".into());
+        browser.page_url = Some("https://fixture.test/a?token=x".into());
+        browser.lifetime = Some("l1".into());
+        browser.lifetime_origin = Some(origin.clone());
+        let tab = |tab: u32, url: &str| WorkerTab {
+            tab,
+            url: url.into(),
+        };
+        let state = TabsState::checked(
+            1,
+            vec![
+                tab(1, "https://fixture.test/a?token=x"),
+                tab(2, "https://fixture.test/popup"),
+                tab(3, "https://other.test/x"),
+                tab(4, "about:blank"),
+            ],
+        )
+        .unwrap();
+        browser.reconcile_tabs(&workspace, &state).unwrap();
+        let views = browser.tab_views();
+        assert_eq!(views.len(), 2, "{views:?}");
+        assert!(views[0].active && views[0].page_id == page.page_id);
+        assert!(!views[1].active && views[1].page_id != page.page_id);
+        assert_eq!(views[1].url.as_deref(), Some("https://fixture.test/popup"));
+        let popup = views[1].page_id.clone();
+        // Listing again adopts nothing twice.
+        browser.reconcile_tabs(&workspace, &state).unwrap();
+        assert_eq!(browser.tab_views().len(), 2);
+        // Tab 1 closed itself: its page is stale for good, tab 2 is active.
+        let state = TabsState::checked(2, vec![tab(2, "https://fixture.test/popup")]).unwrap();
+        browser.reconcile_tabs(&workspace, &state).unwrap();
+        let views = browser.tab_views();
+        assert_eq!(views.len(), 1);
+        assert!(views[0].active && views[0].page_id == popup);
+        assert!(browser
+            .live_page(&workspace, &page.page_id, page.generation)
+            .is_err());
+        assert!(browser.background.is_empty());
+        // Every tab gone: no page is left, and nothing is active.
+        browser
+            .reconcile_tabs(&workspace, &TabsState::checked(0, vec![]).unwrap())
+            .unwrap();
+        assert!(browser.page().is_none() && browser.tab_views().is_empty());
+        // A page with no document yet closes without a host; an unknown tab
+        // is refused.
+        browser.lifetime = None;
+        let blank = browser.open_page(&workspace).unwrap();
+        assert_eq!(
+            browser
+                .tab_close(&workspace, "pg-0123456789abcdef0123456789abcdef")
+                .unwrap_err()
+                .code,
+            FailureCode::TargetStale
+        );
+        assert!(browser
+            .tab_close(&workspace, &blank.page_id)
+            .unwrap()
+            .is_empty());
+        assert!(browser.page().is_none());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn scratch(label: &str) -> PathBuf {

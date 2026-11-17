@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { KernelClient } from "./kernel.js";
-import { projectKernelResult } from "./result.js";
+import { projectKernelResult, projectScreenshotResult } from "./result.js";
 import { BROWSER_FULL_CONTRACT } from "./tool_contract.js";
 import {
   browserVerifyChecksSchema,
@@ -27,6 +27,16 @@ import {
  * - `browser_snapshot`, `browser_verify` and `browser_extract` are
  *   read-only and ask nothing; `browser_extract` returns the page's rendered
  *   text, untrusted, bounded and marked.
+ * - `browser_screenshot` (SG-000135 OB-03) returns a bounded PNG of the
+ *   session's own active tab as MCP image content, every secret field
+ *   painted over before capture; read-only and asks nothing. The receipt
+ *   keeps the image's digest only.
+ * - `browser_tabs` lists, opens, switches and closes the session's tabs
+ *   (at most 8, all on the session's current site). Listing, switching and
+ *   closing change only Orcel's own isolated session and ask nothing; a new
+ *   tab to a URL is a navigation, with the same fresh SOFT approval as
+ *   `browser_open`. A popup the page opens becomes a tab only when Orcel's
+ *   navigation rules admitted its page.
  * - `browser_close` ends the session and removes its profile;
  *   `browser_task_status` returns its provisional receipts.
  *
@@ -107,6 +117,38 @@ export function browserSessionVerifySchema(defaultWorkspace: string) {
   });
 }
 
+/** A page id as orceld's page store mints it. */
+export const browserPageIdSchema = z.string().regex(/^pg-[0-9a-f]{32}$/, { message: "page_id is a tab's page id from browser_tabs" });
+
+export function browserScreenshotSchema(defaultWorkspace: string) {
+  return z.strictObject({
+    workspace_id: workspace(defaultWorkspace),
+    session_id: browserSessionIdSchema,
+    expected_generation: generation,
+    full_page: z.boolean().optional()
+  });
+}
+
+export function browserTabsSchema(defaultWorkspace: string) {
+  return z
+    .strictObject({
+      workspace_id: workspace(defaultWorkspace),
+      session_id: browserSessionIdSchema,
+      action: z.enum(["list", "new", "switch", "close"]),
+      url: liveUrlSchema.optional(),
+      page_id: browserPageIdSchema.optional()
+    })
+    .superRefine((value, context) => {
+      if (value.url !== undefined && value.action !== "new") {
+        context.addIssue({ code: "custom", message: "url is only for action new", path: ["url"] });
+      }
+      const needsPage = value.action === "switch" || value.action === "close";
+      if (needsPage !== (value.page_id !== undefined)) {
+        context.addIssue({ code: "custom", message: "page_id is required for switch and close, and only there", path: ["page_id"] });
+      }
+    });
+}
+
 export function browserExtractSchema(defaultWorkspace: string) {
   return z.strictObject({
     workspace_id: workspace(defaultWorkspace),
@@ -120,15 +162,15 @@ const DEV_ONLY = "Windows development builds only; other builds answer typed una
 export function registerSessionBrokerTools(server: McpServer, kernel: KernelClient, defaultWorkspace: string): void {
   // Each tool forwards exactly its broker shape: the capability and
   // operation come from BROWSER_FULL_CONTRACT, never from here.
-  const forward = async (tool: string, workspaceId: string, args: Record<string, unknown>, timeoutMs: number) => {
+  const call = async (tool: string, workspaceId: string, args: Record<string, unknown>, timeoutMs: number) => {
     const entry = BROWSER_FULL_CONTRACT[tool];
     if (entry === undefined) {
       throw new Error(`tool ${tool} has no browser_full contract entry`);
     }
-    return projectKernelResult(
-      await kernel.call({ workspaceId, capability: entry.capability, operation: entry.operation, arguments: args, timeoutMs })
-    );
+    return kernel.call({ workspaceId, capability: entry.capability, operation: entry.operation, arguments: args, timeoutMs });
   };
+  const forward = async (tool: string, workspaceId: string, args: Record<string, unknown>, timeoutMs: number) =>
+    projectKernelResult(await call(tool, workspaceId, args, timeoutMs));
 
   server.registerTool(
     "browser_session_create",
@@ -206,6 +248,38 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
     },
     async ({ workspace_id, session_id, expected_generation }) =>
       forward("browser_extract", workspace_id, { session_id, expected_generation }, OBSERVE_TIMEOUT_MS)
+  );
+
+  server.registerTool(
+    "browser_screenshot",
+    {
+      description: `Take a PNG screenshot of the session's active tab: the viewport, or with full_page the page from its top (at most 2048 x 4096 CSS pixels; truncated: true when cut). Returned as image content, at most 2 MiB. Password, one-time-code, card and other secret-looking fields are painted over before capture. Only this session's own page: never another session, another app or the desktop. Read-only, no approval; refused while a navigation is in flight. The receipt keeps the image's SHA-256 only. ${DEV_ONLY}`,
+      inputSchema: browserScreenshotSchema(defaultWorkspace)
+    },
+    async ({ workspace_id, session_id, expected_generation, full_page }) =>
+      projectScreenshotResult(
+        await call(
+          "browser_screenshot",
+          workspace_id,
+          full_page === undefined ? { session_id, expected_generation } : { session_id, expected_generation, full_page },
+          OBSERVE_TIMEOUT_MS
+        )
+      )
+  );
+
+  server.registerTool(
+    "browser_tabs",
+    {
+      description: `Manage the session's tabs (at most 8, all on its current site). action list: every tab's page_id, generation, URL (no query or fragment) and which is active. new: a blank active tab, or with url a tab opened there after fresh local Orcel approval, as browser_open. switch / close with page_id: make that tab active (take a snapshot afterwards), or close it; closing the last tab keeps the session with no page. Every other tool acts on the active tab. A popup the page opens becomes a tab only when Orcel's navigation rules admitted it. ${DEV_ONLY}`,
+      inputSchema: browserTabsSchema(defaultWorkspace)
+    },
+    async ({ workspace_id, session_id, action, url, page_id }) =>
+      forward(
+        "browser_tabs",
+        workspace_id,
+        { session_id, action, ...(url === undefined ? {} : { url }), ...(page_id === undefined ? {} : { page_id }) },
+        action === "new" && url !== undefined ? APPROVAL_TIMEOUT_MS : OBSERVE_TIMEOUT_MS
+      )
   );
 
   server.registerTool(
