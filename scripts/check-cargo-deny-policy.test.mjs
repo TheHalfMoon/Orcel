@@ -41,7 +41,7 @@ function deny(depName, depLicense) {
   try {
     const result = spawnSync(
       "cargo",
-      ["deny", "--manifest-path", join(root, "Cargo.toml"), "--config", DENY, "--workspace", "check", "bans", "sources"],
+      ["deny", "--color", "never", "--manifest-path", join(root, "Cargo.toml"), "--config", DENY, "--workspace", "check", "bans", "sources"],
       { encoding: "utf8", env: { ...process.env, CARGO_TARGET_DIR: join(root, "target") } },
     );
     return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
