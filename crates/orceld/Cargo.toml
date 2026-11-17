@@ -29,8 +29,9 @@ browser-takeover-gate = []
 # SG-000135 OB-01 end-to-end harness (scripts/browser-full-e2e.mjs), TEST
 # BUILDS ONLY: together with both live browser features above, orceld's SOFT
 # consent is decided by a scripted decider (the approval crate's existing
-# test-support soft decider) that approves only the isolated browser's
-# prompts on the loopback fixture and records each prompt's dialog text.
+# test-support soft decider) that approves only the mission's four browser
+# actions whose whole target is the loopback fixture origin, and records
+# each prompt's dialog text.
 # orceld refuses to start without ORCEL_E2E_CONSENT_LOG. Never default, never
 # in a development or release build; the release-blocker sweep confines it.
 browser-full-scripted-consent = ["orcel-approval/test-support"]

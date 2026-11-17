@@ -22,8 +22,9 @@
 //                       `browser-full-scripted-consent` feature: the real
 //                       approval broker and ledger, with the SOFT consent
 //                       decided by the approval crate's existing test-support
-//                       soft decider (approve only isolated browser prompts on
-//                       https://fixture.test; deny everything else) and every
+//                       soft decider (approve only the mission's four action
+//                       titles whose whole target is https://fixture.test;
+//                       deny everything else) and every
 //                       prompt's dialog text recorded. No dialog is shown.
 //                       This is scripted consent, not human acceptance.
 //   --consent founder   FOUNDER RUN. Builds orceld WITHOUT that feature: every
@@ -99,8 +100,12 @@ function run(command, args, env = process.env) {
   require_(!result.error && result.status === 0, `${command} ${args.join(" ")} failed`);
 }
 
-function targetDir() {
-  return process.env.CARGO_TARGET_DIR ? resolve(repo, process.env.CARGO_TARGET_DIR) : join(repo, "target");
+/// Each consent mode builds into its own target folder (under
+/// CARGO_TARGET_DIR, or the repository's target), so a founder run, even
+/// with --skip-build, can never pick up the scripted-consent orceld.
+function targetDir(consent) {
+  const base = process.env.CARGO_TARGET_DIR ? resolve(repo, process.env.CARGO_TARGET_DIR) : join(repo, "target");
+  return join(base, `ob01-${consent}`);
 }
 
 /// Build the worker, orcel-mcp, the browser host (both live features, the
@@ -120,11 +125,11 @@ function build(consent, pin) {
   // The pin covers dist/, so it is computed after the worker build.
   const fresh = runtimePin(process.execPath, workerApp);
   Object.assign(pin, fresh);
-  const env = { ...process.env, ...pin };
+  const env = { ...process.env, ...pin, CARGO_TARGET_DIR: targetDir(consent) };
   const live = "live-browser-test,live-browser-dev";
-  run("cargo", ["build", "-p", "orcel-browser-host", "--features", live, "--bin", "orcel-browser-host"], env);
+  run("cargo", ["build", "--locked", "-p", "orcel-browser-host", "--features", live, "--bin", "orcel-browser-host"], env);
   const features = consent === "scripted" ? `${live},browser-full-scripted-consent` : live;
-  run("cargo", ["build", "-p", "orceld", "--features", features, "--bin", "orceld"], env);
+  run("cargo", ["build", "--locked", "-p", "orceld", "--features", features, "--bin", "orceld"], env);
 }
 
 /// The test-only loopback fixture; resolves with its certificate's SPKI hash.
@@ -477,8 +482,9 @@ async function main() {
   const evidenceDir = options.evidence ? resolve(options.evidence) : join(homedir(), `orcel-ob01-e2e-evidence-${options.consent}-${stamp}`);
   const pin = {};
   if (!options.skipBuild) build(options.consent, pin);
-  const orceld = join(targetDir(), "debug", "orceld.exe");
-  require_(existsSync(orceld) && existsSync(join(targetDir(), "debug", "orcel-browser-host.exe")), `orceld and the browser host are built in ${targetDir()}`);
+  const built = join(targetDir(options.consent), "debug");
+  const orceld = join(built, "orceld.exe");
+  require_(existsSync(orceld) && existsSync(join(built, "orcel-browser-host.exe")), `orceld and the browser host are built in ${built}`);
   const paths = {
     root,
     orceld,

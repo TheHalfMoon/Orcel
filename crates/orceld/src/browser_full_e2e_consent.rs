@@ -9,9 +9,10 @@
 //! mechanism orceld's native live-browser tests use. STRONG approvals have no
 //! presence verifier and fail closed.
 //!
-//! The decider approves only the isolated browser's prompts whose target is
-//! the loopback fixture origin (`fixture.test`) and denies every other
-//! prompt. Every decision is appended to `ORCEL_E2E_CONSENT_LOG` with the
+//! The decider approves only the mission's four exact action titles (open,
+//! fill, select, click) whose whole target is the loopback fixture origin
+//! (`https://fixture.test`, optional `:443` and path), and denies every
+//! other prompt. Every decision is appended to `ORCEL_E2E_CONSENT_LOG` with the
 //! exact dialog text a person would have been shown, so the harness can
 //! check what was asked. orceld refuses to start without that log, and a
 //! harness that finds no header line in it knows the build it drove was not
@@ -30,22 +31,37 @@ use std::sync::Arc;
 pub(crate) const CONSENT_LOG_ENV: &str = "ORCEL_E2E_CONSENT_LOG";
 
 /// The only origin whose browser prompts the scripted consent approves.
-const FIXTURE_HOST: &str = "fixture.test";
+const FIXTURE_ORIGIN: &str = "https://fixture.test";
 
-/// Whether the scripted consent approves `prompt`: an isolated browser
-/// action whose target is on the loopback fixture origin. Nothing else.
+/// The exact action titles of the four approved steps of the mission
+/// (`live_browser.rs`): navigate, type a value, choose an option, open a
+/// link. No other action, however similar, is approved.
+const MISSION_ACTIONS: [&str; 4] = [
+    "navigate isolated browser page",
+    "type the value on the line after Target into a field of an isolated browser page",
+    "choose the option on the line after Target in a list of an isolated browser page",
+    "open a link on an isolated browser page",
+];
+
+/// Whether the scripted consent approves `prompt`: one of the mission's
+/// four actions, whose whole target is on the loopback fixture origin.
+/// Nothing else.
 pub(crate) fn approves(prompt: &ApprovalPrompt) -> bool {
-    prompt.action.contains("isolated browser page") && names_fixture(&prompt.target)
+    MISSION_ACTIONS.contains(&prompt.action.as_str()) && names_fixture(&prompt.target)
 }
 
-/// Whether `target` names the fixture host as a URL host (not merely as text
-/// somewhere in it).
+/// Whether the whole of `target` is the fixture origin: exactly
+/// `https://fixture.test`, optionally `:443`, optionally a path starting
+/// with `/`, and no whitespace or control character anywhere.
 fn names_fixture(target: &str) -> bool {
-    target.split_whitespace().any(|word| {
-        word.strip_prefix("https://")
-            .and_then(|rest| rest.split(['/', ':']).next())
-            .is_some_and(|host| host.eq_ignore_ascii_case(FIXTURE_HOST))
-    })
+    if target.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let Some(rest) = target.strip_prefix(FIXTURE_ORIGIN) else {
+        return false;
+    };
+    let rest = rest.strip_prefix(":443").unwrap_or(rest);
+    rest.is_empty() || rest.starts_with('/')
 }
 
 fn append(log: &Path, line: &serde_json::Value) -> std::io::Result<()> {
@@ -75,7 +91,7 @@ pub(crate) fn broker() -> Result<LocalApprovalBroker, String> {
             "event": "scripted_consent_started",
             "at_ms": now_ms(),
             "pid": std::process::id(),
-            "rule": "approve only isolated browser prompts targeting https://fixture.test; deny every other prompt",
+            "rule": "approve only the four mission actions (navigate, type, choose, open a link) whose whole target is https://fixture.test; deny every other prompt",
         }),
     )
     .map_err(|error| format!("write {CONSENT_LOG_ENV}: {error}"))?;
@@ -115,27 +131,68 @@ mod tests {
     }
 
     #[test]
-    fn only_isolated_browser_prompts_on_the_fixture_are_approved() {
-        assert!(approves(&prompt(
-            "navigate isolated browser page",
-            "https://fixture.test/ob01-form"
-        )));
-        assert!(approves(&prompt(
-            "open a link on an isolated browser page",
-            "https://fixture.test:443/ob01-done"
-        )));
-        for (action, target) in [
-            ("navigate isolated browser page", "https://example.com/"),
-            (
-                "navigate isolated browser page",
-                "https://fixture.test.example.com/",
-            ),
-            ("navigate isolated browser page", "http://fixture.test/"),
-            ("navigate isolated browser page", "see fixture.test"),
-            ("write a file", "https://fixture.test/"),
-            ("emergency revoke", "https://fixture.test/"),
+    fn only_the_whole_fixture_origin_is_a_fixture_target() {
+        for target in [
+            "https://fixture.test",
+            "https://fixture.test/",
+            "https://fixture.test/ob01-form",
+            "https://fixture.test:443",
+            "https://fixture.test:443/ob01-done",
         ] {
-            assert!(!approves(&prompt(action, target)), "{action} {target}");
+            assert!(names_fixture(target), "{target}");
+        }
+        for target in [
+            "",
+            "https://example.com/",
+            "https://fixture.test.example.com/",
+            "https://fixture.testing/",
+            "https://fixture.test:4443/",
+            "https://fixture.test:443x",
+            "https://fixture.test@evil.example/",
+            "https://FIXTURE.test/",
+            "http://fixture.test/",
+            "see https://fixture.test/",
+            "https://evil.example/ https://fixture.test/",
+            "https://fixture.test/ extra",
+            "https://fixture.test/\tx",
+            "https://fixture.test/\nx",
+            " https://fixture.test/",
+        ] {
+            assert!(!names_fixture(target), "{target:?}");
+        }
+    }
+
+    #[test]
+    fn only_the_four_mission_actions_on_the_fixture_are_approved() {
+        for action in MISSION_ACTIONS {
+            assert!(
+                approves(&prompt(action, "https://fixture.test:443")),
+                "{action}"
+            );
+            assert!(
+                !approves(&prompt(action, "https://example.com/")),
+                "{action}"
+            );
+        }
+        for action in [
+            "check a box or option on an isolated browser page",
+            "uncheck a box or option on an isolated browser page",
+            "press Enter in a field of an isolated browser page",
+            "download from isolated browser page",
+            "navigate isolated browser page ",
+            "Navigate isolated browser page",
+            "write a file",
+            "emergency revoke",
+        ] {
+            assert!(
+                !approves(&prompt(action, "https://fixture.test/")),
+                "{action}"
+            );
+        }
+        // The titles are the live browser's own, word for word.
+        let live = include_str!("live_browser.rs");
+        for action in MISSION_ACTIONS {
+            assert!(live.contains(&format!("\"{action}\"")), "{action}");
         }
     }
 }

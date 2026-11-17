@@ -51,9 +51,11 @@ The script then checks, itself:
 `browser-full-scripted-consent` is new and test-only:
 
 - It enables nothing but `orcel-approval/test-support`. orceld refuses to compile it without both live browser features, and refuses to start without an absolute `ORCEL_E2E_CONSENT_LOG` (checked: `orceld fatal: this is a test-only OB-01 harness build with scripted consent; it refuses to start without an absolute ORCEL_E2E_CONSENT_LOG`).
-- The decider approves only prompts whose action is an isolated browser action and whose target host is `fixture.test`. It denies every other prompt. STRONG approvals have no presence verifier and fail closed.
+- The decider approves only the mission's four exact action titles (navigate, type a value, choose an option, open a link) whose whole target is `https://fixture.test`, with an optional `:443` and an optional path, and no whitespace. It denies every other prompt. STRONG approvals have no presence verifier and fail closed.
 - Every decision goes to the consent log with the exact dialog text a person would have seen.
 - The release-blocker sweep (`the_browser_full_scripted_consent_feature_never_reaches_a_release_build`) keeps its name out of every place except orceld's manifest, entry point and consent module, this script and docs, and requires its one definition.
+- In a scripted build, `browser_open` of any other URL takes the public path, which resolves the host name (a DNS lookup) before the approval prompt; only then does the scripted consent deny it. The mission opens only the fixture, but a scripted build given another URL is not network-silent.
+- Each mode builds into its own target folder (`<CARGO_TARGET_DIR or target>\ob01-scripted` and `ob01-founder`), with `cargo build --locked`, so a founder run, even with `--skip-build`, can never pick up the scripted-consent orceld.
 - In scripted mode the script reads the consent log's start line right after `browser_session_create`, before any approval. If the line is missing, the binary is not the scripted build and the run stops there, so no real dialog can come up unanswered.
 
 Both modes also build with the test-only `live-browser-test` feature. With both live features, `browser_open` of `https://fixture.test/...` opens a fixture lifetime that trusts exactly the fixture certificate (SPKI in `ORCEL_E2E_FIXTURE_SPKI`; host pinned to 127.0.0.1). A development build alone admits only public HTTPS, so it cannot reach a loopback fixture. Neither build is a development or release build.
@@ -111,6 +113,7 @@ Edge 157 (qualified), Node 24.19.0, Windows 11 Home 10.0.26300, no managed Edge 
 - After: closed id refused `TARGET_STALE`; 0 Edge processes and 0 session folders left.
 - Scripted consent: 4 SOFT prompts, all approved by the scripted decider, dialog texts recorded (quoted above). **Not human acceptance.**
 - A second run on the final code passed the same way: open 8450 ms (Edge launch included), snapshot 189, fill 142, select 73, verify 62, click 152, verify 44, extract 35, status 7, close 1297 ms; whole session 14548 ms; 8 receipts chained (head `5c1543e168f92f2b...`); nothing left.
+- A third run after the security judge's low fixes (exact action titles, whole-target match, per-mode target folders, `--locked`) passed the same way: open 13926 ms, close 1623 ms, whole session 20629 ms, 8 receipts chained (head `0c107e148e46f87f...`), nothing left.
 
 ## Not covered
 
