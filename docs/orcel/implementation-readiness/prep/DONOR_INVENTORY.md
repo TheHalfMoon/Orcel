@@ -3,7 +3,7 @@
 **Status: INVENTORY ONLY.** This document imports, copies or sublicenses no donor code. It records what
 each donor repository contains at an exact commit, what licence terms its files carry, and how each
 capability could reach Orcel. It makes no legal decision. The machine-readable companion is
-[`capability_inventory.json`](capability_inventory.json) (96 records at first; 140 after section 8). The master
+[`capability_inventory.json`](capability_inventory.json) (96 records at first; 140 after section 8; 182 after section 8.7). The master
 donor-to-feature transplant ledger for the 2026-11-17 master directive is section 8 and
 [`TRANSPLANT_LEDGER.json`](TRANSPLANT_LEDGER.json).
 
@@ -352,6 +352,8 @@ Every row is a record in the JSON.
   the name. If confirmed, it is a strong donor for Track 1, because Orcel's macOS and Linux computer
   host today wraps vendored Cua driver crates.
 - `vercel-labs/ai-sdk-computer-use` is a small Next.js demo with no licence.
+- **Resolved 2026-11-17:** the founder named both `vercel-labs/agent-desktop` and `browser-use/desktop` as separate donors
+  (section 8.7).
 
 ## 5. Recommended first implementation packets
 
@@ -459,7 +461,7 @@ donor code.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | A | Obscura | h4ckf0r0day/obscura | `0d9a2f764ffdb097269da048002c593865e83a9e` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | OWNER-ASSERTED | third_party/obscura + crates/orcel-browser-host (engine contract) | P2 |
 | A | browser-use | browser-use/browser-use | `4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134` | MIT | TESTED | OWNER-ASSERTED | apps/orcel-browser-worker | P1 |
-| A | Vercel browser-use/agent-desktop | vercel-labs/agent-desktop (NEEDS_FOUNDER_CONFIRMATION) | `8ffecc1d3d088727f8d84baf4dde0224aab2e8ad` | Apache-2.0 (candidate 2: MIT) | NOT_ACQUIRED | OWNER-ASSERTED | apps/orcel-native-host | P2 |
+| A | Vercel browser-use/agent-desktop | vercel-labs/agent-desktop (RESOLVED 2026-11-17; browser-use/desktop is a separate record, section 8.7) | `8ffecc1d3d088727f8d84baf4dde0224aab2e8ad` | Apache-2.0 | NOT_ACQUIRED | OWNER-ASSERTED AUTHORIZATION — 2026-11-17 | apps/orcel-native-host + apps/orcel-computer-host (Windows) | P0 |
 | A | Crawlee | apify/crawlee | `7bec9ad5631f8e529ae067494f6841dba3c12683` | Apache-2.0 | NOT_ACQUIRED | OWNER-ASSERTED | crates/orcel-jobs (new) | P2 |
 | A | Scrapling | D4Vinci/Scrapling | `bb223f2f5fc8f743772751a5ce283ef7851ca6be` | BSD-3-Clause | NOT_ACQUIRED | OWNER-ASSERTED | crates/orcel-browser-host | P2 |
 | A | Firecrawl | firecrawl/firecrawl | `98a5630a0b7ad3d58653dfe4ceb21d444dd8e2d2` | AGPL-3.0 + per-directory terms | TESTED | OWNER-ASSERTED | apps/orcel-firecrawl (new) | P1 |
@@ -512,13 +514,13 @@ Donors already tracked by Orcel (outside the 50):
 
 | Donor | Pin | Public licence (informational) | Status | Authorization | Orcel |
 | --- | --- | --- | --- | --- | --- |
-| vercel-labs/agent-browser | `b06e2533ba9b3823b8a96c859d455cb55f4d7893` | Apache-2.0; cli/src/native/a11y/axe.min.js MPL-2.0 | NOT_ACQUIRED | OWNER-ASSERTED | crates/orcel-browser-host/src/transfers.rs, crates/orcel-policy |
-| vercel-labs/remote-agent-browser | `8770ea28f3ab0e8822e104e12e0efb65339d235b` | No LICENSE file; package.json declares MIT; GitHub reports no licence | NOT_ACQUIRED | OWNER-ASSERTED | none |
+| vercel-labs/agent-browser | `b06e2533ba9b3823b8a96c859d455cb55f4d7893` | Apache-2.0; cli/src/native/a11y/axe.min.js MPL-2.0 | NOT_ACQUIRED | OWNER-ASSERTED AUTHORIZATION — 2026-11-17 | Promoted to a full record (section 8.7, V2) |
+| vercel-labs/remote-agent-browser | `8770ea28f3ab0e8822e104e12e0efb65339d235b` | No LICENSE file; package.json declares MIT; GitHub reports no licence | NOT_ACQUIRED | OWNER-ASSERTED AUTHORIZATION — 2026-11-17 | Promoted to a full record (section 8.7, V2) |
 | wangzan101/Mika | `e956f5529ad4cfd7881aafaa630318097949f56a` | Apache-2.0 + NOTICE; bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed | NOT_ACQUIRED | OWNER-ASSERTED | none |
 | phone-harness/phone-harness | `4bebff105af853215fb74c958c2c5e78bc275be2` | MIT | NOT_ACQUIRED | OWNER-ASSERTED | none |
 | netease-uuyc/uuremote-integration-guide | `181dee4540a8e4161a65e1053fbcf6ad223d24f8` | MIT (org not GitHub-verified) | NOT_ACQUIRED | OWNER-ASSERTED | none |
 | UU Remote (NetEase) | none | Proprietary; no official source repository found | NOT_ACQUIRED | OWNER-ASSERTED | none |
-| Vercel agent-use | none | Unknown; repository not identified | NOT_ACQUIRED | OWNER-ASSERTED | none |
+| Vercel agent-use | none | RESOLVED 2026-11-17: vercel-labs/agent-desktop + browser-use/desktop (section 8.7) | NOT_ACQUIRED | OWNER-ASSERTED AUTHORIZATION — 2026-11-17 | see agent_desktop, browser_use_desktop |
 | bytedance/deer-flow | `81e1ab8dcc86574cfac0ecdfe3636b775a08c567` | MIT | TESTED | OWNER-ASSERTED | apps/orcel-agent/orcel_agent (tests: apps/orcel-agent/tests) |
 | BuilderIO/agent-native | `9c277b79cb87eb27da538e572dd710986e2fa06d` | MIT | TESTED | OWNER-ASSERTED | apps/orcel-control-room/src/agentkit; crates/orcel-journal/src/resume.rs (unit tests in the file) |
 | unclecode/crawl4ai | `94b67888ca8b335ff2121423a50e06dd27661922` | Apache-2.0 with an attribution requirement | TESTED | OWNER-ASSERTED | apps/orcel-browser-worker/src/extract/relevance.ts (relevance.test.ts) |
@@ -528,7 +530,8 @@ Donors already tracked by Orcel (outside the 50):
 
 ### 8.2 Resolution notes
 
-- **Vercel browser-use/agent-desktop** (NEEDS_FOUNDER_CONFIRMATION): The name mixes two organisations. Candidates: vercel-labs/agent-desktop (Apache-2.0, Rust computer-use CLI; admitted as a candidate by FD-UP-3) and browser-use/desktop (MIT, TypeScript desktop app, pinned f073b7574f7927185ebbebd87556391d5cb0cfd1). Neither is substituted for the other; vercel-labs/agent-desktop is the recorded candidate until the founder confirms.
+- **Vercel browser-use/agent-desktop** (RESOLVED by the founder on 2026-11-17: both repositories, as separate donors; see section
+  8.7. The original note follows.) The name mixes two organisations. Candidates: vercel-labs/agent-desktop (Apache-2.0, Rust computer-use CLI; admitted as a candidate by FD-UP-3) and browser-use/desktop (MIT, TypeScript desktop app, pinned f073b7574f7927185ebbebd87556391d5cb0cfd1). Neither is substituted for the other; vercel-labs/agent-desktop is the recorded candidate until the founder confirms.
   - Candidate `vercel-labs/agent-desktop` at `8ffecc1d3d088727f8d84baf4dde0224aab2e8ad`: Apache-2.0, 3801 files.
   - Candidate `browser-use/desktop` at `f073b7574f7927185ebbebd87556391d5cb0cfd1`: MIT, 554 files.
 - **Firecrawl** (RESOLVED): Founder pin in PR #785. HEAD moved again (2026-11-16 inventory: 42f4d669954649ce33466a2a50e8215c7f1f4d1c).
@@ -540,7 +543,8 @@ Donors already tracked by Orcel (outside the 50):
 - **OpenSandbox (verify org)** (RESOLVED): alibaba/OpenSandbox redirects to opensandbox-group/OpenSandbox (GitHub transfer); REA_WAVE3_COPY_FIRST_PLAN.md names the same repository.
 - **CopilotKit/OpenBot** (RESOLVED): CopilotKit/OpenBot exists. Not to be confused with ob-f/OpenBot (formerly isl-org/OpenBot, a robotics project), which is not used.
 - **screenpipe** (RESOLVED): screenpipe/screenpipe (mediar-ai/screenpipe redirects here).
-- **Vercel agent-use** (tracked, NEEDS_FOUNDER_CONFIRMATION): still unidentified; `vercel-labs/agent-use` returns 404.
+- **Vercel agent-use** (tracked; RESOLVED 2026-11-17): the founder named `vercel-labs/agent-desktop` and `browser-use/desktop`;
+  `vercel-labs/agent-use` itself returns 404.
 
 ### 8.3 Access blockers
 
@@ -578,7 +582,7 @@ carry the right notices, and so that the record states what the upstream terms s
 - **vercel-labs/remote-agent-browser**: no licence, proprietary or source-available (No LICENSE file; package.json declares MIT; GitHub reports no licence).
 - **wangzan101/Mika**: mixed per directory (Apache-2.0 + NOTICE; bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed). Notes: PRoot, talloc, Alpine rootfs: GPL-2.0+, LGPL-3.0+, mixed.
 - **UU Remote (NetEase)**: no licence, proprietary or source-available (Proprietary; no official source repository found).
-- **Vercel agent-use**: no licence, proprietary or source-available (Unknown; repository not identified).
+- **Vercel agent-use**: resolved on 2026-11-17 to vercel-labs/agent-desktop (Apache-2.0) and browser-use/desktop (MIT); section 8.7.
 
 ### 8.5 Priority 0: highest-value immediately transplantable modules
 
@@ -615,3 +619,194 @@ configuration is fetched from third parties at run time and is not in the reposi
 - `fleetdm/fleet`: `99e64e6bbee9e7a9b5334fea2527303992f747f7` to `6070ad340095cd9dbfdef75fb6d18c9ba14c4b82`.
 - `vercel-labs/agent-browser`: `53384771fbafc261ba67608ac806dd5aa70b84f0` to `b06e2533ba9b3823b8a96c859d455cb55f4d7893`.
 - Sections 1 to 7 keep the 2026-11-16 pins; the ledger records the new HEADs. Every other pre-existing pin is unchanged.
+
+### 8.7 Vercel source expansion (2026-11-17)
+
+The founder resolved "Vercel agent-use" as **both** `vercel-labs/agent-desktop` and `browser-use/desktop` (separate donors;
+`browser-use/desktop` belongs to the browser-use organisation, not Vercel) and put every useful `vercel` and `vercel-labs` repository
+in scope. Authorization for every record below: **OWNER-ASSERTED AUTHORIZATION — 2026-11-17**, recorded in
+`docs/orcel/grants/2026-11-17-founder-attestation.md` (section "Vercel source expansion (2026-11-17)"). It is owner-asserted and
+not independently verified; the public licence stays as information, provenance and notices. Machine-readable data:
+`TRANSPLANT_LEDGER.json` records in groups I and J, and `vercel_expansion`; `capability_inventory.json` gains one record per new source
+(now 182 records: 15 TESTED, 156 NOT STARTED, 11 BLOCKED).
+
+- **Method.** No clones. SHAs from `git ls-remote <repo> HEAD` on 2026-11-17; metadata, languages, the recursive tree, licence files,
+  manifests and key source files from the GitHub API at that SHA. Functionality below comes from the source tree and files, not only
+  the README. Nothing is acquired: every record is NOT_ACQUIRED.
+- **Not found or redirected:** none. All 25 founder-named repositories exist under the named owner with no redirect.
+- **One runtime.** `apps/orcel-agent` stays the single agent runtime. Eve, Workflow and durable-harness supply patterns and tests that
+  are ported into it; `crates/orcel-journal` stays the privileged operation journal and takes no model-conversation durability (the
+  ruling of the unmerged 2026-09-30 Eve donor plan on branch `plan/eve-donor-integration`, kept).
+- **Personal Agent plan.** The Nod-derived Orcel Personal Agent plan named in the directive is not in this repository or its
+  remote branches (searched 2026-11-17). Targets were compared with apps/orcel-agent, which stays the single agent runtime.
+
+#### 8.7.1 Founder-named repositories
+
+| Repository | Pinned SHA | Public licence (informational) | Status | V | Orcel target | P |
+| --- | --- | --- | --- | --- | --- | --- |
+| vercel-labs/agent-desktop | `8ffecc1d3d088727f8d84baf4dde0224aab2e8ad` | Apache-2.0 | NOT_ACQUIRED | V1 | apps/orcel-native-host (macOS, Linux, cross-platform core) + apps/orcel-computer-host (Windows) | P0 |
+| browser-use/desktop | `f073b7574f7927185ebbebd87556391d5cb0cfd1` | MIT | NOT_ACQUIRED | V1 | apps/orcel-browser-worker (sessions) + apps/orcel-control-room (takeover UI) | P1 |
+| vercel-labs/agent-browser | `b06e2533ba9b3823b8a96c859d455cb55f4d7893` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | V2 | crates/orcel-browser-host | P0 |
+| vercel-labs/ai-sdk-computer-use | `ed103da5ebe75112850fbba39872206dd3c439de` | NONE | NOT_ACQUIRED | V1 | none (reference only) | P3 |
+| vercel-labs/remote-agent-browser | `8770ea28f3ab0e8822e104e12e0efb65339d235b` | no LICENSE file (package.json: MIT) | NOT_ACQUIRED | V2 | crates/orcel-browser-host (reference contract only) | P3 |
+| vercel/eve | `ac1a15c36d95ae6d0d73d68d20008a8da4a5625a` | Apache-2.0 + NOTICE + per-directory terms | NOT_ACQUIRED | V3 | apps/orcel-agent | P1 |
+| vercel/workflow | `47697fe1b7af0d7da695a17f2f34d2394ebdef90` | Apache-2.0 | NOT_ACQUIRED | V3 | apps/orcel-agent | P1 |
+| vercel-labs/durable-harness | `badd648db763e7d9121917b5c35732cd334e01be` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | V3 | apps/orcel-agent | P0 |
+| vercel-labs/open-agents | `cf865e94de7729751c747171785b6ce57e7b178c` | MIT | NOT_ACQUIRED | V3 | apps/orcel-agent (reference only) | P3 |
+| vercel-labs/personal-agent-template | `c0a09b7a2cb62563d7f945f3b30cc65279cf5417` | MIT | NOT_ACQUIRED | V3 | apps/orcel-agent (memory) | P2 |
+| vercel-labs/coding-agent-template | `e753e1b6d28b2d64446dd5f9ef33a93909cc7a09` | Apache-2.0 | NOT_ACQUIRED | V3 | none (reference only) | P3 |
+| vercel/ai | `3bea041f28e65f371e640d2c70c302776a46387f` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | V4 | apps/orcel-mcp (MCP client conformance) + crates/orcel-policy (shadow policy) | P2 |
+| vercel-labs/mcp-handler | `57181555cbef0de65bdaa041db69f8434266ed66` | no LICENSE file (package.json: Apache-2.0) | NOT_ACQUIRED | V4 | apps/orcel-mcp | P1 |
+| vercel-labs/mcp-to-ai-sdk | `3287f6ff08b2574530818b8b75ecd1ed129efd06` | Apache-2.0 | NOT_ACQUIRED | V4 | apps/orcel-mcp | P1 |
+| vercel-labs/just-bash | `5b8297908ef921bbd83a94ad5b7ba82340c0a74a` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | V5 | apps/orcel-sandbox (new): virtual-shell tier | P0 |
+| vercel-labs/opensrc | `b51de60867e806da1839b33dd29c29424f12521b` | Apache-2.0 | NOT_ACQUIRED | - | none (reference only) | P3 |
+| vercel-labs/skills | `50894c1d98bc45ca1ab127213e59d6525065b5e7` | MIT + per-directory terms | NOT_ACQUIRED | - | apps/orcel-agent (reference only) | P3 |
+| vercel-labs/agent-skills | `1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62` | NONE | NOT_ACQUIRED | - | none | P3 |
+| vercel/sandbox | `58c48661a4ff5f994739eede59769f03b50c6d89` | Apache-2.0 | NOT_ACQUIRED | V5 | apps/orcel-sandbox (new) (API reference only) | P2 |
+| vercel-labs/emulate | `ad7b0dea9287ac7bdfe94bf7056522b90a736e2a` | Apache-2.0 + THIRD_PARTY_NOTICES.md | NOT_ACQUIRED | V5 | tests/emulators (new) | P0 |
+| vercel-labs/workflow-builder-template | `3ed5b14af3194d75ad686bfe1da50d42d4ce1b77` | Apache-2.0 | NOT_ACQUIRED | - | none (reference only) | P3 |
+| vercel-labs/agent-eval | `9ff2ea3e9f14c14e5123b215c3f695d3b4f9955d` | MIT + per-directory terms | NOT_ACQUIRED | V5 | tests/benchmarks | P1 |
+| vercel/next-evals-oss | `3bd644b26e69e3d89cefb33680b4f28ff7cc0eab` | MIT | NOT_ACQUIRED | - | none (reference only) | P3 |
+| vercel-labs/native | `4d47c2cfcd256e7835a31342058cb321d5c75217` | Apache-2.0 + per-directory terms | NOT_ACQUIRED | V1 | none (reference only) | P3 |
+| vercel-labs/sandcastle | `85b678c10defa2b7220a37418f96f4410c4fe1d4` | MIT | NOT_ACQUIRED | V5 | none (reference only) | P3 |
+
+Notes on the named set:
+
+- `vercel-labs/agent-desktop` keeps its group A record (now RESOLVED, priority P0 for V1); `browser-use/desktop` is a new record.
+- `vercel-labs/agent-browser` and `vercel-labs/remote-agent-browser` moved from the tracked-donor table into full records; their
+  HEADs are unchanged since the ledger pin, and their feature rows in `capability_inventory.json` stand.
+- `vercel/sandbox` is the client SDK, CLI, mock and base images for hosted Vercel Sandbox. The microVM backend is not public.
+- `vercel-labs/native` says it is experimental; `vercel-labs/sandcastle` calls itself a proof of concept not meant for production;
+  `vercel-labs/durable-harness` is experimental (0.0.x).
+- No licence file at all: `vercel-labs/ai-sdk-computer-use`, `vercel-labs/agent-skills`. Licence only in package.json:
+  `vercel-labs/mcp-handler` (Apache-2.0), `vercel-labs/agent-eval` (MIT), `vercel-labs/remote-agent-browser` (MIT);
+  `vercel-labs/just-bash` has Apache-2.0 in `packages/just-bash/LICENSE` only, plus GPL-2.0 and GPL-3.0 test fixtures.
+- `vercel/next-evals-oss` is about 1.8 GB in the tree (results per model) and must not be cloned.
+
+#### 8.7.2 Discovered repositories
+
+Sweep: `gh api orgs/vercel/repos` (244 public) and `gh api orgs/vercel-labs/repos` (398 public), paginated; 467 are active and not
+forks. Selected by capability (computer use, browser agents, agent runtimes, durable execution, sandboxing, remote sessions, MCP,
+evaluation, orchestration, memory, security), then checked against each tree and key files.
+
+| Repository | Pinned SHA | Public licence | What the code does | Orcel target | V | P |
+| --- | --- | --- | --- | --- | --- | --- |
+| vercel-labs/fx | `3fe7377e290fff22d287118db8058a3c89e8cbee` | Apache-2.0 + THIRD_PARTY_NOTICES.md | A coding agent in Zig: agent loop, permission gate with approval prompts, an auto classifier and command admission (src/core/permissions), a session store with event... | apps/orcel-agent (reference) | V3 | P2 |
+| vercel-labs/ralph-loop-agent | `8a37af8390c7bd6fac81f746776b52ce6d5001b4` | Apache-2.0 | Wraps an AI SDK agent in an outer loop that repeats until a verifier or stop condition passes (ralph-loop-agent.ts, ralph-loop-agent-evaluator.ts,... | apps/orcel-agent (reference) | V3 | P3 |
+| vercel-labs/knowledge-agent-template | `fab8f3076de22e79f731525456c1151efa6f48de` | MIT + per-directory terms | Knowledge agent: a router sends questions to source agents over a file system synced from GitHub (packages/agent/src/router, agents/source.ts), with sanitising and... | apps/orcel-agent (reference) | - | P3 |
+| vercel-labs/eve-memory-agent-template | `fd414324954dff3f88bb7af547e4b1fc197f4dd2` | MIT | eve agent with long-term memory kept as files: user and channel preference memories (agent/memory), memory helpers (agent/lib/memory), write and edit tools that... | apps/orcel-agent (memory) | V3 | P2 |
+| vercel/chat | `990411ea2b6b3aeb01ef0bcf44cd2e0ccb320b93` | MIT | One bot or agent across Slack, Teams, Discord, Google Chat, GitHub, GitLab, Linear, Telegram, WhatsApp, Messenger, Instagram, X, Twilio, Gmail, Notion, Twitch and web... | apps/orcel-relay | - | P2 |
+| vercel/resumable-stream | `770cdeb4b6e4b3838b294b0565591f3d75930897` | MIT-style LICENSE text | Lets a client reconnect to an in-progress HTTP stream and resume from where it left off, buffering through Redis (src/runtime.ts, redis and ioredis adapters) | apps/orcel-relay | - | P3 |
+| vercel-labs/steve | `09c105e7751f89365c15e3ddf405f1ddeeba5fe5` | NONE | Self-hosted eve proof of concept: an eve agent (bash, run_python, web fetch and search tools) on @workflow/world-postgres, deployed with Ansible roles (hardening,... | apps/orcel-agent (reference) | V3 | P2 |
+| vercel-labs/run | `6c146567b19d96b4164550314875ed55eb2366ce` | Apache-2.0 + per-directory terms | Secure alternative to eval for agents: runs JavaScript in QuickJS inside workers with host functions (host-function-invocation.ts), CPU and wall timeouts, interrupts,... | apps/orcel-sandbox (new) | V5 | P1 |
+| vercel-labs/quickjs-wasi | `2d8504c47bbb22bced32ec3c9e93e8c51ed73cac` | MIT + per-directory terms | QuickJS-NG compiled to WASI with whole-VM snapshot and restore, including pending promises (src/index.ts, wasi-shim.ts), and crypto and URL extensions | apps/orcel-sandbox (new) | V5 | P2 |
+| vercel-labs/bash-tool | `70ba5ad4d01be465e76acb5b6bd0c6221a2af1b9` | MIT | AI SDK tools bash, readFile, writeFile and a skill tool over either just-bash or Vercel Sandbox (src/sandbox, src/tools, src/skills) | apps/orcel-sandbox (new) (reference) | V5 | P3 |
+| vercel-labs/guarded-fetch | `74b7a293472a44b4d02bbcd842c6694e41594e7c` | Apache-2.0 | SSRF-safe fetch: resolves and pins DNS (guarded-lookup.ts, resolve-host.ts), blocks private and special IP ranges (ip-address.ts, url-blocked.ts, hostname-safety.ts),... | crates/orcel-provider-network (test vectors; compare with apps/orcel-browser-worker/src/resolve-guard.ts) | - | P1 |
+| vercel-labs/just-secrets | `31719436bccf5ecfee621391e94c771b7484c0cf` | MIT | Reads and writes OS secret stores from Node with no dependencies: macOS security CLI, Linux secret-tool and Windows Credential Manager through PowerShell... | none (reference only) | - | P3 |
+| vercel-labs/deepsec | `aed5d06de8940c1fea4e6bef3600d875dd35007c` | Apache-2.0 + NOTICE | Security review harness: a scanner with about 200 declarative matchers (packages/scanner/src/matchers) finds candidate issues, a processor hands them to coding agents... | tests/security-scan (new) | - | P2 |
+| vercel-labs/dev3000 | `e5573ae23a62fad58194881ef8642a7ee2b273fe` | MIT | Records a unified, timestamped development timeline: managed CDP Chrome with isolation (managed-cdp.ts, chrome-isolation.ts), browser events, console, network... | apps/orcel-browser-worker (compare with navigation-trace.ts) | V2 | P2 |
+| vercel-labs/webreel | `1504682685514107e48a1696490666eb9ed7da14` | Apache-2.0 | Records scripted browser sessions as video (packages/@webreel/core) from step scripts | crates/orcel-browser-host (reference) | V2 | P3 |
+| vercel-labs/wterm | `b00ad0b7786cc9031d45d878bb9ad9bc75016850` | Apache-2.0 | Web terminal emulator: VT parser, grid, scrollback, graphemes and widths in Zig compiled to WASM (src/*.zig, wasm_api.zig); DOM renderer and React, Vue and Svelte... | apps/orcel-control-room | - | P2 |
+| vercel-labs/specli | `6dbe06908948847fad5c2e9617150a49c14b43a2` | NONE | Turns an OpenAPI spec into an agent-oriented CLI: parses and validates the spec (src/cli/parse, spec), builds a command model, executes requests (runtime/) and can... | apps/orcel-mcp (reference) | V4 | P3 |
+| vercel-labs/lat.md | `370a9a8c13787d83a52d9f437d5812a2aaaac808` | MIT + per-directory terms | Markdown knowledge graph for a codebase: documents with code references (code-refs.ts), validation, search with a stemmer and MiniLM embeddings... | apps/orcel-agent (reference) | - | P3 |
+| vercel-labs/ai-python | `07aaf34f985ec378b5e3b998db6c66468935875c` | Apache-2.0 | AI SDK for Python: provider adapters (src/ai/providers), agents, a durable-step helper (durable.py), ops, UI message streaming and telemetry, with tests per provider | apps/orcel-agent | V3 | P1 |
+| vercel/detect-agent | `3ab1df1e4eaae153cf66f4a5018e4c5854855212` | no LICENSE file (package.json: Apache-2.0) | Detects which AI agent is running a process from environment conditions defined in agents.json (TypeScript src/ and Go detect.go, evaluate_condition.go), with shared... | apps/orcel-mcp (reference) | - | P3 |
+
+Inspected and skipped:
+
+- `vercel-labs/npx-mcp`: Empty repository (size 0, git ls-remote returns no HEAD); nothing to record.
+- `vercel-labs/harness-agent-eve-extension`: Thin glue exposing @ai-sdk/harness packages to eve; the substance is in vercel/ai packages/harness*.
+- `vercel-labs/sandboxed-issue-triage-agent`: 23-file app over @ai-sdk/harness and Vercel Sandbox; covered by vercel/ai and durable-harness.
+- `vercel-labs/ai-sdk-tool-code-execution`: 9-file demo that calls the hosted Vercel Sandbox; covered by vercel-labs/run and just-bash.
+- `vercel-labs/rex-cloud`: Cloud terminals for a third-party tool on Vercel Sandbox; hosted only.
+- `vercel-labs/skills-handler`: 15-file early version of the skills tooling; superseded by vercel-labs/skills.
+- `vercel-labs/tau-agent`: 15-file coding-agent demo of ai-python; ai-python itself is recorded.
+- `vercel-labs/openreview`: Code-review bot template on Vercel Sandbox and Workflow; deepsec and durable-harness cover the useful parts.
+- `vercel/next-devtools-mcp`: Next.js-specific MCP server (dev-server discovery, Next.js docs); not a general capability.
+
+Skipped as clearly irrelevant (one line per category):
+
+- **Web frameworks and build tools:** vercel/next.js, turborepo, ncc, nft, swr, styled-jsx, satori, edge-runtime, microfrontends, serve, micro and similar: application frameworks and build tooling, not agent capabilities.
+- **Starters, demos and examples:** vercel/examples, next-learn, *-starter, *-demo, *-template repositories for commerce, CMS, databases and AWS services, workshop and academy repositories: sample apps unrelated to agents.
+- **Workflow pattern examples:** About 60 vercel-labs/workflow-* repositories (saga, retry-backoff, circuit-breaker and others): single-pattern examples of vercel/workflow, which is recorded.
+- **eve templates:** vercel-labs/eve-*-template, *-eve-template and eve-examples: application templates on vercel/eve; eve-memory-agent-template is recorded, the rest add no capability.
+- **Platform SDKs, deploy tooling and integrations:** vercel/vercel, vercel-py, sdk, terraform-provider-vercel, storage, flags, analytics, speed-insights, otel, ai-gateway providers, vcr-action, Codex/Cursor/Claude deploy plugins: Vercel platform clients.
+- **AI chat UI and generative UI:** vercel/chatbot, ai-elements, streamdown, v0-sdk, json-render, ui, vercel-labs/ai-chatbot-svelte and ai-sdk-preview-*: chat front ends and UI kits; Orcel's control room is separate.
+- **Design, fonts, media and misc:** geist-font, geist-pixel-font, vgpu, gpu-lexer, reel0, ship26-*, arcade, hyper*, zsh-theme and similar: unrelated to agents.
+- **Language and compiler experiments:** zerolang, scriptc, tsc-ts, python-typemap, bincode-fork, ggt, ggbuild: compiler or language projects, not agent capabilities.
+- **Forks and archived repositories:** 57 active forks, 109 archived repositories and 9 archived forks (175 in all) were excluded from selection.
+
+#### 8.7.3 V1 to V5: first modules to transplant
+
+Each still needs its own activated grain, provenance file and tests before any copy lands on main.
+
+**V1 Desktop (agent-desktop + browser-use/desktop + HCU).**
+
+1. Windows element ref minting and stale-ref rejection (ledger P0 order 1) (`hcu`) to apps/orcel-computer-host:
+   `computer-use/internal/core/ax_ref_registry.go`, `computer-use/internal/core/ax_ref_minting.go`, `computer-use/internal/core/ax_ref_provider_continuity.go`.
+2. Cross-platform ref store with identity matching and saved-ref resolution (macOS and Linux) (`agent_desktop`) to apps/orcel-native-host:
+   `crates/core/src/refs/refs_store.rs`, `crates/core/src/refs/ref_alloc.rs`, `crates/core/src/refs/ref_identity.rs`, `crates/core/src/refs/ref_identity_match.rs`, `crates/core/src/refs/resolve_saved_ref.rs`, `crates/core/src/refs/refs_validate.rs`.
+3. Actionability gates before any ref action (`agent_desktop`) to apps/orcel-native-host:
+   `crates/core/src/actionability/gates.rs`, `crates/core/src/actionability/evaluate.rs`, `crates/core/src/actionability/hit_test_evidence.rs`, `crates/core/src/actionability/occluder.rs`, `crates/core/src/actionability/stability_sampler.rs`.
+4. Compact AX diff and batched actions with readback (ledger P0 order 2) (`hcu`) to apps/orcel-computer-host:
+   `computer-use/internal/core/ax_semantic_diff.go`, `computer-use/internal/core/ax_batch.go`, `computer-use/internal/core/ax_action_readback.go`.
+5. Parallel browser sessions with pooled Chromium and live screencast (`browser_use_desktop`) to apps/orcel-browser-worker:
+   `app/src/main/sessions/SessionManager.ts`, `app/src/main/sessions/BrowserPool.ts`, `app/src/main/sessions/SessionScreencast.ts`.
+6. Human takeover of a running session (`browser_use_desktop`) to apps/orcel-control-room:
+   `app/src/main/takeoverOverlay.ts`.
+7. Desktop e2e scenarios as qualification tests (`agent_desktop`) to apps/orcel-computer-host (Windows) and apps/orcel-native-host/tests (Linux):
+   `tests/e2e-windows/scenarios`, `tests/e2e-linux/scenarios`.
+
+**V2 Browser (agent-browser + Obscura, Stagehand, Playwright).**
+
+1. Accessibility snapshot with stable refs (Rust to Rust) (`agent_browser`) to crates/orcel-browser-host:
+   `cli/src/native/snapshot.rs`, `cli/src/native/element.rs`.
+2. Ref-addressed actions and multi-tab binding (`agent_browser`) to crates/orcel-browser-host:
+   `cli/src/native/actions.rs`, `cli/src/native/interaction.rs`, `cli/src/native/tab_binding.rs`.
+3. Hybrid a11y/DOM snapshot, act/observe with action cache (ledger P0 order 5) (`stagehand`) to apps/orcel-browser-worker:
+   `packages/extension/understudy/a11y/snapshot/capture.ts`, `packages/extension/understudy/a11y/snapshot/a11yTree.ts`, `packages/extension/services/actService.ts`, `packages/extension/services/observeService.ts`, `packages/extension/services/cacheService.ts`.
+4. Snapshot-ref MCP browser tools (ledger P0 order 6; source in microsoft/playwright) (`playwright_mcp`) to apps/orcel-mcp:
+   `packages/playwright-core/src/tools/mcp`, `packages/playwright-core/src/tools/backend`.
+5. Second engine behind the engine contract (`obscura`) to third_party/obscura (new) via crates/orcel-browser-host engine contract:
+   `crates/obscura-browser/src`, `crates/obscura-dom/src`.
+6. Parity and e2e corpus for dual-engine qualification (`agent_browser`) to tests/browser-corpus (new):
+   `cli/src/native/parity_tests.rs`, `cli/src/native/e2e_tests.rs`.
+
+**V3 Agent reliability (durable-harness + workflow + eve, against Orcel's runtime).** apps/orcel-agent stays the one agent runtime; crates/orcel-journal stays the privileged operation journal and receives no model-conversation durability (ruling of the 2026-09-30 Eve donor plan, kept).
+
+1. Exactly-once tool effects and crash resume from the session log (`durable_harness`) to apps/orcel-agent:
+   `packages/harness-world/src/fence.ts`, `packages/harness-world/src/recover.ts`, `packages/harness-world/src/session-log.ts`, `packages/harness-process/src/ledger.ts`, `packages/harness-process/src/journal.ts`, `packages/harness-process/src/recovery.ts`.
+2. Deterministic replay with step memoisation and divergence detection (`workflow`) to apps/orcel-agent:
+   `packages/core/src/replay-divergence.ts`, `packages/core/src/events-consumer.ts`, `packages/core/src/step.ts`, `packages/core/src/state.ts`, `packages/world/src/interfaces.ts`, `packages/world/src/events.ts`.
+3. Tool authorization, approvals and interrupted-attempt handling in the loop (`eve`) to apps/orcel-agent:
+   `packages/eve/src/harness/authorization.ts`, `packages/eve/src/harness/clearance.ts`, `packages/eve/src/harness/approval-outcome.ts`, `packages/eve/src/harness/interrupted-attempt.ts`, `packages/eve/src/harness/hitl`.
+4. Context compaction (`eve`) to apps/orcel-agent (orcel_agent/compaction.py):
+   `packages/eve/src/harness/compaction`.
+5. Chaos, drill and invariant tests (with workflow packages/world-testing) (`durable_harness`) to apps/orcel-agent/tests:
+   `packages/harness-world/src/chaos.test.ts`, `packages/harness-world/src/drills.test.ts`, `packages/harness-world/src/invariants.test.ts`.
+
+**V4 MCP (mcp-handler + mcp-to-ai-sdk).**
+
+1. Pinned, reviewed tool-schema snapshots (`mcp_to_ai_sdk`) to apps/orcel-mcp:
+   `lib/tool-generator.ts`, `lib/mcp-client.ts`, `lib/client-generator.ts`.
+2. OAuth protected-resource metadata and bearer verification (`mcp_handler`) to apps/orcel-mcp (compare with src/oauth_authorization.ts):
+   `src/auth/auth-metadata.ts`, `src/auth/auth-wrapper.ts`.
+3. Streamable HTTP and SSE transport handling (`mcp_handler`) to apps/orcel-mcp:
+   `src/handler/mcp-api-handler.ts`.
+4. Per-message and per-tool spans (`mcp_handler`) to apps/orcel-mcp:
+   `src/telemetry`.
+5. Shadow-mode policy decisions per tool (`vercel_ai`) to crates/orcel-policy (reference):
+   `packages/policy-opa/src/shadow.ts`, `packages/policy-opa/src/wrap-mcp-tools.ts`.
+
+**V5 Sandbox and testing (just-bash + emulate + agent-eval).**
+
+1. Virtual-shell tier with no host access (`just_bash`) to apps/orcel-sandbox (new):
+   `packages/just-bash/src/Bash.ts`, `packages/just-bash/src/parser`, `packages/just-bash/src/interpreter`, `packages/just-bash/src/fs`, `packages/just-bash/src/limits.ts`, `packages/just-bash/src/security`, `packages/just-bash/src/network`.
+2. No-network GitHub API emulator for git and OAuth tests (`emulate`) to tests/emulators (new):
+   `packages/@emulators/core/src`, `packages/@emulators/github/src`.
+3. Sandboxed eval runs with failure classes and fingerprints (`agent_eval`) to tests/benchmarks:
+   `packages/agent-eval/src/lib/runner.ts`, `packages/agent-eval/src/lib/docker-sandbox.ts`, `packages/agent-eval/src/lib/classifier.ts`, `packages/agent-eval/src/lib/fingerprint.ts`.
+4. Code-mode tier with host functions and continuations (`vercel_run`) to apps/orcel-sandbox (new):
+   `packages/run/src/run.ts`, `packages/run/src/host-function-invocation.ts`, `packages/run/src/continuation-codec.ts`.
+5. Shell conformance tests (`just_bash`) to apps/orcel-sandbox/tests (new):
+   `packages/just-bash/src/spec-tests`, `packages/just-bash/src/comparison-tests`.
