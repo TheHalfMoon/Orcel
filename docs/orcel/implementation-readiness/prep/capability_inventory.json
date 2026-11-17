@@ -11,7 +11,8 @@
   "method for NOT STARTED or BLOCKED rows is the planned method; integrated is true only for code in Orcel main.",
   "2026-11-17: founder decisions FD-UP-1 to FD-UP-13 applied (UNIFIED_INTEGRATION_SPEC.md section 11). Founder attestation of 2026-11-17 recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, separately from upstream terms. Stealth records moved from BLOCKED to NOT STARTED behind the opt-in policy gate; agent-desktop admitted as a candidate; Exa Browser and TinyFish added as source-unverified.",
   "2026-11-17: founder decision recorded in docs/orcel/grants/2026-11-17-founder-attestation.md: licence type no longer blocks copying, renaming or publishing (authorization OWNER-ASSERTED, not independently verified). Licence facts stay as informational fields; fleet.software_install, fleet.mdm and fleet.ee_security move from BLOCKED to NOT STARTED; mika.sandbox and remote_agent_browser.sandbox stay BLOCKED for non-licence reasons.",
-  "2026-11-17: master transplant ledger added (TRANSPLANT_LEDGER.json; DONOR_INVENTORY.md section 8). 42 records added for master-directive sources not already inventoried; exa_browser.unverified and tinyfish.unverified updated with the resolved repositories. Ledger statuses map to this vocabulary as stated in the ledger notes."
+  "2026-11-17: master transplant ledger added (TRANSPLANT_LEDGER.json; DONOR_INVENTORY.md section 8). 42 records added for master-directive sources not already inventoried; exa_browser.unverified and tinyfish.unverified updated with the resolved repositories. Ledger statuses map to this vocabulary as stated in the ledger notes.",
+  "2026-11-17: Vercel source expansion (TRANSPLANT_LEDGER.json vercel_expansion; DONOR_INVENTORY.md section 8.7). One record per newly inventoried source (founder-named group I and discovered group J); agent_desktop.candidate updated after the founder resolved 'Vercel agent-use' as vercel-labs/agent-desktop plus browser-use/desktop; agent_browser.* and remote_agent_browser.* keep their rows with a pin note. Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (owner-asserted, not independently verified)."
  ],
  "status_vocabulary": [
   "NOT STARTED",
@@ -253,6 +254,174 @@
   "ServiceNow/BrowserGym": {
    "upstream_commit": "27a90ce815098f43414e93491e06907af468e45b",
    "upstream_license": "/: Apache-2.0 (LICENSE with a ServiceNow copyright header; GitHub reports NOASSERTION)"
+  },
+  "browser-use/desktop": {
+   "upstream_commit": "f073b7574f7927185ebbebd87556391d5cb0cfd1",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Browser Use)"
+  },
+  "vercel-labs/ai-sdk-computer-use": {
+   "upstream_commit": "ed103da5ebe75112850fbba39872206dd3c439de",
+   "upstream_license": "/: None: no LICENSE file, no licence field in package.json, GitHub reports no licence"
+  },
+  "vercel/eve": {
+   "upstream_commit": "ac1a15c36d95ae6d0d73d68d20008a8da4a5625a",
+   "upstream_license": "/: Apache-2.0 + NOTICE (Copyright 2026 Vercel, Inc. and contributors); apps/templates/*: MIT LICENSE files per template; apps/templates/openinstinct: THIRD_PARTY_NOTICES.md; apps/templates/eve-data-agent-template/dbt: own LICENSE and NOTICE.md"
+  },
+  "vercel/workflow": {
+   "upstream_commit": "47697fe1b7af0d7da695a17f2f34d2394ebdef90",
+   "upstream_license": "/: Apache-2.0 (LICENSE.md; each package carries its own LICENSE.md)"
+  },
+  "vercel-labs/durable-harness": {
+   "upstream_commit": "badd648db763e7d9121917b5c35732cd334e01be",
+   "upstream_license": "/: Apache-2.0 (LICENSE.md); packages/durable-harness: Apache-2.0 (LICENSE)"
+  },
+  "vercel-labs/open-agents": {
+   "upstream_commit": "cf865e94de7729751c747171785b6ce57e7b178c",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.)"
+  },
+  "vercel-labs/personal-agent-template": {
+   "upstream_commit": "c0a09b7a2cb62563d7f945f3b30cc65279cf5417",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Hugo Richard)"
+  },
+  "vercel-labs/coding-agent-template": {
+   "upstream_commit": "e753e1b6d28b2d64446dd5f9ef33a93909cc7a09",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE, Copyright 2025 Vercel, Inc.; GitHub reports NOASSERTION)"
+  },
+  "vercel/ai": {
+   "upstream_commit": "3bea041f28e65f371e640d2c70c302776a46387f",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE, Copyright 2023 Vercel, Inc.; GitHub reports NOASSERTION); packages/provider-utils/src/to-json-schema/zod3-to-json-schema: ISC (Copyright (c) 2020 Stefan Terdell, 2025 Vercel Inc.); packages/tui: Apache-2.0 (own LICENSE)"
+  },
+  "vercel-labs/mcp-handler": {
+   "upstream_commit": "57181555cbef0de65bdaa041db69f8434266ed66",
+   "upstream_license": "/: No LICENSE file; package.json declares Apache-2.0; GitHub reports no licence"
+  },
+  "vercel-labs/mcp-to-ai-sdk": {
+   "upstream_commit": "3287f6ff08b2574530818b8b75ecd1ed129efd06",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "vercel-labs/just-bash": {
+   "upstream_commit": "5b8297908ef921bbd83a94ad5b7ba82340c0a74a",
+   "upstream_license": "packages/just-bash: Apache-2.0 (no root LICENSE; GitHub reports no licence); packages/just-bash/src/spec-tests/grep/cases, sed/cases (busybox): GPL-2.0 (test fixtures); packages/just-bash/src/spec-tests/grep/cases (GNU grep): GPL-3.0 (test fixtures); packages/just-bash/src/spec-tests/bash/cases: Apache-2.0; packages/just-bash/src/spec-tests/jq/cases: MIT (jq); packages/just-bash/src/spec-tests/awk/cases: Lucent awk permissive licence; packages/just-bash/src/spec-tests/sed/cases (PythonSed): BSD"
+  },
+  "vercel-labs/opensrc": {
+   "upstream_commit": "b51de60867e806da1839b33dd29c29424f12521b",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "vercel-labs/skills": {
+   "upstream_commit": "50894c1d98bc45ca1ab127213e59d6525065b5e7",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.); ThirdPartyNoticeText.txt: third-party notices for bundled dependencies"
+  },
+  "vercel-labs/agent-skills": {
+   "upstream_commit": "1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62",
+   "upstream_license": "/: None: no LICENSE file anywhere in the tree, package.json is private with no licence field, GitHub reports no licence"
+  },
+  "vercel/sandbox": {
+   "upstream_commit": "58c48661a4ff5f994739eede59769f03b50c6d89",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "vercel-labs/emulate": {
+   "upstream_commit": "ad7b0dea9287ac7bdfe94bf7056522b90a736e2a",
+   "upstream_license": "/: Apache-2.0 + THIRD_PARTY_NOTICES.md (Hono)"
+  },
+  "vercel-labs/workflow-builder-template": {
+   "upstream_commit": "3ed5b14af3194d75ad686bfe1da50d42d4ce1b77",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE, Copyright 2025 Vercel, Inc.; GitHub reports NOASSERTION)"
+  },
+  "vercel-labs/agent-eval": {
+   "upstream_commit": "9ff2ea3e9f14c14e5123b215c3f695d3b4f9955d",
+   "upstream_license": "packages/agent-eval: MIT (package.json; no LICENSE file; GitHub reports no licence); packages/playground/.agents/skills/frontend-design: own LICENSE.txt"
+  },
+  "vercel/next-evals-oss": {
+   "upstream_commit": "3bd644b26e69e3d89cefb33680b4f28ff7cc0eab",
+   "upstream_license": "/: MIT (Copyright (c) 2025 Vercel)"
+  },
+  "vercel-labs/native": {
+   "upstream_commit": "4d47c2cfcd256e7835a31342058cb321d5c75217",
+   "upstream_license": "/: Apache-2.0; third_party/webview2: Microsoft WebView2 SDK licence (LICENSE.txt); third_party/sqlite: SQLite (public domain)"
+  },
+  "vercel-labs/sandcastle": {
+   "upstream_commit": "85b678c10defa2b7220a37418f96f4410c4fe1d4",
+   "upstream_license": "/: MIT (Copyright (c) 2025 Vercel)"
+  },
+  "vercel-labs/fx": {
+   "upstream_commit": "3fe7377e290fff22d287118db8058a3c89e8cbee",
+   "upstream_license": "/: Apache-2.0 + THIRD_PARTY_NOTICES.md (interface sounds and other material)"
+  },
+  "vercel-labs/ralph-loop-agent": {
+   "upstream_commit": "8a37af8390c7bd6fac81f746776b52ce6d5001b4",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "vercel-labs/knowledge-agent-template": {
+   "upstream_commit": "fab8f3076de22e79f731525456c1151efa6f48de",
+   "upstream_license": "/: MIT (Copyright (c) 2026-present Vercel); apps/app/app/assets/icons/custom: own LICENSE"
+  },
+  "vercel-labs/eve-memory-agent-template": {
+   "upstream_commit": "fd414324954dff3f88bb7af547e4b1fc197f4dd2",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.)"
+  },
+  "vercel/chat": {
+   "upstream_commit": "990411ea2b6b3aeb01ef0bcf44cd2e0ccb320b93",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.)"
+  },
+  "vercel/resumable-stream": {
+   "upstream_commit": "770cdeb4b6e4b3838b294b0565591f3d75930897",
+   "upstream_license": "/: MIT-style LICENSE text (Copyright (c) 2025 Vercel, Inc); package.json declares ISC"
+  },
+  "vercel-labs/steve": {
+   "upstream_commit": "09c105e7751f89365c15e3ddf405f1ddeeba5fe5",
+   "upstream_license": "/: None: no LICENSE file, no licence field, GitHub reports no licence"
+  },
+  "vercel-labs/run": {
+   "upstream_commit": "6c146567b19d96b4164550314875ed55eb2366ce",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE); packages/run: Apache-2.0 + THIRD_PARTY_NOTICES.md"
+  },
+  "vercel-labs/quickjs-wasi": {
+   "upstream_commit": "2d8504c47bbb22bced32ec3c9e93e8c51ed73cac",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.); extensions/crypto/mbedtls: Apache-2.0 OR GPL-2.0-or-later; quickjs-ng (git submodule): MIT, not in this tree"
+  },
+  "vercel-labs/bash-tool": {
+   "upstream_commit": "70ba5ad4d01be465e76acb5b6bd0c6221a2af1b9",
+   "upstream_license": "/: MIT (Copyright (c) 2025 Vercel, Inc.)"
+  },
+  "vercel-labs/guarded-fetch": {
+   "upstream_commit": "74b7a293472a44b4d02bbcd842c6694e41594e7c",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "vercel-labs/just-secrets": {
+   "upstream_commit": "31719436bccf5ecfee621391e94c771b7484c0cf",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.)"
+  },
+  "vercel-labs/deepsec": {
+   "upstream_commit": "aed5d06de8940c1fea4e6bef3600d875dd35007c",
+   "upstream_license": "/: Apache-2.0 + NOTICE (Copyright 2026 Vercel, Inc. and contributors)"
+  },
+  "vercel-labs/dev3000": {
+   "upstream_commit": "e5573ae23a62fad58194881ef8642a7ee2b273fe",
+   "upstream_license": "/: MIT (Copyright (c) 2025 Vercel Inc.)"
+  },
+  "vercel-labs/webreel": {
+   "upstream_commit": "1504682685514107e48a1696490666eb9ed7da14",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "vercel-labs/wterm": {
+   "upstream_commit": "b00ad0b7786cc9031d45d878bb9ad9bc75016850",
+   "upstream_license": "/: Apache-2.0"
+  },
+  "vercel-labs/specli": {
+   "upstream_commit": "6dbe06908948847fad5c2e9617150a49c14b43a2",
+   "upstream_license": "/: None: no LICENSE file, no licence field, GitHub reports no licence"
+  },
+  "vercel-labs/lat.md": {
+   "upstream_commit": "370a9a8c13787d83a52d9f437d5812a2aaaac808",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Yury Selivanov); packages/stemmer: own LICENSE + THIRD_PARTY_NOTICES"
+  },
+  "vercel-labs/ai-python": {
+   "upstream_commit": "07aaf34f985ec378b5e3b998db6c66468935875c",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE, Copyright 2026 Vercel, Inc.; GitHub reports NOASSERTION)"
+  },
+  "vercel/detect-agent": {
+   "upstream_commit": "3ab1df1e4eaae153cf66f4a5018e4c5854855212",
+   "upstream_license": "/: No LICENSE file; package.json declares Apache-2.0; GitHub reports no licence"
   }
  },
  "records": [
@@ -800,7 +969,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [
-    "Orcel already has e-refs for Chromium; agent-browser is Rust and Apache-2.0, so engine-neutral logic can be adapted"
+    "Orcel already has e-refs for Chromium; agent-browser is Rust and Apache-2.0, so engine-neutral logic can be adapted",
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
@@ -829,7 +999,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [
-    "Orcel exposes click/fill/select/check/enter/wait; hover, drag, scroll, dblclick and upload exposure are missing"
+    "Orcel exposes click/fill/select/check/enter/wait; hover, drag, scroll, dblclick and upload exposure are missing",
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
@@ -857,7 +1028,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
+   ],
    "status": "NOT STARTED",
    "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
   },
@@ -885,7 +1058,8 @@
     "crates/orcel-browser-host/tests/sg000108_worker_host.rs::the_journey_downloads_the_latest_report_through_bound_approvals_and_verifies_it"
    ],
    "evidence": [
-    "Uploads are implemented model-only and not exposed"
+    "Uploads are implemented model-only and not exposed",
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
    ],
    "status": "TESTED",
    "blocking_issue": null
@@ -916,7 +1090,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [
-    "Orcel profiles are ephemeral by design today (profile.rs); persistence needs a policy change"
+    "Orcel profiles are ephemeral by design today (profile.rs); persistence needs a policy change",
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Policy: persistent browser profiles and credential vault are outside current Orcel limits; Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
@@ -944,7 +1119,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [
-    "Orcel has no multi-tab management; dialogs are handled in apps/orcel-browser-worker"
+    "Orcel has no multi-tab management; dialogs are handled in apps/orcel-browser-worker",
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
@@ -970,7 +1146,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
+   ],
    "status": "NOT STARTED",
    "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
   },
@@ -998,7 +1176,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [
-    "Upstream README lists Obscura as a selectable engine; the blueprint notes it is experimental upstream"
+    "Upstream README lists Obscura as a selectable engine; the blueprint notes it is experimental upstream",
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
@@ -1024,7 +1203,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
+   ],
    "status": "NOT STARTED",
    "blocking_issue": "Hosted services; optional only. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
   },
@@ -1054,7 +1235,8 @@
     "crates/orcel-policy/tests/sg000096_shell_intent.rs"
    ],
    "evidence": [
-    "Reference only for gap analysis"
+    "Reference only for gap analysis",
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
    ],
    "status": "TESTED",
    "blocking_issue": null
@@ -1082,7 +1264,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [
-    "No second MCP authority"
+    "No second MCP authority",
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
    ],
    "status": "NOT STARTED",
    "blocking_issue": null
@@ -1109,7 +1292,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
+   ],
    "status": "NOT STARTED",
    "blocking_issue": "axe-core is MPL-2.0 (file-level copyleft): keep the file unmodified or publish modifications; record the notice. Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
   },
@@ -1134,7 +1319,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
+   ],
    "status": "NOT STARTED",
    "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
   },
@@ -1162,7 +1349,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record agent_browser (group I, V2); HEAD on 2026-11-17 is b06e2533ba9b3823b8a96c859d455cb55f4d7893; paths above were read at 53384771fbafc261ba67608ac806dd5aa70b84f0."
+   ],
    "status": "NOT STARTED",
    "blocking_issue": "Source admission packet (UP-001) not filed: per-file licence matrix, third-party inventory, owner."
   },
@@ -1193,7 +1382,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record remote_agent_browser (group I, V2); HEAD on 2026-11-17 is 8770ea28f3ab0e8822e104e12e0efb65339d235b; paths above were read at 8770ea28f3ab0e8822e104e12e0efb65339d235b."
+   ],
    "status": "NOT STARTED",
    "blocking_issue": "No LICENSE file: package.json declares MIT but the repository carries no licence text or copyright notice; confirm with Vercel or rely on the founder grant"
   },
@@ -1218,7 +1409,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record remote_agent_browser (group I, V2); HEAD on 2026-11-17 is 8770ea28f3ab0e8822e104e12e0efb65339d235b; paths above were read at 8770ea28f3ab0e8822e104e12e0efb65339d235b."
+   ],
    "status": "BLOCKED",
    "blocking_issue": "Requires a Vercel cloud account; violates zero mandatory paid runtime. Licence facts (informational under the founder decision of 2026-11-17): no LICENSE file; package.json declares MIT."
   },
@@ -1244,7 +1437,9 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "2026-11-17 Vercel source expansion: ledger record remote_agent_browser (group I, V2); HEAD on 2026-11-17 is 8770ea28f3ab0e8822e104e12e0efb65339d235b; paths above were read at 8770ea28f3ab0e8822e104e12e0efb65339d235b."
+   ],
    "status": "NOT STARTED",
    "blocking_issue": "No LICENSE file: package.json declares MIT but the repository carries no licence text or copyright notice; confirm with Vercel or rely on the founder grant"
   },
@@ -1278,23 +1473,32 @@
    "id": "agent_desktop.candidate",
    "source": "vercel-labs/agent-desktop",
    "upstream_commit": "8ffecc1d3d088727f8d84baf4dde0224aab2e8ad",
-   "upstream_license": "Apache-2.0 (root LICENSE)",
+   "upstream_license": "/: Apache-2.0 (single root LICENSE; no NOTICE file)",
    "upstream_paths": [
-    "crates/core",
-    "crates/windows",
-    "crates/macos",
-    "crates/linux",
-    "src/mcp"
+    "crates/core/src/actionability",
+    "crates/core/src/ref_action",
+    "crates/core/src/refs",
+    "crates/core/src/snapshot",
+    "crates/linux/src",
+    "crates/macos/src",
+    "crates/windows/src/actions",
+    "crates/windows/src/tree",
+    "probes/windows/24-fixture-e2e",
+    "src/batch",
+    "src/command_policy",
+    "src/dispatch",
+    "src/mcp",
+    "tests/conformance",
+    "tests/e2e",
+    "tests/e2e-linux"
    ],
    "upstream_tests": [
-    "tests/e2e-windows",
-    "tests/e2e-linux",
-    "tests/conformance"
+    "345 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
-   "feature": "Candidate donor (FD-UP-3, 2026-11-17): cross-platform computer-use CLI (AX / UIA / AT-SPI) with MCP",
-   "classification": "best_via_adapter",
-   "orcel_destination": "Would map to orcel-provider-uia / apps/orcel-native-host if confirmed",
-   "method": "adapter",
+   "feature": "Vercel expansion (V1, founder-named): Durable desktop element refs: identity matching, saved-ref resolution and stale-ref refusal; snapshot surfaces; Actionability gates (hit test, occlusion, stability sampling) before a ref action; exactly-once ref actions; macOS AX and Linux AT-SPI tree read and actions; Windows UIA tree walk and semantic actions (value write, toggle, select, scroll into view) with physical-input fallback; Rust-to-Go port beside HCU; Batched desktop actions with per-command policy; Desktop MCP tool catalogue (vocabulary reference); Linux and cross-platform e2e and conformance scenarios; Windows e2e scenarios and fixture probes",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-native-host (macOS, Linux, cross-platform core) + apps/orcel-computer-host (Windows)",
+   "method": "adapted",
    "integrated": false,
    "windows": "not_started",
    "macos": "not_started",
@@ -1303,9 +1507,13 @@
    "api": "not_started",
    "app": "not_started",
    "tests": [],
-   "evidence": [],
+   "evidence": [
+    "Founder resolved 'Vercel agent-use' on 2026-11-17 as vercel-labs/agent-desktop plus browser-use/desktop (browser_use_desktop.multi_session_desktop).",
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
    "status": "NOT STARTED",
-   "blocking_issue": "Admitted as a candidate donor by the founder on 2026-11-17; Apache-2.0 upstream; source admission (per-file licence matrix, provenance) pending; the search for the original 'agent-use' continues."
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
   },
   {
    "id": "crawlee.request_queue",
@@ -4444,6 +4652,1428 @@
    "evidence": [
     "API pin only.",
     "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "browser_use_desktop.multi_session_desktop",
+   "source": "browser-use/desktop",
+   "upstream_commit": "f073b7574f7927185ebbebd87556391d5cb0cfd1",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Browser Use)",
+   "upstream_paths": [
+    "app/src/main/channels",
+    "app/src/main/chrome-import",
+    "app/src/main/hl/engines",
+    "app/src/main/hl/harness.ts",
+    "app/src/main/hl/stock/domain-skills",
+    "app/src/main/hl/stock/interaction-skills",
+    "app/src/main/sessions/BrowserPool.ts",
+    "app/src/main/sessions/SessionDb.ts",
+    "app/src/main/sessions/SessionManager.ts",
+    "app/src/main/sessions/SessionScreencast.ts",
+    "app/src/main/takeoverOverlay.ts",
+    "app/src/renderer",
+    "app/tests/e2e",
+    "app/tests/parity",
+    "app/tests/unit"
+   ],
+   "upstream_tests": [
+    "120 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V1, founder-named): Parallel browser sessions: pooled Chromium, live screencast, persisted session records; Human takeover of a running session; session list and status UI; Per-site and interaction skills for browser agents; External coding-agent CLIs as engines (reference only; Orcel keeps one agent runtime); Import of the user's Chrome cookies and profiles (security-sensitive: opt-in only, Full Control and secret-store policy); Inbound message channels (WhatsApp) that start sessions (reference); Session and harness tests",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-browser-worker (sessions) + apps/orcel-control-room (takeover UI)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "ai_sdk_computer_use.demo_reference",
+   "source": "vercel-labs/ai-sdk-computer-use",
+   "upstream_commit": "ed103da5ebe75112850fbba39872206dd3c439de",
+   "upstream_license": "/: None: no LICENSE file, no licence field in package.json, GitHub reports no licence",
+   "upstream_paths": [
+    "app",
+    "lib/sandbox"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V1, founder-named): Streaming computer-use chat UI over a remote desktop (reference only)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: no licence, proprietary or source-available; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "eve.agent_runtime_patterns",
+   "source": "vercel/eve",
+   "upstream_commit": "ac1a15c36d95ae6d0d73d68d20008a8da4a5625a",
+   "upstream_license": "/: Apache-2.0 + NOTICE (Copyright 2026 Vercel, Inc. and contributors); apps/templates/*: MIT LICENSE files per template; apps/templates/openinstinct: THIRD_PARTY_NOTICES.md; apps/templates/eve-data-agent-template/dbt: own LICENSE and NOTICE.md",
+   "upstream_paths": [
+    "apps/benchmarks",
+    "packages/eve-agent-browser/extension",
+    "packages/eve-agent-desktop/extension/tools",
+    "packages/eve/src/approval",
+    "packages/eve/src/evals",
+    "packages/eve/src/execution/agent-sessions",
+    "packages/eve/src/execution/durable-session-store.ts",
+    "packages/eve/src/harness/approval-outcome.ts",
+    "packages/eve/src/harness/authorization.ts",
+    "packages/eve/src/harness/call-executor.ts",
+    "packages/eve/src/harness/clearance.ts",
+    "packages/eve/src/harness/compaction",
+    "packages/eve/src/harness/hitl",
+    "packages/eve/src/harness/interrupted-attempt.ts",
+    "packages/eve/src/harness/kernel.ts",
+    "packages/eve/src/harness/prompt-cache.ts"
+   ],
+   "upstream_tests": [
+    "2880 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, founder-named): Tool-call authorization, human approval and interrupted-attempt handling in the agent loop; Context compaction and prompt-cache layout; Durable agent sessions (agent side only, never inside orceld); Subagent invocation, callback routing and HITL proxying; Desktop and browser tool vocabulary over agent-desktop and agent-browser; Agent evals and benchmarks",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "workflow.durable_execution",
+   "source": "vercel/workflow",
+   "upstream_commit": "47697fe1b7af0d7da695a17f2f34d2394ebdef90",
+   "upstream_license": "/: Apache-2.0 (LICENSE.md; each package carries its own LICENSE.md)",
+   "upstream_paths": [
+    "packages/core/src/events-consumer.ts",
+    "packages/core/src/replay-divergence.ts",
+    "packages/core/src/runtime",
+    "packages/core/src/state.ts",
+    "packages/core/src/step.ts",
+    "packages/core/src/workflow.ts",
+    "packages/core/tla",
+    "packages/world-local/src/orphaned-steps.ts",
+    "packages/world-local/src/queue.ts",
+    "packages/world-local/src/recovery-wake.ts",
+    "packages/world-local/src/storage.ts",
+    "packages/world-testing",
+    "packages/world/src/events.ts",
+    "packages/world/src/interfaces.ts",
+    "packages/world/src/queue.ts",
+    "packages/world/src/recovery.ts"
+   ],
+   "upstream_tests": [
+    "949 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, founder-named): Deterministic replay from an event log with step memoisation and divergence detection (ported to Python); Local durable event store, queue and recovery of orphaned steps; TLA+ models and World conformance suite",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "durable_harness.exactly_once_resume",
+   "source": "vercel-labs/durable-harness",
+   "upstream_commit": "badd648db763e7d9121917b5c35732cd334e01be",
+   "upstream_license": "/: Apache-2.0 (LICENSE.md); packages/durable-harness: Apache-2.0 (LICENSE)",
+   "upstream_paths": [
+    "packages/cli-check/scenarios",
+    "packages/harness-process/src/host.ts",
+    "packages/harness-process/src/journal.ts",
+    "packages/harness-process/src/ledger.ts",
+    "packages/harness-process/src/recovery.ts",
+    "packages/harness-sandbox/src",
+    "packages/harness-world/src/chaos.test.ts",
+    "packages/harness-world/src/chaos.ts",
+    "packages/harness-world/src/drills.test.ts",
+    "packages/harness-world/src/fence.ts",
+    "packages/harness-world/src/invariants.test.ts",
+    "packages/harness-world/src/lanes.ts",
+    "packages/harness-world/src/queue.ts",
+    "packages/harness-world/src/recover.ts",
+    "packages/harness-world/src/session-log.ts",
+    "packages/harness-world/src/tether.ts"
+   ],
+   "upstream_tests": [
+    "284 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, founder-named): Exactly-once tool effects (fences) and crash resume of a turn from the event log; Effect ledger and journal for host-process tool calls; Chaos, drill and invariant tests for crash and resume; VM-backed sandbox host with tunnel and relay (reference)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "open_agents.template_reference",
+   "source": "vercel-labs/open-agents",
+   "upstream_commit": "cf865e94de7729751c747171785b6ce57e7b178c",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.)",
+   "upstream_paths": [
+    "packages/agent/context-management",
+    "packages/agent/subagents",
+    "packages/agent/tools/path-security.ts",
+    "packages/sandbox/factory.ts",
+    "packages/sandbox/interface.ts"
+   ],
+   "upstream_tests": [
+    "106 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, founder-named): Tool path confinement, subagent roles, compaction (reference); Sandbox interface (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-agent (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "personal_agent_template.approved_memory",
+   "source": "vercel-labs/personal-agent-template",
+   "upstream_commit": "c0a09b7a2cb62563d7f945f3b30cc65279cf5417",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Hugo Richard)",
+   "upstream_paths": [
+    "agent/channels",
+    "agent/memory/profile.ts",
+    "agent/skills/daily-summary.md",
+    "server/db/schema"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, founder-named): Long-term user memory with user-approved saves; Channels and scheduled summaries (reference)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent (memory)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "coding_agent_template.template_reference",
+   "source": "vercel-labs/coding-agent-template",
+   "upstream_commit": "e753e1b6d28b2d64446dd5f9ef33a93909cc7a09",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE, Copyright 2025 Vercel, Inc.; GitHub reports NOASSERTION)",
+   "upstream_paths": [
+    "lib/sandbox/agents",
+    "lib/sandbox/creation.ts"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, founder-named): Running external coding CLIs in a sandbox per task (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "vercel_ai.mcp_client_policy",
+   "source": "vercel/ai",
+   "upstream_commit": "3bea041f28e65f371e640d2c70c302776a46387f",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE, Copyright 2023 Vercel, Inc.; GitHub reports NOASSERTION); packages/provider-utils/src/to-json-schema/zod3-to-json-schema: ISC (Copyright (c) 2020 Stefan Terdell, 2025 Vercel Inc.); packages/tui: Apache-2.0 (own LICENSE)",
+   "upstream_paths": [
+    "packages/code-mode/src",
+    "packages/harness/src",
+    "packages/mcp/src/tool/mcp-client.ts",
+    "packages/mcp/src/tool/mcp-http-transport.ts",
+    "packages/mcp/src/tool/mcp-stdio",
+    "packages/mcp/src/tool/oauth.ts",
+    "packages/policy-opa/src/policy-decision.ts",
+    "packages/policy-opa/src/shadow.ts",
+    "packages/policy-opa/src/wrap-mcp-tools.ts",
+    "packages/sandbox-just-bash/src",
+    "packages/workflow/src"
+   ],
+   "upstream_tests": [
+    "1521 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V4, founder-named): MCP client transports and OAuth (client-side conformance reference); Per-tool policy decisions with a shadow (observe-only) mode; just-bash as a sandbox session provider; Harness agents, durable agent steps, code mode with approval continuations (reference)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp (MCP client conformance) + crates/orcel-policy (shadow policy)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "mcp_handler.http_transport_auth",
+   "source": "vercel-labs/mcp-handler",
+   "upstream_commit": "57181555cbef0de65bdaa041db69f8434266ed66",
+   "upstream_license": "/: No LICENSE file; package.json declares Apache-2.0; GitHub reports no licence",
+   "upstream_paths": [
+    "src/auth/auth-metadata.ts",
+    "src/auth/auth-wrapper.ts",
+    "src/events",
+    "src/handler/mcp-api-handler.ts",
+    "src/telemetry"
+   ],
+   "upstream_tests": [
+    "16 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V4, founder-named): Streamable HTTP and SSE transport handling; Bearer-token verification and OAuth protected-resource metadata; Per-message and per-tool OpenTelemetry spans; event delivery validation",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive (declared in package.json only); notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "mcp_to_ai_sdk.pinned_tool_schemas",
+   "source": "vercel-labs/mcp-to-ai-sdk",
+   "upstream_commit": "3287f6ff08b2574530818b8b75ecd1ed129efd06",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "lib/client-generator.ts",
+    "lib/mcp-client.ts",
+    "lib/oauth-handler.ts",
+    "lib/tool-generator.ts"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V4, founder-named): Pinned, reviewed tool-schema snapshots for MCP servers (guards against tool-description drift and injected descriptions); OAuth handshake for remote MCP servers (reference)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "just_bash.virtual_shell",
+   "source": "vercel-labs/just-bash",
+   "upstream_commit": "5b8297908ef921bbd83a94ad5b7ba82340c0a74a",
+   "upstream_license": "packages/just-bash: Apache-2.0 (no root LICENSE; GitHub reports no licence); packages/just-bash/src/spec-tests/grep/cases, sed/cases (busybox): GPL-2.0 (test fixtures); packages/just-bash/src/spec-tests/grep/cases (GNU grep): GPL-3.0 (test fixtures); packages/just-bash/src/spec-tests/bash/cases: Apache-2.0; packages/just-bash/src/spec-tests/jq/cases: MIT (jq); packages/just-bash/src/spec-tests/awk/cases: Lucent awk permissive licence; packages/just-bash/src/spec-tests/sed/cases (PythonSed): BSD",
+   "upstream_paths": [
+    "THREAT_MODEL.md",
+    "packages/just-bash/src/Bash.ts",
+    "packages/just-bash/src/commands",
+    "packages/just-bash/src/comparison-tests",
+    "packages/just-bash/src/fs",
+    "packages/just-bash/src/interpreter",
+    "packages/just-bash/src/limits.ts",
+    "packages/just-bash/src/network",
+    "packages/just-bash/src/parser",
+    "packages/just-bash/src/security",
+    "packages/just-bash/src/spec-tests"
+   ],
+   "upstream_tests": [
+    "842 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V5, founder-named): Virtual bash: parser, interpreter and commands with no host process; Virtual filesystem, network allow-list, execution limits and threat model; Shell conformance tests (GPL fixtures keep their notices)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-sandbox (new): virtual-shell tier",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: mixed per directory; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "opensrc.source_fetch",
+   "source": "vercel-labs/opensrc",
+   "upstream_commit": "b51de60867e806da1839b33dd29c29424f12521b",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "packages/opensrc/cli/src/core"
+   ],
+   "upstream_tests": [
+    "3 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, founder-named): Dependency source fetch and cache for agent context (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "vercel_skills.skill_lock",
+   "source": "vercel-labs/skills",
+   "upstream_commit": "50894c1d98bc45ca1ab127213e59d6525065b5e7",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.); ThirdPartyNoticeText.txt: third-party notices for bundled dependencies",
+   "upstream_paths": [
+    "src/frontmatter.ts",
+    "src/sanitize.ts",
+    "src/skill-hash.ts",
+    "src/skill-lock.ts"
+   ],
+   "upstream_tests": [
+    "117 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, founder-named): Hash-locked skill installation and sanitising (reference; telemetry excluded)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-agent (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "vercel_agent_skills.framework_skills",
+   "source": "vercel-labs/agent-skills",
+   "upstream_commit": "1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62",
+   "upstream_license": "/: None: no LICENSE file anywhere in the tree, package.json is private with no licence field, GitHub reports no licence",
+   "upstream_paths": [
+    "skills"
+   ],
+   "upstream_tests": [
+    "115 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, founder-named): Framework guidance skills (not an Orcel capability)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: no licence, proprietary or source-available; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "vercel_sandbox.hosted_sandbox_client",
+   "source": "vercel/sandbox",
+   "upstream_commit": "58c48661a4ff5f994739eede59769f03b50c6d89",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "images",
+    "packages/vercel-sandbox-m\u006fck",
+    "packages/vercel-sandbox/src/command.ts",
+    "packages/vercel-sandbox/src/filesystem.ts",
+    "packages/vercel-sandbox/src/network-policy.ts",
+    "packages/vercel-sandbox/src/snapshot.ts"
+   ],
+   "upstream_tests": [
+    "83 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V5, founder-named): Sandbox API shape: network policy, snapshot and fork, streamed commands, files (reference); Local test double of the sandbox API; Base image Dockerfiles (reference)",
+   "classification": "unavailable_or_outside_rights",
+   "orcel_destination": "apps/orcel-sandbox (new) (API reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Client of a hosted service; the backend is not in any public repository. Only the API shape and test double are usable."
+  },
+  {
+   "id": "emulate.api_emulators",
+   "source": "vercel-labs/emulate",
+   "upstream_commit": "ad7b0dea9287ac7bdfe94bf7056522b90a736e2a",
+   "upstream_license": "/: Apache-2.0 + THIRD_PARTY_NOTICES.md (Hono)",
+   "upstream_paths": [
+    "packages/@emulators/core/src",
+    "packages/@emulators/github/src",
+    "packages/@emulators/google",
+    "packages/@emulators/microsoft",
+    "packages/@emulators/okta",
+    "packages/@emulators/slack",
+    "packages/emulate/src/mcp.ts",
+    "packages/emulate/src/project-runner.ts"
+   ],
+   "upstream_tests": [
+    "95 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V5, founder-named): Stateful GitHub API emulator with OAuth and webhooks for no-network tests; Further service emulators for channel and identity tests; Emulator runner and MCP control surface",
+   "classification": "directly_reusable",
+   "orcel_destination": "tests/emulators (new)",
+   "method": "copied",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "workflow_builder_template.visual_builder",
+   "source": "vercel-labs/workflow-builder-template",
+   "upstream_commit": "3ed5b14af3194d75ad686bfe1da50d42d4ce1b77",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE, Copyright 2025 Vercel, Inc.; GitHub reports NOASSERTION)",
+   "upstream_paths": [
+    "components/workflow",
+    "lib/codegen-templates",
+    "plugins/_template"
+   ],
+   "upstream_tests": [
+    "3 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, founder-named): Visual workflow editor and code generation (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "agent_eval.sandboxed_eval",
+   "source": "vercel-labs/agent-eval",
+   "upstream_commit": "9ff2ea3e9f14c14e5123b215c3f695d3b4f9955d",
+   "upstream_license": "packages/agent-eval: MIT (package.json; no LICENSE file; GitHub reports no licence); packages/playground/.agents/skills/frontend-design: own LICENSE.txt",
+   "upstream_paths": [
+    "packages/agent-eval/src/lib/agents/redact.ts",
+    "packages/agent-eval/src/lib/classifier.ts",
+    "packages/agent-eval/src/lib/docker-sandbox.ts",
+    "packages/agent-eval/src/lib/fingerprint.ts",
+    "packages/agent-eval/src/lib/fixture.ts",
+    "packages/agent-eval/src/lib/results.ts",
+    "packages/agent-eval/src/lib/runner.ts"
+   ],
+   "upstream_tests": [
+    "30 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V5, founder-named): Sandboxed eval runner over local Docker; Failure classification, experiment fingerprints, result records, secret redaction",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/benchmarks",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive (declared in package.json only); notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "next_evals_oss.nextjs_evals",
+   "source": "vercel/next-evals-oss",
+   "upstream_commit": "3bd644b26e69e3d89cefb33680b4f28ff7cc0eab",
+   "upstream_license": "/: MIT (Copyright (c) 2025 Vercel)",
+   "upstream_paths": [
+    "apps/release-agent",
+    "lib"
+   ],
+   "upstream_tests": [
+    "26 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, founder-named): Eval publication and grader overrides (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "vercel_native.app_automation_protocol",
+   "source": "vercel-labs/native",
+   "upstream_commit": "4d47c2cfcd256e7835a31342058cb321d5c75217",
+   "upstream_license": "/: Apache-2.0; third_party/webview2: Microsoft WebView2 SDK licence (LICENSE.txt); third_party/sqlite: SQLite (public domain)",
+   "upstream_paths": [
+    "src/automation",
+    "src/runtime/automation_command_policy.zig",
+    "src/runtime/automation_snapshot.zig"
+   ],
+   "upstream_tests": [
+    "496 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V1, founder-named): App-side automation protocol with snapshots and refs (reference for cooperating apps)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: mixed per directory; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "sandcastle.remote_desktop_poc",
+   "source": "vercel-labs/sandcastle",
+   "upstream_commit": "85b678c10defa2b7220a37418f96f4410c4fe1d4",
+   "upstream_license": "/: MIT (Copyright (c) 2025 Vercel)",
+   "upstream_paths": [
+    "src/lib/sandbox/golden-snapshot.ts",
+    "src/lib/sandbox/warm-pool.ts"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V5, founder-named): Warm pool and golden snapshot for remote desktops (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "vercel_fx.permissions_replay",
+   "source": "vercel-labs/fx",
+   "upstream_commit": "3fe7377e290fff22d287118db8058a3c89e8cbee",
+   "upstream_license": "/: Apache-2.0 + THIRD_PARTY_NOTICES.md (interface sounds and other material)",
+   "upstream_paths": [
+    "src/core/permissions",
+    "src/core/session/session_log.zig",
+    "src/core/session/session_replay.zig",
+    "tests/tla"
+   ],
+   "upstream_tests": [
+    "1678 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, discovered): Permission gate, command admission and session replay, with TLA+ models (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-agent (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "ralph_loop_agent.verifier_loop",
+   "source": "vercel-labs/ralph-loop-agent",
+   "upstream_commit": "8a37af8390c7bd6fac81f746776b52ce6d5001b4",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "packages/ralph-loop-agent/src"
+   ],
+   "upstream_tests": [
+    "1 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, discovered): Outer loop with completion verifier and context reset",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-agent (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "knowledge_agent_template.knowledge_routing",
+   "source": "vercel-labs/knowledge-agent-template",
+   "upstream_commit": "fab8f3076de22e79f731525456c1151efa6f48de",
+   "upstream_license": "/: MIT (Copyright (c) 2026-present Vercel); apps/app/app/assets/icons/custom: own LICENSE",
+   "upstream_paths": [
+    "packages/agent/src/core/policy.ts",
+    "packages/agent/src/core/sanitize.ts",
+    "packages/agent/src/router"
+   ],
+   "upstream_tests": [
+    "1 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): Question routing over a synced knowledge file system (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-agent (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "eve_memory_agent_template.file_memory",
+   "source": "vercel-labs/eve-memory-agent-template",
+   "upstream_commit": "fd414324954dff3f88bb7af547e4b1fc197f4dd2",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.)",
+   "upstream_paths": [
+    "agent/lib/memory",
+    "agent/memory",
+    "e2e/evals"
+   ],
+   "upstream_tests": [
+    "36 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, discovered): File-backed long-term memory with evals",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent (memory)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "vercel_chat.chat_channels",
+   "source": "vercel/chat",
+   "upstream_commit": "990411ea2b6b3aeb01ef0bcf44cd2e0ccb320b93",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.)",
+   "upstream_paths": [
+    "packages/adapter-shared",
+    "packages/adapter-slack",
+    "packages/adapter-telegram",
+    "packages/chat/src",
+    "packages/state-memory"
+   ],
+   "upstream_tests": [
+    "278 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): Messaging channels for remote sessions and approvals",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-relay",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "resumable_stream.stream_resume",
+   "source": "vercel/resumable-stream",
+   "upstream_commit": "770cdeb4b6e4b3838b294b0565591f3d75930897",
+   "upstream_license": "/: MIT-style LICENSE text (Copyright (c) 2025 Vercel, Inc); package.json declares ISC",
+   "upstream_paths": [
+    "src/generic.ts",
+    "src/runtime.ts"
+   ],
+   "upstream_tests": [
+    "6 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): Resume a client's stream of a running session after reconnect",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-relay",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "steve.self_hosted_eve",
+   "source": "vercel-labs/steve",
+   "upstream_commit": "09c105e7751f89365c15e3ddf405f1ddeeba5fe5",
+   "upstream_license": "/: None: no LICENSE file, no licence field, GitHub reports no licence",
+   "upstream_paths": [
+    "agent/agent.ts",
+    "deploy",
+    "docker-compose.yml"
+   ],
+   "upstream_tests": [
+    "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, discovered): Running eve and Workflow off Vercel on Postgres (evidence and reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-agent (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: no licence, proprietary or source-available; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "vercel_run.code_mode",
+   "source": "vercel-labs/run",
+   "upstream_commit": "6c146567b19d96b4164550314875ed55eb2366ce",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE); packages/run: Apache-2.0 + THIRD_PARTY_NOTICES.md",
+   "upstream_paths": [
+    "packages/run/src/continuation-codec.ts",
+    "packages/run/src/host-function-invocation.ts",
+    "packages/run/src/run.ts",
+    "packages/run/src/runtime/manager.ts"
+   ],
+   "upstream_tests": [
+    "33 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V5, discovered): Code-mode tier: agent-written JavaScript with host functions mapped to Orcel tools, timeouts and resumable continuations",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-sandbox (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "quickjs_wasi.wasm_js_vm",
+   "source": "vercel-labs/quickjs-wasi",
+   "upstream_commit": "2d8504c47bbb22bced32ec3c9e93e8c51ed73cac",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.); extensions/crypto/mbedtls: Apache-2.0 OR GPL-2.0-or-later; quickjs-ng (git submodule): MIT, not in this tree",
+   "upstream_paths": [
+    "c",
+    "extensions",
+    "src"
+   ],
+   "upstream_tests": [
+    "46 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V5, discovered): Snapshotable JavaScript VM for suspend and resume of agent code",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-sandbox (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: mixed per directory; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "bash_tool.bash_tool",
+   "source": "vercel-labs/bash-tool",
+   "upstream_commit": "70ba5ad4d01be465e76acb5b6bd0c6221a2af1b9",
+   "upstream_license": "/: MIT (Copyright (c) 2025 Vercel, Inc.)",
+   "upstream_paths": [
+    "src/sandbox/just-bash.ts",
+    "src/tools"
+   ],
+   "upstream_tests": [
+    "12 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V5, discovered): Agent tool surface over a virtual shell (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-sandbox (new) (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "guarded_fetch.ssrf_guard",
+   "source": "vercel-labs/guarded-fetch",
+   "upstream_commit": "74b7a293472a44b4d02bbcd842c6694e41594e7c",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "src/guarded-lookup.ts",
+    "src/hostname-safety.ts",
+    "src/ip-address.ts",
+    "src/redirect-policy.test.ts",
+    "src/url-blocked.test.ts",
+    "src/url-blocked.ts"
+   ],
+   "upstream_tests": [
+    "20 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): SSRF test vectors and checks for Orcel's network egress guard",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "crates/orcel-provider-network (test vectors; compare with apps/orcel-browser-worker/src/resolve-guard.ts)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "just_secrets.os_secrets",
+   "source": "vercel-labs/just-secrets",
+   "upstream_commit": "31719436bccf5ecfee621391e94c771b7484c0cf",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Vercel, Inc.)",
+   "upstream_paths": [
+    "src"
+   ],
+   "upstream_tests": [
+    "9 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): OS secret-store access (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "none (reference only)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "deepsec.security_triage",
+   "source": "vercel-labs/deepsec",
+   "upstream_commit": "aed5d06de8940c1fea4e6bef3600d875dd35007c",
+   "upstream_license": "/: Apache-2.0 + NOTICE (Copyright 2026 Vercel, Inc. and contributors)",
+   "upstream_paths": [
+    "packages/processor",
+    "packages/scanner/src/declarative-matcher.ts",
+    "packages/scanner/src/matchers"
+   ],
+   "upstream_tests": [
+    "69 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): Matcher-driven security triage with agent confirmation",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "tests/security-scan (new)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "dev3000.browser_evidence",
+   "source": "vercel-labs/dev3000",
+   "upstream_commit": "e5573ae23a62fad58194881ef8642a7ee2b273fe",
+   "upstream_license": "/: MIT (Copyright (c) 2025 Vercel Inc.)",
+   "upstream_paths": [
+    "src/runtime/browser-capture.ts",
+    "src/runtime/browser-events.ts",
+    "src/runtime/managed-cdp.ts",
+    "src/runtime/network-evidence.ts"
+   ],
+   "upstream_tests": [
+    "52 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V2, discovered): Timestamped browser evidence capture (console, network, screenshots)",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-browser-worker (compare with navigation-trace.ts)",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "webreel.session_video",
+   "source": "vercel-labs/webreel",
+   "upstream_commit": "1504682685514107e48a1696490666eb9ed7da14",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "packages/@webreel/core/src"
+   ],
+   "upstream_tests": [
+    "13 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V2, discovered): Scripted session recording to video (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "crates/orcel-browser-host (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "wterm.web_terminal",
+   "source": "vercel-labs/wterm",
+   "upstream_commit": "b00ad0b7786cc9031d45d878bb9ad9bc75016850",
+   "upstream_license": "/: Apache-2.0",
+   "upstream_paths": [
+    "packages/@wterm/core",
+    "packages/@wterm/dom",
+    "src"
+   ],
+   "upstream_tests": [
+    "198 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): Terminal view for remote and sandbox sessions",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-control-room",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "specli.openapi_tools",
+   "source": "vercel-labs/specli",
+   "upstream_commit": "6dbe06908948847fad5c2e9617150a49c14b43a2",
+   "upstream_license": "/: None: no LICENSE file, no licence field, GitHub reports no licence",
+   "upstream_paths": [
+    "src/cli/model",
+    "src/cli/parse",
+    "src/cli/runtime"
+   ],
+   "upstream_tests": [
+    "22 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V4, discovered): OpenAPI-to-tool generation (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-mcp (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: no licence, proprietary or source-available; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "lat_md.code_knowledge_graph",
+   "source": "vercel-labs/lat.md",
+   "upstream_commit": "370a9a8c13787d83a52d9f437d5812a2aaaac808",
+   "upstream_license": "/: MIT (Copyright (c) 2026 Yury Selivanov); packages/stemmer: own LICENSE + THIRD_PARTY_NOTICES",
+   "upstream_paths": [
+    "packages/core/src",
+    "src/search"
+   ],
+   "upstream_tests": [
+    "236 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): Codebase knowledge graph and search (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-agent (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "ai_python.python_provider_layer",
+   "source": "vercel-labs/ai-python",
+   "upstream_commit": "07aaf34f985ec378b5e3b998db6c66468935875c",
+   "upstream_license": "/: Apache-2.0 (short-form LICENSE, Copyright 2026 Vercel, Inc.; GitHub reports NOASSERTION)",
+   "upstream_paths": [
+    "src/ai/agents",
+    "src/ai/durable.py",
+    "src/ai/providers"
+   ],
+   "upstream_tests": [
+    "81 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (V3, discovered): Provider layer and durable-step helper in Python",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-agent",
+   "method": "adapted",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
+   ],
+   "status": "NOT STARTED",
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
+  },
+  {
+   "id": "detect_agent.agent_detection",
+   "source": "vercel/detect-agent",
+   "upstream_commit": "3ab1df1e4eaae153cf66f4a5018e4c5854855212",
+   "upstream_license": "/: No LICENSE file; package.json declares Apache-2.0; GitHub reports no licence",
+   "upstream_paths": [
+    "agents.json",
+    "detect.go",
+    "evaluate_condition.go",
+    "testcases.json"
+   ],
+   "upstream_tests": [
+    "4 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
+   ],
+   "feature": "Vercel expansion (no V group, discovered): Agent and client detection definitions (reference)",
+   "classification": "needs_new_implementation",
+   "orcel_destination": "apps/orcel-mcp (reference)",
+   "method": "reimplemented",
+   "integrated": false,
+   "windows": "not_started",
+   "macos": "not_started",
+   "linux": "not_started",
+   "mcp": "not_started",
+   "api": "not_started",
+   "app": "not_started",
+   "tests": [],
+   "evidence": [
+    "API pin only.",
+    "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive (declared in package.json only); notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
