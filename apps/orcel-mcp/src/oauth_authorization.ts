@@ -1605,6 +1605,7 @@ export const UNMAPPED_REMOTE_PROFILES = [
   "developer",
   "desktop_structured",
   "browser_structured",
+  "browser_full",
   "coordinate_fallback"
 ] as const;
 

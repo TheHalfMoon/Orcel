@@ -12,8 +12,10 @@ import { projectKernelResult } from "./result.js";
 import { registerReportTools } from "./report.js";
 import { registerWebSearchTools } from "./web_search.js";
 import { registerLiveBrowserTools } from "./browser_live.js";
+import { registerSessionBrokerTools } from "./browser_full.js";
 import {
   TOOL_CONTRACT,
+  contractEntryFor,
   TOOL_SURFACE_PROFILE_ENV,
   localProfileFromConfig,
   profileTools,
@@ -103,9 +105,10 @@ export function allowedToolsFor(context: TransportContext): ReadonlySet<string> 
  * the profile is not registered, and the contract's title and annotations
  * are attached on every transport.
  */
-function contractGatedServer(server: McpServer, allowed: ReadonlySet<string>): McpServer {
+function contractGatedServer(server: McpServer, allowed: ReadonlySet<string>, profile: ToolSurfaceProfile): McpServer {
   const registerTool = (name: string, config: Record<string, unknown>, handler: unknown): unknown => {
-    const entry = TOOL_CONTRACT[name];
+    // SG-000135 OB-02: under `browser_full` a broker tool has its own entry.
+    const entry = contractEntryFor(name, profile);
     if (entry === undefined) {
       throw new Error(`tool ${name} has no SG-000065 contract entry`);
     }
@@ -235,7 +238,7 @@ export function registerOrcelTools(
   defaultWorkspace: string,
   context: TransportContext = defaultTransportContext()
 ): void {
-  server = contractGatedServer(server, allowedToolsFor(context));
+  server = contractGatedServer(server, allowedToolsFor(context), context.toolSurfaceProfile);
   const workspaceSchema = z.object({
     workspace_id: z.string().min(1).default(defaultWorkspace)
   });
@@ -537,7 +540,13 @@ export function registerOrcelTools(
   registerWebSearchTools(server, kernel, defaultWorkspace);
   registerReportTools(server, kernel, defaultWorkspace);
   // SG-000108 slice 3c: registered only where the profile lists them.
-  registerLiveBrowserTools(server, kernel, defaultWorkspace);
+  // SG-000135 OB-02: `browser_full` serves the broker tools instead; the
+  // two profiles never serve each other's form of a shared name.
+  if (context.toolSurfaceProfile === "browser_full") {
+    registerSessionBrokerTools(server, kernel, defaultWorkspace);
+  } else {
+    registerLiveBrowserTools(server, kernel, defaultWorkspace);
+  }
   registerGitFetchTools(server, kernel, defaultWorkspace);
   registerGitPushTools(server, kernel, defaultWorkspace);
 }

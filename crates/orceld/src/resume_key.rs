@@ -77,7 +77,7 @@ fn hmac_sha256(key: &[u8; KEY_BYTES], message: &[u8]) -> [u8; 32] {
 }
 
 #[cfg(windows)]
-fn random_key() -> std::io::Result<[u8; KEY_BYTES]> {
+pub(crate) fn random_key() -> std::io::Result<[u8; KEY_BYTES]> {
     use windows_sys::Win32::Security::Cryptography::{
         BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
     };
@@ -102,7 +102,7 @@ fn random_key() -> std::io::Result<[u8; KEY_BYTES]> {
 }
 
 #[cfg(not(windows))]
-fn random_key() -> std::io::Result<[u8; KEY_BYTES]> {
+pub(crate) fn random_key() -> std::io::Result<[u8; KEY_BYTES]> {
     use std::io::Read as _;
     let mut key = [0u8; KEY_BYTES];
     std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;

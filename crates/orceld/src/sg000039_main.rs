@@ -1,4 +1,7 @@
-use orcel_approval::{ApprovalBroker, ApprovalClass, LocalApprovalBroker};
+use orcel_approval::{ApprovalBroker, ApprovalClass};
+// The OB-01 harness build constructs its broker in its own module.
+#[cfg_attr(feature = "browser-full-scripted-consent", allow(unused_imports))]
+use orcel_approval::LocalApprovalBroker;
 use orcel_audit::{default_audit_path, AuditLogger};
 use orcel_contracts::{
     FailureCode, RemoteRequestEnvelope, RequestEnvelope, ResponseEnvelope,
@@ -19,6 +22,30 @@ mod bm02_tier_b_tests;
 #[cfg(all(test, windows))]
 mod bm02_tier_c_act_tests;
 mod browser;
+// SG-000135 OB-01: the Orcel Browser Session Broker (generic over its
+// worker) and the browser_full request forms. Only the Windows
+// live-browser-dev build drives a real worker through them; other builds
+// validate browser_full requests and answer typed unavailable.
+#[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+mod browser_broker;
+mod browser_full;
+// SG-000135 OB-01 end-to-end harness, test builds only: the scripted SOFT
+// consent. Compiled only with both live browser features and the harness
+// feature, never in a development or release build.
+#[cfg(all(
+    windows,
+    feature = "browser-full-scripted-consent",
+    feature = "live-browser-test",
+    feature = "live-browser-dev"
+))]
+mod browser_full_e2e_consent;
+#[cfg(all(
+    feature = "browser-full-scripted-consent",
+    not(all(windows, feature = "live-browser-test", feature = "live-browser-dev"))
+))]
+compile_error!(
+    "browser-full-scripted-consent is the OB-01 harness's test-only consent: build it only on Windows with live-browser-test and live-browser-dev"
+);
 mod clipboard;
 mod contained_tier;
 #[cfg(test)]
@@ -117,8 +144,18 @@ fn run() -> Result<(), String> {
     let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
     let audit =
         AuditLogger::new(audit_path).map_err(|error| format!("initialize audit log: {error}"))?;
+    #[cfg(not(feature = "browser-full-scripted-consent"))]
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;
+    // OB-01 harness builds only (see the module): the real broker and
+    // ledger, with the SOFT consent scripted and recorded.
+    #[cfg(all(
+        windows,
+        feature = "browser-full-scripted-consent",
+        feature = "live-browser-test",
+        feature = "live-browser-dev"
+    ))]
+    let approval = browser_full_e2e_consent::broker()?;
     let workspace_set = remote_lease::WorkspaceSet::from_environment();
     // SG-000120 RJ-02: approved file mutations are journaled; what an
     // exited orceld left open is reconciled now.
@@ -197,6 +234,13 @@ fn run() -> Result<(), String> {
 
     let mut hello = live_sessions::Hello::new(sessions.clone());
 
+    // SG-000135 OB-01: however run() ends from here (input closed, a read
+    // error, a failed response write), the MCP session is over: every
+    // browser_full session ends with it and its profile is removed.
+    let _end_browser_sessions = OnExit::new(|| {
+        live_dispatch::end_browser_sessions(browser_broker::EndReason::McpSessionEnded);
+    });
+
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
 
@@ -257,6 +301,39 @@ fn run() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Runs its closure once when dropped: on every exit path of the scope that
+/// holds it, an early return or `?` included.
+struct OnExit<F: FnMut()> {
+    action: F,
+}
+
+impl<F: FnMut()> OnExit<F> {
+    fn new(action: F) -> Self {
+        Self { action }
+    }
+}
+
+impl<F: FnMut()> Drop for OnExit<F> {
+    fn drop(&mut self) {
+        (self.action)();
+    }
+}
+
+/// The emergency revoke's first step: advance the approval epoch, and the
+/// moment it advanced, end every browser_full session, before any later
+/// step that can fail. Other orceld processes see the new epoch before
+/// their next broker action and end theirs.
+fn advance_epoch_and_stop_browsers(
+    approval: &impl ApprovalBroker,
+    prompt: &orcel_approval::ApprovalPrompt,
+) -> Result<u64, ProviderError> {
+    let epoch = approval
+        .emergency_revoke(prompt)
+        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    live_dispatch::end_browser_sessions(browser_broker::EndReason::EmergencyStop);
+    Ok(epoch)
 }
 
 /// CR-01 `request.completed` event data: the request's shape and outcome,
@@ -362,6 +439,10 @@ impl<B: ApprovalBroker> ApprovalBroker for OriginStamp<'_, B> {
     fn history(&self, limit: usize) -> Vec<orcel_approval::ApprovalRecordSummary> {
         self.inner.history(limit)
     }
+
+    fn verified_revoke_epoch(&self) -> Option<u64> {
+        self.inner.verified_revoke_epoch()
+    }
 }
 
 /// SG-000055 entry: remote-context requests must pass the local
@@ -390,6 +471,11 @@ fn handle_envelope(
     // the live browser, never to the model-only browser shapes.
     if profile_gate::is_live_shape(&request) {
         return handle_live(policy, audit, approval, request);
+    }
+    // SG-000135 OB-02: a broker shape the gate admitted (local,
+    // `browser_full`) runs through the Orcel Browser Session Broker.
+    if profile_gate::is_browser_full_shape(&request) {
+        return handle_browser_full(policy, audit, approval, request);
     }
     // XP-19: secrets are local-only and never reach workspace dispatch.
     if secret_store::is_secret_request(&request.capability) {
@@ -612,6 +698,41 @@ fn handle_live(
     };
     let result = live_dispatch::dispatch(&decision.workspace, approval, &request);
     finish(audit, request, decision.policy_revision, result)
+}
+
+/// SG-000135 OB-02: a `browser_full` broker shape, after the profile gate.
+/// Its own form is checked, then (for an action that maps onto a live host
+/// action) that action's live form, before anything runs.
+fn handle_browser_full(
+    policy: &PolicyEngine,
+    audit: &AuditLogger,
+    approval: &impl ApprovalBroker,
+    request: RequestEnvelope,
+) -> ResponseEnvelope {
+    let deny = |request: RequestEnvelope, error: ProviderError| {
+        let _ = audit.record(&request, POLICY_REVISION, "DENIED");
+        ResponseEnvelope::failure(request.request_id, error.code, error.message)
+    };
+    let action = match browser_full::parse(&request) {
+        Ok(action) => action,
+        Err(error) => return deny(request, error),
+    };
+    if let Some(live) = action.live_request(&request, browser_full::VALIDATION_PAGE_ID, 0) {
+        if let Err(error) = policy.authorize_live_browser(&live) {
+            return deny(request, ProviderError::new(error.code, error.message));
+        }
+    }
+    let Some(workspace) = policy.workspace(&request.workspace_id).cloned() else {
+        return deny(
+            request,
+            ProviderError::new(
+                FailureCode::WorkspaceDenied,
+                "requested workspace is not configured",
+            ),
+        );
+    };
+    let result = live_dispatch::dispatch_full(&workspace, approval, &request, &action);
+    finish(audit, request, POLICY_REVISION, result)
 }
 
 fn handle_request(
@@ -902,9 +1023,7 @@ fn dispatch_trust(
                 format!("workspace={} policy={POLICY_REVISION}", workspace.id),
                 digest.clone(),
             );
-            let epoch = approval
-                .emergency_revoke(&prompt)
-                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            let epoch = advance_epoch_and_stop_browsers(approval, &prompt)?;
             let full_control_epoch =
                 orcel_policy::full_control_store::revoke_default_if_present().map_err(|error| {
                     ProviderError::new(
@@ -2823,6 +2942,256 @@ mod sg000055_envelope_tests {
                 capability, operation, "default"
             )));
         }
+        let audited = std::fs::read_to_string(audit.path()).unwrap_or_default();
+        assert!(audited.contains("PROFILE_DENIED"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// SG-000135 OB-01: the exit guard ends browser sessions on every exit
+    /// path, an early `?` return (a failed response write) included.
+    #[test]
+    fn ob01_every_exit_path_ends_browser_sessions() {
+        fn run_until(fail_write: bool) -> Result<(), String> {
+            let _guard = OnExit::new(|| {
+                live_dispatch::end_browser_sessions(browser_broker::EndReason::McpSessionEnded);
+            });
+            if fail_write {
+                return Err("write response: broken pipe".into());
+            }
+            Ok(())
+        }
+        for fail_write in [false, true] {
+            live_dispatch::ENDED_CALLS.with(|calls| calls.borrow_mut().clear());
+            let _ = run_until(fail_write);
+            let calls = live_dispatch::ENDED_CALLS.with(|calls| calls.borrow().clone());
+            assert_eq!(
+                calls,
+                vec![browser_broker::EndReason::McpSessionEnded],
+                "{fail_write}"
+            );
+        }
+        // run() holds the guard from before its request loop.
+        let source = include_str!("sg000039_main.rs");
+        let guard = source
+            .find("let _end_browser_sessions = OnExit::new")
+            .unwrap_or(usize::MAX);
+        let read_loop = source.find("for line in stdin.lock().lines()").unwrap_or(0);
+        assert!(
+            guard < read_loop,
+            "the guard is set before the request loop"
+        );
+    }
+
+    /// SG-000135 OB-01: the emergency revoke ends browser sessions as soon
+    /// as the epoch advanced, before any later step; a revoke the broker
+    /// refused ends nothing.
+    #[test]
+    fn ob01_emergency_revoke_ends_browser_sessions_right_after_the_epoch_moves() {
+        use orcel_approval::{ApprovalError, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
+        struct Revoker(Result<u64, FailureCode>);
+        impl ApprovalBroker for Revoker {
+            fn request_token(&self, _: &ApprovalPrompt) -> Result<ApprovedToken, ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalUnavailable,
+                    message: "test".into(),
+                })
+            }
+            fn consume(
+                &self,
+                _: &ApprovedToken,
+                _: &ConsumeExpectation,
+                _: u64,
+            ) -> Result<(), ApprovalError> {
+                Err(ApprovalError {
+                    code: FailureCode::ApprovalUnavailable,
+                    message: "test".into(),
+                })
+            }
+            fn emergency_revoke(&self, _: &ApprovalPrompt) -> Result<u64, ApprovalError> {
+                self.0.clone().map_err(|code| ApprovalError {
+                    code,
+                    message: "refused".into(),
+                })
+            }
+        }
+        let prompt =
+            ApprovalPrompt::new_strong("default", "rev", "emergency revoke", "w", "s", "d");
+        live_dispatch::ENDED_CALLS.with(|calls| calls.borrow_mut().clear());
+        assert_eq!(
+            advance_epoch_and_stop_browsers(&Revoker(Ok(7)), &prompt).ok(),
+            Some(7)
+        );
+        let calls = live_dispatch::ENDED_CALLS.with(|calls| calls.borrow().clone());
+        assert_eq!(calls, vec![browser_broker::EndReason::EmergencyStop]);
+        live_dispatch::ENDED_CALLS.with(|calls| calls.borrow_mut().clear());
+        assert!(advance_epoch_and_stop_browsers(
+            &Revoker(Err(FailureCode::ApprovalDenied)),
+            &prompt
+        )
+        .is_err());
+        assert!(live_dispatch::ENDED_CALLS.with(|calls| calls.borrow().is_empty()));
+        // The dispatcher's revoke goes through it before the later steps.
+        let source = include_str!("sg000039_main.rs");
+        let arm = source
+            .find("(\"trust.revoke_emergency\", \"revoke\") => {")
+            .unwrap_or(0);
+        let stop = source[arm..]
+            .find("advance_epoch_and_stop_browsers(approval")
+            .map(|at| arm + at);
+        let later = source[arm..]
+            .find("revoke_default_if_present")
+            .map(|at| arm + at);
+        assert!(stop.is_some() && stop < later);
+    }
+
+    /// SG-000135 OB-02: the broker shapes reach the broker only through the
+    /// gate: a local `browser_full` request. There, the broker form and the
+    /// mapped live form are checked (unknown fields, a malformed session id,
+    /// a non-HTTPS URL, an unknown workspace), and every build without the
+    /// live browser answers typed unavailable, before any approval or any
+    /// worker. `browser_structured` shapes stay out of `browser_full`.
+    #[test]
+    fn ob02_browser_full_shapes_reach_the_broker_only_through_the_gate() {
+        let (policy, audit, root) = fixture();
+        let workspaces =
+            remote_lease::WorkspaceSet::from_pairs(&[("default".into(), root.join("workspace"))]);
+        let approval = FixedApprovalBroker(ApprovalDecision::Approved);
+        let full = |operation: &str, workspace: &str, arguments: Value| {
+            let mut request = request("browser.session", operation, workspace);
+            request.target = None;
+            request.arguments = arguments;
+            request
+        };
+        let send =
+            |request: RequestEnvelope, profile: Option<&str>, remote: Option<RemoteContext>| {
+                handle_envelope(
+                    &policy,
+                    &audit,
+                    &approval,
+                    &workspaces,
+                    RemoteRequestEnvelope {
+                        request,
+                        remote,
+                        profile: profile.map(str::to_owned),
+                    },
+                )
+            };
+        let session = "bs-0123456789abcdef-1-0001020304050607";
+        let shapes = [
+            ("create", json!({"task": "fixture form"})),
+            (
+                "open",
+                json!({"session_id": session, "url": "https://example.org/"}),
+            ),
+            ("snapshot", json!({"session_id": session})),
+            (
+                "click",
+                json!({"session_id": session, "node_id": "d1-e2", "expected_generation": 1}),
+            ),
+            (
+                "fill",
+                json!({"session_id": session, "node_id": "d1-e2", "value": "Ada", "expected_generation": 1}),
+            ),
+            (
+                "select",
+                json!({"session_id": session, "node_id": "d1-e2", "option": "Two", "expected_generation": 1}),
+            ),
+            (
+                "verify",
+                json!({"session_id": session, "checks": [{"kind": "element_visible", "node_id": "d1-e2"}], "expected_generation": 1}),
+            ),
+            (
+                "extract",
+                json!({"session_id": session, "expected_generation": 1}),
+            ),
+            ("close", json!({"session_id": session})),
+            ("status", json!({"session_id": session})),
+        ];
+        assert_eq!(shapes.len(), profile_gate::BROWSER_FULL_SHAPES.len());
+        let full_profile = Some(profile_gate::BROWSER_FULL_PROFILE);
+        for (operation, arguments) in shapes {
+            let shape = || full(operation, "default", arguments.clone());
+            for profile in [
+                None,
+                Some("browser_structured"),
+                Some("desktop_structured"),
+                Some("core"),
+            ] {
+                assert_eq!(
+                    code(&send(shape(), profile, None)),
+                    FailureCode::CapabilityDenied,
+                    "{operation} {profile:?}"
+                );
+            }
+            assert_eq!(
+                code(&send(shape(), full_profile, Some(remote()))),
+                FailureCode::CapabilityDenied
+            );
+            assert_eq!(
+                code(&send(
+                    full(operation, "missing", arguments.clone()),
+                    full_profile,
+                    None
+                )),
+                FailureCode::WorkspaceDenied,
+                "{operation}"
+            );
+            let mut widened = arguments.clone();
+            widened["profile_root"] =
+                json!("C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data");
+            assert_eq!(
+                code(&send(
+                    full(operation, "default", widened),
+                    full_profile,
+                    None
+                )),
+                FailureCode::InvalidRequest,
+                "{operation}"
+            );
+            #[cfg(not(all(windows, feature = "live-browser-dev")))]
+            {
+                let response = send(shape(), full_profile, None);
+                assert_eq!(
+                    code(&response),
+                    FailureCode::ProviderUnavailable,
+                    "{operation}"
+                );
+                assert!(response
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.message.contains("live-browser-dev")));
+            }
+        }
+        // The mapped live form is checked before anything runs.
+        for (operation, arguments) in [
+            (
+                "open",
+                json!({"session_id": session, "url": "http://example.org/"}),
+            ),
+            (
+                "open",
+                json!({"session_id": "bs-1", "url": "https://example.org/"}),
+            ),
+            (
+                "fill",
+                json!({"session_id": session, "node_id": "d1-e2", "value": "a\u{202e}b", "expected_generation": 1}),
+            ),
+        ] {
+            let response = send(full(operation, "default", arguments), full_profile, None);
+            assert!(!response.ok);
+            assert_ne!(
+                code(&response),
+                FailureCode::ProviderUnavailable,
+                "{operation}"
+            );
+        }
+        // browser_structured's shapes are refused under browser_full.
+        let mut structured = request("browser.page", "open", "default");
+        structured.target = None;
+        assert_eq!(
+            code(&send(structured, full_profile, None)),
+            FailureCode::CapabilityDenied
+        );
         let audited = std::fs::read_to_string(audit.path()).unwrap_or_default();
         assert!(audited.contains("PROFILE_DENIED"));
         let _ = std::fs::remove_dir_all(root);

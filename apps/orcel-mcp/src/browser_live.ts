@@ -67,6 +67,8 @@ const oneLine = (value: string) => !/\p{Cc}/u.test(value);
 
 const pageId = z.string().min(4).max(128).regex(/^pg-[A-Za-z0-9_-]+$/, { message: "page_id is an Orcel page id (pg-...)" });
 const nodeId = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, { message: "node_id is an observed node id" });
+/** SG-000135 OB-02: shared with the `browser_full` tools (browser_full.ts). */
+export const liveNodeIdSchema = nodeId;
 const generation = z.number().int().min(0);
 const fileName = z
   .string()
@@ -82,15 +84,18 @@ export function browserPageSchema(defaultWorkspace: string) {
   return z.object({ workspace_id: workspace(defaultWorkspace) });
 }
 
+/** One public HTTPS URL (shared with `browser_open`). */
+export const liveUrlSchema = z
+  .string()
+  .min(1)
+  .max(MAX_URL_CHARS)
+  .refine((value) => value.startsWith("https://"), { message: "url must use https://" });
+
 export function browserNavigateSchema(defaultWorkspace: string) {
   return z.object({
     workspace_id: workspace(defaultWorkspace),
     page_id: pageId,
-    url: z
-      .string()
-      .min(1)
-      .max(MAX_URL_CHARS)
-      .refine((value) => value.startsWith("https://"), { message: "url must use https://" }),
+    url: liveUrlSchema,
     expected_generation: generation
   });
 }
@@ -128,15 +133,18 @@ const waitText = z
   .max(MAX_WAIT_TEXT_CHARS)
   .refine(oneLine, { message: "text is one line with no control character" });
 
+/** A fill value the prompt can show (shared with the `browser_full` fill). */
+export const liveFormValueSchema = z
+  .string()
+  .max(MAX_FORM_VALUE_CHARS)
+  .refine(oneLine, { message: "value is one line with no control character" });
+
 export function browserFillSchema(defaultWorkspace: string) {
   return z.strictObject({
     workspace_id: workspace(defaultWorkspace),
     page_id: pageId,
     node_id: nodeId,
-    value: z
-      .string()
-      .max(MAX_FORM_VALUE_CHARS)
-      .refine(oneLine, { message: "value is one line with no control character" }),
+    value: liveFormValueSchema,
     expected_generation: generation
   });
 }
@@ -175,26 +183,31 @@ const postcondition = z.discriminatedUnion("kind", [
   })
 ]);
 
+/** 1 to 16 postconditions (shared with the `browser_full` verify). */
+export const browserVerifyChecksSchema = z.array(postcondition).min(1).max(MAX_POSTCONDITIONS);
+
 export function browserVerifySchema(defaultWorkspace: string) {
   return z.strictObject({
     workspace_id: workspace(defaultWorkspace),
     page_id: pageId,
-    checks: z.array(postcondition).min(1).max(MAX_POSTCONDITIONS),
+    checks: browserVerifyChecksSchema,
     expected_generation: generation
   });
 }
 
 /** SG-000122 slice A4: exactly one option of a native select, by its label. */
+export const liveOptionSchema = z
+  .string()
+  .min(1)
+  .max(MAX_FORM_VALUE_CHARS)
+  .refine(oneLine, { message: "option is one label on one line with no control character" });
+
 export function browserSelectSchema(defaultWorkspace: string) {
   return z.strictObject({
     workspace_id: workspace(defaultWorkspace),
     page_id: pageId,
     node_id: nodeId,
-    option: z
-      .string()
-      .min(1)
-      .max(MAX_FORM_VALUE_CHARS)
-      .refine(oneLine, { message: "option is one label on one line with no control character" }),
+    option: liveOptionSchema,
     expected_generation: generation
   });
 }

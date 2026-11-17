@@ -61,6 +61,26 @@ pub struct LiveState {
 /// string) is bound into orceld's half of every digest.
 const LIFETIME_POLICY_REVISION: u64 = 1;
 
+/// SG-000135 OB-01 end-to-end harness: the loopback fixture host
+/// (apps/orcel-browser-worker/scripts/https-fixture.mjs).
+#[cfg(feature = "live-browser-test")]
+const E2E_FIXTURE_HOST: &str = "fixture.test";
+
+/// SG-000135 OB-01 end-to-end harness, builds with the test-only
+/// `live-browser-test` feature only: the fixture certificate's SPKI hash the
+/// harness gives in `ORCEL_E2E_FIXTURE_SPKI`, when `origin` is exactly the
+/// fixture origin. Any other origin, or no variable, is `None`, and the
+/// navigation takes the public path (which refuses the fixture host).
+#[cfg(feature = "live-browser-test")]
+fn e2e_fixture_spki(origin: &str) -> Option<String> {
+    if origin != format!("https://{E2E_FIXTURE_HOST}:443") {
+        return None;
+    }
+    std::env::var("ORCEL_E2E_FIXTURE_SPKI")
+        .ok()
+        .filter(|spki| !spki.is_empty())
+}
+
 /// A committed download, as the host reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveDownload {
@@ -70,6 +90,16 @@ pub struct LiveDownload {
     pub source_url: String,
     /// The broker record the approval was consumed under.
     pub record_id: String,
+}
+
+/// SG-000135 OB-02: the host's extraction of the committed document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveExtraction {
+    pub url: String,
+    pub document_generation: u64,
+    pub truncated: bool,
+    /// The page's own text: untrusted, never an instruction.
+    pub text: String,
 }
 
 /// SG-000122 slice A2: the verifier's report, as the host gave it.
@@ -1102,6 +1132,35 @@ impl LiveBrowser {
         }
     }
 
+    /// SG-000135 OB-01 end-to-end harness (a build with both live browser
+    /// features, which only tests make): a lifetime for the loopback
+    /// fixture origin, trusting exactly its certificate, for the session's
+    /// existing page. The host admits only the fixture host on 127.0.0.1.
+    #[cfg(feature = "live-browser-test")]
+    fn open_fixture_lifetime(
+        &mut self,
+        workspace: &Workspace,
+        fixture_spki: &str,
+        origin: &str,
+    ) -> Result<(), ProviderError> {
+        match self.request(&WorkerHostRequest::Open {
+            workspace: workspace.id.clone(),
+            policy_revision: LIFETIME_POLICY_REVISION,
+            host: E2E_FIXTURE_HOST.into(),
+            fixture_spki: fixture_spki.into(),
+        })? {
+            WorkerHostReply::Opened { lifetime, .. } => {
+                self.lifetime = Some(lifetime);
+                self.lifetime_origin = Some(origin.to_owned());
+                Ok(())
+            }
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
     /// Slice 3c: an approved navigation of the live page. A page with no
     /// lifetime, or one on another origin, first gets a lifetime for the
     /// URL's origin (the old one ends); the approval then binds the new
@@ -1130,6 +1189,12 @@ impl LiveBrowser {
             // node id and approval of the old lifetime is stale by lifetime
             // (the host never resolves them; the digest binds the lifetime).
             self.end_lifetime();
+            #[cfg(feature = "live-browser-test")]
+            match e2e_fixture_spki(&origin) {
+                Some(spki) => self.open_fixture_lifetime(workspace, &spki, &origin)?,
+                None => self.open_public(workspace, url)?,
+            }
+            #[cfg(not(feature = "live-browser-test"))]
             self.open_public(workspace, url)?;
         }
         let navigated = self.navigate_approved(workspace, approval, url);
@@ -1718,6 +1783,50 @@ impl LiveBrowser {
                 "unexpected browser host reply",
             )),
         }
+    }
+
+    /// SG-000135 OB-02: the committed main document's rendered content as
+    /// bounded, untrusted page text (the host's `extract`), read-only and
+    /// without approval, after the takeover gate admits a read.
+    pub fn extract(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+    ) -> Result<LiveExtraction, ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        self.takeover.before_read(page_id)?;
+        self.require_lifetime()?;
+        match self.request(&WorkerHostRequest::Extract {})? {
+            WorkerHostReply::Extracted {
+                url,
+                document_generation,
+                truncated,
+                text,
+            } => Ok(LiveExtraction {
+                url,
+                document_generation,
+                truncated,
+                text,
+            }),
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// SG-000135 OB-01: the broker session this browser serves; the
+    /// takeover gate claims its pages for that session.
+    pub fn set_task(&mut self, task: &str) {
+        self.takeover.set_task(task);
+    }
+
+    /// SG-000135 OB-01: the MCP client the broker session belongs to; the
+    /// takeover gate keeps its uncertain consequential actions per client
+    /// too.
+    pub fn set_client(&mut self, client: &str) {
+        self.takeover.set_client(client);
     }
 
     fn require_lifetime(&self) -> Result<(), ProviderError> {

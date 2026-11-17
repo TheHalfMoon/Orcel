@@ -15,7 +15,8 @@
 //! is unknown is not admitted again: its key is built from stable action
 //! material (origin, URL path, kind, and the target's role, name and ordinal
 //! or the link and file name), never a page or node id, and the uncertain
-//! actions live in one ledger per orceld process, so neither a closed page,
+//! actions live in one ledger per orceld process (entries kept per task: the
+//! live browser's task, or a broker session's id), so neither a closed page,
 //! a renumbered observation nor a host restart forgets them. With the gate
 //! on, a page it does not track (one it could not claim) is refused.
 //!
@@ -40,7 +41,7 @@ use orcel_contracts::FailureCode;
 use orcel_provider_fs::ProviderError;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, PoisonError};
 
 /// Whether the gate is on in this build. Off until SG-000135 is merged.
 pub(crate) const ENABLED: bool = cfg!(feature = "browser-takeover-gate");
@@ -50,6 +51,10 @@ const LIVE_TASK: &str = "live-browser";
 
 /// Domain separation for a write's provisional (per-page) key.
 const ACTION_KEY_DOMAIN: &str = "orcel-b1-action-key/1";
+
+/// The prefix of a client's ledger task (never a session id or the live
+/// task, which carry no such prefix).
+const CLIENT_TASK_PREFIX: &str = "client\u{0}";
 
 /// Domain separation for a write's stable key.
 const STABLE_KEY_DOMAIN: &str = "orcel-b1-stable-action/1";
@@ -68,6 +73,20 @@ pub(crate) struct TakeoverGate<C: Clock = SystemClock> {
     /// next write is planned on. orceld cannot see the agent's plan, so the
     /// latest observation stands for it.
     basis: HashMap<String, u64>,
+    /// The task that owns the pages this gate claims: the live browser's
+    /// one task, or (SG-000135 OB-01) the broker session's id.
+    task: String,
+    /// SG-000135 OB-01: the MCP client a broker session belongs to. Its
+    /// uncertain consequential actions are also kept under the client in
+    /// the shared ledger, so the client cannot repeat one by opening a new
+    /// session; unrelated clients stay independent.
+    client: Option<String>,
+    /// The shared ledger (the session gate's own), for the client entries.
+    ledger: Option<SharedLedger>,
+    /// The class of the write in progress, from `before_write`.
+    pending_class: Option<ActionClass>,
+    /// The client-scoped key of the consequential write in progress.
+    pending_client_key: Option<ActionKey>,
 }
 
 impl TakeoverGate<SystemClock> {
@@ -87,6 +106,11 @@ impl<C: Clock> TakeoverGate<C> {
         Self {
             gate: None,
             basis: HashMap::new(),
+            task: LIVE_TASK.to_owned(),
+            client: None,
+            ledger: None,
+            pending_class: None,
+            pending_client_key: None,
         }
     }
 
@@ -99,9 +123,41 @@ impl<C: Clock> TakeoverGate<C> {
     /// A gate on `clock` whose idempotency guard uses `ledger`.
     pub(crate) fn on_with_ledger(clock: C, ledger: SharedLedger) -> Self {
         Self {
-            gate: Some(SessionGate::with_ledger(clock, Reads::Block, ledger)),
+            gate: Some(SessionGate::with_ledger(
+                clock,
+                Reads::Block,
+                SharedLedger::clone(&ledger),
+            )),
             basis: HashMap::new(),
+            task: LIVE_TASK.to_owned(),
+            client: None,
+            ledger: Some(ledger),
+            pending_class: None,
+            pending_client_key: None,
         }
+    }
+
+    /// SG-000135 OB-01: pages opened from now on belong to `task` (a broker
+    /// session's id), so the gate's ownership is per session. A page
+    /// already claimed keeps its owner. Every session's gate shares the
+    /// process's uncertain-action ledger (`process_ledger`), never one of
+    /// its own.
+    #[cfg_attr(not(feature = "live-browser-dev"), allow(dead_code))]
+    pub(crate) fn set_task(&mut self, task: &str) {
+        self.task = task.to_owned();
+    }
+
+    /// SG-000135 OB-01: the MCP client (its `client_session_id`) the
+    /// session belongs to; its uncertain consequential actions are also
+    /// kept per client.
+    #[cfg_attr(not(feature = "live-browser-dev"), allow(dead_code))]
+    pub(crate) fn set_client(&mut self, client: &str) {
+        self.client = Some(client.to_owned());
+    }
+
+    /// The ledger task a client's entries are kept under.
+    fn client_task(client: &str) -> TaskId {
+        TaskId::new(format!("{CLIENT_TASK_PREFIX}{client}"))
     }
 
     /// With the gate on, a page it does not track is refused (fail closed).
@@ -129,7 +185,7 @@ impl<C: Clock> TakeoverGate<C> {
     pub(crate) fn page_opened(&mut self, page_id: &str) {
         if let Some(gate) = self.gate.as_mut() {
             if gate
-                .claim(ResourceId::new(page_id), TaskId::new(LIVE_TASK))
+                .claim(ResourceId::new(page_id), TaskId::new(self.task.as_str()))
                 .is_ok()
             {
                 self.basis.insert(page_id.to_owned(), 0);
@@ -183,6 +239,8 @@ impl<C: Clock> TakeoverGate<C> {
             return Ok(None);
         };
         Self::tracked(gate, page_id)?;
+        self.pending_class = Some(class);
+        self.pending_client_key = None;
         let basis = self.basis.get(page_id).copied().unwrap_or(0);
         gate.begin_write(
             &ResourceId::new(page_id),
@@ -205,12 +263,70 @@ impl<C: Clock> TakeoverGate<C> {
         kind: &str,
         material: &str,
     ) -> Result<(), ProviderError> {
-        match (self.gate.as_mut(), ticket) {
-            (Some(gate), Some(ticket)) => gate
-                .rekey(ticket, stable_key(origin, url_path(url), kind, material))
-                .map_err(|refusal| refused(&refusal)),
-            _ => Ok(()),
+        let key = stable_key(&self.task, origin, url_path(url), kind, material);
+        let (Some(gate), Some(ticket)) = (self.gate.as_mut(), ticket) else {
+            return Ok(());
+        };
+        gate.rekey(ticket, key)
+            .map_err(|refusal| refused(&refusal))?;
+        // SG-000135 OB-01: the same action's outcome is unknown under this
+        // client, from any of its sessions.
+        if let (Some(client), Some(ledger)) = (&self.client, &self.ledger) {
+            let task = Self::client_task(client);
+            let client_key = stable_key(task.as_str(), origin, url_path(url), kind, material);
+            let consequential = self.pending_class == Some(ActionClass::Consequential);
+            let refuses = ledger
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .refuses(&task, &client_key, consequential);
+            if refuses {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "browser session stale: outcome_uncertain: an earlier session of this client sent this action and its outcome is unknown; check the page and reconcile before repeating it",
+                ));
+            }
+            if consequential {
+                self.pending_client_key = Some(client_key);
+            }
         }
+        Ok(())
+    }
+
+    /// SG-000135 OB-01: the outcome of this client's uncertain action
+    /// (`origin`, `url`, `kind`, `material`, as `rekey` named it) was
+    /// established: the client may send it again. Like the session
+    /// reconcile, it is never automatic; until it is called the action
+    /// stays refused. False when nothing was recorded.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn reconcile_client(
+        &mut self,
+        origin: &str,
+        url: Option<&str>,
+        kind: &str,
+        material: &str,
+    ) -> bool {
+        let (Some(client), Some(ledger)) = (&self.client, &self.ledger) else {
+            return false;
+        };
+        let task = Self::client_task(client);
+        let key = stable_key(task.as_str(), origin, url_path(url), kind, material);
+        ledger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .reconcile(&task, &key)
+    }
+
+    /// SG-000135 OB-01: every uncertain outcome of this client was
+    /// established, including any a full ledger could not record.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn reconcile_client_overflow(&mut self) -> bool {
+        let (Some(client), Some(ledger)) = (&self.client, &self.ledger) else {
+            return false;
+        };
+        ledger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .reconcile_overflow(&Self::client_task(client))
     }
 
     /// Right before the write's approval is spent and the frame is sent.
@@ -229,6 +345,16 @@ impl<C: Clock> TakeoverGate<C> {
     /// The write finished: `outcome` is the journal's word for it (`done`,
     /// `failed`, or anything else for unknown).
     pub(crate) fn after_write(&mut self, ticket: Option<WriteTicket>, outcome: &str) {
+        let client_key = self.pending_client_key.take();
+        self.pending_class = None;
+        if let (Some(key), Some(client), Some(ledger)) = (client_key, &self.client, &self.ledger) {
+            if ticket.is_some() && !matches!(outcome, "done" | "failed") {
+                let _ = ledger
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .record(&Self::client_task(client), key);
+            }
+        }
         if let (Some(gate), Some(ticket)) = (self.gate.as_mut(), ticket) {
             let outcome = match outcome {
                 "done" => WriteOutcome::Done,
@@ -261,10 +387,13 @@ fn action_key(page_id: &str, kind: &str, material: &str) -> ActionKey {
     digest_key(&[ACTION_KEY_DOMAIN, page_id, kind, material])
 }
 
-/// A write's stable key: the task, the origin, the URL path, the kind and
-/// a stable target description. No page or node id.
-fn stable_key(origin: &str, path: &str, kind: &str, material: &str) -> ActionKey {
-    digest_key(&[STABLE_KEY_DOMAIN, LIVE_TASK, origin, path, kind, material])
+/// A write's stable key: the owning task (the live browser's one task, or
+/// SG-000135 OB-01 a broker session's id), the origin, the URL path, the
+/// kind and a stable target description. No page or node id. The ledger
+/// keeps its entries per task as well, so one broker session's uncertain
+/// action never blocks an unrelated session.
+fn stable_key(task: &str, origin: &str, path: &str, kind: &str, material: &str) -> ActionKey {
+    digest_key(&[STABLE_KEY_DOMAIN, task, origin, path, kind, material])
 }
 
 /// Split `url` at the end of its authority: the authority ends at the
@@ -522,6 +651,7 @@ mod tests {
         // Reconciled (its outcome established), it may be sent again.
         if let Some(session) = second.session_gate() {
             let key = stable_key(
+                LIVE_TASK,
                 "https://shop.test",
                 "/checkout",
                 "form",
@@ -630,8 +760,9 @@ mod tests {
         assert_eq!(url_path(Some("https://a.test#/route")), "/");
         assert_eq!(url_path(Some("https://a.test/p?x=/y#/z")), "/p");
         assert_eq!(
-            stable_key("https://a.test", "/x", "form", "m"),
+            stable_key(LIVE_TASK, "https://a.test", "/x", "form", "m"),
             stable_key(
+                LIVE_TASK,
                 "https://a.test",
                 url_path(Some("https://a.test/x?other")),
                 "form",
@@ -639,9 +770,124 @@ mod tests {
             )
         );
         assert_ne!(
-            stable_key("https://a.test", "/x", "form", "m"),
-            stable_key("https://b.test", "/x", "form", "m")
+            stable_key(LIVE_TASK, "https://a.test", "/x", "form", "m"),
+            stable_key(LIVE_TASK, "https://b.test", "/x", "form", "m")
         );
+    }
+
+    /// SG-000135 OB-01: the uncertain-action ledger is shared by every gate
+    /// of the process but keyed per task: one broker session's lost Enter
+    /// blocks that session (even after its host restarts) and never an
+    /// unrelated session doing the same action.
+    #[test]
+    fn one_sessions_uncertain_action_never_blocks_another_session() {
+        let ledger = UncertainLedger::shared();
+        let clock = ManualClock::at(0);
+        let session = |task: &str, page: &str| {
+            let mut gate = TakeoverGate::on_with_ledger(clock.clone(), ledger.clone());
+            gate.set_task(task);
+            gate.page_opened(page);
+            gate
+        };
+        let (a, b) = (
+            "bs-0123456789abcdef-1-0001020304050607",
+            "bs-0123456789abcdef-2-0706050403020100",
+        );
+        let mut first = session(a, "page-a");
+        let ticket = enter_on(&mut first, "page-a", "n1").ok().flatten();
+        assert!(first.before_dispatch(ticket.as_ref()).is_ok());
+        first.after_write(ticket, "unknown");
+        assert_ne!(
+            stable_key(a, "https://shop.test", "/checkout", "form", "m"),
+            stable_key(b, "https://shop.test", "/checkout", "form", "m")
+        );
+        // The same session, on a new page (a restarted host), is refused...
+        let mut again = session(a, "page-a2");
+        let refused = enter_on(&mut again, "page-a2", "n9");
+        assert!(
+            matches!(&refused, Err(e) if e.message.contains("outcome_uncertain")),
+            "{refused:?}"
+        );
+        // ...and an unrelated session doing the same action is not.
+        let mut other = session(b, "page-b");
+        assert!(matches!(enter_on(&mut other, "page-b", "n1"), Ok(Some(_))));
+    }
+
+    /// SG-000135 OB-01: a client's lost consequential action stays
+    /// uncertain across that client's sessions; another client is not
+    /// blocked by it.
+    #[test]
+    fn a_client_cannot_repeat_a_lost_action_from_a_new_session() {
+        let ledger = UncertainLedger::shared();
+        let clock = ManualClock::at(0);
+        let session = |client: &str, task: &str, page: &str| {
+            let mut gate = TakeoverGate::on_with_ledger(clock.clone(), ledger.clone());
+            gate.set_task(task);
+            gate.set_client(client);
+            gate.page_opened(page);
+            gate
+        };
+        let mut first = session("client-a", "bs-0123456789abcdef-1-0001020304050607", "p1");
+        let ticket = enter_on(&mut first, "p1", "n1").ok().flatten();
+        assert!(first.before_dispatch(ticket.as_ref()).is_ok());
+        first.after_write(ticket, "unknown");
+        // The same client, in a fresh session: refused.
+        let mut second = session("client-a", "bs-0123456789abcdef-3-0001020304050607", "p2");
+        let refused = enter_on(&mut second, "p2", "n5");
+        assert!(
+            matches!(&refused, Err(e) if e.message.contains("outcome_uncertain")),
+            "{refused:?}"
+        );
+        // Another client doing the same: admitted.
+        let mut other = session("client-b", "bs-0123456789abcdef-4-0001020304050607", "p3");
+        assert!(matches!(enter_on(&mut other, "p3", "n1"), Ok(Some(_))));
+        // Reconciled under the client (never automatically), the client
+        // may send it again from a new session.
+        assert!(second.reconcile_client(
+            "https://shop.test",
+            Some("https://shop.test/checkout?step=2#pay"),
+            "form",
+            "enter\u{0}textbox\u{0}Search\u{0}1/1\u{0}",
+        ));
+        assert!(!second.reconcile_client_overflow());
+        let mut third = session("client-a", "bs-0123456789abcdef-6-0001020304050607", "p5");
+        assert!(matches!(enter_on(&mut third, "p5", "n1"), Ok(Some(_))));
+        // A poisoned ledger lock still records and refuses (fail closed).
+        let poisoned = ledger.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.lock();
+            // Unwinds (as a panic would) while the guard is held.
+            std::panic::resume_unwind(Box::new("poison the ledger lock"));
+        })
+        .join();
+        assert!(ledger.is_poisoned());
+        let mut fourth = session("client-c", "bs-0123456789abcdef-7-0001020304050607", "p6");
+        let ticket = enter_on(&mut fourth, "p6", "n1").ok().flatten();
+        assert!(fourth.before_dispatch(ticket.as_ref()).is_ok());
+        fourth.after_write(ticket, "unknown");
+        let mut fifth = session("client-c", "bs-0123456789abcdef-8-0001020304050607", "p7");
+        assert!(enter_on(&mut fifth, "p7", "n1").is_err());
+        // A done or failed action leaves nothing under the client.
+        let ticket = enter_on(&mut other, "p3", "n1").ok().flatten();
+        other.after_write(ticket, "failed");
+        let mut again = session("client-b", "bs-0123456789abcdef-5-0001020304050607", "p4");
+        assert!(matches!(enter_on(&mut again, "p4", "n1"), Ok(Some(_))));
+    }
+
+    /// SG-000135 OB-01: a broker session's gate claims its pages for the
+    /// session's own task, and still refuses while a person holds the page.
+    #[test]
+    fn a_session_task_owns_its_pages_and_the_gate_still_refuses() {
+        let clock = ManualClock::at(0);
+        let mut gate = TakeoverGate::on(clock);
+        gate.set_task("bs-0123456789abcdef-1-0001020304050607");
+        gate.page_opened("page-s");
+        assert!(matches!(gate.before_read("page-s"), Ok(Some(_))));
+        human(&mut gate, "page-s");
+        assert!(gate.before_read("page-s").is_err());
+        assert!(gate
+            .before_write("page-s", "click", "n1", ActionClass::Repeatable)
+            .is_err());
     }
 
     #[test]

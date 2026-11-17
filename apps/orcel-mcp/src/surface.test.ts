@@ -3,6 +3,7 @@ import test from "node:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BROWSER_FULL_TOOLS } from "./tool_contract.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
@@ -88,13 +89,18 @@ function toolSources(): Array<[string, string]> {
 
 test("the MCP surface registers exactly the canonical closed tool set", () => {
   const registered: string[] = [];
-  for (const [, text] of toolSources()) {
+  // SG-000135 OB-02: the `browser_full` profile's broker tools live in
+  // browser_full.ts with their own contract, registered only under that
+  // profile; they are checked against it below.
+  const brokered: string[] = [];
+  for (const [name, text] of toolSources()) {
     for (const match of text.matchAll(/registerTool\(\s*["']([^"']+)["']/g)) {
-      registered.push(match[1] ?? "");
+      (name === "browser_full.ts" ? brokered : registered).push(match[1] ?? "");
     }
   }
   assert.deepEqual([...registered].sort(), [...CANONICAL_TOOLS].sort());
   assert.equal(new Set(registered).size, registered.length, "duplicate tool registration");
+  assert.deepEqual(brokered, [...BROWSER_FULL_TOOLS]);
 });
 
 test("no MCP tool source reaches lifecycle, installer, update, trust, or approval surfaces", () => {
