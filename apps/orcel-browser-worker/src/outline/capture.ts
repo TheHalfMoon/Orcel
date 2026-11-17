@@ -39,6 +39,10 @@ export const MAX_OUTLINE_URL_BYTES = 2048;
 export const MAX_OUTLINE_JSON_BYTES = 56 * 1024;
 /// The whole capture's budget (under the host's observation bound).
 export const OUTLINE_BUDGET_MS = 4_000;
+/// The deepest accessibility level asked of the engine, and the most AX
+/// nodes read (past either, the outline withholds every name but plain text).
+export const MAX_AX_DEPTH = 128;
+export const MAX_AX_NODES = 100_000;
 
 /// The only CDP methods an outline may send.
 export const OUTLINE_METHODS: ReadonlySet<string> = new Set([
@@ -169,26 +173,32 @@ export async function captureOutline(cdp: CdpReader, budgetMs = OUTLINE_BUDGET_M
 
   await cdp.send("Accessibility.enable").catch(() => {});
   if (Date.now() > deadline) throw new Error("the outline timed out");
-  const { nodes } = (await cdp.send("Accessibility.getFullAXTree", {})) as { nodes: AxNode[] };
-  if (!Array.isArray(nodes)) throw new Error("the accessibility tree is malformed");
+  // The engine stops at MAX_AX_DEPTH; a cut shows as children the list
+  // names but does not hold, which withholdNames treats as incomplete.
+  const { nodes: all } = (await cdp.send("Accessibility.getFullAXTree", { depth: MAX_AX_DEPTH })) as { nodes: AxNode[] };
+  if (!Array.isArray(all)) throw new Error("the accessibility tree is malformed");
   if (Date.now() > deadline) throw new Error("the outline timed out");
+  const nodes = all.length > MAX_AX_NODES ? all.slice(0, MAX_AX_NODES) : all;
 
-  const filtered = nodes.filter((n) => {
+  const opts = { tagNameMap, scrollableMap, encode, isIgnoredBackendNode };
+  // Names are withheld on the whole list, before anything is filtered or
+  // pruned; a cut DOM index or AX list withholds every name but plain text.
+  const decorated = decorateRoles(nodes, opts);
+  withholdNames(decorated, index.truncated || all.length > MAX_AX_NODES);
+  const filtered = decorated.filter((n) => {
     const be = n.backendDOMNodeId;
     // Ignored nodes stay: their children hang off them, and structural
     // pruning removes them (as in Stagehand).
     return typeof be !== "number" || !isIgnoredBackendNode(be);
   });
   const urlMap: Record<string, string> = {};
-  for (const n of filtered) {
+  for (const n of nodes) {
     const be = n.backendDOMNodeId;
-    if (typeof be !== "number") continue;
+    if (typeof be !== "number" || isIgnoredBackendNode(be)) continue;
     const url = extractUrlFromAXNode(n);
     if (url) urlMap[encode(be)] = url;
   }
-  const opts = { tagNameMap, scrollableMap, encode, isIgnoredBackendNode };
-  const { tree } = buildHierarchicalTree(decorateRoles(filtered, opts), opts);
-  withholdNames(tree);
+  const { tree } = buildHierarchicalTree(filtered, opts);
   const bounded = boundOutline(tree, xpathMap, urlMap);
-  return { nodes: bounded.nodes, truncated: bounded.truncated || index.truncated };
+  return { nodes: bounded.nodes, truncated: bounded.truncated || index.truncated || all.length > MAX_AX_NODES };
 }

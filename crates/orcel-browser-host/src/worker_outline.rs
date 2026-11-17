@@ -65,6 +65,8 @@ pub fn admit(capability: WorkerCapability) -> Result<(), HostError> {
 
 /// Mirrors the worker's bounds (apps/orcel-browser-worker/src/outline).
 pub const MAX_OUTLINE_NODES: usize = 512;
+/// The deepest node level the worker sends (roots are level 0).
+pub const MAX_OUTLINE_DEPTH: usize = 32;
 pub const MAX_OUTLINE_NAME_BYTES: usize = 512;
 pub const MAX_OUTLINE_XPATH_BYTES: usize = 1024;
 pub const MAX_SCHEMA_FIELDS: usize = 32;
@@ -150,16 +152,17 @@ fn protocol_violation() -> HostError {
 /// characters, ids of the outline's own shape.
 pub fn check_outline(nodes: &[OutlineNode]) -> Result<(), HostError> {
     let mut count = 0usize;
-    let mut stack: Vec<&OutlineNode> = nodes.iter().collect();
-    while let Some(node) = stack.pop() {
+    let mut stack: Vec<(&OutlineNode, usize)> = nodes.iter().map(|node| (node, 0)).collect();
+    while let Some((node, depth)) = stack.pop() {
         count += 1;
         let id_ok = node.id.is_empty()
             || node.id.strip_prefix("0-").is_some_and(|rest| {
                 !rest.is_empty() && rest.len() <= 12 && rest.bytes().all(|b| b.is_ascii_digit())
             });
         if count > MAX_OUTLINE_NODES
+            || depth > MAX_OUTLINE_DEPTH
             || !id_ok
-            || node.role.len() > 48
+            || !role_ok(&node.role)
             || node.name.len() > MAX_OUTLINE_NAME_BYTES
             || node.xpath.len() > MAX_OUTLINE_XPATH_BYTES
             || node.name.chars().any(char::is_control)
@@ -173,9 +176,19 @@ pub fn check_outline(nodes: &[OutlineNode]) -> Result<(), HostError> {
                 return Err(protocol_violation());
             }
         }
-        stack.extend(node.children.iter());
+        stack.extend(node.children.iter().map(|child| (child, depth + 1)));
     }
     Ok(())
+}
+
+/// The worker's role pattern: a letter, then up to 47 letters, digits,
+/// spaces, commas or hyphens.
+fn role_ok(role: &str) -> bool {
+    role.len() <= 48
+        && role.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && role
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || " ,-".contains(c))
 }
 
 /// Re-check a schema reply: one value per field, in order, each bounded.
@@ -246,12 +259,7 @@ pub fn validate_schema(fields: &[SchemaField]) -> Result<(), HostError> {
                 }
             }
             (Some(role), name, None) => {
-                let ok = role.len() <= 48
-                    && role.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-                    && role
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || " ,-".contains(c));
-                if !ok {
+                if !role_ok(role) {
                     return invalid("a role is a short role name");
                 }
                 if let Some(name) = name {
@@ -367,12 +375,42 @@ mod tests {
             node("0-7", &"x".repeat(MAX_OUTLINE_NAME_BYTES + 1), None),
             node("0-7", "Pay", Some("javascript:alert(1)")),
         ] {
-            assert!(check_outline(std::slice::from_ref(&bad)).is_err(), "{bad:?}");
+            assert!(
+                check_outline(std::slice::from_ref(&bad)).is_err(),
+                "{bad:?}"
+            );
         }
         let wide: Vec<_> = (0..=MAX_OUTLINE_NODES)
             .map(|i| node(&format!("0-{i}"), "", None))
             .collect();
         assert!(check_outline(&wide).is_err());
+        // Roles follow the worker's pattern.
+        for role in [
+            "heading<script>",
+            "1st",
+            " lead",
+            "x\u{202e}y",
+            &"x".repeat(49),
+        ] {
+            let mut bad = node("0-7", "Pay", None);
+            bad.role = role.to_owned();
+            assert!(check_outline(std::slice::from_ref(&bad)).is_err(), "{role}");
+        }
+        let mut decorated = node("0-7", "Pay", None);
+        decorated.role = "scrollable, div".into();
+        assert!(check_outline(std::slice::from_ref(&decorated)).is_ok());
+        // Depth 32 (levels 0..=32) is the worker's bound; one more is refused.
+        let chain = |levels: usize| {
+            let mut top = node("0-1", "", None);
+            for _ in 0..levels {
+                let mut parent = node("0-1", "", None);
+                parent.children.push(top);
+                top = parent;
+            }
+            top
+        };
+        assert!(check_outline(&[chain(MAX_OUTLINE_DEPTH)]).is_ok());
+        assert!(check_outline(&[chain(MAX_OUTLINE_DEPTH + 1)]).is_err());
 
         let fields = [
             SchemaField {

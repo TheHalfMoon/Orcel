@@ -24,11 +24,18 @@
 //   that holds one, and of every node named through another element
 //   (aria-labelledby, a label, a legend or a caption: `relatedElement`). A
 //   name whose source the engine does not report is withheld too, except a
-//   text node's own text.
+//   text node's own text. Withholding runs on the engine's whole flat node
+//   list, before any node is filtered out or pruned away (pruning collapses
+//   a structural node into its only child and would lose its control mark),
+//   and iteratively (no recursion on page depth). When the list is
+//   incomplete (a child the engine named is missing, or the DOM index was
+//   cut), every name but a text node's own text is withheld, since a missing
+//   node may be a control whose value a name was computed from.
 // - A generic node takes its tag as its role only for a plain HTML tag name
 //   (never a custom element's page-chosen name).
-// - The tree build is synchronous; focus-locator scoping (`a11yForFrame`'s
-//   CSS/XPath focus, which resolves selectors in the page) is not copied.
+// - The tree build is synchronous and depth-capped (MAX_TREE_DEPTH);
+//   focus-locator scoping (`a11yForFrame`'s CSS/XPath focus, which resolves
+//   selectors in the page) is not copied.
 
 import { normaliseSpaces } from "./tree-format.js";
 
@@ -80,6 +87,10 @@ export const CONTROL_ROLES: ReadonlySet<string> = new Set([
   "menuitemcheckbox", "menuitemradio", "option", "textField", "TextField", "ComboBoxGrouping", "ComboBoxMenuButton",
   "ListBox", "ListBoxOption", "SpinButton", "Slider", "CheckBox", "RadioButton", "Switch", "MenuListPopup", "MenuListOption"
 ]);
+
+/// Orcel: the deepest tree level the build keeps (structural pruning can lift
+/// deeper nodes up, so this is above the outline's own depth bound).
+export const MAX_TREE_DEPTH = 128;
 
 /// Orcel: a plain HTML tag a generic node may show as its role.
 const PLAIN_TAG = /^[a-z][a-z0-9]{0,15}$/;
@@ -170,19 +181,21 @@ export function buildHierarchicalTree(nodes: A11yNode[], opts: A11yOptions): { t
 
   const roots = nodes.filter((n) => !n.parentId && nodeMap.has(n.nodeId)).map((n) => nodeMap.get(n.nodeId)!);
 
-  const cleaned = roots.map(pruneStructuralSafe).filter(Boolean) as A11yNode[];
+  const cleaned = roots.map((root) => pruneStructuralSafe(root, 0)).filter(Boolean) as A11yNode[];
 
   return { tree: cleaned };
 
-  function pruneStructuralSafe(node: A11yNode): A11yNode | null {
+  function pruneStructuralSafe(node: A11yNode, depth: number): A11yNode | null {
     if (+node.nodeId < 0) return null;
+    // Orcel: recursion is capped; anything deeper is not in the outline.
+    if (depth > MAX_TREE_DEPTH) return null;
 
     const children = node.children ?? [];
     if (!children.length) {
       return isStructural(node.role) ? null : node;
     }
 
-    const cleanedKids = children.map(pruneStructuralSafe).filter(Boolean) as A11yNode[];
+    const cleanedKids = children.map((child) => pruneStructuralSafe(child, depth + 1)).filter(Boolean) as A11yNode[];
 
     const prunedStatic = removeRedundantStaticTextChildren(node, cleanedKids);
 
@@ -207,23 +220,60 @@ export function buildHierarchicalTree(nodes: A11yNode[], opts: A11yOptions): { t
 }
 
 /// Orcel: clears every name that could carry what a user typed or chose
-/// (see the module comment). Returns how many names were withheld.
-export function withholdNames(tree: A11yNode[]): number {
-  let withheld = 0;
-  // Post-order: whether the subtree holds a control.
-  const holds = (node: A11yNode, inside: boolean): boolean => {
-    let below = false;
-    const nowInside = inside || node.control === true;
-    for (const child of node.children ?? []) {
-      if (holds(child, nowInside)) below = true;
+/// (see the module comment), on the engine's flat node list, before any
+/// filtering or pruning. Iterative: page depth never grows the stack. With
+/// `incomplete` (or when a named child is missing from the list), every name
+/// but a text node's own text is withheld. Returns how many were withheld.
+export function withholdNames(nodes: A11yNode[], incomplete = false): number {
+  const byId = new Map<string, A11yNode>();
+  for (const n of nodes) byId.set(n.nodeId, n);
+  const childrenOf = new Map<string, A11yNode[]>();
+  let missing = incomplete;
+  for (const n of nodes) {
+    for (const id of n.childIds ?? []) if (!byId.has(id)) missing = true;
+    if (n.parentId === undefined) continue;
+    const parent = byId.get(n.parentId);
+    if (parent === undefined) {
+      missing = true;
+      continue;
     }
-    if (node.name && (nowInside || below || node.borrowedName === true)) {
+    const list = childrenOf.get(parent.nodeId);
+    if (list) list.push(n);
+    else childrenOf.set(parent.nodeId, [n]);
+  }
+  // inside: the node is a control or has a control ancestor (pre-order).
+  // holds: the node is a control or has a control descendant (post-order).
+  const inside = new Set<string>();
+  const holds = new Set<string>();
+  const roots = nodes.filter((n) => n.parentId === undefined || !byId.has(n.parentId));
+  const seen = new Set<string>();
+  const order: A11yNode[] = [];
+  const stack: Array<{ node: A11yNode; within: boolean }> = roots.map((node) => ({ node, within: false }));
+  while (stack.length) {
+    const { node, within } = stack.pop()!;
+    if (seen.has(node.nodeId)) continue;
+    seen.add(node.nodeId);
+    order.push(node);
+    const now = within || node.control === true;
+    if (now) inside.add(node.nodeId);
+    for (const child of childrenOf.get(node.nodeId) ?? []) stack.push({ node: child, within: now });
+  }
+  // Nodes on a parent cycle were never reached: treat them as incomplete.
+  if (seen.size !== nodes.length) missing = true;
+  for (let k = order.length - 1; k >= 0; k--) {
+    const node = order[k]!;
+    if (node.control === true || (childrenOf.get(node.nodeId) ?? []).some((c) => holds.has(c.nodeId))) holds.add(node.nodeId);
+  }
+  let withheld = 0;
+  for (const node of nodes) {
+    if (!node.name) continue;
+    const plainText = node.role === "StaticText" && node.borrowedName !== true;
+    const risky = inside.has(node.nodeId) || holds.has(node.nodeId) || node.borrowedName === true || !seen.has(node.nodeId);
+    if (risky || (missing && !plainText)) {
       node.name = "";
       withheld += 1;
     }
-    return below || node.control === true;
-  };
-  for (const root of tree) holds(root, false);
+  }
   return withheld;
 }
 

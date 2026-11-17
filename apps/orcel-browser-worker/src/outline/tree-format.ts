@@ -1,134 +1,19 @@
-// W2-03: text helpers for the accessibility outline: an indented text form
-// of the tree, the cleaning of page text before it is shown, and the
-// line diff of two outlines.
+// W2-03: text helpers for the accessibility outline: the cleaning of page
+// text before it crosses to the host.
 //
 // Copied from browserbase/stagehand at commit
 // 82827a219512f0399cb159720a63f7d271d21480,
 // `packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts` (blob
-// 4928894ca32684f7cc854578c3ddaee9d6305a1a: `formatTreeLine`,
-// `injectSubtrees`, `indentBlock`, `diffCombinedTrees`, `cleanText`,
-// `normaliseSpaces`). MIT License, Copyright (c) 2024 Browserbase Inc.;
-// notice in docs/orcel/notices/stagehand-MIT.txt; provenance in
-// docs/orcel/stagehand_provenance.json. Modifications for Orcel: the node
-// type is the outline's own `OutlineNode`; `formatTreeLine` labels a node
-// with its outline id and shows no state but checked/selected;
-// `untrustedText` (new) is the one sanitiser every page string passes
+// 4928894ca32684f7cc854578c3ddaee9d6305a1a: `cleanText`, `normaliseSpaces`).
+// MIT License, Copyright (c) 2024 Browserbase Inc.; notice in
+// docs/orcel/notices/stagehand-MIT.txt; provenance in
+// docs/orcel/stagehand_provenance.json. Modifications for Orcel: the text
+// outline helpers (`formatTreeLine`, `injectSubtrees`, `indentBlock`,
+// `diffCombinedTrees`) are not copied, as the outline crosses as bounded
+// nodes; `untrustedText` (new) is the one sanitiser every page string passes
 // before it crosses to the host, and it applies the well-formed repair
 // Stagehand's `capture.ts` applies to whole outlines (blob
 // 6706bef9c7bd654bfd161129ae8be8cb78dffaba, `toWellFormed`).
-
-/// The node shape the text form renders (see `outline/a11y-tree.ts`).
-export interface FormattableNode {
-  id: string;
-  role: string;
-  name: string;
-  checked?: boolean;
-  selected?: boolean;
-  children: FormattableNode[];
-}
-
-/**
- * Render a formatted outline (with encoded ids) for the accessibility tree.
- * Keeps indentation logic shared between modules so unit tests can cover these
- * pure formatting helpers without a full snapshot pipeline.
- */
-export function formatTreeLine(node: FormattableNode, level = 0): string {
-  const indent = "  ".repeat(level);
-  const stateFlags = formatStateFlags(node);
-  const label = `[${node.id}] ${node.role}${node.name ? `: ${cleanText(node.name)}` : ""}${stateFlags}`;
-  const kids = node.children.map((c) => formatTreeLine(c, level + 1)).join("\n");
-  return kids ? `${indent}${label}\n${kids}` : `${indent}${label}`;
-}
-
-function formatStateFlags(node: FormattableNode): string {
-  let flags = "";
-  if (node.selected) flags += " [selected]";
-  if (node.checked) flags += " [checked]";
-  return flags;
-}
-
-/**
- * Inject each child frame outline under the parent's iframe node line.
- * Keys in `idToTree` are the parent's iframe encoded ids.
- */
-export function injectSubtrees(rootOutline: string, idToTree: Map<string, string>): string {
-  type Frame = { lines: string[]; i: number };
-  const out: string[] = [];
-  const visited = new Set<string>();
-  const stack: Frame[] = [{ lines: rootOutline.split("\n"), i: 0 }];
-
-  while (stack.length) {
-    const top = stack[stack.length - 1]!;
-    if (top.i >= top.lines.length) {
-      stack.pop();
-      continue;
-    }
-
-    const raw = top.lines[top.i++]!;
-    out.push(raw);
-
-    const indent = raw.match(/^(\s*)/)?.[1] ?? "";
-    const content = raw.slice(indent.length);
-
-    const m = content.match(/^\[([^\]]+)]/);
-    if (!m) continue;
-
-    const encId = m[1]!;
-    const childOutline = idToTree.get(encId);
-    if (!childOutline || visited.has(encId)) continue;
-
-    visited.add(encId);
-
-    const fullyInjectedChild = injectSubtrees(childOutline, idToTree);
-    out.push(indentBlock(fullyInjectedChild.trimEnd(), indent + "  "));
-  }
-
-  return out.join("\n");
-}
-
-export function indentBlock(block: string, indent: string): string {
-  if (!block) return "";
-  return block
-    .split("\n")
-    .map((line) => indent + line)
-    .join("\n");
-}
-
-/**
- * Return the lines that appear in `nextTree` but not in `prevTree`.
- * Comparison is done line-by-line, ignoring leading whitespace in both trees.
- * The returned block is re-indented so the minimal indent becomes column 0.
- */
-export function diffCombinedTrees(prevTree: string, nextTree: string): string {
-  const prevSet = new Set(
-    (prevTree || "")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0)
-  );
-
-  const nextLines = (nextTree || "").split("\n");
-  const added: string[] = [];
-  for (const line of nextLines) {
-    const core = line.trim();
-    if (!core) continue;
-    if (!prevSet.has(core)) added.push(line);
-  }
-
-  if (added.length === 0) return "";
-
-  let minIndent = Infinity;
-  for (const l of added) {
-    if (!l.trim()) continue;
-    const m = l.match(/^\s*/);
-    const indentLen = m ? m[0]!.length : 0;
-    if (indentLen < minIndent) minIndent = indentLen;
-  }
-  if (!isFinite(minIndent)) minIndent = 0;
-
-  const out = added.map((l) => (l.length >= minIndent ? l.slice(minIndent) : l));
-  return out.join("\n");
-}
 
 /**
  * Remove whitespace noise and invisible code points before rendering names.

@@ -41,7 +41,7 @@ This packet does not duplicate it.
 | `understudy/a11y/snapshot/xpathUtils.ts`, `utils.ts` (`trimTrailingTextNode`) | `src/outline/xpath.ts` | Copied pure helpers; page-script helpers dropped |
 | `understudy/a11y/snapshot/domTree.ts` | `src/outline/dom-tree.ts` | Copied; deadline instead of `Progress`; node bound |
 | `understudy/a11y/snapshot/a11yTree.ts` | `src/outline/a11y-tree.ts` | Copied; no values; name withholding added |
-| `understudy/a11y/snapshot/treeFormatUtils.ts` | `src/outline/tree-format.ts` | Copied; `untrustedText` sanitiser added |
+| `understudy/a11y/snapshot/treeFormatUtils.ts` | `src/outline/tree-format.ts` | `cleanText` and `normaliseSpaces` copied; `untrustedText` sanitiser added; the text-outline helpers are not copied |
 | `understudy/a11y/snapshot/capture.ts` | `src/outline/capture.ts` | Adapted: main document only, read-only CDP allowlist, bounded wire nodes |
 | `services/extractService.ts` | `src/outline/schema-extract.ts` | Deterministic half kept; inference replaced by exact matching |
 | `services/actService.ts`, `services/observeService.ts` | `src/outline/targets.ts` | Id-to-XPath resolution only |
@@ -106,6 +106,18 @@ Names are withheld (`withholdNames`) for:
   covers aria-labelledby, a label, a legend or a caption);
 - every non-text node whose name source the engine does not report.
 
+Withholding runs iteratively on the engine's whole flat node list, before
+any node is filtered out or pruned. Pruning collapses a structural node
+into its only child, so running it first would drop the control mark of,
+say, an unnamed contenteditable span. When the list is incomplete, every
+name except a text node's own text is withheld, because a missing node may
+be a control whose value a name was computed from. The list counts as
+incomplete when a child the engine names is missing, when the DOM index
+stopped at its 50,000-node bound, or when more than 100,000 AX nodes came
+back. The engine is asked for at most 128 accessibility levels, and the
+tree build is capped at 128 levels, so a deep page is cut rather than
+overflowing the stack.
+
 No field value, description, or checked or selected state is ever sent. A
 schema extraction reads only this withheld outline, so it can never return
 a value.
@@ -120,7 +132,9 @@ the gate before anything is sent, so the host never sends either frame
 today. Once a grain admits a capability, the host does three things:
 
 1. It validates the schema (`validate_schema`).
-2. It re-checks every reply bound (`check_outline`, `check_values`).
+2. It re-checks every reply bound (`check_outline`, `check_values`):
+   node count, depth 32, the worker's role pattern, name and XPath bytes,
+   and URL schemes.
 3. It refuses a stale document, and keeps the result as host-internal page
    text (`Outline`, `SchemaExtraction`) bound to the document generation.
 
@@ -159,9 +173,11 @@ Both capabilities are denied by default until these amendments land:
   Progress and CDP stack, which needs the whole pnpm workspace installed. The
   applicable tests were ported to `node:test` instead.
 - Worker (`node --test`, named files, all non-native suites plus
-  `scripts/dev-pin.test.mjs`): **237 passed, 0 failed**. This includes the
+  `scripts/dev-pin.test.mjs`): **239 passed, 0 failed**. This includes the
   new `outline/dom-tree.test.js` (10 tests, 4 of them ported from Stagehand),
-  `outline/outline.test.js` (12), 3 new protocol tests and 3 new worker
+  `outline/outline.test.js` (14, including the security-review cases: an
+  unnamed editable node lifted by pruning, a truncated DOM index, and a
+  20,000-level page), 3 new protocol tests and 3 new worker
   tests. The native Edge suites (`native.test.js`,
   `extract/extract.native.test.js`) were not run: they launch Edge, and
   Edge 157 is unqualified on this machine.

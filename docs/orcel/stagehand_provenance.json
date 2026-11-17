@@ -112,15 +112,15 @@
       "donor_blob": "2d3a626f9645f29b817a7a30a7cfbc3343da9c5e",
       "adapted": "decorateRoles, buildHierarchicalTree, isStructural, extractUrlFromAXNode, toBooleanValue, extractBooleanProperty; removeRedundantStaticTextChildren from treeFormatUtils.ts (blob 4928894ca32684f7cc854578c3ddaee9d6305a1a)",
       "row": "W2-03",
-      "changes": "no value and no description kept; withholdNames (new) clears the name of every control or editable node, every node inside or holding one, every node named through another element (relatedElement or aria-labelledby) and every non-text node whose name source is unreported; generic nodes take only a plain HTML tag as role; synchronous build; a11yForFrame's focus-locator scoping not copied"
+      "changes": "no value and no description kept; withholdNames (new) clears the name of every control or editable node, every node inside or holding one, every node named through another element (relatedElement or aria-labelledby) and every non-text node whose name source is unreported; withholding runs iteratively on the engine's whole flat node list before filtering and structural pruning, and withholds every name but plain text when the list or the DOM index is incomplete; generic nodes take only a plain HTML tag as role; synchronous, depth-capped build (128 levels); a11yForFrame's focus-locator scoping not copied"
     },
     {
       "path": "apps/orcel-browser-worker/src/outline/tree-format.ts",
       "donor_path": "packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts",
       "donor_blob": "4928894ca32684f7cc854578c3ddaee9d6305a1a",
-      "adapted": "formatTreeLine, injectSubtrees, indentBlock, diffCombinedTrees, cleanText, normaliseSpaces",
+      "adapted": "cleanText, normaliseSpaces",
       "row": "W2-03",
-      "changes": "node type is the outline's own; untrustedText (new) applies capture.ts's toWellFormed repair (blob 6706bef9c7bd654bfd161129ae8be8cb78dffaba), strips C0/C1 controls, bidi overrides and isolates, zero-width and format characters, folds line breaks, and cuts to a byte bound"
+      "changes": "the text-outline helpers (formatTreeLine, injectSubtrees, indentBlock, diffCombinedTrees) not copied, as the outline crosses as bounded nodes; untrustedText (new) applies capture.ts's toWellFormed repair (blob 6706bef9c7bd654bfd161129ae8be8cb78dffaba), strips C0/C1 controls, bidi overrides and isolates, zero-width and format characters, folds line breaks, and cuts to a byte bound"
     },
     {
       "path": "apps/orcel-browser-worker/src/outline/capture.ts",
@@ -128,7 +128,7 @@
       "donor_blob": "6706bef9c7bd654bfd161129ae8be8cb78dffaba",
       "adapted": "captureHybridSnapshot, collectPerFrameMaps and mergeFramesIntoSnapshot (main-frame path), with a11yForFrame from a11yTree.ts",
       "row": "W2-03",
-      "changes": "one CDP session behind readOnlyCdp (allowlist: DOM.enable, DOM.getDocument, DOM.describeNode, Accessibility.enable, Accessibility.getFullAXTree); main document only (an iframe is a leaf); no focus or ignore locators; output is bounded OutlineNode trees (512 nodes, depth 32, 512-byte names, 1024-byte XPaths, 56 KiB) instead of a text outline plus id maps; link URLs only absolute http(s) without credentials; no checked or selected state on the wire"
+      "changes": "one CDP session behind readOnlyCdp (allowlist: DOM.enable, DOM.getDocument, DOM.describeNode, Accessibility.enable, Accessibility.getFullAXTree); main document only (an iframe is a leaf); no focus or ignore locators; the engine is asked for at most 128 accessibility levels and at most 100,000 AX nodes are read; output is bounded OutlineNode trees (512 nodes, depth 32, 512-byte names, 1024-byte XPaths, 56 KiB) instead of a text outline plus id maps; link URLs only absolute http(s) without credentials; no checked or selected state on the wire"
     },
     {
       "path": "apps/orcel-browser-worker/src/outline/schema-extract.ts",
@@ -160,7 +160,7 @@
       "donor_blob": null,
       "adapted": "Orcel tests for the outline, untrusted text, schema extraction, targets and the no-network rule",
       "row": "W2-03",
-      "changes": "new code; includes behaviour checks of the copied formatTreeLine, diffCombinedTrees, injectSubtrees, removeRedundantStaticTextChildren and the toWellFormed repair"
+      "changes": "new code; includes behaviour checks of the copied removeRedundantStaticTextChildren and the toWellFormed repair, and the review cases (an unnamed editable node lifted by pruning, a truncated DOM index, a 20,000-level page)"
     },
     {
       "path": "apps/orcel-browser-worker/src/protocol.ts",

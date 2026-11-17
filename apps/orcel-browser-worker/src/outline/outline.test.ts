@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   boundOutline,
   captureOutline,
+  MAX_AX_DEPTH,
   MAX_OUTLINE_DEPTH,
   MAX_OUTLINE_JSON_BYTES,
   MAX_OUTLINE_NAME_BYTES,
@@ -17,10 +18,11 @@ import {
   readOnlyCdp,
   type OutlineNode
 } from "./capture.js";
-import { buildHierarchicalTree, decorateRoles, removeRedundantStaticTextChildren, withholdNames, type A11yNode, type AxNode } from "./a11y-tree.js";
+import { buildHierarchicalTree, decorateRoles, MAX_TREE_DEPTH, removeRedundantStaticTextChildren, withholdNames, type A11yNode, type AxNode } from "./a11y-tree.js";
+import { MAX_DOM_NODES } from "./dom-tree.js";
 import { extractBySchema, MAX_SCHEMA_LIST_ITEMS, nodeText } from "./schema-extract.js";
 import { resolveOutlineTarget } from "./targets.js";
-import { cleanText, diffCombinedTrees, formatTreeLine, injectSubtrees, untrustedText } from "./tree-format.js";
+import { cleanText, untrustedText } from "./tree-format.js";
 import type { CdpReader } from "./dom-tree.js";
 import type { CdpDomNode } from "./xpath.js";
 
@@ -145,16 +147,18 @@ function fixtureAx(): AxNode[] {
 
 function fakeCdp(dom = fixtureDom(), ax = fixtureAx()) {
   const methods: string[] = [];
+  const params: Array<Record<string, unknown> | undefined> = [];
   const session = {
-    async send(method: string): Promise<unknown> {
+    async send(method: string, param?: Record<string, unknown>): Promise<unknown> {
       methods.push(method);
+      params.push(param);
       if (method === "DOM.getDocument") return { root: dom };
       if (method === "Accessibility.getFullAXTree") return { nodes: ax };
       if (method === "Runtime.evaluate") return { result: { value: "ran page script" } };
       return {};
     }
   };
-  return { cdp: readOnlyCdp(session as never), methods, raw: session };
+  return { cdp: readOnlyCdp(session as never), methods, params, raw: session };
 }
 
 function all(nodes: OutlineNode[]): OutlineNode[] {
@@ -241,11 +245,22 @@ test("decorated roles and name withholding follow the module rules", () => {
   assert.equal(decorated[1]?.role, "input, file");
   assert.equal(decorated[1]?.control, true);
   assert.equal(decorated[2]?.role, "scrollable, html");
-  const tree: A11yNode[] = [
-    { nodeId: "p", role: "button", name: "Pay 4111", children: [{ nodeId: "q", role: "textbox", name: "4111", control: true, children: [] }] }
+  const flat: A11yNode[] = [
+    { nodeId: "p", role: "button", name: "Pay 4111", childIds: ["q"] },
+    { nodeId: "q", role: "textbox", name: "4111", control: true, parentId: "p" },
+    { nodeId: "h", role: "heading", name: "Fees", childIds: ["t"] },
+    { nodeId: "t", role: "StaticText", name: "Fees", parentId: "h" }
   ];
-  assert.equal(withholdNames(tree), 2);
-  assert.equal(tree[0]?.name, "");
+  assert.equal(withholdNames(flat), 2);
+  assert.deepEqual(flat.map((n) => n.name), ["", "", "Fees", "Fees"]);
+  // An incomplete list (a named child is missing) withholds every name but
+  // a text node's own text.
+  const cut: A11yNode[] = [
+    { nodeId: "h", role: "heading", name: "Fees", childIds: ["t", "gone"] },
+    { nodeId: "t", role: "StaticText", name: "Fees", parentId: "h" }
+  ];
+  withholdNames(cut);
+  assert.deepEqual(cut.map((n) => n.name), ["", "Fees"]);
   // Stagehand's static-text dedupe.
   const parent: A11yNode = { nodeId: "x", role: "link", name: "Read  more" };
   const kids: A11yNode[] = [
@@ -307,23 +322,6 @@ test("untrusted page text is repaired, stripped and bounded", () => {
   assert.equal(untrustedText("\ue000private use", 64), "private use");
   assert.equal(untrustedText("\u00e9\u00e9\u00e9", 5), "\u00e9\u00e9");
   assert.equal(cleanText("\u00a0 x \u00a0"), "x");
-});
-
-test("Stagehand's outline text helpers keep their behaviour", () => {
-  const tree = {
-    id: "0-1",
-    role: "list",
-    name: "",
-    children: [
-      { id: "0-2", role: "listitem", name: "One", checked: true, children: [] },
-      { id: "0-3", role: "listitem", name: "Two", selected: true, children: [] }
-    ]
-  };
-  const outline = formatTreeLine(tree);
-  assert.equal(outline, "[0-1] list\n  [0-2] listitem: One [checked]\n  [0-3] listitem: Two [selected]");
-  assert.equal(diffCombinedTrees(outline, `${outline}\n  [0-4] listitem: Three`), "[0-4] listitem: Three");
-  assert.equal(diffCombinedTrees(outline, outline), "");
-  assert.equal(injectSubtrees("[0-1] Iframe", new Map([["0-1", "[1-1] heading: Inner"]])), "[0-1] Iframe\n  [1-1] heading: Inner");
 });
 
 // --- Schema extraction -----------------------------------------------------
@@ -390,4 +388,63 @@ test("the outline modules import nothing that can reach a network or run a model
     const imports = [...source.matchAll(/from "([^"]+)"/g)].map((m) => m[1]!);
     for (const spec of imports) assert.ok(spec.startsWith("./"), `${name} imports ${spec}`);
   }
+});
+
+// --- Review fixes ----------------------------------------------------------
+
+test("an unnamed editable generic with one text child leaks nothing after pruning", async () => {
+  const dom = el(1, "#document", [el(2, "HTML", [el(4, "BODY", [el(18, "SPAN", [el(19, "#text")]), el(5, "H1", [el(6, "#text")])])])]);
+  const ax: AxNode[] = [
+    { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["4"], backendDOMNodeId: 1 },
+    { nodeId: "4", role: { value: "generic" }, parentId: "1", childIds: ["18", "5"], backendDOMNodeId: 4 },
+    // contenteditable span: structural, no name, one child the engine does
+    // not mark editable. Pruning lifts the child into its place.
+    { nodeId: "18", role: { value: "generic" }, parentId: "4", childIds: ["19"], backendDOMNodeId: 18, properties: [{ name: "editable", value: { value: "richtext" } }] },
+    text("19", 19, "18", "typed secret 4111"),
+    { nodeId: "5", role: { value: "heading" }, name: contents("Fees"), parentId: "4", childIds: ["6"], backendDOMNodeId: 5 },
+    text("6", 6, "5", "Fees")
+  ];
+  const { cdp } = fakeCdp(dom, ax);
+  const { nodes } = await captureOutline(cdp);
+  const wire = JSON.stringify(nodes);
+  assert.ok(!wire.includes("typed secret"), wire);
+  // The lifted text node is still there, nameless.
+  assert.equal(byId(nodes, "0-19")?.name, "");
+  assert.equal(byId(nodes, "0-5")?.name, "Fees");
+});
+
+test("past the DOM index bound, names from contents are withheld", async () => {
+  const spans: CdpDomNode[] = Array.from({ length: MAX_DOM_NODES + 10 }, (_, i) => el(1000 + i, "SPAN"));
+  const dom = el(1, "#document", [el(2, "HTML", [el(4, "BODY", [el(5, "H1", [el(6, "#text")]), ...spans])])]);
+  const ax: AxNode[] = [
+    { nodeId: "1", role: { value: "RootWebArea" }, childIds: ["4"], backendDOMNodeId: 1 },
+    { nodeId: "4", role: { value: "generic" }, parentId: "1", childIds: ["5"], backendDOMNodeId: 4 },
+    { nodeId: "5", role: { value: "heading" }, name: contents("Pay 4111"), parentId: "4", childIds: ["6", "x"], backendDOMNodeId: 5 },
+    text("6", 6, "5", "Pay"),
+    // An input past the index bound: its tag is unknown and the engine gave
+    // it no control role, so only the truncation rule protects the heading.
+    { nodeId: "x", role: { value: "generic" }, name: contents("4111"), parentId: "5", backendDOMNodeId: 1000 + MAX_DOM_NODES + 5 }
+  ];
+  const { cdp } = fakeCdp(dom, ax);
+  const { nodes, truncated } = await captureOutline(cdp);
+  assert.equal(truncated, true);
+  assert.ok(!JSON.stringify(nodes).includes("4111"));
+  assert.equal(byId(nodes, "0-5")?.name, "");
+  assert.equal(byId(nodes, "0-6")?.name, "Pay");
+});
+
+test("a very deep page is depth-capped, not a stack overflow", async () => {
+  const levels = 20_000;
+  const ax: AxNode[] = [{ nodeId: "1", role: { value: "RootWebArea" }, childIds: ["d0"], backendDOMNodeId: 1 }];
+  for (let i = 0; i < levels; i++) {
+    ax.push({ nodeId: `d${i}`, role: { value: "group" }, name: contents(`level ${i}`), parentId: i === 0 ? "1" : `d${i - 1}`, childIds: i + 1 < levels ? [`d${i + 1}`] : [] });
+  }
+  const { cdp, methods, params } = fakeCdp(el(1, "#document", [el(2, "HTML")]), ax);
+  const { nodes, truncated } = await captureOutline(cdp);
+  assert.equal(truncated, true);
+  let depth = 0;
+  for (let n = nodes[0]; n && n.children.length > 0; n = n.children[0]) depth += 1;
+  assert.ok(depth <= MAX_OUTLINE_DEPTH && depth <= MAX_TREE_DEPTH);
+  // The engine is asked for a bounded depth.
+  assert.deepEqual(params[methods.indexOf("Accessibility.getFullAXTree")], { depth: MAX_AX_DEPTH });
 });
