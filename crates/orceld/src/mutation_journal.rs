@@ -697,6 +697,10 @@ impl<B: orcel_approval::ApprovalBroker> orcel_approval::ApprovalBroker for Unkno
         self.approval.emergency_revoke(prompt)
     }
 
+    fn verified_revoke_epoch(&self) -> Option<u64> {
+        self.approval.verified_revoke_epoch()
+    }
+
     fn history(&self, limit: usize) -> Vec<orcel_approval::ApprovalRecordSummary> {
         self.approval.history(limit)
     }

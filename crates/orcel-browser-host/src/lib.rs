@@ -101,7 +101,8 @@ pub use discovery::{discover_engine, Engine, EngineKind, SearchConfig};
 pub use error::{DownloadFailure, HostError, UnavailableReason};
 pub use exposure::{
     is_admissible_live_shape, is_denied_shape, is_live_exposed, is_qualified_shape, profile_tools,
-    remote_browser_mapping_enabled, BROWSER_STRUCTURED_PROFILE, DENIED_BROWSER_SHAPES,
+    remote_browser_mapping_enabled, BROWSER_FULL_MCP_TOOLS, BROWSER_FULL_PROFILE,
+    BROWSER_FULL_TOOL_SHAPES, BROWSER_STRUCTURED_PROFILE, DENIED_BROWSER_SHAPES,
     LIVE_BROWSER_MCP_TOOLS, LIVE_BROWSER_TOOL_SHAPES, PREEXISTING_PROFILES,
     QUALIFIED_BROWSER_SHAPES, SG122_ADMITTED_SHAPES,
 };

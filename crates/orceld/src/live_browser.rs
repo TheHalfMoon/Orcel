@@ -24,11 +24,13 @@
     allow(dead_code)
 )]
 
+use crate::takeover_gate::TakeoverGate;
 use orcel_approval::{now_ms, ApprovalBroker, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
 use orcel_browser_host::worker_host::{
     BindAction, BoundForm, FormNavigation, WireCheck, WireNode, WorkerHostReply, WorkerHostRequest,
 };
 use orcel_browser_host::{Supervisor, WorkerHostLaunch};
+use orcel_browser_session::{ActionClass, WriteTicket};
 use orcel_contracts::FailureCode;
 use orcel_policy::{Workspace, POLICY_REVISION};
 use orcel_provider_browser::{PageRecord, PageState, PageStore};
@@ -59,6 +61,26 @@ pub struct LiveState {
 /// string) is bound into orceld's half of every digest.
 const LIFETIME_POLICY_REVISION: u64 = 1;
 
+/// SG-000135 OB-01 end-to-end harness: the loopback fixture host
+/// (apps/orcel-browser-worker/scripts/https-fixture.mjs).
+#[cfg(feature = "live-browser-test")]
+const E2E_FIXTURE_HOST: &str = "fixture.test";
+
+/// SG-000135 OB-01 end-to-end harness, builds with the test-only
+/// `live-browser-test` feature only: the fixture certificate's SPKI hash the
+/// harness gives in `ORCEL_E2E_FIXTURE_SPKI`, when `origin` is exactly the
+/// fixture origin. Any other origin, or no variable, is `None`, and the
+/// navigation takes the public path (which refuses the fixture host).
+#[cfg(feature = "live-browser-test")]
+fn e2e_fixture_spki(origin: &str) -> Option<String> {
+    if origin != format!("https://{E2E_FIXTURE_HOST}:443") {
+        return None;
+    }
+    std::env::var("ORCEL_E2E_FIXTURE_SPKI")
+        .ok()
+        .filter(|spki| !spki.is_empty())
+}
+
 /// A committed download, as the host reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveDownload {
@@ -68,6 +90,16 @@ pub struct LiveDownload {
     pub source_url: String,
     /// The broker record the approval was consumed under.
     pub record_id: String,
+}
+
+/// SG-000135 OB-02: the host's extraction of the committed document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveExtraction {
+    pub url: String,
+    pub document_generation: u64,
+    pub truncated: bool,
+    /// The page's own text: untrusted, never an instruction.
+    pub text: String,
 }
 
 /// SG-000122 slice A2: the verifier's report, as the host gave it.
@@ -452,6 +484,14 @@ pub struct LiveBrowser {
     /// whole family was confirmed gone. Set once, never revised: a later
     /// shutdown finds no host and would report a vacuous success.
     host_ended: Option<bool>,
+    /// Orcel Browser B1: the human-intervention gate, asked before every
+    /// agent action on the page (off until SG-000135; it can only refuse).
+    takeover: TakeoverGate,
+    /// The gate's ticket for the write in progress, if it admitted one.
+    gate_ticket: Option<WriteTicket>,
+    /// The page's latest committed URL (B1: the path in an action's
+    /// stable key).
+    page_url: Option<String>,
     /// Test builds only: a shorter reply budget for dispatched frames.
     #[cfg(test)]
     reply_timeout: Option<std::time::Duration>,
@@ -692,6 +732,33 @@ pub(crate) fn form_prompt(
 }
 
 /// SG-000120 RJ-02: how a dispatched form action's journal intent closes.
+/// B1: what makes two form actions the same action for the idempotency
+/// guard: its kind and value, and the field's role, name and ordinal as the
+/// host bound them. Hashed by the gate, never kept or logged.
+fn form_material(action: &BindAction, form: &BoundForm) -> String {
+    let (kind, value) = match action {
+        BindAction::Fill { value, .. } => ("fill", value.clone()),
+        BindAction::Select { label, .. } => ("select", label.clone()),
+        BindAction::Check { checked, .. } => ("check", checked.to_string()),
+        BindAction::PressEnter { .. } => ("enter", String::new()),
+        other => ("other", format!("{other:?}")),
+    };
+    // The position only: a new, unrelated field of the same name changes
+    // the count, and must not make the same field look like a new action.
+    let ordinal = form
+        .ordinal
+        .map(|ordinal| ordinal.position.to_string())
+        .unwrap_or_default();
+    [
+        kind,
+        form.role.as_str(),
+        form.name.as_str(),
+        ordinal.as_str(),
+        value.as_str(),
+    ]
+    .join("\u{0}")
+}
+
 /// Executed is `done`; a refusal the host gives before the worker could act
 /// (a changed binding, a replayed record, the wrong control, a stale or
 /// covered target, a busy worker) is `failed`, nothing done; anything else
@@ -765,6 +832,9 @@ impl LiveBrowser {
             committed: Vec::new(),
             observed_roles: std::collections::HashMap::new(),
             host_ended: None,
+            takeover: TakeoverGate::from_switch(),
+            gate_ticket: None,
+            page_url: None,
             #[cfg(test)]
             reply_timeout: None,
             #[cfg(test)]
@@ -836,6 +906,10 @@ impl LiveBrowser {
             // unknown: record it lost, and end the host before anything
             // reads the destination.
             Err(error) => {
+                // B1: settle the write as uncertain while its page's
+                // session still exists; end_host closes the page.
+                self.takeover
+                    .after_write(self.gate_ticket.take(), "unknown");
                 self.end_host();
                 (DispatchOutcome::Lost, Err(error))
             }
@@ -854,6 +928,8 @@ impl LiveBrowser {
         self.observed_roles.clear();
         if let Some(page) = self.page.take() {
             let _ = self.pages.close_page(&page.page_id);
+            self.takeover.page_closed(&page.page_id);
+            self.page_url = None;
         }
     }
 
@@ -944,7 +1020,10 @@ impl LiveBrowser {
                     &format!("live-lifetime:{lifetime}"),
                     POLICY_REVISION,
                 ) {
-                    Ok(page) => self.page = Some(page),
+                    Ok(page) => {
+                        self.takeover.page_opened(&page.page_id);
+                        self.page = Some(page);
+                    }
                     Err(error) => {
                         self.end_host();
                         return Err(from_page(error));
@@ -980,6 +1059,7 @@ impl LiveBrowser {
             .map_err(from_page)?;
         self.page = Some(page.clone());
         self.page_workspace = Some(workspace.id.clone());
+        self.takeover.page_opened(&page.page_id);
         Ok(page)
     }
 
@@ -1052,6 +1132,35 @@ impl LiveBrowser {
         }
     }
 
+    /// SG-000135 OB-01 end-to-end harness (a build with both live browser
+    /// features, which only tests make): a lifetime for the loopback
+    /// fixture origin, trusting exactly its certificate, for the session's
+    /// existing page. The host admits only the fixture host on 127.0.0.1.
+    #[cfg(feature = "live-browser-test")]
+    fn open_fixture_lifetime(
+        &mut self,
+        workspace: &Workspace,
+        fixture_spki: &str,
+        origin: &str,
+    ) -> Result<(), ProviderError> {
+        match self.request(&WorkerHostRequest::Open {
+            workspace: workspace.id.clone(),
+            policy_revision: LIFETIME_POLICY_REVISION,
+            host: E2E_FIXTURE_HOST.into(),
+            fixture_spki: fixture_spki.into(),
+        })? {
+            WorkerHostReply::Opened { lifetime, .. } => {
+                self.lifetime = Some(lifetime);
+                self.lifetime_origin = Some(origin.to_owned());
+                Ok(())
+            }
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
     /// Slice 3c: an approved navigation of the live page. A page with no
     /// lifetime, or one on another origin, first gets a lifetime for the
     /// URL's origin (the old one ends); the approval then binds the new
@@ -1066,6 +1175,7 @@ impl LiveBrowser {
         url: &str,
     ) -> Result<(String, u16), ProviderError> {
         self.live_page(workspace, page_id, expected_generation)?;
+        self.gate_write(page_id, "navigate", url, ActionClass::Repeatable)?;
         let origin = orcel_provider_browser::parse_destination_url(url)
             .map_err(from_page)?
             .origin;
@@ -1079,9 +1189,15 @@ impl LiveBrowser {
             // node id and approval of the old lifetime is stale by lifetime
             // (the host never resolves them; the digest binds the lifetime).
             self.end_lifetime();
+            #[cfg(feature = "live-browser-test")]
+            match e2e_fixture_spki(&origin) {
+                Some(spki) => self.open_fixture_lifetime(workspace, &spki, &origin)?,
+                None => self.open_public(workspace, url)?,
+            }
+            #[cfg(not(feature = "live-browser-test"))]
             self.open_public(workspace, url)?;
         }
-        let navigated = self.navigate(workspace, approval, url);
+        let navigated = self.navigate_approved(workspace, approval, url);
         if navigated.is_err() && switched {
             // A denied or failed switch leaves no lifetime, as decision 2
             // says: the fresh one never held a document of this page.
@@ -1099,6 +1215,7 @@ impl LiveBrowser {
         expected_generation: u64,
     ) -> Result<(PageRecord, Vec<WireNode>, Option<String>), ProviderError> {
         let page = self.live_page(workspace, page_id, expected_generation)?;
+        let read = self.takeover.before_read(page_id)?;
         if self.lifetime.is_none() {
             return Err(ProviderError::new(
                 FailureCode::TargetStale,
@@ -1124,6 +1241,9 @@ impl LiveBrowser {
                 None
             }
         };
+        // B1: a fresh observation is what the agent's next write is
+        // planned on (and, after a person's intervention, what ends it).
+        self.takeover.observed(read);
         Ok((page, nodes, latest))
     }
 
@@ -1138,19 +1258,21 @@ impl LiveBrowser {
         node_id: &str,
     ) -> Result<(String, u16), ProviderError> {
         self.live_page(workspace, page_id, expected_generation)?;
+        self.gate_write(page_id, "click", node_id, ActionClass::Repeatable)?;
         let action = BindAction::Click {
             node_id: node_id.into(),
             role: "link".into(),
         };
-        let (token, digest, binding) = self.ask(
+        let (token, digest, binding, _target) = self.ask(
             workspace,
             approval,
             &action,
             "open a link on an isolated browser page",
         )?;
+        self.gate_confirm()?;
         Self::consume(workspace, approval, &token, digest)?;
         let record_id = token.record_id;
-        match self.dispatch(
+        let reply = self.dispatch(
             &record_id,
             &WorkerHostRequest::Activate {
                 node_id: node_id.into(),
@@ -1158,7 +1280,9 @@ impl LiveBrowser {
                 record_id: record_id.clone(),
                 binding,
             },
-        )? {
+        );
+        self.gate_finish(&record_id);
+        match reply? {
             WorkerHostReply::Activated { url, status } => {
                 self.follow(&url)?;
                 Ok((url, status))
@@ -1182,6 +1306,7 @@ impl LiveBrowser {
         relative: &str,
     ) -> Result<(String, String), ProviderError> {
         self.live_page(workspace, page_id, expected_generation)?;
+        self.takeover.before_read(page_id)?;
         match self.request(&WorkerHostRequest::Bind {
             action: BindAction::Download {
                 node_id: node_id.into(),
@@ -1222,6 +1347,7 @@ impl LiveBrowser {
             });
         match moved {
             Ok(next) => {
+                self.page_url = Some(url.to_owned());
                 self.page = Some(next.clone());
                 Ok(next)
             }
@@ -1242,7 +1368,7 @@ impl LiveBrowser {
         approval: &impl ApprovalBroker,
         action: &BindAction,
         title: &str,
-    ) -> Result<(ApprovedToken, String, String), ProviderError> {
+    ) -> Result<(ApprovedToken, String, String, String), ProviderError> {
         // What the prompt shows: where the action goes, and for a download
         // also where the file lands (all of it bound into the digest).
         let lifetime = self.lifetime.clone().ok_or_else(|| {
@@ -1294,7 +1420,66 @@ impl LiveBrowser {
         let token = approval
             .request_token(&prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))?;
-        Ok((token, digest, binding))
+        Ok((token, digest, binding, target))
+    }
+
+    /// B1: ask the takeover gate before an agent write on `page_id`. It
+    /// can only refuse. A ticket an earlier write left (it failed before
+    /// dispatch, so nothing was sent) is released first.
+    fn gate_write(
+        &mut self,
+        page_id: &str,
+        kind: &str,
+        material: &str,
+        class: ActionClass,
+    ) -> Result<(), ProviderError> {
+        self.takeover.after_write(self.gate_ticket.take(), "failed");
+        self.gate_ticket = self.takeover.before_write(page_id, kind, material, class)?;
+        Ok(())
+    }
+
+    /// B1: give the write in progress the key of its stable material: the
+    /// page's origin and URL path, the action's kind and `material` (a
+    /// stable description of its target, never a node id).
+    fn gate_rekey(&mut self, kind: &str, material: &str) -> Result<(), ProviderError> {
+        let origin = self
+            .page
+            .as_ref()
+            .map(|page| page.current_origin.clone())
+            .unwrap_or_default();
+        let rekeyed = self.takeover.rekey(
+            self.gate_ticket.as_ref(),
+            &origin,
+            self.page_url.as_deref(),
+            kind,
+            material,
+        );
+        if rekeyed.is_err() {
+            self.gate_ticket = None;
+        }
+        rekeyed
+    }
+
+    /// B1: ask the gate again right before the approval is spent: a person
+    /// may have taken the page over while the prompt was up.
+    fn gate_confirm(&mut self) -> Result<(), ProviderError> {
+        let confirmed = self.takeover.before_dispatch(self.gate_ticket.as_ref());
+        if confirmed.is_err() {
+            self.gate_ticket = None;
+        }
+        confirmed
+    }
+
+    /// B1: tell the gate what became of the write dispatched under
+    /// `record_id`, in the journal's words (`done`, `failed`, `unknown`).
+    fn gate_finish(&mut self, record_id: &str) {
+        let outcome = self
+            .outcomes
+            .last()
+            .filter(|last| last.record_id == record_id)
+            .map(|last| form_outcome(&last.outcome))
+            .unwrap_or("unknown");
+        self.takeover.after_write(self.gate_ticket.take(), outcome);
     }
 
     /// Spend the approval: exact digest, workspace and policy revision.
@@ -1313,29 +1498,49 @@ impl LiveBrowser {
             .map_err(|error| ProviderError::new(error.code, error.message))
     }
 
-    /// An approved navigation of the lifetime's page.
+    /// An approved navigation of the lifetime's page. B1: asks the
+    /// takeover gate first, as every agent write does.
     pub fn navigate(
         &mut self,
         workspace: &Workspace,
         approval: &impl ApprovalBroker,
         url: &str,
     ) -> Result<(String, u16), ProviderError> {
-        let (token, digest, binding) = self.ask(
+        let page_id = self
+            .page
+            .as_ref()
+            .map(|page| page.page_id.clone())
+            .unwrap_or_default();
+        self.gate_write(&page_id, "navigate", url, ActionClass::Repeatable)?;
+        self.navigate_approved(workspace, approval, url)
+    }
+
+    /// The approved navigation itself, once the gate admitted it.
+    fn navigate_approved(
+        &mut self,
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        url: &str,
+    ) -> Result<(String, u16), ProviderError> {
+        let (token, digest, binding, _target) = self.ask(
             workspace,
             approval,
             &BindAction::Navigate { url: url.into() },
             "navigate isolated browser page",
         )?;
+        self.gate_confirm()?;
         Self::consume(workspace, approval, &token, digest)?;
         let record_id = token.record_id;
-        match self.dispatch(
+        let reply = self.dispatch(
             &record_id,
             &WorkerHostRequest::Navigate {
                 url: url.into(),
                 record_id: record_id.clone(),
                 binding,
             },
-        )? {
+        );
+        self.gate_finish(&record_id);
+        match reply? {
             WorkerHostReply::Navigated { url, status } => {
                 // The page store follows the committed document: a new
                 // origin and generation, so every earlier approval and
@@ -1373,6 +1578,14 @@ impl LiveBrowser {
         action: BindAction,
     ) -> Result<(String, String, FormNavigation), ProviderError> {
         self.live_page(workspace, page_id, expected_generation)?;
+        // B1: Enter may submit or send what the page holds, so an Enter
+        // whose outcome is unknown is never admitted again on this page.
+        let class = if matches!(action, BindAction::PressEnter { .. }) {
+            ActionClass::Consequential
+        } else {
+            ActionClass::Repeatable
+        };
+        self.gate_write(page_id, "form", &format!("{action:?}"), class)?;
         let lifetime = self.lifetime.clone().ok_or_else(|| {
             ProviderError::new(
                 FailureCode::TargetStale,
@@ -1399,6 +1612,10 @@ impl LiveBrowser {
                 ))
             }
         };
+        // B1: the stable key names the field by its role, name and ordinal
+        // (never its node id), so a renumbered observation still finds an
+        // Enter whose outcome is unknown.
+        self.gate_rekey("form", &form_material(&action, &form))?;
         let digest = approval_digest(
             &workspace.id,
             &lifetime,
@@ -1427,14 +1644,24 @@ impl LiveBrowser {
             sink,
             crate::mutation_journal::opaque(workspace, request, &digest, &journal_target),
         )?;
+        let mut gate_refused = false;
         let approved = approval
             .request_token(&prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))
+            .and_then(|token| {
+                self.gate_confirm()
+                    .inspect_err(|_| gate_refused = true)
+                    .map(|()| token)
+            })
             .and_then(|token| Self::consume(workspace, approval, &token, digest).map(|()| token));
         let token = match approved {
             Ok(token) => token,
             Err(refusal) => {
                 intent.abandon(match refusal.code {
+                    // B1: a person took the page over during the prompt.
+                    // Only the gate's own refusal is named so; with the
+                    // gate off this never happens.
+                    _ if gate_refused => "target_stale",
                     FailureCode::ApprovalDenied => "approval_denied",
                     _ => "approval_unavailable",
                 });
@@ -1460,6 +1687,7 @@ impl LiveBrowser {
             .map(|last| form_outcome(&last.outcome))
             .unwrap_or("unknown");
         intent.settle(outcome);
+        self.takeover.after_write(self.gate_ticket.take(), outcome);
         let reply = match reply {
             Ok(reply) => reply,
             Err(error) => {
@@ -1505,6 +1733,7 @@ impl LiveBrowser {
         timeout_ms: u64,
     ) -> Result<bool, ProviderError> {
         self.live_page(workspace, page_id, expected_generation)?;
+        self.takeover.before_read(page_id)?;
         self.require_lifetime()?;
         match self.request(&WorkerHostRequest::WaitText {
             text: text.into(),
@@ -1531,6 +1760,7 @@ impl LiveBrowser {
         checks: Vec<orcel_browser_host::Postcondition>,
     ) -> Result<LiveVerification, ProviderError> {
         self.live_page(workspace, page_id, expected_generation)?;
+        self.takeover.before_read(page_id)?;
         self.require_lifetime()?;
         orcel_browser_host::check_postconditions(&checks)
             .map_err(|_| ProviderError::new(FailureCode::InvalidRequest, "malformed checks"))?;
@@ -1553,6 +1783,50 @@ impl LiveBrowser {
                 "unexpected browser host reply",
             )),
         }
+    }
+
+    /// SG-000135 OB-02: the committed main document's rendered content as
+    /// bounded, untrusted page text (the host's `extract`), read-only and
+    /// without approval, after the takeover gate admits a read.
+    pub fn extract(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+    ) -> Result<LiveExtraction, ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        self.takeover.before_read(page_id)?;
+        self.require_lifetime()?;
+        match self.request(&WorkerHostRequest::Extract {})? {
+            WorkerHostReply::Extracted {
+                url,
+                document_generation,
+                truncated,
+                text,
+            } => Ok(LiveExtraction {
+                url,
+                document_generation,
+                truncated,
+                text,
+            }),
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// SG-000135 OB-01: the broker session this browser serves; the
+    /// takeover gate claims its pages for that session.
+    pub fn set_task(&mut self, task: &str) {
+        self.takeover.set_task(task);
+    }
+
+    /// SG-000135 OB-01: the MCP client the broker session belongs to; the
+    /// takeover gate keeps its uncertain consequential actions per client
+    /// too.
+    pub fn set_client(&mut self, client: &str) {
+        self.takeover.set_client(client);
     }
 
     fn require_lifetime(&self) -> Result<(), ProviderError> {
@@ -1609,9 +1883,20 @@ impl LiveBrowser {
         folder: &Path,
         relative: &str,
     ) -> Result<LiveDownload, ProviderError> {
+        let page_id = self
+            .page
+            .as_ref()
+            .map(|page| page.page_id.clone())
+            .unwrap_or_default();
+        self.gate_write(
+            &page_id,
+            "download",
+            &format!("{node_id}\u{0}{relative}"),
+            ActionClass::Consequential,
+        )?;
         let folder = folder.to_string_lossy().into_owned();
         let folder_for_record = folder.clone();
-        let (token, digest, binding) = self.ask(
+        let (token, digest, binding, target) = self.ask(
             workspace,
             approval,
             &BindAction::Download {
@@ -1622,6 +1907,17 @@ impl LiveBrowser {
             },
             "download from isolated browser page",
         )?;
+        // B1: nothing is journaled or spent while a person holds the page,
+        // nor for a download of the same link to the same name whose
+        // earlier outcome is unknown.
+        self.gate_rekey(
+            "download",
+            &format!(
+                "{}\u{0}{relative}",
+                crate::takeover_gate::link_identity(&target)
+            ),
+        )?;
+        self.gate_confirm()?;
         let record_id = token.record_id.clone();
         // The intent is durable before the approval is spent: if orceld
         // dies anywhere after this, a restart finds it and reconciles the
@@ -1659,6 +1955,7 @@ impl LiveBrowser {
                 binding,
             },
         );
+        self.gate_finish(&record_id);
         // A reply, refusal or success, settles it; only a lost one stays.
         // If the settled line cannot be written, a restart reports the
         // destination as present, unverified: never adopted, so still safe.
@@ -1751,6 +2048,38 @@ impl LiveBrowser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B1: a form action's stable material names the field by its position,
+    /// never the count of same-named fields, nor its node id.
+    #[test]
+    fn b1_form_material_keys_on_the_position_not_the_count() {
+        let field = |count: usize| BoundForm {
+            role: "textbox".into(),
+            name: "Search".into(),
+            name_cut: false,
+            ordinal: Some(orcel_browser_host::worker_host::FieldOrdinal { position: 1, count }),
+        };
+        let enter = |node: &str| BindAction::PressEnter {
+            node_id: node.into(),
+            role: "textbox".into(),
+        };
+        assert_eq!(
+            form_material(&enter("n7"), &field(2)),
+            form_material(&enter("n42"), &field(3)),
+            "an unrelated new field of the same name, and renumbered nodes, change nothing"
+        );
+        let second = BoundForm {
+            ordinal: Some(orcel_browser_host::worker_host::FieldOrdinal {
+                position: 2,
+                count: 3,
+            }),
+            ..field(3)
+        };
+        assert_ne!(
+            form_material(&enter("n7"), &field(3)),
+            form_material(&enter("n7"), &second)
+        );
+    }
 
     #[test]
     fn reconciliation_reports_what_is_at_the_destination_and_nothing_else() {
@@ -1854,6 +2183,9 @@ mod tests {
             committed: Vec::new(),
             observed_roles: std::collections::HashMap::new(),
             host_ended,
+            takeover: TakeoverGate::from_switch(),
+            gate_ticket: None,
+            page_url: None,
             reply_timeout: None,
             after_consume: None,
         }

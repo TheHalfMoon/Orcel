@@ -21,6 +21,7 @@ members = [
   "crates/orcel-app-api-client",
   "crates/orcel-search",
   "crates/orcel-authority",
+  "crates/orcel-browser-session",
 ]
 
 [workspace.package]

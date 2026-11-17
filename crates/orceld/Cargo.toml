@@ -21,10 +21,25 @@ live-browser-test = ["dep:orcel-browser-host", "orcel-browser-host/live-browser-
 # host build pinned. Never default; the release-blocker sweep keeps it out
 # of every release build.
 live-browser-dev = ["dep:orcel-browser-host", "orcel-browser-host/live-browser-dev"]
+# Orcel Browser B1: the live browser asks the human-intervention gate
+# (orcel-browser-session) before each agent action. Off by default, and no
+# build enables it, until SG-000135 defines the browser session broker it
+# belongs to. The gate can only refuse; it grants nothing.
+browser-takeover-gate = []
+# SG-000135 OB-01 end-to-end harness (scripts/browser-full-e2e.mjs), TEST
+# BUILDS ONLY: together with both live browser features above, orceld's SOFT
+# consent is decided by a scripted decider (the approval crate's existing
+# test-support soft decider) that approves only the mission's four browser
+# actions whose whole target is the loopback fixture origin, and records
+# each prompt's dialog text.
+# orceld refuses to start without ORCEL_E2E_CONSENT_LOG. Never default, never
+# in a development or release build; the release-blocker sweep confines it.
+browser-full-scripted-consent = ["orcel-approval/test-support"]
 
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }
 orcel-browser-host = { path = "../orcel-browser-host", optional = true }
+orcel-browser-session = { path = "../orcel-browser-session" }
 orcel-audit = { path = "../orcel-audit" }
 # SG-000132 slice 1: the authority service client (verify, Authorize).
 orcel-authority = { path = "../orcel-authority" }

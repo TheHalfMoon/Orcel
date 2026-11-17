@@ -222,9 +222,10 @@ test("the contract's remote scopes equal the orceld remote-session scope table",
 });
 
 test("profile membership is exact and unmapped profiles fail closed", () => {
-  assert.deepEqual(Object.keys(SURFACE_PROFILES).sort(), ["browser_structured", "core", "desktop_structured"]);
+  assert.deepEqual(Object.keys(SURFACE_PROFILES).sort(), ["browser_full", "browser_structured", "core", "desktop_structured"]);
   assert.deepEqual([...profileTools("core")].sort(), CORE);
   assert.deepEqual([...profileTools("desktop_structured")].sort(), [...CORE, ...LOCAL_ONLY].sort());
+  // SG-000135 OB-02: browser_full is pinned in browser-full.test.ts.
   // SG-000108: browser_structured adds exactly the live browser tools.
   assert.deepEqual([...profileTools("browser_structured")].sort(), [...CORE, ...LOCAL_ONLY, ...LIVE].sort());
   for (const profile of ["developer", "coordinate_fallback", "admin", "", "__proto__", "constructor"]) {

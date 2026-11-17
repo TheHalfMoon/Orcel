@@ -94,3 +94,23 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `web_fetch` | `network/fetch` | network | SOFT | local-only | yes | no | yes | yes | one response body of at most 1 MiB |
 | `web_search` | `search/query` | network | SOFT | local-only | yes | no | no | yes | at most 10 untrusted results; titles 300 and snippets 1000 characters; provider response at most 512 KiB |
 | `workspace_get` | `workspace.get/get` | read | none | orcel.read | yes | no | yes | no | fixed-size workspace metadata |
+
+## browser_full (SG-000135, local only)
+
+Served by stdio and loopback HTTP only when local configuration selects it (`ORCEL_TOOL_SURFACE_PROFILE=browser_full`);
+never remote. It holds 55 tools: `desktop_structured` plus the Orcel Browser Session Broker tools below,
+which orceld's broker maps onto the existing live host actions. Under this profile `browser_click`, `browser_fill`,
+`browser_select` and `browser_verify` are the broker tools listed here; `browser_structured` keeps its own forms.
+
+| Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `browser_session_create` | `browser.session/create` | read | none | local-only | yes | no | no | no | one broker session id, its task label and the orceld instance id |
+| `browser_open` | `browser.session/open` | network | SOFT | local-only | no | no | no | yes | the session's page id, the committed URL, status and generation, and one provisional receipt |
+| `browser_snapshot` | `browser.session/snapshot` | read | none | local-only | yes | no | yes | no | one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one provisional receipt |
+| `browser_click` | `browser.session/click` | network | SOFT | local-only | no | no | no | yes | the opened URL, status and generation, and one provisional receipt |
+| `browser_fill` | `browser.session/fill` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, committed URL, record id and one provisional receipt; never the value |
+| `browser_select` | `browser.session/select` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, committed URL, record id and one provisional receipt; never the option label |
+| `browser_verify` | `browser.session/verify` | read | none | local-only | yes | no | yes | no | at most 16 pass or fail results with fixed evidence words and counts, the committed URL, a report digest and one provisional receipt |
+| `browser_extract` | `browser.session/extract` | read | none | local-only | yes | no | yes | no | the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one provisional receipt |
+| `browser_close` | `browser.session/close` | read | none | local-only | yes | no | no | no | whether the session's worker ended and its profile was removed |
+| `browser_task_status` | `browser.session/status` | read | none | local-only | yes | no | yes | no | the session's state, budgets and at most 128 provisional receipts |

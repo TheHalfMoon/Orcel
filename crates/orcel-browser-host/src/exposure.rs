@@ -110,6 +110,46 @@ pub const LIVE_BROWSER_TOOL_SHAPES: &[(&str, &str, &str)] = &[
     ("browser_enter", "browser.form", "enter"),
 ];
 
+/// SG-000135 OB-02: the `browser_full` profile, served by orceld's
+/// Orcel Browser Session Broker. Local only, Windows development builds
+/// only, like `browser_structured`; it is not a widening of a preexisting
+/// profile, and remote mapping stays disabled for it too.
+pub const BROWSER_FULL_PROFILE: &str = "browser_full";
+
+/// SG-000135 OB-02: the `browser_full` MCP tools. Every one takes the
+/// broker's `session_id` (except `browser_session_create`, which mints
+/// it). Four names are shared with `browser_structured`
+/// (`browser_click`, `browser_fill`, `browser_select`, `browser_verify`):
+/// under `browser_full` they are the broker tools, with their own schema
+/// and shape, and the two profiles never serve each other's form.
+pub const BROWSER_FULL_MCP_TOOLS: &[&str] = &[
+    "browser_session_create",
+    "browser_open",
+    "browser_snapshot",
+    "browser_click",
+    "browser_fill",
+    "browser_select",
+    "browser_verify",
+    "browser_extract",
+    "browser_close",
+    "browser_task_status",
+];
+
+/// The broker shape each `browser_full` tool forwards (tool, capability,
+/// operation), and the live host action it maps onto, if any.
+pub const BROWSER_FULL_TOOL_SHAPES: &[(&str, &str, &str)] = &[
+    ("browser_session_create", "browser.session", "create"),
+    ("browser_open", "browser.session", "open"),
+    ("browser_snapshot", "browser.session", "snapshot"),
+    ("browser_click", "browser.session", "click"),
+    ("browser_fill", "browser.session", "fill"),
+    ("browser_select", "browser.session", "select"),
+    ("browser_verify", "browser.session", "verify"),
+    ("browser_extract", "browser.session", "extract"),
+    ("browser_close", "browser.session", "close"),
+    ("browser_task_status", "browser.session", "status"),
+];
+
 /// Whether a capability and operation pair is within the maximum
 /// admissible set. Admission is necessary but not sufficient for live
 /// exposure.
@@ -149,6 +189,9 @@ pub fn remote_browser_mapping_enabled() -> bool {
 pub fn profile_tools(profile: &str) -> Result<&'static [&'static str], HostError> {
     if profile == BROWSER_STRUCTURED_PROFILE {
         return Ok(LIVE_BROWSER_MCP_TOOLS);
+    }
+    if profile == BROWSER_FULL_PROFILE {
+        return Ok(BROWSER_FULL_MCP_TOOLS);
     }
     Err(HostError::Invalid(
         "tool surface profile is not mapped for live browser".into(),
@@ -234,6 +277,48 @@ mod tests {
     fn preexisting_profiles_gain_no_browser_shapes() {
         assert_eq!(PREEXISTING_PROFILES, &["core", "desktop_structured"]);
         assert!(!PREEXISTING_PROFILES.contains(&BROWSER_STRUCTURED_PROFILE));
+    }
+
+    /// SG-000135 OB-02: the `browser_full` tools, one broker shape each,
+    /// no denied shape, none of the uploads, and a profile of its own.
+    #[test]
+    fn ob02_the_browser_full_set_is_ten_broker_tools() {
+        assert_eq!(BROWSER_FULL_MCP_TOOLS.len(), 10);
+        let tools: Vec<&str> = BROWSER_FULL_TOOL_SHAPES
+            .iter()
+            .map(|(t, _, _)| *t)
+            .collect();
+        assert_eq!(tools, BROWSER_FULL_MCP_TOOLS);
+        let unique: HashSet<&str> = BROWSER_FULL_MCP_TOOLS.iter().copied().collect();
+        assert_eq!(unique.len(), 10);
+        for (tool, capability, _) in BROWSER_FULL_TOOL_SHAPES {
+            assert_eq!(*capability, "browser.session", "{tool}");
+            assert!(!is_denied_shape(tool), "{tool}");
+        }
+        for denied in DENIED_BROWSER_SHAPES {
+            assert!(!BROWSER_FULL_MCP_TOOLS.contains(denied), "{denied}");
+        }
+        assert!(!PREEXISTING_PROFILES.contains(&BROWSER_FULL_PROFILE));
+        assert_eq!(
+            profile_tools(BROWSER_FULL_PROFILE).unwrap(),
+            BROWSER_FULL_MCP_TOOLS
+        );
+        // The four shared names are the only overlap with browser_structured.
+        let shared: Vec<&str> = BROWSER_FULL_MCP_TOOLS
+            .iter()
+            .copied()
+            .filter(|tool| LIVE_BROWSER_MCP_TOOLS.contains(tool))
+            .collect();
+        assert_eq!(
+            shared,
+            [
+                "browser_click",
+                "browser_fill",
+                "browser_select",
+                "browser_verify"
+            ]
+        );
+        assert!(!remote_browser_mapping_enabled());
     }
 
     #[test]

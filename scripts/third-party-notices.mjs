@@ -80,6 +80,14 @@ const VENDORED_NOTICES = [
     file: "docs/orcel/notices/firecrawl-AGPL-3.0.txt",
     copyright: "Upstream license: GNU Affero General Public License v3.0",
     windowsOnly: true
+  },
+  // Orcel Browser B1: orceld links crates/orcel-browser-session, which adapts
+  // BrowserOS's takeover rules, on every platform.
+  {
+    name: "BrowserOS (browseros-ai/BrowserOS@bd725831273884c4b1aee8425975afa122f720f2, adapted takeover rules)",
+    license: "AGPL-3.0-or-later upstream; redistributed under the owner-asserted authorization the notice names",
+    file: "docs/orcel/notices/browseros-AGPL-3.0.txt",
+    copyright: "Upstream license: GNU Affero General Public License v3.0 or later"
   }
 ].filter((notice) => !notice.windowsOnly || WINDOWS);
 // Registry crates published without any license file, keyed by exact

@@ -23,11 +23,44 @@
 //! cross-language agreement. The separate table slice A2 kept for the
 //! shapes without a tool (`LIVE_FORM_SHAPES`) is gone: no live shape is
 //! reachable without an MCP tool any more.
+//!
+//! SG-000135 OB-02 adds the `browser_full` profile: its shapes
+//! (`BROWSER_FULL_SHAPES`, capability `browser.session`) run through the
+//! Orcel Browser Session Broker, are dispatched only for a local request
+//! naming `browser_full`, and never for a remote one (remote browser
+//! mapping stays disabled). The two profiles never share a shape: a
+//! `browser_structured` live shape under `browser_full` is refused, and a
+//! `browser_full` shape under `browser_structured` is refused. The table
+//! agrees with `BROWSER_FULL_TOOLS` in `apps/orcel-mcp/src/tool_contract.ts`
+//! and `BROWSER_FULL_MCP_TOOLS` in `orcel-browser-host`'s exposure list
+//! (`apps/orcel-mcp/src/browser-full.test.ts`).
 
 use orcel_contracts::{FailureCode, RemoteContext, RequestEnvelope};
 
 /// The profile that alone may reach a live browser shape.
 pub const BROWSER_STRUCTURED_PROFILE: &str = "browser_structured";
+
+/// SG-000135 OB-02: the profile that alone may reach a broker shape.
+pub const BROWSER_FULL_PROFILE: &str = "browser_full";
+
+/// SG-000135 OB-02: the broker shapes of the `browser_full` profile, one
+/// per MCP tool: session create, open, snapshot, click, fill, select,
+/// verify, extract, close and task status. Each but create, close and
+/// status maps onto an existing live host action with that action's own
+/// approval (SOFT for open, click, fill and select; none for snapshot,
+/// verify and extract).
+pub const BROWSER_FULL_SHAPES: &[(&str, &str)] = &[
+    ("browser.session", "create"),
+    ("browser.session", "open"),
+    ("browser.session", "snapshot"),
+    ("browser.session", "click"),
+    ("browser.session", "fill"),
+    ("browser.session", "select"),
+    ("browser.session", "verify"),
+    ("browser.session", "extract"),
+    ("browser.session", "close"),
+    ("browser.session", "status"),
+];
 
 /// The live browser shapes, each with an MCP tool (capability, operation):
 /// slice 3c's six, each one of SG-000079's qualified browser shapes, and
@@ -78,15 +111,46 @@ pub fn is_live_shape(request: &RequestEnvelope) -> bool {
     names(LIVE_BROWSER_SHAPES, request)
 }
 
+/// SG-000135 OB-02: whether a request names one of the broker shapes.
+pub fn is_browser_full_shape(request: &RequestEnvelope) -> bool {
+    names(BROWSER_FULL_SHAPES, request)
+}
+
 /// Refuse a live browser shape unless the request is local and names the
-/// `browser_structured` profile. Every other shape passes unchanged: the
-/// profile field grants nothing by itself.
+/// `browser_structured` profile, and a broker shape unless it is local and
+/// names `browser_full`. Every other shape passes unchanged: the profile
+/// field grants nothing by itself.
 pub fn gate(
     request: &RequestEnvelope,
     profile: Option<&str>,
     remote: Option<&RemoteContext>,
 ) -> Result<(), (FailureCode, &'static str)> {
-    gate_shapes(LIVE_BROWSER_SHAPES, request, profile, remote)
+    gate_shapes(LIVE_BROWSER_SHAPES, request, profile, remote)?;
+    gate_full(BROWSER_FULL_SHAPES, request, profile, remote)
+}
+
+fn gate_full(
+    shapes: &[(&str, &str)],
+    request: &RequestEnvelope,
+    profile: Option<&str>,
+    remote: Option<&RemoteContext>,
+) -> Result<(), (FailureCode, &'static str)> {
+    if !names(shapes, request) {
+        return Ok(());
+    }
+    if remote.is_some() {
+        return Err((
+            FailureCode::CapabilityDenied,
+            "SG-000135 browser_full shapes are local-only; remote browser mapping is disabled",
+        ));
+    }
+    if profile != Some(BROWSER_FULL_PROFILE) {
+        return Err((
+            FailureCode::CapabilityDenied,
+            "SG-000135 browser_full shapes require the browser_full profile, selected by local configuration",
+        ));
+    }
+    Ok(())
 }
 
 fn gate_shapes(
@@ -203,6 +267,57 @@ mod tests {
             let model = request(capability, operation);
             assert!(!is_live_shape(&model));
             assert_eq!(gate(&model, None, None), Ok(()));
+        }
+    }
+
+    /// SG-000135 OB-02: the broker shapes need a local `browser_full`
+    /// request; the two browser profiles never reach each other's shapes;
+    /// no remote request reaches either.
+    #[test]
+    fn ob02_browser_full_shapes_need_a_local_browser_full_request() {
+        assert_eq!(BROWSER_FULL_SHAPES.len(), 10);
+        let remote = remote();
+        for (capability, operation) in BROWSER_FULL_SHAPES {
+            let full = request(capability, operation);
+            assert!(is_browser_full_shape(&full));
+            assert!(!is_live_shape(&full), "{capability}/{operation}");
+            assert_eq!(gate(&full, Some(BROWSER_FULL_PROFILE), None), Ok(()));
+            for profile in [
+                None,
+                Some(BROWSER_STRUCTURED_PROFILE),
+                Some("desktop_structured"),
+                Some("core"),
+                Some("Browser_Full"),
+                Some(""),
+            ] {
+                let refused = gate(&full, profile, None).unwrap_err();
+                assert_eq!(refused.0, FailureCode::CapabilityDenied, "{profile:?}");
+                assert!(refused.1.contains("browser_full profile"));
+            }
+            let refused = gate(&full, Some(BROWSER_FULL_PROFILE), Some(&remote)).unwrap_err();
+            assert_eq!(refused.0, FailureCode::CapabilityDenied);
+            assert!(refused.1.contains("remote browser mapping is disabled"));
+            // A broker shape is never one of the denied model-only shapes.
+            assert!(
+                !orcel_provider_browser::DENIED_BROWSER_SHAPES.contains(&(*capability, *operation))
+            );
+        }
+        // browser_structured's live shapes stay out of browser_full.
+        for (capability, operation) in LIVE_BROWSER_SHAPES {
+            let live = request(capability, operation);
+            assert!(!is_browser_full_shape(&live));
+            assert!(gate(&live, Some(BROWSER_FULL_PROFILE), None).is_err());
+        }
+        // Distinct, and W2-03's outline and extract_schema have no shape.
+        let unique: std::collections::HashSet<_> = BROWSER_FULL_SHAPES.iter().collect();
+        assert_eq!(unique.len(), BROWSER_FULL_SHAPES.len());
+        for (capability, operation) in [
+            ("browser.session", "outline"),
+            ("browser.session", "extract_schema"),
+            ("browser.page", "outline"),
+            ("browser.session", "evaluate"),
+        ] {
+            assert!(!is_browser_full_shape(&request(capability, operation)));
         }
     }
 
