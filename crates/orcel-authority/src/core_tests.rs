@@ -162,6 +162,7 @@ fn open_enrolled(dir: &Path, events: &Events) -> Result<AuthorityCore, String> {
 fn owner() -> CallerFacts {
     CallerFacts {
         pid: 4100,
+        process_generation: 0x01dc_5a00_0000_0001,
         image: r"C:\Program Files\Orcel\orcel.exe".to_owned(),
         user_sid: "S-1-5-21-1-2-3-1001".to_owned(),
         logon_session_id: 0x5555,
@@ -730,12 +731,68 @@ fn every_event_carries_a_signature_by_the_lease_key() -> Result<(), String> {
     grant(&mut core, None)?;
     let all = events.all();
     assert!(all.len() >= 4, "{all:?}");
-    for (_, line) in all {
+    for (id, line) in all {
         let (text, signature) = line.rsplit_once("|sig=").ok_or("an unsigned event")?;
+        assert!(
+            text.starts_with(&format!("orcel-event/1|id={id}|audit_seq=")),
+            "{text}"
+        );
         let mut input = EVENT_SIGNING_DOMAIN.to_vec();
         input.extend_from_slice(text.as_bytes());
         assert_eq!(signature, keyed_hash(&input), "{text}");
     }
+    // A forged id (or position) does not verify.
+    let (id, line) = events.all().into_iter().next().ok_or("no event")?;
+    let (text, signature) = line.rsplit_once("|sig=").ok_or("unsigned")?;
+    let forged = text.replacen(&format!("id={id}"), "id=4101", 1);
+    let mut input = EVENT_SIGNING_DOMAIN.to_vec();
+    input.extend_from_slice(forged.as_bytes());
+    assert_ne!(signature, keyed_hash(&input));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn an_intent_is_bound_to_the_process_instance_and_needs_its_image() -> Result<(), String> {
+    let dir = temp_dir("generation")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let mut no_image = owner();
+    no_image.image.clear();
+    assert_eq!(
+        code(core.handle(&no_image, grant_begin(None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let mut no_generation = owner();
+    no_generation.process_generation = 0;
+    assert_eq!(
+        code(core.handle(&no_generation, grant_begin(None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let begun = ok(core.handle(&owner(), grant_begin(None)))?;
+    let id = str_of(&begun, "intent_id")?;
+    // The same PID and image in a later process (a reused PID) is another caller.
+    let mut reused = owner();
+    reused.process_generation += 1;
+    assert!(core
+        .handle(
+            &reused,
+            Request::IntentStatus {
+                intent_id: id.clone()
+            }
+        )
+        .is_err());
+    assert!(core
+        .handle(
+            &reused,
+            Request::CancelIntent {
+                intent_id: id.clone()
+            }
+        )
+        .is_err());
+    assert!(core
+        .handle(&owner(), Request::IntentStatus { intent_id: id })
+        .is_ok());
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

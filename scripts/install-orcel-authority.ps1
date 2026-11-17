@@ -85,13 +85,28 @@ $Marker = 'install-orcel-authority.ps1'
 $OrcelDirMarker = Join-Path $ProgramDataOrcel '.created-by-install-orcel-authority'
 $PrivilegedSids = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
 
-$self = (Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
+function Get-Sha256([string]$Path) {
+  # .NET directly: Get-FileHash honours -WhatIf in Windows PowerShell 5.1 and then hashes nothing.
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return -join ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose() }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
+$self = Get-Sha256 $PSCommandPath
 Write-Host "This script: $PSCommandPath"
 Write-Host "SHA-256 of this script: $self (compare it with the reviewed commit's copy before going on)"
 
 function Assert-Elevated {
   $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
   if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    if ($WhatIfPreference) {
+      Write-Host 'Not elevated: running the -WhatIf preview only; nothing will be changed.'
+      return
+    }
     throw 'Run this script from an elevated PowerShell (Run as administrator). Nothing was changed.'
   }
 }
@@ -100,10 +115,6 @@ function Invoke-Checked([string]$File, [string[]]$Arguments) {
   Write-Host ">> $File $($Arguments -join ' ')"
   & $File @Arguments
   if ($LASTEXITCODE -ne 0) { throw "$File failed with exit code $LASTEXITCODE" }
-}
-
-function Get-Sha256([string]$Path) {
-  return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
 }
 
 function Assert-Hash([string]$Path, [string]$Expected) {
@@ -140,7 +151,7 @@ function New-ProtectedDirectory([string]$Path, [string]$Sddl) {
   $security = New-Object System.Security.AccessControl.DirectorySecurity
   $security.SetSecurityDescriptorSddlForm($Sddl)
   if ($PSVersionTable.PSEdition -eq 'Core') {
-    [System.IO.FileSystemAclExtensions]::Create($security, $Path) | Out-Null
+    [System.IO.FileSystemAclExtensions]::Create([System.IO.DirectoryInfo]::new($Path), $security) | Out-Null
   } else {
     [System.IO.Directory]::CreateDirectory($Path, $security) | Out-Null
   }
@@ -186,6 +197,17 @@ function Install-Authority {
       throw "$dir already exists. Someone may have pre-created it; inspect and remove it (or run -Uninstall). Nothing was changed."
     }
   }
+  foreach ($dir in @($ProgramFilesOrcel, $ProgramFilesDir)) {
+    if (Test-Path -LiteralPath $dir) {
+      $owner = Get-OwnerSid $dir
+      if ($PrivilegedSids -notcontains $owner) {
+        throw "$dir is owned by $owner, not SYSTEM, Administrators or TrustedInstaller. Inspect and remove it first. Nothing was changed."
+      }
+      if (Test-UsersCanChangeEntries $dir) {
+        throw "$dir lets non-administrators add, delete or rename entries, so an installed binary could be replaced. Fix its ACL or remove it first. Nothing was changed."
+      }
+    }
+  }
   if (Test-Path -LiteralPath $ProgramDataOrcel) {
     $owner = Get-OwnerSid $ProgramDataOrcel
     if (@('S-1-5-18', 'S-1-5-32-544') -notcontains $owner) {
@@ -222,7 +244,12 @@ function Install-Authority {
     Invoke-Checked 'sc.exe' @('privs', $ServiceName, 'SeChangeNotifyPrivilege/SeImpersonatePrivilege/SeCreateGlobalPrivilege')
     Invoke-Checked 'sc.exe' @('failure', $ServiceName, 'reset=', '86400', 'actions=', 'restart/5000/restart/5000//')
   }
-  $serviceSid = ([Security.Principal.NTAccount]$ServiceAccount).Translate([Security.Principal.SecurityIdentifier]).Value
+  try {
+    $serviceSid = ([Security.Principal.NTAccount]$ServiceAccount).Translate([Security.Principal.SecurityIdentifier]).Value
+  } catch {
+    if (-not $WhatIfPreference) { throw }
+    $serviceSid = '<service SID, known once the service exists>'
+  }
 
   if (-not (Test-Path -LiteralPath $ProgramDataOrcel)) {
     if ($PSCmdlet.ShouldProcess($ProgramDataOrcel, 'Create with owner Administrators and a protected ACL (SYSTEM, Administrators full; Users read)')) {

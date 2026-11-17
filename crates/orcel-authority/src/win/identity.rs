@@ -144,8 +144,8 @@ pub fn client_facts(pipe: HANDLE) -> Result<CallerFacts, AuthorityError> {
     // Read the image as the client: the service account cannot open user
     // processes itself. Empty when it cannot be read; the role then falls
     // back to interactive or other, never orceld.
-    let image = orcel_platform::process::image_path_and_generation(pid)
-        .map(|(image, _)| image)
+    let (image, process_generation) = orcel_platform::process::image_path_and_generation(pid)
+        .map(|(image, generation)| (image, generation.generation))
         .unwrap_or_default();
     drop(token);
     drop(guard);
@@ -153,6 +153,7 @@ pub fn client_facts(pipe: HANDLE) -> Result<CallerFacts, AuthorityError> {
     let console = unsafe { WTSGetActiveConsoleSessionId() };
     Ok(CallerFacts {
         pid,
+        process_generation,
         image,
         user_sid,
         logon_session_id,

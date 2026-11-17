@@ -37,12 +37,16 @@ entries in it. What uninstall leaves: events already written to the Application 
 ## Steps
 
 1. **Get hash-pinned binaries.** Either:
-   - Download the `orcel-authority-windows-x64` artifact of the CI run for the reviewed commit (workflow CI,
-     job "Authority service artifact"). It holds `orcel-authority.exe`, `orceld.exe` and `SHA256SUMS.txt` with
-     both SHA-256 values and the commit. Check that the commit in `SHA256SUMS.txt` is the reviewed head. CI
-     builds this artifact for every commit and publishes no release. Or:
-   - Build it yourself in a folder only administrators can write (for example a clone under
-     `C:\OrcelBuild`, created from an elevated shell), from the reviewed commit, with
+   - **CI artifact from main only.** Use only a run of workflow CI, job "Authority service artifact", whose
+     event is a `push` to `main` of `TheHalfMoon/Orcel` (or a manual `workflow_dispatch` on `main`) and whose
+     commit is the reviewed head now on `main`. The job does not run for pull requests; an artifact from any
+     other run (a pull request, a fork, another branch) is untrusted, whatever it contains. Open that job's
+     log on github.com, step "Record the SHA-256 of each binary", and copy the two `AUTHORITY-ARTIFACT
+     <sha256>  <file>` lines and the `commit` line from the log: these are your expected values. Then download
+     the `orcel-authority-windows-x64` artifact into an admin-only folder. Do not take the expected hashes from
+     the `SHA256SUMS.txt` inside the zip; it only has to agree with the log. Or:
+   - **Admin-only build.** Clone the reviewed commit into a folder only administrators can write (for example
+     `C:\OrcelBuild`, created from an elevated shell), build there with
      `cargo build --release --locked -p orcel-authority -p orceld`, and take the hashes with
      `Get-FileHash -Algorithm SHA256`.
 
@@ -54,7 +58,7 @@ entries in it. What uninstall leaves: events already written to the Application 
    (`git show <commit>:scripts/install-orcel-authority.ps1 | Out-File ...` then `Get-FileHash`). The script
    prints its own SHA-256 as its first line; compare that too.
 
-3. **Preview, elevated** (changes nothing):
+3. **Preview** (changes nothing; it also runs unelevated, under Windows PowerShell 5.1 or PowerShell 7):
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File C:\OrcelBuild\install-orcel-authority.ps1 -WhatIf `
@@ -78,11 +82,24 @@ entries in it. What uninstall leaves: events already written to the Application 
    anchors (`orcel-anchor/1|authority|audit.jsonl|1|...|sig=...`) carry the service account as their user and a
    signature by the lease key; the public key in `authority-public` verifies them.
 
+## The one-time code is a link, not a secret
+
+`orcel full-control grant` (slice 2) will print a one-time code, and the Orcel Authority box shows the code of
+the intent it is confirming. The code links the box to the command you just ran; it is not a secret. A process
+running as you can read your console or the screen through UI Automation, and it can take the session's single
+pending-intent slot first, in which case your command is refused and a box for its request appears instead.
+Refuse (choose No on) any confirmation whose code you did not just start yourself in that terminal, or whose
+requesting process is not your command. Windows Hello (slice 2, attested and enrolled from an elevated caller)
+is the real gate; the code only helps you spot a box you did not ask for.
+
 ## What to verify by hand
 
 - **The state is unreadable**: step 5's `Get-ChildItem` is refused for your account.
 - **The trusted orceld path is protected**: the service refuses to start if `config.json` names an orceld
-  outside `%ProgramFiles%\Orcel\` or one a non-administrator could replace (event 4103 says which). Only the
+  outside `%ProgramFiles%\Orcel\`, one a non-administrator could replace, or a path with a junction, symbolic
+  link or mount point on it (event 4103 says which). It applies the same check to its own
+  `orcel-authority.exe`. The install also refuses a pre-existing `%ProgramFiles%\Orcel` (or `Authority`
+  folder) not owned by SYSTEM, Administrators or TrustedInstaller, or one that lets other users change entries. Only the
   `%ProgramFiles%\Orcel\orceld.exe` copy is trusted for `Authorize`; an orceld run from the repository is an
   ordinary interactive caller.
 - **A pre-created pipe name stops the service** (optional): stop the service, create `\\.\pipe\orcel-authority`

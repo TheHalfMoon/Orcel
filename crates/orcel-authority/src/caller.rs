@@ -35,6 +35,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallerFacts {
     pub pid: u32,
+    /// The process's creation time (FILETIME) read with its image, so a
+    /// reused PID is a different caller; 0 when it could not be read.
+    pub process_generation: u64,
     /// Win32 image path, or empty when it could not be read.
     pub image: String,
     pub user_sid: String,
@@ -107,6 +110,7 @@ mod tests {
     fn facts(image: &str, interactive: bool, console: bool) -> CallerFacts {
         CallerFacts {
             pid: 42,
+            process_generation: 7,
             image: image.to_owned(),
             user_sid: "S-1-5-21-1-2-3-1001".to_owned(),
             logon_session_id: 7,

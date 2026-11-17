@@ -245,6 +245,8 @@ struct Intent {
     sid: String,
     logon_session_id: u64,
     requester: ObservedRequester,
+    /// The requesting process's creation time: a reused PID is refused.
+    requester_generation: u64,
     scope: LeaseScope,
     minutes: u64,
     principal_id: String,
@@ -461,16 +463,24 @@ impl AuthorityCore {
         Ok(format!("{}-{}", &chars[..4], &chars[4..]))
     }
 
-    /// Every Event Log entry ends with `|sig=<hex>`: the lease key's
-    /// signature over `EVENT_SIGNING_DOMAIN || text`, so an entry another
-    /// process wrote under the same source name does not verify.
+    /// Every Event Log entry reads `orcel-event/1|id=<event id>|audit_seq=<last
+    /// audit record>|<text>|sig=<hex>`: the lease key's signature over
+    /// `EVENT_SIGNING_DOMAIN` and everything before `|sig=`, so the event id
+    /// and the chain position are signed too, and an entry another process
+    /// wrote under the same source name does not verify.
     fn event(&self, event_id: u32, error: bool, text: &str) -> Result<(), AuthorityError> {
+        let signed = format!(
+            "orcel-event/1|id={event_id}|audit_seq={}|{text}",
+            self.audit.last_seq()
+        );
         let mut input = EVENT_SIGNING_DOMAIN.to_vec();
-        input.extend_from_slice(text.as_bytes());
+        input.extend_from_slice(signed.as_bytes());
         let signature = self.services.signer.sign(&input)?;
-        self.services
-            .events
-            .record(event_id, error, &format!("{text}|sig={}", hex(&signature)))
+        self.services.events.record(
+            event_id,
+            error,
+            &format!("{signed}|sig={}", hex(&signature)),
+        )
     }
 
     fn after_append(&self, record: &AuditRecord) -> Result<(), AuthorityError> {
@@ -675,6 +685,11 @@ impl AuthorityCore {
         }
         check_display_field("principal_id", &principal_id)?;
         check_display_field("task", &task)?;
+        if caller.image.is_empty() || caller.process_generation == 0 {
+            return Err(AuthorityError::denied(
+                "the requesting process's image or creation time could not be read; an intent must name its process",
+            ));
+        }
         if !self
             .state
             .enrolled
@@ -752,6 +767,7 @@ impl AuthorityCore {
                 pid: caller.pid,
                 image: caller.image.clone(),
             },
+            requester_generation: caller.process_generation,
             scope,
             minutes,
             principal_id,
@@ -781,6 +797,7 @@ impl AuthorityCore {
                     && intent.sid == caller.user_sid
                     && intent.logon_session_id == caller.logon_session_id
                     && intent.requester.pid == caller.pid
+                    && intent.requester_generation == caller.process_generation
                     && intent.requester.image == caller.image
             })
             .ok_or_else(|| {

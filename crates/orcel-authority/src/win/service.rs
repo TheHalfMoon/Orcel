@@ -132,6 +132,23 @@ pub fn check_trusted_images(
     Ok(())
 }
 
+/// The service's own binary must sit under `%ProgramFiles%\Orcel\` with the
+/// same protection as the trusted orceld image.
+fn check_own_image(
+    program_files: &std::path::Path,
+    service_sid: &str,
+) -> Result<(), AuthorityError> {
+    let own = std::env::current_exe()
+        .map_err(|error| AuthorityError::unavailable(format!("the service's own path: {error}")))?;
+    check_trusted_images(
+        &ClientPolicy {
+            trusted_orceld_images: vec![own],
+        },
+        program_files,
+        service_sid,
+    )
+}
+
 /// The installed configuration: fixed paths under `%ProgramData%`, the
 /// pipe owned by the virtual service SID, the protected state directory.
 pub fn service_config() -> Result<RunConfig, AuthorityError> {
@@ -160,6 +177,7 @@ pub fn service_config() -> Result<RunConfig, AuthorityError> {
         Err(_) => ClientPolicy::default(),
     };
     check_trusted_images(&policy, &program_files(), &service_sid)?;
+    check_own_image(&program_files(), &service_sid)?;
     Ok(RunConfig {
         mode: RunMode::Service,
         state_dir,

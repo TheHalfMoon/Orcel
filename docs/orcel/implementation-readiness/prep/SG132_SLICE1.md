@@ -5,7 +5,7 @@ build on 2026-11-17 ("Yes, build it"). Installing it is the founder's elevated s
 [SG132_INSTALL_RUNBOOK.md](SG132_INSTALL_RUNBOOK.md). Spec: `.specgrain/specs/SG-000132.json` (with its
 SG-000135 amendment) and sections 1.2, 4.8, 4.13 to 4.15 of
 [UNIFIED_INTEGRATION_SPEC.md](UNIFIED_INTEGRATION_SPEC.md). Revision 2 of this slice answers the independent
-review of `ecb66ab3` (findings 1 to 9, listed at the end).
+review of `ecb66ab3` (findings 1 to 9), revision 3 the re-review of `2d774e45`; both are listed at the end.
 
 **No grant completes in slice 1.** Windows Hello enrollment is refused (`enrollment_unavailable`) until slice 2
 brings attested keys and an elevated enrollment caller; without an enrolled key `GrantBegin` is refused. The
@@ -60,7 +60,8 @@ spec's `StandingBegin`, `StandingComplete` and `Heartbeat` are later slices.
 ### Grant flow (spec 4.13 steps 1 to 6)
 
 1. `GrantBegin` records the session's single pending intent (audit and Event Log 4102), expiring after 5
-   minutes, bound to the requesting process (observed PID and image) and returns a one-time code
+   minutes, bound to the requesting process (observed PID, creation time and image; an unreadable image or
+   creation time is refused, and a reused PID is another caller) and returns a one-time code
    (`XXXX-XXXX`) to that process only. `IntentStatus`, `CancelIntent` and `PresenceComplete` are answered only
    for that same process, user and logon session; a second intent in the session is refused while one is
    pending, so another process cannot take over or replace the slot. Refused: orceld (observed image), callers
@@ -89,6 +90,12 @@ repeated spaces: principal and task at most 64 characters, roots at most 128, at
 most 1,200 characters. Line and paragraph separators (U+2028, U+2029), bidi controls (U+202E), zero-width
 characters and every other format character are refused. The observed image path is cleaned (non-ASCII
 becomes `?`) and cut to its last 160 characters.
+
+### The one-time code
+
+The code links the confirmation box to the command the user ran; it is not a secret. A same-user process can
+read the console or the screen (UI Automation) and can take the single pending-intent slot first. The user must
+refuse any box whose code they did not just start in their own terminal; Windows Hello (slice 2) is the gate.
 
 ### Origin claims
 
@@ -138,6 +145,8 @@ from the hash-pinned artifact. At start the service refuses any trusted path out
 reads the owner and effective DACL of the file and every directory above it: the file must be owned by SYSTEM,
 Administrators, TrustedInstaller or the service and writable or replaceable by no one else; no directory on the
 path may be owned by anyone else or grant anyone else delete-child, delete, permission or ownership rights.
+No element of the path may be a reparse point (junction, symbolic link, mount point). The service applies the
+same rules to its own `orcel-authority.exe`, and the state directory and its parent may not be reparse points.
 
 ### ACL checks
 
@@ -155,8 +164,10 @@ start; a break refuses to start. `Authorize` appends and flushes before it answe
 records and on lease, stop, start and shutdown. A dedicated Event Log channel with restricted write needs an
 instrumentation manifest installed with `wevtutil`, which slice 1 does not add; instead every event the service
 writes ends with `|sig=<hex>`, the lease key's ECDSA signature over `orcel-authority-event-signature/1\n || text`,
-and carries the service account SID as its user. An entry another process writes under the `Orcel` source does
-not verify against the published public key. The start-refusal event 4103 is written before the key is loaded
+and carries the service account SID as its user. The signed part is
+`orcel-event/1|id=<event id>|audit_seq=<last audit record>|<text>`, so the event id and the chain position are
+signed with the text. An entry another process writes under the `Orcel` source does not verify against the
+published public key. The start-refusal event 4103 is written before the key is loaded
 and is unsigned.
 
 ### orceld
@@ -228,13 +239,14 @@ UAC "Always notify".
 
 ## Tests
 
-- `cargo test -p orcel-authority`: 32 unit tests (lease shapes, audit tamper and removal, framing, SDDL, roles,
+- `cargo test -p orcel-authority`: 34 unit tests (lease shapes, audit tamper and removal, framing, SDDL, roles,
   ACL rules including owner, parent, trusted-image chain and a live System32 versus temp-file check, CNG signing
   and DPAPI, Hello RSA verification, enrollment refusal, the grant flow with code, process binding and text-bound
   challenge, wrong code and signature, ASCII-only fields with U+2028, U+2029, U+202E, U+200B, U+FEFF and padding,
   window and timeouts, counters, missing key with history, signed events, bindings, browser scope, trusted image
-  prefix), 9 console-harness integration tests, and 4 install-script tests (hash-pinned install order, protected
-  creation, uninstall wait and profile removal, PowerShell parse).
+  prefix, process creation-time binding, junctions on a path, signed event id), 9 console-harness integration
+  tests, and 5 install-script tests (hash-pinned install order, protected creation, uninstall wait and profile
+  removal, parse and an unelevated `-WhatIf` preview with a good and a wrong hash under PowerShell 5.1 and 7).
 - `cargo test -p orceld sg132_`: orceld's link fails closed and its commands parse.
 
 ## Review findings of `ecb66ab3` and their answers
@@ -250,6 +262,21 @@ UAC "Always notify".
 8. `%ProgramData%\Orcel` and the authority directories created with their security in one call, then verified.
 9. Missing key with audit history refuses start; unknown ACE types unsafe; uninstall waits for stop and removes
    the virtual account profile; recovery note in the runbook; daily-work note in the runbook.
+
+## Re-review findings of `2d774e45` and their answers
+
+1. CI trust: `authority-artifact` runs only for a push or manual dispatch on `main` of TheHalfMoon/Orcel (never
+   for pull requests) and prints the SHA-256 values in its log; the runbook takes them from the log on
+   github.com, with an admin-only clone as the alternative.
+2. `FileSystemAclExtensions.Create(DirectoryInfo, DirectorySecurity)` fixed; the script tests parse it and run
+   the unelevated `-WhatIf` preview under both Windows PowerShell 5.1 and PowerShell 7 (which found and fixed
+   `Get-FileHash` hashing nothing under `-WhatIf` in 5.1: hashing now uses .NET directly).
+3. Intents bind the requester's creation time; an empty image or unknown creation time is refused.
+4. The install checks a pre-existing `%ProgramFiles%\Orcel` and `Authority` folder; the service checks its own
+   binary's path.
+5. Reparse points on any checked path element are refused.
+6. Events sign their id and the audit sequence number.
+7. The runbook explains that the one-time code is a link, not a secret.
 
 ## Next slices
 

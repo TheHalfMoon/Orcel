@@ -80,24 +80,113 @@ fn uninstall_waits_for_the_stop_and_removes_the_profile() {
 }
 
 #[cfg(windows)]
-#[test]
-fn the_script_parses() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn script_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("scripts")
-        .join("install-orcel-authority.ps1");
+        .join("install-orcel-authority.ps1")
+}
+
+/// Windows PowerShell 5.1 always; PowerShell 7 when `pwsh` is installed.
+#[cfg(windows)]
+fn shells() -> Vec<&'static str> {
+    let mut shells = vec!["powershell.exe"];
+    let pwsh = std::process::Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+        .output();
+    if pwsh.is_ok_and(|output| output.status.success()) {
+        shells.push("pwsh");
+    }
+    shells
+}
+
+#[cfg(windows)]
+#[test]
+fn the_script_parses_in_every_shell() {
     let command = format!(
         "$errors = $null; [System.Management.Automation.Language.Parser]::ParseFile('{}', [ref]$null, [ref]$errors) | Out-Null; if ($errors.Count) {{ $errors | ForEach-Object {{ $_.ToString() }}; exit 1 }}",
-        path.display()
+        script_path().display()
     );
-    let output = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &command])
-        .output()
-        .expect("powershell.exe");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+    for shell in shells() {
+        let output = std::process::Command::new(shell)
+            .args(["-NoProfile", "-NonInteractive", "-Command", &command])
+            .output()
+            .expect("a PowerShell");
+        assert!(
+            output.status.success(),
+            "{shell}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
+
+/// The `-WhatIf` preview runs without elevation and changes nothing: it
+/// verifies the artifact hashes and prints every planned change. A wrong
+/// hash stops it. (If the service is installed on this machine, the
+/// preview stops at "already exists", which is also no change.)
+#[cfg(windows)]
+#[test]
+fn the_whatif_preview_runs_unelevated_in_every_shell_and_checks_hashes() {
+    use sha2::{Digest, Sha256};
+    let dir = std::env::temp_dir().join(format!("orcel-authority-artifact-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("artifact dir");
+    let hash = |bytes: &[u8]| {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    std::fs::write(dir.join("orcel-authority.exe"), b"authority bytes").expect("write");
+    std::fs::write(dir.join("orceld.exe"), b"orceld bytes").expect("write");
+    let good_authority = hash(b"authority bytes");
+    let good_orceld = hash(b"orceld bytes");
+    println!("shells: {:?}", shells());
+    for shell in shells() {
+        let run = |authority: &str| {
+            std::process::Command::new(shell)
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ])
+                .arg(script_path())
+                .arg("-WhatIf")
+                .arg("-ArtifactDir")
+                .arg(&dir)
+                .args(["-AuthoritySha256", authority, "-OrceldSha256", &good_orceld])
+                .output()
+                .expect("a PowerShell")
+        };
+        let output = run(&good_authority);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if text.contains("already exists") {
+            continue;
+        }
+        assert!(output.status.success(), "{shell}: {text}");
+        assert!(text.contains("SHA-256 of this script"), "{shell}: {text}");
+        assert!(
+            text.contains(&good_authority),
+            "{shell}: the hash is printed"
+        );
+        assert!(text.contains("What if"), "{shell}: {text}");
+        let wrong = run(&"0".repeat(64));
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&wrong.stdout),
+            String::from_utf8_lossy(&wrong.stderr)
+        );
+        assert!(
+            !wrong.status.success(),
+            "{shell}: a wrong hash must stop the preview"
+        );
+        assert!(text.contains("SHA-256 mismatch"), "{shell}: {text}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

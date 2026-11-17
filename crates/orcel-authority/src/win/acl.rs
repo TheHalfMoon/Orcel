@@ -217,14 +217,38 @@ fn read_security(path: &Path, effective: bool) -> Result<Security, AuthorityErro
     result
 }
 
+/// `FILE_ATTRIBUTE_REPARSE_POINT`.
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+/// Refuses a path element that is a reparse point (junction, symbolic link,
+/// mount point): a checked path must be the object it names.
+pub fn refuse_reparse_point(path: &Path) -> Result<(), AuthorityError> {
+    use std::os::windows::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        AuthorityError::unavailable(format!(
+            "read the attributes of {}: {error}",
+            path.display()
+        ))
+    })?;
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(AuthorityError::unavailable(format!(
+            "{} is a reparse point (junction, link or mount point); refused",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Refuses `dir` unless it is owned by and grants access only to
 /// `service_sid`, SYSTEM and Administrators with a protected DACL, and its
 /// parent lets nobody else change its entries.
 pub fn check_protected_dir(dir: &Path, service_sid: &str) -> Result<(), AuthorityError> {
     let allowed = [service_sid, SYSTEM_SID, ADMINISTRATORS_SID];
+    refuse_reparse_point(dir)?;
     let (owner, protected, aces) = read_security(dir, false)?;
     evaluate(&owner, protected, &aces, &allowed)?;
     if let Some(parent) = dir.parent() {
+        refuse_reparse_point(parent)?;
         let (owner, _, aces) = read_security(parent, false)?;
         evaluate_parent(&owner, &aces, &allowed)?;
     }
@@ -301,6 +325,7 @@ pub fn check_trusted_image(path: &Path, service_sid: &str) -> Result<(), Authori
     let mut chain = Vec::new();
     let mut current = Some(path);
     while let Some(item) = current {
+        refuse_reparse_point(item)?;
         let (owner, _, aces) = read_security(item, true)?;
         chain.push((item.display().to_string(), owner, aces));
         current = item.parent();
@@ -420,6 +445,32 @@ mod tests {
             result.is_err(),
             "a file in the user's temp directory must be refused"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_junction_on_the_path_is_refused() -> Result<(), String> {
+        let base =
+            std::env::temp_dir().join(format!("orcel-authority-junction-{}", std::process::id()));
+        let target = base.join("target");
+        let link = base.join("link");
+        std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert!(made.status.success(), "mklink /J failed");
+        assert_eq!(refuse_reparse_point(&target), Ok(()));
+        assert!(refuse_reparse_point(&link).is_err());
+        let file = link.join("orceld.exe");
+        std::fs::write(&file, b"MZ").map_err(|e| e.to_string())?;
+        let error = check_trusted_image(&file, "S-1-5-80-1-2-3-4-5").err();
+        let _ = std::fs::remove_dir(&link);
+        let _ = std::fs::remove_dir_all(&base);
+        let message = error.map(|e| e.message).unwrap_or_default();
+        assert!(message.contains("reparse point"), "{message}");
         Ok(())
     }
 
