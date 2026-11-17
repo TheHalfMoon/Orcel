@@ -24,6 +24,7 @@
     allow(dead_code)
 )]
 
+use crate::browser_lease::{FullAccess, LeaseDecision, LeaseMoment, LeaseQuery, LeaseUse};
 use crate::takeover_gate::TakeoverGate;
 use orcel_approval::{now_ms, ApprovalBroker, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
 use orcel_browser_host::worker_host::{
@@ -31,7 +32,9 @@ use orcel_browser_host::worker_host::{
 };
 use orcel_browser_host::{Supervisor, WorkerHostLaunch};
 use orcel_browser_session::{ActionClass, WriteTicket};
+use orcel_contracts::browser_impact::{self, Impact};
 use orcel_contracts::FailureCode;
+use orcel_policy::browser_lease::BrowserFamily;
 use orcel_policy::{Workspace, POLICY_REVISION};
 use orcel_provider_browser::{PageRecord, PageState, PageStore};
 use orcel_provider_fs::ProviderError;
@@ -130,6 +133,21 @@ pub enum DispatchOutcome {
 pub struct ApprovalOutcome {
     pub record_id: String,
     pub outcome: DispatchOutcome,
+    /// SG-000135 OB-08: the Full Access lease that authorized the frame
+    /// instead of an approval (its record id is then the lease's one-shot
+    /// use id, never an approval record).
+    pub lease_id: Option<String>,
+}
+
+/// SG-000135 OB-08: what authorizes one consequential frame.
+enum Authority {
+    /// A SOFT approval, spent (consumed) right before dispatch.
+    Approval {
+        token: ApprovedToken,
+        digest: String,
+    },
+    /// A Full Access lease, checked once more right before dispatch.
+    Lease(LeaseUse),
 }
 
 /// A download sent to the host whose reply has not arrived.
@@ -529,6 +547,12 @@ pub struct LiveBrowser {
     /// id of `page`, once a tab request learned it.
     background: Vec<BackgroundTab>,
     active_tab: Option<u32>,
+    /// SG-000135 OB-08 (browser_full only; always `None` for
+    /// browser_structured): the session's Full Access lease cache.
+    full_access: Option<FullAccess>,
+    /// SG-000135 OB-08: the family a navigation also needs (`tabs` while a
+    /// new tab opens its URL).
+    navigation_also: Option<BrowserFamily>,
     /// Test builds only: a shorter reply budget for dispatched frames.
     #[cfg(test)]
     reply_timeout: Option<std::time::Duration>,
@@ -639,6 +663,25 @@ pub(crate) fn approval_digest(
         "{LIVE_APPROVAL_DOMAIN}\n{workspace_id}\n{POLICY_REVISION}\n{lifetime}\n{}\n{}\n{}\n{action}\n{form}\n{host_binding}",
         page.page_id, page.generation, page.current_origin
     ))
+}
+
+/// The host's binding for one action and the prompt a person would see.
+struct Bound {
+    prompt: ApprovalPrompt,
+    digest: String,
+    binding: String,
+    target: String,
+    /// SG-000135 OB-08: the host's classification of a link; unknown for
+    /// every other action.
+    impact: Impact,
+}
+
+/// SG-000135 OB-08: the origin of `url` as the page store names origins,
+/// or empty (which no lease covers).
+fn origin_of(url: &str) -> String {
+    orcel_provider_browser::parse_destination_url(url)
+        .map(|parsed| parsed.origin)
+        .unwrap_or_default()
 }
 
 /// SG-000122 slice A2: the approval prompt of one live form action, from
@@ -887,6 +930,8 @@ impl LiveBrowser {
             page_url: None,
             background: Vec::new(),
             active_tab: None,
+            full_access: None,
+            navigation_also: None,
             #[cfg(test)]
             reply_timeout: None,
             #[cfg(test)]
@@ -969,8 +1014,113 @@ impl LiveBrowser {
         self.outcomes.push(ApprovalOutcome {
             record_id: record_id.to_owned(),
             outcome,
+            lease_id: None,
         });
         result
+    }
+
+    /// SG-000135 OB-08: the frame dispatched under `record_id` was
+    /// authorized by `authority`: its outcome names the lease, if one.
+    fn note_authority(&mut self, record_id: &str, authority: &Authority) {
+        if let Authority::Lease(used) = authority {
+            if let Some(last) = self
+                .outcomes
+                .last_mut()
+                .filter(|last| last.record_id == record_id)
+            {
+                last.lease_id = Some(used.lease_id.clone());
+            }
+        }
+    }
+
+    /// SG-000135 OB-08: give this browser (a broker session's) its Full
+    /// Access lease cache. browser_structured never has one.
+    pub(crate) fn set_full_access(&mut self, access: FullAccess) {
+        self.full_access = Some(access);
+    }
+
+    /// SG-000135 OB-08: the session's lease status, read-only (scope and
+    /// expiry), for `browser_task_status`.
+    pub(crate) fn full_access_status(&self) -> Option<serde_json::Value> {
+        self.full_access
+            .as_ref()
+            .map(|access| access.status(now_ms()))
+    }
+
+    /// SG-000135 OB-08: what is true now for a lease decision on `page_id`.
+    fn lease_moment(&self, approval: &impl ApprovalBroker, page_id: &str) -> LeaseMoment {
+        LeaseMoment {
+            approval_epoch: approval.verified_revoke_epoch(),
+            now_ms: now_ms(),
+            intervention: self.takeover.intervention_epoch(page_id),
+        }
+    }
+
+    /// SG-000135 OB-08: authorize one consequential frame. A session with
+    /// a Full Access lease that covers `query` needs no prompt; otherwise
+    /// (no lease, a query that is not covered, or no query) the person is
+    /// asked as before. A lease that just became invalid refuses.
+    fn authorize(
+        &mut self,
+        approval: &impl ApprovalBroker,
+        prompt: &ApprovalPrompt,
+        query: Option<LeaseQuery<'_>>,
+    ) -> Result<Authority, ProviderError> {
+        if let Some(query) = query {
+            let moment = self.lease_moment(approval, query.page_id);
+            if let Some(access) = self.full_access.as_mut() {
+                match access.decide(&query, &moment) {
+                    LeaseDecision::Covered(used) => return Ok(Authority::Lease(used)),
+                    LeaseDecision::Refuse(error) => return Err(error),
+                    LeaseDecision::Ask => {}
+                }
+            }
+        }
+        let token = approval
+            .request_token(prompt)
+            .map_err(|error| ProviderError::new(error.code, error.message))?;
+        Ok(Authority::Approval {
+            token,
+            digest: prompt.digest.clone(),
+        })
+    }
+
+    /// SG-000135 OB-08: right before dispatch, spend the approval (exact
+    /// digest, single use) or check the lease once more (one fresh read).
+    /// Returns the record id the frame carries.
+    fn spend(
+        &mut self,
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        authority: &Authority,
+    ) -> Result<String, ProviderError> {
+        match authority {
+            Authority::Approval { token, digest } => {
+                Self::consume(workspace, approval, token, digest.clone())?;
+                Ok(token.record_id.clone())
+            }
+            Authority::Lease(used) => {
+                let moment = self.lease_moment(approval, used.page_id());
+                let access = self.full_access.as_mut().ok_or_else(|| {
+                    ProviderError::new(
+                        FailureCode::CapabilityDenied,
+                        "lease_invalid: this browser has no Full Access lease; nothing was sent",
+                    )
+                })?;
+                access.confirm(used, &moment)?;
+                Ok(used.record_id.clone())
+            }
+        }
+    }
+
+    /// SG-000135 OB-08: a person took the page over (the takeover gate
+    /// refused as paused): Full Access stops for the session.
+    fn note_gate_refusal(&mut self, error: &ProviderError) {
+        if error.message.starts_with("browser session paused") {
+            if let Some(access) = self.full_access.as_mut() {
+                access.invalidate("a person interrupted this browser session");
+            }
+        }
     }
 
     /// A dead lifetime makes its page stale for good (decision 3). If the
@@ -1231,6 +1381,9 @@ impl LiveBrowser {
     ) -> Result<(String, u16), ProviderError> {
         self.live_page(workspace, page_id, expected_generation)?;
         self.gate_write(page_id, "navigate", url, ActionClass::Repeatable)?;
+        // SG-000135 OB-08: the origin of the document the page holds now,
+        // read before a switch ends its lifetime.
+        let committed = self.page_url.as_deref().map(origin_of);
         let origin = orcel_provider_browser::parse_destination_url(url)
             .map_err(from_page)?
             .origin;
@@ -1261,7 +1414,7 @@ impl LiveBrowser {
                 None => self.open_public(workspace, url)?,
             }
         }
-        let navigated = self.navigate_approved(workspace, approval, url);
+        let navigated = self.navigate_approved(workspace, approval, url, committed.as_deref());
         if navigated.is_err() && switched {
             // A denied or failed switch leaves no lifetime, as decision 2
             // says: the fresh one never held a document of this page.
@@ -1321,30 +1474,44 @@ impl LiveBrowser {
         expected_generation: u64,
         node_id: &str,
     ) -> Result<(String, u16), ProviderError> {
-        self.live_page(workspace, page_id, expected_generation)?;
+        let page = self.live_page(workspace, page_id, expected_generation)?;
         self.gate_write(page_id, "click", node_id, ActionClass::Repeatable)?;
         let action = BindAction::Click {
             node_id: node_id.into(),
             role: "link".into(),
         };
-        let (token, digest, binding, _target) = self.ask(
+        let bound = self.bind_prompt(
             workspace,
-            approval,
             &action,
             "open a link on an isolated browser page",
         )?;
+        // SG-000135 OB-08: a link to the page's own origin, which the host
+        // classified routine from its name and destination.
+        let effect = origin_of(&bound.target);
+        let authority = self.authorize(
+            approval,
+            &bound.prompt,
+            Some(LeaseQuery {
+                family: BrowserFamily::Click,
+                also: None,
+                effect_origin: &effect,
+                committed_origin: Some(&page.current_origin),
+                impact: bound.impact,
+                page_id,
+            }),
+        )?;
         self.gate_confirm()?;
-        Self::consume(workspace, approval, &token, digest)?;
-        let record_id = token.record_id;
+        let record_id = self.spend(workspace, approval, &authority)?;
         let reply = self.dispatch(
             &record_id,
             &WorkerHostRequest::Activate {
                 node_id: node_id.into(),
                 role: "link".into(),
                 record_id: record_id.clone(),
-                binding,
+                binding: bound.binding,
             },
         );
+        self.note_authority(&record_id, &authority);
         self.gate_finish(&record_id);
         match reply? {
             WorkerHostReply::Activated { url, status } => {
@@ -1433,6 +1600,22 @@ impl LiveBrowser {
         action: &BindAction,
         title: &str,
     ) -> Result<(ApprovedToken, String, String, String), ProviderError> {
+        let bound = self.bind_prompt(workspace, action, title)?;
+        let token = approval
+            .request_token(&bound.prompt)
+            .map_err(|error| ProviderError::new(error.code, error.message))?;
+        Ok((token, bound.digest, bound.binding, bound.target))
+    }
+
+    /// The host's binding for `action` and the prompt a person would see
+    /// for it (nothing asked yet), with the host's routine classification
+    /// of a link (SG-000135 OB-08; unknown for anything else).
+    fn bind_prompt(
+        &mut self,
+        workspace: &Workspace,
+        action: &BindAction,
+        title: &str,
+    ) -> Result<Bound, ProviderError> {
         // What the prompt shows: where the action goes, and for a download
         // also where the file lands (all of it bound into the digest).
         let lifetime = self.lifetime.clone().ok_or_else(|| {
@@ -1443,12 +1626,15 @@ impl LiveBrowser {
             .clone()
             .filter(|page| page.state != PageState::Closed)
             .ok_or_else(|| ProviderError::new(FailureCode::TargetStale, "no live browser page"))?;
-        let (binding, target) = match self.request(&WorkerHostRequest::Bind {
+        let (binding, target, impact) = match self.request(&WorkerHostRequest::Bind {
             action: action.clone(),
         })? {
             WorkerHostReply::Bound {
-                binding, target, ..
-            } => (binding, target),
+                binding,
+                target,
+                impact,
+                ..
+            } => (binding, target, impact),
             _ => {
                 return Err(ProviderError::new(
                     FailureCode::InternalError,
@@ -1481,10 +1667,19 @@ impl LiveBrowser {
             } => prompt.downloading_to(format!("{folder}/{relative}")),
             _ => prompt,
         };
-        let token = approval
-            .request_token(&prompt)
-            .map_err(|error| ProviderError::new(error.code, error.message))?;
-        Ok((token, digest, binding, target))
+        // Only a link's classification is the host's to give; anything it
+        // does not name exactly `routine` is not routine.
+        let impact = match (action, impact) {
+            (BindAction::Click { .. }, Some(impact)) => impact,
+            _ => Impact::Unknown,
+        };
+        Ok(Bound {
+            prompt,
+            digest,
+            binding,
+            target,
+            impact,
+        })
     }
 
     /// B1: ask the takeover gate before an agent write on `page_id`. It
@@ -1498,8 +1693,16 @@ impl LiveBrowser {
         class: ActionClass,
     ) -> Result<(), ProviderError> {
         self.takeover.after_write(self.gate_ticket.take(), "failed");
-        self.gate_ticket = self.takeover.before_write(page_id, kind, material, class)?;
-        Ok(())
+        match self.takeover.before_write(page_id, kind, material, class) {
+            Ok(ticket) => {
+                self.gate_ticket = ticket;
+                Ok(())
+            }
+            Err(error) => {
+                self.note_gate_refusal(&error);
+                Err(error)
+            }
+        }
     }
 
     /// B1: give the write in progress the key of its stable material: the
@@ -1528,8 +1731,9 @@ impl LiveBrowser {
     /// may have taken the page over while the prompt was up.
     fn gate_confirm(&mut self) -> Result<(), ProviderError> {
         let confirmed = self.takeover.before_dispatch(self.gate_ticket.as_ref());
-        if confirmed.is_err() {
+        if let Err(error) = &confirmed {
             self.gate_ticket = None;
+            self.note_gate_refusal(error);
         }
         confirmed
     }
@@ -1576,33 +1780,57 @@ impl LiveBrowser {
             .map(|page| page.page_id.clone())
             .unwrap_or_default();
         self.gate_write(&page_id, "navigate", url, ActionClass::Repeatable)?;
-        self.navigate_approved(workspace, approval, url)
+        let committed = self.page_url.as_deref().map(origin_of);
+        self.navigate_approved(workspace, approval, url, committed.as_deref())
     }
 
     /// The approved navigation itself, once the gate admitted it.
+    /// `committed` is the origin of the document the page held before this
+    /// navigation (none for a page with no document yet): SG-000135 OB-08
+    /// covers a navigation on that origin, or a page's first one, never a
+    /// move to another origin.
     fn navigate_approved(
         &mut self,
         workspace: &Workspace,
         approval: &impl ApprovalBroker,
         url: &str,
+        committed: Option<&str>,
     ) -> Result<(String, u16), ProviderError> {
-        let (token, digest, binding, _target) = self.ask(
+        let bound = self.bind_prompt(
             workspace,
-            approval,
             &BindAction::Navigate { url: url.into() },
             "navigate isolated browser page",
         )?;
+        let page_id = self
+            .page
+            .as_ref()
+            .map(|page| page.page_id.clone())
+            .unwrap_or_default();
+        let effect = origin_of(url);
+        let also = self.navigation_also;
+        let authority = self.authorize(
+            approval,
+            &bound.prompt,
+            Some(LeaseQuery {
+                family: BrowserFamily::Navigate,
+                also,
+                effect_origin: &effect,
+                committed_origin: committed,
+                impact: browser_impact::classify_destination(url),
+                page_id: &page_id,
+            }),
+        )?;
         self.gate_confirm()?;
-        Self::consume(workspace, approval, &token, digest)?;
-        let record_id = token.record_id;
+        let record_id = self.spend(workspace, approval, &authority)?;
         let reply = self.dispatch(
             &record_id,
             &WorkerHostRequest::Navigate {
                 url: url.into(),
                 record_id: record_id.clone(),
-                binding,
+                binding: bound.binding,
             },
         );
+        self.note_authority(&record_id, &authority);
         self.gate_finish(&record_id);
         match reply? {
             WorkerHostReply::Navigated { url, status } => {
@@ -1668,6 +1896,7 @@ impl LiveBrowser {
                 binding,
                 target,
                 form: Some(form),
+                ..
             } => (binding, target, form),
             _ => {
                 return Err(ProviderError::new(
@@ -1709,23 +1938,53 @@ impl LiveBrowser {
             crate::mutation_journal::opaque(workspace, request, &digest, &journal_target),
         )?;
         let mut gate_refused = false;
-        let approved = approval
-            .request_token(&prompt)
-            .map_err(|error| ProviderError::new(error.code, error.message))
-            .and_then(|token| {
+        // SG-000135 OB-08: a fill (the `type` family) or a select of an
+        // ordinary, named field on the page's own origin may be covered by
+        // the session's lease; a check, an Enter (which may submit) and
+        // anything secret, payment- or effect-named ask as before.
+        let family = match &action {
+            BindAction::Fill { .. } => Some(BrowserFamily::Type),
+            BindAction::Select { .. } => Some(BrowserFamily::Select),
+            _ => None,
+        };
+        let impact = if orcel_browser_host::name_looks_secret(&form.name) || form.name_cut {
+            Impact::HighImpact
+        } else {
+            browser_impact::classify_field(&form.role, &form.name)
+        };
+        let query = family.map(|family| LeaseQuery {
+            family,
+            also: None,
+            effect_origin: &page.current_origin,
+            committed_origin: Some(&page.current_origin),
+            impact,
+            page_id,
+        });
+        let approved = self
+            .authorize(approval, &prompt, query)
+            .and_then(|authority| {
                 self.gate_confirm()
                     .inspect_err(|_| gate_refused = true)
-                    .map(|()| token)
-            })
-            .and_then(|token| Self::consume(workspace, approval, &token, digest).map(|()| token));
-        let token = match approved {
-            Ok(token) => token,
+                    .map(|()| authority)
+            });
+        let approved = approved.and_then(|authority| {
+            self.spend(workspace, approval, &authority)
+                .map(|record_id| (record_id, authority))
+        });
+        let (record_id, authority) = match approved {
+            Ok(done) => done,
             Err(refusal) => {
                 intent.abandon(match refusal.code {
                     // B1: a person took the page over during the prompt.
                     // Only the gate's own refusal is named so; with the
                     // gate off this never happens.
                     _ if gate_refused => "target_stale",
+                    _ if refusal
+                        .message
+                        .starts_with(crate::browser_lease::LEASE_INVALID) =>
+                    {
+                        "lease_invalid"
+                    }
                     FailureCode::ApprovalDenied => "approval_denied",
                     _ => "approval_unavailable",
                 });
@@ -1733,9 +1992,9 @@ impl LiveBrowser {
             }
         };
         // If this line cannot be written, nothing is sent: the approval is
-        // spent and the step closes `not_dispatched`.
+        // spent (or the lease use checked) and the step closes
+        // `not_dispatched`.
         intent.dispatched()?;
-        let record_id = token.record_id;
         let reply = self.dispatch(
             &record_id,
             &WorkerHostRequest::FormAction {
@@ -1744,6 +2003,7 @@ impl LiveBrowser {
                 binding,
             },
         );
+        self.note_authority(&record_id, &authority);
         let outcome = self
             .outcomes
             .last()
@@ -2198,7 +2458,11 @@ impl LiveBrowser {
         let Some(url) = url else {
             return Ok((page, None));
         };
-        match self.navigate_live(workspace, approval, &page.page_id, page.generation, url) {
+        self.navigation_also = Some(BrowserFamily::Tabs);
+        let navigated =
+            self.navigate_live(workspace, approval, &page.page_id, page.generation, url);
+        self.navigation_also = None;
+        match navigated {
             Ok(done) => {
                 let page = self.page.clone().ok_or_else(|| {
                     ProviderError::new(FailureCode::TargetStale, "no live browser page")
@@ -2571,6 +2835,10 @@ impl LiveBrowser {
     /// Shut the host family down; true when confirmed empty. The page is
     /// closed with the lifetime.
     pub fn shutdown(mut self) -> bool {
+        // SG-000135 OB-08: the session's lease ends with it.
+        if let Some(mut access) = self.full_access.take() {
+            access.session_ended();
+        }
         self.lifetime = None;
         self.close_page();
         self.supervisor.shutdown().unwrap_or(false)
@@ -2720,6 +2988,8 @@ mod tests {
             page_url: None,
             background: Vec::new(),
             active_tab: None,
+            full_access: None,
+            navigation_also: None,
             reply_timeout: None,
             after_consume: None,
         }
@@ -3087,7 +3357,8 @@ mod tests {
             browser.outcomes(),
             &[ApprovalOutcome {
                 record_id: "r9".into(),
-                outcome: DispatchOutcome::Lost
+                outcome: DispatchOutcome::Lost,
+                lease_id: None,
             }]
         );
         // No host existed, so its end is (trivially) confirmed.

@@ -29,6 +29,11 @@ mod browser;
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_broker;
 mod browser_full;
+// SG-000135 OB-08: Full Access browser leases (the owner's local management
+// path, and the per-session lease cache the live browser consults). Only the
+// Windows live-browser-dev build drives a session that uses the cache.
+#[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+mod browser_lease;
 // SG-000135 OB-01 end-to-end harness, test builds only: the scripted SOFT
 // consent. Compiled only with both live browser features and the harness
 // feature, never in a development or release build.
@@ -50,6 +55,8 @@ mod clipboard;
 mod contained_tier;
 #[cfg(test)]
 mod desktop_prompt_tests;
+#[cfg(test)]
+mod ob08_lease_tests;
 #[cfg(test)]
 mod sg000128_dispatch_tests;
 // WI-05: reached through the live browser's committed downloads
@@ -477,6 +484,19 @@ fn handle_envelope(
     if profile_gate::is_browser_full_shape(&request) {
         return handle_browser_full(policy, audit, approval, request);
     }
+    // SG-000135 OB-08: Full Access browser lease management is the owner's
+    // local path only: never remote, never under a tool surface profile,
+    // and issuance needs STRONG presence.
+    if browser_lease::is_management(&request.capability) {
+        return handle_browser_lease(
+            policy,
+            audit,
+            approval,
+            request,
+            remote.is_some(),
+            profile.as_deref(),
+        );
+    }
     // XP-19: secrets are local-only and never reach workspace dispatch.
     if secret_store::is_secret_request(&request.capability) {
         return handle_secret(policy, audit, &request, remote.is_some());
@@ -680,6 +700,36 @@ fn load_trust_store() -> Result<trust::TrustStore, ProviderError> {
     trust::default_trust_path()
         .map(trust::TrustStore::load_or_create)
         .map_err(|error| state_unavailable("trust store", &error))
+}
+
+/// SG-000135 OB-08: the owner's browser lease management (issue, list,
+/// revoke). A remote caller or a request naming a tool surface profile (an
+/// MCP edge) is refused before anything is read or asked.
+fn handle_browser_lease(
+    policy: &PolicyEngine,
+    audit: &AuditLogger,
+    approval: &impl ApprovalBroker,
+    request: RequestEnvelope,
+    remote: bool,
+    profile: Option<&str>,
+) -> ResponseEnvelope {
+    if let Err(error) = browser_lease::refuse_untrusted(remote, profile) {
+        let state = if remote { "REMOTE_DENIED" } else { "DENIED" };
+        let _ = audit.record(&request, POLICY_REVISION, state);
+        return ResponseEnvelope::failure(request.request_id, error.code, error.message);
+    }
+    if policy.workspace(&request.workspace_id).is_none() {
+        let _ = audit.record(&request, POLICY_REVISION, "DENIED");
+        return ResponseEnvelope::failure(
+            request.request_id,
+            FailureCode::WorkspaceDenied,
+            "requested workspace is not configured",
+        );
+    }
+    let issuing = request.capability == "browser.lease.issue";
+    let result = browser_lease::ManagementEnv::default(issuing)
+        .and_then(|env| browser_lease::dispatch_management(&env, approval, &request));
+    finish(audit, request, POLICY_REVISION, result)
 }
 
 /// SG-000108 slice 3c: a live browser shape, after the profile gate.

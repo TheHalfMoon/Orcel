@@ -1,3 +1,5 @@
+// SG-000135 OB-08: positive routine classification for browser leases.
+pub mod browser_impact;
 pub mod prompt_display;
 
 use serde::{Deserialize, Serialize};

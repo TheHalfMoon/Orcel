@@ -722,6 +722,11 @@ mod full {
         )?;
         browser.set_task(session_id);
         browser.set_client(client);
+        // SG-000135 OB-08: the session's Full Access lease cache, over the
+        // protected store; it covers nothing until the owner issues a lease.
+        browser.set_full_access(crate::browser_lease::FullAccess::protected(
+            session_id, client,
+        ));
         Ok(browser)
     }
 
@@ -766,6 +771,9 @@ mod full {
                     "orcel_session_id": instance,
                     "profile_mode": "ephemeral",
                     "page_id": Value::Null,
+                    // SG-000135 OB-08: what the owner names to issue this
+                    // session a Full Access lease (it grants nothing).
+                    "client_ref": orcel_policy::browser_lease::client_ref(client),
                 }))
             }),
             FullAction::Close { session } => with_broker(|broker| {
@@ -774,7 +782,18 @@ mod full {
             }),
             FullAction::Status { session } => with_broker(|broker| {
                 broker.check_epoch(probe())?;
-                broker.status(client, session)
+                let mut status = broker.status(client, session)?;
+                // SG-000135 OB-08: the session's lease, read-only (scope
+                // and expiry); an agent can never issue or widen one.
+                let lease = broker
+                    .peek(client, session)?
+                    .worker
+                    .full_access_status()
+                    .unwrap_or(Value::Null);
+                if let Value::Object(map) = &mut status {
+                    map.insert("full_access".into(), lease);
+                }
+                Ok(status)
             }),
             other => {
                 let id = other.session_id().ok_or_else(|| {
@@ -865,7 +884,13 @@ mod full {
                     .and_then(|code| code.as_str().map(str::to_owned)),
                 evidence_kind: evidence_kind.to_owned(),
                 evidence_sha256,
-                record_id: dispatched.map(|last| last.record_id),
+                // SG-000135 OB-08: an approval's record, or the lease that
+                // authorized the action instead (never both).
+                record_id: dispatched
+                    .as_ref()
+                    .filter(|last| last.lease_id.is_none())
+                    .map(|last| last.record_id.clone()),
+                lease_id: dispatched.and_then(|last| last.lease_id),
             },
             orcel_approval::now_ms(),
         );
@@ -1041,6 +1066,11 @@ mod full {
                     *expected_generation,
                     bind,
                 )?;
+                let lease_id = browser
+                    .outcomes()
+                    .last()
+                    .filter(|last| last.record_id == record_id)
+                    .and_then(|last| last.lease_id.clone());
                 let page = browser.page().cloned().ok_or_else(super::live::stale)?;
                 let reply = json!({
                     "page_id": page.page_id,
@@ -1052,8 +1082,9 @@ mod full {
                         FormNavigation::None => "none",
                         FormNavigation::DocumentCommitted => "document_committed",
                     },
-                    "record_id": record_id,
-                    "approval": "SOFT",
+                    "record_id": if lease_id.is_some() { Value::Null } else { json!(record_id) },
+                    "approval": if lease_id.is_some() { "lease" } else { "SOFT" },
+                    "lease_id": lease_id,
                 });
                 Ok(Done {
                     evidence_sha256: Some(digest(&reply.to_string())),

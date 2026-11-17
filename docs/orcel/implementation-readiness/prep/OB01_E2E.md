@@ -158,6 +158,31 @@ A third run, after the re-judge's fixes (every page reply tab-checked, a crash h
 - **Popups.** At most 4 popups wait for admission at once; any further popup is closed at once.
 - **Where the image is kept.** It is in the tool reply only. The broker's receipt (`ActionRecord`, `browser_task_status`) keeps the SHA-256 digest (`evidence_kind: screenshot`) and never the image or its base64; the mission checks that no receipt holds `png_base64`.
 
+## OB-08 extension: Full Access browser lease (SG-000135 OB-08, FA-E)
+
+After the OB-03 steps, the mission tests Full Access on the same session:
+
+1. `browser_session_create` also returned `client_ref` (a digest of the MCP session id; it grants nothing).
+2. The owner's local path issues a lease. The script starts a second orceld of the same build on the same state root, with no tool surface profile (as the lifecycle CLI would), and sends one `browser.lease.issue` request: this session, its `client_ref`, origin `https://fixture.test`, families `navigate, click, type, select, read, tabs`, 30 minutes. Issuance needs STRONG presence. In the scripted build, the scripted presence approves exactly this prompt (the lease title, a broker session id as the target, the fixture origin as the only origin) and denies every other STRONG prompt. In a founder run it is the real Windows Hello prompt, and the script does not answer it.
+3. `browser_task_status` shows the lease to the agent, read-only (`full_access`: lease id, origins, families, expiry, `active`, `routine_only`). No Windows user or device is shown.
+4. 25 routine actions run under the lease: 6 rounds of open the routine page, snapshot, fill `Full name`, select `City`, click `Continue to the next page`, then one more open. That is 7 opens, 6 fills, 6 selects and 6 clicks. None of them raises an Orcel prompt, and each receipt names the lease (`lease_id`) instead of an approval record.
+5. A click on the link named `Submit order` is not routine, so it asks once (a SOFT prompt for `https://fixture.test/ob08-submitted`). Its receipt carries an approval record and no lease.
+6. The owner revokes the lease through the second orceld (`browser.lease.revoke`). The very next `browser_open` is refused `CAPABILITY_DENIED` with `lease_invalid: the browser lease was revoked`, and nothing is sent. The open after that asks again.
+
+### Scripted run on this PC, 2026-11-17 (OB-08)
+
+Same machine and Edge as above. The run passed: 54 steps, 50 receipts chained, receipt digests recomputed with the new `lease_id` field (receipt domain `orcel-ob01-receipt/2`), chain head `dcfc4a8366348a4c...`.
+
+- One scripted STRONG prompt (the lease issuance), approved.
+- 25 routine actions, 0 Orcel prompts, 25 receipts with the lease id.
+- The submit link asked once.
+- After the revoke: the next action was refused `lease_invalid` and the following one asked.
+- 7 SOFT prompts in all (the 5 earlier ones, the submit, and the open after the revoke), each approved by the scripted decider.
+- 0 Edge processes and 0 session folders left; MCP exit 0; whole session 27152 ms.
+- A second run on the final code (after the clippy fixes: the host's `impact` is a closed enum on the wire, and an unknown word refuses the reply) passed the same way: 50 receipts chained (head `cbef093adc22b317...`), 7 approval records, 0 Edge and 0 session folders left, whole session 23682 ms.
+
+**This is scripted consent, not human acceptance.** The founder run, where the founder answers the Windows Hello issuance prompt and the dialogs, has not run yet. FA-E also needs Shadow mode with the foreground window, cursor and clipboard unchanged. Shadow mode comes from OB-04, which is not in this stack, so FA-E and FX-6 stay open.
+
 ## Not covered
 
 - The founder-present run (above).

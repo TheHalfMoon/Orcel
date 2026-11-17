@@ -3874,6 +3874,17 @@ mod platform {
             self.host_nodes.retain(|id, _| keep.contains(id));
         }
 
+        /// SG-000135 OB-08: the accessible name of this observed link, for
+        /// the host's own routine classification (`impact::classify_link`).
+        /// It never leaves the host.
+        pub fn link_name(&self, node_id: &str) -> Result<String, HostError> {
+            self.host_nodes
+                .get(node_id)
+                .filter(|node| node.role == "link")
+                .map(|node| node.name.clone())
+                .ok_or_else(|| HostError::Invalid("stale or unknown link".into()))
+        }
+
         /// The destination an activation of this observed link would open
         /// (what an approval must name as the target's `state`).
         pub fn link_destination(&self, node_id: &str) -> Result<String, HostError> {
@@ -4561,6 +4572,13 @@ mod fallback {
 
         /// API parity: no worker ever exists off Windows.
         pub fn tabs(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn link_name(&self, _node_id: &str) -> Result<String, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))
