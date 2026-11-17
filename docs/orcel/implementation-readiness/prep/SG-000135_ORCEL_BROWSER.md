@@ -56,14 +56,14 @@ actions, remote browser path, takeover or challenge detection.
 | Packet | Content | Main acceptance |
 |---|---|---|
 | OB-00 | This activation | A0 |
-| OB-01 | Broker, persistent Orcel-managed profiles, budgets, concurrent sessions | C, F, H, Shadow 8 |
+| OB-01 | Broker, persistent Orcel-managed profiles, budgets, concurrent sessions | C (provisional receipt), F, H, Shadow 8 |
 | OB-02 | Local `browser_full` profile on existing shapes | C |
 | OB-03 | Screenshot frame and tabs | C |
-| OB-04 | Shadow and Visible modes (headed argv) | E, F, Shadow 1 and 2 |
+| OB-04 | Shadow and Visible modes (headed argv) | F, Shadow 1 and 2; the Shadow half of E only |
 | OB-05 | Evidence receipts on the audit chain | H, J |
 | OB-06 | Takeover state machine, 3000 ms quiet timer | G |
 | OB-07 | Challenge handoff, autofill through the browser vault | I |
-| OB-08 | Full Access lease caching (interim store, then the SG-000132 service) | E, Shadow 5, Full Access 4 and 6 |
+| OB-08 | Full Access lease caching (interim store, then the SG-000132 service) | E and Full Access 6 close here; Shadow 5, Full Access 4 |
 | OB-09 | Remote `browser_full` mapping for ChatGPT | D |
 | OB-10 | BrowserOS human browser, packaging, consented import (later, on a Chromium-sized build volume) | A, B, K, Shadow 7 |
 
@@ -86,11 +86,22 @@ Dependencies:
 - **SG-000132 (active).** This grain adds an amendment entry. The Browser executor is enabled under its dispatcher,
   with a browser lease scope of profiles, origins, sessions, action families and expiry. Browser leases start on the
   existing Hello-gated full-control store and move into the authority service when WP1-10 lands. An interim lease
-  ends at the move; it is never converted. Pending founder confirmation, the interim store never covers a remote
+  ends at the move; it is never converted. This interim issuance is a grain decision, not a founder decision, and
+  waits for the OB-08 independent security judge. Pending founder confirmation, the interim store never covers a remote
   caller; the alternative is
   remote coverage on the interim store, gated by the existing SG-000055 STRONG remote-session lease.
-- **Spec section 4.15.** It says a standing approval never covers remote callers. The founder lifted this for the
-  remote `browser_full` profile only, and only for the identified client named in the lease.
+- **Spec section 4.15.** It says a standing approval never covers remote callers. For the remote `browser_full`
+  profile only, and only for the identified client named in the lease, this grain lifts that rule. The lift is
+  derived from the founder's words (the chat directive and the "owner-lease-authorized MCP service" of the
+  architecture decision), not quoted from them, and is pending founder confirmation together with remote coverage.
+- **Routine versus high-impact.** The split is this grain's mapping of the founder's lists, not a founder quote.
+  High-impact includes form submit and Enter in a form, clicks on submit, send, buy, publish or delete controls,
+  uploads, payments, irreversible deletion and other destructive or high-risk actions. Until OB-08 records and
+  qualifies the signals, any action not positively classified as routine is outside the lease and asks.
+- **New practice in the grain file.** SG-000135 introduces two top-level keys, `closed_grain_amendments` and
+  `active_grain_amendments`, plus `work_packets`. Earlier grains recorded closed-grain rule changes inside
+  `decisions` (SG-000122) and used `amendments` only on the amended active grain (SG-000096); SG-000132 keeps that
+  `amendments` form.
 - **Engines (B0 inventory).**
   - Every engine attaches with `--remote-debugging-pipe`; no adapter may use `--remote-debugging-port`.
   - A donor process such as claw-server runs only behind orceld, with a per-launch token that orceld holds, on a pipe
