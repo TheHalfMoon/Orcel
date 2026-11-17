@@ -555,8 +555,14 @@ remote callers, out-of-scope targets or another client. Without one, each action
 Amended 2026-11-17 by founder decision, recorded in SG-000135 (`.specgrain/specs/SG-000135.json`): for the remote
 `browser_full` capability profile only, a browser lease or browser standing approval issued by the owner may cover
 the remote caller that is the identified client named in it, through the Secure MCP Tunnel, within its origins,
-profiles, sessions, action families and expiry, and only when the authority service issued it. Every other remote
-caller, executor and profile keeps the rule above.
+profiles, sessions, action families and expiry. Every other remote caller, executor and profile keeps the rule above.
+The founder's words (chat directive, 2026-11-17): "The current Orcel remote MCP profile does not expose browser
+actions. Implement an explicitly authorized remote browser capability profile. Do not merely copy BrowserOS's MCP
+server and claim that ChatGPT can already control it. Prove an actual end-to-end browser task over local MCP, then
+validate the ChatGPT tunnel integration where the client supports it." and "Full Access grants eliminate repeated
+approvals for routine actions already authorized by the owner." Pending founder confirmation, only a lease issued by
+the authority service covers a remote caller; the alternative is an interim-store browser lease gated by the existing
+SG-000055 STRONG remote-session lease.
 
 ### 4.16 Sensitive web features (FD-UP-2 decided)
 

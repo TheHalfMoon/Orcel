@@ -28,6 +28,15 @@ its `decisions`. In short:
   never claimed to work without an end-to-end test, and Orcel cannot turn on tools the product does not allow.
 - Agent tasks can run at the same time, each with its own budget, and every action has a verifiable receipt.
 
+The founder's own words from the chat directive of 2026-11-17, quoted in the grain:
+
+- "All five must operate through one Orcel Browser Session Broker and one Orcel authorization system."
+- "Full Access grants eliminate repeated approvals for routine actions already authorized by the owner."
+- "The current Orcel remote MCP profile does not expose browser actions. Implement an explicitly authorized remote
+  browser capability profile. Do not merely copy BrowserOS's MCP server and claim that ChatGPT can already control
+  it. Prove an actual end-to-end browser task over local MCP, then validate the ChatGPT tunnel integration where the
+  client supports it."
+
 ## Where the code is today
 
 The read-only code map was taken on `48ae7a12`, with PR #794 and PR #797 read but not merged. Main has one
@@ -77,7 +86,9 @@ Dependencies:
 - **SG-000132 (active).** This grain adds an amendment entry. The Browser executor is enabled under its dispatcher,
   with a browser lease scope of profiles, origins, sessions, action families and expiry. Browser leases start on the
   existing Hello-gated full-control store and move into the authority service when WP1-10 lands. An interim lease
-  ends at the move; it is never converted. The interim store never covers a remote caller.
+  ends at the move; it is never converted. Pending founder confirmation, the interim store never covers a remote
+  caller; the alternative is
+  remote coverage on the interim store, gated by the existing SG-000055 STRONG remote-session lease.
 - **Spec section 4.15.** It says a standing approval never covers remote callers. The founder lifted this for the
   remote `browser_full` profile only, and only for the identified client named in the lease.
 - **Engines (B0 inventory).**
