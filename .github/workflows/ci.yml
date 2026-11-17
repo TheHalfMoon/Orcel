@@ -175,7 +175,12 @@ jobs:
           set -euo pipefail
           cd apps/orcel-computer-host
           go version
-          test -z "$(gofmt -l third_party semantic_supervisor.go semantic_supervisor_test.go native_semantic_windows.go native_semantic_windows_test.go)"
+          # gofmt reports every file on Windows, where checkout converts to
+          # CRLF; formatting is checked on the other two runners.
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            unformatted="$(gofmt -l third_party semantic_supervisor.go semantic_supervisor_test.go native_semantic_windows.go native_semantic_windows_test.go)"
+            if [ -n "$unformatted" ]; then echo "gofmt: $unformatted"; exit 1; fi
+          fi
           go vet ./...
           go test -count=1 -v -skip 'TestSG95' ./... 2>&1 | tee "$RUNNER_TEMP/go-host.log"
           grep -q "^ok .*third_party/hcu/semantic" "$RUNNER_TEMP/go-host.log"
