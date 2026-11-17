@@ -478,7 +478,7 @@ Software.
 
 ## Crates from crates.io
 
-Every crate below is locked in `Cargo.lock` with its crates.io SHA-256 checksum: 416 crates across all targets (Windows, Linux, macOS, Android and iOS are all resolved; only the Windows ones are built in this grain). Licenses as each crate declares them.
+Every crate below is locked in `Cargo.lock` with its crates.io SHA-256 checksum: 422 crates across all targets (Windows, Linux, macOS, Android and iOS are all resolved; only the Windows ones are built in this grain). Licenses as each crate declares them. Six of them (windows, windows-core, windows-implement and windows-interface 0.58.0, windows-result 0.2.0 and windows-strings 0.1.0) entered the lock with #782 (MAC-M1-05, `f1775c17`), which recorded the path crate `orcel-platform` (Orcel's own, beside `orcel-app-api-client`) as a Unix-only dependency of the A1 client; they are resolved in the lock, and on Windows the shell builds neither `orcel-platform` nor these six.
 
 | Crate | Version | License | Repository |
 |---|---|---|---|
@@ -851,15 +851,21 @@ Every crate below is locked in `Cargo.lock` with its crates.io SHA-256 checksum:
 | winapi-util | 0.1.11 | Unlicense OR MIT | https://github.com/BurntSushi/winapi-util |
 | winapi-x86_64-pc-windows-gnu | 0.4.0 | MIT/Apache-2.0 | https://github.com/retep998/winapi-rs |
 | window-vibrancy | 0.8.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri-plugin-vibrancy |
+| windows | 0.58.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows | 0.62.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-collections | 0.3.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-core | 0.58.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-core | 0.62.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-future | 0.3.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-implement | 0.58.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-implement | 0.60.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-interface | 0.58.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-interface | 0.59.3 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-link | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-numerics | 0.3.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-result | 0.2.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-result | 0.4.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-strings | 0.1.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.45.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.52.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
