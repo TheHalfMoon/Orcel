@@ -56,11 +56,11 @@ actions, remote browser path, takeover or challenge detection.
 | Packet | Content | Main acceptance |
 |---|---|---|
 | OB-00 | This activation | A0 |
-| OB-01 | Broker, persistent Orcel-managed profiles, budgets, concurrent sessions | C (provisional receipt), F, H, Shadow 8 |
+| OB-01 | Broker, per-session ephemeral profiles, separate `browser_full` slot, budgets, concurrent sessions, leftover-session sweep, cleanup on every orceld exit path, emergency stop across orceld processes | C (provisional receipt), F; Shadow 8 with ephemeral profiles |
 | OB-02 | Local `browser_full` profile on existing shapes | C |
 | OB-03 | Screenshot frame and tabs | C |
-| OB-04 | Shadow and Visible modes (headed argv) | F, Shadow 1 and 2; the Shadow half of E only |
-| OB-05 | Evidence receipts on the audit chain | H, J |
+| OB-04 | Shadow and Visible modes (headed argv), profile mode with persistent Orcel-managed profiles, `browser_structured` shapes routed through the broker | F, H, Shadow 1, 2 and 8; the Shadow half of E only |
+| OB-05 | Evidence receipts on the audit chain | J |
 | OB-06 | Takeover state machine, 3000 ms quiet timer | G |
 | OB-07 | Challenge handoff, autofill through the browser vault | I |
 | OB-08 | Full Access lease caching (interim store, then the SG-000132 service) | E and Full Access 6 close here; Shadow 5, Full Access 4 |

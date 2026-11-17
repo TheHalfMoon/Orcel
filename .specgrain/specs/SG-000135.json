@@ -29,8 +29,8 @@
   "scope": {
     "include": [
       "OB-00 (this packet): activate the contract only; the grain, its prep summary, CURRENT.md's record and the open-grain pins land together. No code.",
-      "Broker: crates/orceld/src/browser_broker.rs owning BrokerSession {session_id, task_id, client principal, profile_id, mode Shadow or Visible, LiveBrowser, state}; session ids bound to orcel_session_id so a restart invalidates them; per-task and device budgets (concurrent sessions, hosts, RAM ceiling, idle expiry, per-client caps) configured locally only; per-session dispatch so concurrent tasks run while policy evaluation stays serialised; an admitted-origin set per session.",
-      "Persistent Orcel-managed profiles: profiles/<profile_id> under the Orcel state root (adopt_profile instead of the ephemeral profile), one per declared identity, never a user's default personal browser profile and never its user-data-dir; per-task contexts inside a profile; leftover sweep; cross-profile isolation of cookies, storage, downloads and secrets.",
+      "Broker (OB-01): crates/orceld/src/browser_broker.rs owning BrokerSession {session_id, task_id, client principal, profile_id, mode Shadow or Visible, LiveBrowser, state}; session ids bound to orcel_session_id so a restart invalidates them; per-task and device budgets (concurrent sessions, hosts, RAM ceiling, idle expiry, per-client caps) configured locally only; per-session dispatch so concurrent tasks run while policy evaluation stays serialised; an admitted-origin set per session; per-session ephemeral profiles and a browser_full slot separate from browser_structured; a leftover-session sweep; cleanup on every orceld exit path; an emergency stop that ends sessions across orceld processes.",
+      "Persistent Orcel-managed profiles (OB-04, where the profile mode is chosen): profiles/<profile_id> under the Orcel state root (adopt_profile instead of the ephemeral profile), one per declared identity, never a user's default personal browser profile and never its user-data-dir; per-task contexts inside a profile; leftover sweep; cross-profile isolation of cookies, storage, downloads and secrets.",
       "browser_full MCP profile, local stdio first: browser_session_create, browser_open, browser_tabs, browser_snapshot, browser_screenshot, browser_click, browser_type, browser_fill, browser_select (with check; Enter in a form is high-impact and asks), browser_download, browser_extract (on PR #797's outline and extract_schema plus the worker's extract frames, never a second extract path), browser_verify, browser_pause, browser_takeover, browser_resume, browser_close and browser_task_status; ToolSurfaceProfile, SURFACE_PROFILES, LOCAL_TOOL_SURFACE_PROFILES, profile_gate.rs, exposure.rs, README and TOOL_CONTRACT change together (SG-000079 rule).",
       "Tabs (several pages per session, opened, listed, switched and closed by the broker; popups mediated by SG-000075 and opened as tabs only when admitted) and a bounded page screenshot frame (PNG, size-capped, secret fields masked) under the WPB-01 capture contract.",
       "Shadow and Visible execution modes as an explicit broker property: Shadow is headless or offscreen and never uses OS input, clipboard, focus or foreground windows; Visible is a headed window of the host-verified engine with a separately reviewed headed argv set.",
@@ -194,7 +194,7 @@
     },
     {
       "id": "FA-H",
-      "claim": "Founder H: after an orceld or machine restart a named task reopens in its own profile with no cross-profile session leak and old session ids refused (OB-01, OB-05)."
+      "claim": "Founder H: after an orceld or machine restart a named task reopens in its own profile with no cross-profile session leak and old session ids refused (OB-04; OB-01 invalidates session ids at restart)."
     },
     {
       "id": "FA-I",
@@ -230,7 +230,7 @@
     },
     {
       "id": "SH-8",
-      "claim": "Shadow test 8: several Shadow missions isolate cookies, secrets, profiles, file outputs and grants (OB-01)."
+      "claim": "Shadow test 8: several Shadow missions isolate cookies, secrets, profiles, file outputs and grants (OB-01 with ephemeral profiles; closes in OB-04 with persistent profiles)."
     },
     {
       "id": "FX-4",
@@ -256,7 +256,7 @@
     },
     {
       "id": "OB-01",
-      "title": "Session Broker with persistent Orcel-managed profiles and budgets; the existing 12 browser_structured shapes run through it unchanged",
+      "title": "Session Broker with per-session ephemeral profiles, a separate browser_full slot, budgets, a leftover-session sweep, cleanup on every orceld exit path, and an emergency stop that ends sessions across orceld processes",
       "depends_on": [
         "OB-00",
         "PR #794 merged"
@@ -264,8 +264,7 @@
       "acceptance": [
         "FA-C",
         "FA-F",
-        "FA-H",
-        "SH-8"
+        "SH-8 (ephemeral profiles; closes in OB-04)"
       ]
     },
     {
@@ -290,14 +289,16 @@
     },
     {
       "id": "OB-04",
-      "title": "Shadow and Visible execution modes, including the headed argv set",
+      "title": "Shadow and Visible execution modes, including the headed argv set, the profile mode with persistent Orcel-managed profiles, and the existing browser_structured shapes routed through the broker unchanged",
       "depends_on": [
         "OB-03"
       ],
       "acceptance": [
         "SH-1",
         "SH-2",
+        "SH-8",
         "FA-F",
+        "FA-H",
         "FA-E (Shadow half only; closes in OB-08)",
         "FX-6 (modes only; closes in OB-08)"
       ]
@@ -310,7 +311,6 @@
         "WP1-03 merged"
       ],
       "acceptance": [
-        "FA-H",
         "FA-J",
         "SH-2"
       ]
