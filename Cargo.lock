@@ -978,6 +978,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "orcel-authority"
+version = "0.2.0"
+dependencies = [
+ "orcel-contracts",
+ "orcel-platform",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "orcel-browser-host"
 version = "0.2.0"
 dependencies = [
@@ -1160,6 +1172,7 @@ dependencies = [
  "libc",
  "orcel-approval",
  "orcel-audit",
+ "orcel-authority",
  "orcel-browser-host",
  "orcel-contracts",
  "orcel-journal",
