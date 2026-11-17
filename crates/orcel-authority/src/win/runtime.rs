@@ -96,6 +96,7 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
             return Err(error);
         }
     };
+    crate::core::check_signing_key_history(&config.state_dir, SIGNING_KEY_FILE)?;
     let signer = EcdsaP256Signer::load_or_create(&config.state_dir.join(SIGNING_KEY_FILE))?;
     let services = Services {
         signer: Box::new(signer),

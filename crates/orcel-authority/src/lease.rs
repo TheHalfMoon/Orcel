@@ -43,8 +43,11 @@ pub const MIN_LEASE_MINUTES: u64 = 1;
 pub const MAX_LEASE_MINUTES: u64 = 12 * 60;
 
 /// Bounds on scope lists and fields.
-pub const MAX_ROOTS: usize = 16;
-pub const MAX_ORIGINS: usize = 64;
+/// Lower than OB-08's 64 origins so the whole scope fits the confirmation.
+pub const MAX_ROOTS: usize = 8;
+pub const MAX_ORIGINS: usize = 16;
+/// The longest root path the confirmation shows.
+pub const MAX_ROOT_CHARS: usize = 128;
 pub const MAX_FIELD_BYTES: usize = 256;
 pub const MAX_TASK_CHARS: usize = 64;
 
@@ -225,7 +228,7 @@ impl LeaseScope {
                 }
                 if origins.is_empty() || origins.len() > MAX_ORIGINS {
                     return Err(AuthorityError::invalid(
-                        "a browser lease names between 1 and 64 origins",
+                        "a browser lease names between 1 and 16 origins",
                     ));
                 }
                 for (index, origin) in origins.iter().enumerate() {
@@ -281,9 +284,9 @@ fn family_name(family: BrowserFamily) -> &'static str {
 /// An absolute Windows drive or folder path, bounded, with no `..`
 /// component, never the authority's own state.
 fn check_root(root: &str) -> Result<(), AuthorityError> {
-    if root.is_empty() || root.len() > MAX_FIELD_BYTES || root.chars().any(char::is_control) {
+    if !is_display_text(root, MAX_ROOT_CHARS) {
         return Err(AuthorityError::invalid(
-            "a root is empty, too long or has a control character",
+            "a root is 1 to 128 printable ASCII characters without padding",
         ));
     }
     let bytes = root.as_bytes();
@@ -312,15 +315,26 @@ fn check_root(root: &str) -> Result<(), AuthorityError> {
 }
 
 fn check_task(task: &str) -> Result<(), AuthorityError> {
-    if task.is_empty()
-        || task.chars().count() > MAX_TASK_CHARS
-        || task.chars().any(char::is_control)
-    {
+    if !is_display_text(task, MAX_TASK_CHARS) {
         return Err(AuthorityError::invalid(
-            "a task label is 1 to 64 characters without control characters",
+            "a task label is 1 to 64 printable ASCII characters without padding",
         ));
     }
     Ok(())
+}
+
+/// Text the confirmation may show: 1 to `max_chars` printable ASCII
+/// characters (U+0020 to U+007E), so no bidi controls, zero-width
+/// characters, line or paragraph separators or other format characters;
+/// no leading, trailing or repeated spaces (no padding that pushes content
+/// out of view).
+pub fn is_display_text(text: &str, max_chars: usize) -> bool {
+    !text.is_empty()
+        && text.len() <= max_chars
+        && text.bytes().all(|b| (0x20..=0x7e).contains(&b))
+        && !text.starts_with(' ')
+        && !text.ends_with(' ')
+        && !text.contains("  ")
 }
 
 /// `cl-` and 1 to 64 lowercase letters, digits or hyphens.
@@ -388,6 +402,9 @@ pub struct ObservedRequester {
 pub struct GrantEvidence {
     /// SHA-256 of the recorded intent.
     pub intent_digest: String,
+    /// SHA-256 of the exact confirmation text the user answered Yes to; the
+    /// presence challenge was bound to it.
+    pub confirmation_text_digest: String,
     /// Always `"service_rendered"` (WTSSendMessageW).
     pub confirmation: String,
     /// `false` until WP1-10 proves injected input cannot answer it.

@@ -308,11 +308,19 @@ fn issuance_is_refused_to_orceld_and_to_claimed_agent_origins() {
             task: "t".into(),
         });
         assert_eq!(code(begin), Some(FailureCode::CapabilityDenied));
+    }
+    // Enrollment is not available in slice 1, whoever asks and whatever
+    // origin they claim.
+    for origin in [ClaimedOrigin::OwnerCli, ClaimedOrigin::Mcp] {
         let enroll = other.call(&Request::EnrollBegin {
             origin,
             public_key_spki_hex: "00".into(),
         });
-        assert_eq!(code(enroll), Some(FailureCode::CapabilityDenied));
+        let error = enroll.expect_err("enrollment refused");
+        assert_eq!(error.code, FailureCode::Unsupported);
+        assert!(error
+            .message
+            .starts_with(orcel_authority::error::ENROLLMENT_UNAVAILABLE));
     }
     // Even the owner origin cannot complete a grant here: no key is
     // enrolled and console mode never observes an unlock.

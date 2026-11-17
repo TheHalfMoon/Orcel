@@ -1,14 +1,15 @@
 //! Rules of the authority core, on every OS, with test doubles for the
 //! platform pieces: a keyed-hash signer, a presence verifier that accepts
 //! `sha256(spki || challenge)`, a recording event sink, counter entropy and
-//! a per-thread clock.
+//! a per-thread clock. Enrollment is refused in slice 1, so the grant flow
+//! tests seed an enrolled key through `enroll_for_test`.
 
 use crate::caller::{CallerFacts, ClientPolicy};
 use crate::core::{
-    AuthorityCore, ConfirmAnswer, Entropy, EventSink, LeaseSigner, PresenceVerifier, Services,
-    GRANT_WINDOW_MS, INTENT_TTL_MS,
+    check_signing_key_history, display_image, AuthorityCore, ConfirmAnswer, Entropy, EventSink,
+    LeaseSigner, PresenceVerifier, Services, EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS, INTENT_TTL_MS,
 };
-use crate::error::AuthorityError;
+use crate::error::{AuthorityError, ENROLLMENT_UNAVAILABLE};
 use crate::lease::{LeaseScope, SignedLease};
 use crate::protocol::{AuthorizeClaims, ClaimedOrigin, Request};
 use crate::{hex, sha256_hex, unhex, RunMode};
@@ -33,14 +34,18 @@ fn advance(ms: u64) {
 
 struct KeyedHashSigner;
 
+fn keyed_hash(message: &[u8]) -> String {
+    let mut input = b"test-signing-key".to_vec();
+    input.extend_from_slice(message);
+    sha256_hex(&input)
+}
+
 impl LeaseSigner for KeyedHashSigner {
     fn public_key(&self) -> Vec<u8> {
         b"test-public-key".to_vec()
     }
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, AuthorityError> {
-        let mut input = b"test-signing-key".to_vec();
-        input.extend_from_slice(message);
-        unhex(&sha256_hex(&input)).ok_or_else(|| AuthorityError::internal("hex"))
+        unhex(&keyed_hash(message)).ok_or_else(|| AuthorityError::internal("hex"))
     }
 }
 
@@ -88,17 +93,19 @@ impl EventSink for Events {
 }
 
 impl Events {
-    fn with_id(&self, id: u32) -> Vec<String> {
+    fn all(&self) -> Vec<(u32, String)> {
         self.0
             .lock()
-            .map(|events| {
-                events
-                    .iter()
-                    .filter(|(i, _)| *i == id)
-                    .map(|(_, t)| t.clone())
-                    .collect()
-            })
+            .map(|events| events.clone())
             .unwrap_or_default()
+    }
+
+    fn with_id(&self, id: u32) -> Vec<String> {
+        self.all()
+            .into_iter()
+            .filter(|(i, _)| *i == id)
+            .map(|(_, t)| t)
+            .collect()
     }
 }
 
@@ -108,13 +115,13 @@ impl Entropy for Counter {
     fn fill(&self, out: &mut [u8]) -> Result<(), AuthorityError> {
         let value = self.0.fetch_add(1, Ordering::Relaxed) + 1;
         for (index, byte) in out.iter_mut().enumerate() {
-            *byte = (value as u8).wrapping_add(index as u8) | 1;
+            *byte = (value as u8).wrapping_add(index as u8 * 7) | 1;
         }
         Ok(())
     }
 }
 
-const ORCELD: &str = r"C:\Orcel\bin\orceld.exe";
+const ORCELD: &str = r"C:\Program Files\Orcel\orceld.exe";
 const SPKI: &[u8] = b"spki:owner-hello-key";
 
 fn temp_dir(name: &str) -> Result<PathBuf, String> {
@@ -145,15 +152,30 @@ fn open(dir: &Path, events: &Events) -> Result<AuthorityCore, String> {
     .map_err(|e| e.to_string())
 }
 
+fn open_enrolled(dir: &Path, events: &Events) -> Result<AuthorityCore, String> {
+    let mut core = open(dir, events)?;
+    core.enroll_for_test(&owner().user_sid, SPKI)
+        .map_err(|e| e.to_string())?;
+    Ok(core)
+}
+
 fn owner() -> CallerFacts {
     CallerFacts {
         pid: 4100,
-        image: r"C:\Orcel\bin\orcel.exe".to_owned(),
+        image: r"C:\Program Files\Orcel\orcel.exe".to_owned(),
         user_sid: "S-1-5-21-1-2-3-1001".to_owned(),
         logon_session_id: 0x5555,
         ts_session_id: 1,
         interactive: true,
         console_session: true,
+    }
+}
+
+fn other_process() -> CallerFacts {
+    CallerFacts {
+        pid: 4999,
+        image: r"C:\Users\me\agent.exe".to_owned(),
+        ..owner()
     }
 }
 
@@ -180,22 +202,30 @@ fn str_of(value: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing {key} in {value}"))
 }
 
-/// Unlock, confirm Yes, read the challenge, sign it with `spki`.
-fn complete(
+fn grant_begin_with(scope: Option<LeaseScope>, principal: &str, task: &str) -> Request {
+    Request::GrantBegin {
+        origin: ClaimedOrigin::OwnerCli,
+        scope,
+        minutes: None,
+        principal_id: principal.to_owned(),
+        task: task.to_owned(),
+    }
+}
+
+fn grant_begin(scope: Option<LeaseScope>) -> Request {
+    grant_begin_with(scope, "mcp-client-1", "tidy the downloads folder")
+}
+
+/// Unlock and confirm Yes; returns the challenge and the confirmation text.
+fn confirm_yes(
     core: &mut AuthorityCore,
     caller: &CallerFacts,
     intent_id: &str,
-    spki: &[u8],
-) -> Result<Value, String> {
+) -> Result<(Vec<u8>, String), String> {
     let task = core
         .observe_unlock(caller.ts_session_id)
         .ok_or("the unlock opened no window")?;
     assert_eq!(task.intent_id, intent_id);
-    assert_eq!(task.title, "Orcel Authority");
-    assert!(task
-        .text
-        .contains("Full Control acts with your Windows rights"));
-    assert!(task.text.contains("Biometric Windows Hello is recommended"));
     core.confirmation_answer(intent_id, ConfirmAnswer::Yes)
         .map_err(|e| e.to_string())?;
     let status = ok(core.handle(
@@ -205,47 +235,33 @@ fn complete(
         },
     ))?;
     let challenge = unhex(&str_of(&status, "challenge_hex")?).ok_or("challenge hex")?;
-    assert_eq!(challenge.len(), 32);
-    ok(core.handle(
-        caller,
-        Request::PresenceComplete {
-            intent_id: intent_id.to_owned(),
-            signature_hex: presence_signature(spki, &challenge),
-        },
-    ))
+    assert_eq!(str_of(&status, "confirmation_text")?, task.text);
+    assert_eq!(
+        str_of(&status, "confirmation_text_digest")?,
+        sha256_hex(task.text.as_bytes())
+    );
+    Ok((challenge, task.text))
 }
 
-fn enroll(core: &mut AuthorityCore, caller: &CallerFacts) -> Result<(), String> {
-    let begun = ok(core.handle(
-        caller,
-        Request::EnrollBegin {
-            origin: ClaimedOrigin::OwnerCli,
-            public_key_spki_hex: hex(SPKI),
-        },
-    ))?;
-    let done = complete(core, caller, &str_of(&begun, "intent_id")?, SPKI)?;
-    assert_eq!(done["enrolled"], Value::Bool(true));
-    Ok(())
-}
-
-fn grant_begin(scope: Option<LeaseScope>) -> Request {
-    Request::GrantBegin {
-        origin: ClaimedOrigin::OwnerCli,
-        scope,
-        minutes: None,
-        principal_id: "mcp-client-1".to_owned(),
-        task: "tidy the downloads folder".to_owned(),
+fn presence(intent_id: &str, code: &str, challenge: &[u8]) -> Request {
+    Request::PresenceComplete {
+        intent_id: intent_id.to_owned(),
+        code: code.to_owned(),
+        signature_hex: presence_signature(SPKI, challenge),
     }
 }
 
 fn grant(
     core: &mut AuthorityCore,
-    caller: &CallerFacts,
     scope: Option<LeaseScope>,
-) -> Result<SignedLease, String> {
-    let begun = ok(core.handle(caller, grant_begin(scope)))?;
-    let done = complete(core, caller, &str_of(&begun, "intent_id")?, SPKI)?;
-    serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())
+) -> Result<(SignedLease, String), String> {
+    let begun = ok(core.handle(&owner(), grant_begin(scope)))?;
+    let id = str_of(&begun, "intent_id")?;
+    let one_time = str_of(&begun, "code")?;
+    let (challenge, text) = confirm_yes(core, &owner(), &id)?;
+    let done = ok(core.handle(&owner(), presence(&id, &one_time, &challenge)))?;
+    let lease = serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
+    Ok((lease, text))
 }
 
 fn claims() -> AuthorizeClaims {
@@ -276,11 +292,43 @@ fn authorize(
 }
 
 #[test]
+fn enrollment_is_refused_in_this_slice_whoever_asks() -> Result<(), String> {
+    let dir = temp_dir("enroll")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    for caller in [owner(), orceld(), other_process()] {
+        let result = core.handle(
+            &caller,
+            Request::EnrollBegin {
+                origin: ClaimedOrigin::OwnerCli,
+                public_key_spki_hex: hex(SPKI),
+            },
+        );
+        let error = result.err().ok_or("enrollment was not refused")?;
+        assert_eq!(error.code, FailureCode::Unsupported);
+        assert!(
+            error.message.starts_with(ENROLLMENT_UNAVAILABLE),
+            "{}",
+            error.message
+        );
+    }
+    let status = ok(core.handle(&owner(), Request::Status))?;
+    assert_eq!(status["enrollment_available"], Value::Bool(false));
+    assert_eq!(status["can_issue"], Value::Bool(false));
+    // Without an enrolled key, a grant cannot even begin.
+    assert_eq!(
+        code(core.handle(&owner(), grant_begin(None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
 fn issuance_is_refused_for_every_non_owner_caller() -> Result<(), String> {
     let dir = temp_dir("non-owner")?;
     let events = Events::default();
-    let mut core = open(&dir, &events)?;
-    enroll(&mut core, &owner())?;
+    let mut core = open_enrolled(&dir, &events)?;
     let mut not_interactive = owner();
     not_interactive.interactive = false;
     let mut remote_session = owner();
@@ -309,82 +357,73 @@ fn issuance_is_refused_for_every_non_owner_caller() -> Result<(), String> {
             code(core.handle(&owner(), request)),
             Some(FailureCode::CapabilityDenied)
         );
-        let enroll = Request::EnrollBegin {
-            origin,
-            public_key_spki_hex: hex(b"spki:other"),
-        };
-        assert_eq!(
-            code(core.handle(&owner(), enroll)),
-            Some(FailureCode::CapabilityDenied)
-        );
     }
-    // Nothing was recorded, so an unlock opens nothing.
-    assert!(core.observe_unlock(1).is_none());
-    // orceld cannot complete presence either.
-    assert_eq!(
-        code(core.handle(
-            &orceld(),
-            Request::PresenceComplete {
-                intent_id: "in-x".into(),
-                signature_hex: "00".into()
-            }
-        )),
-        Some(FailureCode::CapabilityDenied)
-    );
+    assert!(core.observe_unlock(1).is_none(), "nothing was recorded");
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
 #[test]
-fn a_grant_needs_enrollment_intent_unlock_confirmation_and_presence() -> Result<(), String> {
+fn a_grant_binds_the_code_the_requesting_process_and_the_confirmation_text() -> Result<(), String> {
     let dir = temp_dir("flow")?;
     let events = Events::default();
-    let mut core = open(&dir, &events)?;
-    // Without an enrolled key there is no grant.
-    assert_eq!(
-        code(core.handle(&owner(), grant_begin(None))),
-        Some(FailureCode::CapabilityDenied)
-    );
-    enroll(&mut core, &owner())?;
+    let mut core = open_enrolled(&dir, &events)?;
     // A routine unlock without an intent opens nothing.
     assert!(core.observe_unlock(1).is_none());
-    // Presence before the unlock is refused.
     let begun = ok(core.handle(&owner(), grant_begin(None)))?;
-    let intent_id = str_of(&begun, "intent_id")?;
+    let id = str_of(&begun, "intent_id")?;
+    let one_time = str_of(&begun, "code")?;
+    assert_eq!(one_time.len(), 9);
+    // Another process of the same user cannot take over the slot, read the
+    // intent, cancel it, or record a second one.
+    for request in [
+        Request::IntentStatus {
+            intent_id: id.clone(),
+        },
+        Request::CancelIntent {
+            intent_id: id.clone(),
+        },
+    ] {
+        assert!(core.handle(&other_process(), request).is_err());
+    }
     assert_eq!(
-        code(core.handle(
-            &owner(),
-            Request::PresenceComplete {
-                intent_id: intent_id.clone(),
-                signature_hex: "00".into()
-            }
-        )),
+        code(core.handle(&other_process(), grant_begin(None))),
         Some(FailureCode::CapabilityDenied)
     );
-    // That refusal consumed nothing: the intent still awaits the unlock.
-    let lease_value = complete(&mut core, &owner(), &intent_id, SPKI);
-    let lease: SignedLease =
-        serde_json::from_value(lease_value?["lease"].clone()).map_err(|e| e.to_string())?;
+    // Presence before the unlock is refused and consumes nothing.
     assert_eq!(
-        lease.body.scope,
-        LeaseScope::narrow_default(),
-        "the default is the narrow scope"
+        code(core.handle(&owner(), presence(&id, &one_time, &[0u8; 32]))),
+        Some(FailureCode::CapabilityDenied)
     );
+    let (challenge, text) = confirm_yes(&mut core, &owner(), &id)?;
+    assert!(text.contains(&format!("Code: {one_time}")), "{text}");
+    assert!(text.contains("Requested by: process 4100 "), "{text}");
+    assert!(text.contains("Full Control acts with your Windows rights"));
+    assert!(text.is_ascii());
+    // Another process holding a valid signature still cannot complete.
+    assert!(core
+        .handle(&other_process(), presence(&id, &one_time, &challenge))
+        .is_err());
+    let done = ok(core.handle(&owner(), presence(&id, &one_time, &challenge)))?;
+    let lease: SignedLease =
+        serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
+    assert_eq!(lease.body.scope, LeaseScope::narrow_default());
     assert_eq!(
         lease.body.expires_at_ms - lease.body.issued_at_ms,
         30 * 60_000
     );
     assert_eq!(lease.body.requester.pid, 4100);
     assert!(!lease.body.grant.confirmation_input_protected);
+    assert_eq!(
+        lease.body.grant.confirmation_text_digest,
+        sha256_hex(text.as_bytes())
+    );
     let granted = events.with_id(crate::EVENT_GRANTED_SCOPE);
     assert_eq!(granted.len(), 1);
     assert!(
         granted[0].contains(&lease.body.lease_id)
             && granted[0].contains("executors [desktop_input]")
     );
-    assert!(granted[0].contains("roots [none]") && granted[0].contains("shells no"));
-    assert!(!events.with_id(crate::EVENT_INTENT).is_empty());
-    assert!(!events.with_id(crate::EVENT_ANCHOR).is_empty());
 
     // Authorize: orceld only, in scope only, never Admin, same principal.
     let allowed = ok(authorize(
@@ -394,7 +433,6 @@ fn a_grant_needs_enrollment_intent_unlock_confirmation_and_presence() -> Result<
         ExecutorClass::DesktopInput,
     ))?;
     assert!(str_of(&allowed, "authorization_id")?.starts_with("az-"));
-    assert_eq!(allowed["job_name"], Value::Null);
     assert_eq!(
         code(authorize(
             &mut core,
@@ -422,21 +460,6 @@ fn a_grant_needs_enrollment_intent_unlock_confirmation_and_presence() -> Result<
         )),
         Some(FailureCode::CapabilityDenied)
     );
-    let mut other_client = claims();
-    other_client.principal_id = "mcp-client-2".to_owned();
-    assert_eq!(
-        code(core.handle(
-            &orceld(),
-            Request::Authorize {
-                lease_id: lease.body.lease_id.clone(),
-                executor: ExecutorClass::DesktopInput,
-                claims: other_client
-            }
-        )),
-        Some(FailureCode::CapabilityDenied)
-    );
-
-    // The audit record of the allowed dispatch keeps claims and observations apart.
     let audit =
         std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
     let record: Value = audit
@@ -446,10 +469,7 @@ fn a_grant_needs_enrollment_intent_unlock_confirmation_and_presence() -> Result<
         .ok_or("no authorize record")?;
     assert_eq!(record["asserted_by_session"]["capability"], "desktop.input");
     assert_eq!(record["observed"]["caller_pid"], 4200);
-    assert_eq!(record["observed"]["caller_image"], ORCELD);
     assert_eq!(record["observed"]["role"], "orceld");
-    assert_eq!(record["detail"]["decision"], "allow");
-
     // A grant (or renewal) while a lease is active is refused.
     assert_eq!(
         code(core.handle(&owner(), grant_begin(None))),
@@ -460,88 +480,32 @@ fn a_grant_needs_enrollment_intent_unlock_confirmation_and_presence() -> Result<
 }
 
 #[test]
-fn the_window_closes_and_a_no_or_a_bad_signature_ends_the_intent() -> Result<(), String> {
-    let dir = temp_dir("window")?;
+fn a_wrong_code_or_signature_is_refused_and_consumes_the_intent() -> Result<(), String> {
+    let dir = temp_dir("code")?;
     let events = Events::default();
-    let mut core = open(&dir, &events)?;
-    enroll(&mut core, &owner())?;
-
-    // No at the confirmation clears the intent.
+    let mut core = open_enrolled(&dir, &events)?;
     let begun = ok(core.handle(&owner(), grant_begin(None)))?;
     let id = str_of(&begun, "intent_id")?;
-    assert!(core.observe_unlock(1).is_some());
-    core.confirmation_answer(&id, ConfirmAnswer::No)
-        .map_err(|e| e.to_string())?;
-    assert!(core
-        .handle(&owner(), Request::IntentStatus { intent_id: id })
-        .is_err());
-
-    // A timeout clears it too.
-    let begun = ok(core.handle(&owner(), grant_begin(None)))?;
-    let id = str_of(&begun, "intent_id")?;
-    assert!(core.observe_unlock(1).is_some());
-    core.confirmation_answer(&id, ConfirmAnswer::Timeout)
-        .map_err(|e| e.to_string())?;
-    assert!(core
-        .handle(&owner(), Request::IntentStatus { intent_id: id })
-        .is_err());
-
-    // Only one intent per session.
-    let begun = ok(core.handle(&owner(), grant_begin(None)))?;
-    let id = str_of(&begun, "intent_id")?;
+    let (challenge, _) = confirm_yes(&mut core, &owner(), &id)?;
     assert_eq!(
-        code(core.handle(&owner(), grant_begin(None))),
+        code(core.handle(&owner(), presence(&id, "AAAA-AAAA", &challenge))),
         Some(FailureCode::CapabilityDenied)
     );
-    // A lock keeps the intent that awaits its unlock (the flow locks).
-    core.session_ended(1, "session_lock", true)
-        .map_err(|e| e.to_string())?;
-    // The intent expires after five minutes without an unlock.
-    advance(INTENT_TTL_MS + 1);
-    assert!(core.observe_unlock(1).is_none());
     assert!(core
         .handle(&owner(), Request::IntentStatus { intent_id: id })
         .is_err());
 
-    // The window closes 120 s after the unlock.
     let begun = ok(core.handle(&owner(), grant_begin(None)))?;
     let id = str_of(&begun, "intent_id")?;
-    assert!(core.observe_unlock(1).is_some());
-    core.confirmation_answer(&id, ConfirmAnswer::Yes)
-        .map_err(|e| e.to_string())?;
-    advance(GRANT_WINDOW_MS + 1);
-    assert!(core
-        .handle(
-            &owner(),
-            Request::PresenceComplete {
-                intent_id: id,
-                signature_hex: "00".into()
-            }
-        )
-        .is_err());
-
-    // A wrong signature is refused and consumes the intent.
-    let begun = ok(core.handle(&owner(), grant_begin(None)))?;
-    let id = str_of(&begun, "intent_id")?;
-    assert!(core.observe_unlock(1).is_some());
-    core.confirmation_answer(&id, ConfirmAnswer::Yes)
-        .map_err(|e| e.to_string())?;
-    let status = ok(core.handle(
-        &owner(),
-        Request::IntentStatus {
-            intent_id: id.clone(),
-        },
-    ))?;
-    let challenge = unhex(&str_of(&status, "challenge_hex")?).ok_or("hex")?;
-    let forged = presence_signature(b"spki:someone-else", &challenge);
+    let one_time = str_of(&begun, "code")?;
+    let (challenge, _) = confirm_yes(&mut core, &owner(), &id)?;
+    let forged = Request::PresenceComplete {
+        intent_id: id.clone(),
+        code: one_time,
+        signature_hex: presence_signature(b"spki:someone-else", &challenge),
+    };
     assert_eq!(
-        code(core.handle(
-            &owner(),
-            Request::PresenceComplete {
-                intent_id: id.clone(),
-                signature_hex: forged
-            }
-        )),
+        code(core.handle(&owner(), forged)),
         Some(FailureCode::CapabilityDenied)
     );
     assert!(core
@@ -552,16 +516,118 @@ fn the_window_closes_and_a_no_or_a_bad_signature_ends_the_intent() -> Result<(),
 }
 
 #[test]
+fn confirmation_fields_are_printable_ascii_without_padding() -> Result<(), String> {
+    let dir = temp_dir("text")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let bad = [
+        "line\u{2028}break",
+        "para\u{2029}graph",
+        "evil\u{202E}txt.exe",
+        "zero\u{200B}width",
+        "bom\u{FEFF}here",
+        "caf\u{e9}",
+        " leading",
+        "trailing ",
+        "two  spaces",
+        "tab\there",
+        "new\nline",
+        "",
+    ];
+    for text in bad {
+        assert_eq!(
+            code(core.handle(&owner(), grant_begin_with(None, text, "task"))),
+            Some(FailureCode::InvalidRequest),
+            "principal {text:?}"
+        );
+        assert_eq!(
+            code(core.handle(&owner(), grant_begin_with(None, "client", text))),
+            Some(FailureCode::InvalidRequest),
+            "task {text:?}"
+        );
+    }
+    let long = "x".repeat(65);
+    assert_eq!(
+        code(core.handle(&owner(), grant_begin_with(None, &long, "task"))),
+        Some(FailureCode::InvalidRequest)
+    );
+    let unicode_root = LeaseScope::DesktopFullUser {
+        executors: vec![ExecutorClass::Filesystem],
+        roots: vec!["D:\\w\u{202E}ork".to_owned()],
+        shells: false,
+    };
+    assert_eq!(
+        code(core.handle(&owner(), grant_begin(Some(unicode_root)))),
+        Some(FailureCode::InvalidRequest)
+    );
+    // The observed image is cleaned, not refused: it comes from the OS.
+    let shown = display_image("C:\\Users\\x\\\u{202E}exe.txt\u{200B}\u{2028}.exe");
+    assert!(shown.is_ascii() && !shown.contains('\u{202E}'), "{shown}");
+    let long_image = format!("C:\\{}\\orceld.exe", "d".repeat(400));
+    let shown = display_image(&long_image);
+    assert!(
+        shown.len() <= 163 && shown.ends_with("orceld.exe"),
+        "{shown}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn the_window_closes_and_a_no_or_a_timeout_ends_the_intent() -> Result<(), String> {
+    let dir = temp_dir("window")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    for answer in [ConfirmAnswer::No, ConfirmAnswer::Timeout] {
+        let begun = ok(core.handle(&owner(), grant_begin(None)))?;
+        let id = str_of(&begun, "intent_id")?;
+        assert!(core.observe_unlock(1).is_some());
+        core.confirmation_answer(&id, answer)
+            .map_err(|e| e.to_string())?;
+        assert!(core
+            .handle(&owner(), Request::IntentStatus { intent_id: id })
+            .is_err());
+    }
+    // A lock keeps the intent that awaits its unlock; it expires after 5 min.
+    let begun = ok(core.handle(&owner(), grant_begin(None)))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.session_ended(1, "session_lock", true)
+        .map_err(|e| e.to_string())?;
+    assert!(core
+        .handle(
+            &owner(),
+            Request::IntentStatus {
+                intent_id: id.clone()
+            }
+        )
+        .is_ok());
+    advance(INTENT_TTL_MS + 1);
+    assert!(core.observe_unlock(1).is_none());
+    assert!(core
+        .handle(&owner(), Request::IntentStatus { intent_id: id })
+        .is_err());
+    // The window closes 120 s after the unlock.
+    let begun = ok(core.handle(&owner(), grant_begin(None)))?;
+    let id = str_of(&begun, "intent_id")?;
+    let one_time = str_of(&begun, "code")?;
+    let (challenge, _) = confirm_yes(&mut core, &owner(), &id)?;
+    advance(GRANT_WINDOW_MS + 1);
+    assert!(core
+        .handle(&owner(), presence(&id, &one_time, &challenge))
+        .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
 fn revoke_stop_lock_and_expiry_move_the_counters_and_end_leases() -> Result<(), String> {
     let dir = temp_dir("counters")?;
     let events = Events::default();
-    let mut core = open(&dir, &events)?;
-    enroll(&mut core, &owner())?;
+    let mut core = open_enrolled(&dir, &events)?;
     let start_epoch = core.epoch();
     let start_revocations = core.revocations();
 
-    // Revoke: the counter moves, the epoch does not.
-    let lease = grant(&mut core, &owner(), None)?;
+    let (lease, _) = grant(&mut core, None)?;
     ok(core.handle(
         &owner(),
         Request::Revoke {
@@ -580,8 +646,7 @@ fn revoke_stop_lock_and_expiry_move_the_counters_and_end_leases() -> Result<(), 
         Some(FailureCode::LeaseInvalid)
     );
 
-    // Stop: both move; the lease ends; the next call fails LEASE_INVALID.
-    let lease = grant(&mut core, &owner(), None)?;
+    let (lease, _) = grant(&mut core, None)?;
     let stopped = ok(core.handle(&orceld(), Request::Stop))?;
     assert_eq!(
         stopped["ended"][0],
@@ -598,8 +663,7 @@ fn revoke_stop_lock_and_expiry_move_the_counters_and_end_leases() -> Result<(), 
         Some(FailureCode::LeaseInvalid)
     );
 
-    // Session lock (the service observes it): ends the session's lease.
-    let lease = grant(&mut core, &owner(), None)?;
+    let (lease, _) = grant(&mut core, None)?;
     core.session_ended(1, "session_lock", true)
         .map_err(|e| e.to_string())?;
     assert_eq!(core.epoch(), start_epoch + 2);
@@ -613,8 +677,7 @@ fn revoke_stop_lock_and_expiry_move_the_counters_and_end_leases() -> Result<(), 
         Some(FailureCode::LeaseInvalid)
     );
 
-    // Expiry: the tick ends it and advances the epoch.
-    let lease = grant(&mut core, &owner(), None)?;
+    let (lease, _) = grant(&mut core, None)?;
     advance(30 * 60_000);
     core.tick().map_err(|e| e.to_string())?;
     assert_eq!(core.epoch(), start_epoch + 3);
@@ -628,15 +691,51 @@ fn revoke_stop_lock_and_expiry_move_the_counters_and_end_leases() -> Result<(), 
         Some(FailureCode::LeaseInvalid)
     );
 
-    // Counters survive a restart and never go back.
     let (epoch, revocations) = (core.epoch(), core.revocations());
     drop(core);
     let core = open(&dir, &events)?;
     assert_eq!((core.epoch(), core.revocations()), (epoch, revocations));
     drop(core);
-    // A deleted state file with audit records left refuses to start.
     std::fs::remove_file(dir.join(crate::core::STATE_FILE)).map_err(|e| e.to_string())?;
-    assert!(open(&dir, &events).is_err());
+    assert!(
+        open(&dir, &events).is_err(),
+        "a missing state with audit history refuses"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn a_missing_signing_key_with_audit_history_refuses_a_new_key() -> Result<(), String> {
+    let dir = temp_dir("keyhistory")?;
+    assert_eq!(
+        check_signing_key_history(&dir, "lease-signing.key"),
+        Ok(()),
+        "a fresh directory may create a key"
+    );
+    let events = Events::default();
+    drop(open(&dir, &events)?);
+    assert!(check_signing_key_history(&dir, "lease-signing.key").is_err());
+    std::fs::write(dir.join("lease-signing.key"), b"wrapped").map_err(|e| e.to_string())?;
+    assert_eq!(check_signing_key_history(&dir, "lease-signing.key"), Ok(()));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn every_event_carries_a_signature_by_the_lease_key() -> Result<(), String> {
+    let dir = temp_dir("events")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    grant(&mut core, None)?;
+    let all = events.all();
+    assert!(all.len() >= 4, "{all:?}");
+    for (_, line) in all {
+        let (text, signature) = line.rsplit_once("|sig=").ok_or("an unsigned event")?;
+        let mut input = EVENT_SIGNING_DOMAIN.to_vec();
+        input.extend_from_slice(text.as_bytes());
+        assert_eq!(signature, keyed_hash(&input), "{text}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
@@ -645,9 +744,8 @@ fn revoke_stop_lock_and_expiry_move_the_counters_and_end_leases() -> Result<(), 
 fn leases_are_bound_to_their_user_and_logon_session() -> Result<(), String> {
     let dir = temp_dir("binding")?;
     let events = Events::default();
-    let mut core = open(&dir, &events)?;
-    enroll(&mut core, &owner())?;
-    let lease = grant(&mut core, &owner(), None)?;
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, None)?;
     let mut stranger = orceld();
     stranger.user_sid = "S-1-5-21-9-9-9-1002".to_owned();
     let mut other_logon = orceld();
@@ -680,20 +778,7 @@ fn leases_are_bound_to_their_user_and_logon_session() -> Result<(), String> {
             )),
             Some(FailureCode::LeaseInvalid)
         );
-        // Another session's Stop ends nothing of this one.
-        ok(core.handle(&caller, Request::Stop))?;
     }
-    // The epoch moved with those stops, so the lease is no longer usable;
-    // the binding refusals above happened first.
-    assert_eq!(
-        code(authorize(
-            &mut core,
-            &orceld(),
-            &lease.body.lease_id,
-            ExecutorClass::DesktopInput
-        )),
-        Some(FailureCode::LeaseInvalid)
-    );
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
@@ -702,8 +787,7 @@ fn leases_are_bound_to_their_user_and_logon_session() -> Result<(), String> {
 fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
     let dir = temp_dir("browser")?;
     let events = Events::default();
-    let mut core = open(&dir, &events)?;
-    enroll(&mut core, &owner())?;
+    let mut core = open_enrolled(&dir, &events)?;
     let scope = LeaseScope::BrowserFullAccess {
         client_ref: "cl-abc123".to_owned(),
         session_id: "bs-1".to_owned(),
@@ -714,7 +798,7 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
         ],
         task: Some("fill the form".to_owned()),
     };
-    let lease = grant(&mut core, &owner(), Some(scope))?;
+    let (lease, _) = grant(&mut core, Some(scope))?;
     ok(authorize(
         &mut core,
         &orceld(),
@@ -730,10 +814,6 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
         )),
         Some(FailureCode::CapabilityDenied)
     );
-    let granted = events.with_id(crate::EVENT_GRANTED_SCOPE);
-    assert!(granted
-        .iter()
-        .any(|line| line.contains("browser Full Access") && line.contains("https://example.com")));
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

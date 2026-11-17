@@ -100,6 +100,38 @@ unsafe extern "system" fn handler(
     }
 }
 
+/// `%ProgramFiles%`.
+fn program_files() -> PathBuf {
+    std::env::var_os("ProgramFiles")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
+}
+
+/// Every trusted orceld image must sit under `%ProgramFiles%\Orcel\` and be
+/// replaceable by no one but SYSTEM, Administrators, TrustedInstaller and
+/// the service (the file and every directory above it are checked). A
+/// configured path anywhere a user could write refuses the start.
+pub fn check_trusted_images(
+    policy: &ClientPolicy,
+    program_files: &std::path::Path,
+    service_sid: &str,
+) -> Result<(), AuthorityError> {
+    let required = program_files.join("Orcel");
+    let prefix = format!("{}\\", required.to_string_lossy().to_lowercase());
+    for image in &policy.trusted_orceld_images {
+        let text = image.to_string_lossy().to_lowercase();
+        if !text.starts_with(&prefix) || text.contains("\\..\\") {
+            return Err(AuthorityError::unavailable(format!(
+                "the trusted orceld image {} is not under {}; reinstall with the hash-pinned orceld",
+                image.display(),
+                required.display()
+            )));
+        }
+        super::acl::check_trusted_image(image, service_sid)?;
+    }
+    Ok(())
+}
+
 /// The installed configuration: fixed paths under `%ProgramData%`, the
 /// pipe owned by the virtual service SID, the protected state directory.
 pub fn service_config() -> Result<RunConfig, AuthorityError> {
@@ -127,6 +159,7 @@ pub fn service_config() -> Result<RunConfig, AuthorityError> {
             .map_err(|error| AuthorityError::internal(format!("parse {CONFIG_FILE}: {error}")))?,
         Err(_) => ClientPolicy::default(),
     };
+    check_trusted_images(&policy, &program_files(), &service_sid)?;
     Ok(RunConfig {
         mode: RunMode::Service,
         state_dir,
@@ -206,4 +239,43 @@ pub fn dispatch() -> Result<(), AuthorityError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trusted_images_outside_program_files_orcel_are_refused() {
+        let program_files = PathBuf::from(r"C:\Program Files");
+        for image in [
+            r"C:\Users\me\Orcel\target\release\orceld.exe",
+            r"D:\Orcel\orceld.exe",
+            r"C:\Program Files\Orcel\..\..\Users\me\orceld.exe",
+            r"C:\Program Files\OrcelX\orceld.exe",
+        ] {
+            let policy = ClientPolicy {
+                trusted_orceld_images: vec![PathBuf::from(image)],
+            };
+            assert!(
+                check_trusted_images(&policy, &program_files, "S-1-5-80-1-2-3-4-5").is_err(),
+                "{image}"
+            );
+        }
+        // Under the right prefix the ACL check decides; a missing file fails.
+        let policy = ClientPolicy {
+            trusted_orceld_images: vec![PathBuf::from(
+                r"C:\Program Files\Orcel\missing-orceld.exe",
+            )],
+        };
+        assert!(check_trusted_images(&policy, &program_files, "S-1-5-80-1-2-3-4-5").is_err());
+        assert_eq!(
+            check_trusted_images(
+                &ClientPolicy::default(),
+                &program_files,
+                "S-1-5-80-1-2-3-4-5"
+            ),
+            Ok(())
+        );
+    }
 }

@@ -24,11 +24,13 @@ pub const PROTOCOL: &str = "orcel.authority-pipe/1";
 /// The largest frame either side accepts.
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
-/// Where a caller says a grant request came from. A claim: the service
-/// refuses every origin but [`ClaimedOrigin::OwnerCli`] for issuance and
-/// enrollment, and it also refuses callers whose observed facts say they
-/// are orceld or not in the interactive console session, whatever they
-/// claim.
+/// Where a caller says a grant request came from. This is an UNVERIFIED
+/// claim: any process can send any value. The service refuses every value
+/// but [`ClaimedOrigin::OwnerCli`], which only stops callers honest enough
+/// to say what they are. What carries weight is observed (orceld's image,
+/// an interactive logon in the active console session), the one-time code
+/// only the requesting process receives, the service-rendered confirmation
+/// that shows that code and that process, and Windows Hello.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimedOrigin {
@@ -67,9 +69,10 @@ pub enum Request {
         principal_id: String,
         task: String,
     },
-    /// Record an enrollment intent for a Windows Hello public key
-    /// (`KeyCredential.RetrievePublicKey()`, X.509 SubjectPublicKeyInfo DER,
-    /// hex). The same unlock, confirmation and signature steps follow.
+    /// Enrollment of a Windows Hello public key. Always refused in slice 1
+    /// with `enrollment_unavailable`: it needs attested KeyCredentialManager
+    /// keys and an elevated (UAC secure desktop) enrollment caller, which
+    /// slice 2 brings (SG132_SLICE1.md).
     EnrollBegin {
         origin: ClaimedOrigin,
         public_key_spki_hex: String,
@@ -77,9 +80,11 @@ pub enum Request {
     /// Where the caller's pending intent stands; carries the challenge once
     /// the confirmation was answered Yes.
     IntentStatus { intent_id: String },
-    /// Spec 4.13 step 5: the Windows Hello signature over the challenge.
+    /// Spec 4.13 step 5: the one-time code `GrantBegin` returned and the
+    /// Windows Hello signature over the challenge.
     PresenceComplete {
         intent_id: String,
+        code: String,
         signature_hex: String,
     },
     /// Drop the caller's pending intent.

@@ -4,6 +4,9 @@
 use orcel_contracts::FailureCode;
 use std::fmt;
 
+/// The reason prefix of [`AuthorityError::enrollment_unavailable`].
+pub const ENROLLMENT_UNAVAILABLE: &str = "enrollment_unavailable";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityError {
     pub code: FailureCode,
@@ -47,6 +50,18 @@ impl AuthorityError {
     /// Something inside the service failed; the request is refused.
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(FailureCode::InternalError, message)
+    }
+
+    /// Hello key enrollment is not available in this slice: it waits for
+    /// attested KeyCredentialManager keys and an elevated enrollment caller
+    /// (slice 2). The message starts with [`ENROLLMENT_UNAVAILABLE`].
+    pub fn enrollment_unavailable() -> Self {
+        Self::new(
+            FailureCode::Unsupported,
+            format!(
+                "{ENROLLMENT_UNAVAILABLE}: Windows Hello enrollment is not available in this slice; it needs attested KeyCredentialManager keys and an elevated (UAC secure desktop) enrollment caller (slice 2)"
+            ),
+        )
     }
 
     /// This operating system has no authority service yet (track X).

@@ -6,26 +6,39 @@
 //! the caller (the pipe server keeps the core in a `Mutex`), so Authorize,
 //! issuance and Stop are atomic with respect to each other (C-30).
 //!
-//! Grant (and enrollment) flow, spec 4.13 steps 1 to 6:
+//! Grant flow, spec 4.13 steps 1 to 6:
 //!
-//! 1. `GrantBegin` from an interactive console-session caller claiming the
-//!    owner CLI origin records the session's single pending intent (audit +
-//!    Event Log 4102). It expires after 5 minutes. orceld, MCP, agent and
-//!    remote origins and non-interactive callers are refused.
+//! 1. `GrantBegin` from an interactive console-session caller records the
+//!    session's single pending intent (audit + Event Log 4102), bound to the
+//!    requesting process (PID and image), and returns a one-time code that
+//!    only that request's answer carries. It expires after 5 minutes. The
+//!    claimed origin is an unverified claim; orceld (by observed image) and
+//!    non-interactive or non-console callers are refused whatever they
+//!    claim, and any claim other than the owner CLI is refused too.
 //! 2. Only the first service-observed `WTS_SESSION_UNLOCK` of that session
 //!    after the intent, with no lease active there, opens a 120 s window
 //!    ([`AuthorityCore::observe_unlock`]). A routine unlock without an
 //!    intent opens nothing. Console mode never observes session changes, so
 //!    it can never issue.
-//! 3. The scope defaults to the narrow form; widening is explicit.
+//! 3. The scope defaults to the narrow form; widening is explicit. Every
+//!    field the confirmation shows is printable ASCII within short bounds.
 //! 4. The service renders the confirmation itself (`WTSSendMessageW`, see
-//!    `win::confirm`) outside the core lock and reports the answer
+//!    `win::confirm`) outside the core lock, showing the one-time code and
+//!    the requesting process, and reports the answer
 //!    ([`AuthorityCore::confirmation_answer`]). Only Yes continues.
-//! 5. The service issues a 32-byte challenge bound to the intent digest;
-//!    the user session signs it with the enrolled Windows Hello key
-//!    credential; the service verifies the signature.
+//! 5. The service issues a 32-byte challenge bound to the intent digest and
+//!    to the SHA-256 of the exact confirmation text; the requesting process
+//!    returns the one-time code and the Windows Hello signature; the service
+//!    verifies both. Hello presence is not consent: consent is the Yes on the
+//!    service-rendered text, which the challenge (and the lease's grant
+//!    evidence) binds.
 //! 6. The lease is signed, stored, audited, and its granted scope written to
 //!    the Event Log (4101).
+//!
+//! Enrollment of a Hello key is refused in slice 1
+//! ([`AuthorityError::enrollment_unavailable`]): it waits for attested
+//! KeyCredentialManager keys and an elevated (UAC secure desktop) enrollment
+//! caller in slice 2. Until then no key is enrolled and no grant completes.
 //!
 //! Grants are refused while any lease is active in the session. Stop (from
 //! any process of the logon session, from session lock, sign-out and
@@ -36,7 +49,7 @@ use crate::audit::{AuditChain, AuditRecord, Observed};
 use crate::caller::{CallerFacts, CallerRole, ClientPolicy};
 use crate::error::AuthorityError;
 use crate::lease::{
-    key_id_of, signing_input, GrantEvidence, LeaseBody, LeaseContext, LeaseScope,
+    is_display_text, key_id_of, signing_input, GrantEvidence, LeaseBody, LeaseContext, LeaseScope,
     ObservedRequester, SignedLease, DEFAULT_LEASE_MINUTES, LEASE_CONTRACT, LEASE_ID_PREFIX,
     MAX_FIELD_BYTES, MAX_LEASE_MINUTES, MIN_LEASE_MINUTES,
 };
@@ -61,17 +74,29 @@ pub const CONFIRMATION_TIMEOUT_SECS: u32 = 60;
 pub const MAX_LEASE_RECORDS: usize = 64;
 /// The confirmation's title (spec 4.13 step 4).
 pub const CONFIRMATION_TITLE: &str = "Orcel Authority";
+/// The longest principal or task the confirmation shows.
+pub const MAX_DISPLAY_FIELD_CHARS: usize = 64;
+/// The longest scope description the confirmation shows.
+pub const MAX_SCOPE_DISPLAY_CHARS: usize = 1_200;
+/// The longest requester image the confirmation shows (its tail is kept).
+pub const MAX_IMAGE_DISPLAY_CHARS: usize = 160;
+/// The one-time code alphabet (no 0/O, 1/I/L).
+const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
-const PRESENCE_DOMAIN: &[u8] = b"orcel-authority-presence-challenge/1\n";
+const PRESENCE_DOMAIN: &[u8] = b"orcel-authority-presence-challenge/2\n";
+/// Domain of the signature appended to every Event Log entry.
+pub const EVENT_SIGNING_DOMAIN: &[u8] = b"orcel-authority-event-signature/1\n";
 
 /// What this slice does not do yet; returned by `Status` and `Authorize`.
-pub const DEFERRED: [&str; 6] = [
+pub const DEFERRED: [&str; 8] = [
+    "Windows Hello enrollment (attested KeyCredentialManager keys, elevated enrollment caller); no grant completes in slice 1",
     "service-owned Job Objects (Authorize returns job_name null)",
     "standing approvals (spec 4.15)",
     "indicator heartbeat",
     "TPM-backed signing key (the key is a CNG software key wrapped by DPAPI)",
     "Authenticode signature requirement on the orceld image",
     "WP1-10 proof that injected input cannot answer the confirmation",
+    "a dedicated Event Log channel with restricted write (events are signed instead)",
 ];
 
 /// Signs lease bodies; holds the only copy of the private key.
@@ -193,19 +218,6 @@ impl PersistedState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Purpose {
-    Grant {
-        scope: LeaseScope,
-        minutes: u64,
-        principal_id: String,
-        task: String,
-    },
-    Enroll {
-        spki: Vec<u8>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 enum Awaiting {
     Unlock,
     Confirmation,
@@ -226,13 +238,22 @@ impl Awaiting {
 struct Intent {
     id: String,
     digest: String,
+    /// The one-time code: returned only to the requesting process and shown
+    /// in the confirmation; `PresenceComplete` must carry it.
+    code: String,
     ts_session_id: u32,
     sid: String,
     logon_session_id: u64,
     requester: ObservedRequester,
-    purpose: Purpose,
+    scope: LeaseScope,
+    minutes: u64,
+    principal_id: String,
+    task: String,
     expires_at_ms: u64,
     window_ends_ms: Option<u64>,
+    /// The exact confirmation text, once rendered, and its SHA-256.
+    text: Option<String>,
+    text_digest: Option<String>,
     state: Awaiting,
 }
 
@@ -266,6 +287,33 @@ fn check_field(name: &str, value: &str) -> Result<(), AuthorityError> {
     Ok(())
 }
 
+/// A field the confirmation shows: printable ASCII only (no bidi, zero-width,
+/// line or paragraph separators), no padding, at most 64 characters.
+fn check_display_field(name: &str, value: &str) -> Result<(), AuthorityError> {
+    if !is_display_text(value, MAX_DISPLAY_FIELD_CHARS) {
+        return Err(AuthorityError::invalid(format!(
+            "{name} is 1 to {MAX_DISPLAY_FIELD_CHARS} printable ASCII characters without leading, trailing or repeated spaces"
+        )));
+    }
+    Ok(())
+}
+
+/// The requester image as the confirmation shows it: printable ASCII (other
+/// characters become `?`), the last 160 characters.
+pub fn display_image(image: &str) -> String {
+    let cleaned: Vec<char> = image
+        .chars()
+        .map(|c| if (' '..='~').contains(&c) { c } else { '?' })
+        .collect();
+    let start = cleaned.len().saturating_sub(MAX_IMAGE_DISPLAY_CHARS);
+    let tail: String = cleaned[start..].iter().collect();
+    if start > 0 {
+        format!("...{tail}")
+    } else {
+        tail
+    }
+}
+
 fn is_lower_hex(text: &str, length: usize) -> bool {
     text.len() == length
         && text
@@ -284,6 +332,22 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), AuthorityError>
         })
         .and_then(|()| std::fs::rename(&temp, path));
     result.map_err(|error| AuthorityError::internal(format!("write {}: {error}", path.display())))
+}
+
+/// Refuses to create a new signing key where the audit chain already has
+/// records: a missing key with history means the key was removed, and a new
+/// key would silently replace the one earlier leases and anchors used.
+pub fn check_signing_key_history(state_dir: &Path, key_file: &str) -> Result<(), AuthorityError> {
+    let key_present = state_dir.join(key_file).exists();
+    let audit_len = std::fs::metadata(state_dir.join(AUDIT_FILE))
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+    if !key_present && audit_len > 0 {
+        return Err(AuthorityError::internal(
+            "the lease-signing key is missing while the audit chain has records; refusing to start with a new key",
+        ));
+    }
+    Ok(())
 }
 
 impl AuthorityCore {
@@ -357,6 +421,18 @@ impl AuthorityCore {
         key_id_of(&self.services.signer.public_key())
     }
 
+    /// Test seam: an enrolled key, standing in for the slice 2 enrollment.
+    #[cfg(test)]
+    pub(crate) fn enroll_for_test(&mut self, sid: &str, spki: &[u8]) -> Result<(), AuthorityError> {
+        self.state.enrolled.push(EnrolledKey {
+            windows_user_sid: sid.to_owned(),
+            spki_hex: hex(spki),
+            key_digest: sha256_hex(spki),
+            enrolled_at_ms: self.now(),
+        });
+        self.persist()
+    }
+
     fn now(&self) -> u64 {
         (self.services.clock)()
     }
@@ -376,8 +452,25 @@ impl AuthorityCore {
         Ok(out)
     }
 
+    fn one_time_code(&self) -> Result<String, AuthorityError> {
+        let bytes = self.random(8)?;
+        let chars: String = bytes
+            .iter()
+            .map(|b| CODE_ALPHABET[usize::from(*b) % CODE_ALPHABET.len()] as char)
+            .collect();
+        Ok(format!("{}-{}", &chars[..4], &chars[4..]))
+    }
+
+    /// Every Event Log entry ends with `|sig=<hex>`: the lease key's
+    /// signature over `EVENT_SIGNING_DOMAIN || text`, so an entry another
+    /// process wrote under the same source name does not verify.
     fn event(&self, event_id: u32, error: bool, text: &str) -> Result<(), AuthorityError> {
-        self.services.events.record(event_id, error, text)
+        let mut input = EVENT_SIGNING_DOMAIN.to_vec();
+        input.extend_from_slice(text.as_bytes());
+        let signature = self.services.signer.sign(&input)?;
+        self.services
+            .events
+            .record(event_id, error, &format!("{text}|sig={}", hex(&signature)))
     }
 
     fn after_append(&self, record: &AuditRecord) -> Result<(), AuthorityError> {
@@ -465,15 +558,13 @@ impl AuthorityCore {
                 principal_id,
                 task,
             } => self.grant_begin(caller, role, origin, scope, minutes, principal_id, task),
-            Request::EnrollBegin {
-                origin,
-                public_key_spki_hex,
-            } => self.enroll_begin(caller, role, origin, &public_key_spki_hex),
+            Request::EnrollBegin { .. } => Err(AuthorityError::enrollment_unavailable()),
             Request::IntentStatus { intent_id } => self.intent_status(caller, &intent_id),
             Request::PresenceComplete {
                 intent_id,
+                code,
                 signature_hex,
-            } => self.presence_complete(caller, role, &intent_id, &signature_hex),
+            } => self.presence_complete(caller, role, &intent_id, &code, &signature_hex),
             Request::CancelIntent { intent_id } => self.cancel_intent(caller, role, &intent_id),
             Request::List => self.list(caller, role),
             Request::Verify { lease_id } => self.verify(caller, role, &lease_id),
@@ -502,7 +593,8 @@ impl AuthorityCore {
             "audit_head": self.audit.head(),
             "caller_role": role.as_str(),
             "caller_enrolled": self.state.enrolled.iter().any(|key| key.windows_user_sid == caller.user_sid),
-            "can_issue": self.mode == RunMode::Service,
+            "enrollment_available": false,
+            "can_issue": self.mode == RunMode::Service && !self.state.enrolled.is_empty(),
             "deferred": DEFERRED,
         })
     }
@@ -525,6 +617,10 @@ impl AuthorityCore {
                 ))
             }
         }
+        // `origin` is the caller's unverified claim. Refusing every claim but
+        // the owner CLI only stops callers honest enough to say what they are;
+        // the observed facts above and the code, confirmation and presence
+        // steps carry the weight.
         if origin != ClaimedOrigin::OwnerCli {
             return Err(AuthorityError::denied(
                 "agent, MCP, orceld and remote self-grant is denied; only the owner's CLI may record a grant intent",
@@ -554,12 +650,6 @@ impl AuthorityCore {
         }
     }
 
-    fn pending_in_session(&self, ts_session_id: u32) -> bool {
-        self.intents
-            .iter()
-            .any(|intent| intent.ts_session_id == ts_session_id)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn grant_begin(
         &mut self,
@@ -574,12 +664,17 @@ impl AuthorityCore {
         self.require_owner_path(role, origin)?;
         let scope = scope.unwrap_or_else(LeaseScope::narrow_default);
         scope.validate()?;
+        if scope.describe().chars().count() > MAX_SCOPE_DISPLAY_CHARS {
+            return Err(AuthorityError::invalid(
+                "the scope is too long to show in the confirmation; ask for fewer roots or origins",
+            ));
+        }
         let minutes = minutes.unwrap_or(DEFAULT_LEASE_MINUTES);
         if !(MIN_LEASE_MINUTES..=MAX_LEASE_MINUTES).contains(&minutes) {
             return Err(AuthorityError::invalid("a lease lasts 1 to 720 minutes"));
         }
-        check_field("principal_id", &principal_id)?;
-        check_field("task", &task)?;
+        check_display_field("principal_id", &principal_id)?;
+        check_display_field("task", &task)?;
         if !self
             .state
             .enrolled
@@ -587,52 +682,9 @@ impl AuthorityCore {
             .any(|key| key.windows_user_sid == caller.user_sid)
         {
             return Err(AuthorityError::denied(
-                "no Windows Hello key credential is enrolled for this user; run the enrollment first",
+                "no Windows Hello key credential is enrolled for this user; enrollment arrives in slice 2, so no grant can complete yet",
             ));
         }
-        let purpose = Purpose::Grant {
-            scope,
-            minutes,
-            principal_id,
-            task,
-        };
-        self.record_intent(caller, role, origin, purpose)
-    }
-
-    fn enroll_begin(
-        &mut self,
-        caller: &CallerFacts,
-        role: CallerRole,
-        origin: ClaimedOrigin,
-        spki_hex: &str,
-    ) -> Result<Value, AuthorityError> {
-        self.require_owner_path(role, origin)?;
-        if spki_hex.len() > 8192 {
-            return Err(AuthorityError::invalid("the public key is too long"));
-        }
-        let spki =
-            unhex(spki_hex).ok_or_else(|| AuthorityError::invalid("the public key is not hex"))?;
-        self.services.presence.check_public_key(&spki)?;
-        if self
-            .state
-            .enrolled
-            .iter()
-            .any(|key| key.windows_user_sid == caller.user_sid)
-        {
-            return Err(AuthorityError::denied(
-                "a Windows Hello key credential is already enrolled for this user; replacing it needs an administrator reset (slice 1)",
-            ));
-        }
-        self.record_intent(caller, role, origin, Purpose::Enroll { spki })
-    }
-
-    fn record_intent(
-        &mut self,
-        caller: &CallerFacts,
-        role: CallerRole,
-        origin: ClaimedOrigin,
-        purpose: Purpose,
-    ) -> Result<Value, AuthorityError> {
         let now = self.now();
         self.drop_expired_intents(now);
         if self.active_lease_in_session(caller.ts_session_id, now) {
@@ -640,42 +692,33 @@ impl AuthorityCore {
                 "a Full Control lease is active in this session; grants and renewals are refused until it ends",
             ));
         }
-        if self.pending_in_session(caller.ts_session_id) {
+        // One pending intent per session: a second request (from any
+        // process) cannot take over or replace the first one's slot.
+        if self
+            .intents
+            .iter()
+            .any(|intent| intent.ts_session_id == caller.ts_session_id)
+        {
             return Err(AuthorityError::denied(
-                "an intent is already pending in this session; cancel it or wait until it expires",
+                "an intent is already pending in this session; its requesting process may cancel it, or it expires",
             ));
         }
         let id = format!("in-{}", hex(&self.random(16)?));
-        let (asserted, describe) = match &purpose {
-            Purpose::Grant {
-                scope,
-                minutes,
-                principal_id,
-                task,
-            } => (
-                json!({
-                    "origin": origin,
-                    "scope": scope,
-                    "minutes": minutes,
-                    "principal_id": principal_id,
-                    "task": task,
-                }),
-                format!(
-                    "grant|{}|client {principal_id}|task {task}|{minutes} min",
-                    scope.describe()
-                ),
-            ),
-            Purpose::Enroll { spki } => (
-                json!({ "origin": origin, "public_key_digest": sha256_hex(spki) }),
-                format!("enroll|key {}", sha256_hex(spki)),
-            ),
-        };
+        let code = self.one_time_code()?;
+        let asserted = json!({
+            "origin": origin,
+            "scope": scope,
+            "minutes": minutes,
+            "principal_id": principal_id,
+            "task": task,
+        });
         let digest = sha256_hex(
             format!(
-                "{id}|{}|{}|{}|{}",
+                "{id}|{}|{}|{}|{}|{}",
                 caller.user_sid,
                 caller.logon_session_id,
                 caller.ts_session_id,
+                caller.pid,
                 serde_json::to_string(&asserted).unwrap_or_default()
             )
             .as_bytes(),
@@ -691,13 +734,17 @@ impl AuthorityCore {
             crate::EVENT_INTENT,
             false,
             &format!(
-                "orcel-intent/1|recorded|{id}|session {}|{describe}|expires {expires_at_ms}",
-                caller.ts_session_id
+                "orcel-intent/1|recorded|{id}|session {}|requester pid {} {}|grant|{}|client {principal_id}|task {task}|{minutes} min|expires {expires_at_ms}",
+                caller.ts_session_id,
+                caller.pid,
+                display_image(&caller.image),
+                scope.describe(),
             ),
         )?;
         self.intents.push(Intent {
             id: id.clone(),
             digest,
+            code: code.clone(),
             ts_session_id: caller.ts_session_id,
             sid: caller.user_sid.clone(),
             logon_session_id: caller.logon_session_id,
@@ -705,19 +752,27 @@ impl AuthorityCore {
                 pid: caller.pid,
                 image: caller.image.clone(),
             },
-            purpose,
+            scope,
+            minutes,
+            principal_id,
+            task,
             expires_at_ms,
             window_ends_ms: None,
+            text: None,
+            text_digest: None,
             state: Awaiting::Unlock,
         });
         Ok(json!({
             "intent_id": id,
+            "code": code,
             "state": "awaiting_unlock",
             "expires_at_ms": expires_at_ms,
-            "next": "Lock your PC (Win+L) and unlock it within 5 minutes; then read the Orcel Authority confirmation and approve only the scope you asked for.",
+            "next": "Lock your PC (Win+L) and unlock it within 5 minutes. The Orcel Authority confirmation must show this code and this process; approve only the scope you asked for.",
         }))
     }
 
+    /// The caller's own intent: same user, logon session and requesting
+    /// process (PID and image) as the one that recorded it.
     fn find_intent(&self, caller: &CallerFacts, intent_id: &str) -> Result<usize, AuthorityError> {
         self.intents
             .iter()
@@ -725,8 +780,14 @@ impl AuthorityCore {
                 intent.id == intent_id
                     && intent.sid == caller.user_sid
                     && intent.logon_session_id == caller.logon_session_id
+                    && intent.requester.pid == caller.pid
+                    && intent.requester.image == caller.image
             })
-            .ok_or_else(|| AuthorityError::invalid("no such pending intent for this logon session"))
+            .ok_or_else(|| {
+                AuthorityError::invalid(
+                    "no such pending intent recorded by this process in this logon session",
+                )
+            })
     }
 
     fn intent_status(
@@ -746,6 +807,8 @@ impl AuthorityCore {
         });
         if let Awaiting::Presence { challenge } = &intent.state {
             value["challenge_hex"] = Value::String(hex(challenge));
+            value["confirmation_text"] = json!(intent.text);
+            value["confirmation_text_digest"] = json!(intent.text_digest);
         }
         Ok(value)
     }
@@ -792,9 +855,12 @@ impl AuthorityCore {
             return None;
         }
         let intent = &mut self.intents[index];
+        let text = confirmation_text(intent);
+        let text_digest = sha256_hex(text.as_bytes());
         intent.state = Awaiting::Confirmation;
         intent.window_ends_ms = Some(now.saturating_add(GRANT_WINDOW_MS));
-        let text = confirmation_text(intent);
+        intent.text = Some(text.clone());
+        intent.text_digest = Some(text_digest.clone());
         let task = ConfirmationTask {
             intent_id: intent.id.clone(),
             ts_session_id,
@@ -806,7 +872,9 @@ impl AuthorityCore {
         let _ = self.event(
             crate::EVENT_INTENT,
             false,
-            &format!("orcel-intent/1|window-opened|{id}|session {ts_session_id}"),
+            &format!(
+                "orcel-intent/1|window-opened|{id}|session {ts_session_id}|text {text_digest}"
+            ),
         );
         Some(task)
     }
@@ -837,20 +905,31 @@ impl AuthorityCore {
         if answer == ConfirmAnswer::Yes && in_window {
             let nonce = self.random(32)?;
             let intent = &mut self.intents[index];
-            let mut input = Vec::with_capacity(PRESENCE_DOMAIN.len() + 96);
+            let text_digest = intent.text_digest.clone().unwrap_or_default();
+            // The challenge binds the intent and the exact text the user
+            // approved: a signature over it is presence for that text.
+            let mut input = Vec::with_capacity(PRESENCE_DOMAIN.len() + 160);
             input.extend_from_slice(PRESENCE_DOMAIN);
             input.extend_from_slice(intent.digest.as_bytes());
+            input.push(b'|');
+            input.extend_from_slice(text_digest.as_bytes());
+            input.push(b'|');
             input.extend_from_slice(&nonce);
             let challenge = crate::unhex(&sha256_hex(&input)).unwrap_or_default();
             intent.state = Awaiting::Presence { challenge };
             self.audit_service(
                 "intent",
-                json!({ "intent_id": intent_id, "confirmation": "yes", "input_protected": false }),
+                json!({
+                    "intent_id": intent_id,
+                    "confirmation": "yes",
+                    "confirmation_text_digest": text_digest,
+                    "input_protected": false,
+                }),
             )?;
             self.event(
                 crate::EVENT_INTENT,
                 false,
-                &format!("orcel-intent/1|confirmed-yes|{intent_id}|input-protected false"),
+                &format!("orcel-intent/1|confirmed-yes|{intent_id}|text {text_digest}|input-protected false"),
             )?;
             return Ok(());
         }
@@ -881,6 +960,7 @@ impl AuthorityCore {
         caller: &CallerFacts,
         role: CallerRole,
         intent_id: &str,
+        code: &str,
         signature_hex: &str,
     ) -> Result<Value, AuthorityError> {
         if role == CallerRole::Orceld || role == CallerRole::Other {
@@ -898,94 +978,54 @@ impl AuthorityCore {
         };
         // One attempt: the intent is consumed whatever the outcome.
         let intent = self.intents.remove(index);
+        if code != intent.code {
+            return Err(AuthorityError::denied(
+                "the one-time code does not match the one shown in the confirmation",
+            ));
+        }
         let signature = unhex(signature_hex)
             .filter(|bytes| !bytes.is_empty() && bytes.len() <= 1024)
             .ok_or_else(|| AuthorityError::invalid("the signature is not bounded hex"))?;
-        match intent.purpose.clone() {
-            Purpose::Enroll { spki } => {
-                self.services
-                    .presence
-                    .verify(&spki, &challenge, &signature)?;
-                let key = EnrolledKey {
-                    windows_user_sid: intent.sid.clone(),
-                    spki_hex: hex(&spki),
-                    key_digest: sha256_hex(&spki),
-                    enrolled_at_ms: now,
-                };
-                self.state
-                    .enrolled
-                    .retain(|k| k.windows_user_sid != intent.sid);
-                self.state.enrolled.push(key.clone());
-                self.persist()?;
-                self.audit(
-                    "enroll",
-                    Value::Null,
-                    observed(caller, role),
-                    json!({ "intent_id": intent.id, "key_digest": key.key_digest }),
-                )?;
-                self.event(
-                    crate::EVENT_INTENT,
-                    false,
-                    &format!(
-                        "orcel-enroll/1|enrolled|{}|key {}",
-                        intent.sid, key.key_digest
-                    ),
-                )?;
-                Ok(json!({ "enrolled": true, "key_digest": key.key_digest }))
-            }
-            Purpose::Grant {
-                scope,
-                minutes,
-                principal_id,
-                task,
-            } => {
-                let key = self
-                    .state
-                    .enrolled
-                    .iter()
-                    .find(|key| key.windows_user_sid == intent.sid)
-                    .cloned()
-                    .ok_or_else(|| AuthorityError::denied("no enrolled presence key"))?;
-                let spki = unhex(&key.spki_hex)
-                    .ok_or_else(|| AuthorityError::internal("an enrolled key is not hex"))?;
-                self.services
-                    .presence
-                    .verify(&spki, &challenge, &signature)?;
-                if self.active_lease_in_session(intent.ts_session_id, now) {
-                    return Err(AuthorityError::denied(
-                        "a Full Control lease became active in this session; the grant is refused",
-                    ));
-                }
-                let lease = self.issue(&intent, scope, minutes, principal_id, task, &key, now)?;
-                Ok(json!({ "lease": lease }))
-            }
+        let key = self
+            .state
+            .enrolled
+            .iter()
+            .find(|key| key.windows_user_sid == intent.sid)
+            .cloned()
+            .ok_or_else(|| AuthorityError::denied("no enrolled presence key"))?;
+        let spki = unhex(&key.spki_hex)
+            .ok_or_else(|| AuthorityError::internal("an enrolled key is not hex"))?;
+        self.services
+            .presence
+            .verify(&spki, &challenge, &signature)?;
+        if self.active_lease_in_session(intent.ts_session_id, now) {
+            return Err(AuthorityError::denied(
+                "a Full Control lease became active in this session; the grant is refused",
+            ));
         }
+        let lease = self.issue(&intent, &key, now)?;
+        Ok(json!({ "lease": lease }))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn issue(
         &mut self,
         intent: &Intent,
-        scope: LeaseScope,
-        minutes: u64,
-        principal_id: String,
-        task: String,
         key: &EnrolledKey,
         now: u64,
     ) -> Result<SignedLease, AuthorityError> {
         let lease_id = format!("{LEASE_ID_PREFIX}{}", hex(&self.random(16)?));
         let expires_at_ms = now
-            .checked_add(minutes.saturating_mul(60_000))
+            .checked_add(intent.minutes.saturating_mul(60_000))
             .ok_or_else(|| AuthorityError::invalid("lease expiry overflow"))?;
         let body = LeaseBody {
             contract: LEASE_CONTRACT.to_owned(),
             lease_id: lease_id.clone(),
-            scope,
+            scope: intent.scope.clone(),
             windows_user_sid: intent.sid.clone(),
             logon_session_id: intent.logon_session_id,
             ts_session_id: intent.ts_session_id,
-            principal_id,
-            task,
+            principal_id: intent.principal_id.clone(),
+            task: intent.task.clone(),
             requester: intent.requester.clone(),
             authority_epoch: self.state.epoch,
             revocations_at_issue: self.state.revocations,
@@ -995,6 +1035,7 @@ impl AuthorityCore {
             grant: GrantEvidence {
                 intent_digest: intent.digest.clone(),
                 confirmation: "service_rendered".to_owned(),
+                confirmation_text_digest: intent.text_digest.clone().unwrap_or_default(),
                 confirmation_input_protected: false,
                 presence: "windows_hello_key_credential".to_owned(),
                 presence_key_digest: key.key_digest.clone(),
@@ -1034,6 +1075,7 @@ impl AuthorityCore {
                 "epoch": lease.body.authority_epoch,
                 "expires_at_ms": expires_at_ms,
                 "intent_id": intent.id,
+                "confirmation_text_digest": lease.body.grant.confirmation_text_digest,
             }),
         )?;
         self.event(
@@ -1424,25 +1466,19 @@ impl AuthorityCore {
     }
 }
 
+/// The exact confirmation text. Every field in it is printable ASCII:
+/// validated at `GrantBegin` (scope, principal, task) or cleaned here (the
+/// observed image).
 fn confirmation_text(intent: &Intent) -> String {
-    let warning = "Full Control acts with your Windows rights. Effects made through Windows outside Orcel's process trees (scheduled tasks, other programs) can persist after Stop, and Orcel cannot undo them. A program running as you can record a request like this and lock your PC, and can draw windows that imitate this one: if you did not just ask for exactly this, choose No. Biometric Windows Hello is recommended; a PIN can be observed by programs running as you.";
-    match &intent.purpose {
-        Purpose::Grant {
-            scope,
-            minutes,
-            principal_id,
-            task,
-        } => format!(
-            "A program asked for Orcel Full Control. Approve only if you asked for exactly this:\n\nScope: {}\nClient: {principal_id}\nTask: {task}\nExpires: {minutes} minutes after approval\nRequested by: process {} {}\n\n{warning}\n\nApprove this grant?",
-            scope.describe(),
-            intent.requester.pid,
-            intent.requester.image
-        ),
-        Purpose::Enroll { spki } => format!(
-            "A program asked to enroll a Windows Hello key for Orcel Authority. After this, grants of Orcel Full Control for your account are confirmed with that key.\n\nKey fingerprint: {}\nRequested by: process {} {}\n\n{warning}\n\nEnroll this key?",
-            &sha256_hex(spki)[..32],
-            intent.requester.pid,
-            intent.requester.image
-        ),
-    }
+    let warning = "Full Control acts with your Windows rights. Effects made through Windows outside Orcel's process trees (scheduled tasks, other programs) can persist after Stop, and Orcel cannot undo them. A program running as you can record a request like this and lock your PC, and can draw windows that imitate this one: if you did not just ask for exactly this, or the code or process differs from what your orcel command printed, choose No. Biometric Windows Hello is recommended; a PIN can be observed by programs running as you.";
+    format!(
+        "A program asked for Orcel Full Control. Approve only if you asked for exactly this:\n\nCode: {}\nScope: {}\nClient: {}\nTask: {}\nExpires: {} minutes after approval\nRequested by: process {} {}\n\n{warning}\n\nApprove this grant?",
+        intent.code,
+        intent.scope.describe(),
+        intent.principal_id,
+        intent.task,
+        intent.minutes,
+        intent.requester.pid,
+        display_image(&intent.requester.image)
+    )
 }
