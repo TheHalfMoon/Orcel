@@ -226,7 +226,7 @@ test("SG-000094 and SG-000095 are closed and SG-000096 and SG-000097 are the onl
   assert.equal(sg135.planning_issue, null);
   assert.deepEqual(Object.keys(sg135.authority_delta).sort(), ["activation", "broker", "leases", "mcp", "profiles", "release", "remote"]);
   assert.equal(sg135.authority_delta.activation, "None.");
-  assert.match(sg135.authority_delta.release, /^None\. /);
+  assert.match(sg135.authority_delta.release ?? "", /^None\. /);
   assert.match(sg135.activation_note, /founder's go-ahead of 2026-11-17, given in the Claude Code session/);
   const sg119 = readJson<{
     program: string;
