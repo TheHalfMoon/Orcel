@@ -805,6 +805,50 @@ impl<A: orcel_provider_uia::UiaAdapter> ObserveAdapter for HostObserver<'_, A> {
     }
 }
 
+/// W2-01: the gate of the `uia.tree` `view: "ref_tree"` observation (the
+/// compact ref tree of the HCU semantic layer, served by the Windows computer
+/// host). Denied by default: enabling it needs an amendment of the desktop
+/// observation grain (SG-000128's observation surface, under SG-000132 when
+/// the Windows Full Control migration lands) and the matching MCP exposure.
+const REF_TREE_VIEW_ACTIVATED: bool = false;
+
+/// W2-01: one ref-tree observation through either adapter.
+trait RefTreeAdapter {
+    fn observe_ref_tree(
+        &self,
+        registry: &mut UiaRegistry,
+        window_id: &str,
+        expected_window_generation: u64,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+    ) -> Result<Value, ProviderError>;
+}
+
+impl<A: orcel_provider_uia::UiaAdapter> RefTreeAdapter for HostObserver<'_, A> {
+    fn observe_ref_tree(
+        &self,
+        registry: &mut UiaRegistry,
+        window_id: &str,
+        expected_window_generation: u64,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+    ) -> Result<Value, ProviderError> {
+        registry
+            .observe_ref_tree(
+                self.0,
+                window_id,
+                expected_window_generation,
+                max_depth,
+                max_nodes,
+                workspace_id,
+                POLICY_REVISION,
+            )
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    }
+}
+
 /// Dispatch the SG-000036 UIA shapes. Returns `Ok(None)` for non-UIA shapes
 /// so the caller falls through to the browser, trust, Git, and legacy
 /// dispatchers.
@@ -916,6 +960,52 @@ pub fn dispatch_uia(
                         "uia.tree observe root_element_id and expected_tree_generation go together",
                     )),
                 };
+            // W2-01: the compact ref tree view (HCU semantic layer). It is an
+            // observation only, but it widens what desktop observation
+            // returns, so it stays denied until a grain amendment admits it.
+            match request.arguments.get("view") {
+                None => {}
+                Some(Value::String(view)) if view == "ref_tree" => {
+                    if !REF_TREE_VIEW_ACTIVATED {
+                        return Err(ProviderError::new(
+                            FailureCode::CapabilityDenied,
+                            "uia.tree observe view ref_tree is denied until a grain amendment enables it",
+                        ));
+                    }
+                    if root.is_some() {
+                        return Err(ProviderError::new(
+                            FailureCode::InvalidRequest,
+                            "uia.tree observe view ref_tree reads the whole window only",
+                        ));
+                    }
+                    let mut guard = locked_registry()?;
+                    let observe_ref_tree = |guard: &mut UiaRegistry,
+                                            adapter: &dyn RefTreeAdapter|
+                     -> Result<Value, ProviderError> {
+                        adapter.observe_ref_tree(
+                            guard,
+                            &window_id,
+                            expected,
+                            max_depth,
+                            max_nodes,
+                            &workspace.id,
+                        )
+                    };
+                    return if computer_host_selected() {
+                        let adapter = computer_host()?;
+                        observe_ref_tree(&mut guard, &HostObserver(adapter)).map(Some)
+                    } else {
+                        let adapter = NativeAdapter::new();
+                        observe_ref_tree(&mut guard, &HostObserver(&adapter)).map(Some)
+                    };
+                }
+                Some(_) => {
+                    return Err(ProviderError::new(
+                        FailureCode::InvalidRequest,
+                        "uia.tree observe view is not recognized",
+                    ))
+                }
+            }
             let mut guard = locked_registry()?;
             let observe = |guard: &mut UiaRegistry,
                            adapter: &dyn ObserveAdapter|
