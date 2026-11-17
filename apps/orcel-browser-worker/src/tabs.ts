@@ -14,6 +14,9 @@
 export const MAX_TABS = 8;
 /// How long a popup's first document may take before it is closed.
 export const POPUP_ADMISSION_MS = 10_000;
+/// The most popups waiting for admission at once; any further popup is
+/// closed at once.
+export const MAX_PENDING_POPUPS = 4;
 /// A page-initiated navigation counts as in flight for at most this long.
 export const NAVIGATION_WATCH_MS = 30_000;
 
@@ -82,14 +85,26 @@ export class TabRegistry<P extends TabPage> {
     return true;
   }
 
-  /// Drop tab `id`. When it was active, the most recently opened remaining
-  /// tab becomes active (or none).
+  /// Drop tab `id` at the host's request. When it was active, the most
+  /// recently opened remaining tab becomes active (or none); the host learns
+  /// that from its reply.
   remove(id: number): boolean {
     if (!this.pages.delete(id)) return false;
     if (this.activeId === id) {
       const remaining = [...this.pages.keys()];
       this.activeId = remaining.length > 0 ? Math.max(...remaining) : null;
     }
+    return true;
+  }
+
+  /// Drop tab `id` because its page went away by itself (window.close, a
+  /// crash). No tab becomes active: the host has not been told, so every
+  /// action fails until the host sends a tab request and learns the tabs.
+  /// Another tab silently taking its place would let an action approved on
+  /// one page land on another.
+  dropClosed(id: number): boolean {
+    if (!this.pages.delete(id)) return false;
+    if (this.activeId === id) this.activeId = null;
     return true;
   }
 

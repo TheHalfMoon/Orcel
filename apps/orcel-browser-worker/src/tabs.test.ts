@@ -157,3 +157,25 @@ test("OB-03: a popup is admitted only once its first document was allowed and an
   // Nothing arrives (a blank popup a script writes into): closed.
   assert.equal(await admit(() => {}, 20).pending, false);
 });
+
+test("OB-03: a tab whose page closed itself leaves no tab active until the host asks", () => {
+  const tabs = new TabRegistry<FakeTabPage>(2048);
+  const a = new FakeTabPage("https://fixture.test/a");
+  const b = new FakeTabPage("https://fixture.test/b");
+  tabs.add(a);
+  tabs.add(b);
+  assert.equal(tabs.active, 1);
+  // Tab 1 (active) closed itself: tab 2 is NOT promoted.
+  assert.ok(tabs.dropClosed(1));
+  assert.equal(tabs.active, null);
+  assert.equal(tabs.activePage(), null);
+  assert.deepEqual(tabs.list().map((info) => info.tab), [2]);
+  assert.equal(tabs.dropClosed(1), false);
+  // Only a host request makes a tab active again.
+  assert.ok(tabs.activate(2));
+  assert.equal(tabs.activePage(), b);
+  // A background tab closing itself leaves the active one alone.
+  tabs.add(a);
+  assert.ok(tabs.dropClosed(3));
+  assert.equal(tabs.active, 2);
+});

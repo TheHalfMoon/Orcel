@@ -110,3 +110,40 @@ test("OB-03: secret fields are masked in the PNG, ordinary ones are not", { skip
     await browser.close();
   }
 });
+
+const SHADOW_AND_FRAME = `<!doctype html><meta charset="utf-8"><body style="margin:0;background:#ffffff">
+<div id="host" style="position:absolute;left:0;top:0;width:400px;height:100px"></div>
+<iframe id="frame" style="position:absolute;left:0;top:120px;width:420px;height:100px;border:0" srcdoc='<body style="margin:0;background:#fff"><input type="password" value="hunter2" style="position:absolute;left:40px;top:20px;width:320px;height:48px;border:0;margin:0;padding:0;outline:0;background:#00ff00;color:#00ff00"></body>'></iframe>
+${field(240, 'type="text" name="nickname"')}
+<script>
+const root = document.getElementById("host").attachShadow({ mode: "open" });
+root.innerHTML = '<input type="password" value="hunter2" style="position:absolute;left:40px;top:20px;width:320px;height:48px;border:0;margin:0;padding:0;outline:0;background:#00ff00;color:#00ff00">';
+</script>
+</body>`;
+
+test("OB-03: fields in an open shadow root, in an iframe and added before the capture are masked", { skip }, async () => {
+  assert.ok(engine, "Edge is installed");
+  const browser = await chromium.launch({ executablePath: engine, headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await context.newPage();
+    await page.setContent(SHADOW_AND_FRAME);
+    await page.frameLocator("#frame").locator("input").waitFor();
+    // The page adds a field of its own just before the capture.
+    await page.evaluate(() => {
+      const added = document.createElement("input");
+      added.type = "password";
+      added.value = "added-late";
+      added.setAttribute("style", "position:absolute;left:40px;top:340px;width:320px;height:48px;border:0;margin:0;padding:0;outline:0;background:#00ff00;color:#00ff00");
+      document.body.append(added);
+    });
+    const shot = await capturePng(page);
+    const decoded = decodePng(shot.png);
+    assert.deepEqual(decoded.pixel(200, 264), [0, 255, 0], "the ordinary field keeps its colour (positive control)");
+    assert.deepEqual(decoded.pixel(200, 44), [0, 0, 0], "the open shadow root's field is masked");
+    assert.deepEqual(decoded.pixel(200, 164), [0, 0, 0], "the iframe's field is masked");
+    assert.deepEqual(decoded.pixel(200, 364), [0, 0, 0], "the field added before the capture is masked");
+  } finally {
+    await browser.close();
+  }
+});

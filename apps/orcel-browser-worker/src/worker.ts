@@ -73,19 +73,21 @@ export interface TabsState {
 export interface EngineSession {
   close(): Promise<void>;
   /// Navigate the primary page; rejects with NavigationError.
-  navigate(url: string): Promise<{ url: string; status: number }>;
+  /// SG-000135 OB-03: `tab` is the tab acted on, here and in observe,
+  /// activate, formAction, verify, extract and screenshot.
+  navigate(url: string): Promise<{ tab: number; url: string; status: number }>;
   /// Navigate the primary page like `navigate` (the same routes and host
   /// decisions) and return the document's text when it is plain text or
   /// XML, bounded to one frame; rejects with NavigationError.
   fetchText(url: string): Promise<{ url: string; status: number; media: string; text: string; truncated: boolean }>;
   /// A bounded, value-free accessibility snapshot of the primary page.
-  observe(): Promise<{ url: string; snapshot: BoundedSnapshot }>;
+  observe(): Promise<{ tab: number; url: string; snapshot: BoundedSnapshot }>;
   /// The primary page's declarative WebMCP tools, read without running
   /// page script; bounded so the reply frame fits.
   discover(discId: number): Promise<{ url: string; truncated: boolean; tools: DeclaredTool[] }>;
   /// The primary page's rendered content as Markdown, read from an engine
   /// snapshot without running page script, in frame-sized pieces.
-  extract(options: { links: boolean; images: boolean }): Promise<{ url: string; truncated: boolean; pieces: Piece[] }>;
+  extract(options: { links: boolean; images: boolean }): Promise<{ tab: number; url: string; truncated: boolean; pieces: Piece[] }>;
   /// Fill the declared tool form with host-validated fields, click its
   /// default submit button and wait for the resulting document; returns it
   /// with its structured data. Rejects with NavigationError.
@@ -93,7 +95,7 @@ export interface EngineSession {
   /// Click the element with this snapshot ref (or, when the ref went
   /// stale, the one element matching the approved target) and wait for the
   /// resulting navigation to load; rejects with NavigationError.
-  activate(ref: string, target?: ApprovedTarget): Promise<{ url: string; status: number }>;
+  activate(ref: string, target?: ApprovedTarget): Promise<{ tab: number; url: string; status: number }>;
   /// Click the element with this snapshot ref (or the one matching the
   /// approved target), expect a download, and save it to `path` (which must
   /// not exist); rejects with NavigationError.
@@ -105,7 +107,7 @@ export interface EngineSession {
   /// (once) while the action runs; every other dialog is dismissed.
   /// SG-000122 slice A6: an Enter also says whether the main frame committed
   /// a new document after the key (`navigated`).
-  formAction(ref: string, act: FormAction, target?: ApprovedTarget, acceptConfirm?: string): Promise<{ url: string; navigated?: boolean }>;
+  formAction(ref: string, act: FormAction, target?: ApprovedTarget, acceptConfirm?: string): Promise<{ tab: number; url: string; navigated?: boolean }>;
   /// BR-05: the dialogs dismissed since the last call (clears the log).
   takeDialogs(): { dialogs: DismissedDialog[]; truncated: boolean };
   /// BR-03: set the approved file input to the host-staged file at `path`;
@@ -115,12 +117,12 @@ export interface EngineSession {
   /// primary page within the bound; read-only.
   waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ url: string; met: boolean }>;
   /// BR-07: read-only probes of the primary page, one result per probe.
-  verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }>;
+  verify(probes: VerifyProbe[]): Promise<{ tab: number; url: string; results: VerifyResult[] }>;
   /// SG-000135 OB-03: a bounded PNG of the active tab's page (the
   /// viewport, or from the top of the page within the bounds when
   /// `fullPage`), every secret field masked; rejects with ScreenshotError
   /// ("busy" while a navigation of the page is in flight).
-  screenshot(fullPage: boolean): Promise<{ png: Buffer; width: number; height: number; truncated: boolean }>;
+  screenshot(fullPage: boolean): Promise<{ tab: number; url: string; png: Buffer; width: number; height: number; truncated: boolean }>;
   /// SG-000135 OB-03: open a blank tab and make it active; rejects with
   /// TabError ("cap" at MAX_TABS).
   tabNew(): Promise<TabsState>;
@@ -141,6 +143,8 @@ export interface Launcher {
 /// SG-000135 OB-03: a screenshot whose pieces the host has not all read.
 interface HeldShot {
   shotId: number;
+  tab: number;
+  url: string;
   width: number;
   height: number;
   bytes: number;
@@ -153,7 +157,7 @@ export type WorkerState = "awaiting_hello" | "ready" | "launched" | "closed";
 export class Worker {
   private state: WorkerState = "awaiting_hello";
   /// The last extraction's remaining pieces, until the host has read them.
-  private extraction: { extId: number; url: string; truncated: boolean; pieces: Piece[] } | null = null;
+  private extraction: { extId: number; tab: number; url: string; truncated: boolean; pieces: Piece[] } | null = null;
   /// SG-000135 OB-03: the last screenshot's remaining pieces, until the
   /// host has read them.
   private shot: HeldShot | null = null;
@@ -311,15 +315,15 @@ export class Worker {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         this.extraction = null;
         try {
-          const { url, truncated, pieces } = await this.session.extract({ links: frame.links, images: frame.images });
+          const { tab, url, truncated, pieces } = await this.session.extract({ links: frame.links, images: frame.images });
           if (pieces.length === 0 || pieces.length > MAX_EXTRACT_PIECES) throw new Error("piece count out of range");
           // A page can give itself a long URL (pushState); the pieces are
           // sized for one of at most MAX_URL_BYTES.
           if (Buffer.byteLength(url) > MAX_URL_BYTES) throw new Error("the page URL is too long");
           const first = pieces[0] ?? { chunk: 0, content: "" };
-          this.send({ frame: "extracted", ext_id: frame.ext_id, url, truncated, piece: 0, total: pieces.length, chunk: first.chunk, content: first.content });
+          this.send({ frame: "extracted", ext_id: frame.ext_id, tab, url, truncated, piece: 0, total: pieces.length, chunk: first.chunk, content: first.content });
           // Kept only until the host has read every piece.
-          if (pieces.length > 1) this.extraction = { extId: frame.ext_id, url, truncated, pieces };
+          if (pieces.length > 1) this.extraction = { extId: frame.ext_id, tab, url, truncated, pieces };
         } catch {
           this.send({ frame: "extraction_failed", ext_id: frame.ext_id });
         }
@@ -337,6 +341,7 @@ export class Worker {
         this.send({
           frame: "extracted",
           ext_id: frame.ext_id,
+          tab: kept.tab,
           url: kept.url,
           truncated: kept.truncated,
           piece: frame.piece,
@@ -366,9 +371,9 @@ export class Worker {
           return;
         }
         try {
-          const { png, width, height, truncated } = await this.session.screenshot(frame.full_page);
+          const { tab, url, png, width, height, truncated } = await this.session.screenshot(frame.full_page);
           const pieces = toBase64Pieces(png);
-          const shot: HeldShot = { shotId: frame.shot_id, width, height, bytes: png.length, truncated, pieces };
+          const shot: HeldShot = { shotId: frame.shot_id, tab, url, width, height, bytes: png.length, truncated, pieces };
           this.sendShotPiece(shot, 0);
           // Kept only until the host has read every piece.
           if (pieces.length > 1) this.shot = shot;
@@ -448,9 +453,9 @@ export class Worker {
           return;
         }
         try {
-          const { url, results } = await this.session.verify(frame.probes);
+          const { tab, url, results } = await this.session.verify(frame.probes);
           if (results.length !== frame.probes.length) throw new Error("one result per probe");
-          this.send({ frame: "verified", ver_id: frame.ver_id, url, results });
+          this.send({ frame: "verified", ver_id: frame.ver_id, tab, url, results });
         } catch {
           this.send({ frame: "verification_failed", ver_id: frame.ver_id });
         }
@@ -459,8 +464,8 @@ export class Worker {
       case "observe": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         try {
-          const { url, snapshot } = await this.session.observe();
-          this.send({ frame: "observed", obs_id: frame.obs_id, url, truncated: snapshot.truncated, nodes: snapshot.nodes });
+          const { tab, url, snapshot } = await this.session.observe();
+          this.send({ frame: "observed", obs_id: frame.obs_id, tab, url, truncated: snapshot.truncated, nodes: snapshot.nodes });
         } catch {
           this.send({ frame: "observation_failed", obs_id: frame.obs_id });
         }
@@ -522,7 +527,7 @@ export class Worker {
     let outcome: WorkerFrame;
     try {
       const result = await session.navigate(url);
-      outcome = { frame: "navigated", nav_id: navId, url: result.url, status: result.status };
+      outcome = { frame: "navigated", nav_id: navId, tab: result.tab, url: result.url, status: result.status };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "navigation_failed", nav_id: navId, reason };
@@ -561,7 +566,7 @@ export class Worker {
     let outcome: WorkerFrame;
     try {
       const result = await session.activate(ref, target);
-      outcome = { frame: "activated", act_id: actId, url: result.url, status: result.status };
+      outcome = { frame: "activated", act_id: actId, tab: result.tab, url: result.url, status: result.status };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "activation_failed", act_id: actId, reason };
@@ -605,9 +610,9 @@ export class Worker {
   ): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const { url, navigated } = await session.formAction(ref, act, target, acceptConfirm);
+      const { tab, url, navigated } = await session.formAction(ref, act, target, acceptConfirm);
       // SG-000122 slice A6: only an Enter reports a committed document.
-      outcome = act.action === "enter" ? { frame: "form_done", form_id: formId, url, navigated: navigated === true } : { frame: "form_done", form_id: formId, url };
+      outcome = act.action === "enter" ? { frame: "form_done", form_id: formId, tab, url, navigated: navigated === true } : { frame: "form_done", form_id: formId, tab, url };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "form_failed", form_id: formId, reason };
@@ -640,6 +645,8 @@ export class Worker {
     this.send({
       frame: "screenshot_piece",
       shot_id: shot.shotId,
+      tab: shot.tab,
+      url: shot.url,
       piece,
       total: shot.pieces.length,
       width: shot.width,

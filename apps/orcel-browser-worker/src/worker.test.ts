@@ -26,16 +26,17 @@ class FakeEngine implements EngineSession {
   fetchText(url: string): Promise<{ url: string; status: number; media: string; text: string; truncated: boolean }> {
     return this.fetchBehavior(url);
   }
-  navigate(url: string): Promise<{ url: string; status: number }> {
+  tab = 1;
+  async navigate(url: string): Promise<{ tab: number; url: string; status: number }> {
     this.navigations.push(url);
-    return this.navigateBehavior(url);
+    return { tab: this.tab, ...(await this.navigateBehavior(url)) };
   }
   observeBehavior: () => Promise<{ url: string; snapshot: { nodes: never[]; truncated: boolean } }> = async () => ({
     url: "https://fixture.test/",
     snapshot: { nodes: [], truncated: false }
   });
-  observe(): Promise<{ url: string; snapshot: { nodes: never[]; truncated: boolean } }> {
-    return this.observeBehavior();
+  async observe(): Promise<{ tab: number; url: string; snapshot: { nodes: never[]; truncated: boolean } }> {
+    return { tab: this.tab, ...(await this.observeBehavior()) };
   }
   discoverBehavior: () => Promise<{ url: string; truncated: boolean; tools: never[] }> = async () => ({
     url: "https://fixture.test/",
@@ -50,8 +51,8 @@ class FakeEngine implements EngineSession {
     truncated: false,
     pieces: [{ chunk: 0, content: "# Page" }]
   });
-  extract(): Promise<{ url: string; truncated: boolean; pieces: Piece[] }> {
-    return this.extractBehavior();
+  async extract(): Promise<{ tab: number; url: string; truncated: boolean; pieces: Piece[] }> {
+    return { tab: this.tab, ...(await this.extractBehavior()) };
   }
   executions: Array<{ tool: string; fields: unknown }> = [];
   executeBehavior: () => Promise<{ url: string; status: number; structured: string[]; structuredComplete: boolean }> = async () => ({
@@ -66,9 +67,9 @@ class FakeEngine implements EngineSession {
   }
   activations: string[] = [];
   activateBehavior: (ref: string) => Promise<{ url: string; status: number }> = async () => ({ url: "https://fixture.test/next", status: 200 });
-  activate(ref: string): Promise<{ url: string; status: number }> {
+  async activate(ref: string): Promise<{ tab: number; url: string; status: number }> {
     this.activations.push(ref);
-    return this.activateBehavior(ref);
+    return { tab: this.tab, ...(await this.activateBehavior(ref)) };
   }
   downloadBehavior: (ref: string, path: string) => Promise<{ url: string; name: string; media: string; bytes: number }> = async () => ({
     url: "https://fixture.test/r.pdf",
@@ -83,8 +84,8 @@ class FakeEngine implements EngineSession {
     url: "https://fixture.test/",
     results: probes.map(() => ({ result: "visible", count: 1 }))
   });
-  verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }> {
-    return this.verifyBehavior(probes);
+  async verify(probes: VerifyProbe[]): Promise<{ tab: number; url: string; results: VerifyResult[] }> {
+    return { tab: this.tab, ...(await this.verifyBehavior(probes)) };
   }
   dialogLog: { dialogs: Array<{ kind: "alert" | "confirm" | "prompt" | "beforeunload"; url: string; message: string; accepted: boolean }>; truncated: boolean } = {
     dialogs: [],
@@ -107,9 +108,9 @@ class FakeEngine implements EngineSession {
   }
   formActions: Array<{ ref: string; act: FormAction; acceptConfirm?: string }> = [];
   formBehavior: () => Promise<{ url: string; navigated?: boolean }> = async () => ({ url: "https://fixture.test/form" });
-  formAction(ref: string, act: FormAction, _target?: unknown, acceptConfirm?: string): Promise<{ url: string; navigated?: boolean }> {
+  async formAction(ref: string, act: FormAction, _target?: unknown, acceptConfirm?: string): Promise<{ tab: number; url: string; navigated?: boolean }> {
     this.formActions.push(acceptConfirm === undefined ? { ref, act } : { ref, act, acceptConfirm });
-    return this.formBehavior();
+    return { tab: this.tab, ...(await this.formBehavior()) };
   }
   shots: boolean[] = [];
   screenshotBehavior: (fullPage: boolean) => Promise<{ png: Buffer; width: number; height: number; truncated: boolean }> = async () => ({
@@ -118,9 +119,9 @@ class FakeEngine implements EngineSession {
     height: 720,
     truncated: false
   });
-  screenshot(fullPage: boolean): Promise<{ png: Buffer; width: number; height: number; truncated: boolean }> {
+  async screenshot(fullPage: boolean): Promise<{ tab: number; url: string; png: Buffer; width: number; height: number; truncated: boolean }> {
     this.shots.push(fullPage);
-    return this.screenshotBehavior(fullPage);
+    return { tab: this.tab, url: "https://fixture.test/", ...(await this.screenshotBehavior(fullPage)) };
   }
   tabCalls: string[] = [];
   tabState: TabsState = { active: 1, tabs: [{ tab: 1, url: "https://fixture.test/" }] };
@@ -356,7 +357,7 @@ test("navigation runs outside the queue and reports its outcome", async () => {
   assert.deepEqual(sent.at(-1), { frame: "navigation_failed", nav_id: 2, reason: "busy" });
   finish({ url: "https://fixture.test/a", status: 200 });
   await settle();
-  assert.deepEqual(sent.at(-1), { frame: "navigated", nav_id: 1, url: "https://fixture.test/a", status: 200 });
+  assert.deepEqual(sent.at(-1), { frame: "navigated", nav_id: 1, tab: 1, url: "https://fixture.test/a", status: 200 });
   assert.deepEqual(engine.navigations, ["https://fixture.test/a"]);
 });
 
@@ -449,7 +450,7 @@ test("observe reports a bounded snapshot or a typed failure", async () => {
   const { worker, sent, engine } = await launched();
   engine.observeBehavior = async () => ({ url: "https://fixture.test/r", snapshot: { nodes: [], truncated: true } });
   await worker.receive({ frame: "observe", obs_id: 3 });
-  assert.deepEqual(sent.at(-1), { frame: "observed", obs_id: 3, url: "https://fixture.test/r", truncated: true, nodes: [] });
+  assert.deepEqual(sent.at(-1), { frame: "observed", obs_id: 3, tab: 1, url: "https://fixture.test/r", truncated: true, nodes: [] });
   engine.observeBehavior = async () => {
     throw new Error("snapshot timed out");
   };
@@ -480,6 +481,7 @@ test("BR-07: verify reports one result per probe or a typed failure, and needs a
   await second.worker.receive({ frame: "verify", ver_id: 2, probes });
   assert.deepEqual(second.sent.at(-1), {
     frame: "verified",
+    tab: 1,
     ver_id: 2,
     url: "https://fixture.test/r",
     results: [
@@ -505,7 +507,7 @@ test("BR-02: a form action runs outside the queue, is busy during a navigation, 
   await worker.receive(validLaunch());
   await worker.receive({ frame: "form_action", form_id: 1, action: "fill", ref: "e4", value: "Ada" });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 1, url: "https://fixture.test/form" });
+  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 1, tab: 1, url: "https://fixture.test/form" });
   assert.deepEqual(engine.formActions.at(-1), { ref: "e4", act: { action: "fill", value: "Ada" } });
   engine.formBehavior = async () => {
     throw new NavigationError("denied");
@@ -530,16 +532,16 @@ test("SG-000122 A6: an Enter says whether its submission committed a document; o
   engine.formBehavior = async () => ({ url: "https://fixture.test/order", navigated: true });
   await worker.receive({ frame: "form_action", form_id: 1, action: "enter", ref: "e4" });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 1, url: "https://fixture.test/order", navigated: true });
+  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 1, tab: 1, url: "https://fixture.test/order", navigated: true });
   engine.formBehavior = async () => ({ url: "https://fixture.test/form" });
   await worker.receive({ frame: "form_action", form_id: 2, action: "enter", ref: "e4" });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 2, url: "https://fixture.test/form", navigated: false });
+  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 2, tab: 1, url: "https://fixture.test/form", navigated: false });
   // A fill's reply carries no navigation, whatever the engine claims.
   engine.formBehavior = async () => ({ url: "https://fixture.test/form", navigated: true });
   await worker.receive({ frame: "form_action", form_id: 3, action: "fill", ref: "e4", value: "Ada" });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 3, url: "https://fixture.test/form" });
+  assert.deepEqual(sent.at(-1), { frame: "form_done", form_id: 3, tab: 1, url: "https://fixture.test/form" });
 });
 
 test("BR-02: a bounded wait runs outside the queue, one at a time, and reports whether it was met", async () => {
@@ -606,7 +608,7 @@ test("activation runs outside the queue and reports a typed outcome", async () =
   const { worker, sent, engine } = await launched();
   await worker.receive({ frame: "activate", act_id: 1, ref: "e5" });
   await settle();
-  assert.deepEqual(sent.at(-1), { frame: "activated", act_id: 1, url: "https://fixture.test/next", status: 200 });
+  assert.deepEqual(sent.at(-1), { frame: "activated", act_id: 1, tab: 1, url: "https://fixture.test/next", status: 200 });
   assert.deepEqual(engine.activations, ["e5"]);
   engine.activateBehavior = async () => {
     throw new NavigationError("denied");
@@ -676,7 +678,7 @@ test("extraction is served in pieces on request, released after the last, or fai
   const { worker, sent, engine } = await launched();
   engine.extractBehavior = async () => ({ url: "https://fixture.test/a", truncated: true, pieces: [{ chunk: 0, content: "one" }, { chunk: 0, content: "two" }, { chunk: 1, content: "three" }] });
   await worker.receive({ frame: "extract", ext_id: 4, links: false, images: false });
-  assert.deepEqual(sent.at(-1), { frame: "extracted", ext_id: 4, url: "https://fixture.test/a", truncated: true, piece: 0, total: 3, chunk: 0, content: "one" });
+  assert.deepEqual(sent.at(-1), { frame: "extracted", ext_id: 4, tab: 1, url: "https://fixture.test/a", truncated: true, piece: 0, total: 3, chunk: 0, content: "one" });
   // Another id, or a piece past the end, fails without dropping the pieces.
   await worker.receive({ frame: "extract_more", ext_id: 5, piece: 1 });
   assert.deepEqual(sent.at(-1), { frame: "extraction_failed", ext_id: 5 });
@@ -685,7 +687,7 @@ test("extraction is served in pieces on request, released after the last, or fai
   await worker.receive({ frame: "extract_more", ext_id: 4, piece: 1 });
   assert.equal((sent.at(-1) as { content: string }).content, "two");
   await worker.receive({ frame: "extract_more", ext_id: 4, piece: 2 });
-  assert.deepEqual(sent.at(-1), { frame: "extracted", ext_id: 4, url: "https://fixture.test/a", truncated: true, piece: 2, total: 3, chunk: 1, content: "three" });
+  assert.deepEqual(sent.at(-1), { frame: "extracted", ext_id: 4, tab: 1, url: "https://fixture.test/a", truncated: true, piece: 2, total: 3, chunk: 1, content: "three" });
   // The last piece releases the extraction.
   await worker.receive({ frame: "extract_more", ext_id: 4, piece: 1 });
   assert.deepEqual(sent.at(-1), { frame: "extraction_failed", ext_id: 4 });
@@ -741,6 +743,8 @@ test("OB-03: a screenshot is served in bounded pieces on request, released after
   assert.deepEqual(sent.at(-1), {
     frame: "screenshot_piece",
     shot_id: 1,
+    tab: 1,
+    url: "https://fixture.test/",
     piece: 0,
     total: 1,
     width: 1280,
@@ -840,4 +844,26 @@ test("OB-03: tab frames reach the engine and answer the tabs or a typed failure"
   await fresh.worker.receive({ frame: "hello", generation: 19 });
   await fresh.worker.receive({ frame: "tabs", tab_req: 1 });
   assert.deepEqual(fresh.sent.at(-1), { frame: "error", code: "not_ready" });
+});
+
+test("OB-03: every action reply names the tab it acted on", async () => {
+  const { worker, sent, engine } = await launched();
+  engine.tab = 3;
+  await worker.receive({ frame: "observe", obs_id: 9 });
+  assert.equal((sent.at(-1) as { tab: number }).tab, 3);
+  await worker.receive({ frame: "screenshot", shot_id: 9, full_page: false });
+  assert.deepEqual([(sent.at(-1) as { tab: number }).tab, (sent.at(-1) as { url: string }).url], [3, "https://fixture.test/"]);
+  await worker.receive({ frame: "verify", ver_id: 9, probes: [{ probe: "visible_text", text: "x" }] });
+  assert.equal((sent.at(-1) as { tab: number }).tab, 3);
+  // With no active tab (its page closed itself), the engine refuses typed.
+  engine.observeBehavior = async () => {
+    throw new NavigationError("stale");
+  };
+  await worker.receive({ frame: "observe", obs_id: 10 });
+  assert.deepEqual(sent.at(-1), { frame: "observation_failed", obs_id: 10 });
+  engine.screenshotBehavior = async () => {
+    throw new ScreenshotError("busy");
+  };
+  await worker.receive({ frame: "screenshot", shot_id: 10, full_page: false });
+  assert.deepEqual(sent.at(-1), { frame: "screenshot_failed", shot_id: 10, reason: "busy" });
 });

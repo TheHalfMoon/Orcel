@@ -4,8 +4,16 @@
 // The capture is Playwright's `page.screenshot` of the session's own page
 // over the existing pipe: never another session's page, another app or the
 // desktop (Orcel's desktop window capture is SG-000080's, and is never used
-// here). No page script runs: the masks are Playwright's own overlay in its
-// utility world, as its locators and accessibility snapshots are.
+// here). Orcel runs no script of its own in the page; the masks are
+// Playwright's overlay, which Playwright inserts into the page's DOM for the
+// capture and removes afterwards, so the page can see it while it exists.
+//
+// Residual limits of the mask (docs/orcel/implementation-readiness/prep/
+// OB01_E2E.md): fields inside closed shadow roots, secret text drawn on a
+// canvas or shown as ordinary text, and a page script that removes or hides
+// the overlay during the capture are not masked. Fields in open shadow roots
+// and in every frame present right before the capture are; a capture during
+// which the set of frames or of secret fields changed is refused.
 //
 // Donor provenance (docs/orcel/agent_browser_provenance.json and
 // docs/orcel/browseros_provenance.json):
@@ -47,10 +55,15 @@ export const MASK_COLOR = "#000000";
 /// actions (`actions/form.ts`): a field Orcel never types into is never shown.
 export const SECRET_FIELD_SELECTOR = [
   'input[type="password" i]',
+  // A text field drawn as dots by a style (inline only: a stylesheet rule
+  // is not visible to a selector).
+  '[style*="text-security" i]',
+  // Rich editors can hold anything: every editable region is masked.
+  '[contenteditable]:not([contenteditable="false" i])',
   ...["current-password", "new-password", "one-time-code", "cc-number", "cc-csc", "cc-exp", "cc-exp-month", "cc-exp-year", "cc-name", "cc-type"].map(
     (token) => `[autocomplete~="${token}" i]`
   ),
-  ...["pass", "pwd", "otp", "cvc", "cvv", "csc", "secret", "token", "card"].flatMap((part) => [
+  ...["pass", "pwd", "otp", "cvc", "cvv", "csc", "cc-", "cc_", "ccnum", "secret", "token", "card", "pin", "ssn", "iban", "security"].flatMap((part) => [
     `input[name*="${part}" i]`,
     `input[id*="${part}" i]`,
     `textarea[name*="${part}" i]`,
@@ -141,8 +154,11 @@ export async function runExclusive<T>(key: object, task: () => Promise<T>): Prom
 }
 
 /// The page surface a screenshot uses (a Playwright `Page`, or a test stub).
+export interface ShotLocator {
+  count(): Promise<number>;
+}
 export interface ShotFrame {
-  locator(selector: string): unknown;
+  locator(selector: string): ShotLocator;
 }
 export interface ShotPage {
   frames(): ShotFrame[];
@@ -154,7 +170,18 @@ export interface ShotPage {
 /// A failed capture (masking included) is a typed failure, never an
 /// unmasked picture.
 export async function capturePng(page: ShotPage, clip?: { x: number; y: number; width: number; height: number }): Promise<{ png: Buffer; width: number; height: number }> {
-  const mask = page.frames().map((frame) => frame.locator(SECRET_FIELD_SELECTOR));
+  // The frames and the secret fields in each, right before the capture
+  // (Playwright resolves the mask locators inside the capture itself).
+  const frames = page.frames();
+  const mask = frames.map((frame) => frame.locator(SECRET_FIELD_SELECTOR));
+  const census = async (): Promise<number[]> => {
+    try {
+      return await Promise.all(mask.map((locator) => locator.count()));
+    } catch {
+      throw new ScreenshotError("failed");
+    }
+  };
+  const before = await census();
   let png: Buffer;
   try {
     png = await page.screenshot({
@@ -169,6 +196,13 @@ export async function capturePng(page: ShotPage, clip?: { x: number; y: number; 
     });
   } catch {
     throw new ScreenshotError("failed");
+  }
+  // A frame attached or detached, or a secret field added or removed,
+  // while the capture ran: it may hold an unmasked field. Refused.
+  const after = page.frames();
+  const sameFrames = after.length === frames.length && after.every((frame, index) => frame === frames[index]);
+  if (!sameFrames || (await census()).some((count, index) => count !== before[index])) {
+    throw new ScreenshotError("busy");
   }
   return { png, ...checkCapture(png) };
 }

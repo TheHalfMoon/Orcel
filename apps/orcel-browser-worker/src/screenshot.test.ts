@@ -132,8 +132,10 @@ test("OB-03: captures of one page run one at a time", async () => {
 test("OB-03: every frame's secret fields are masked, and a failed capture is never an unmasked one", async () => {
   const calls: Array<Record<string, unknown>> = [];
   const located: string[] = [];
+  const locators = [0, 1, 2].map((index) => ({ frame: index, count: async () => 1 }));
+  const framesOf = [0, 1, 2].map((index) => ({ locator: (selector: string) => (located.push(`${index}:${selector}`), locators[index] as (typeof locators)[number]) }));
   const page = (fail: boolean): ShotPage => ({
-    frames: () => [0, 1, 2].map((index) => ({ locator: (selector: string) => (located.push(`${index}:${selector}`), { frame: index }) })),
+    frames: () => framesOf,
     screenshot: async (options) => {
       calls.push(options);
       if (fail) throw new Error("mask could not be applied");
@@ -147,11 +149,64 @@ test("OB-03: every frame's secret fields are masked, and a failed capture is nev
   assert.equal(options.maskColor, MASK_COLOR);
   assert.equal(options.scale, "css");
   assert.equal(options.fullPage, undefined);
-  assert.deepEqual(options.mask, [{ frame: 0 }, { frame: 1 }, { frame: 2 }]);
+  assert.deepEqual(options.mask, locators);
   assert.deepEqual(located, [0, 1, 2].map((index) => `${index}:${SECRET_FIELD_SELECTOR}`));
   const clip = { x: 0, y: 0, width: 1280, height: 4096 };
   await capturePng(page(false), clip);
   assert.equal(calls[1]?.fullPage, true);
   assert.deepEqual(calls[1]?.clip, clip);
   await assert.rejects(capturePng(page(true)), (error: unknown) => error instanceof ScreenshotError && error.reason === "failed");
+});
+
+test("OB-03: a capture during which a frame or a secret field appeared is refused", async () => {
+  const reason = async (page: ShotPage) => {
+    try {
+      await capturePng(page);
+      return "ok";
+    } catch (error) {
+      assert.ok(error instanceof ScreenshotError);
+      return error.reason;
+    }
+  };
+  // A frame attached while the capture ran.
+  const frames: Array<{ locator: () => { count: () => Promise<number> } }> = [{ locator: () => ({ count: async () => 0 }) }];
+  assert.equal(
+    await reason({
+      frames: () => [...frames],
+      screenshot: async () => {
+        frames.push({ locator: () => ({ count: async () => 1 }) });
+        return png(10, 10);
+      }
+    }),
+    "busy"
+  );
+  // A secret field added in a frame while the capture ran.
+  let fields = 0;
+  assert.equal(
+    await reason({
+      frames: () => [{ locator: () => ({ count: async () => fields }) }],
+      screenshot: async () => {
+        fields += 1;
+        return png(10, 10);
+      }
+    }),
+    "busy"
+  );
+  // A frame that cannot be counted fails closed before any capture.
+  let captured = false;
+  assert.equal(
+    await reason({
+      frames: () => [{ locator: () => ({ count: async () => Promise.reject(new Error("detached")) }) }],
+      screenshot: async () => {
+        captured = true;
+        return png(10, 10);
+      }
+    }),
+    "failed"
+  );
+  assert.equal(captured, false);
+  // The widened selector names the new kinds.
+  for (const part of ['[style*="text-security" i]', '[contenteditable]:not([contenteditable="false" i])', 'input[name*="pin" i]', 'input[name*="ssn" i]', 'input[name*="cc-" i]', 'input[id*="iban" i]']) {
+    assert.ok(SECRET_FIELD_SELECTOR.split(", ").includes(part), part);
+  }
 });

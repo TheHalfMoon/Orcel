@@ -138,6 +138,24 @@ Scripted run on this PC, 2026-11-17 (Edge 157, Node 24.19.0): every step passed.
 - Mask pixels: ordinary `[0,255,0]`, password, one-time code, card number and secret name all `[0,0,0]`.
 - **Scripted consent, not human acceptance.**
 
+A second run, after the security judge's fixes (tab-checked replies, no promotion when a tab closes itself, the wider mask, the pending-popup cap), also passed:
+
+- Step times: open 8544 ms, screenshot 173 ms, new tab 1005 ms, masked screenshot 267 ms, close 4339 ms.
+- Whole session 19837 ms. 15 receipts chained, head `bc00091fe0c48bad...`. 5 approval records. Same mask pixels as the first run. Nothing left.
+- Scripted consent, not human acceptance.
+
+### OB-03 limits and rules (after the security judge on b4ed449a)
+
+- **A tab that closes itself.** When the active tab's page closes itself (`window.close()` from page script, or a crash), the worker makes no other tab active. Every action and screenshot is then refused (`TARGET_STALE`) until orceld sends a tab request (`browser_tabs`) and learns the tabs. Each reply of navigate, observe, activate, form action, verify, extract and screenshot names the worker tab it ran on, and a screenshot reply also names the page's URL. The host checks the tab against the one it acts on and checks the URL against its committed document. A read from another tab is refused as stale. A navigation, click or form action reported from another tab ends as outcome unknown, with nothing observed kept.
+- **What the mask does not cover.** It paints fields matching the secret selector in every frame present right before the capture, open shadow roots included. That means password inputs, secret `autocomplete` tokens, secret-looking names and ids (pass, pwd, otp, cvc, cvv, csc, cc-, pin, ssn, iban, card, token, secret, security), editable regions, and inline `-webkit-text-security`. If a frame or a secret field is added or removed during the capture, the capture is refused. Not masked:
+  - fields inside closed shadow roots;
+  - secret text drawn on a canvas, or shown as ordinary text;
+  - a text-security style applied by a stylesheet rule;
+  - a page script that removes or hides Playwright's mask overlay while the capture runs (the overlay is page-visible DOM for the capture's duration).
+- **Closing a tab runs its handlers.** It runs the page's own `unload` and `pagehide` handlers, which may send requests such as beacons. The worker's route stack still decides each request, so only the lifetime's admitted site can receive them. orceld asks the takeover gate first, as for any write on that tab.
+- **Popups.** At most 4 popups wait for admission at once; any further popup is closed at once.
+- **Where the image is kept.** It is in the tool reply only. The broker's receipt (`ActionRecord`, `browser_task_status`) keeps the SHA-256 digest (`evidence_kind: screenshot`) and never the image or its base64; the mission checks that no receipt holds `png_base64`.
+
 ## Not covered
 
 - The founder-present run (above).

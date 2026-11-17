@@ -44,7 +44,9 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// generation 18 W2-03's outline and extract_schema frames (PR #797, on main),
 /// generation 19 SG-000135 OB-03: bounded page screenshots with secret fields
 /// masked (`screenshot`, `screenshot_more`) and tabs (`tab_new`,
-/// `tab_switch`, `tab_close`, `tabs`).
+/// `tab_switch`, `tab_close`, `tabs`); the replies of navigate, observe,
+/// activate, form_action, verify, extract and screenshot name the tab they
+/// acted on (`tab`), which the host checks against its own.
 export const WORKER_PROTOCOL_GENERATION = 19;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host; SG-000122: one option of a native select).
@@ -220,24 +222,24 @@ export type WorkerFrame =
       /// page's main-frame document.
       main_document?: true;
     }
-  | { frame: "navigated"; nav_id: number; url: string; status: number }
+  | { frame: "navigated"; nav_id: number; tab: number; url: string; status: number }
   | { frame: "navigation_failed"; nav_id: number; reason: NavigationFailure }
   | { frame: "fetched_text"; fetch_id: number; url: string; status: number; media: string; text: string; truncated: boolean }
   | { frame: "fetch_failed"; fetch_id: number; reason: NavigationFailure }
-  | { frame: "observed"; obs_id: number; url: string; truncated: boolean; nodes: SnapshotNode[] }
+  | { frame: "observed"; obs_id: number; tab: number; url: string; truncated: boolean; nodes: SnapshotNode[] }
   | { frame: "observation_failed"; obs_id: number }
   | { frame: "discovered"; disc_id: number; url: string; truncated: boolean; tools: DeclaredTool[] }
   | { frame: "discovery_failed"; disc_id: number }
-  | { frame: "extracted"; ext_id: number; url: string; truncated: boolean; piece: number; total: number; chunk: number; content: string }
+  | { frame: "extracted"; ext_id: number; tab: number; url: string; truncated: boolean; piece: number; total: number; chunk: number; content: string }
   | { frame: "extraction_failed"; ext_id: number }
   | { frame: "executed"; exec_id: number; url: string; status: number; structured: string[]; structured_complete: boolean }
   | { frame: "execution_failed"; exec_id: number; reason: NavigationFailure }
-  | { frame: "activated"; act_id: number; url: string; status: number }
+  | { frame: "activated"; act_id: number; tab: number; url: string; status: number }
   | { frame: "activation_failed"; act_id: number; reason: NavigationFailure }
   | { frame: "downloaded"; dl_id: number; url: string; name: string; media: string; bytes: number }
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
-  | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
-  | { frame: "form_done"; form_id: number; url: string; navigated?: boolean }
+  | { frame: "verified"; ver_id: number; tab: number; url: string; results: VerifyResult[] }
+  | { frame: "form_done"; form_id: number; tab: number; url: string; navigated?: boolean }
   | { frame: "waited"; wait_id: number; url: string; met: boolean }
   | { frame: "uploaded"; up_id: number; url: string }
   | { frame: "dialogs_seen"; dlg_id: number; dialogs: DismissedDialog[]; truncated: boolean }
@@ -248,6 +250,9 @@ export type WorkerFrame =
   | {
       frame: "screenshot_piece";
       shot_id: number;
+      /// The tab captured and its page's URL (the host checks both).
+      tab: number;
+      url: string;
       piece: number;
       total: number;
       width: number;

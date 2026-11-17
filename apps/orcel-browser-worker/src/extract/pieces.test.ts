@@ -77,6 +77,7 @@ test("the largest piece still fits a reply frame with the longest URL", () => {
   const { pieces } = toPieces([chunk('"\u0001'.repeat(100_000))], MAX_PIECE_BYTES, MAX_EXTRACT_PIECES);
   const frame = encodeFrame({
     frame: "extracted",
+    tab: 1,
     ext_id: 2 ** 31,
     url: "https://x.test/" + "a".repeat(2033),
     truncated: true,
