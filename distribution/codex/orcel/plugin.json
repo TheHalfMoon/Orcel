@@ -18,7 +18,7 @@
         "websiteURL": "https://github.com/TheHalfMoon/Orcel",
         "privacyPolicyURL": "https://github.com/TheHalfMoon/Orcel/blob/main/docs/legal/PRIVACY.md",
         "termsOfServiceURL": "https://github.com/TheHalfMoon/Orcel/blob/main/docs/legal/TERMS.md",
-        "brandColor": "#080808",
+        "brandColor": "#090C12",
         "composerIcon": "./assets/logo.svg",
         "logo": "./assets/logo.svg"
       }

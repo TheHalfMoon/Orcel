@@ -185,7 +185,7 @@ test("BR-07: verify probes are closed, bounded and exact", () => {
 });
 
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 17 }), { frame: "hello", generation: 17 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 18 }), { frame: "hello", generation: 18 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -193,11 +193,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 17 },
+    { generation: 18 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 17, extra: true },
+    { frame: "hello", generation: 18, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },
@@ -473,4 +473,55 @@ test("BR-01 activate and download frames may carry the approved role and name, b
   ]) {
     assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
   }
+});
+
+test("W2-03: outline frames carry only a positive id", () => {
+  assert.deepEqual(parseHostFrame({ frame: "outline", out_id: 3 }), { frame: "outline", out_id: 3 });
+  for (const bad of [{ frame: "outline", out_id: 0 }, { frame: "outline", out_id: 1, depth: 99 }, { frame: "outline" }, { frame: "outline", out_id: "1" }]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad));
+  }
+});
+
+test("W2-03: extract_schema frames carry bounded fields with exactly one target each", () => {
+  const fields = [
+    { key: "title", take: "text", role: "heading" },
+    { key: "fee", take: "text", role: "heading", name: "Fees & passes" },
+    { key: "rows", take: "texts", xpath: "/html[1]/body[1]/ul[1]" },
+    { key: "pay", take: "url", role: "link" }
+  ];
+  assert.deepEqual(parseHostFrame({ frame: "extract_schema", xs_id: 2, fields }), { frame: "extract_schema", xs_id: 2, fields });
+  const field = (extra: Record<string, unknown>) => ({ frame: "extract_schema", xs_id: 2, fields: [{ key: "k", take: "text", role: "heading", ...extra }] });
+  const many = Array.from({ length: 33 }, (_, i) => ({ key: `k${i}`, take: "text", role: "heading" }));
+  for (const bad of [
+    { frame: "extract_schema", xs_id: 2, fields: [] },
+    { frame: "extract_schema", xs_id: 2, fields: many },
+    { frame: "extract_schema", xs_id: 2 },
+    { frame: "extract_schema", xs_id: 0, fields },
+    { frame: "extract_schema", xs_id: 2, fields, model: "byok" },
+    { frame: "extract_schema", xs_id: 2, fields: [fields[0], fields[0]] },
+    { frame: "extract_schema", xs_id: 2, fields: ["title"] },
+    field({ key: "Title" }),
+    field({ key: "x".repeat(41) }),
+    field({ take: "html" }),
+    field({ take: "value" }),
+    field({ xpath: "/html[1]" }),
+    field({ instruction: "find the price" }),
+    field({ role: "heading<script>" }),
+    field({ role: "x".repeat(49) }),
+    field({ name: "" }),
+    field({ name: "line\nbreak" }),
+    field({ name: "x".repeat(513) }),
+    { frame: "extract_schema", xs_id: 2, fields: [{ key: "k", take: "text", xpath: "//*[@id='secret']" }] },
+    { frame: "extract_schema", xs_id: 2, fields: [{ key: "k", take: "text", xpath: "html[1]" }] },
+    { frame: "extract_schema", xs_id: 2, fields: [{ key: "k", take: "text", xpath: `/${"a[1]/".repeat(210)}` }] },
+    { frame: "extract_schema", xs_id: 2, fields: [{ key: "k", take: "text" }] }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 120));
+  }
+});
+
+test("W2-03: outline and schema replies fit one frame", () => {
+  const nodes = [{ id: "0-1", role: "heading", name: "x".repeat(512), xpath: "/html[1]", children: [] }];
+  assert.ok(encodeFrame({ frame: "outlined", out_id: 1, url: "https://fixture.test/", truncated: false, nodes }).length < MAX_FRAME_BYTES);
+  assert.ok(encodeFrame({ frame: "schema_extracted", xs_id: 1, url: "https://fixture.test/", truncated: false, values: [{ key: "k", found: false }] }).length < MAX_FRAME_BYTES);
 });

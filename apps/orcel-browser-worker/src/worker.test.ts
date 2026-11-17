@@ -5,6 +5,8 @@ import { validLaunch } from "./fixtures.js";
 import { encodeFrame, type WorkerFrame } from "./protocol.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
 import type { FormAction } from "./actions/form.js";
+import type { BoundedOutline } from "./outline/capture.js";
+import type { SchemaField, SchemaValue } from "./outline/schema-extract.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, describeLaunchError } from "./worker.js";
 
 class FakeEngine implements EngineSession {
@@ -35,6 +37,23 @@ class FakeEngine implements EngineSession {
   });
   observe(): Promise<{ url: string; snapshot: { nodes: never[]; truncated: boolean } }> {
     return this.observeBehavior();
+  }
+  outlineBehavior: () => Promise<{ url: string; outline: BoundedOutline }> = async () => ({
+    url: "https://fixture.test/",
+    outline: { nodes: [{ id: "0-4", role: "heading", name: "Fees", xpath: "/html[1]/body[1]/h1[1]", children: [] }], truncated: false }
+  });
+  outline(): Promise<{ url: string; outline: BoundedOutline }> {
+    return this.outlineBehavior();
+  }
+  schemaFields: SchemaField[][] = [];
+  schemaBehavior: (fields: SchemaField[]) => Promise<{ url: string; truncated: boolean; values: SchemaValue[] }> = async (fields) => ({
+    url: "https://fixture.test/",
+    truncated: false,
+    values: fields.map((field) => ({ key: field.key, found: true, text: "Fees" }))
+  });
+  extractSchema(fields: SchemaField[]): Promise<{ url: string; truncated: boolean; values: SchemaValue[] }> {
+    this.schemaFields.push(fields);
+    return this.schemaBehavior(fields);
   }
   discoverBehavior: () => Promise<{ url: string; truncated: boolean; tools: never[] }> = async () => ({
     url: "https://fixture.test/",
@@ -141,12 +160,12 @@ function harness(launchBehavior: (spec: LaunchSpec) => Promise<EngineSession> = 
 test("hello, launch, ping and shutdown follow the closed lifecycle", async () => {
   const engine = new FakeEngine();
   const { worker, sent, exits, launches } = harness(async () => engine);
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive(validLaunch());
   await worker.receive({ frame: "ping", nonce: "n1" });
   await worker.receive({ frame: "shutdown" });
   assert.deepEqual(sent, [
-    { frame: "hello", generation: 17, worker: "orcel-browser-worker" },
+    { frame: "hello", generation: 18, worker: "orcel-browser-worker" },
     { frame: "launched" },
     { frame: "pong", nonce: "n1" },
     { frame: "bye" }
@@ -161,7 +180,7 @@ test("hello, launch, ping and shutdown follow the closed lifecycle", async () =>
 });
 
 test("anything before hello, a wrong generation, or a second hello fails closed", async () => {
-  for (const first of [validLaunch(), { frame: "ping", nonce: "n" }, { frame: "hello", generation: 16 }, { frame: "hello", generation: 18 }, { frame: "bogus" }]) {
+  for (const first of [validLaunch(), { frame: "ping", nonce: "n" }, { frame: "hello", generation: 17 }, { frame: "hello", generation: 19 }, { frame: "bogus" }]) {
     const { worker, sent, exits, launches } = harness();
     await worker.receive(first);
     assert.deepEqual(sent, [{ frame: "error", code: "protocol_violation" }]);
@@ -169,15 +188,15 @@ test("anything before hello, a wrong generation, or a second hello fails closed"
     assert.equal(launches.length, 0);
   }
   const { worker, sent, exits } = harness();
-  await worker.receive({ frame: "hello", generation: 17 });
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
+  await worker.receive({ frame: "hello", generation: 18 });
   assert.deepEqual(sent.at(-1), { frame: "error", code: "protocol_violation" });
   assert.deepEqual(exits, [1]);
 });
 
 test("a refused launch never reaches the launcher", async () => {
   const { worker, sent, exits, launches } = harness();
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   const launch = validLaunch();
   launch.argv.splice(9, 0, "--remote-debugging-port=9222");
   await worker.receive(launch);
@@ -189,7 +208,7 @@ test("a refused launch never reaches the launcher", async () => {
 test("only one engine per worker lifetime", async () => {
   const engine = new FakeEngine();
   const { worker, sent, exits, launches } = harness(async () => engine);
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive(validLaunch());
   await worker.receive(validLaunch());
   assert.equal(launches.length, 1);
@@ -203,7 +222,7 @@ test("launch failure, engine exit, violations and end of input all close the eng
     const { worker, sent, exits } = harness(async () => {
       throw new Error("no engine");
     });
-    await worker.receive({ frame: "hello", generation: 17 });
+    await worker.receive({ frame: "hello", generation: 18 });
     await worker.receive(validLaunch());
     assert.deepEqual(sent.at(-1), { frame: "error", code: "launch_failed" });
     assert.deepEqual(exits, [1]);
@@ -217,7 +236,7 @@ test("launch failure, engine exit, violations and end of input all close the eng
       () => {},
       (line) => lines.push(line)
     );
-    await worker.receive({ frame: "hello", generation: 17 });
+    await worker.receive({ frame: "hello", generation: 18 });
     await worker.receive(validLaunch());
     assert.deepEqual(lines, ["orcel-browser-worker: launch failed: TimeoutError: browserType.launch: Timeout 30000ms exceeded."]);
     assert.equal(Array.from(describeLaunchError("x".repeat(2000))).length, 1025);
@@ -235,7 +254,7 @@ test("launch failure, engine exit, violations and end of input all close the eng
   {
     const engine = new FakeEngine();
     const { worker, sent, exits } = harness(async () => engine);
-    await worker.receive({ frame: "hello", generation: 17 });
+    await worker.receive({ frame: "hello", generation: 18 });
     await worker.receive(validLaunch());
     engine.crash();
     await worker.receive({ frame: "ping", nonce: "after" });
@@ -245,7 +264,7 @@ test("launch failure, engine exit, violations and end of input all close the eng
   {
     const engine = new FakeEngine();
     const { worker, sent, exits } = harness(async () => engine);
-    await worker.receive({ frame: "hello", generation: 17 });
+    await worker.receive({ frame: "hello", generation: 18 });
     await worker.receive(validLaunch());
     await worker.violation();
     assert.deepEqual(sent.at(-1), { frame: "error", code: "protocol_violation" });
@@ -255,7 +274,7 @@ test("launch failure, engine exit, violations and end of input all close the eng
   {
     const engine = new FakeEngine();
     const { worker, sent, exits } = harness(async () => engine);
-    await worker.receive({ frame: "hello", generation: 17 });
+    await worker.receive({ frame: "hello", generation: 18 });
     await worker.receive(validLaunch());
     await worker.endOfInput();
     assert.deepEqual(sent.at(-1), { frame: "launched" });
@@ -272,7 +291,7 @@ test("a shutdown queued behind a slow launch closes the launched engine", async 
     await gate;
     return engine;
   });
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   const launching = worker.receive(validLaunch());
   const shutdown = worker.receive({ frame: "shutdown" });
   release();
@@ -295,7 +314,7 @@ test("an unexpected error in a step fails the worker closed exactly once", async
     },
     (code) => exits.push(code)
   );
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive(validLaunch());
   await worker.receive({ frame: "ping", nonce: "boom" });
   await worker.receive({ frame: "ping", nonce: "after" });
@@ -305,7 +324,7 @@ test("an unexpected error in a step fails the worker closed exactly once", async
 
 async function launched(engine = new FakeEngine()) {
   const h = harness(async () => engine);
-  await h.worker.receive({ frame: "hello", generation: 17 });
+  await h.worker.receive({ frame: "hello", generation: 18 });
   await h.worker.receive(validLaunch());
   return { ...h, engine, policy: h.policies[0] as RoutePolicy };
 }
@@ -347,7 +366,7 @@ test("navigation failures are typed", async () => {
 
 test("navigate before launch fails closed", async () => {
   const { worker, sent, exits } = harness();
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive({ frame: "navigate", nav_id: 1, url: "https://fixture.test/" });
   assert.deepEqual(sent.at(-1), { frame: "error", code: "not_ready" });
   assert.deepEqual(exits, [1]);
@@ -408,7 +427,7 @@ test("pending decisions are refused when the worker closes", async () => {
 
 test("a route decision before launch is a violation", async () => {
   const { worker, sent, exits } = harness();
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive({ frame: "route_decision", request_id: 1, allow: true });
   assert.deepEqual(sent.at(-1), { frame: "error", code: "protocol_violation" });
   assert.deepEqual(exits, [1]);
@@ -429,11 +448,11 @@ test("observe reports a bounded snapshot or a typed failure", async () => {
 test("BR-07: verify reports one result per probe or a typed failure, and needs a launch", async () => {
   const engine = new FakeEngine();
   const { worker, sent } = harness(async () => engine);
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive({ frame: "verify", ver_id: 1, probes: [{ probe: "visible_text", text: "Done" }] });
   assert.deepEqual(sent.at(-1), { frame: "error", code: "not_ready" });
   const second = harness(async () => engine);
-  await second.worker.receive({ frame: "hello", generation: 17 });
+  await second.worker.receive({ frame: "hello", generation: 18 });
   await second.worker.receive(validLaunch());
   const probes = [
     { probe: "visible_role", role: "button", name: "Pay" },
@@ -470,7 +489,7 @@ test("BR-07: verify reports one result per probe or a typed failure, and needs a
 test("BR-02: a form action runs outside the queue, is busy during a navigation, and reports a typed outcome", async () => {
   const engine = new FakeEngine();
   const { worker, sent } = harness(async () => engine);
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive(validLaunch());
   await worker.receive({ frame: "form_action", form_id: 1, action: "fill", ref: "e4", value: "Ada" });
   await new Promise((resolve) => setImmediate(resolve));
@@ -494,7 +513,7 @@ test("BR-02: a form action runs outside the queue, is busy during a navigation, 
 test("SG-000122 A6: an Enter says whether its submission committed a document; other actions never do", async () => {
   const engine = new FakeEngine();
   const { worker, sent } = harness(async () => engine);
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive(validLaunch());
   engine.formBehavior = async () => ({ url: "https://fixture.test/order", navigated: true });
   await worker.receive({ frame: "form_action", form_id: 1, action: "enter", ref: "e4" });
@@ -514,7 +533,7 @@ test("SG-000122 A6: an Enter says whether its submission committed a document; o
 test("BR-02: a bounded wait runs outside the queue, one at a time, and reports whether it was met", async () => {
   const engine = new FakeEngine();
   const { worker, sent } = harness(async () => engine);
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive(validLaunch());
   let release = (): void => {};
   engine.waitBehavior = () => new Promise((resolve) => (release = () => resolve({ url: "https://fixture.test/form", met: false })));
@@ -532,7 +551,7 @@ test("BR-02: a bounded wait runs outside the queue, one at a time, and reports w
 test("BR-03: an upload runs outside the queue and reports a typed outcome", async () => {
   const engine = new FakeEngine();
   const { worker, sent } = harness(async () => engine);
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive(validLaunch());
   await worker.receive({ frame: "upload", up_id: 1, ref: "e3", path: "C:\\staging\\up-1\\report.txt" });
   await new Promise((resolve) => setImmediate(resolve));
@@ -549,7 +568,7 @@ test("BR-03: an upload runs outside the queue and reports a typed outcome", asyn
 test("BR-05: dismissed dialogs are reported once", async () => {
   const engine = new FakeEngine();
   const { worker, sent } = harness(async () => engine);
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive(validLaunch());
   engine.dialogLog = { dialogs: [{ kind: "confirm", url: "https://fixture.test/", message: "Delete this item?", accepted: false }], truncated: false };
   await worker.receive({ frame: "dialogs", dlg_id: 1 });
@@ -563,9 +582,79 @@ test("BR-05: dismissed dialogs are reported once", async () => {
   assert.deepEqual(sent.at(-1), { frame: "dialogs_seen", dlg_id: 2, dialogs: [], truncated: false });
 });
 
+test("W2-03: outline reports bounded nodes or a typed failure, and never runs during a navigation", async () => {
+  const { worker, sent, engine } = await launched();
+  await worker.receive({ frame: "outline", out_id: 2 });
+  assert.deepEqual(sent.at(-1), {
+    frame: "outlined",
+    out_id: 2,
+    url: "https://fixture.test/",
+    truncated: false,
+    nodes: [{ id: "0-4", role: "heading", name: "Fees", xpath: "/html[1]/body[1]/h1[1]", children: [] }]
+  });
+  engine.outlineBehavior = async () => {
+    throw new Error("the outline timed out");
+  };
+  await worker.receive({ frame: "outline", out_id: 3 });
+  assert.deepEqual(sent.at(-1), { frame: "outline_failed", out_id: 3 });
+  // A page URL longer than the bound fails instead of breaking the frame.
+  engine.outlineBehavior = async () => ({ url: `https://fixture.test/${"a".repeat(2100)}`, outline: { nodes: [], truncated: false } });
+  await worker.receive({ frame: "outline", out_id: 4 });
+  assert.deepEqual(sent.at(-1), { frame: "outline_failed", out_id: 4 });
+  // While a navigation runs, the document is being replaced.
+  let release: () => void = () => {};
+  engine.navigateBehavior = (url) => new Promise((resolve) => (release = () => resolve({ url, status: 200 })));
+  await worker.receive({ frame: "navigate", nav_id: 1, url: "https://fixture.test/next" });
+  await worker.receive({ frame: "outline", out_id: 5 });
+  assert.deepEqual(sent.at(-1), { frame: "outline_failed", out_id: 5 });
+  await worker.receive({ frame: "extract_schema", xs_id: 6, fields: [{ key: "title", take: "text", role: "heading" }] });
+  assert.deepEqual(sent.at(-1), { frame: "schema_extraction_failed", xs_id: 6 });
+  release();
+  await settle();
+});
+
+test("W2-03: extract_schema reports one value per field or a typed failure", async () => {
+  const { worker, sent, engine } = await launched();
+  const fields = [
+    { key: "title", take: "text", role: "heading", name: "Fees" },
+    { key: "rows", take: "texts", xpath: "/html[1]/body[1]/ul[1]" }
+  ];
+  await worker.receive({ frame: "extract_schema", xs_id: 7, fields });
+  assert.deepEqual(engine.schemaFields.at(-1), fields);
+  assert.deepEqual(sent.at(-1), {
+    frame: "schema_extracted",
+    xs_id: 7,
+    url: "https://fixture.test/",
+    truncated: false,
+    values: [
+      { key: "title", found: true, text: "Fees" },
+      { key: "rows", found: true, text: "Fees" }
+    ]
+  });
+  // A session that answers with the wrong number of values fails the frame.
+  engine.schemaBehavior = async () => ({ url: "https://fixture.test/", truncated: false, values: [] });
+  await worker.receive({ frame: "extract_schema", xs_id: 8, fields });
+  assert.deepEqual(sent.at(-1), { frame: "schema_extraction_failed", xs_id: 8 });
+  engine.schemaBehavior = async () => {
+    throw new Error("the outline timed out");
+  };
+  await worker.receive({ frame: "extract_schema", xs_id: 9, fields });
+  assert.deepEqual(sent.at(-1), { frame: "schema_extraction_failed", xs_id: 9 });
+});
+
+test("W2-03: outline and extract_schema before launch fail closed", async () => {
+  for (const frame of [{ frame: "outline", out_id: 1 }, { frame: "extract_schema", xs_id: 1, fields: [{ key: "k", take: "text", role: "heading" }] }]) {
+    const { worker, sent, exits } = harness();
+    await worker.receive({ frame: "hello", generation: 18 });
+    await worker.receive(frame);
+    assert.deepEqual(sent.at(-1), { frame: "error", code: "not_ready" });
+    assert.deepEqual(exits, [1]);
+  }
+});
+
 test("observe before launch fails closed", async () => {
   const { worker, sent, exits } = harness();
-  await worker.receive({ frame: "hello", generation: 17 });
+  await worker.receive({ frame: "hello", generation: 18 });
   await worker.receive({ frame: "observe", obs_id: 1 });
   assert.deepEqual(sent.at(-1), { frame: "error", code: "not_ready" });
   assert.deepEqual(exits, [1]);
@@ -617,7 +706,7 @@ test("discover reports bounded tools or a typed failure, and needs a launch", as
   await worker.receive({ frame: "discover", disc_id: 3 });
   assert.deepEqual(sent.at(-1), { frame: "discovery_failed", disc_id: 3 });
   const fresh = harness();
-  await fresh.worker.receive({ frame: "hello", generation: 17 });
+  await fresh.worker.receive({ frame: "hello", generation: 18 });
   await fresh.worker.receive({ frame: "discover", disc_id: 1 });
   assert.deepEqual(fresh.sent.at(-1), { frame: "error", code: "not_ready" });
 });
@@ -678,7 +767,7 @@ test("extraction is served in pieces on request, released after the last, or fai
   await worker.receive({ frame: "extract_more", ext_id: 10, piece: 1 });
   assert.deepEqual(sent.at(-1), { frame: "extraction_failed", ext_id: 10 });
   const fresh = harness();
-  await fresh.worker.receive({ frame: "hello", generation: 17 });
+  await fresh.worker.receive({ frame: "hello", generation: 18 });
   await fresh.worker.receive({ frame: "extract", ext_id: 1, links: false, images: false });
   assert.deepEqual(fresh.sent.at(-1), { frame: "error", code: "not_ready" });
 });
