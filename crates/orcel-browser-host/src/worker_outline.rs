@@ -64,13 +64,17 @@ pub fn admit(capability: WorkerCapability) -> Result<(), HostError> {
 }
 
 /// Mirrors the worker's bounds (apps/orcel-browser-worker/src/outline).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const MAX_OUTLINE_NODES: usize = 512;
 /// The deepest node level the worker sends (roots are level 0).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const MAX_OUTLINE_DEPTH: usize = 32;
 pub const MAX_OUTLINE_NAME_BYTES: usize = 512;
 pub const MAX_OUTLINE_XPATH_BYTES: usize = 1024;
 pub const MAX_SCHEMA_FIELDS: usize = 32;
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const MAX_SCHEMA_LIST_ITEMS: usize = 32;
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const MAX_SCHEMA_TEXT_BYTES: usize = 2048;
 
 /// One outline node as the worker sends it. Every string but `id` and
@@ -143,6 +147,7 @@ pub struct SchemaExtraction {
     pub values: Vec<SchemaValue>,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn protocol_violation() -> HostError {
     HostError::Unavailable(crate::error::UnavailableReason::ProtocolViolation)
 }
@@ -150,6 +155,7 @@ fn protocol_violation() -> HostError {
 /// Re-check the worker's outline bounds (defense against a worker bug or a
 /// compromised worker): node count, name and XPath bytes, no control
 /// characters, ids of the outline's own shape.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn check_outline(nodes: &[OutlineNode]) -> Result<(), HostError> {
     let mut count = 0usize;
     let mut stack: Vec<(&OutlineNode, usize)> = nodes.iter().map(|node| (node, 0)).collect();
@@ -192,6 +198,7 @@ fn role_ok(role: &str) -> bool {
 }
 
 /// Re-check a schema reply: one value per field, in order, each bounded.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn check_values(fields: &[SchemaField], values: &[SchemaValue]) -> Result<(), HostError> {
     if fields.len() != values.len() {
         return Err(protocol_violation());
