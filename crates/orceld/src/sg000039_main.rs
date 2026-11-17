@@ -35,6 +35,13 @@ mod browser_full;
 // Windows live-browser-dev build drives a session that uses the cache.
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_lease;
+#[cfg(all(
+    feature = "browser-lease-dev-issuance",
+    not(all(windows, feature = "live-browser-dev"))
+))]
+compile_error!(
+    "browser-lease-dev-issuance is the OB-08 stand-in owner channel for test and development builds: build it only on Windows with live-browser-dev"
+);
 // SG-000135 OB-01 end-to-end harness, test builds only: the scripted SOFT
 // consent. Compiled only with both live browser features and the harness
 // feature, never in a development or release build.

@@ -703,6 +703,7 @@ mod full {
     fn start(
         session_id: &str,
         client: &str,
+        task: Option<&str>,
         dirs: &SessionDirs,
     ) -> Result<LiveBrowser, ProviderError> {
         let launch = WorkerHostLaunch {
@@ -725,7 +726,7 @@ mod full {
         // SG-000135 OB-08: the session's Full Access lease cache, over the
         // protected store; it covers nothing until the owner issues a lease.
         browser.set_full_access(crate::browser_lease::FullAccess::protected(
-            session_id, client,
+            session_id, client, task,
         ));
         Ok(browser)
     }
@@ -763,7 +764,7 @@ mod full {
                     task.as_deref(),
                     random,
                     orcel_approval::now_ms(),
-                    |id, dirs| start(id, client, dirs),
+                    |id, dirs| start(id, client, task.as_deref(), dirs),
                 )?;
                 Ok(json!({
                     "session_id": session.id,

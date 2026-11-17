@@ -265,6 +265,10 @@ pub enum WorkerHostRequest {
     TabSwitch {
         tab: u32,
     },
+    /// SG-000135 OB-08 review: orceld uses a Full Access lease in this
+    /// lifetime: from now on the host refuses every page request but a GET
+    /// (sticky for the lifetime). Sent before each lease-covered dispatch.
+    LeaseGuard {},
     TabClose {
         tab: u32,
     },
@@ -511,6 +515,8 @@ pub enum WorkerHostReply {
         profile_removed: bool,
     },
     Bye {},
+    /// SG-000135 OB-08 review: the lifetime's GET-only guard is in force.
+    Guarded {},
     /// A typed refusal: a bounded, closed code, never page text.
     Error {
         code: String,
@@ -807,6 +813,10 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
         WorkerHostRequest::TabSwitch { tab } => tabs_reply(live, |worker| worker.tab_switch(tab)),
         WorkerHostRequest::TabClose { tab } => tabs_reply(live, |worker| worker.tab_close(tab)),
         WorkerHostRequest::Tabs {} => tabs_reply(live, |worker| worker.tabs()),
+        WorkerHostRequest::LeaseGuard {} => {
+            live.worker.guard_get_only();
+            WorkerHostReply::Guarded {}
+        }
         WorkerHostRequest::Bind { action } => match host_binding(live, &action) {
             Ok(derived) => WorkerHostReply::Bound {
                 binding: derived.binding,

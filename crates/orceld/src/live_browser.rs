@@ -24,7 +24,9 @@
     allow(dead_code)
 )]
 
-use crate::browser_lease::{FullAccess, LeaseDecision, LeaseMoment, LeaseQuery, LeaseUse};
+use crate::browser_lease::{
+    FillValue, FullAccess, LeaseDecision, LeaseMoment, LeaseQuery, LeaseUse,
+};
 use crate::takeover_gate::TakeoverGate;
 use orcel_approval::{now_ms, ApprovalBroker, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
 use orcel_browser_host::worker_host::{
@@ -1048,11 +1050,21 @@ impl LiveBrowser {
     }
 
     /// SG-000135 OB-08: what is true now for a lease decision on `page_id`.
-    fn lease_moment(&self, approval: &impl ApprovalBroker, page_id: &str) -> LeaseMoment {
+    fn lease_moment(&self, approval: &impl ApprovalBroker) -> LeaseMoment {
         LeaseMoment {
             approval_epoch: approval.verified_revoke_epoch(),
             now_ms: now_ms(),
-            intervention: self.takeover.intervention_epoch(page_id),
+            interventions: self.takeover.interventions(),
+        }
+    }
+
+    /// A page opened: the takeover gate claims it, and (OB-08 review) the
+    /// session's lease takes its intervention mark now, not at first use.
+    fn page_claimed(&mut self, page_id: &str) {
+        self.takeover.page_opened(page_id);
+        let epoch = self.takeover.intervention_epoch(page_id);
+        if let Some(access) = self.full_access.as_mut() {
+            access.page_opened(page_id, epoch);
         }
     }
 
@@ -1067,7 +1079,7 @@ impl LiveBrowser {
         query: Option<LeaseQuery<'_>>,
     ) -> Result<Authority, ProviderError> {
         if let Some(query) = query {
-            let moment = self.lease_moment(approval, query.page_id);
+            let moment = self.lease_moment(approval);
             if let Some(access) = self.full_access.as_mut() {
                 match access.decide(&query, &moment) {
                     LeaseDecision::Covered(used) => return Ok(Authority::Lease(used)),
@@ -1100,7 +1112,21 @@ impl LiveBrowser {
                 Ok(token.record_id.clone())
             }
             Authority::Lease(used) => {
-                let moment = self.lease_moment(approval, used.page_id());
+                // OB-08 review: from the first lease use on, the host refuses
+                // every page request but a GET for this lifetime (page
+                // scripts, fetch, XHR, form posts, beacons). Nothing is sent
+                // unless the host confirms the guard.
+                match self.request(&WorkerHostRequest::LeaseGuard {})? {
+                    WorkerHostReply::Guarded {} => {}
+                    _ => {
+                        return Err(ProviderError::new(
+                            FailureCode::InternalError,
+                            "unexpected browser host reply",
+                        ))
+                    }
+                }
+                let moment = self.lease_moment(approval);
+                let _ = used.page_id();
                 let access = self.full_access.as_mut().ok_or_else(|| {
                     ProviderError::new(
                         FailureCode::CapabilityDenied,
@@ -1224,7 +1250,7 @@ impl LiveBrowser {
                     POLICY_REVISION,
                 ) {
                     Ok(page) => {
-                        self.takeover.page_opened(&page.page_id);
+                        self.page_claimed(&page.page_id);
                         self.page = Some(page);
                     }
                     Err(error) => {
@@ -1262,7 +1288,7 @@ impl LiveBrowser {
             .map_err(from_page)?;
         self.page = Some(page.clone());
         self.page_workspace = Some(workspace.id.clone());
-        self.takeover.page_opened(&page.page_id);
+        self.page_claimed(&page.page_id);
         Ok(page)
     }
 
@@ -1499,21 +1525,49 @@ impl LiveBrowser {
                 page_id,
             }),
         )?;
+        // OB-08 review: under a lease the link is never clicked: the host
+        // navigates (a GET) to the destination it bound, so no click
+        // listener, `href="#"` or `javascript:` handler of the page runs.
+        let frame = match &authority {
+            Authority::Lease(_) => {
+                let navigation = BindAction::Navigate {
+                    url: bound.target.clone(),
+                };
+                let binding = match self.request(&WorkerHostRequest::Bind { action: navigation })? {
+                    WorkerHostReply::Bound { binding, .. } => binding,
+                    _ => {
+                        return Err(ProviderError::new(
+                            FailureCode::InternalError,
+                            "unexpected browser host reply",
+                        ))
+                    }
+                };
+                (true, binding)
+            }
+            Authority::Approval { .. } => (false, bound.binding.clone()),
+        };
         self.gate_confirm()?;
         let record_id = self.spend(workspace, approval, &authority)?;
-        let reply = self.dispatch(
-            &record_id,
-            &WorkerHostRequest::Activate {
+        let request = if frame.0 {
+            WorkerHostRequest::Navigate {
+                url: bound.target.clone(),
+                record_id: record_id.clone(),
+                binding: frame.1,
+            }
+        } else {
+            WorkerHostRequest::Activate {
                 node_id: node_id.into(),
                 role: "link".into(),
                 record_id: record_id.clone(),
-                binding: bound.binding,
-            },
-        );
+                binding: frame.1,
+            }
+        };
+        let reply = self.dispatch(&record_id, &request);
         self.note_authority(&record_id, &authority);
         self.gate_finish(&record_id);
         match reply? {
-            WorkerHostReply::Activated { url, status } => {
+            WorkerHostReply::Activated { url, status }
+            | WorkerHostReply::Navigated { url, status } => {
                 self.follow(&url)?;
                 Ok((url, status))
             }
@@ -1951,6 +2005,18 @@ impl LiveBrowser {
         } else {
             browser_impact::classify_field(&form.role, &form.name)
         };
+        // OB-08 review: a value that looks secret or holds a stored secret
+        // is never typed under a lease (refused below); one the secret
+        // store could not check is left to the person (it asks).
+        let fill_value = match (&action, self.full_access.as_ref()) {
+            (BindAction::Fill { value, .. }, Some(access)) => access.fill_value(value),
+            _ => FillValue::Ordinary,
+        };
+        let family = if fill_value == FillValue::Unverified {
+            None
+        } else {
+            family
+        };
         let query = family.map(|family| LeaseQuery {
             family,
             also: None,
@@ -1961,6 +2027,13 @@ impl LiveBrowser {
         });
         let approved = self
             .authorize(approval, &prompt, query)
+            .and_then(|authority| match authority {
+                Authority::Lease(_) if fill_value == FillValue::Secret => Err(ProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "the value looks like a secret or holds a stored secret; Full Access never types it and nothing was sent",
+                )),
+                other => Ok(other),
+            })
             .and_then(|authority| {
                 self.gate_confirm()
                     .inspect_err(|_| gate_refused = true)
@@ -2319,7 +2392,7 @@ impl LiveBrowser {
                 )
                 .map(|(next, _, _)| next)
                 .map_err(from_page)?;
-            self.takeover.page_opened(&page.page_id);
+            self.page_claimed(&page.page_id);
             self.background.push(BackgroundTab {
                 page,
                 worker_tab: tab.tab,
@@ -2447,7 +2520,7 @@ impl LiveBrowser {
                 POLICY_REVISION,
             )
             .map_err(from_page)?;
-        self.takeover.page_opened(&page.page_id);
+        self.page_claimed(&page.page_id);
         self.make_active(BackgroundTab {
             page: page.clone(),
             worker_tab: state.active,

@@ -91,7 +91,10 @@ const OB08_FORM_URL = `${FIXTURE}/ob08-form`;
 const OB08_NEXT_URL = `${FIXTURE}/ob08-next`;
 const OB08_SUBMITTED_URL = `${FIXTURE}/ob08-submitted`;
 const OB08_ROUTINE_ACTIONS = 25;
-const LEASE_FAMILIES = ["navigate", "click", "type", "select", "read", "tabs"];
+const LEASE_FAMILIES = ["navigate", "click", "type", "select", "tabs"];
+const OB08_POST_URL = `${FIXTURE}/ob08-scripts`;
+/// The session's task label, which the lease must name.
+const SESSION_TASK = "OB-01 E2E fixture mission";
 // Longer than the MCP edge's own 10-minute approval timeout, so a dialog that
 // waits for a person ends as orceld's answer, not as this client giving up.
 const CALL_TIMEOUT_MS = 11 * 60_000;
@@ -156,7 +159,11 @@ function build(consent, pin) {
   const env = { ...process.env, ...pin, CARGO_TARGET_DIR: targetDir(consent) };
   const live = "live-browser-test,live-browser-dev";
   run("cargo", ["build", "--locked", "-p", "orcel-browser-host", "--features", live, "--bin", "orcel-browser-host"], env);
-  const features = consent === "scripted" ? `${live},browser-full-scripted-consent` : live;
+  // OB-08 review: a lease covers nothing without the takeover gate, and
+  // issuance needs an owner channel, which only the test-and-development
+  // browser-lease-dev-issuance stand-in provides.
+  const ob08 = "browser-takeover-gate,browser-lease-dev-issuance";
+  const features = consent === "scripted" ? `${live},${ob08},browser-full-scripted-consent` : `${live},${ob08}`;
   run("cargo", ["build", "--locked", "-p", "orceld", "--features", features, "--bin", "orceld"], env);
 }
 
@@ -448,7 +455,7 @@ async function mission(options, paths, fixtureSpki, fixture) {
   const tools = (listed.result?.tools ?? []).map((tool) => tool.name);
   for (const name of EXPECTED_TOOLS) require_(tools.includes(name), `${name} is listed: ${tools.join(", ")}`);
 
-  const create = await client.call("browser_session_create", { task: "OB-01 E2E fixture mission" });
+  const create = await client.call("browser_session_create", { task: SESSION_TASK });
   record(create);
   const session = expectOk(create, "browser_session_create").session_id;
   if (options.consent === "scripted") {
@@ -611,7 +618,8 @@ async function mission(options, paths, fixtureSpki, fixture) {
     client_ref: clientRef,
     origins: [FIXTURE],
     families: LEASE_FAMILIES,
-    minutes: 30
+    minutes: 30,
+    task: SESSION_TASK
   });
   require_(issued.ok === true, `the owner issued the lease: ${JSON.stringify(issued.error)}`);
   const leaseId = issued.result.lease_id;
@@ -662,6 +670,29 @@ async function mission(options, paths, fixtureSpki, fixture) {
     require_(nexted.url === OB08_NEXT_URL && nexted.receipt?.lease_id === leaseId, `the ordinary link ran under the lease: ${JSON.stringify(nexted)}`);
     routine += 1;
   }
+  // OB-08 review: a page whose scripts post on input and on click. The
+  // fill and the click run under the lease, and neither post leaves.
+  const postOpen = await client.call("browser_open", { session_id: session, url: OB08_POST_URL });
+  record(postOpen);
+  require_(expectOk(postOpen, "browser_open (posting page)").receipt?.lease_id === leaseId, "the posting page opened under the lease");
+  const postSnap = await client.call("browser_snapshot", { session_id: session });
+  record(postSnap);
+  const postObserved = expectOk(postSnap, "browser_snapshot (posting page)");
+  const postNodes = flatten(postObserved.nodes);
+  const note = postNodes.find((node) => node.role === "textbox" && node.untrusted_name?.text === "Note");
+  const postLink = postNodes.find((node) => node.role === "link");
+  require_(note && postLink, `the posting page shows its field and link: ${JSON.stringify(postNodes.map((node) => [node.node_id, node.role]))}`);
+  const noteStep = await client.call("browser_fill", { session_id: session, node_id: note.node_id, value: "Hello", expected_generation: postObserved.generation });
+  record(noteStep);
+  require_(expectOk(noteStep, "browser_fill (posting page)").approval === "lease", "the fill on the posting page ran under the lease");
+  const postClick = await client.call("browser_click", { session_id: session, node_id: postLink.node_id, expected_generation: postObserved.generation });
+  record(postClick);
+  const postClicked = expectOk(postClick, "browser_click (posting page)");
+  require_(postClicked.url === OB08_NEXT_URL && postClicked.receipt?.lease_id === leaseId, `the link was navigated under the lease: ${JSON.stringify(postClicked)}`);
+  // Give any late script request the time to reach the fixture.
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 1500));
+  const leaked = fixture.hits.filter((hit) => hit.includes("/ob08-sink") || hit.includes("/ob08-beacon"));
+  require_(leaked.length === 0, `no page post or beacon left under the lease: ${leaked.join(", ")}`);
   await openForm();
   require_(routine === OB08_ROUTINE_ACTIONS, `${OB08_ROUTINE_ACTIONS} routine actions ran under the lease: ${routine}`);
   const routinePrompts = softPrompts().length - promptsBefore;
@@ -696,6 +727,7 @@ async function mission(options, paths, fixtureSpki, fixture) {
     lease_session: session,
     routine_actions: routine,
     routine_prompts: routinePrompts,
+    posting_page_leaks: 0,
     submit_asked: true,
     revoke_refused: afterRevoke.body?.error?.message,
     asked_after_revoke: true
@@ -721,6 +753,7 @@ async function mission(options, paths, fixtureSpki, fixture) {
     "browser_open", "browser_snapshot", "browser_fill", "browser_select", "browser_verify", "browser_click", "browser_verify", "browser_extract",
     "browser_screenshot", "browser_tabs", "browser_tabs", "browser_screenshot", "browser_tabs", "browser_verify", "browser_tabs",
     ...Array.from({ length: 6 }, () => ob08Round).flat(),
+    "browser_open", "browser_snapshot", "browser_fill", "browser_click",
     "browser_open", "browser_snapshot", "browser_click", "browser_open", "browser_open"
   ];
   require_(JSON.stringify(actions) === JSON.stringify(expectedActions), `the receipts are the mission's actions: ${actions.join(", ")}`);
@@ -728,7 +761,7 @@ async function mission(options, paths, fixtureSpki, fixture) {
   const approved = receipts.filter((receipt) => receipt.record_id);
   require_(approved.length === APPROVED_ACTIONS, `seven actions carry an approval record (open, fill, select, click, the new tab, the submit, the open after the revoke): ${approved.length}`);
   const leasedReceipts = receipts.filter((receipt) => receipt.lease_id);
-  require_(leasedReceipts.length === OB08_ROUTINE_ACTIONS && leasedReceipts.every((receipt) => receipt.lease_id === ob08.lease_id && receipt.outcome === "done"), `every routine action is receipted with the lease: ${leasedReceipts.length}`);
+  require_(leasedReceipts.length === OB08_ROUTINE_ACTIONS + 3 && leasedReceipts.every((receipt) => receipt.lease_id === ob08.lease_id && receipt.outcome === "done"), `every routine action is receipted with the lease: ${leasedReceipts.length}`);
   // OB-03: a screenshot's receipt keeps its digest only.
   const shotReceipts = receipts.filter((receipt) => receipt.action === "browser_screenshot");
   require_(

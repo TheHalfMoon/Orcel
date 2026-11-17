@@ -31,7 +31,11 @@ use orcel_contracts::FailureCode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const BROWSER_LEASE_SCHEMA: &str = "orcel-browser-lease/1";
+/// Version 2 (OB-08 review): the requester, the task label and the store's
+/// revocation counter are bound into every lease.
+pub const BROWSER_LEASE_SCHEMA: &str = "orcel-browser-lease/2";
+/// The longest task label a lease names (the broker's own bound).
+pub const MAX_LEASE_TASK_CHARS: usize = 64;
 /// The most origins one lease names.
 pub const MAX_BROWSER_LEASE_ORIGINS: usize = 64;
 /// The shortest and longest lease.
@@ -67,6 +71,18 @@ pub enum BrowserFamily {
     /// Download a file (opt-in only).
     Download,
 }
+
+/// The families orceld can enforce under a lease in this build. `read`,
+/// `scroll` and `download` are named in the vocabulary but are refused at
+/// issuance until a packet implements them (reads ask nothing already; no
+/// browser_full tool scrolls or downloads).
+pub const IMPLEMENTED_FAMILIES: [BrowserFamily; 5] = [
+    BrowserFamily::Navigate,
+    BrowserFamily::Click,
+    BrowserFamily::Type,
+    BrowserFamily::Select,
+    BrowserFamily::Tabs,
+];
 
 impl BrowserFamily {
     pub const ALL: [Self; 8] = [
@@ -122,6 +138,13 @@ pub struct BrowserLease {
     pub families: Vec<BrowserFamily>,
     pub issued_at_ms: u64,
     pub expires_at_ms: u64,
+    /// The session's task label the owner saw (none when it has none).
+    pub task: Option<String>,
+    /// Who asked for the lease, as the owner channel identified it.
+    pub requester: String,
+    /// The store's browser revocation counter at issuance; the store's
+    /// counter only grows, so a store that went back behind it is refused.
+    pub revocations: u64,
 }
 
 /// What an owner asks the store to issue (the store fills the device, the
@@ -140,6 +163,9 @@ pub struct BrowserLeaseRequest {
     pub families: Vec<BrowserFamily>,
     pub issued_at_ms: u64,
     pub duration_ms: u64,
+    pub task: Option<String>,
+    pub requester: String,
+    pub revocations: u64,
 }
 
 /// What a lease is checked against right now.
@@ -156,7 +182,13 @@ pub struct BrowserLeaseContext<'a> {
     pub approval_epoch: Option<u64>,
     pub session_id: &'a str,
     pub client_ref: &'a str,
+    /// The session's own task label.
+    pub task: Option<&'a str>,
     pub now_ms: u64,
+    /// The store's browser revocation counter, read now.
+    pub store_revocations: u64,
+    /// The store's last-seen time: a clock behind it went backwards.
+    pub store_clock_ms: u64,
 }
 
 fn invalid(message: impl Into<String>) -> PolicyError {
@@ -288,6 +320,21 @@ fn bounded_field(name: &str, value: &str) -> Result<(), PolicyError> {
     Ok(())
 }
 
+/// A task label as a lease names it: 1 to 64 characters on one line.
+pub fn check_task(task: Option<&str>) -> Result<(), PolicyError> {
+    match task {
+        None => Ok(()),
+        Some(task)
+            if !task.is_empty()
+                && task.chars().count() <= MAX_LEASE_TASK_CHARS
+                && !task.chars().any(char::is_control) =>
+        {
+            Ok(())
+        }
+        Some(_) => Err(invalid("browser lease task label malformed")),
+    }
+}
+
 /// Check and canonicalize a requested scope: 1 to 64 distinct canonical
 /// origins and 1 to 8 distinct families. Returns the canonical origins in
 /// the order given and the families sorted.
@@ -313,13 +360,22 @@ pub fn check_scope(
         canonical.push(exact);
     }
     if families.is_empty() || families.len() > BrowserFamily::ALL.len() {
-        return Err(invalid("a browser lease names 1 to 8 action families"));
+        return Err(invalid("a browser lease names 1 to 5 action families"));
     }
     let mut sorted = families.to_vec();
     sorted.sort();
     sorted.dedup();
     if sorted.len() != families.len() {
         return Err(invalid("a browser lease names each action family once"));
+    }
+    if let Some(missing) = sorted
+        .iter()
+        .find(|family| !IMPLEMENTED_FAMILIES.contains(family))
+    {
+        return Err(invalid(format!(
+            "the {} family is not implemented under a browser lease yet; a lease names only navigate, click, type, select or tabs",
+            missing.as_str()
+        )));
     }
     Ok((canonical, sorted))
 }
@@ -361,6 +417,15 @@ fn derive_lease_id(
     }
     hasher.update(request.issued_at_ms.to_le_bytes());
     hasher.update(expires_at_ms.to_le_bytes());
+    match &request.task {
+        Some(task) => {
+            hasher.update([1u8]);
+            hash_part(&mut hasher, task.as_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+    hash_part(&mut hasher, request.requester.as_bytes());
+    hasher.update(request.revocations.to_le_bytes());
     format!(
         "{BROWSER_LEASE_ID_PREFIX}{}",
         lower_hex(hasher.finalize().as_slice())
@@ -388,6 +453,8 @@ pub fn issue_browser_lease(
     }
     bounded_field("device id", &request.device_id)?;
     bounded_field("policy revision", &request.policy_revision)?;
+    bounded_field("requester", &request.requester)?;
+    check_task(request.task.as_deref())?;
     if request.logon_session_id == 0 || request.authority_epoch == 0 {
         return Err(invalid(
             "browser lease logon session and authority epoch must be non-zero",
@@ -417,6 +484,9 @@ pub fn issue_browser_lease(
         families,
         issued_at_ms: request.issued_at_ms,
         expires_at_ms,
+        task: request.task,
+        requester: request.requester,
+        revocations: request.revocations,
     })
 }
 
@@ -441,6 +511,8 @@ impl BrowserLease {
         bounded_field("Windows user SID", &self.windows_user_sid)?;
         bounded_field("device id", &self.device_id)?;
         bounded_field("policy revision", &self.policy_revision)?;
+        bounded_field("requester", &self.requester)?;
+        check_task(self.task.as_deref())?;
         let (origins, families) = check_scope(&self.origins, &self.families)?;
         let duration = self.expires_at_ms.checked_sub(self.issued_at_ms);
         if origins != self.origins
@@ -472,6 +544,16 @@ pub fn check_browser_lease(
     context: &BrowserLeaseContext<'_>,
 ) -> Result<(), PolicyError> {
     lease.check_shape()?;
+    if context.now_ms < context.store_clock_ms {
+        return Err(denied(
+            "the clock went backwards behind the authority store",
+        ));
+    }
+    if context.store_revocations < lease.revocations {
+        return Err(denied(
+            "the authority store went back behind this browser lease's revocation counter",
+        ));
+    }
     if context.now_ms < lease.issued_at_ms || context.now_ms >= lease.expires_at_ms {
         return Err(denied("browser lease expired or not yet active"));
     }
@@ -499,6 +581,9 @@ pub fn check_browser_lease(
     }
     if lease.client_ref != context.client_ref {
         return Err(denied("browser lease names another client"));
+    }
+    if lease.task.as_deref() != context.task {
+        return Err(denied("browser lease names another task label"));
     }
     Ok(())
 }
@@ -530,6 +615,9 @@ mod tests {
             families: vec![BrowserFamily::Navigate, BrowserFamily::Click],
             issued_at_ms: NOW,
             duration_ms: 60 * 60 * 1_000,
+            task: Some("Book a table".into()),
+            requester: "pid 42 C:\\Orcel\\orcel.exe (test channel)".into(),
+            revocations: 3,
         }
     }
 
@@ -543,7 +631,10 @@ mod tests {
             approval_epoch: Some(0),
             session_id: SESSION,
             client_ref: client,
+            task: Some("Book a table"),
             now_ms: NOW + 1,
+            store_revocations: 3,
+            store_clock_ms: NOW,
         }
     }
 
@@ -604,10 +695,7 @@ mod tests {
         for family in [
             BrowserFamily::Type,
             BrowserFamily::Select,
-            BrowserFamily::Scroll,
-            BrowserFamily::Read,
             BrowserFamily::Tabs,
-            BrowserFamily::Download,
         ] {
             assert!(!lease.covers("https://fixture.test", family), "{family:?}");
         }
@@ -647,6 +735,12 @@ mod tests {
         zero_epoch.authority_epoch = 0;
         let mut overflow = request();
         overflow.issued_at_ms = u64::MAX - 10;
+        let mut long_task = request();
+        long_task.task = Some("t".repeat(65));
+        let mut odd_task = request();
+        odd_task.task = Some("two\nlines".into());
+        let mut no_requester = request();
+        no_requester.requester = String::new();
         for (name, bad) in [
             ("too many origins", too_many),
             ("duplicate origin", duplicate_origin),
@@ -660,6 +754,9 @@ mod tests {
             ("client", client),
             ("zero epoch", zero_epoch),
             ("overflow", overflow),
+            ("long task", long_task),
+            ("odd task", odd_task),
+            ("no requester", no_requester),
         ] {
             assert!(issue_browser_lease(&proof(), bad).is_err(), "{name}");
         }
@@ -667,6 +764,17 @@ mod tests {
         max.origins = (0..64).map(|n| format!("https://h{n}.test")).collect();
         max.duration_ms = MAX_BROWSER_LEASE_MS;
         let lease = issue_browser_lease(&proof(), max).expect("64 origins, 12 hours");
+        // OB-08 review: families orceld does not enforce yet are refused.
+        for family in [
+            BrowserFamily::Read,
+            BrowserFamily::Scroll,
+            BrowserFamily::Download,
+        ] {
+            let mut unimplemented = request();
+            unimplemented.families.push(family);
+            let refused = issue_browser_lease(&proof(), unimplemented).expect_err("refused");
+            assert!(refused.message.contains("not implemented"), "{family:?}");
+        }
         assert_eq!(lease.origins.len(), 64);
         assert!(lease.check_shape().is_ok());
     }
@@ -691,6 +799,20 @@ mod tests {
                 .expect("wider")
                 .lease_id
         );
+        for change in [
+            (|r: &mut BrowserLeaseRequest| r.task = None) as fn(&mut BrowserLeaseRequest),
+            |r| r.requester = "pid 7 other.exe".into(),
+            |r| r.revocations = 4,
+        ] {
+            let mut changed = request();
+            change(&mut changed);
+            assert_ne!(
+                first.lease_id,
+                issue_browser_lease(&proof(), changed)
+                    .expect("changed")
+                    .lease_id
+            );
+        }
         let mut epoch = request();
         epoch.approval_epoch = 1;
         assert_ne!(
@@ -740,6 +862,18 @@ mod tests {
         let mut c = base;
         c.now_ms = NOW - 1;
         cases.push(("not yet", c));
+        let mut c = base;
+        c.task = Some("Another task");
+        cases.push(("task", c));
+        let mut c = base;
+        c.task = None;
+        cases.push(("no task", c));
+        let mut c = base;
+        c.store_revocations = 2;
+        cases.push(("store went back", c));
+        let mut c = base;
+        c.store_clock_ms = NOW + 10;
+        cases.push(("clock went backwards", c));
         for (name, case) in cases {
             let refused = check_browser_lease(&lease, &case).expect_err(name);
             assert_eq!(refused.code, FailureCode::CapabilityDenied, "{name}");

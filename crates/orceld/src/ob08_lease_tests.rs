@@ -6,8 +6,9 @@
 //! the cache tests a scripted lease source.
 
 use crate::browser_lease::{
-    dispatch_management, refuse_untrusted, FullAccess, LeaseDecision, LeaseMoment, LeaseQuery,
-    LeaseSource, ManagementEnv, StoreView, LEASE_INVALID, LEASE_ISSUE_ACTION,
+    dispatch_management, refuse_untrusted, FillValue, FullAccess, LeaseDecision, LeaseMoment,
+    LeaseQuery, LeaseSource, ManagementEnv, NoOwnerChannel, OwnerChannel, Requester, SecretMatcher,
+    StoreView, LEASE_INVALID, LEASE_ISSUE_ACTION,
 };
 use orcel_approval::test_support::{
     broker_with_presence, FixedApprovalBroker, TestPresenceVerifier,
@@ -24,6 +25,7 @@ use orcel_policy::POLICY_REVISION;
 use orcel_provider_fs::ProviderError;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -37,6 +39,8 @@ const ORIGIN: &str = "https://fixture.test";
 const PAGE: &str = "pg-0123456789abcdef0123456789abcdef";
 const NOW: u64 = 1_800_000_000_000;
 const KEY: [u8; 32] = [0xA5; 32];
+const TASK: &str = "Book a table";
+const OTHER_PAGE: &str = "pg-fedcba9876543210fedcba9876543210";
 
 // ---------------------------------------------------------------------
 // The lease cache.
@@ -88,6 +92,9 @@ fn proof_lease(
         families: families.to_vec(),
         issued_at_ms: NOW,
         duration_ms: 60 * 60 * 1_000,
+        task: Some(TASK.into()),
+        requester: "pid 7 owner.exe (via test channel)".into(),
+        revocations: 0,
     };
     change(&mut request);
     // The store's proof is crate-private to orcel-policy: issue through the
@@ -98,6 +105,8 @@ fn proof_lease(
         authority_epoch: request.authority_epoch,
         lease: None,
         browser_leases: Vec::new(),
+        browser_revocations: 0,
+        browser_clock_ms: 0,
     };
     full_control_store::save_store(&path, &KEY, &status).expect("seed store");
     let lease = full_control_store::grant_browser_lease_at_epoch(
@@ -113,6 +122,8 @@ fn proof_lease(
             origins: request.origins.clone(),
             families: request.families.clone(),
             duration_ms: request.duration_ms,
+            task: request.task.clone(),
+            requester: request.requester.clone(),
         },
         request.issued_at_ms,
     )
@@ -132,6 +143,8 @@ fn view_of(leases: Vec<BrowserLease>) -> StoreView {
         authority_epoch: 5,
         device_id: DEVICE.into(),
         leases,
+        revocations: 0,
+        clock_ms: NOW,
     }
 }
 
@@ -141,7 +154,6 @@ fn routine_families() -> Vec<BrowserFamily> {
         BrowserFamily::Click,
         BrowserFamily::Type,
         BrowserFamily::Select,
-        BrowserFamily::Read,
         BrowserFamily::Tabs,
     ]
 }
@@ -163,7 +175,9 @@ impl Scene {
         let access = FullAccess::new(
             SESSION,
             &client_ref(CLIENT),
+            Some(TASK),
             Box::new(Source(Rc::clone(&store))),
+            Box::new(NoSecrets),
             Some((SID.into(), LOGON)),
         );
         Self {
@@ -182,7 +196,24 @@ fn moment() -> LeaseMoment {
     LeaseMoment {
         approval_epoch: Some(2),
         now_ms: NOW + 1_000,
-        intervention: None,
+        interventions: gate(0),
+    }
+}
+
+/// The takeover gate's view: both pages at intervention epoch `epoch`.
+fn gate(epoch: u64) -> Option<BTreeMap<String, u64>> {
+    Some(BTreeMap::from([
+        (PAGE.to_owned(), epoch),
+        (OTHER_PAGE.to_owned(), 0),
+    ]))
+}
+
+/// A secret store holding nothing.
+struct NoSecrets;
+
+impl SecretMatcher for NoSecrets {
+    fn matches(&self, _value: &str) -> Result<bool, ()> {
+        Ok(false)
     }
 }
 
@@ -350,7 +381,14 @@ fn ob08_no_lease_means_every_action_asks_as_before() {
     let lease = proof_lease(&routine_families(), |_| {});
     let store = Rc::new(Scripted::default());
     *store.view.borrow_mut() = Some(Ok(Some(view_of(vec![lease]))));
-    let mut nobody = FullAccess::new(SESSION, &client_ref(CLIENT), Box::new(Source(store)), None);
+    let mut nobody = FullAccess::new(
+        SESSION,
+        &client_ref(CLIENT),
+        Some(TASK),
+        Box::new(Source(store)),
+        Box::new(NoSecrets),
+        None,
+    );
     let first = nobody.decide(&query(BrowserFamily::Click, Impact::Routine), &moment());
     assert!(is_lease_invalid(&first), "{first:?}");
     assert!(is_ask(&nobody.decide(
@@ -369,7 +407,9 @@ fn ob08_another_client_or_any_binding_drift_is_refused_once_then_asks() {
     let mut stranger = FullAccess::new(
         SESSION,
         &client_ref("mcp-client-b"),
+        Some(TASK),
         Box::new(Source(Rc::clone(&store))),
+        Box::new(NoSecrets),
         Some((SID.into(), LOGON)),
     );
     assert!(is_lease_invalid(&stranger.decide(
@@ -448,7 +488,9 @@ fn ob08_another_client_or_any_binding_drift_is_refused_once_then_asks() {
         let mut access = FullAccess::new(
             SESSION,
             &client_ref(CLIENT),
+            Some(TASK),
             Box::new(Source(store)),
+            Box::new(NoSecrets),
             identity,
         );
         let first = access.decide(&query(BrowserFamily::Navigate, Impact::Routine), &at);
@@ -577,10 +619,7 @@ fn ob08_every_change_found_right_before_dispatch_refuses() {
 #[test]
 fn ob08_human_interruption_ends_lease_use() {
     let mut scene = Scene::new();
-    let at = LeaseMoment {
-        intervention: Some(0),
-        ..moment()
-    };
+    let at = moment();
     let used = covered(
         scene
             .access
@@ -593,7 +632,7 @@ fn ob08_human_interruption_ends_lease_use() {
             .decide(&query(BrowserFamily::Click, Impact::Routine), &at),
     );
     let person = LeaseMoment {
-        intervention: Some(1),
+        interventions: gate(1),
         ..moment()
     };
     assert!(
@@ -692,6 +731,20 @@ fn env(dir: &std::path::Path) -> ManagementEnv {
         key: Ok(KEY),
         identity: Ok((SID.into(), LOGON)),
         now_ms: orcel_approval::now_ms,
+        owner: Box::new(TestOwner(7)),
+    }
+}
+
+/// A stand-in owner channel naming requester `pid`.
+struct TestOwner(u32);
+
+impl OwnerChannel for TestOwner {
+    fn requester(&self) -> Result<Requester, ProviderError> {
+        Ok(Requester {
+            pid: self.0,
+            image: "C:\\Orcel\\orcel.exe".into(),
+            channel: "test owner channel",
+        })
     }
 }
 
@@ -713,7 +766,8 @@ fn issue_arguments() -> Value {
         "session_id": SESSION,
         "client_ref": client_ref(CLIENT),
         "origins": ["HTTPS://Fixture.test/"],
-        "families": ["navigate", "click", "type", "select", "read", "tabs"],
+        "families": ["navigate", "click", "type", "select", "tabs"],
+        "task": TASK,
         "minutes": 30,
     })
 }
@@ -790,10 +844,18 @@ fn ob08_the_owner_issues_lists_and_revokes_with_strong_presence() {
     assert!(prompts[0].summary.contains("https://fixture.test"));
     assert!(prompts[0].summary.contains("30 minutes"));
     assert!(prompts[0].summary.contains("still ask"));
+    // OB-08 review: the prompt shows who asked, the client and the task.
+    assert!(prompts[0].summary.contains(&client_ref(CLIENT)));
+    assert!(prompts[0]
+        .summary
+        .contains("pid 7 C:\\Orcel\\orcel.exe (via test owner channel)"));
+    assert!(prompts[0]
+        .summary
+        .ends_with(&format!("(agent-supplied): {TASK}")));
     assert_eq!(issued["origins"], json!(["https://fixture.test"]));
     assert_eq!(
         issued["families"],
-        json!(["navigate", "click", "type", "select", "read", "tabs"])
+        json!(["navigate", "click", "type", "select", "tabs"])
     );
     assert_eq!(issued["active"], json!(true));
     let lease_id = issued["lease_id"].as_str().expect("id").to_owned();
@@ -1087,4 +1149,281 @@ fn remote() -> orcel_contracts::RemoteContext {
         tool_surface_profile: "core".into(),
         scopes: vec!["orcel.read".into()],
     }
+}
+
+// ---------------------------------------------------------------------
+// OB-08 review.
+// ---------------------------------------------------------------------
+
+/// Finding 3: without the takeover gate (feature off) no person's input can
+/// be seen, so nothing is ever covered; a page the gate does not track asks.
+#[test]
+fn ob08_review_without_the_takeover_gate_nothing_is_covered() {
+    let mut scene = Scene::new();
+    let no_gate = LeaseMoment {
+        interventions: None,
+        ..moment()
+    };
+    for family in [
+        BrowserFamily::Navigate,
+        BrowserFamily::Click,
+        BrowserFamily::Type,
+    ] {
+        assert!(is_ask(
+            &scene
+                .access
+                .decide(&query(family, Impact::Routine), &no_gate)
+        ));
+    }
+    let untracked = LeaseMoment {
+        interventions: Some(BTreeMap::from([(OTHER_PAGE.to_owned(), 0)])),
+        ..moment()
+    };
+    assert!(is_ask(&scene.access.decide(
+        &query(BrowserFamily::Click, Impact::Routine),
+        &untracked
+    )));
+    // A use the gate vanished under is refused at the last check.
+    let used = covered(
+        scene
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    assert!(scene.access.confirm(&used, &no_gate).is_err());
+}
+
+/// Finding 3: the intervention marks are taken when the lease is cached
+/// (every tracked page) and when a page opens, not at a page's first use:
+/// a person on another page before the agent ever acted there ends it.
+#[test]
+fn ob08_review_marks_are_taken_when_cached_not_at_first_use() {
+    let mut scene = Scene::new();
+    covered(
+        scene
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    let mut person_elsewhere = gate(0);
+    if let Some(map) = person_elsewhere.as_mut() {
+        map.insert(OTHER_PAGE.to_owned(), 1);
+    }
+    let moved = LeaseMoment {
+        interventions: person_elsewhere,
+        ..moment()
+    };
+    let mut other = query(BrowserFamily::Click, Impact::Routine);
+    other.page_id = OTHER_PAGE;
+    assert!(is_lease_invalid(&scene.access.decide(&other, &moved)));
+
+    // A page opened after caching takes its mark when it opens.
+    let mut scene = Scene::new();
+    covered(
+        scene
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    let new_page = "pg-00000000000000000000000000000001";
+    scene.access.page_opened(new_page, Some(0));
+    let mut later = gate(0);
+    if let Some(map) = later.as_mut() {
+        map.insert(new_page.to_owned(), 2);
+    }
+    let mut on_new = query(BrowserFamily::Click, Impact::Routine);
+    on_new.page_id = new_page;
+    assert!(is_lease_invalid(&scene.access.decide(
+        &on_new,
+        &LeaseMoment {
+            interventions: later,
+            ..moment()
+        }
+    )));
+}
+
+/// Finding 7: a clock that went backwards (behind the store's last-seen
+/// time, or behind what this session already saw) refuses.
+#[test]
+fn ob08_review_a_clock_that_went_backwards_refuses() {
+    let mut scene = Scene::new();
+    let mut behind_store = view_of(vec![scene.lease.clone()]);
+    behind_store.clock_ms = NOW + 5_000;
+    scene.set_view(Ok(Some(behind_store)));
+    assert!(is_lease_invalid(&scene.access.decide(
+        &query(BrowserFamily::Click, Impact::Routine),
+        &moment()
+    )));
+
+    let mut scene = Scene::new();
+    let later = LeaseMoment {
+        now_ms: NOW + 9_000,
+        ..moment()
+    };
+    covered(
+        scene
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &later),
+    );
+    assert!(is_lease_invalid(&scene.access.decide(
+        &query(BrowserFamily::Click, Impact::Routine),
+        &moment()
+    )));
+}
+
+/// Finding 1 (partial): a store whose revocation counter went back behind
+/// one this session saw (restored from an older copy) refuses.
+#[test]
+fn ob08_review_a_store_that_went_back_refuses() {
+    let mut scene = Scene::new();
+    let mut ahead = view_of(vec![scene.lease.clone()]);
+    ahead.revocations = 4;
+    scene.set_view(Ok(Some(ahead)));
+    let used = covered(
+        scene
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    scene.access.confirm(&used, &moment()).expect("counter 4");
+    let used = covered(
+        scene
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    scene.set_view(Ok(Some(view_of(vec![scene.lease.clone()]))));
+    let refused = scene
+        .access
+        .confirm(&used, &moment())
+        .expect_err("went back");
+    assert!(refused.message.contains("went back"), "{}", refused.message);
+}
+
+/// The lease names the session's task label: another label, or none,
+/// never covers.
+#[test]
+fn ob08_review_the_task_label_is_bound() {
+    let lease = proof_lease(&routine_families(), |r| {
+        r.task = Some("Another task".into())
+    });
+    let mut scene = Scene::with(lease);
+    assert!(is_lease_invalid(&scene.access.decide(
+        &query(BrowserFamily::Click, Impact::Routine),
+        &moment()
+    )));
+}
+
+/// A stored secret.
+struct OneSecret(&'static str);
+
+impl SecretMatcher for OneSecret {
+    fn matches(&self, value: &str) -> Result<bool, ()> {
+        Ok(value.contains(self.0))
+    }
+}
+
+struct UnreadableSecrets;
+
+impl SecretMatcher for UnreadableSecrets {
+    fn matches(&self, _value: &str) -> Result<bool, ()> {
+        Err(())
+    }
+}
+
+/// Finding 8: a value that looks secret, or holds a stored secret, is
+/// never typed under a lease; an unreadable secret store leaves it to the
+/// person.
+#[test]
+fn ob08_review_secret_values_are_never_typed_under_a_lease() {
+    let access = |secrets: Box<dyn SecretMatcher>| {
+        FullAccess::new(
+            SESSION,
+            &client_ref(CLIENT),
+            Some(TASK),
+            Box::new(Source(Rc::new(Scripted::default()))),
+            secrets,
+            Some((SID.into(), LOGON)),
+        )
+    };
+    let plain = access(Box::new(NoSecrets));
+    assert_eq!(plain.fill_value("Ada Lovelace"), FillValue::Ordinary);
+    for value in [
+        "4111 1111 1111 1111",
+        "123456",
+        "sk-live-0123",
+        "my password",
+    ] {
+        assert_eq!(plain.fill_value(value), FillValue::Secret, "{value}");
+    }
+    let stored = access(Box::new(OneSecret("correct-horse-battery")));
+    assert_eq!(
+        stored.fill_value("note correct-horse-battery staple"),
+        FillValue::Secret
+    );
+    assert_eq!(stored.fill_value("Ada Lovelace"), FillValue::Ordinary);
+    let unreadable = access(Box::new(UnreadableSecrets));
+    assert_eq!(unreadable.fill_value("Ada Lovelace"), FillValue::Unverified);
+}
+
+/// Finding 1 (partial): no owner channel, no issuance (refused before any
+/// prompt); the requester is bound into the digest as well as shown.
+#[test]
+fn ob08_review_issuance_needs_the_owner_channel_and_binds_the_requester() {
+    let dir = scratch("owner");
+    let broker = broker_with_presence(dir.join("approvals.json"), TestPresenceVerifier::verified());
+    let recording = Recording::new(&broker);
+    let mut without = env(&dir);
+    without.owner = Box::new(NoOwnerChannel);
+    let refused = dispatch_management(
+        &without,
+        &recording,
+        &management("browser.lease.issue", "issue", issue_arguments()),
+    )
+    .expect_err("no owner channel");
+    assert_eq!(refused.code, FailureCode::CapabilityDenied);
+    assert!(
+        refused.message.contains("owner channel"),
+        "{}",
+        refused.message
+    );
+    assert!(recording.prompts.borrow().is_empty());
+    // The same request from two requesters: two digests.
+    for pid in [7, 8] {
+        let mut from = env(&dir);
+        from.owner = Box::new(TestOwner(pid));
+        let _ = dispatch_management(
+            &from,
+            &recording,
+            &management("browser.lease.issue", "issue", issue_arguments()),
+        );
+    }
+    let prompts = recording.prompts.borrow().clone();
+    assert_eq!(prompts.len(), 2);
+    assert_ne!(prompts[0].digest, prompts[1].digest);
+    let lease = full_control_store::load_store(&dir.join("full_control.json"), &KEY)
+        .expect("store")
+        .browser_leases
+        .first()
+        .cloned()
+        .expect("lease");
+    assert!(lease.requester.starts_with("pid 8 "), "{}", lease.requester);
+    assert_eq!(lease.task.as_deref(), Some(TASK));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Finding 5: families orceld does not enforce are refused at issuance.
+#[test]
+fn ob08_review_unimplemented_families_are_refused_at_issuance() {
+    let dir = scratch("families");
+    let broker = broker_with_presence(dir.join("approvals.json"), TestPresenceVerifier::verified());
+    let recording = Recording::new(&broker);
+    for family in ["read", "scroll", "download"] {
+        let mut arguments = issue_arguments();
+        arguments["families"] = json!(["navigate", family]);
+        let refused = dispatch_management(
+            &env(&dir),
+            &recording,
+            &management("browser.lease.issue", "issue", arguments),
+        )
+        .expect_err(family);
+        assert_eq!(refused.code, FailureCode::InvalidRequest, "{family}");
+    }
+    assert!(recording.prompts.borrow().is_empty());
+    let _ = std::fs::remove_dir_all(dir);
 }
