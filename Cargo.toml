@@ -19,6 +19,7 @@ members = [
   "crates/orcel-lifecycle",
   "crates/orceld",
   "crates/orcel-app-api-client",
+  "crates/orcel-search",
 ]
 
 [workspace.package]

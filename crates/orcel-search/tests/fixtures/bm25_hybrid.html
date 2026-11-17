@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>BM25 and hybrid retrieval: what lexical ranking still buys you</title>
+    <meta name="description" content="A field note on BM25, inverted indexes and hybrid retrieval for local-first search." />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Search Lab Notes" />
+    <meta property="article:published_time" content="2026-02-11T09:00:00Z" />
+    <meta name="author" content="Dana Whitfield" />
+    <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"BlogPosting","headline":"BM25 and hybrid retrieval","datePublished":"2026-02-11","author":{"@type":"Person","name":"Dana Whitfield"}}
+    </script>
+    <style>body{font-family:sans-serif}</style>
+  </head>
+  <body>
+    <header><nav><a href="/">Home</a><a href="/notes">Notes</a></nav></header>
+    <article>
+      <h1>BM25 and hybrid retrieval: what lexical ranking still buys you</h1>
+      <p>
+        BM25 remains the strongest single baseline for keyword retrieval. The scoring function rewards rare terms through
+        inverse document frequency and saturates term frequency, so a page that repeats a keyword forty times does not
+        outrank a page that uses it once, precisely where the query needs it.
+      </p>
+      <p>
+        In our benchmarks, a tuned BM25 index beat a small embedding model on exact-identifier queries, function names,
+        product codes and quoted phrases. Embeddings win on paraphrase and on queries written in a different vocabulary
+        from the document.
+      </p>
+      <h2>Hybrid retrieval</h2>
+      <p>
+        Hybrid retrieval runs BM25 and a dense retriever in parallel and fuses the ranked lists. Reciprocal rank fusion is
+        the cheapest fusion rule and needs no score calibration between the two systems.
+      </p>
+      <p>
+        The practical lesson for a local-first search engine is that BM25 costs a few megabytes of memory and zero API
+        calls, while a dense retriever costs a model download, a GPU budget or a hosted embedding endpoint.
+      </p>
+      <h2>Inverted index sizing</h2>
+      <p>
+        A compressed inverted index for one hundred thousand pages fits comfortably in memory on a laptop. Postings are
+        delta-encoded, term frequencies are quantised, and the whole structure rebuilds in under a minute on commodity
+        hardware.
+      </p>
+      <p>
+        If you are building offline search into a desktop agent, start with BM25, measure recall on your own queries, and
+        only then decide whether a neural retriever earns its footprint.
+      </p>
+    </article>
+    <footer><p>Search Lab Notes, 2026. No newsletter.</p></footer>
+  </body>
+</html>
