@@ -67,6 +67,7 @@ fn spec_with(main: PathBuf, profile: &Path, ephemeral: bool) -> WorkerLaunch {
     let (node, _) = prerequisites();
     WorkerLaunch {
         test_trusted_spki: None,
+        mode: crate::confinement::EngineMode::Shadow,
         runtime_pin: None,
         node,
         worker_main: main,

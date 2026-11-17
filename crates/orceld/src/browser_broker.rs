@@ -14,11 +14,18 @@
 //! - Each session owns one worker lifetime (its own supervised browser
 //!   host) and one Orcel-managed profile directory under the broker's root
 //!   in orceld's protected browser state, never a personal browser profile.
-//!   Profiles are ephemeral in this packet: the directory is removed when
-//!   the session ends. Persistent profiles, and routing the
-//!   `browser_structured` shapes through the broker, are deferred to the
-//!   packet the grain names for them (SG-000135 is being amended to place
-//!   both in OB-04, beside Shadow and Visible).
+//!   A session's profile is ephemeral by default: the directory is removed
+//!   when the session ends. SG-000135 OB-04 adds a persistent Orcel-managed
+//!   profile a session may name (`browser_profiles.rs`): its data folder
+//!   lives outside the session's directory, is held by one live session at
+//!   a time and is kept when the session ends. Routing the
+//!   `browser_structured` shapes through the broker stays deferred (see
+//!   `docs/orcel/implementation-readiness/prep/OB04_MODES_PROFILES.md`).
+//! - SG-000135 OB-04: each session has a mode, Shadow (the default:
+//!   headless, never the person's desktop) or Visible (a headed window named
+//!   as an Orcel agent session, which the caller chose). The broker records
+//!   it; the host builds the matching argv. Only Shadow advertises
+//!   no-interference.
 //! - Budgets: a per-client cap on open sessions, a device-wide cap held as
 //!   locked slot files (so every orceld on the device counts, and a crashed
 //!   orceld's slot frees itself), and a per-session action budget with a
@@ -95,6 +102,55 @@ impl Budgets {
     };
 }
 
+/// SG-000135 OB-04: where a session's engine runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SessionMode {
+    /// Headless, isolated, never the OS input, clipboard, focus or a
+    /// foreground window: the default.
+    #[default]
+    Shadow,
+    /// A headed engine window of its own, named as an Orcel agent session,
+    /// never raised over the person's foreground by Orcel. Chosen by the
+    /// caller; it never advertises no-interference.
+    Visible,
+}
+
+impl SessionMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Shadow => "shadow",
+            Self::Visible => "visible",
+        }
+    }
+
+    /// Parse a mode name; anything else is refused.
+    pub(crate) fn parse(value: &str) -> Result<Self, ProviderError> {
+        match value {
+            "shadow" => Ok(Self::Shadow),
+            "visible" => Ok(Self::Visible),
+            _ => Err(ProviderError::new(
+                FailureCode::InvalidRequest,
+                "mode is shadow or visible",
+            )),
+        }
+    }
+
+    /// Whether the mode may claim it does not interfere with the person:
+    /// only Shadow (FX-6: Visible never advertises no-interference).
+    pub(crate) fn no_interference(self) -> bool {
+        self == Self::Shadow
+    }
+}
+
+/// SG-000135 OB-04: what a new session is opened with.
+#[derive(Debug, Default)]
+pub(crate) struct SessionOptions {
+    pub mode: SessionMode,
+    /// A persistent Orcel-managed profile, held for the session's life;
+    /// `None` for the default ephemeral profile.
+    pub profile: Option<crate::browser_profiles::ProfileLease>,
+}
+
 /// What the broker needs from a session's worker.
 pub(crate) trait SessionWorker {
     /// Whether the worker still answers.
@@ -115,11 +171,16 @@ pub(crate) struct SessionDirs {
     pub host: PathBuf,
     pub pages: PathBuf,
     pub intents: PathBuf,
+    /// SG-000135 OB-04: the persistent profile's data folder the session's
+    /// host uses in place of an ephemeral profile (outside `root`, kept when
+    /// the session ends), or `None`.
+    pub persistent_profile: Option<PathBuf>,
 }
 
 impl SessionDirs {
     fn under(root: PathBuf) -> Self {
         Self {
+            persistent_profile: None,
             profiles: root.join("profiles"),
             staging: root.join("staging"),
             host: root.join("host"),
@@ -140,7 +201,7 @@ impl SessionDirs {
 
 /// Whether `metadata` (from `symlink_metadata`) is a reparse point: a
 /// symbolic link, a junction or any other Windows reparse point.
-fn is_reparse(metadata: &std::fs::Metadata) -> bool {
+pub(crate) fn is_reparse(metadata: &std::fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -154,7 +215,7 @@ fn is_reparse(metadata: &std::fs::Metadata) -> bool {
 
 /// Create `dir` if needed and require it to be a real directory, not a
 /// junction, a symbolic link or a file.
-fn real_dir(dir: &Path) -> Result<(), ProviderError> {
+pub(crate) fn real_dir(dir: &Path) -> Result<(), ProviderError> {
     let refused = || {
         ProviderError::new(
             FailureCode::ProviderUnavailable,
@@ -172,7 +233,7 @@ fn real_dir(dir: &Path) -> Result<(), ProviderError> {
 /// link or junction inside it is removed as a link, its target untouched.
 /// A `path` that is itself a reparse point is refused (left in place).
 /// True when nothing is left at `path`.
-fn remove_tree(path: &Path) -> bool {
+pub(crate) fn remove_tree(path: &Path) -> bool {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
         Err(_) => false,
@@ -203,7 +264,7 @@ fn remove_tree(path: &Path) -> bool {
 
 /// Try an exclusive lock on the lock file at `path` (created if missing).
 /// `Ok(Some)` holds it; `Ok(None)` means another process holds it.
-fn try_lock_file(path: &Path) -> Result<Option<File>, ProviderError> {
+pub(crate) fn try_lock_file(path: &Path) -> Result<Option<File>, ProviderError> {
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -289,6 +350,9 @@ pub(crate) struct EndReport {
     pub worker_ended: bool,
     /// The session's profile directory no longer exists.
     pub profile_removed: bool,
+    /// SG-000135 OB-04: the persistent profile the session held, kept (and
+    /// released for the next session), if any.
+    pub persistent_profile: Option<String>,
 }
 
 impl EndReport {
@@ -298,6 +362,9 @@ impl EndReport {
             "reason": self.reason.as_str(),
             "worker_ended": self.worker_ended,
             "profile_removed": self.profile_removed,
+            "profile_mode": if self.persistent_profile.is_some() { "persistent" } else { "ephemeral" },
+            "profile": self.persistent_profile,
+            "profile_kept": self.persistent_profile.is_some(),
         })
     }
 }
@@ -388,6 +455,11 @@ pub(crate) struct BrokerSession<W> {
     pub task: Option<String>,
     pub dirs: SessionDirs,
     pub created_ms: u64,
+    /// SG-000135 OB-04: Shadow or Visible, fixed for the session's life.
+    pub mode: SessionMode,
+    /// SG-000135 OB-04: the persistent profile held, released when the
+    /// session ends (after its worker is gone).
+    profile: Option<crate::browser_profiles::ProfileLease>,
     pub worker: W,
     /// The session's page id in its worker's page store, once opened.
     pub page_id: Option<String>,
@@ -452,6 +524,21 @@ impl<W> BrokerSession<W> {
     #[cfg(test)]
     pub(crate) fn actions(&self) -> u64 {
         self.actions
+    }
+
+    /// SG-000135 OB-04: the persistent profile's name, if the session holds one.
+    pub(crate) fn profile_name(&self) -> Option<&str> {
+        self.profile.as_ref().map(|lease| lease.name.as_str())
+    }
+
+    /// SG-000135 OB-04: how the session runs, as replies show it.
+    pub(crate) fn mode_json(&self) -> Value {
+        json!({
+            "mode": self.mode.as_str(),
+            "no_interference": self.mode.no_interference(),
+            "profile_mode": if self.profile.is_some() { "persistent" } else { "ephemeral" },
+            "profile": self.profile_name(),
+        })
     }
 }
 
@@ -639,10 +726,35 @@ impl<W: SessionWorker> Broker<W> {
 
     /// Open a session for `client`, whose worker `start` launches on the
     /// session's own directories. `random` is 8 fresh random bytes.
+    #[cfg(test)]
     pub(crate) fn create(
         &mut self,
         client: &str,
         task: Option<&str>,
+        random: [u8; 8],
+        now_ms: u64,
+        start: impl FnOnce(&str, &SessionDirs) -> Result<W, ProviderError>,
+    ) -> Result<&mut BrokerSession<W>, ProviderError> {
+        self.create_with(
+            client,
+            task,
+            SessionOptions::default(),
+            random,
+            now_ms,
+            start,
+        )
+    }
+
+    /// Open a session for `client` with `options` (SG-000135 OB-04: its
+    /// mode, and a persistent profile already held for it). The worker
+    /// `start` launches sees the profile's data folder in
+    /// `SessionDirs::persistent_profile`. On any refusal the profile is
+    /// released with `options`.
+    pub(crate) fn create_with(
+        &mut self,
+        client: &str,
+        task: Option<&str>,
+        options: SessionOptions,
         random: [u8; 8],
         now_ms: u64,
         start: impl FnOnce(&str, &SessionDirs) -> Result<W, ProviderError>,
@@ -681,7 +793,8 @@ impl<W: SessionWorker> Broker<W> {
             self.counter,
             hex(&random)
         );
-        let dirs = SessionDirs::under(sessions_root.join(&id));
+        let mut dirs = SessionDirs::under(sessions_root.join(&id));
+        dirs.persistent_profile = options.profile.as_ref().map(|lease| lease.data_dir.clone());
         if std::fs::symlink_metadata(&dirs.root).is_ok() {
             return Err(ProviderError::new(
                 FailureCode::InternalError,
@@ -705,6 +818,8 @@ impl<W: SessionWorker> Broker<W> {
             task: task.map(str::to_owned),
             dirs,
             created_ms: now_ms,
+            mode: options.mode,
+            profile: options.profile,
             worker,
             page_id: None,
             actions: 0,
@@ -810,6 +925,9 @@ impl<W: SessionWorker> Broker<W> {
     fn end(&mut self, id: &str, reason: EndReason) -> Option<EndReport> {
         let session = self.sessions.remove(id)?;
         let root = session.dirs.root.clone();
+        let persistent_profile = session.profile_name().map(str::to_owned);
+        // The worker first; the persistent profile's lock is released only
+        // when the rest of the session drops, after the worker is gone.
         let worker_ended = session.worker.shutdown();
         // The worker removes its own profile on a clean shutdown; the
         // session's directory (profiles, staging, page store) goes here,
@@ -839,6 +957,7 @@ impl<W: SessionWorker> Broker<W> {
             reason,
             worker_ended,
             profile_removed,
+            persistent_profile,
         })
     }
 
@@ -870,7 +989,10 @@ impl<W: SessionWorker> Broker<W> {
             "receipts": session.receipts().map(Receipt::to_json).collect::<Vec<_>>(),
             "receipts_dropped": session.receipts_dropped,
             "last_receipt_sha256": session.last_receipt_sha256,
-            "profile_mode": "ephemeral",
+            "mode": session.mode.as_str(),
+            "no_interference": session.mode.no_interference(),
+            "profile_mode": if session.profile.is_some() { "persistent" } else { "ephemeral" },
+            "profile": session.profile_name(),
         }))
     }
 }
@@ -1606,5 +1728,228 @@ mod tests {
             Budgets::DEFAULT
         )
         .is_err());
+    }
+
+    // SG-000135 OB-04: modes and persistent profiles.
+
+    type Outcome = Result<(), Box<dyn std::error::Error>>;
+
+    fn boxed(error: ProviderError) -> Box<dyn std::error::Error> {
+        format!("{:?}: {}", error.code, error.message).into()
+    }
+
+    impl Scene {
+        /// Open a session with `options`; its worker writes `secret` into
+        /// whichever profile the session runs in (the persistent profile's
+        /// data folder, or its own ephemeral profile root), as an engine
+        /// would write cookies.
+        fn create_in(
+            &mut self,
+            broker: &mut Broker<TestWorker>,
+            client: &str,
+            options: SessionOptions,
+            secret: &str,
+        ) -> Result<String, ProviderError> {
+            let (shutdowns, usable) = (Rc::clone(&self.shutdowns), Rc::clone(&self.usable));
+            let random = self.random();
+            let secret = secret.to_owned();
+            broker
+                .create_with(client, Some("task"), options, random, 1, move |_, dirs| {
+                    let profile = dirs
+                        .persistent_profile
+                        .clone()
+                        .unwrap_or_else(|| dirs.profiles.clone());
+                    let marker = profile.join("cookies.txt");
+                    std::fs::write(&marker, secret).map_err(|_| {
+                        ProviderError::new(FailureCode::InternalError, "test marker")
+                    })?;
+                    Ok(TestWorker {
+                        profile_marker: marker,
+                        usable,
+                        shutdowns,
+                    })
+                })
+                .map(|session| session.id.clone())
+        }
+
+        fn store(&self) -> Result<crate::browser_profiles::ProfileStore, ProviderError> {
+            crate::browser_profiles::ProfileStore::open(self.root.join("named-profiles"))
+        }
+    }
+
+    #[test]
+    fn ob04_a_persistent_profile_outlives_its_session_and_serves_the_next_one() -> Outcome {
+        let mut scene = Scene::new("persist");
+        let store = scene.store().map_err(boxed)?;
+        store.create("work", 1).map_err(boxed)?;
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let lease = store.acquire("work").map_err(boxed)?;
+        let data = lease.data_dir.clone();
+        let first = scene
+            .create_in(
+                &mut broker,
+                "client-a",
+                SessionOptions {
+                    mode: SessionMode::Shadow,
+                    profile: Some(lease),
+                },
+                "session=kept",
+            )
+            .map_err(boxed)?;
+        let session_root = broker
+            .peek("client-a", &first)
+            .map_err(boxed)?
+            .dirs
+            .root
+            .clone();
+        assert!(
+            !data.starts_with(&session_root),
+            "the profile lives outside the session"
+        );
+        let status = broker.status("client-a", &first).map_err(boxed)?;
+        assert_eq!(status["profile_mode"], "persistent");
+        assert_eq!(status["profile"], "work");
+        // One live session per profile, in this orceld or any other.
+        assert!(store.acquire("work").is_err());
+        let report = broker.close("client-a", &first).map_err(boxed)?;
+        assert_eq!(report.persistent_profile.as_deref(), Some("work"));
+        assert!(
+            report.profile_removed,
+            "the session's own directory is gone"
+        );
+        assert!(!session_root.exists());
+        assert_eq!(std::fs::read(data.join("cookies.txt"))?, b"session=kept");
+        assert_eq!(report.to_json()["profile_kept"], true);
+
+        // A later session (here a new orceld instance) reopens it.
+        drop(broker);
+        let mut later = scene.broker(OTHER_INSTANCE, Budgets::DEFAULT);
+        let lease = store.acquire("work").map_err(boxed)?;
+        assert_eq!(
+            std::fs::read(lease.data_dir.join("cookies.txt"))?,
+            b"session=kept"
+        );
+        let second = scene
+            .create_in(
+                &mut later,
+                "client-b",
+                SessionOptions {
+                    mode: SessionMode::Shadow,
+                    profile: Some(lease),
+                },
+                "session=kept",
+            )
+            .map_err(boxed)?;
+        // The earlier instance's session id is refused here.
+        assert!(later.status("client-a", &first).is_err());
+        later.close("client-b", &second).map_err(boxed)?;
+        assert!(store.acquire("work").is_ok(), "released at close");
+        Ok(())
+    }
+
+    #[test]
+    fn ob04_sessions_on_different_profiles_share_no_profile_staging_or_downloads() -> Outcome {
+        let mut scene = Scene::new("isolate");
+        let store = scene.store().map_err(boxed)?;
+        store.create("alpha", 1).map_err(boxed)?;
+        store.create("beta", 1).map_err(boxed)?;
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let open = |scene: &mut Scene, broker: &mut Broker<TestWorker>, name: &str| {
+            let lease = store.acquire(name).map_err(boxed)?;
+            scene
+                .create_in(
+                    broker,
+                    "client-a",
+                    SessionOptions {
+                        mode: SessionMode::Shadow,
+                        profile: Some(lease),
+                    },
+                    name,
+                )
+                .map_err(boxed)
+        };
+        let a = open(&mut scene, &mut broker, "alpha")?;
+        let b = open(&mut scene, &mut broker, "beta")?;
+        let dirs_a = broker.peek("client-a", &a).map_err(boxed)?.dirs.clone();
+        let dirs_b = broker.peek("client-a", &b).map_err(boxed)?.dirs.clone();
+        let (Some(profile_a), Some(profile_b)) = (
+            dirs_a.persistent_profile.clone(),
+            dirs_b.persistent_profile.clone(),
+        ) else {
+            return Err("both sessions hold a persistent profile".into());
+        };
+        for (left, right) in [
+            (&profile_a, &profile_b),
+            (&dirs_a.staging, &dirs_b.staging),
+            (&dirs_a.host, &dirs_b.host),
+            (&dirs_a.root, &dirs_b.root),
+        ] {
+            assert_ne!(left, right);
+            assert!(!left.starts_with(right) && !right.starts_with(left));
+        }
+        assert_eq!(std::fs::read(profile_a.join("cookies.txt"))?, b"alpha");
+        assert_eq!(std::fs::read(profile_b.join("cookies.txt"))?, b"beta");
+        broker.end_all(EndReason::Closed);
+        assert_eq!(std::fs::read(profile_a.join("cookies.txt"))?, b"alpha");
+        Ok(())
+    }
+
+    #[test]
+    fn ob04_the_mode_is_recorded_and_only_shadow_claims_no_interference() -> Outcome {
+        let mut scene = Scene::new("modes");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let shadow = scene
+            .create_in(&mut broker, "client-a", SessionOptions::default(), "s")
+            .map_err(boxed)?;
+        let visible = scene
+            .create_in(
+                &mut broker,
+                "client-a",
+                SessionOptions {
+                    mode: SessionMode::Visible,
+                    profile: None,
+                },
+                "v",
+            )
+            .map_err(boxed)?;
+        let shadow_status = broker.status("client-a", &shadow).map_err(boxed)?;
+        assert_eq!(shadow_status["mode"], "shadow");
+        assert_eq!(shadow_status["no_interference"], true);
+        assert_eq!(shadow_status["profile_mode"], "ephemeral");
+        let visible_status = broker.status("client-a", &visible).map_err(boxed)?;
+        assert_eq!(visible_status["mode"], "visible");
+        assert_eq!(visible_status["no_interference"], false);
+        assert_eq!(
+            SessionMode::parse("visible").map_err(boxed)?,
+            SessionMode::Visible
+        );
+        assert!(SessionMode::parse("headed").is_err());
+        assert!(SessionMode::parse("Shadow").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn ob04_a_refused_session_releases_the_profile_it_was_given() -> Outcome {
+        let mut scene = Scene::new("release");
+        let store = scene.store().map_err(boxed)?;
+        store.create("work", 1).map_err(boxed)?;
+        let budgets = Budgets {
+            per_client: 0,
+            ..Budgets::DEFAULT
+        };
+        let mut broker = scene.broker(INSTANCE, budgets);
+        let lease = store.acquire("work").map_err(boxed)?;
+        let refused = scene.create_in(
+            &mut broker,
+            "client-a",
+            SessionOptions {
+                mode: SessionMode::Shadow,
+                profile: Some(lease),
+            },
+            "x",
+        );
+        assert!(refused.is_err());
+        assert!(store.acquire("work").is_ok(), "released with the refusal");
+        Ok(())
     }
 }

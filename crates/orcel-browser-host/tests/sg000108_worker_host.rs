@@ -96,6 +96,8 @@ fn launch_with(
         profile_root: root.join("profiles"),
         temp_dir: root.join("staging"),
         state_root: root.join("state"),
+        mode: orcel_browser_host::EngineMode::Shadow,
+        persistent_profile: None,
     };
     for dir in [&launch.profile_root, &launch.temp_dir, &launch.state_root] {
         std::fs::create_dir_all(dir).expect("dirs");

@@ -11,7 +11,7 @@ import { chromium, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
 import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
-import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, MAX_URL_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
+import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, isVisibleArgv, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, MAX_URL_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
@@ -60,7 +60,10 @@ const playwrightLauncher: Launcher = {
       ignoreDefaultArgs: true,
       args: spec.argv,
       env: spec.env,
-      headless: true,
+      // SG-000135 OB-04: headless (Shadow) unless the host-built argv is
+      // exactly the Visible form launchRefusal accepted. Nothing here ever
+      // raises, focuses or activates the window.
+      headless: !isVisibleArgv(spec.argv),
       // Downloads never happen through the engine: an approved document is
       // captured by the redirect guard instead (slice 3d).
       acceptDownloads: false,

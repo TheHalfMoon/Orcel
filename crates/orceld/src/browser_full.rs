@@ -4,9 +4,15 @@
 //! names the broker's `session_id`. A caller says only what it may say
 //! about its own session: the session id the broker minted, a URL, an
 //! observed node, a value or option label, postconditions, the generation
-//! it saw, and an optional task label for a new session. Profiles, pins,
-//! folders, approvals, scripts, selectors and page ids are never the
+//! it saw, and an optional task label for a new session. Pins, folders,
+//! paths, approvals, scripts, selectors and page ids are never the
 //! caller's: the broker holds the session's page.
+//!
+//! SG-000135 OB-04: a new session may also name its mode (`shadow`, the
+//! default, or `visible`) and an existing Orcel-managed profile by its
+//! checked name (never a path: orceld builds every path from the name under
+//! its own state). `profiles` lists those profiles; `profile_create` and
+//! `profile_delete` name one, and each asks the owner first.
 //!
 //! Each shape that maps onto an existing live host action is also checked
 //! in that action's live form by `PolicyEngine::authorize_live_browser`
@@ -24,7 +30,7 @@ pub(crate) const VALIDATION_PAGE_ID: &str = "pg-ob02-validation";
 
 /// Each broker operation, its required and its optional argument fields.
 const FORMS: &[(&str, &[&str], &[&str])] = &[
-    ("create", &[], &["task"]),
+    ("create", &[], &["task", "mode", "profile"]),
     ("open", &["session_id", "url"], &[]),
     ("snapshot", &["session_id"], &[]),
     (
@@ -57,6 +63,10 @@ const FORMS: &[(&str, &[&str], &[&str])] = &[
     ("tabs", &["session_id", "action"], &["url", "page_id"]),
     ("close", &["session_id"], &[]),
     ("status", &["session_id"], &[]),
+    // SG-000135 OB-04: persistent Orcel-managed profiles.
+    ("profiles", &[], &[]),
+    ("profile_create", &["name"], &[]),
+    ("profile_delete", &["name"], &[]),
 ];
 
 /// SG-000135 OB-03: what `browser_tabs` asks for.
@@ -88,6 +98,11 @@ pub(crate) fn is_page_id(id: &str) -> bool {
 pub(crate) enum FullAction {
     Create {
         task: Option<String>,
+        /// SG-000135 OB-04: Shadow (default) or Visible.
+        mode: browser_broker::SessionMode,
+        /// SG-000135 OB-04: an existing persistent profile's name, or
+        /// `None` for an ephemeral profile (the default).
+        profile: Option<String>,
     },
     Open {
         session: String,
@@ -136,6 +151,16 @@ pub(crate) enum FullAction {
     },
     Status {
         session: String,
+    },
+    /// SG-000135 OB-04: list the persistent profiles (read-only).
+    Profiles,
+    /// SG-000135 OB-04: create a persistent profile (owner-approved).
+    ProfileCreate {
+        name: String,
+    },
+    /// SG-000135 OB-04: delete a persistent profile (owner-approved).
+    ProfileDelete {
+        name: String,
     },
 }
 
@@ -214,7 +239,33 @@ pub(crate) fn parse(request: &RequestEnvelope) -> Result<FullAction, ProviderErr
                     Some(task)
                 }
             };
-            FullAction::Create { task }
+            let mode = match arguments.get("mode") {
+                None => browser_broker::SessionMode::Shadow,
+                Some(_) => browser_broker::SessionMode::parse(&text("mode")?)?,
+            };
+            let profile = match arguments.get("profile") {
+                None => None,
+                Some(_) => {
+                    let name = text("profile")?;
+                    crate::browser_profiles::check_name(&name)?;
+                    Some(name)
+                }
+            };
+            FullAction::Create {
+                task,
+                mode,
+                profile,
+            }
+        }
+        "profiles" => FullAction::Profiles,
+        "profile_create" | "profile_delete" => {
+            let name = text("name")?;
+            crate::browser_profiles::check_name(&name)?;
+            if request.operation == "profile_create" {
+                FullAction::ProfileCreate { name }
+            } else {
+                FullAction::ProfileDelete { name }
+            }
         }
         "open" => FullAction::Open {
             session: session()?,
@@ -313,7 +364,10 @@ impl FullAction {
     #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
     pub(crate) fn session_id(&self) -> Option<&str> {
         match self {
-            Self::Create { .. } => None,
+            Self::Create { .. }
+            | Self::Profiles
+            | Self::ProfileCreate { .. }
+            | Self::ProfileDelete { .. } => None,
             Self::Open { session, .. }
             | Self::Snapshot { session }
             | Self::Click { session, .. }
@@ -344,6 +398,9 @@ impl FullAction {
             Self::Tabs { .. } => "browser_tabs",
             Self::Close { .. } => "browser_close",
             Self::Status { .. } => "browser_task_status",
+            Self::Profiles => "browser_profiles",
+            Self::ProfileCreate { .. } => "browser_profile_create",
+            Self::ProfileDelete { .. } => "browser_profile_delete",
         }
     }
 
@@ -418,7 +475,10 @@ impl FullAction {
             | Self::Screenshot { .. }
             | Self::Tabs { .. }
             | Self::Close { .. }
-            | Self::Status { .. } => return None,
+            | Self::Status { .. }
+            | Self::Profiles
+            | Self::ProfileCreate { .. }
+            | Self::ProfileDelete { .. } => return None,
         };
         Some(RequestEnvelope {
             version: base.version,
@@ -528,15 +588,70 @@ mod tests {
             ),
             ("close", json!({"session_id": SESSION})),
             ("status", json!({"session_id": SESSION})),
+            ("create", json!({"mode": "visible"})),
+            ("create", json!({"mode": "shadow", "profile": "work"})),
+            ("profiles", json!({})),
+            ("profile_create", json!({"name": "work"})),
+            ("profile_delete", json!({"name": "work"})),
         ];
         for (operation, arguments) in cases {
             let action = parse(&request(operation, arguments)).unwrap();
             assert_eq!(
                 action.session_id().is_some(),
-                operation != "create",
+                !["create", "profiles", "profile_create", "profile_delete"].contains(&operation),
                 "{operation}"
             );
         }
+    }
+
+    /// SG-000135 OB-04: a mode is shadow or visible (shadow by default), and
+    /// a profile is a checked name, never a path or a person's profile.
+    #[test]
+    fn ob04_mode_and_profile_are_closed_and_never_a_path() -> Result<(), String> {
+        let parsed = |arguments: Value| {
+            parse(&request("create", arguments)).map_err(|e| format!("{:?}: {}", e.code, e.message))
+        };
+        match parsed(json!({}))? {
+            FullAction::Create { mode, profile, .. } => {
+                assert_eq!(mode, browser_broker::SessionMode::Shadow);
+                assert_eq!(profile, None);
+            }
+            other => return Err(format!("not a create: {other:?}")),
+        }
+        match parsed(json!({"mode": "visible", "profile": "shop-2"}))? {
+            FullAction::Create { mode, profile, .. } => {
+                assert_eq!(mode, browser_broker::SessionMode::Visible);
+                assert_eq!(profile.as_deref(), Some("shop-2"));
+            }
+            other => return Err(format!("not a create: {other:?}")),
+        }
+        for arguments in [
+            json!({"mode": "headed"}),
+            json!({"mode": "Visible"}),
+            json!({"mode": true}),
+            json!({"profile": "Default"}),
+            json!({"profile": "C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data"}),
+            json!({"profile": "../work"}),
+            json!({"profile": "work/data"}),
+            json!({"profile": ""}),
+            json!({"profile": 7}),
+            json!({"profile_dir": "C:\\x"}),
+        ] {
+            assert!(parsed(arguments.clone()).is_err(), "{arguments}");
+        }
+        for (operation, arguments) in [
+            ("profile_create", json!({})),
+            ("profile_create", json!({"name": "Work"})),
+            ("profile_create", json!({"name": "work", "path": "C:\\x"})),
+            ("profile_delete", json!({"name": "a/b"})),
+            ("profiles", json!({"name": "work"})),
+        ] {
+            assert!(
+                parse(&request(operation, arguments.clone())).is_err(),
+                "{operation} {arguments}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

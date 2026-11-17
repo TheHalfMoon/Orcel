@@ -3,10 +3,13 @@ import { test } from "node:test";
 import {
   encodeFrame,
   FrameDecoder,
+  isVisibleArgv,
   launchRefusal,
   MAX_FRAME_BYTES,
   parseHostFrame,
   ProtocolViolation,
+  VISIBLE_FLAGS,
+  VISIBLE_WINDOW_NAME_FLAG,
 } from "./protocol.js";
 import { validLaunch } from "./fixtures.js";
 
@@ -369,6 +372,36 @@ test("a trusted test certificate is accepted only with loopback fixture pins", (
     assert.notEqual(launchRefusal({ ...publicLaunch, argv: [...loopbackArgv.slice(0, -1), bad, "about:blank"] }), null, bad);
   }
   assert.notEqual(launchRefusal({ ...publicLaunch, argv: [...withCertificate(loopbackArgv).slice(0, -1), spki, "about:blank"] }), null);
+});
+
+test("SG-000135 OB-04: a Visible launch drops only --headless and adds only the fixed window name", () => {
+  const shadow = validLaunch();
+  assert.equal(isVisibleArgv(shadow.argv), false);
+  // The Rust host's Visible argv: the frozen flags without --headless, the
+  // window name, then the Shadow argv's profile, pipe, confinement flags and
+  // blank page (crates/orcel-browser-host/src/confinement.rs).
+  const visibleArgv = [...VISIBLE_FLAGS, ...shadow.argv.slice(7)];
+  assert.equal(visibleArgv.length, shadow.argv.length);
+  assert.equal(visibleArgv.includes("--headless"), false);
+  assert.equal(visibleArgv[6], VISIBLE_WINDOW_NAME_FLAG);
+  const visible = { ...shadow, argv: visibleArgv };
+  assert.equal(isVisibleArgv(visible.argv), true);
+  assert.equal(launchRefusal(visible), null);
+  const refusals = [
+    // Headed with no window name, or a window name of the page's choosing.
+    [...VISIBLE_FLAGS.slice(0, -1), ...shadow.argv.slice(7)],
+    [...VISIBLE_FLAGS.slice(0, -1), "--window-name=My bank", ...shadow.argv.slice(7)],
+    // Both --headless and the window name, or the name in another place.
+    ["--headless", ...VISIBLE_FLAGS, ...shadow.argv.slice(7)],
+    [...VISIBLE_FLAGS.slice(0, -1), ...shadow.argv.slice(7, -1), VISIBLE_WINDOW_NAME_FLAG, "about:blank"],
+    // Anything that raises or focuses the window, or a debugging port.
+    [...VISIBLE_FLAGS, "--start-maximized", ...shadow.argv.slice(7)],
+    [...VISIBLE_FLAGS, "--kiosk", ...shadow.argv.slice(7)],
+    [...VISIBLE_FLAGS, ...shadow.argv.slice(7, -1), "--remote-debugging-port=9222", "about:blank"]
+  ];
+  for (const argv of refusals) {
+    assert.equal(typeof launchRefusal({ ...shadow, argv }), "string", argv.join(" "));
+  }
 });
 
 test("download frames carry a strict ref and an absolute .part staging path", () => {

@@ -3958,6 +3958,8 @@ mod native {
                     profile_root: self.root.join("profiles"),
                     temp_dir: self.root.join("staging"),
                     state_root: self.root.join("state"),
+                    mode: orcel_browser_host::EngineMode::Shadow,
+                    persistent_profile: None,
                 },
                 &self.state(),
             )

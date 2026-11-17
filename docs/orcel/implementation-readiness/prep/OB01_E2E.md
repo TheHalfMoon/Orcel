@@ -158,6 +158,24 @@ A third run, after the re-judge's fixes (every page reply tab-checked, a crash h
 - **Popups.** At most 4 popups wait for admission at once; any further popup is closed at once.
 - **Where the image is kept.** It is in the tool reply only. The broker's receipt (`ActionRecord`, `browser_task_status`) keeps the SHA-256 digest (`evidence_kind: screenshot`) and never the image or its base64; the mission checks that no receipt holds `png_base64`.
 
+## OB-04 extension: modes and persistent profiles (SG-000135 OB-04)
+
+Design: `OB04_MODES_PROFILES.md`. The script adds the following, all native on Windows. Nothing sends keyboard or mouse input.
+
+- **Shadow desktop check on the mission above.** A read-only probe (a PowerShell `Add-Type` of `GetForegroundWindow`, `GetCursorPos`, `GetClipboardSequenceNumber`, `GetLastInputInfo` and `EnumWindows`) reads the foreground window, cursor and clipboard sequence number before `browser_session_create` and after `browser_close`. They must be equal. While the session lives, the session's Edge must have no visible window. If the person gave input in between, the comparison is recorded as inconclusive, never as passed.
+- **Phase 1, first orceld (FA-H).** Steps: `browser_profiles` (empty), `browser_profile_create` for `ob04-e2e-keep` and `ob04-e2e-other` (SOFT each), a duplicate name refused, and a session on a missing profile refused. Then a session on `keep`: `/ob04-show` shows no cookie, `/ob04-set-alpha` sets a one-hour cookie by response header, and `/ob04-show` shows `alpha`. Edge runs headless in `named-profiles/ob04-e2e-keep/data`. `browser_close` reports `profile_kept`. The MCP session then ends and orceld exits.
+- **Phase 2, a new orceld (FA-H, SH-8, FA-F).** The first orceld's session id is refused (`TARGET_STALE`). New sessions on `keep` and `other` run at the same time, one Edge each, each in its own profile. `keep` still sends `alpha` after the restart. `other` has no cookie, sets `beta`, and `keep` still sees `alpha`. Deleting a profile a session holds is refused, and so is a second session on a held profile. Both profiles are then deleted (SOFT each), and their folders are gone.
+- **Phase 3, Visible.** A `mode: visible` session opens the fixture form. Checked: Edge is headed, over the pipe, with no remote debugging port. It has one window titled `Orcel agent session`. The window is not the foreground window, and the foreground window, cursor and clipboard are unchanged. The script also records whether the window sits above the foreground window in z-order. After `browser_close` the window and its Edge are gone.
+- Scripted consent now approves, besides the mission's four actions on the fixture, only the two profile writes on `orcel-browser-profile:ob04-e2e-*`. The run expects 5 + 12 prompts, all approved.
+
+Scripted run on this PC, 2026-11-17 (Edge 157.0.4341.60, Windows 11 Home 10.0.26300). The first run failed at its last check, because the script looked for text the form page does not hold. After that one-line script fix, the second run passed every step:
+
+- Shadow desktop: foreground, cursor and clipboard unchanged, with no human input during the mission. 0 visible Shadow windows.
+- Cookie kept across the orceld restart: yes. Isolation: 2 Edge browser processes, 1 in each profile. Cookies did not cross.
+- Visible: 1 window titled `Orcel agent session`. It did not take the foreground, was not above the foreground window (z 2), and left the desktop unchanged.
+- 12 OB-04 approvals. MCP exits 0, 0 and 0. No Edge and no session folder left. The mission above: 15 receipts chained (head `0cf236d3b08963e7...`), whole session 16537 ms.
+- **Scripted consent, not human acceptance.**
+
 ## Not covered
 
 - The founder-present run (above).

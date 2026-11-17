@@ -392,6 +392,14 @@ pub struct WorkerHostLaunch {
     pub profile_root: std::path::PathBuf,
     pub temp_dir: std::path::PathBuf,
     pub state_root: std::path::PathBuf,
+    /// SG-000135 OB-04: Shadow (headless; every `browser_structured` host)
+    /// or Visible (a headed window named as an Orcel agent session).
+    pub mode: crate::confinement::EngineMode,
+    /// SG-000135 OB-04: an Orcel-managed persistent profile data directory
+    /// under orceld's protected browser state, used by every lifetime of the
+    /// host and never removed by it; `None` for a fresh ephemeral profile
+    /// per lifetime under `profile_root`.
+    pub persistent_profile: Option<std::path::PathBuf>,
 }
 
 #[cfg(all(
@@ -425,6 +433,12 @@ impl Supervisor {
             "--temp-dir".to_string(),
             path(&launch.temp_dir),
         ];
+        if launch.mode != crate::confinement::EngineMode::Shadow {
+            args.extend(["--mode".to_string(), launch.mode.as_str().to_string()]);
+        }
+        if let Some(dir) = &launch.persistent_profile {
+            args.extend(["--profile-dir".to_string(), path(dir)]);
+        }
         if let Some(node) = &launch.node {
             args.extend(["--node".to_string(), path(node)]);
         }

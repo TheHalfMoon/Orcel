@@ -12,9 +12,9 @@
 //! removes an ephemeral profile.
 
 use crate::argv::FORBIDDEN_FLAGS;
-#[cfg(windows)]
-use crate::confinement::build_worker_argv;
 use crate::confinement::{assert_no_managed_policy, AdmittedDestination, PolicySource};
+#[cfg(windows)]
+use crate::confinement::{build_worker_argv_in, EngineMode};
 use crate::discovery::Engine;
 use crate::error::{HostError, UnavailableReason};
 use crate::supervise::{CleanEnv, JOB_ACTIVE_PROCESS_LIMIT};
@@ -418,6 +418,9 @@ pub struct WorkerLaunch {
     pub temp_dir: PathBuf,
     /// Destinations admitted into this engine lifetime.
     pub destinations: Vec<AdmittedDestination>,
+    /// SG-000135 OB-04: Shadow (headless, the SG-000108 argv) or Visible
+    /// (a headed window named as an Orcel agent session).
+    pub mode: EngineMode,
     /// SG-000108 decision 7: the runtime the build pinned. When set, launch
     /// verifies `node.exe` and the worker's runtime tree against it through
     /// handles that refuse writes and deletes, and holds them for the
@@ -1833,7 +1836,7 @@ mod platform {
             _ => 0,
         };
         #[allow(unused_mut)] // mutated in test builds only
-        let mut argv = build_worker_argv(&spec.profile_dir, &spec.destinations)?;
+        let mut argv = build_worker_argv_in(&spec.profile_dir, &spec.destinations, spec.mode)?;
         #[cfg(any(test, feature = "live-browser-test"))]
         if let Some(spki) = &spec.test_trusted_spki {
             // Before the trailing blank page, where the worker expects it.
@@ -6282,6 +6285,7 @@ mod tests {
         };
         let launch = |destinations| WorkerLaunch {
             test_trusted_spki: None,
+            mode: crate::confinement::EngineMode::Shadow,
             runtime_pin: None,
             node: base.join("node.exe"),
             worker_main: base.join("main.js"),
@@ -6328,6 +6332,7 @@ mod tests {
         }
         let spec = |engine: Engine| WorkerLaunch {
             test_trusted_spki: None,
+            mode: crate::confinement::EngineMode::Shadow,
             runtime_pin: None,
             node: base.join("node.exe"),
             worker_main: base.join("main.js"),
@@ -6370,6 +6375,7 @@ mod tests {
         let engine = Engine::for_tests(base.join("msedge.exe"), crate::discovery::EngineKind::Edge);
         let spec = |node: PathBuf, main: PathBuf| WorkerLaunch {
             test_trusted_spki: None,
+            mode: crate::confinement::EngineMode::Shadow,
             runtime_pin: None,
             node,
             worker_main: main,

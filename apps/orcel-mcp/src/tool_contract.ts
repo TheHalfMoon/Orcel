@@ -404,7 +404,7 @@ export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([
 export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
   browser_session_create: {
     capability: "browser.session", operation: "create", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "one broker session id, its task label and the orceld instance id",
+    outputBound: "one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name)",
     annotations: { ...read("Create isolated browser session"), idempotentHint: false }
   },
   browser_open: {
@@ -463,6 +463,24 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
     capability: "browser.session", operation: "status", effect: "read", approval: "none", remote: "local_only",
     outputBound: "the session's state, budgets and at most 128 provisional receipts",
     annotations: read("Read isolated browser session status")
+  },
+  // SG-000135 OB-04: persistent Orcel-managed profiles under orceld's own
+  // protected state (never a person's browser profile). Listing reads only;
+  // creating and deleting each ask the owner (SOFT) first.
+  browser_profiles: {
+    capability: "browser.session", operation: "profiles", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "at most 16 Orcel-managed profiles: name, creation time and whether a session holds it; never a path, cookie or stored value",
+    annotations: read("List Orcel browser profiles")
+  },
+  browser_profile_create: {
+    capability: "browser.session", operation: "profile_create", effect: "write", approval: "SOFT", remote: "local_only",
+    outputBound: "the new profile's name and creation time",
+    annotations: change("Create Orcel browser profile", { destructive: false, idempotent: false })
+  },
+  browser_profile_delete: {
+    capability: "browser.session", operation: "profile_delete", effect: "destructive", approval: "SOFT", remote: "local_only",
+    outputBound: "the deleted profile's name",
+    annotations: change("Delete Orcel browser profile", { destructive: true, idempotent: false })
   }
 };
 

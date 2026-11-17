@@ -11,8 +11,10 @@
 //!
 //! The decider approves only the mission's four exact action titles (open,
 //! fill, select, click) whose whole target is the loopback fixture origin
-//! (`https://fixture.test`, optional `:443` and path), and denies every
-//! other prompt. Every decision is appended to `ORCEL_E2E_CONSENT_LOG` with the
+//! (`https://fixture.test`, optional `:443` and path), and (SG-000135 OB-04)
+//! the two Orcel-managed profile writes (create, delete) whose whole target
+//! names a profile of the harness's own (`orcel-browser-profile:ob04-e2e-`
+//! and a checked name), and denies every other prompt. Every decision is appended to `ORCEL_E2E_CONSENT_LOG` with the
 //! exact dialog text a person would have been shown, so the harness can
 //! check what was asked. orceld refuses to start without that log, and a
 //! harness that finds no header line in it knows the build it drove was not
@@ -43,11 +45,34 @@ const MISSION_ACTIONS: [&str; 4] = [
     "open a link on an isolated browser page",
 ];
 
+/// SG-000135 OB-04: the exact titles of the two profile writes
+/// (`live_dispatch.rs`) the harness's profile missions ask for.
+const PROFILE_ACTIONS: [&str; 2] = [
+    "create an Orcel-managed browser profile",
+    "delete an Orcel-managed browser profile",
+];
+
+/// SG-000135 OB-04: the only profiles whose writes the scripted consent
+/// approves: names the harness makes, `ob04-e2e-` and a checked suffix.
+const E2E_PROFILE_TARGET: &str = "orcel-browser-profile:ob04-e2e-";
+
 /// Whether the scripted consent approves `prompt`: one of the mission's
-/// four actions, whose whole target is on the loopback fixture origin.
+/// four actions, whose whole target is on the loopback fixture origin, or
+/// one of the two profile writes on a profile of the harness's own.
 /// Nothing else.
 pub(crate) fn approves(prompt: &ApprovalPrompt) -> bool {
-    MISSION_ACTIONS.contains(&prompt.action.as_str()) && names_fixture(&prompt.target)
+    (MISSION_ACTIONS.contains(&prompt.action.as_str()) && names_fixture(&prompt.target))
+        || (PROFILE_ACTIONS.contains(&prompt.action.as_str()) && names_e2e_profile(&prompt.target))
+}
+
+/// Whether `target` is exactly a harness profile: the prefix, then a
+/// suffix that keeps the whole name a checked profile name.
+fn names_e2e_profile(target: &str) -> bool {
+    target
+        .strip_prefix("orcel-browser-profile:")
+        .is_some_and(|name| crate::browser_profiles::check_name(name).is_ok())
+        && target.starts_with(E2E_PROFILE_TARGET)
+        && target.len() > E2E_PROFILE_TARGET.len()
 }
 
 /// Whether the whole of `target` is the fixture origin: exactly
@@ -91,7 +116,7 @@ pub(crate) fn broker() -> Result<LocalApprovalBroker, String> {
             "event": "scripted_consent_started",
             "at_ms": now_ms(),
             "pid": std::process::id(),
-            "rule": "approve only the four mission actions (navigate, type, choose, open a link) whose whole target is https://fixture.test; deny every other prompt",
+            "rule": "approve only the four mission actions (navigate, type, choose, open a link) whose whole target is https://fixture.test, and the two Orcel-managed profile writes (create, delete) of a harness profile (orcel-browser-profile:ob04-e2e-*); deny every other prompt",
         }),
     )
     .map_err(|error| format!("write {CONSENT_LOG_ENV}: {error}"))?;
@@ -159,6 +184,42 @@ mod tests {
             " https://fixture.test/",
         ] {
             assert!(!names_fixture(target), "{target:?}");
+        }
+    }
+
+    /// SG-000135 OB-04: the profile writes are approved only for the
+    /// harness's own profiles, and only with their exact titles.
+    #[test]
+    fn ob04_only_harness_profile_writes_are_approved() {
+        for action in PROFILE_ACTIONS {
+            for target in [
+                "orcel-browser-profile:ob04-e2e-keep",
+                "orcel-browser-profile:ob04-e2e-a",
+            ] {
+                assert!(approves(&prompt(action, target)), "{action} {target}");
+            }
+            for target in [
+                "orcel-browser-profile:ob04-e2e-",
+                "orcel-browser-profile:work",
+                "orcel-browser-profile:ob04-e2e-Keep",
+                "orcel-browser-profile:ob04-e2e-a/b",
+                "orcel-browser-profile:ob04-e2e-keep ",
+                "orcel-browser-profile:ob04-e2e-keep\nx",
+                "https://fixture.test/",
+                "orcel-browser-profile:ob04-e2e-aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ] {
+                assert!(!approves(&prompt(action, target)), "{action} {target:?}");
+            }
+        }
+        for action in MISSION_ACTIONS {
+            assert!(!approves(&prompt(
+                action,
+                "orcel-browser-profile:ob04-e2e-keep"
+            )));
+        }
+        let dispatch = include_str!("live_dispatch.rs");
+        for action in PROFILE_ACTIONS {
+            assert!(dispatch.contains(&format!("\"{action}\"")), "{action}");
         }
     }
 

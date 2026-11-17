@@ -22,6 +22,28 @@
 // the session's folder (its profile) must be gone, no Edge of this run may
 // be left, and orceld must end when the MCP session ends.
 //
+// SG-000135 OB-04 adds, natively:
+//   - Shadow check on that mission (FA-E Shadow half, SH-1 short form): the
+//     foreground window, cursor position and clipboard sequence number are
+//     read (read-only Win32 calls) before browser_session_create and after
+//     browser_close and must be unchanged, and no Edge window of this run is
+//     visible while the session lives. If the person at the PC gave any
+//     input meanwhile (GetLastInputInfo moved), the three comparisons are
+//     recorded as inconclusive, never as passed.
+//   - Persistent profiles across orceld restarts (FA-H): two Orcel-managed
+//     profiles are created (owner-approved writes); a session on the first
+//     receives a persistent cookie; the MCP session ends (orceld exits); a
+//     new MCP session (a new orceld) refuses the old session id, and a new
+//     session on the same profile still sends the cookie.
+//   - Two concurrent sessions on different profiles (SH-8, FA-F): the
+//     second profile has no cookie of the first, its own cookie never
+//     reaches the first, and a second session on a held profile is refused.
+//     Both profiles are then deleted (owner-approved writes).
+//   - Visible mode: a session with mode visible opens a real headed Edge
+//     window titled as an Orcel agent session; it must not take the
+//     foreground (and, with no human input, the foreground is unchanged).
+//     Nothing in this script sends keyboard or mouse input.
+//
 // Two consent modes, never mixed:
 //   --consent scripted  TEST HARNESS. Builds orceld with the test-only
 //                       `browser-full-scripted-consent` feature: the real
@@ -79,6 +101,12 @@ const APPROVED_ACTIONS = 5;
 // waits for a person ends as orceld's answer, not as this client giving up.
 const CALL_TIMEOUT_MS = 11 * 60_000;
 const RECEIPT_DOMAIN = "orcel-ob01-receipt/1";
+/// SG-000135 OB-04: the harness's own profile names (the scripted consent
+/// approves profile writes for `ob04-e2e-*` only).
+const KEEP_PROFILE = "ob04-e2e-keep";
+const OTHER_PROFILE = "ob04-e2e-other";
+const VISIBLE_TITLE = "Orcel agent session";
+const OB04_TOOLS = ["browser_profiles", "browser_profile_create", "browser_profile_delete"];
 /** The MCP session of this run, ended on every exit path. */
 let activeClient = null;
 
@@ -328,6 +356,100 @@ function screenshotOf(step) {
   return { png, decoded, result };
 }
 
+/// SG-000135 OB-04: a read-only desktop probe. Reads the foreground window,
+/// the cursor position, the clipboard sequence number and the last-input
+/// tick, and lists the visible top-level windows (title and z-order) of the
+/// given process ids only. It calls no API that changes anything.
+const PROBE_CS = String.raw`
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class OrcelOb04Probe {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+  public delegate bool EnumProc(IntPtr hwnd, IntPtr lparam);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT point);
+  [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
+  [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr lparam);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int max);
+  // JSON is built without backslash escapes in this source: quote and
+  // backslash are written by their character codes.
+  static readonly char Quote = (char)34;
+  static readonly char Backslash = (char)92;
+  static string Str(string value) {
+    StringBuilder b = new StringBuilder();
+    b.Append(Quote);
+    foreach (char c in value) {
+      if (c == Quote || c == Backslash) { b.Append(Backslash); b.Append(c); }
+      else if (c < ' ') { b.Append(' '); }
+      else { b.Append(c); }
+    }
+    b.Append(Quote);
+    return b.ToString();
+  }
+  static string Key(string name) { return Str(name) + ":"; }
+  public static string Probe(int[] pids) {
+    IntPtr fg = GetForegroundWindow();
+    uint fgPid;
+    GetWindowThreadProcessId(fg, out fgPid);
+    POINT cursor;
+    GetCursorPos(out cursor);
+    LASTINPUTINFO input = new LASTINPUTINFO();
+    input.cbSize = (uint)Marshal.SizeOf(input);
+    GetLastInputInfo(ref input);
+    uint sequence = GetClipboardSequenceNumber();
+    List<string> windows = new List<string>();
+    int z = 0;
+    int fgZ = -1;
+    EnumWindows(delegate (IntPtr h, IntPtr l) {
+      if (IsWindowVisible(h)) {
+        if (h == fg) { fgZ = z; }
+        uint pid;
+        GetWindowThreadProcessId(h, out pid);
+        if (Array.IndexOf(pids, (int)pid) >= 0) {
+          StringBuilder title = new StringBuilder(512);
+          GetWindowText(h, title, 512);
+          windows.Add("{" + Key("hwnd") + h.ToInt64() + "," + Key("pid") + pid + "," + Key("z") + z + "," + Key("minimized") + (IsIconic(h) ? "true" : "false") + "," + Key("title") + Str(title.ToString()) + "}");
+        }
+        z++;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return "{" + Key("foreground") + fg.ToInt64() + "," + Key("foreground_pid") + fgPid + "," + Key("foreground_z") + fgZ + "," + Key("cursor") + "[" + cursor.X + "," + cursor.Y + "]," + Key("clipboard_sequence") + sequence + "," + Key("last_input_tick") + input.dwTime + "," + Key("windows") + "[" + string.Join(",", windows.ToArray()) + "]}";
+  }
+}
+`;
+
+function desktopProbe(pids = []) {
+  const list = pids.map((pid) => String(Number(pid) | 0)).join(",");
+  const script = `Add-Type -TypeDefinition @'\n${PROBE_CS}\n'@\n[OrcelOb04Probe]::Probe([int[]]@(${list}))`;
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], { encoding: "utf8", windowsHide: true });
+  require_(result.status === 0 && result.stdout.trim(), `the desktop probe ran: ${result.stderr}`);
+  return JSON.parse(result.stdout.trim());
+}
+
+/// SG-000135 OB-04: compare two desktop probes. With no human input in
+/// between, the foreground window, cursor and clipboard sequence must be
+/// equal; with human input, the comparison is inconclusive (never passed).
+function desktopUnchanged(before, after) {
+  const human = before.last_input_tick !== after.last_input_tick;
+  const facts = {
+    human_input_during: human,
+    foreground_unchanged: before.foreground === after.foreground,
+    cursor_unchanged: before.cursor[0] === after.cursor[0] && before.cursor[1] === after.cursor[1],
+    clipboard_unchanged: before.clipboard_sequence === after.clipboard_sequence
+  };
+  facts.verdict = human ? "inconclusive (the person gave input)" : facts.foreground_unchanged && facts.cursor_unchanged && facts.clipboard_unchanged ? "unchanged" : "CHANGED";
+  return facts;
+}
+
 /// Edge processes whose command line names `root` (this run's isolated state).
 function edgeProcessesUnder(root) {
   const script = "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
@@ -358,6 +480,14 @@ async function mission(options, paths, fixtureSpki, fixture) {
     require_(step.ok, `${what}: ${JSON.stringify(step.body)}`);
     return step.body.result;
   };
+  const env = missionEnv(options, paths, fixtureSpki);
+  const started = Date.now();
+  return await runMission(options, paths, fixture, env, steps, record, expectOk, started);
+}
+
+/// The environment every MCP session of this run gets: the run's own state
+/// root, the browser_full profile and the fixture's certificate.
+function missionEnv(options, paths, fixtureSpki) {
   const env = {
     PATH: process.env.PATH ?? process.env.Path ?? "",
     PATHEXT: process.env.PATHEXT ?? "",
@@ -383,8 +513,10 @@ async function mission(options, paths, fixtureSpki, fixture) {
     ORCEL_E2E_FIXTURE_SPKI: fixtureSpki
   };
   if (options.consent === "scripted") env.ORCEL_E2E_CONSENT_LOG = paths.consentLog;
+  return env;
+}
 
-  const started = Date.now();
+async function runMission(options, paths, fixture, env, steps, record, expectOk, started) {
   const client = new McpClient(process.execPath, [join(repo, "apps", "orcel-mcp", "dist", "entrypoints", "stdio.js")], env);
   activeClient = client;
   const init = await client.request("initialize", {
@@ -398,9 +530,13 @@ async function mission(options, paths, fixtureSpki, fixture) {
   const tools = (listed.result?.tools ?? []).map((tool) => tool.name);
   for (const name of EXPECTED_TOOLS) require_(tools.includes(name), `${name} is listed: ${tools.join(", ")}`);
 
+  // SG-000135 OB-04: the desktop as the mission starts.
+  const desktopBefore = desktopProbe();
   const create = await client.call("browser_session_create", { task: "OB-01 E2E fixture mission" });
   record(create);
-  const session = expectOk(create, "browser_session_create").session_id;
+  const created = expectOk(create, "browser_session_create");
+  const session = created.session_id;
+  require_(created.mode === "shadow" && created.no_interference === true && created.profile_mode === "ephemeral", `a session is Shadow and ephemeral by default: ${JSON.stringify(created)}`);
   if (options.consent === "scripted") {
     // The build must be the scripted-consent one: otherwise a real dialog
     // would appear with nobody to answer it. Checked before any approval.
@@ -435,6 +571,9 @@ async function mission(options, paths, fixtureSpki, fixture) {
   require_(edgeFacts.session_dir_exists && edgeFacts.profiles >= 1, "the session folder holds its profile while it lives");
   require_(edgeFacts.browser_processes >= 1 && edgeFacts.headless && edgeFacts.pipe && !edgeFacts.remote_debugging_port, "Edge runs headless over a pipe with no remote debugging port");
   require_(edgeFacts.profile_in_session_dir, "Edge's profile is inside the session's own folder");
+  // SG-000135 OB-04: a Shadow session shows no window at all.
+  const shadowWindows = desktopProbe(edge.map((entry) => entry.ProcessId)).windows;
+  require_(shadowWindows.length === 0, `a Shadow session has no visible window: ${JSON.stringify(shadowWindows)}`);
 
   const snap = await client.call("browser_snapshot", { session_id: session });
   record(snap);
@@ -583,6 +722,10 @@ async function mission(options, paths, fixtureSpki, fixture) {
   require_(!existsSync(sessionDir), `the session folder is gone from disk: ${sessionDir}`);
   const after = await client.call("browser_task_status", { session_id: session });
   require_(!after.ok && after.body?.error?.code === "TARGET_STALE", `the closed session's id is refused: ${JSON.stringify(after.body)}`);
+  // SG-000135 OB-04: the desktop after the whole Shadow mission.
+  const shadowDesktop = desktopUnchanged(desktopBefore, desktopProbe());
+  process.stdout.write(`OB04-E2E shadow desktop: ${JSON.stringify(shadowDesktop)}\n`);
+  require_(shadowDesktop.verdict !== "CHANGED", `the Shadow mission left the foreground window, cursor and clipboard as they were: ${JSON.stringify(shadowDesktop)}`);
 
   const exitCode = await client.close();
   const leftEdge = edgeProcessesUnder(paths.root);
@@ -606,7 +749,162 @@ async function mission(options, paths, fixtureSpki, fixture) {
     edge_left: leftEdge.length,
     session_folders_left: leftSessions.length,
     ob03,
+    shadow_desktop: shadowDesktop,
+    shadow_visible_windows: shadowWindows.length,
     fixture_hits: fixture.hits.filter((hit) => hit.includes("/ob01-"))
+  };
+}
+
+/// SG-000135 OB-04: one MCP session (its own orceld) for the OB-04 phases.
+async function openClient(env, label) {
+  const client = new McpClient(process.execPath, [join(repo, "apps", "orcel-mcp", "dist", "entrypoints", "stdio.js")], env);
+  activeClient = client;
+  const init = await client.request("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: `orcel-ob04-e2e-${label}`, version: "1" }
+  });
+  require_(!init.error, `initialize: ${JSON.stringify(init.error)}`);
+  client.send({ method: "notifications/initialized" });
+  const listed = await client.request("tools/list", {});
+  const tools = (listed.result?.tools ?? []).map((tool) => tool.name);
+  for (const name of [...EXPECTED_TOOLS, ...OB04_TOOLS]) require_(tools.includes(name), `${name} is listed: ${tools.join(", ")}`);
+  return client;
+}
+
+/// SG-000135 OB-04: persistent profiles across an orceld restart, two
+/// concurrent sessions on different profiles, and a Visible session.
+async function ob04Missions(options, paths, env) {
+  const steps = [];
+  let approvals = 0;
+  const call = async (client, tool, args, approved = false) => {
+    const step = await client.call(tool, args);
+    steps.push({ tool, ok: step.ok, ms: step.ms });
+    const outcome = step.ok ? "ok" : `refused ${step.body?.error?.code ?? "?"}`;
+    process.stdout.write(`OB04-E2E step ${steps.length} ${tool}: ${outcome} in ${step.ms} ms\n`);
+    if (approved && step.ok) approvals += 1;
+    return step;
+  };
+  const ok = (step, what) => {
+    require_(step.ok, `${what}: ${JSON.stringify(step.body)}`);
+    return step.body.result;
+  };
+  const refused = (step, code, what) => {
+    require_(!step.ok && step.body?.error?.code === code, `${what} is refused ${code}: ${JSON.stringify(step.body)}`);
+  };
+  /// Open `path` on the fixture and check the page shows `text`.
+  const openAndSee = async (client, session, path, text) => {
+    const opened = ok(await call(client, "browser_open", { session_id: session, url: `${FIXTURE}${path}` }, true), `browser_open ${path}`);
+    const seen = ok(
+      await call(client, "browser_verify", { session_id: session, expected_generation: opened.generation, checks: [{ kind: "text_visible", text }] }),
+      `browser_verify ${path}`
+    );
+    return seen.verified === true;
+  };
+  const profilesRoot = join(paths.root, ".orcel", "browser-profile", "live", "named-profiles");
+  if (options.consent === "founder") {
+    process.stdout.write("OB04-E2E founder run: Orcel approval dialogs follow for two profile creations, seven page openings and two profile deletions. Read each and answer it yourself.\n");
+  }
+
+  // Phase 1 (FA-H, first orceld): two profiles; a cookie in the first.
+  const first = await openClient(env, "first");
+  const empty = ok(await call(first, "browser_profiles", {}), "browser_profiles");
+  require_(Array.isArray(empty.profiles) && empty.profiles.length === 0, `no profile exists yet: ${JSON.stringify(empty)}`);
+  ok(await call(first, "browser_profile_create", { name: KEEP_PROFILE }, true), "browser_profile_create keep");
+  ok(await call(first, "browser_profile_create", { name: OTHER_PROFILE }, true), "browser_profile_create other");
+  refused(await call(first, "browser_profile_create", { name: KEEP_PROFILE }), "INVALID_REQUEST", "a second profile of one name");
+  refused(await call(first, "browser_session_create", { profile: "ob04-e2e-missing" }), "TARGET_STALE", "a session on a missing profile");
+  const keepCreate = ok(await call(first, "browser_session_create", { task: "OB-04 keep", profile: KEEP_PROFILE }), "browser_session_create keep");
+  require_(keepCreate.profile_mode === "persistent" && keepCreate.profile === KEEP_PROFILE && keepCreate.mode === "shadow", `the session holds the persistent profile: ${JSON.stringify(keepCreate)}`);
+  const firstSession = keepCreate.session_id;
+  require_(await openAndSee(first, firstSession, "/ob04-show", "OB-04 cookie is absent"), "a new profile has no cookie");
+  require_(await openAndSee(first, firstSession, "/ob04-set-alpha", "OB-04 cookie set to alpha"), "the cookie is set");
+  require_(await openAndSee(first, firstSession, "/ob04-show", "OB-04 cookie is alpha"), "the cookie is sent back in the same session");
+  const edgeKeep = edgeProcessesUnder(paths.root).filter((entry) => !/--type=/.test(entry.CommandLine ?? ""));
+  const keepData = join(profilesRoot, KEEP_PROFILE, "data").toLowerCase();
+  require_(edgeKeep.length >= 1 && edgeKeep.every((entry) => (entry.CommandLine ?? "").toLowerCase().includes(keepData)) && edgeKeep.every((entry) => /--headless/.test(entry.CommandLine)), `Edge runs headless in the persistent profile's data folder: ${JSON.stringify(edgeKeep.map((entry) => entry.CommandLine))}`);
+  const closedKeep = ok(await call(first, "browser_close", { session_id: firstSession }), "browser_close keep");
+  require_(closedKeep.profile_kept === true && closedKeep.profile === KEEP_PROFILE && closedKeep.worker_ended === true, `the persistent profile is kept at close: ${JSON.stringify(closedKeep)}`);
+  const listedFirst = ok(await call(first, "browser_profiles", {}), "browser_profiles after close");
+  require_(listedFirst.profiles.map((profile) => profile.name).join(",") === `${KEEP_PROFILE},${OTHER_PROFILE}` && listedFirst.profiles.every((profile) => profile.in_use === false), `both profiles are listed, none in use: ${JSON.stringify(listedFirst)}`);
+  const firstExit = await first.close();
+  require_(edgeProcessesUnder(paths.root).length === 0, "no Edge is left after the first orceld");
+  require_(existsSync(join(profilesRoot, KEEP_PROFILE, "data")), "the persistent profile's data folder outlives the orceld");
+
+  // Phase 2 (a new orceld): the old id is refused; the cookie is kept;
+  // two concurrent sessions on different profiles share nothing.
+  const second = await openClient(env, "second");
+  refused(await call(second, "browser_task_status", { session_id: firstSession }), "TARGET_STALE", "the earlier orceld's session id");
+  const keepAgain = ok(await call(second, "browser_session_create", { task: "OB-04 keep again", profile: KEEP_PROFILE }), "browser_session_create keep again");
+  const otherCreate = ok(await call(second, "browser_session_create", { task: "OB-04 other", profile: OTHER_PROFILE }), "browser_session_create other");
+  const keepSession = keepAgain.session_id;
+  const otherSession = otherCreate.session_id;
+  const restartKept = await openAndSee(second, keepSession, "/ob04-show", "OB-04 cookie is alpha");
+  require_(restartKept, "the cookie survived the orceld restart in its profile");
+  require_(await openAndSee(second, otherSession, "/ob04-show", "OB-04 cookie is absent"), "the other profile has no cookie of the first");
+  require_(await openAndSee(second, otherSession, "/ob04-set-beta", "OB-04 cookie set to beta"), "the other profile sets its own cookie");
+  require_(await openAndSee(second, keepSession, "/ob04-show", "OB-04 cookie is alpha"), "the other profile's cookie never reaches the first");
+  const edgeBoth = edgeProcessesUnder(paths.root).filter((entry) => !/--type=/.test(entry.CommandLine ?? ""));
+  const otherData = join(profilesRoot, OTHER_PROFILE, "data").toLowerCase();
+  const isolation = {
+    browser_processes: edgeBoth.length,
+    keep_profile_processes: edgeBoth.filter((entry) => (entry.CommandLine ?? "").toLowerCase().includes(keepData)).length,
+    other_profile_processes: edgeBoth.filter((entry) => (entry.CommandLine ?? "").toLowerCase().includes(otherData)).length
+  };
+  require_(isolation.keep_profile_processes === 1 && isolation.other_profile_processes === 1, `each session runs its own Edge in its own profile: ${JSON.stringify(isolation)}`);
+  const status = ok(await call(second, "browser_task_status", { session_id: otherSession }), "browser_task_status other");
+  require_(status.profile === OTHER_PROFILE && status.profile_mode === "persistent", `the status names the profile: ${JSON.stringify({ profile: status.profile, profile_mode: status.profile_mode })}`);
+  refused(await call(second, "browser_profile_delete", { name: KEEP_PROFILE }), "TARGET_STALE", "deleting a profile a session holds");
+  ok(await call(second, "browser_close", { session_id: otherSession }), "browser_close other");
+  refused(await call(second, "browser_session_create", { profile: KEEP_PROFILE }), "TARGET_STALE", "a second live session on one profile");
+  ok(await call(second, "browser_close", { session_id: keepSession }), "browser_close keep again");
+  ok(await call(second, "browser_profile_delete", { name: OTHER_PROFILE }, true), "browser_profile_delete other");
+  ok(await call(second, "browser_profile_delete", { name: KEEP_PROFILE }, true), "browser_profile_delete keep");
+  const listedAfter = ok(await call(second, "browser_profiles", {}), "browser_profiles after delete");
+  require_(listedAfter.profiles.length === 0, `both profiles are gone: ${JSON.stringify(listedAfter)}`);
+  require_(!existsSync(join(profilesRoot, KEEP_PROFILE)) && !existsSync(join(profilesRoot, OTHER_PROFILE)), "the profile folders are removed");
+  const secondExit = await second.close();
+  require_(edgeProcessesUnder(paths.root).length === 0, "no Edge is left after the second orceld");
+
+  // Phase 3: a Visible session opens a real headed window of its own.
+  const third = await openClient(env, "visible");
+  const visibleBefore = desktopProbe();
+  const visibleCreate = ok(await call(third, "browser_session_create", { task: "OB-04 visible", mode: "visible" }), "browser_session_create visible");
+  require_(visibleCreate.mode === "visible" && visibleCreate.no_interference === false, `a Visible session never claims no-interference: ${JSON.stringify(visibleCreate)}`);
+  const visibleSession = visibleCreate.session_id;
+  require_(await openAndSee(third, visibleSession, "/ob01-form", "Orcel Browser mission"), "the Visible session opens the fixture form");
+  const edgeVisible = edgeProcessesUnder(paths.root);
+  const edgeVisibleMain = edgeVisible.filter((entry) => !/--type=/.test(entry.CommandLine ?? ""));
+  const visibleProbe = desktopProbe(edgeVisible.map((entry) => entry.ProcessId));
+  const named = visibleProbe.windows.filter((window) => window.title.includes(VISIBLE_TITLE));
+  const visible = {
+    browser_processes: edgeVisibleMain.length,
+    headed: edgeVisibleMain.length > 0 && edgeVisibleMain.every((entry) => !/--headless/.test(entry.CommandLine ?? "")),
+    window_name_flag: edgeVisibleMain.length > 0 && edgeVisibleMain.every((entry) => (entry.CommandLine ?? "").includes(`--window-name=${VISIBLE_TITLE}`) || (entry.CommandLine ?? "").includes(`"--window-name=${VISIBLE_TITLE}"`)),
+    pipe: edgeVisibleMain.length > 0 && edgeVisibleMain.every((entry) => /--remote-debugging-pipe/.test(entry.CommandLine ?? "")),
+    remote_debugging_port: edgeVisible.some((entry) => /--remote-debugging-port/.test(entry.CommandLine ?? "")),
+    windows: visibleProbe.windows,
+    titled_windows: named.length,
+    took_foreground: visibleProbe.windows.some((window) => window.hwnd === visibleProbe.foreground),
+    above_foreground: visibleProbe.foreground_z >= 0 && visibleProbe.windows.some((window) => window.z < visibleProbe.foreground_z),
+    desktop: desktopUnchanged(visibleBefore, visibleProbe)
+  };
+  process.stdout.write(`OB04-E2E visible session: ${JSON.stringify(visible)}\n`);
+  require_(visible.headed && visible.pipe && !visible.remote_debugging_port, "the Visible Edge is headed, pipe-driven, with no remote debugging port");
+  require_(visible.titled_windows >= 1, `the Visible session has a window titled ${VISIBLE_TITLE}`);
+  require_(!visible.took_foreground, "the Visible window did not take the foreground");
+  require_(visible.desktop.verdict !== "CHANGED" || (visible.desktop.foreground_unchanged && visible.desktop.cursor_unchanged), `the Visible session left the foreground and cursor as they were: ${JSON.stringify(visible.desktop)}`);
+  ok(await call(third, "browser_close", { session_id: visibleSession }), "browser_close visible");
+  const thirdExit = await third.close();
+  const windowsLeft = desktopProbe(edgeVisible.map((entry) => entry.ProcessId)).windows.length;
+  require_(windowsLeft === 0 && edgeProcessesUnder(paths.root).length === 0, "the Visible window and its Edge are gone after close");
+  return {
+    steps,
+    approvals,
+    restart_kept_cookie: restartKept,
+    isolation,
+    visible,
+    mcp_exit_codes: [firstExit, secondExit, thirdExit]
   };
 }
 
@@ -635,15 +933,24 @@ async function main() {
   try {
     const spki = await fixture.ready;
     summary = await mission(options, paths, spki, fixture);
+    summary.ob04 = await ob04Missions(options, paths, missionEnv(options, paths, spki));
     const ledger = join(root, ".orcel");
     summary.approval_ledger_files = existsSync(ledger) ? readdirSync(ledger) : [];
     if (options.consent === "scripted") {
       const prompts = readFileSync(paths.consentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((line) => line.event === "soft_prompt");
-      require_(prompts.length === APPROVED_ACTIONS && prompts.every((prompt) => prompt.decision === "approved"), `five scripted SOFT prompts, each approved: ${prompts.length}`);
+      const expectedPrompts = APPROVED_ACTIONS + summary.ob04.approvals;
+      require_(prompts.length === expectedPrompts && prompts.every((prompt) => prompt.decision === "approved"), `${expectedPrompts} scripted SOFT prompts, each approved: ${prompts.length}`);
       summary.scripted_prompts = prompts.map((prompt) => ({ action: prompt.action, target: prompt.target }));
     }
     writeFileSync(join(evidenceDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
     const steps = summary.steps.map((step) => `${step.tool}=${step.ok ? "ok" : "refused"}/${step.ms}ms`).join(" ");
+    const ob04 = summary.ob04;
+    process.stdout.write(
+      `OB04-E2E-EVIDENCE ${options.consent} consent: shadow desktop ${summary.shadow_desktop.verdict}, ${summary.shadow_visible_windows} Shadow windows; ` +
+        `cookie kept across orceld restart ${ob04.restart_kept_cookie}; isolation ${JSON.stringify(ob04.isolation)}; ` +
+        `visible: ${ob04.visible.titled_windows} titled window(s), took foreground ${ob04.visible.took_foreground}, above foreground ${ob04.visible.above_foreground}, desktop ${ob04.visible.desktop.verdict}; ` +
+        `${ob04.approvals} OB-04 approvals, MCP exits ${ob04.mcp_exit_codes.join("/")}\n`
+    );
     process.stdout.write(
       `OB01-E2E-EVIDENCE ${options.consent} consent: ${steps}; ${summary.receipts_count} receipts chained (head ${summary.chain_head.slice(0, 16)}), ` +
         `${summary.approvals_recorded.length} approval records, profile removed, ${summary.edge_left} Edge left, ` +

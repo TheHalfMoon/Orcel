@@ -7,6 +7,8 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import {
   browserExtractSchema,
   browserOpenSchema,
+  browserProfileNameArgsSchema,
+  browserProfilesSchema,
   browserScreenshotSchema,
   browserTabsSchema,
   browserSessionClickSchema,
@@ -56,7 +58,10 @@ const EXPECTED = [
   "browser_screenshot",
   "browser_tabs",
   "browser_close",
-  "browser_task_status"
+  "browser_task_status",
+  "browser_profiles",
+  "browser_profile_create",
+  "browser_profile_delete"
 ];
 const PAGE = "pg-0123456789abcdef0123456789abcdef";
 
@@ -135,7 +140,7 @@ test("browser_full is desktop_structured plus the broker tools, and only the fou
 });
 
 test("the broker contract follows the annotation, effect and approval rules", () => {
-  const soft = ["browser_open", "browser_click", "browser_fill", "browser_select", "browser_tabs"];
+  const soft = ["browser_open", "browser_click", "browser_fill", "browser_select", "browser_tabs", "browser_profile_create", "browser_profile_delete"];
   for (const [name, entry] of Object.entries(BROWSER_FULL_CONTRACT)) {
     const a = entry.annotations;
     assert.equal(entry.remote, "local_only", name);
@@ -266,7 +271,8 @@ test("local discovery under browser_full lists the broker forms of the shared na
       const properties = Object.keys(tool.inputSchema?.properties ?? {});
       // Only browser_tabs names a page: one of the session's own tabs.
       assert.equal(properties.includes("page_id"), tool.name === "browser_tabs", tool.name);
-      assert.equal(properties.includes("session_id"), tool.name !== "browser_session_create", tool.name);
+      const sessionless = ["browser_session_create", "browser_profiles", "browser_profile_create", "browser_profile_delete"];
+      assert.equal(properties.includes("session_id"), !sessionless.includes(tool.name), tool.name);
     }
     for (const name of ["browser_page_open", "browser_navigate", "browser_observe", "browser_enter", "browser_check", "browser_download"]) {
       assert.equal(tools.some((t) => t.name === name), false, name);
@@ -297,7 +303,7 @@ test("each broker tool forwards exactly its broker shape and only its own fields
   registerSessionBrokerTools(server, kernel, "default");
   assert.deepEqual([...handlers.keys()], [...BROWSER_FULL_TOOLS]);
   const args: Record<string, Record<string, unknown>> = {
-    browser_session_create: { task: "fixture form" },
+    browser_session_create: { task: "fixture form", mode: "visible", profile: "work" },
     browser_open: { session_id: SESSION, url: "https://example.org/" },
     browser_snapshot: { session_id: SESSION },
     browser_click: { session_id: SESSION, node_id: "d1-e2", expected_generation: 1 },
@@ -308,13 +314,16 @@ test("each broker tool forwards exactly its broker shape and only its own fields
     browser_screenshot: { session_id: SESSION, expected_generation: 1, full_page: true },
     browser_tabs: { session_id: SESSION, action: "switch", page_id: PAGE },
     browser_close: { session_id: SESSION },
-    browser_task_status: { session_id: SESSION }
+    browser_task_status: { session_id: SESSION },
+    browser_profiles: {},
+    browser_profile_create: { name: "work" },
+    browser_profile_delete: { name: "work" }
   };
   for (const tool of BROWSER_FULL_TOOLS) {
     sent.length = 0;
     const handler = handlers.get(tool);
     assert.ok(handler, tool);
-    await handler({ workspace_id: "default", page_id: "pg-a1", profile: "Default", selector: "#x", hwnd: 7, ...args[tool] });
+    await handler({ workspace_id: "default", page_id: "pg-a1", profile: "Default", path: "C:\\x", selector: "#x", hwnd: 7, ...args[tool] });
     assert.equal(sent.length, 1, tool);
     const entry = BROWSER_FULL_CONTRACT[tool];
     assert.equal(`${sent[0]?.capability}/${sent[0]?.operation}`, `${entry?.capability}/${entry?.operation}`, tool);
@@ -330,6 +339,9 @@ test("the broker schemas are strict and take a broker session id", () => {
   const ok: Array<[string, { safeParse: (v: unknown) => { success: boolean } }, Record<string, unknown>]> = [
     ["create", browserSessionCreateSchema("default"), {}],
     ["create task", browserSessionCreateSchema("default"), { task: "Book a table" }],
+    ["create visible", browserSessionCreateSchema("default"), { mode: "visible", profile: "work-2" }],
+    ["profiles", browserProfilesSchema("default"), {}],
+    ["profile name", browserProfileNameArgsSchema("default"), { name: "work" }],
     ["session", browserSessionSchema("default"), { session_id: SESSION }],
     ["open", browserOpenSchema("default"), { session_id: SESSION, url: "https://example.org/" }],
     ["click", browserSessionClickSchema("default"), { session_id: SESSION, node_id: "d1-e2", expected_generation: 0 }],
@@ -356,6 +368,18 @@ test("the broker schemas are strict and take a broker session id", () => {
   assert.equal(browserSessionFillSchema("default").safeParse({ session_id: SESSION, node_id: "d1", value: "a\u0007", expected_generation: 0 }).success, false);
   assert.equal(browserSessionVerifySchema("default").safeParse({ session_id: SESSION, checks: [], expected_generation: 0 }).success, false);
   assert.equal(browserExtractSchema("default").safeParse({ session_id: SESSION, expected_generation: 0, schema: {} }).success, false);
+});
+
+test("OB-04: mode is shadow or visible and a profile is a checked name, never a path", () => {
+  const create = browserSessionCreateSchema("default");
+  for (const value of [{ mode: "headed" }, { mode: "Visible" }, { mode: true }, { profile: "Default" }, { profile: "C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data" }, { profile: "../work" }, { profile: "a/b" }, { profile: "" }, { profile: "-a" }, { profile: "a-" }, { profile: "a".repeat(33) }, { profile_dir: "C:\\x" }]) {
+    assert.equal(create.safeParse(value).success, false, JSON.stringify(value));
+  }
+  const named = browserProfileNameArgsSchema("default");
+  for (const value of [{}, { name: "Work" }, { name: "work", path: "C:\\x" }, { name: "a b" }]) {
+    assert.equal(named.safeParse(value).success, false, JSON.stringify(value));
+  }
+  assert.equal(browserProfilesSchema("default").safeParse({ name: "work" }).success, false);
 });
 
 test("the contract document lists the browser_full profile and its broker tools", () => {

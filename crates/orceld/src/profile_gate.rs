@@ -51,6 +51,8 @@ pub const BROWSER_FULL_PROFILE: &str = "browser_full";
 /// approval. Each but create, close, status, screenshot and tabs maps onto an existing live host action with that action's own
 /// approval (SOFT for open, click, fill and select; none for snapshot,
 /// verify and extract).
+/// SG-000135 OB-04 adds the persistent Orcel-managed profiles: list
+/// (read-only), create and delete (each a fresh SOFT approval first).
 pub const BROWSER_FULL_SHAPES: &[(&str, &str)] = &[
     ("browser.session", "create"),
     ("browser.session", "open"),
@@ -64,6 +66,9 @@ pub const BROWSER_FULL_SHAPES: &[(&str, &str)] = &[
     ("browser.session", "tabs"),
     ("browser.session", "close"),
     ("browser.session", "status"),
+    ("browser.session", "profiles"),
+    ("browser.session", "profile_create"),
+    ("browser.session", "profile_delete"),
 ];
 
 /// The live browser shapes, each with an MCP tool (capability, operation):
@@ -279,7 +284,7 @@ mod tests {
     /// no remote request reaches either.
     #[test]
     fn ob02_browser_full_shapes_need_a_local_browser_full_request() {
-        assert_eq!(BROWSER_FULL_SHAPES.len(), 12);
+        assert_eq!(BROWSER_FULL_SHAPES.len(), 15);
         let remote = remote();
         for (capability, operation) in BROWSER_FULL_SHAPES {
             let full = request(capability, operation);
