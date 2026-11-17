@@ -992,6 +992,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "orcel-browser-session"
+version = "0.2.0"
+dependencies = [
+ "getrandom",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "orcel-contracts"
 version = "0.2.0"
 dependencies = [
@@ -1161,6 +1169,7 @@ dependencies = [
  "orcel-approval",
  "orcel-audit",
  "orcel-browser-host",
+ "orcel-browser-session",
  "orcel-contracts",
  "orcel-journal",
  "orcel-platform",

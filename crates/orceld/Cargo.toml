@@ -21,10 +21,16 @@ live-browser-test = ["dep:orcel-browser-host", "orcel-browser-host/live-browser-
 # host build pinned. Never default; the release-blocker sweep keeps it out
 # of every release build.
 live-browser-dev = ["dep:orcel-browser-host", "orcel-browser-host/live-browser-dev"]
+# Orcel Browser B1: the live browser asks the human-intervention gate
+# (orcel-browser-session) before each agent action. Off by default, and no
+# build enables it, until SG-000135 defines the browser session broker it
+# belongs to. The gate can only refuse; it grants nothing.
+browser-takeover-gate = []
 
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }
 orcel-browser-host = { path = "../orcel-browser-host", optional = true }
+orcel-browser-session = { path = "../orcel-browser-session" }
 orcel-audit = { path = "../orcel-audit" }
 orcel-contracts = { path = "../orcel-contracts" }
 orcel-platform = { path = "../orcel-platform" }

@@ -1,0 +1,93 @@
+{
+  "schema": "orcel-donor-provenance/1",
+  "packet": "Orcel Browser B1",
+  "note": "Provenance of the BrowserOS code adapted into the human-intervention state machine (crates/orcel-browser-session). Same shape as docs/orcel/notices/donor-provenance.json: the donor records the source repository, the 40-hex pin, the original licence as recorded upstream (recorded, not judged), the notice and the authorization; each file entry names its donor, its source path(s) and blob(s) at that pin, and the method (ADAPT: code copied and changed; PORT: behaviour and tests carried over in Orcel's own code). 'references' lists files that hold the notice or name the adapted crate without being donor code. Consolidated by the browseros donor in docs/orcel/notices/donor-provenance.json.",
+  "donors": {
+    "browseros": {
+      "repo": "browseros-ai/BrowserOS",
+      "commit": "bd725831273884c4b1aee8425975afa122f720f2",
+      "licence": "AGPL-3.0-or-later",
+      "notice": "docs/orcel/notices/browseros-AGPL-3.0.txt",
+      "records": [
+        "docs/orcel/browseros_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-11-17-founder-attestation.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    }
+  },
+  "files": [
+    {
+      "path": "crates/orcel-browser-session/src/lock_decision.rs",
+      "donor": "browseros",
+      "method": "ADAPT",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-takeover/src/lock_decision.rs"
+      ],
+      "donor_blob": [
+        "4796bbc388b0986fdc84979637fea00913350b84"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-session/src/machine.rs",
+      "donor": "browseros",
+      "method": "PORT",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-takeover/src/locks.rs"
+      ],
+      "donor_blob": [
+        "b49b759fcc53f44d81ed9e04fadc665fb34a380e"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-session/src/gate.rs",
+      "donor": "browseros",
+      "method": "PORT",
+      "source": [
+        "packages/browseros-agent/apps/claw-server/src/api/mcp/effects/ownership_claims.rs",
+        "packages/browseros-agent/apps/claw-server/src/services/help.rs"
+      ],
+      "donor_blob": [
+        "52903f76b17a3bcbbfb4c7e296ad0aeb953d3c46",
+        "e7f9b5c6d22ad423dff78158c07fb15d337d770f"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-session/tests/transitions.rs",
+      "donor": "browseros",
+      "method": "PORT",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-takeover/tests/locks.rs"
+      ],
+      "donor_blob": [
+        "b6bd7ff1ea702a3487d902ee4903740cce08bba7"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-session/tests/scenarios.rs",
+      "donor": "browseros",
+      "method": "PORT",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-takeover/tests/locks.rs"
+      ],
+      "donor_blob": [
+        "b6bd7ff1ea702a3487d902ee4903740cce08bba7"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "path": "docs/orcel/notices/browseros-AGPL-3.0.txt",
+      "reason": "The BrowserOS notice: the adapted-file list and the upstream LICENSE verbatim."
+    },
+    {
+      "path": "crates/orcel-browser-session/src/lib.rs",
+      "reason": "Crate documentation naming the BrowserOS-adapted modules."
+    },
+    {
+      "path": "crates/orceld/src/takeover_gate.rs",
+      "reason": "orceld's caller of the adapted crate; no donor code."
+    }
+  ]
+}

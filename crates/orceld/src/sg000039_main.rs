@@ -67,6 +67,17 @@ mod report_workbook;
 mod resume_key;
 mod search;
 mod secret_store;
+// Orcel Browser B1: the human-intervention gate the live browser asks
+// before each agent action (off until SG-000135). Its one caller is
+// live_browser.rs, so other builds leave it unused.
+#[cfg_attr(
+    not(all(
+        windows,
+        any(feature = "live-browser-test", feature = "live-browser-dev")
+    )),
+    allow(dead_code)
+)]
+mod takeover_gate;
 mod trust;
 mod uia;
 mod workstation;

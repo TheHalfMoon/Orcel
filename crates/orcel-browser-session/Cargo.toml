@@ -1,0 +1,14 @@
+[package]
+name = "orcel-browser-session"
+description = "Human-intervention state machine for Orcel browser sessions: per-resource ownership, the three-second quiet timer, challenge handoff and the idempotency guard. Pure, no I/O; it can only refuse or pause."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# HMAC-SHA256 marker tags (the workspace's sha2) under a per-process key
+# from the OS random source (getrandom 0.4, already in the lock graph).
+sha2.workspace = true
+getrandom = "0.4"
