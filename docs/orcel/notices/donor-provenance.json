@@ -258,6 +258,17 @@
       ],
       "earlier_records": [],
       "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "browseros": {
+      "repo": "browseros-ai/BrowserOS",
+      "commit": "bd725831273884c4b1aee8425975afa122f720f2",
+      "licence": "AGPL-3.0",
+      "notice": "docs/orcel/notices/browseros-AGPL-3.0.txt",
+      "records": [
+        "docs/orcel/browseros_provenance.json"
+      ],
+      "earlier_records": [],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
     }
   },
   "files": [
@@ -892,6 +903,42 @@
         "gui_agents/s3/utils/formatters.py",
         "gui_agents/s3/memory/procedural_memory.py"
       ]
+    },
+    {
+      "path": "crates/orcel-browser-session/src/lock_decision.rs",
+      "donor": "browseros",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-takeover/src/lock_decision.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-session/src/machine.rs",
+      "donor": "browseros",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-takeover/src/locks.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-session/src/gate.rs",
+      "donor": "browseros",
+      "source": [
+        "packages/browseros-agent/apps/claw-server/src/api/mcp/effects/ownership_claims.rs",
+        "packages/browseros-agent/apps/claw-server/src/services/help.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-session/tests/transitions.rs",
+      "donor": "browseros",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-takeover/tests/locks.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-session/tests/scenarios.rs",
+      "donor": "browseros",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-takeover/tests/locks.rs"
+      ]
     }
   ],
   "references": [
@@ -1046,6 +1093,14 @@
     {
       "path": "docs/orcel/implementation-readiness/prep/W2_02_AGENT_S_INTEGRATION.md",
       "reason": "W2-02 module map and integration record for the Agent S orchestration primitives."
+    },
+    {
+      "path": "crates/orcel-browser-session/src/lib.rs",
+      "reason": "Crate documentation naming the BrowserOS-adapted modules (docs/orcel/browseros_provenance.json); no donor code."
+    },
+    {
+      "path": "crates/orceld/src/takeover_gate.rs",
+      "reason": "New Orcel code: orceld's caller of the BrowserOS-adapted orcel-browser-session crate; no donor code."
     }
   ],
   "authorizations": {
