@@ -1190,13 +1190,12 @@ impl LiveBrowser {
             // (the host never resolves them; the digest binds the lifetime).
             self.end_lifetime();
             #[cfg(feature = "live-browser-test")]
-            let fixture = e2e_fixture_spki(&origin);
-            #[cfg(not(feature = "live-browser-test"))]
-            let fixture: Option<String> = None;
-            match fixture {
+            match e2e_fixture_spki(&origin) {
                 Some(spki) => self.open_fixture_lifetime(workspace, &spki, &origin)?,
                 None => self.open_public(workspace, url)?,
             }
+            #[cfg(not(feature = "live-browser-test"))]
+            self.open_public(workspace, url)?;
         }
         let navigated = self.navigate_approved(workspace, approval, url);
         if navigated.is_err() && switched {
