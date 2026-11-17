@@ -57,18 +57,30 @@ What the founder asserts:
   to them; the upstream licences are still recorded beside this assertion.
 - Copy-first transplant is the intended method: acquire, pin, copy and adapt, integrate, test, qualify.
 
-How this record is read:
+How this record is read: see the founder decision below, which replaces the earlier reading of this section.
 
-- It is kept separate from the public licence terms. Each ledger record carries both fields, and neither replaces the
-  other.
-- No copyright-holder-signed grant is in the repository. For a source whose public licence does not permit publishing
-  copied code in this public repository (no licence, commercial, proprietary, FSL non-compete), the ledger marks
-  `PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE` and names the evidence needed: a written grant from the copyright holder
-  covering redistribution under Orcel's terms. This assertion does not count as that evidence. It does not block
-  private or local engineering.
-- AGPL and GPL code is published only under its own licence as a separate component (FD-UP-1), whatever this record
-  says.
-- The assertion reaches only code its grantors own. Third-party files, vendored code, dependencies, model weights,
-  datasets, binaries, fonts and trademarks keep their own terms. Required copyright and attribution notices stay even
-  where product names are changed.
+## Founder decision: licences no longer block (2026-11-17)
+
+Status: **OWNER-ASSERTED AUTHORIZATION.** Typed by the founder on 2026-11-17 and relayed verbatim to the engineering
+agent by the coordinating agent. The founder's sentence, verbatim:
+
+> all sources i have sent to you and all sources in the repo are legally and i have permission to copy all of them and re name them to orcel. so not worry about the licness anymore
+
+How Orcel records it:
+
+- Licence type no longer blocks copying, renaming or publishing any source the founder has sent or any source in the
+  repository. This replaces the `PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE` designation and the "AGPL/GPL only as a
+  separate component" designation in the transplant ledger and in the readings of the earlier sections of this file
+  and of the 2026-10-13 and 2026-10-18 records where they conflict.
+- Each record in `docs/orcel/implementation-readiness/prep/TRANSPLANT_LEDGER.json` keeps the upstream licence facts as an
+  informational `public_licence` field beside `authorization: OWNER-ASSERTED (founder, 2026-11-17)`.
+- **This authorization is owner-asserted. It has not been independently verified**, no copyright-holder-signed grant is
+  in the repository, and the engineering agent did not review the underlying agreements.
+- Copies keep the upstream copyright, licence and NOTICE texts, and a provenance record (repository, SHA, paths).
+  Required attribution stays even where product names are changed.
+- Things that are not sources in the repository are not covered by this sentence and keep their own terms: model
+  weights downloaded from model hubs (read each model card before download), hosted services and their terms of
+  service, and trademarks.
 - It gives no access to private source. Private repositories still need authorized credentials and exact names.
+- Architecture choices made for other reasons (for example the separate `apps/orcel-firecrawl` process in
+  UNIFIED_INTEGRATION_SPEC.md) stay until changed by their own decision; they are no longer required by licence.

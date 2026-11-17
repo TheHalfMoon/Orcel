@@ -8,7 +8,8 @@
   "No donor code is imported, copied or sublicensed by this file. No repository was cloned for it; SHAs come from git ls-remote HEAD and everything else from the GitHub API at that SHA, read on 2026-11-17.",
   "Wave 1 (Exa, TinyFish) and Wave 2 (HCU, Agent S, Stagehand) local clones and test results come from the REA workspaces D:\\Orcel-REA and D:\\Orcel-REA-W2 (read-only inputs; not in this repository). Every REA clone SHA matches the HEAD read here.",
   "Licences were read from LICENSE, NOTICE, THIRD_PARTY and manifest files at each SHA; per-file headers were not read. Model weights, datasets and binaries are recorded separately and were not downloaded.",
-  "Public licence terms and the owner-asserted authorization are recorded separately. The authorization is owner-asserted and is not independent legal verification.",
+  "Founder decision 2026-11-17: licence type no longer blocks copying, renaming or publishing any source sent by the founder or present in the repository. Each record keeps the public licence as informational facts (for notices and provenance) beside authorization OWNER-ASSERTED (founder, 2026-11-17). The authorization is owner-asserted and is not independent legal verification.",
+  "Real blockers remain: private repositories are not accessible, hosted backends are not in any repository, and model weights are not in the repositories (their model-card terms must be read before download). Upstream notices and provenance must be kept with every copy.",
   "One owner per feature: modules[].orcel_owner names the single Orcel unit that owns that feature; '(new)' units do not exist on main yet.",
   "The companion records in capability_inventory.json map status as: NOT_ACQUIRED, SOURCE_ACQUIRED, REA_VERIFIED -> NOT STARTED; TRANSPLANTED -> IMPORTED; INTEGRATED -> INTEGRATED; TESTED -> TESTED; RELEASE_QUALIFIED -> RELEASED."
  ],
@@ -21,12 +22,10 @@
   "TESTED": "Integrated code is covered by Orcel tests on main (never claimed because something was downloaded).",
   "RELEASE_QUALIFIED": "Passed the release gates for a shipped build. No ledger record has this status."
  },
- "redistribution_vocabulary": {
-  "PERMISSIVE_PUBLIC_OK": "Public licence permits publishing copied code in this public repository with notices preserved.",
-  "COPYLEFT_SEPARATE_COMPONENT_ONLY": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-  "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE": "The public licence does not permit publishing copied code here (no licence, commercial, proprietary or FSL non-compete). Private or local engineering is not blocked.",
-  "MIXED_PER_DIRECTORY": "Directory-dependent: see licences.per_directory; the restricted directories are listed under rights.restricted_directories."
+ "authorization_vocabulary": {
+  "OWNER-ASSERTED (founder, 2026-11-17)": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository."
  },
+ "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy.",
  "architecture_layers": [
   "Agent Runtime",
   "Perception",
@@ -36,8 +35,12 @@
  ],
  "owner_asserted_authorization": {
   "record": "docs/orcel/grants/2026-11-17-founder-attestation.md",
-  "section": "Master directive (2026-11-17)",
-  "text": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository."
+  "sections": [
+   "Master directive (2026-11-17)",
+   "Founder decision: licences no longer block (2026-11-17)"
+  ],
+  "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+  "text": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository."
  },
  "records": [
   {
@@ -128,11 +131,12 @@
    "operating_cost": "None (no paid service or model)",
    "rights": {
     "public_licence": "/: Apache-2.0; vendor/taffy: MIT; vendor/cosmic-text: MIT OR Apache-2.0; vendor/wreq-util: Apache-2.0; Noto Color Emoji font: OFL-1.1",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "Pinned and inventoried through the GitHub API only (DONOR_INVENTORY.md section 3.1); no local copy, no Orcel code from it.",
@@ -217,11 +221,12 @@
    "operating_cost": "LLM inference for the agent loop (any provider; Browser Use Cloud optional and excluded)",
    "rights": {
     "public_licence": "/: MIT (Copyright (c) 2024 Gregor Zunic)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository. This donor is also named in the earlier 2026-11-17 FD-UP attestation.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "status_evidence": "Extraction subset ported at c75e8476 and covered by apps/orcel-browser-worker/src/extract/*.test.ts on main. The rest of the tree is not acquired.",
@@ -350,11 +355,12 @@
    "operating_cost": "None",
    "rights": {
     "public_licence": "/: Apache-2.0 (vercel-labs/agent-desktop); browser-use/desktop: /: MIT (Copyright (c) 2026 Browser Use)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only; identity unconfirmed.",
@@ -425,11 +431,12 @@
    "operating_cost": "None (Apify platform optional, excluded)",
    "rights": {
     "public_licence": "/: Apache-2.0 (LICENSE.md)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only (DONOR_INVENTORY.md section 3.5).",
@@ -497,11 +504,12 @@
    "operating_cost": "None",
    "rights": {
     "public_licence": "/: BSD-3-Clause (Copyright (c) 2024 Karim Shoair)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only (DONOR_INVENTORY.md section 3.6).",
@@ -573,7 +581,7 @@
       "apps/api/src/controllers/v2"
      ],
      "feature": "Firecrawl v1/v2 REST compatibility",
-     "orcel_owner": "apps/orcel-mcp (REST front) + crates/orcel-web (new)"
+     "orcel_owner": "crates/orcel-web (new)"
     }
    ],
    "orcel_existing": [
@@ -586,12 +594,12 @@
    "operating_cost": "Self-hosted is free; LLM extract uses a paid or local model (opt-in); Firecrawl cloud excluded",
    "rights": {
     "public_licence": "/ (apps/api, apps/playwright-service-ts, apps/go-html-to-md-service, apps/test-suite and others): AGPL-3.0; SDK directories (apps/js-sdk, apps/python-sdk and the other SDKs): MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository. This donor is also named in the earlier 2026-11-17 FD-UP attestation.",
-    "public_redistribution": "COPYLEFT_SEPARATE_COMPONENT_ONLY",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "copyleft (AGPL/GPL)",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "status_evidence": "Crawl, map, change tracking and document parsing ported at f84845c8 and tested on main (capability_inventory.json firecrawl.* TESTED rows). Bulk copy into apps/orcel-firecrawl has not started.",
@@ -678,23 +686,22 @@
    "operating_cost": "Free tier self-hosted; ee/ features need a paid Fleet licence",
    "rights": {
     "public_licence": "/ (outside ee/): MIT (Expat); ee/: Fleet Enterprise Edition licence (production use needs a paid subscription); docs/: CC BY-SA 4.0; orbit/: MIT; third_party/goval-dictionary, frontend/utilities/osquery_sql_parser: Apache-2.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "MIXED_PER_DIRECTORY",
-    "restricted_directories": [
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "mixed per directory",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy.",
+    "licence_notes": [
      {
       "path": "ee/",
-      "licence": "Fleet Enterprise Edition licence",
-      "classification": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE"
+      "licence": "Fleet Enterprise Edition licence"
      },
      {
       "path": "docs/",
-      "licence": "CC BY-SA 4.0 (share-alike; keep docs separate)",
-      "classification": "SHARE_ALIKE_NOTICE"
+      "licence": "CC BY-SA 4.0 (share-alike notice applies to copied docs)"
      }
-    ],
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from Fleet Device Management Inc. (the copyright holder) covering redistribution of any file under ee/ in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "private_engineering_blocked": false
+    ]
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only (DONOR_INVENTORY.md section 3.9).",
@@ -795,11 +802,12 @@
    "operating_cost": "None",
    "rights": {
     "public_licence": "/: Apache-2.0 (+ NOTICE: code derived from Puppeteer, Apache-2.0); tests/assets/axe-core: MPL-2.0; tests/assets/wpt: BSD-3-Clause; tests/assets/to-do-notifications: CC0-1.0; packages/web/src/third_party/vscode: MIT; packages/playwright-core/src/server/bidi/third_party: Apache-2.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "status_evidence": "BR-02/03/05/07 ports at 1b025d7e are on main with tests (form.test.ts, upload.test.ts, dialogs.test.ts, verify.test.ts).",
@@ -868,11 +876,12 @@
    "operating_cost": "None against the local API; the hosted Exa API is paid",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "REA_VERIFIED",
    "status_evidence": "Cloned at this SHA; 420/420 tests (D:\\Orcel-REA\\reports\\08_tests_and_evidence.md EV-16).",
@@ -942,11 +951,12 @@
    "operating_cost": "None against the local API",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "REA_VERIFIED",
    "status_evidence": "829 passed, 2 failed (Windows-only timeout assertions), 42 skipped (EV-18).",
@@ -1013,11 +1023,12 @@
    "operating_cost": "Upstream calls the paid Exa API; an Orcel port would call orceld instead",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "REA_VERIFIED",
    "status_evidence": "269/269 tests, typecheck clean (EV-17).",
@@ -1081,11 +1092,12 @@
    "operating_cost": "None",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA (D:\\Orcel-REA\\reports\\source_clone_manifest_machine.json).",
@@ -1152,11 +1164,12 @@
    "operating_cost": "Graders call LLMs and searchers call hosted search APIs (paid unless pointed at local models and Orcel's API)",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA.",
@@ -1221,14 +1234,15 @@
    "operating_cost": "None",
    "rights": {
     "public_licence": "/: NONE (no LICENSE file; GitHub reports no licence)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from Exa Labs, Inc. (the copyright holder) covering redistribution of the openapi-spec files in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "no licence, proprietary or source-available",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
-   "status_evidence": "Cloned at this SHA; REA guardrail: do not copy (no licence).",
+   "status_evidence": "Cloned at this SHA. The REA guardrail against copying (no licence) is superseded by the founder decision of 2026-11-17.",
    "priority": "P2",
    "inventory_records": [
     "exa.openapi_spec (new)"
@@ -1290,11 +1304,12 @@
    "operating_cost": "DeepSeek and Exa hosted APIs (paid)",
    "rights": {
     "public_licence": "/: NONE (no LICENSE file)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from Exa Labs, Inc. (the copyright holder) covering redistribution of any file of exa-deepseek-chat in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "no licence, proprietary or source-available",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA; reference only.",
@@ -1359,11 +1374,12 @@
    "operating_cost": "Exa hosted API (paid)",
    "rights": {
     "public_licence": "/: NONE (no LICENSE file)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from the GitHub user adisinghstudent (the copyright holder) covering redistribution of any file of exa-browser in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "no licence, proprietary or source-available",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA (third-party reference).",
@@ -1432,11 +1448,12 @@
    "operating_cost": "Upstream proxies the paid TinyFish API; only the transport skeleton is useful",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "REA_VERIFIED",
    "status_evidence": "158/158 tests, typecheck clean (EV-13).",
@@ -1504,11 +1521,12 @@
    "operating_cost": "Samples need a paid TinyFish API key",
    "rights": {
     "public_licence": "/: MIT (single LICENSE; sample folders carry none of their own)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA.",
@@ -1582,11 +1600,12 @@
    "operating_cost": "Upstream adapters call the paid TinyFish API",
    "rights": {
     "public_licence": "/: MIT; convex/, grok/, hermes/, langchain/, n8n/, pi/, kiro/tinyfish/: MIT (own LICENSE files)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA.",
@@ -1651,11 +1670,12 @@
    "operating_cost": "AgentQL hosted API (paid)",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA.",
@@ -1720,11 +1740,12 @@
    "operating_cost": "AgentQL hosted API (paid)",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA.",
@@ -1795,11 +1816,12 @@
    "operating_cost": "AgentQL hosted API (paid)",
    "rights": {
     "public_licence": "/: MIT; langchain/: MIT (own LICENSE)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA.",
@@ -1858,7 +1880,7 @@
       "frontend/convex"
      ],
      "feature": "Dataset-building web agent app (reference only)",
-     "orcel_owner": "apps/orcel-firecrawl-style separate component; not planned"
+     "orcel_owner": "none (not planned: needs paid keys to build)"
     }
    ],
    "orcel_existing": [],
@@ -1867,12 +1889,12 @@
    "operating_cost": "Not buildable at $0: paid keys required (EV-15)",
    "rights": {
     "public_licence": "/: AGPL-3.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "COPYLEFT_SEPARATE_COMPONENT_ONLY",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "copyleft (AGPL/GPL)",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Cloned at this SHA; build fails without paid keys (EV-15).",
@@ -1938,11 +1960,12 @@
    "operating_cost": "None",
    "rights": {
     "public_licence": "/: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "REA_VERIFIED",
    "status_evidence": "34/34 tests (EV-14).",
@@ -2110,11 +2133,12 @@
    "operating_cost": "Runtime is model-free. The agent loop and published benchmarks use hosted models (hcu/gateway proxies for OpenAI, Anthropic, Gemini); not needed for the transplant",
    "rights": {
     "public_licence": "/: MIT (Copyright (c) 2026 Hybrid Computer Use authors); pyproject declares MIT AND Apache-2.0; osworld-overlay/desktop_env/ (except cache.py, cdp.py), hcu/osworld/task_loader.py: Apache-2.0 (OSWorld-derived); computer-use/native/linux/provider/ax_records.py (StableIndexer portions): Apache-2.0 + Playwright NOTICE; computer-use/native/macos/: MIT portions from open-codex-computer-use (licenses/MIT-open-codex-computer-use.txt); computer-use/native/macos/Sources/ComputerUseProviderKit/SkyLightSPI.swift, SkyClickSimulation.swift: MIT (cua yabai, licenses/MIT-cua-yabai.txt); computer-use/vendor/golang.org/x/text: BSD-3-Clause + PATENTS; computer-use/vendor/github.com/santhosh-tekuri/jsonschema/v6: Apache-2.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Shallow clone at this SHA in D:\\Orcel-REA-W2\\hybrid-computer-use (REA_ROUND2_PLAN.md); no donor tests run, no Orcel code from it.",
@@ -2244,11 +2268,12 @@
    "operating_cost": "Model inference: paid providers must be opt-in; local vLLM/Ollama endpoints are possible (GPU needed for grounding models). Simular API optional and excluded",
    "rights": {
     "public_licence": "/: Apache-2.0; agent_s4/: Apache-2.0 (own LICENSE); osworld_setup/s4/agent_harness/prime-agent-runtime: MIT (Mario Zechner, Prime Intellect)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Shallow clone at this SHA in D:\\Orcel-REA-W2\\agent-s; tests/test_providers.py not run.",
@@ -2366,11 +2391,12 @@
    "operating_cost": "LLM inference (paid or local). Browserbase cloud transports (packages/sdk-ts/src/browserbase*.ts) are excluded",
    "rights": {
     "public_licence": "/: MIT (Copyright (c) 2024 Browserbase Inc.); packages/cli: MIT (own LICENSE)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
    "status_evidence": "Shallow clone at this SHA in D:\\Orcel-REA-W2\\stagehand; no tests run.",
@@ -2490,24 +2516,22 @@
    "operating_cost": "Driver and Lume are free; Cua cloud sandboxes and Spaces are paid services and excluded",
    "rights": {
     "public_licence": "/: MIT (LICENSE.md, Cua AI, Inc.); apps/cua-spaces, apps/cua-spaces-desktop, apps/cua-spaces-macos, apps/cua-spaces-mobile, apps/cua-spaces-web: FSL-1.1-MIT; examples/cua-bots-ios, examples/cua-bots-macos, examples/infinite-canvas-swift, examples/openkoalabot-example-swift, examples/openkoalabot-example-tauri: FSL-1.1-MIT; libs/cua-driver-bench, libs/cua-spacesd, libs/spaces-app-swift, libs/spaces-notch-swift, libs/cua/bench/streaming: FSL-1.1-MIT; libs/cua/crates/{cua-chromium-storage, cua-keyvault, cua-logging, cua-machine-seal, cua-media-client, cua-media-codec, cua-media-protocol, cua-media-transport, cua-push, cua-replica-lab, cua-spaces-app-core, cua-spaces-cli, cua-spaces-cluster, cua-spaces-ext, cua-spaces-ffi, cua-spacesd-html5, cua-teleport-bundle, cua-teleport, cua-viewer, cua-volume}: FSL-1.1-MIT; libs/python/som: AGPL-3.0; libs/cua-bench, libs/cua-bench-rl, libs/kasm, libs/cua-s1/python, libs/cua-bench-s1/python, libs/lume/metal-capability-shim, libs/python/cua-sandbox, libs/typescript/core, libs/typescript/cursor-motion: MIT (own LICENSE files); libs/cua-driver: MIT (root licence; THIRD_PARTY_NOTICES.md in libs/cua-driver/rust); libs/cua/netgw: Apache-2.0 NOTICE",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "MIXED_PER_DIRECTORY",
-    "restricted_directories": [
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "mixed per directory",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy.",
+    "licence_notes": [
      {
       "path": "apps/cua-spaces*, examples/{cua-bots-ios,cua-bots-macos,infinite-canvas-swift,openkoalabot-example-swift,openkoalabot-example-tauri}, libs/{cua-driver-bench,cua-spacesd,spaces-app-swift,spaces-notch-swift}, libs/cua/bench/streaming, libs/cua/crates/* (20 crates listed)",
-      "licence": "FSL-1.1-MIT",
-      "classification": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE"
+      "licence": "FSL-1.1-MIT"
      },
      {
       "path": "libs/python/som",
-      "licence": "AGPL-3.0",
-      "classification": "COPYLEFT_SEPARATE_COMPONENT_ONLY"
+      "licence": "AGPL-3.0"
      }
-    ],
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from Cua AI, Inc. (the copyright holder) covering redistribution of the FSL-1.1-MIT directories listed above (FSL forbids competing use until each version converts to MIT two years after release) in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    ]
    },
    "status": "TESTED",
    "status_evidence": "cua-driver subset transplanted at a802eaf2 and covered by apps/orcel-native-host tests; the rest is not acquired.",
@@ -2606,24 +2630,22 @@
    "operating_cost": "Local compute only (GPU optional, CPU slow); no paid service. The omnitool agent uses hosted VLMs (paid) and is not transplanted",
    "rights": {
     "public_licence": "/ (code and docs): CC-BY-4.0 (LICENSE file; GitHub SPDX CC-BY-4.0). The README badge says MIT; the LICENSE file is recorded as governing. Conflict recorded, not resolved",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "MIXED_PER_DIRECTORY",
-    "restricted_directories": [
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "mixed per directory",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy.",
+    "licence_notes": [
      {
       "path": "Ultralytics-based icon_detect weights (v1, v1.5, v2) and the ultralytics==8.3.70 dependency",
-      "licence": "AGPL-3.0",
-      "classification": "COPYLEFT_SEPARATE_COMPONENT_ONLY"
+      "licence": "AGPL-3.0"
      },
      {
       "path": "Repository code and docs",
-      "licence": "CC-BY-4.0 (attribution required; README badge says MIT)",
-      "classification": "ATTRIBUTION_NOTICE"
+      "licence": "CC-BY-4.0 (attribution required; README badge says MIT)"
      }
-    ],
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    ]
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -2714,11 +2736,12 @@
    "operating_cost": "None",
    "rights": {
     "public_licence": "/: Apache-2.0; microsoft/playwright packages/playwright-core/src/tools: Apache-2.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -2815,11 +2838,12 @@
    "operating_cost": "Free locally; some compile paths call hosted models (opt-in)",
    "rights": {
     "public_licence": "/ and packages/{agent,capture,desktop,flow,privacy,program-graph,seal-view,tray,types,verify}: MIT (own LICENSE files); packages/desktop/third_party/flatbuffers: Apache-2.0; packages/desktop/third_party/loguru: MIT; packages/flow benchmarks (openIMIS config): AGPL-3.0 config fetched at run time, not stored (packages/flow/THIRD_PARTY_NOTICES.md)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -2926,11 +2950,12 @@
    "operating_cost": "Free for record/replay; model-assisted compile is opt-in and may be paid",
    "rights": {
     "public_licence": "/: MIT (OpenAdapt.AI (MLDSAI Inc.)); benchmark/effectbench: MIT; benchmark/openimis_claims, benchmark/openemr_local: Third-party AGPL-3.0 configuration fetched at run time, not stored",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only (archived tree pinned; maintained source pinned in openadapt).",
@@ -3026,11 +3051,12 @@
    "operating_cost": "Uses the paid Anthropic API; Orcel keeps model providers opt-in",
    "rights": {
     "public_licence": "/: MIT (Anthropic); computer-use-demo/: MIT (own LICENSE); browser-use-demo/: MIT + NOTICE for modified Playwright files (Apache-2.0); managed-agents/self-hosted-sandboxes/openshell-policy/third_party/openshell, .../sandbox/openshell-skills: Apache-2.0 (NVIDIA); managed-agents/assistant-ui/components: MIT (assistant-ui notice)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3108,11 +3134,12 @@
    "operating_cost": "LLM inference (paid or local)",
    "rights": {
     "public_licence": "/: MIT (SimonLuvRamen; Alibaba Group Holding Limited)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3195,12 +3222,12 @@
    "operating_cost": "None (Lightpanda cloud optional, excluded)",
    "rights": {
     "public_licence": "/: AGPL-3.0; src/rust/render/fonts: Bitstream Vera / DejaVu font licence",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "COPYLEFT_SEPARATE_COMPONENT_ONLY",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "copyleft (AGPL/GPL)",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3286,24 +3313,24 @@
      "upstream_paths": [
       "packages/browseros-agent"
      ],
-     "feature": "Browser agent and MCP server (reference; MIT subpackages reusable)",
-     "orcel_owner": "apps/orcel-mcp (agent-mcp-manager, MIT)"
+     "feature": "Browser agent and MCP server",
+     "orcel_owner": "apps/orcel-mcp"
     }
    ],
    "orcel_existing": [
     "crates/orcel-browser-host, apps/orcel-browser-worker"
    ],
-   "target_owner": "apps/orcel-mcp (MIT subpackages only)",
+   "target_owner": "apps/orcel-mcp",
    "dependencies": "Chromium build toolchain (very large); Rust; Node.js",
    "operating_cost": "Building Chromium needs large compute; optional hosted LLM billing (packages/browseros-agent/apps/claw-server/src/services/billing)",
    "rights": {
     "public_licence": "/ and packages/browseros-agent: AGPL-3.0; ungoogled-chromium patches under packages/browseros/series_patches (per LICENSE.ungoogled_chromium): BSD-3-Clause (LICENSE.ungoogled_chromium); packages/browseros-agent/packages/{acpx-ai-provider, agent-mcp-manager}: MIT (Dani Akash); packages/browseros-agent/packages/agent-cursor: MIT (Cua AI, Inc.); packages/browseros-agent/crates/neo-sdk/neo-playwright/third_party/{playwright, mime, yaml}: Apache-2.0, MIT, ISC; packages/browseros/bos_build/steps/patches/fixtures: BSD-3-Clause (Chromium)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "COPYLEFT_SEPARATE_COMPONENT_ONLY",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "copyleft (AGPL/GPL)",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3379,12 +3406,12 @@
    "operating_cost": "Hosted LLMs (paid) by default; Skyvern cloud excluded",
    "rights": {
     "public_licence": "/: AGPL-3.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "COPYLEFT_SEPARATE_COMPONENT_ONLY",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "copyleft (AGPL/GPL)",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3459,11 +3486,12 @@
    "operating_cost": "None (user-enabled USB debugging)",
    "rights": {
     "public_licence": "/: Apache-2.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3536,11 +3564,12 @@
    "operating_cost": "Free; real iOS devices need Apple developer signing (an Apple Developer Program membership may be required)",
    "rights": {
     "public_licence": "/: Apache-2.0; packages/logger: ISC (npm, Inc.)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3630,11 +3659,12 @@
    "operating_cost": "Model inference: local GPU for GUI-Owl 7B/32B or paid Bailian/DashScope",
    "rights": {
     "public_licence": "/: MIT (mPLUG); Mobile-Agent-v3/android_world_v3, Mobile-Agent-v3.5/android_world_v3.5: Apache-2.0 (AndroidWorld); */android_world_*/apps/java/com/google/androidenv/miniwob/app/assets/html: MIT (OpenAI universe, Stanford); UI-S1/verl: No LICENSE file found in the tree path list; upstream verl licence not checked",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3716,11 +3746,12 @@
    "operating_cost": "LLM inference (any provider; paid or local); Mobilerun cloud excluded",
    "rights": {
     "public_licence": "/: MIT (Niels Schmidt)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3798,11 +3829,12 @@
    "operating_cost": "Free locally; Maestro Cloud is paid and excluded",
    "rights": {
     "public_licence": "/: Apache-2.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -3887,8 +3919,8 @@
       "rdp/",
       "public/mstsc"
      ],
-     "feature": "RDP gateway (GPL-3.0; separate component only)",
-     "orcel_owner": "none"
+     "feature": "RDP gateway (GPL-3.0 notices kept)",
+     "orcel_owner": "apps/orcel-relay"
     }
    ],
    "orcel_existing": [
@@ -3900,29 +3932,26 @@
    "operating_cost": "None",
    "rights": {
     "public_licence": "/: Apache-2.0; rdp/: GPL-3.0; public/mstsc/: GPL-3.0; public/novnc/: MPL-2.0 core (noVNC; other noVNC parts carry their own terms); public/novnc/vendor/pako: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "MIXED_PER_DIRECTORY",
-    "restricted_directories": [
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "mixed per directory",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy.",
+    "licence_notes": [
      {
       "path": "rdp/, public/mstsc/",
-      "licence": "GPL-3.0",
-      "classification": "COPYLEFT_SEPARATE_COMPONENT_ONLY"
+      "licence": "GPL-3.0"
      },
      {
       "path": "public/novnc/",
-      "licence": "MPL-2.0 (file-level copyleft)",
-      "classification": "FILE_COPYLEFT_NOTICE"
+      "licence": "MPL-2.0 (file-level copyleft)"
      },
      {
       "path": "agents/ prebuilt binaries",
-      "licence": "Not verified",
-      "classification": "BINARY_PROVENANCE_UNVERIFIED"
+      "licence": "Not verified"
      }
-    ],
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    ]
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -4012,12 +4041,12 @@
    "operating_cost": "None self-hosted; RustDesk Pro server is paid and excluded",
    "rights": {
     "public_licence": "/: AGPL-3.0 (LICENCE); libs/enigo: MIT",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "COPYLEFT_SEPARATE_COMPONENT_ONLY",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "copyleft_rule": "AGPL-3.0: may be published only as a separate component under AGPL-3.0 with its notices and source offer (separate process and package, no linking into the Apache-2.0 core, per FD-UP-1). Inclusion in the core would need a copyright-holder grant.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "copyleft (AGPL/GPL)",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -4125,11 +4154,12 @@
    "operating_cost": "None (self-hosted)",
    "rights": {
     "public_licence": "/ and cli/, server/, sdks/code-interpreter/python, sdks/sandbox/kotlin, sdks/sandbox/python, sdks/mcp/sandbox/python: Apache-2.0 (own LICENSE files)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -4212,11 +4242,12 @@
    "operating_cost": "LLM inference per agent framework; CopilotKit cloud optional and excluded",
    "rights": {
     "public_licence": "/: MIT (CopilotKit)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -4310,11 +4341,12 @@
    "operating_cost": "Model inference (Nous Portal, OpenRouter and others are paid; local models possible)",
    "rights": {
     "public_licence": "/: MIT (Nous Research); plugins/security-guidance: Apache-2.0 (NOTICE: from claude-plugins-official); plugins/hermes-achievements: MIT; optional-skills/** (ported skills): MIT with per-skill authors and upstream commits",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -4374,7 +4406,7 @@
       "crates/screenpipe-engine"
      ],
      "feature": "Continuous screen capture and OCR",
-     "orcel_owner": "apps/orcel-native-host (reference only without a grant)"
+     "orcel_owner": "apps/orcel-native-host"
     },
     {
      "layer": "Infrastructure",
@@ -4382,23 +4414,24 @@
       "crates/screenpipe-db",
       "packages/screenpipe-mcp"
      ],
-     "feature": "Local screen-history index and MCP (reference only)",
-     "orcel_owner": "crates/orcel-journal (reference only)"
+     "feature": "Local screen-history index and MCP",
+     "orcel_owner": "crates/orcel-journal"
     }
    ],
    "orcel_existing": [
     "apps/orcel-native-host/src/capture.rs"
    ],
-   "target_owner": "apps/orcel-native-host (reference only)",
+   "target_owner": "apps/orcel-native-host",
    "dependencies": "Rust, ffmpeg, OCR engines, ONNX Runtime",
    "operating_cost": "Commercial use requires a paid Enterprise licence",
    "rights": {
     "public_licence": "/: Screenpipe Commercial License (Negentropy Labs, Inc.; all rights reserved): free for personal non-commercial use; commercial use needs an Enterprise licence; building a competing product is prohibited without one. GitHub reports NOASSERTION",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from Negentropy Labs, Inc. (dba Screenpipe) (the copyright holder) covering redistribution of any screenpipe file, and commercial and competing use in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "no licence, proprietary or source-available",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -4478,11 +4511,12 @@
    "operating_cost": "Local VMs are free; cloud providers and agent models are paid",
    "rights": {
     "public_licence": "/: Apache-2.0",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -4561,11 +4595,12 @@
    "operating_cost": "WebArena hosting needs large Docker images; agent models may be paid",
    "rights": {
     "public_licence": "/: Apache-2.0 (LICENSE with a ServiceNow copyright header; GitHub reports NOASSERTION)",
-    "owner_asserted_authorization": "OWNER-ASSERTED AUTHORIZATION (founder, 2026-11-17, recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Master directive'). Owner-asserted; not independent legal verification; no copyright-holder-signed grant is in the repository.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "status_evidence": "API pin only.",
@@ -4586,11 +4621,12 @@
    "target_owner": "crates/orcel-browser-host",
    "rights": {
     "public_licence": "Apache-2.0; cli/src/native/a11y/axe.min.js MPL-2.0",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "note": "HEAD moved from 53384771fbafc261ba67608ac806dd5aa70b84f0 (2026-11-16). Orcel-owned equivalents in capability_inventory.json agent_browser.* rows."
@@ -4605,11 +4641,12 @@
    "target_owner": "none",
    "rights": {
     "public_licence": "No LICENSE file; package.json declares MIT; GitHub reports no licence",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from Vercel Inc. (the copyright holder) covering redistribution of the remote-agent-browser files (or a committed LICENSE file at a pinned commit) in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "no licence, proprietary or source-available",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "note": "Cloud-dependent; deliberately not in the first packets."
@@ -4624,16 +4661,16 @@
    "target_owner": "crates/orcel-provider-mobile (new)",
    "rights": {
     "public_licence": "Apache-2.0 + NOTICE; bundled PRoot GPL-2.0-or-later, talloc LGPL-3.0-or-later, Alpine rootfs mixed",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "MIXED_PER_DIRECTORY",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false,
-    "restricted_directories": [
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "mixed per directory",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy.",
+    "licence_notes": [
      {
       "path": "PRoot, talloc, Alpine rootfs",
-      "licence": "GPL-2.0+, LGPL-3.0+, mixed",
-      "classification": "COPYLEFT_SEPARATE_COMPONENT_ONLY"
+      "licence": "GPL-2.0+, LGPL-3.0+, mixed"
      }
     ]
    },
@@ -4650,11 +4687,12 @@
    "target_owner": "crates/orcel-provider-mobile (new)",
    "rights": {
     "public_licence": "MIT",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "note": "Pairs with scrcpy and droidrun for Android."
@@ -4669,11 +4707,12 @@
    "target_owner": "apps/orcel-relay (reference)",
    "rights": {
     "public_licence": "MIT (org not GitHub-verified)",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "note": "Integration guide only; UU Remote itself is proprietary."
@@ -4688,11 +4727,12 @@
    "target_owner": "none",
    "rights": {
     "public_licence": "Proprietary; no official source repository found",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from NetEase (the copyright holder) covering redistribution of any UU Remote source or binary in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "no licence, proprietary or source-available",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "note": "No source available."
@@ -4707,11 +4747,12 @@
    "target_owner": "none",
    "rights": {
     "public_licence": "Unknown; repository not identified",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "public_redistribution_flag": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE",
-    "grant_evidence_needed": "A written grant from the unidentified copyright holder (the copyright holder) covering redistribution of any file in the public TheHalfMoon/Orcel repository under Orcel's terms (Apache-2.0 core), naming the files or directories, the pinned commit, and whether sublicensing and modification are allowed; stored under docs/orcel/grants/ with the signer's identity.",
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "no licence, proprietary or source-available",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "NOT_ACQUIRED",
    "note": "NEEDS_FOUNDER_CONFIRMATION: vercel-labs/agent-use does not exist (404 on 2026-11-17)."
@@ -4726,11 +4767,12 @@
    "target_owner": "apps/orcel-agent",
    "rights": {
     "public_licence": "MIT",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "note": "Pin from deerflow-donor.lock.json."
@@ -4745,11 +4787,12 @@
    "target_owner": "apps/orcel-control-room",
    "rights": {
     "public_licence": "MIT",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "note": "Pin from docs/orcel/control_room_agentkit_provenance.json and journal_resume_provenance.json."
@@ -4764,11 +4807,12 @@
    "target_owner": "apps/orcel-browser-worker",
    "rights": {
     "public_licence": "Apache-2.0 with an attribution requirement",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "note": "Pin from docs/orcel/wi03_relevance_provenance.json."
@@ -4783,11 +4827,12 @@
    "target_owner": "crates/orceld",
    "rights": {
     "public_licence": "MIT",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "note": "Pin from docs/orcel/wi06_search_provenance.json."
@@ -4802,11 +4847,12 @@
    "target_owner": "apps/orcel-browser-worker",
    "rights": {
     "public_licence": "MIT",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "note": "Pin from docs/orcel/sg000108_webmcp_provenance.json."
@@ -4821,11 +4867,12 @@
    "target_owner": "apps/orcel-doc-parser",
    "rights": {
     "public_licence": "MIT",
-    "owner_asserted_authorization": "Not one of the 50 master-directive sources. Covered only by earlier founder records where they name it (docs/orcel/grants/2026-11-17-founder-attestation.md, 2026-10-13 and 2026-10-18 records); otherwise used under its public licence.",
-    "public_redistribution": "PERMISSIVE_PUBLIC_OK",
-    "public_redistribution_flag": null,
-    "grant_evidence_needed": null,
-    "private_engineering_blocked": false
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "TESTED",
    "note": "Vendored crate, pin by version (docs/orcel/lopdf_provenance.json)."
@@ -4848,7 +4895,8 @@
    ],
    "orcel_owner": "apps/orcel-computer-host (Go to Go, same language; denied by default, test UI only first)",
    "source_status": "SOURCE_ACQUIRED",
-   "public_redistribution": "PERMISSIVE_PUBLIC_OK"
+   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+   "public_licence_family": "permissive"
   },
   {
    "order": 2,
@@ -4867,7 +4915,8 @@
    ],
    "orcel_owner": "apps/orcel-computer-host",
    "source_status": "SOURCE_ACQUIRED",
-   "public_redistribution": "PERMISSIVE_PUBLIC_OK"
+   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+   "public_licence_family": "permissive"
   },
   {
    "order": 3,
@@ -4882,9 +4931,10 @@
     "util/yolov9.py",
     "omnitool/omniparserserver/omniparserserver.py"
    ],
-   "orcel_owner": "apps/orcel-vision (new, contained sidecar; only icon_detect_v3 + MIT caption weights; ultralytics and AGPL detectors excluded or isolated)",
+   "orcel_owner": "apps/orcel-vision (new, contained sidecar; keep notices for ultralytics (AGPL-3.0) and the detector and caption weights; read each model card before downloading weights)",
    "source_status": "NOT_ACQUIRED",
-   "public_redistribution": "MIXED_PER_DIRECTORY"
+   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+   "public_licence_family": "mixed per directory"
   },
   {
    "order": 4,
@@ -4904,7 +4954,8 @@
    ],
    "orcel_owner": "apps/orcel-agent (provider-agnostic; paid providers opt-in)",
    "source_status": "SOURCE_ACQUIRED",
-   "public_redistribution": "PERMISSIVE_PUBLIC_OK"
+   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+   "public_licence_family": "permissive"
   },
   {
    "order": 5,
@@ -4924,7 +4975,8 @@
    ],
    "orcel_owner": "apps/orcel-browser-worker (no Browserbase transport)",
    "source_status": "SOURCE_ACQUIRED",
-   "public_redistribution": "PERMISSIVE_PUBLIC_OK"
+   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+   "public_licence_family": "permissive"
   },
   {
    "order": 6,
@@ -4941,7 +4993,8 @@
    ],
    "orcel_owner": "apps/orcel-mcp (tools) over apps/orcel-browser-worker",
    "source_status": "NOT_ACQUIRED",
-   "public_redistribution": "PERMISSIVE_PUBLIC_OK"
+   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+   "public_licence_family": "permissive"
   },
   {
    "order": 7,
@@ -4961,7 +5014,8 @@
    ],
    "orcel_owner": "apps/orcel-agent (flow package, new)",
    "source_status": "NOT_ACQUIRED",
-   "public_redistribution": "PERMISSIVE_PUBLIC_OK"
+   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+   "public_licence_family": "permissive"
   },
   {
    "order": 8,
@@ -4978,7 +5032,8 @@
    ],
    "orcel_owner": "apps/orcel-sandbox (new; launched under apps/orcel-contain policy and the Orcel stop control)",
    "source_status": "NOT_ACQUIRED",
-   "public_redistribution": "PERMISSIVE_PUBLIC_OK"
+   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
+   "public_licence_family": "permissive"
   }
  ]
 }

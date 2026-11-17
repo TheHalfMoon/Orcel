@@ -10,6 +10,7 @@
   "Per-OS and surface fields: tested | implemented_untested | inert_stub | not_started | not_applicable; exposed:<tools> | not_exposed | not_started.",
   "method for NOT STARTED or BLOCKED rows is the planned method; integrated is true only for code in Orcel main.",
   "2026-11-17: founder decisions FD-UP-1 to FD-UP-13 applied (UNIFIED_INTEGRATION_SPEC.md section 11). Founder attestation of 2026-11-17 recorded in docs/orcel/grants/2026-11-17-founder-attestation.md, separately from upstream terms. Stealth records moved from BLOCKED to NOT STARTED behind the opt-in policy gate; agent-desktop admitted as a candidate; Exa Browser and TinyFish added as source-unverified.",
+  "2026-11-17: founder decision recorded in docs/orcel/grants/2026-11-17-founder-attestation.md: licence type no longer blocks copying, renaming or publishing (authorization OWNER-ASSERTED, not independently verified). Licence facts stay as informational fields; fleet.software_install, fleet.mdm and fleet.ee_security move from BLOCKED to NOT STARTED; mika.sandbox and remote_agent_browser.sandbox stay BLOCKED for non-licence reasons.",
   "2026-11-17: master transplant ledger added (TRANSPLANT_LEDGER.json; DONOR_INVENTORY.md section 8). 42 records added for master-directive sources not already inventoried; exa_browser.unverified and tinyfish.unverified updated with the resolved repositories. Ledger statuses map to this vocabulary as stated in the ledger notes."
  ],
  "status_vocabulary": [
@@ -1206,7 +1207,7 @@
    ],
    "upstream_tests": [],
    "feature": "Vercel Sandbox provisioning (@vercel/sandbox, OIDC)",
-   "classification": "unavailable_or_outside_rights",
+   "classification": "needs_new_implementation",
    "orcel_destination": "None (cloud infrastructure)",
    "method": "adapter",
    "integrated": false,
@@ -1219,7 +1220,7 @@
    "tests": [],
    "evidence": [],
    "status": "BLOCKED",
-   "blocking_issue": "Requires Vercel cloud account; violates zero mandatory paid runtime. No LICENSE file: package.json declares MIT but the repository carries no licence text or copyright notice; confirm with Vercel or rely on the founder grant"
+   "blocking_issue": "Requires a Vercel cloud account; violates zero mandatory paid runtime. Licence facts (informational under the founder decision of 2026-11-17): no LICENSE file; package.json declares MIT."
   },
   {
    "id": "remote_agent_browser.transfers",
@@ -2343,7 +2344,7 @@
    ],
    "upstream_tests": [],
    "feature": "Local Linux sandbox (PRoot + Alpine rootfs, Python/Node)",
-   "classification": "unavailable_or_outside_rights",
+   "classification": "needs_new_implementation",
    "orcel_destination": "None for desktop (apps/orcel-contain already sandboxes on three OSes)",
    "method": "adapter",
    "integrated": false,
@@ -2356,7 +2357,7 @@
    "tests": [],
    "evidence": [],
    "status": "BLOCKED",
-   "blocking_issue": "Bundles GPL-2.0-or-later PRoot (patched) and LGPL-3.0 talloc plus GPL/LGPL Alpine packages; redistribution needs corresponding-source offers; desktop need already covered by orcel-contain"
+   "blocking_issue": "Desktop need already covered by orcel-contain. Licence facts (informational under the founder decision of 2026-11-17): bundles GPL-2.0-or-later PRoot (patched), LGPL-3.0 talloc and GPL/LGPL Alpine packages; keep their notices and source offers with any copy."
   },
   {
    "id": "mika.relay",
@@ -2536,7 +2537,7 @@
    ],
    "upstream_tests": [],
    "feature": "Software installers, Fleet-maintained apps, auto-update, VPP, patch deadlines",
-   "classification": "unavailable_or_outside_rights",
+   "classification": "reusable_with_adaptation",
    "orcel_destination": "None (reimplement independently if needed)",
    "method": "reimplemented",
    "integrated": false,
@@ -2548,8 +2549,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [],
-   "status": "BLOCKED",
-   "blocking_issue": "Lives under ee/ (Fleet EE licence): production use requires a paid Fleet subscription; copying/distribution forbidden. Founder attestation does not cover Fleet-owned EE code unless a signed grant says so."
+   "status": "NOT STARTED",
+   "blocking_issue": "Licence recorded as informational: ee/ carries the Fleet Enterprise Edition licence (production use needs a paid Fleet subscription). Founder decision of 2026-11-17: licence type no longer blocks copying, renaming or publishing (authorization OWNER-ASSERTED, not independently verified). Needs a source admission packet and an activated grain; keep notices and provenance."
   },
   {
    "id": "fleet.mdm",
@@ -2566,7 +2567,7 @@
    ],
    "upstream_tests": [],
    "feature": "Apple/Windows MDM, profiles, setup experience, SCEP/certificates",
-   "classification": "unavailable_or_outside_rights",
+   "classification": "reusable_with_adaptation",
    "orcel_destination": "None",
    "method": "reimplemented",
    "integrated": false,
@@ -2578,8 +2579,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [],
-   "status": "BLOCKED",
-   "blocking_issue": "Lives under ee/ (Fleet EE licence): production use requires a paid Fleet subscription; copying/distribution forbidden. Founder attestation does not cover Fleet-owned EE code unless a signed grant says so. server/mdm/nanomdm, nanodep (MIT, Jesse Peterson) and scep (MIT, Victor Vrantchan) are separately reusable third-party code."
+   "status": "NOT STARTED",
+   "blocking_issue": "Licence recorded as informational: ee/ carries the Fleet Enterprise Edition licence (production use needs a paid Fleet subscription). Founder decision of 2026-11-17: licence type no longer blocks copying, renaming or publishing (authorization OWNER-ASSERTED, not independently verified). Needs a source admission packet and an activated grain; keep notices and provenance. server/mdm/nanomdm, nanodep (MIT, Jesse Peterson) and scep (MIT, Victor Vrantchan) are third-party code with their own notices."
   },
   {
    "id": "fleet.orbit_agent",
@@ -2681,7 +2682,7 @@
    ],
    "upstream_tests": [],
    "feature": "CIS benchmarks, host identity/TPM, SCEP proxy, Chrome extension agent",
-   "classification": "unavailable_or_outside_rights",
+   "classification": "reusable_with_adaptation",
    "orcel_destination": "None",
    "method": "reimplemented",
    "integrated": false,
@@ -2693,8 +2694,8 @@
    "app": "not_started",
    "tests": [],
    "evidence": [],
-   "status": "BLOCKED",
-   "blocking_issue": "Lives under ee/ (Fleet EE licence): production use requires a paid Fleet subscription; copying/distribution forbidden. Founder attestation does not cover Fleet-owned EE code unless a signed grant says so."
+   "status": "NOT STARTED",
+   "blocking_issue": "Licence recorded as informational: ee/ carries the Fleet Enterprise Edition licence (production use needs a paid Fleet subscription). Founder decision of 2026-11-17: licence type no longer blocks copying, renaming or publishing (authorization OWNER-ASSERTED, not independently verified). Needs a source admission packet and an activated grain; keep notices and provenance."
   },
   {
    "id": "phone_harness.android_adb",
@@ -2992,7 +2993,7 @@
     "Resolved by the master transplant ledger (TRANSPLANT_LEDGER.json id exa_browser): adisinghstudent/exa-browser at 20a0cf9100879f234bd0036a3d9cae58e135265d, no LICENSE file, third-party (not Exa Labs). Exa Labs repositories are recorded as ledger ids exa_js to exa_deepseek_chat."
    ],
    "status": "NOT STARTED",
-   "blocking_issue": "PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE (no licence). Source resolved on 2026-11-17; see TRANSPLANT_LEDGER.json."
+   "blocking_issue": "Source resolved on 2026-11-17 (no LICENSE file; informational under the founder decision of 2026-11-17, authorization OWNER-ASSERTED). Needs a source admission packet; see TRANSPLANT_LEDGER.json."
   },
   {
    "id": "tinyfish.unverified",
@@ -3051,7 +3052,7 @@
    "evidence": [
     "BR-02/03/05/07 ports at 1b025d7e are on main with tests (form.test.ts, upload.test.ts, dialogs.test.ts, verify.test.ts).",
     "Transplanted commit 1b025d7e20a026371cd5f98ba0cdce48892737c8; current HEAD 76b6fa645744699e982a54c48c3fc7971f4a1eef (TRANSPLANT_LEDGER.json).",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "TESTED",
    "blocking_issue": null
@@ -3085,7 +3086,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA; 420/420 tests (D:\\Orcel-REA\\reports\\08_tests_and_evidence.md EV-16).",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3118,7 +3119,7 @@
    "tests": [],
    "evidence": [
     "829 passed, 2 failed (Windows-only timeout assertions), 42 skipped (EV-18).",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3150,7 +3151,7 @@
    "tests": [],
    "evidence": [
     "269/269 tests, typecheck clean (EV-17).",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3182,7 +3183,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA (D:\\Orcel-REA\\reports\\source_clone_manifest_machine.json).",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3215,7 +3216,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3233,9 +3234,9 @@
     "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
    "feature": "Master ledger: Exa API contract",
-   "classification": "unavailable_or_outside_rights",
+   "classification": "reusable_with_adaptation",
    "orcel_destination": "crates/orcel-web (new)",
-   "method": "reimplemented",
+   "method": "adapted",
    "integrated": false,
    "windows": "not_started",
    "macos": "not_started",
@@ -3245,11 +3246,11 @@
    "app": "not_started",
    "tests": [],
    "evidence": [
-    "Cloned at this SHA; REA guardrail: do not copy (no licence).",
-    "Rights: PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Cloned at this SHA. The REA guardrail against copying (no licence) is superseded by the founder decision of 2026-11-17.",
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: no licence, proprietary or source-available; notices and provenance kept."
    ],
    "status": "NOT STARTED",
-   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain. PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE for public copies."
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
   },
   {
    "id": "exa.deepseek_chat",
@@ -3264,7 +3265,7 @@
     "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
    "feature": "Master ledger: Search-grounded chat demo (reference only)",
-   "classification": "unavailable_or_outside_rights",
+   "classification": "needs_new_implementation",
    "orcel_destination": "apps/orcel-control-room (reference only)",
    "method": "reimplemented",
    "integrated": false,
@@ -3277,10 +3278,10 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA; reference only.",
-    "Rights: PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: no licence, proprietary or source-available; notices and provenance kept."
    ],
    "status": "NOT STARTED",
-   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain. PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE for public copies."
+   "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
   },
   {
    "id": "tinyfish.mcp_transport",
@@ -3310,7 +3311,7 @@
    "tests": [],
    "evidence": [
     "158/158 tests, typecheck clean (EV-13).",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3341,7 +3342,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3375,7 +3376,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3406,7 +3407,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3436,7 +3437,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3468,7 +3469,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3500,7 +3501,7 @@
    "tests": [],
    "evidence": [
     "Cloned at this SHA; build fails without paid keys (EV-15).",
-    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: copyleft (AGPL/GPL); notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3532,7 +3533,7 @@
    "tests": [],
    "evidence": [
     "34/34 tests (EV-14).",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status REA_VERIFIED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3573,7 +3574,7 @@
    "tests": [],
    "evidence": [
     "Shallow clone at this SHA in D:\\Orcel-REA-W2\\hybrid-computer-use (REA_ROUND2_PLAN.md); no donor tests run, no Orcel code from it.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3614,7 +3615,7 @@
    "tests": [],
    "evidence": [
     "Shallow clone at this SHA in D:\\Orcel-REA-W2\\agent-s; tests/test_providers.py not run.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3655,7 +3656,7 @@
    "tests": [],
    "evidence": [
     "Shallow clone at this SHA in D:\\Orcel-REA-W2\\stagehand; no tests run.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status SOURCE_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3690,7 +3691,7 @@
    "evidence": [
     "cua-driver subset transplanted at a802eaf2 and covered by apps/orcel-native-host tests; the rest is not acquired.",
     "Transplanted commit a802eaf26ca97616a6bf0de6a29729a9346fbb1f; current HEAD 494c3cdcc2768033bd75ba34745ce810fc55052d (TRANSPLANT_LEDGER.json).",
-    "Rights: MIXED_PER_DIRECTORY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: mixed per directory; notices and provenance kept."
    ],
    "status": "TESTED",
    "blocking_issue": null
@@ -3727,7 +3728,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: MIXED_PER_DIRECTORY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: mixed per directory; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3762,7 +3763,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3794,7 +3795,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3833,7 +3834,7 @@
    "tests": [],
    "evidence": [
     "API pin only (archived tree pinned; maintained source pinned in openadapt).",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3866,7 +3867,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3900,7 +3901,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3920,9 +3921,9 @@
     "786 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
    "feature": "Master ledger: Alternative headless engine over CDP; MCP server (reference)",
-   "classification": "best_via_adapter",
+   "classification": "reusable_with_adaptation",
    "orcel_destination": "third_party/lightpanda (new)",
-   "method": "adapter",
+   "method": "adapted",
    "integrated": false,
    "windows": "not_started",
    "macos": "not_started",
@@ -3933,7 +3934,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: copyleft (AGPL/GPL); notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3950,10 +3951,10 @@
    "upstream_tests": [
     "1318 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
-   "feature": "Master ledger: Agentic Chromium build (reference); Browser agent and MCP server (reference; MIT subpackages reusable)",
-   "classification": "best_via_adapter",
-   "orcel_destination": "apps/orcel-mcp (MIT subpackages only)",
-   "method": "adapter",
+   "feature": "Master ledger: Agentic Chromium build (reference); Browser agent and MCP server",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-mcp",
+   "method": "adapted",
    "integrated": false,
    "windows": "not_started",
    "macos": "not_started",
@@ -3964,7 +3965,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: copyleft (AGPL/GPL); notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -3996,7 +3997,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: copyleft (AGPL/GPL); notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4027,7 +4028,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4059,7 +4060,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4093,7 +4094,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4126,7 +4127,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4160,7 +4161,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4181,7 +4182,7 @@
    "upstream_tests": [
     "0 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
-   "feature": "Master ledger: Relay, desktop multiplexing, agent and user sessions (study pairing and auditing); RDP gateway (GPL-3.0; separate component only)",
+   "feature": "Master ledger: Relay, desktop multiplexing, agent and user sessions (study pairing and auditing); RDP gateway (GPL-3.0 notices kept)",
    "classification": "reusable_with_adaptation",
    "orcel_destination": "apps/orcel-relay",
    "method": "adapted",
@@ -4195,7 +4196,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: MIXED_PER_DIRECTORY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: mixed per directory; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4215,9 +4216,9 @@
     "52 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
    "feature": "Master ledger: Cross-platform screen capture; Input simulation (MIT); Remote desktop transport (reference)",
-   "classification": "best_via_adapter",
+   "classification": "reusable_with_adaptation",
    "orcel_destination": "third_party/rustdesk (new)",
-   "method": "adapter",
+   "method": "adapted",
    "integrated": false,
    "windows": "not_started",
    "macos": "not_started",
@@ -4228,7 +4229,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: COPYLEFT_SEPARATE_COMPONENT_ONLY; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: copyleft (AGPL/GPL); notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4269,7 +4270,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4305,7 +4306,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4340,7 +4341,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4359,10 +4360,10 @@
    "upstream_tests": [
     "1509 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
-   "feature": "Master ledger: Continuous screen capture and OCR; Local screen-history index and MCP (reference only)",
-   "classification": "unavailable_or_outside_rights",
-   "orcel_destination": "apps/orcel-native-host (reference only)",
-   "method": "reimplemented",
+   "feature": "Master ledger: Continuous screen capture and OCR; Local screen-history index and MCP",
+   "classification": "reusable_with_adaptation",
+   "orcel_destination": "apps/orcel-native-host",
+   "method": "adapted",
    "integrated": false,
    "windows": "not_started",
    "macos": "not_started",
@@ -4373,10 +4374,10 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: no licence, proprietary or source-available; notices and provenance kept."
    ],
    "status": "NOT STARTED",
-   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain. PUBLIC_REDISTRIBUTION_NEEDS_GRANT_EVIDENCE for public copies."
+   "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
   },
   {
    "id": "osworld.harness",
@@ -4407,7 +4408,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
@@ -4442,7 +4443,7 @@
    "tests": [],
    "evidence": [
     "API pin only.",
-    "Rights: PERMISSIVE_PUBLIC_OK; owner-asserted authorization recorded separately in docs/orcel/grants/2026-11-17-founder-attestation.md"
+    "Authorization: OWNER-ASSERTED (founder, 2026-11-17) (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
    "blocking_issue": "Ledger status NOT_ACQUIRED (TRANSPLANT_LEDGER.json). Needs a source admission packet (per-file licence matrix, third-party inventory, owner) and an activated grain."
