@@ -154,6 +154,40 @@ jobs:
         run: |
           apps/orcel-desktop-preview/tests/memory.ps1 -OutPath "$env:RUNNER_TEMP/wpf-memory.json"
           Get-Content "$env:RUNNER_TEMP/wpf-memory.json"
+      # W2-01: the Go computer host's own tests on every OS. Off Windows the
+      # untagged tests run (the host protocol and supervisor, and the
+      # HCU-derived semantic package, whose macOS and Linux adapters are
+      # UNVERIFIED); on Windows the native observation tests run too,
+      # against a disposable window, and the W2-01 live identity check of
+      # a semantic action on that window. The SG-000095 raw-input
+      # qualification tests are left to their own native qualification.
+      # macOS runners do not ship Go; pin the toolchain from go.mod on every OS.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: apps/orcel-computer-host/go.mod
+          cache: false
+      - name: Go computer host tests
+        shell: bash
+        env:
+          ORCEL_W201_NATIVE_TESTS: ${{ runner.os == 'Windows' && '1' || '' }}
+          ORCEL_W201_SEMANTIC_ACTIONS: ${{ runner.os == 'Windows' && '1' || '' }}
+        run: |
+          set -euo pipefail
+          cd apps/orcel-computer-host
+          go version
+          # gofmt reports every file on Windows, where checkout converts to
+          # CRLF; formatting is checked on the other two runners.
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            unformatted="$(gofmt -l third_party semantic_supervisor.go semantic_supervisor_test.go native_semantic_windows.go native_semantic_windows_test.go)"
+            if [ -n "$unformatted" ]; then echo "gofmt: $unformatted"; exit 1; fi
+          fi
+          go vet ./...
+          go test -count=1 -v -skip 'TestSG95' ./... 2>&1 | tee "$RUNNER_TEMP/go-host.log"
+          grep -q "^ok .*third_party/hcu/semantic" "$RUNNER_TEMP/go-host.log"
+          grep -q -- "--- PASS: TestStaleSnapshotTargetIsRefusedBeforeDispatch" "$RUNNER_TEMP/go-host.log"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            grep -q -- "--- PASS: TestW201RefTreeAgainstDisposableWindow" "$RUNNER_TEMP/go-host.log"
+          fi
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
       # negotiation test against the freshly built Go host, not a script. The
       # native-host job does the same with orcel-native-host on macOS and
