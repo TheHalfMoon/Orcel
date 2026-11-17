@@ -7,7 +7,7 @@
 
 import { Console } from "node:console";
 import { existsSync, writeFileSync } from "node:fs";
-import { chromium, type Page } from "playwright-core";
+import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
 import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
@@ -33,6 +33,8 @@ import { nameControls } from "./actions/names.js";
 import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
+import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
+import { extractBySchema } from "./outline/schema-extract.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -337,6 +339,14 @@ const playwrightLauncher: Launcher = {
         await nameControls(primary, snapshot.nodes);
         return { url: primary.url(), snapshot };
       },
+      async outline() {
+        return takeOutline(context, primary);
+      },
+      async extractSchema(fields) {
+        const { url, outline } = await takeOutline(context, primary);
+        const { values, truncated } = extractBySchema(outline.nodes, fields);
+        return { url, truncated: truncated || outline.truncated, values };
+      },
       async discover(discId: number) {
         // The engine serialises its own DOM: no page script runs. The whole
         // call (capture, discovery, fit) stays inside DISCOVERY_TOTAL_MS.
@@ -396,6 +406,25 @@ const playwrightLauncher: Launcher = {
 /// The engine's layout snapshot for an extraction (larger than discovery's
 /// style-free one).
 const EXTRACT_CAPTURE_TIMEOUT_MS = 5_000;
+
+/// W2-03: the outline of the primary page through its own CDP session,
+/// wrapped so only the outline's read methods can be sent; the engine
+/// serialises its DOM and accessibility tree, and no page script runs. A page
+/// that moved during the capture is refused (stale).
+async function takeOutline(context: BrowserContext, page: Page): Promise<{ url: string; outline: BoundedOutline }> {
+  const before = page.url();
+  const session = await context.newCDPSession(page);
+  const outline = (await captureWithin(
+    {
+      capture: () => captureOutline(readOnlyCdp(session), OUTLINE_BUDGET_MS),
+      detach: () => session.detach()
+    },
+    OUTLINE_BUDGET_MS + 1_000
+  )) as BoundedOutline;
+  const url = page.url();
+  if (before !== url) throw new Error("the document changed during the outline");
+  return { url, outline };
+}
 
 /// The worker's budget for locating and filling a tool's fields.
 const FILL_BUDGET_MS = 10_000;
