@@ -597,6 +597,49 @@ fn the_browser_full_scripted_consent_feature_never_reaches_a_release_build() {
     );
 }
 
+/// SG-000135 OB-08 review: the stand-in owner channel that lets a test or
+/// development orceld issue Full Access browser leases never reaches a
+/// release build. Only orceld's manifest, its entry point (which refuses to
+/// compile it without live-browser-dev), the browser lease module, the
+/// end-to-end script and documentation may name it, and the manifest only
+/// defines it, empty, never as a default.
+#[test]
+fn the_browser_lease_dev_issuance_feature_never_reaches_a_release_build() {
+    let root = repo_root();
+    let mut hits = Vec::new();
+    for (relative, text) in text_files(&root) {
+        if !text.contains("browser-lease-dev-issuance") {
+            continue;
+        }
+        let allowed = relative == "crates/orceld/Cargo.toml"
+            || relative == "crates/orceld/src/sg000039_main.rs"
+            || relative == "crates/orceld/src/browser_lease.rs"
+            || relative == "scripts/browser-full-e2e.mjs"
+            || relative.starts_with("docs/");
+        if !allowed {
+            hits.push(relative);
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "browser-lease-dev-issuance is named outside its test and development places:\n{}",
+        hits.join("\n")
+    );
+    let orceld = fs::read_to_string(root.join("crates/orceld/Cargo.toml")).expect("manifest");
+    let naming: Vec<&str> = orceld
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("browser-lease-dev-issuance") && !line.starts_with('#'))
+        .collect();
+    assert_eq!(
+        naming,
+        ["browser-lease-dev-issuance = []"],
+        "orceld may only define browser-lease-dev-issuance, never enable it by default"
+    );
+    let main = fs::read_to_string(root.join("crates/orceld/src/sg000039_main.rs")).expect("main");
+    assert!(main.contains("\"browser-lease-dev-issuance is the OB-08 stand-in owner channel"));
+}
+
 /// SG-000108 slice 3b-ii (decision 7): the development-only
 /// `live-browser-dev` feature (the host's public worker mode, running only
 /// the runtime its build pinned) never reaches a release build. Only the

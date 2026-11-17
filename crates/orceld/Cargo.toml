@@ -35,6 +35,13 @@ browser-takeover-gate = []
 # orceld refuses to start without ORCEL_E2E_CONSENT_LOG. Never default, never
 # in a development or release build; the release-blocker sweep confines it.
 browser-full-scripted-consent = ["orcel-approval/test-support"]
+# SG-000135 OB-08 review, TEST AND DEVELOPMENT BUILDS ONLY: Full Access
+# browser lease issuance through a stand-in owner channel (orceld's parent
+# process names the requester on the STRONG prompt). Without it no build
+# issues a lease: the real owner channel (the Control Room pipe or the
+# SG-000132 authority service) does not exist yet. orceld refuses to compile
+# it without live-browser-dev; never default, never in a release build.
+browser-lease-dev-issuance = []
 
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }
@@ -75,6 +82,7 @@ windows-sys = { version = "0.52", features = [
   "Win32_Storage_FileSystem",
   "Win32_System_IO",
   "Win32_System_Pipes",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_RemoteDesktop",
   "Win32_System_Threading",
 ] }

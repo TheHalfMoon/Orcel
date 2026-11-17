@@ -36,6 +36,18 @@ struct StoredBody {
     /// store without one serializes (and authenticates) exactly as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     browser_leases: Vec<BrowserLease>,
+    /// OB-08 review: advanced by every browser lease revoke, replacement
+    /// and invalidation, never lowered. Absent while zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    browser_revocations: u64,
+    /// OB-08 review: the latest time a browser lease change was written; a
+    /// clock behind it went backwards. Absent while zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    browser_clock_ms: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +63,10 @@ pub struct AuthorityStatus {
     pub lease: Option<FullControlLease>,
     /// SG-000135 OB-08: the browser leases, each issued at this epoch.
     pub browser_leases: Vec<BrowserLease>,
+    /// OB-08 review: the browser revocation counter (only grows).
+    pub browser_revocations: u64,
+    /// OB-08 review: the store's last-seen time for browser leases.
+    pub browser_clock_ms: u64,
 }
 
 fn invalid(message: impl Into<String>) -> PolicyError {
@@ -243,6 +259,8 @@ fn initial_status() -> AuthorityStatus {
         authority_epoch: INITIAL_AUTHORITY_EPOCH,
         lease: None,
         browser_leases: Vec::new(),
+        browser_revocations: 0,
+        browser_clock_ms: 0,
     }
 }
 
@@ -278,12 +296,25 @@ pub fn load_store(
             ));
         }
     }
-    check_browser_leases(&stored.body.browser_leases, stored.body.authority_epoch)
-        .map_err(|_| denied("browser lease state does not match the authority store"))?;
+    check_browser_leases(
+        &stored.body.browser_leases,
+        stored.body.authority_epoch,
+        stored.body.browser_revocations,
+    )
+    .map_err(|_| denied("browser lease state does not match the authority store"))?;
+    // OB-08 review: a store whose revocation counter is behind the
+    // high-water mark written beside it was restored from an older copy.
+    if stored.body.browser_revocations < read_revocation_mark(path, key)? {
+        return Err(denied(
+            "the authority store is older than its revocation mark (restored from a copy); it is refused",
+        ));
+    }
     Ok(AuthorityStatus {
         authority_epoch: stored.body.authority_epoch,
         lease: stored.body.lease,
         browser_leases: stored.body.browser_leases,
+        browser_revocations: stored.body.browser_revocations,
+        browser_clock_ms: stored.body.browser_clock_ms,
     })
 }
 
@@ -303,12 +334,18 @@ pub fn save_store(
             ));
         }
     }
-    check_browser_leases(&status.browser_leases, status.authority_epoch)?;
+    check_browser_leases(
+        &status.browser_leases,
+        status.authority_epoch,
+        status.browser_revocations,
+    )?;
     let body = StoredBody {
         schema: AUTHORITY_STORE_SCHEMA.into(),
         authority_epoch: status.authority_epoch,
         lease: status.lease.clone(),
         browser_leases: status.browser_leases.clone(),
+        browser_revocations: status.browser_revocations,
+        browser_clock_ms: status.browser_clock_ms,
     };
     let envelope = StoredEnvelope {
         mac: body_mac(key, &body)?,
@@ -323,7 +360,65 @@ pub fn save_store(
         unavailable(format!("create full-control authority directory: {error}"))
     })?;
     files::write_private_atomic(path, &bytes)
-        .map_err(|error| unavailable(format!("write full-control authority state: {error}")))
+        .map_err(|error| unavailable(format!("write full-control authority state: {error}")))?;
+    // OB-08 review: the mark follows the store (never ahead of it), so a
+    // crash between the two writes leaves a store at or past its mark.
+    if status.browser_revocations > read_revocation_mark(path, key)? {
+        write_revocation_mark(path, key, status.browser_revocations)?;
+    }
+    Ok(())
+}
+
+/// OB-08 review: where the revocation high-water mark lives, beside the
+/// store and outside its body.
+fn revocation_mark_path(path: &Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .unwrap_or_default();
+    name.push(".revocations");
+    path.with_file_name(name)
+}
+
+fn revocation_mark_mac(key: &[u8; AUTHORITY_KEY_BYTES], counter: u64) -> String {
+    let mut message = b"orcel/sg000135/browser-revocation-mark/v1\n".to_vec();
+    message.extend_from_slice(counter.to_string().as_bytes());
+    hex_lower(&hmac_sha256(key, &message))
+}
+
+/// The authenticated revocation high-water mark (0 when none was ever
+/// written). A mark that does not authenticate fails closed.
+fn read_revocation_mark(path: &Path, key: &[u8; AUTHORITY_KEY_BYTES]) -> Result<u64, PolicyError> {
+    let text = match std::fs::read_to_string(revocation_mark_path(path)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => {
+            return Err(unavailable(format!(
+                "read the browser revocation mark: {error}"
+            )))
+        }
+    };
+    let (counter, mac) = text
+        .trim()
+        .split_once(' ')
+        .ok_or_else(|| denied("the browser revocation mark is corrupt"))?;
+    let counter: u64 = counter
+        .parse()
+        .map_err(|_| denied("the browser revocation mark is corrupt"))?;
+    if !constant_time_eq(revocation_mark_mac(key, counter).as_bytes(), mac.as_bytes()) {
+        return Err(denied("the browser revocation mark failed authentication"));
+    }
+    Ok(counter)
+}
+
+fn write_revocation_mark(
+    path: &Path,
+    key: &[u8; AUTHORITY_KEY_BYTES],
+    counter: u64,
+) -> Result<(), PolicyError> {
+    let text = format!("{counter} {}\n", revocation_mark_mac(key, counter));
+    files::write_private_atomic(&revocation_mark_path(path), text.as_bytes())
+        .map_err(|error| unavailable(format!("write the browser revocation mark: {error}")))
 }
 
 fn advance_epoch(value: u64) -> Result<u64, PolicyError> {
@@ -423,8 +518,11 @@ pub fn invalidate(path: &Path, key: &[u8; AUTHORITY_KEY_BYTES]) -> Result<u64, P
         &AuthorityStatus {
             authority_epoch: epoch,
             lease: None,
-            // Every browser lease ends with the epoch it was issued at.
+            // Every browser lease ends with the epoch it was issued at, and
+            // the revocation counter moves past them.
             browser_leases: Vec::new(),
+            browser_revocations: advance_epoch(current.browser_revocations)?,
+            browser_clock_ms: current.browser_clock_ms,
         },
     )?;
     Ok(epoch)
@@ -535,6 +633,12 @@ fn grant(
             // A desktop grant advances the epoch, which ends every browser
             // lease issued at the old one (fail closed, never carried over).
             browser_leases: Vec::new(),
+            browser_revocations: if current.browser_leases.is_empty() {
+                current.browser_revocations
+            } else {
+                advance_epoch(current.browser_revocations)?
+            },
+            browser_clock_ms: current.browser_clock_ms,
         },
     )?;
     Ok(lease)
@@ -543,7 +647,11 @@ fn grant(
 /// SG-000135 OB-08: a store's browser leases are each well formed, issued at
 /// the store's `epoch`, one per broker session, and at most
 /// `MAX_BROWSER_LEASES`. Anything else is refused (fail closed).
-fn check_browser_leases(leases: &[BrowserLease], epoch: u64) -> Result<(), PolicyError> {
+fn check_browser_leases(
+    leases: &[BrowserLease],
+    epoch: u64,
+    revocations: u64,
+) -> Result<(), PolicyError> {
     if leases.len() > MAX_BROWSER_LEASES {
         return Err(invalid("the authority store holds too many browser leases"));
     }
@@ -553,6 +661,11 @@ fn check_browser_leases(leases: &[BrowserLease], epoch: u64) -> Result<(), Polic
         if lease.authority_epoch != epoch {
             return Err(invalid(
                 "browser lease epoch does not match the authority store",
+            ));
+        }
+        if lease.revocations > revocations {
+            return Err(invalid(
+                "browser lease names a revocation counter the store has not reached",
             ));
         }
         if !sessions.insert(lease.session_id.as_str()) {
@@ -575,6 +688,10 @@ pub struct BrowserLeaseGrant {
     pub origins: Vec<String>,
     pub families: Vec<BrowserFamily>,
     pub duration_ms: u64,
+    /// The session's task label the owner saw.
+    pub task: Option<String>,
+    /// Who asked, as the owner channel identified it.
+    pub requester: String,
 }
 
 /// SG-000135 OB-08: issue a browser lease the owner approved with STRONG
@@ -599,6 +716,22 @@ pub fn grant_browser_lease_at_epoch(
             "authority was revoked or reset while this browser lease was being approved; nothing was granted, request it again",
         ));
     }
+    if now_ms < current.browser_clock_ms {
+        return Err(denied(
+            "the clock went backwards behind the authority store; nothing was granted",
+        ));
+    }
+    // Replacing a live lease of the same session revokes it: the counter
+    // moves first, and the new lease is issued at the new counter.
+    let replaces = current
+        .browser_leases
+        .iter()
+        .any(|kept| kept.expires_at_ms > now_ms && kept.session_id == grant.session_id);
+    let revocations = if replaces {
+        advance_epoch(current.browser_revocations)?
+    } else {
+        current.browser_revocations
+    };
     let proof = LocalGrantProof::from_secret(*key)?;
     let lease = issue_browser_lease(
         &proof,
@@ -615,6 +748,9 @@ pub fn grant_browser_lease_at_epoch(
             families: grant.families,
             issued_at_ms: now_ms,
             duration_ms: grant.duration_ms,
+            task: grant.task,
+            requester: grant.requester,
+            revocations,
         },
     )?;
     let mut leases: Vec<BrowserLease> = current
@@ -635,6 +771,8 @@ pub fn grant_browser_lease_at_epoch(
             authority_epoch: current.authority_epoch,
             lease: current.lease,
             browser_leases: leases,
+            browser_revocations: revocations,
+            browser_clock_ms: current.browser_clock_ms.max(now_ms),
         },
     )?;
     Ok(lease)
@@ -665,6 +803,10 @@ fn remove_browser_leases(
                 authority_epoch: current.authority_epoch,
                 lease: current.lease,
                 browser_leases: kept,
+                // Every revoke moves the counter: a copy of the store from
+                // before it is refused, so the lease cannot come back.
+                browser_revocations: advance_epoch(current.browser_revocations)?,
+                browser_clock_ms: current.browser_clock_ms,
             },
         )?;
     }
@@ -1046,6 +1188,8 @@ mod tests {
             origins: vec!["https://fixture.test".into()],
             families: vec![BrowserFamily::Navigate, BrowserFamily::Type],
             duration_ms: 60_000,
+            task: Some("task".into()),
+            requester: "pid 7 test.exe (test channel)".into(),
         }
     }
 
@@ -1161,6 +1305,66 @@ mod tests {
             .expect("load")
             .browser_leases
             .is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// OB-08 review: every revoke advances the counter and its mark, so a
+    /// copy of the store from before the revoke is refused (the revoked
+    /// lease cannot come back); a clock behind the store refuses a grant.
+    #[test]
+    fn ob08_a_restored_store_cannot_resurrect_a_revoked_lease() {
+        let dir = temp("ob08-rollback");
+        let path = dir.join("state.json");
+        let key = key();
+        let epoch = load_store(&path, &key).expect("load").authority_epoch;
+        let lease =
+            grant_browser_lease_at_epoch(&path, &key, epoch, browser_grant(BROWSER_SESSION), 2_000)
+                .expect("lease");
+        assert_eq!(lease.revocations, 0);
+        let before_revoke = std::fs::read(&path).expect("copy");
+        revoke_browser_leases(&path, &key, Some(&lease.lease_id)).expect("revoke");
+        let status = load_store(&path, &key).expect("load");
+        assert_eq!(status.browser_revocations, 1);
+        std::fs::write(&path, &before_revoke).expect("restore the old copy");
+        let refused = load_store(&path, &key).expect_err("rolled back");
+        assert!(
+            refused.message.contains("revocation mark"),
+            "{}",
+            refused.message
+        );
+        // A forged mark does not authenticate.
+        std::fs::write(revocation_mark_path(&path), "0 00").expect("forge");
+        assert!(load_store(&path, &key).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let dir = temp("ob08-clock");
+        let path = dir.join("state.json");
+        grant_browser_lease_at_epoch(&path, &key, epoch, browser_grant(BROWSER_SESSION), 5_000)
+            .expect("lease");
+        assert_eq!(
+            load_store(&path, &key).expect("load").browser_clock_ms,
+            5_000
+        );
+        let other = "bs-0123456789abcdef-2-0001020304050607";
+        let refused = grant_browser_lease_at_epoch(&path, &key, epoch, browser_grant(other), 4_000)
+            .expect_err("clock went back");
+        assert!(refused.message.contains("clock"), "{}", refused.message);
+        // Replacing a session's live lease revokes it: the counter moves
+        // and the new lease names the new counter.
+        let again =
+            grant_browser_lease_at_epoch(&path, &key, epoch, browser_grant(BROWSER_SESSION), 6_000)
+                .expect("re-issue");
+        assert_eq!(again.revocations, 1);
+        assert_eq!(
+            load_store(&path, &key).expect("load").browser_revocations,
+            1
+        );
+        // An emergency invalidate moves it again and keeps it.
+        invalidate(&path, &key).expect("invalidate");
+        assert_eq!(
+            load_store(&path, &key).expect("load").browser_revocations,
+            2
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

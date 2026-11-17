@@ -294,9 +294,125 @@ pub fn classify_field(role: &str, name: &str) -> Impact {
     Impact::Routine
 }
 
+/// Prefixes of well-known credential formats (API keys, tokens, keys).
+const SECRET_VALUE_PREFIXES: &[&str] = &[
+    "sk-",
+    "sk_live_",
+    "sk_test_",
+    "pk_live_",
+    "rk_live_",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "github_pat_",
+    "glpat-",
+    "xoxb-",
+    "xoxp-",
+    "xoxa-",
+    "akia",
+    "asia",
+    "aiza",
+    "ya29.",
+    "eyj",
+    "-----begin",
+];
+
+/// The Luhn check of a card-number-like digit string.
+fn luhn(digits: &[u8]) -> bool {
+    let mut sum = 0u32;
+    for (index, digit) in digits.iter().rev().enumerate() {
+        let mut value = u32::from(*digit);
+        if index % 2 == 1 {
+            value *= 2;
+            if value > 9 {
+                value -= 9;
+            }
+        }
+        sum += value;
+    }
+    sum % 10 == 0
+}
+
+/// OB-08 review: whether a value an agent would type under a Full Access
+/// lease looks like a secret, by the secret-field detector's words (a
+/// password, PIN, token, one-time code, security code) and the shapes of
+/// secrets themselves: a card number (13 to 19 digits passing Luhn), a
+/// PIN or one-time code (4 to 8 digits alone), a known credential prefix,
+/// or one long unbroken token mixing letters and digits. A value it flags
+/// is never typed without the person seeing it.
+pub fn value_looks_secret(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let words = words(trimmed);
+    let secret_word = words.iter().any(|word| {
+        SECRET_FIELD_WORDS.contains(&word.as_str())
+            || word.starts_with("passw")
+            || matches!(word.as_str(), "cvc" | "cvv" | "csc" | "otp")
+    });
+    let digits: Vec<u8> = trimmed
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .map(|b| b - b'0')
+        .collect();
+    let only_digits_and_separators = trimmed
+        .bytes()
+        .all(|b| b.is_ascii_digit() || b == b' ' || b == b'-');
+    let card = only_digits_and_separators && (13..=19).contains(&digits.len()) && luhn(&digits);
+    let pin = trimmed.bytes().all(|b| b.is_ascii_digit()) && (4..=8).contains(&trimmed.len());
+    let lower = trimmed.to_ascii_lowercase();
+    let prefixed = SECRET_VALUE_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix));
+    let token = trimmed.len() >= 20
+        && !trimmed.contains(char::is_whitespace)
+        && trimmed.bytes().any(|b| b.is_ascii_digit())
+        && trimmed.bytes().any(|b| b.is_ascii_alphabetic());
+    secret_word || card || pin || prefixed || token
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_looking_values_are_flagged_and_ordinary_ones_are_not() {
+        for value in [
+            "4111 1111 1111 1111",
+            "4111-1111-1111-1111",
+            "123456",
+            "0042",
+            "sk-abc123",
+            "AKIAIOSFODNN7EXAMPLE",
+            "eyJhbGciOiJIUzI1NiJ9.e30.x",
+            "my password is hunter2",
+            "a1b2c3d4e5f6g7h8i9j0k1",
+        ] {
+            assert!(value_looks_secret(value), "{value}");
+        }
+        // Assembled at run time, so no secret-shaped literal is in the
+        // source (the release-blocker sweep refuses those).
+        for value in [
+            format!("{}{}", "gh", "p_0123456789abcdefABCDEF"),
+            format!("{}BEGIN {}KEY{}", "-".repeat(5), "PRIVATE ", "-".repeat(5)),
+        ] {
+            assert!(value_looks_secret(&value), "{value}");
+        }
+        for value in [
+            "",
+            "Ada Lovelace",
+            "Round 3",
+            "Porto",
+            "4111 1111 1111 1112",
+            "12",
+            "123456789",
+            "Meet at 10:30 on 2026-11-17",
+        ] {
+            assert!(!value_looks_secret(value), "{value}");
+        }
+    }
 
     #[test]
     fn submit_send_buy_publish_and_delete_links_are_high_impact() {

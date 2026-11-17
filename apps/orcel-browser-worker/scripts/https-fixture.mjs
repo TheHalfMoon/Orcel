@@ -237,6 +237,14 @@ const OB08_FORM = `<!doctype html><meta charset="utf-8"><title>OB-08 Full Access
 <p><a href="/ob08-submitted">Submit order</a></p>`;
 const OB08_NEXT = `<!doctype html><meta charset="utf-8"><title>OB-08 next</title>
 <h1>Next page</h1><p id="result">OB-08 next page reached</p>`;
+// OB-08 review: a page whose scripts post on input and on click (fetch
+// and navigator.sendBeacon). Under a lease the host refuses every page
+// request but a GET, and a covered link is navigated, never clicked, so
+// neither /ob08-sink nor /ob08-beacon may ever be requested.
+const OB08_POST = `<!doctype html><meta charset="utf-8"><title>OB-08 posting page</title>
+<h1>Posting page</h1>
+<label>Note <input type="text" name="note" oninput="fetch('/ob08-sink', {method: 'POST', body: 'note=' + this.value})"></label>
+<p><a href="/ob08-next" onclick="navigator.sendBeacon('/ob08-beacon', 'clicked'); fetch('/ob08-sink', {method: 'POST', body: 'clicked'})">Continue to the next page</a></p>`;
 const OB08_SUBMITTED = `<!doctype html><meta charset="utf-8"><title>OB-08 submitted</title>
 <h1>Submitted</h1><p id="result">OB-08 order submitted</p>`;
 // SG-000135 OB-03: the second tab's page. Each field is a green box at a
@@ -592,7 +600,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
   if (path === "/form-names") response.setHeader("content-type", "text/html; charset=utf-8");
-  const pages = { "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/ob03-secret": OB03_SECRET, "/ob08-form": OB08_FORM, "/ob08-next": OB08_NEXT, "/ob08-submitted": OB08_SUBMITTED, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
+  const pages = { "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/ob03-secret": OB03_SECRET, "/ob08-form": OB08_FORM, "/ob08-next": OB08_NEXT, "/ob08-submitted": OB08_SUBMITTED, "/ob08-scripts": OB08_POST, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });

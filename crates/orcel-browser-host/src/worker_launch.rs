@@ -3866,6 +3866,12 @@ mod platform {
             select_latest_dated_link(&self.host_nodes)
         }
 
+        /// SG-000135 OB-08 review: refuse every page request but a GET for
+        /// the rest of this lifetime (`NavigationPolicy::guard_get_only`).
+        pub fn guard_get_only(&mut self) {
+            self.policy.guard_get_only();
+        }
+
         /// Forget every observed node but `keep` (the product caller's
         /// worker mode: only nodes Orcel actually received can be acted
         /// on, when a reply had to drop some to fit one frame).
@@ -4576,6 +4582,9 @@ mod fallback {
                 UnavailableReason::UnsupportedRuntime,
             ))
         }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn guard_get_only(&mut self) {}
 
         /// API parity: no worker ever exists off Windows.
         pub fn link_name(&self, _node_id: &str) -> Result<String, HostError> {
