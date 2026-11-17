@@ -16,8 +16,9 @@
 [workspace]
 resolver = "2"
 members = ["."]
-# The vendored lopdf is a patched dependency, not a member (#391), and so is
-# the zip 8 re-export of zip 9 (compat/zip8-on-zip9).
+# The vendored lopdf is a patched dependency, not a member (#391), and so are
+# the crates under compat/ (the zip 8 re-export of zip 9, and the in-workspace
+# manifest of crates/orcel-provider-process).
 exclude = ["third_party", "compat"]
 
 [package]
@@ -51,10 +52,13 @@ log = "0.4"
 # The donor's header and footer pass (deflate only, as in the donor). zip 9
 # for RUSTSEC-2026-0545..0548; anydoc's zip 8 requirement is served by this
 # same zip through the patch below.
-zip ={ version = "=9.6.1", default-features = false, features = ["deflate"] }
+zip = { version = "=9.6.1", default-features = false, features = ["deflate"] }
 roxmltree = "=0.20.0"
-# The spec, bounds and stdout frame shared with orceld (std only).
-orcel-provider-process = { path = "../../crates/orcel-provider-process" }
+# The spec, bounds and stdout frame shared with orceld (std only). The source
+# is crates/orcel-provider-process; this manifest of it sits inside this
+# workspace so the release build doesn't depend on the checkout path
+# (compat/orcel-provider-process/Cargo.toml says why).
+orcel-provider-process = { path = "compat/orcel-provider-process" }
 
 # #391: lopdf 0.45.0, vendored with Orcel's patch queue
 # (third_party/lopdf/PATCHES.md; provenance docs/orcel/lopdf_provenance.json,
