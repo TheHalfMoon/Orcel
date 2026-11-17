@@ -1,0 +1,22 @@
+{
+  "contract": "orcel.standing-approval/1",
+  "id": "sa-01",
+  "lease_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "principal_id": "mcp-client-7f3a",
+  "task": "Tidy the build scripts in the repo",
+  "executors": [
+    "shell_process",
+    "desktop_input"
+  ],
+  "roots": [
+    "C:\\Users\\me\\src\\repo"
+  ],
+  "origins": [],
+  "commands": [
+    "pwsh",
+    "git"
+  ],
+  "granted_with": "STRONG",
+  "issued_at_ms": 1763300000000,
+  "expires_at_ms": 1763301800000
+}

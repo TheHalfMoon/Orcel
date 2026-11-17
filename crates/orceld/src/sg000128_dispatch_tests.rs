@@ -147,3 +147,44 @@ fn a_scoped_call_on_an_unknown_window_fails_closed_and_is_audited() {
     let unscoped = bench.call(json!({"window_id": window_id(), "expected_window_generation": 1}));
     assert!(!unscoped.ok);
 }
+
+/// W2-01: the compact ref tree view (HCU semantic layer) is denied by
+/// default. Policy does not admit the `view` argument (the refusal is
+/// audited), and orceld's own gate refuses it if a request reaches dispatch.
+#[test]
+fn w201_the_ref_tree_view_is_denied_by_default_and_audited() {
+    let bench = Bench::new();
+    let before = bench.audit_lines();
+    let response = bench.call(json!({
+        "window_id": window_id(), "expected_window_generation": 1, "view": "ref_tree",
+    }));
+    assert!(!response.ok, "nothing was observed");
+    assert_eq!(response.error.unwrap().code, FailureCode::InvalidRequest);
+    assert_eq!(bench.audit_lines(), before + 1, "the refusal is audited");
+
+    let broker = LocalApprovalBroker::with_path_and_soft_decider(
+        bench.dir.join("approvals.json"),
+        Arc::new(NoPresenceVerifier),
+        Arc::new(|_| ApprovalDecision::Denied),
+    );
+    let workspace = Workspace {
+        id: "default".into(),
+        root: std::fs::canonicalize(bench.dir.join("workspace")).unwrap(),
+    };
+    let request = |view: Value| RequestEnvelope {
+        version: INTERNAL_PROTOCOL_VERSION,
+        request_id: "w201".into(),
+        client_session_id: "w201".into(),
+        workspace_id: "default".into(),
+        capability: "uia.tree".into(),
+        operation: "observe".into(),
+        target: None,
+        arguments: json!({"window_id": window_id(), "expected_window_generation": 1, "view": view}),
+    };
+    let gated = uia::dispatch_uia(&workspace, &broker, &request(json!("ref_tree")))
+        .expect_err("the kernel gate refuses the ref tree view");
+    assert_eq!(gated.code, FailureCode::CapabilityDenied);
+    let unknown = uia::dispatch_uia(&workspace, &broker, &request(json!("pixels")))
+        .expect_err("an unknown view is refused");
+    assert_eq!(unknown.code, FailureCode::InvalidRequest);
+}

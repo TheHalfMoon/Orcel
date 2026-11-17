@@ -1,0 +1,99 @@
+{
+  "schema": "orcel-donor-provenance/1",
+  "packet": "W2-02",
+  "note": "Provenance of every Agent S file copied or adapted into apps/orcel-agent (W2-02). Format follows docs/orcel/notices/donor-provenance.json (origin/wp1/licence-gates): the donor records the repository, the 40-hex pin, the original licence as recorded upstream (recorded, not judged), the preserved notice and the authorization; each file entry names its donor and source path(s) at that pin, and adds the source blobs, the decision (COPY or ADAPT) and the modifications. Each destination names its Agent S source paths and the pin in its header (checked by apps/orcel-agent/tests/test_orchestrator.py). 'references' lists files that are Orcel-original but name Agent S as a design reference.",
+  "donors": {
+    "agent-s": {
+      "repo": "simular-ai/Agent-S",
+      "commit": "0fff0e634869dab72027435b4586e62300185d41",
+      "licence": "Apache-2.0",
+      "licence_file": "LICENSE",
+      "licence_blob": "f49a4e16e68b128803cc2dcea614603632b04eac",
+      "licence_sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1",
+      "upstream_notice_file": "none at this commit",
+      "copyright": "Simular AI (setup.py author)",
+      "subcomponents": [
+        {"path": "agent_s4/", "licence": "Apache-2.0 (own LICENSE)", "used": false},
+        {"path": "osworld_setup/s4/agent_harness/prime-agent-runtime/", "licence": "MIT (Mario Zechner, Prime Intellect)", "used": false}
+      ],
+      "notice": "docs/orcel/notices/agent-s-Apache-2.0.txt",
+      "records": [
+        "docs/orcel/implementation-readiness/prep/W2_02_AGENT_S_INTEGRATION.md"
+      ],
+      "earlier_records": [],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md)"
+    }
+  },
+  "files": [
+    {
+      "path": "apps/orcel-agent/orcel_agent/task_graph.py",
+      "donor": "agent-s",
+      "source": [
+        "gui_agents/s2/utils/common_utils.py",
+        "gui_agents/s2/agents/manager.py",
+        "gui_agents/s2/memory/procedural_memory.py"
+      ],
+      "source_blobs": {
+        "gui_agents/s2/utils/common_utils.py": "1873aa1a6d3a35de57055d2bf4d5a09ef1043a0b",
+        "gui_agents/s2/agents/manager.py": "07b5dbaf126eff3b468ff5fe1ad313af851279fe",
+        "gui_agents/s2/memory/procedural_memory.py": "289583eef1fc5caa0ec8fade8c985a28a78dca23"
+      },
+      "decision": "ADAPT",
+      "modifications": [
+        "Node and Dag: pydantic models become frozen standard-library dataclasses (the agent imports the standard library only).",
+        "parse_dag: the second (fence-aware) definition is kept, the shadowed first one dropped; returns None instead of printing; bounds added (16 nodes, 120-character names, 1000-character info, edges must be pairs of valid nodes).",
+        "Manager._topological_sort becomes topological_sort: the same depth-first reverse post-order, plus refusals for duplicate names, edges to unknown nodes and cycles (the original raised KeyError or accepted a cycle silently).",
+        "format_subtask_list and the three planner messages of _generate_step_by_step_plan copied in logic; cost, token accounting, logging, knowledge-base retrieval and web search removed.",
+        "DAG_TRANSLATOR_PROMPT renamed for Orcel; its guideline 1 (a 'plan' field the schema does not have) dropped and the rest renumbered."
+      ]
+    },
+    {
+      "path": "apps/orcel-agent/orcel_agent/orchestrator.py",
+      "donor": "agent-s",
+      "source": [
+        "gui_agents/s2/agents/agent_s.py",
+        "gui_agents/s2/agents/manager.py",
+        "gui_agents/s2/memory/procedural_memory.py",
+        "gui_agents/s2/utils/common_utils.py",
+        "gui_agents/s3/agents/worker.py",
+        "gui_agents/s3/utils/common_utils.py",
+        "gui_agents/s3/utils/formatters.py",
+        "gui_agents/s3/memory/procedural_memory.py"
+      ],
+      "source_blobs": {
+        "gui_agents/s2/agents/agent_s.py": "c8e7d18e4e87cb92d56978b070aa9da9df1987f5",
+        "gui_agents/s2/agents/manager.py": "07b5dbaf126eff3b468ff5fe1ad313af851279fe",
+        "gui_agents/s2/memory/procedural_memory.py": "289583eef1fc5caa0ec8fade8c985a28a78dca23",
+        "gui_agents/s2/utils/common_utils.py": "1873aa1a6d3a35de57055d2bf4d5a09ef1043a0b",
+        "gui_agents/s3/agents/worker.py": "2b4aff06150c2deac2e2e8e8df1023137829c37b",
+        "gui_agents/s3/utils/common_utils.py": "b55e594435b6a596a6f5a45483245f36f10f9440",
+        "gui_agents/s3/utils/formatters.py": "08889826940aff2dc8ba6708d2dfcc83b8c5576b",
+        "gui_agents/s3/memory/procedural_memory.py": "9bc0f0e741fbbbb6960ac78ba3ea7db787b4dda0"
+      },
+      "decision": "ADAPT",
+      "modifications": [
+        "AgentS2.predict's subtask state machine (requires_replan, needs_next_subtask, failure_subtask, completed_tasks, current_subtask, subtasks, subtask_status Start/In/Done; FAIL re-plans with the failed subtask; DONE records it and re-plans; an empty plan ends the task) becomes TaskOrchestrator, an Orcel Planner that returns one ToolCall or Finish per propose(). The 'empty plan means DONE' exit becomes a completion claim that must pass caller-supplied success checks.",
+        "Actions are orceld tool calls proposed to the Agent gate; pyautogui code generation, eval of model code, the grounding agent (ACI), the code agent and the permission dialog of cli_app.py are not used.",
+        "Manager: COMBINED_MANAGER_PROMPT renamed for Orcel (the screenshot becomes the window observation; verification steps left to Orcel; window text named as data); the DAG translator is re-created per translation as in the original; narrative/episodic memory, knowledge fusion, embeddings and search removed.",
+        "Worker (S3): _generate_reflection kept in structure (first turn records the task and initial state without a call; later turns reflect on the latest action and observation); REFLECTION_ON_TRAJECTORY renamed for Orcel, the code-agent paragraph dropped and each case required to start with its label; a Case 3 ('completed') reflection is passed on as advisory and never ends a subtask or a task.",
+        "flush_messages: the non-long-context strategy (drop whole turns beyond max_trajectory_length) kept; image pruning removed (Orcel observations are text).",
+        "call_llm_safe: three attempts kept, sleep and printing removed. call_llm_formatted: three attempts with the bad reply and FORMATTING_FEEDBACK_PROMPT (verbatim) fed back kept; a reply that never passes is None instead of the last bad reply.",
+        "SINGLE_ACTION_FORMATTER and CODE_VALID_FORMATTER re-targeted from one agent.* call to one JSON tool call (or a WAIT/DONE/FAIL sentinel) whose tool is offered and whose arguments match the tool's schema (agent.arguments_match). parse_code_from_string copied in logic.",
+        "WAIT, which slept in Agent S, becomes a fresh observation through orceld.",
+        "Orcel additions (not from Agent S): an observation after every action; bounds on re-plans, subtask steps, rejected claims, dialog attempts and transitions per proposal; unexpected-dialog recovery; completion verification (verification.py); events into the agent's EventLog; telemetry, provider clients and model names removed (the model is any caller-supplied object with complete(role, messages))."
+      ]
+    }
+  ],
+  "references": [
+    {
+      "path": "apps/orcel-agent/orcel_agent/verification.py",
+      "donor": "agent-s",
+      "relation": "Orcel-original; design reference only (no code copied): gui_agents/s3/bbon/comparative_judge.py (blob 3ece8187fd71f9f8c1073acb9d34c93f47cbad4f) judges success with a vision model, and gui_agents/s3/memory/procedural_memory.py asks the worker to close popups it opened. Orcel replaces both with deterministic checks over orceld results."
+    },
+    {
+      "path": "docs/orcel/notices/agent-s-Apache-2.0.txt",
+      "donor": "agent-s",
+      "relation": "notice: the upstream LICENSE, unchanged, under an Orcel header"
+    }
+  ]
+}

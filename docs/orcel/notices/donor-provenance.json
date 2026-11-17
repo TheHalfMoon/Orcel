@@ -1,0 +1,1061 @@
+{
+  "schema": "orcel-donor-provenance/1",
+  "packet": "WP1-01",
+  "note": "Machine-readable provenance of every copied, vendored or adapted donor file in the repository. Each donor records the source repository, the pin (a 40-hex commit, or a registry release with its SHA-256), the original licence as recorded upstream (recorded, not judged), the preserved original copyright or attribution notice, and the authorization reference (OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17; earlier_records lists the grant records that came before it). Each file entry names its donor and its source path(s) at that pin; a path ending in '/' covers the whole directory and names its patch queue (\"patches\": a file, or \"none\"). 'references' lists files that name a donor notice, hold a provenance record or mention a licence without being donor code. This central manifest stands in for per-directory PROVENANCE.json files: each entry carries the same fields {repo, sha, paths, licence, attestation_ref, patches}. Checked by scripts/check-donor-provenance.mjs and scripts/check-agpl-markers.mjs.",
+  "donors": {
+    "firecrawl": {
+      "repo": "firecrawl/firecrawl",
+      "commit": "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "licence": "AGPL-3.0",
+      "notice": "docs/orcel/notices/firecrawl-AGPL-3.0.txt",
+      "records": [
+        "docs/orcel/firecrawl_crawl_scope_provenance.json",
+        "docs/orcel/firecrawl_change_tracking_provenance.json",
+        "docs/orcel/firecrawl_doc_parser_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-13-founder-source-authorization.md",
+        "docs/orcel/grants/2026-10-18-founder-attestation.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "cua-fsl": {
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "licence": "FSL-1.1-MIT",
+      "notice": "docs/orcel/notices/cua-FSL-1.1-MIT.txt",
+      "records": [],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "cua": {
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/cua-MIT.txt",
+      "records": [
+        "docs/orcel/cua_driver_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "cua-driver-clipboard": {
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/cua-driver-clipboard-MIT.txt",
+      "records": [],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "cua-bench": {
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "licence": "MIT",
+      "notice": "tests/benchmarks/LICENSE-cua-bench.txt",
+      "records": [],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "playwright": {
+      "repo": "microsoft/playwright",
+      "commit": "1b025d7e20a026371cd5f98ba0cdce48892737c8",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/playwright-Apache-2.0.txt",
+      "records": [
+        "docs/orcel/br02_form_actions_provenance.json",
+        "docs/orcel/br03_upload_provenance.json",
+        "docs/orcel/br05_dialogs_provenance.json",
+        "docs/orcel/br07_verify_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "agent-native": {
+      "repo": "BuilderIO/agent-native",
+      "commit": "9c277b79cb87eb27da538e572dd710986e2fa06d",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/agent-native-MIT.txt",
+      "records": [
+        "docs/orcel/control_room_agentkit_provenance.json",
+        "docs/orcel/journal_resume_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "browser-use": {
+      "repo": "browser-use/browser-use",
+      "commit": "c75e8476e26d18b7617643bc2ae082fae8eae431",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/browser-use-MIT.txt",
+      "records": [
+        "docs/orcel/sg000108_browser_donors_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "webmcp": {
+      "repo": "WebMCP-org/npm-packages",
+      "commit": "7db816b5a280c2d1d4b86559696e993c497c021a",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/WebMCP-org-npm-packages-MIT.txt",
+      "records": [
+        "docs/orcel/sg000108_webmcp_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "crawl4ai": {
+      "repo": "unclecode/crawl4ai",
+      "commit": "94b67888ca8b335ff2121423a50e06dd27661922",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/crawl4ai-Apache-2.0-attribution.txt",
+      "records": [
+        "docs/orcel/wi03_relevance_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "agent-reach": {
+      "repo": "Panniantong/Agent-Reach",
+      "commit": "a19a171fa980a0785849596492e0af4db800c82f",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/agent-reach-MIT.txt",
+      "records": [
+        "docs/orcel/wi06_search_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "lopdf": {
+      "repo": "J-F-Liu/lopdf",
+      "release": {
+        "registry": "crates.io",
+        "name": "lopdf",
+        "version": "0.45.0",
+        "sha256": [
+          "bfffda0fe1ab0157e1a13c14bebd3f28671f2fccb7922f0722ec53926e6922d3"
+        ]
+      },
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/lopdf-MIT.txt",
+      "records": [
+        "docs/orcel/lopdf_provenance.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "deer-flow": {
+      "repo": "bytedance/deer-flow",
+      "commit": "81e1ab8dcc86574cfac0ecdfe3636b775a08c567",
+      "licence": "MIT",
+      "notice": "apps/orcel-agent/third_party/deer-flow/LICENSE",
+      "records": [
+        "apps/orcel-agent/third_party/PROVENANCE.json"
+      ],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "langchain": {
+      "repo": "langchain-ai/langchain",
+      "release": {
+        "registry": "pypi",
+        "name": "langchain",
+        "version": "1.3.14",
+        "sha256": [
+          "1b6696c72ba3bbbce54d745e0180742c9f6ece8bbc59ed5a46c3e20b9a435929",
+          "4d10dbe91005952cddd56d0dc77aa108964da6bae90ab20063653957e901f782"
+        ],
+        "note": "The two hashes apps/orcel-agent/requirements.lock admits for langchain==1.3.14; the copied text comes from the wheel."
+      },
+      "licence": "MIT",
+      "notice": "apps/orcel-agent/third_party/langchain/NOTICE.md",
+      "licence_text": "apps/orcel-agent/third_party/langchain/LICENSE",
+      "records": [],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "apache-poi": {
+      "repo": "apache/poi",
+      "commit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/apache-poi-Apache-2.0.txt",
+      "records": [],
+      "earlier_records": [
+        "docs/orcel/grants/2026-10-18-founder-attestation.md",
+        "docs/orcel/SOURCE_PERMISSIONS.md"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "stagehand": {
+      "repo": "browserbase/stagehand",
+      "commit": "82827a219512f0399cb159720a63f7d271d21480",
+      "licence": "MIT",
+      "notice": "docs/orcel/notices/stagehand-MIT.txt",
+      "records": [
+        "docs/orcel/stagehand_provenance.json"
+      ],
+      "earlier_records": [],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "agent-s": {
+      "repo": "simular-ai/Agent-S",
+      "commit": "0fff0e634869dab72027435b4586e62300185d41",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/agent-s-Apache-2.0.txt",
+      "records": [
+        "docs/orcel/agent_s_provenance.json"
+      ],
+      "earlier_records": [],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "hcu": {
+      "repo": "microsoft/Hybrid-Computer-Use",
+      "commit": "00eaeebe8ac0d275e46f875bdb5347e5f326faa1",
+      "licence": "MIT",
+      "notice": "apps/orcel-computer-host/third_party/hcu/LICENSE",
+      "repository_notice": "docs/orcel/notices/hybrid-computer-use-MIT.txt",
+      "records": [
+        "docs/orcel/hcu_semantic_provenance.json"
+      ],
+      "earlier_records": [],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    }
+  },
+  "files": [
+    {
+      "path": "crates/orcel-browser-host/src/crawl_scope.rs",
+      "donor": "firecrawl",
+      "source": [
+        "apps/api/native/src/crawler.rs",
+        "apps/api/src/lib/canonical-url.ts"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-host/src/map_rank.rs",
+      "donor": "firecrawl",
+      "source": [
+        "apps/api/src/lib/map-cosine.ts"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-host/src/change_tracking.rs",
+      "donor": "firecrawl",
+      "source": [
+        "apps/api/src/lib/change-tracking-diff.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-doc-parser/src/pdf.rs",
+      "donor": "firecrawl",
+      "source": [
+        "apps/api/native/src/pdf.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-doc-parser/src/document.rs",
+      "donor": "firecrawl",
+      "source": [
+        "apps/api/native/src/document.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-approval/src/presence_unix.rs",
+      "donor": "cua-fsl",
+      "source": [
+        "libs/cua/crates/cua-teleport/src/biometric.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-approval/src/linux.rs",
+      "donor": "cua-fsl",
+      "source": [
+        "libs/cua/crates/cua-teleport/src/biometric.rs"
+      ]
+    },
+    {
+      "path": "crates/orceld/src/app_api.rs",
+      "donor": "cua-fsl",
+      "source": [
+        "libs/cua/crates/cua-keyvault/src/winpipe.rs",
+        "libs/cua/crates/cua-keyvault/src/winpeer.rs",
+        "libs/cua/crates/cua-keyvault/src/ipc.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-app-api-client/src/win.rs",
+      "donor": "cua-fsl",
+      "source": [
+        "libs/cua/crates/cua-keyvault/src/winpipe.rs",
+        "libs/cua/crates/cua-keyvault/src/winpeer.rs"
+      ]
+    },
+    {
+      "path": "distribution/linux/ai.orcel.approve.policy",
+      "donor": "cua-fsl",
+      "source": [
+        "apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy"
+      ]
+    },
+    {
+      "path": "apps/orcel-native-host/third_party/cua-driver/",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/"
+      ],
+      "patches": "apps/orcel-native-host/third_party/cua-driver/PATCHES.md"
+    },
+    {
+      "path": "tests/native-fixtures/",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/tests/fixtures/"
+      ],
+      "patches": "none"
+    },
+    {
+      "path": "apps/orcel-contain/src/containment.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/linux.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/linux.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/macos.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/macos.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/unix.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/unix.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/windows.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/windows.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/unsupported.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/unsupported.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/containment_tests.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/linux_tests.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/linux.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/macos_tests.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/macos.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-contain/src/windows_tests.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/windows.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-platform/src/peer.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua/crates/cua-daemon/src/lib.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-platform/src/process.rs",
+      "donor": "cua",
+      "source": [
+        "libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs"
+      ]
+    },
+    {
+      "path": "crates/orcel-provider-clipboard/src/unix.rs",
+      "donor": "cua-driver-clipboard",
+      "source": [
+        "libs/cua-driver/rust/crates/platform-linux/src/clipboard.rs"
+      ]
+    },
+    {
+      "path": "tests/benchmarks/orcel_bench/task.py",
+      "donor": "cua-bench",
+      "source": [
+        "libs/cua-bench/cua_bench/core.py",
+        "libs/cua-bench/cua_bench/decorators.py"
+      ]
+    },
+    {
+      "path": "tests/benchmarks/orcel_bench/runner.py",
+      "donor": "cua-bench",
+      "source": [
+        "libs/cua-bench/cua_bench/runner/episode.py"
+      ]
+    },
+    {
+      "path": "tests/benchmarks/tasks/orcel/hello-file/main.py",
+      "donor": "cua-bench",
+      "source": [
+        "libs/cua-bench/example_tasks/hello_file_env/main.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/actions/form.ts",
+      "donor": "playwright",
+      "source": [
+        "packages/playwright-core/src/tools/backend/form.ts",
+        "packages/playwright-core/src/tools/backend/keyboard.ts",
+        "packages/playwright-core/src/tools/backend/snapshot.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/actions/wait.ts",
+      "donor": "playwright",
+      "source": [
+        "packages/playwright-core/src/tools/backend/wait.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/actions/upload.ts",
+      "donor": "playwright",
+      "source": [
+        "packages/playwright-core/src/tools/backend/files.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/actions/dialogs.ts",
+      "donor": "playwright",
+      "source": [
+        "packages/playwright-core/src/tools/backend/dialogs.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/verify.ts",
+      "donor": "playwright",
+      "source": [
+        "packages/playwright-core/src/tools/backend/verify.ts"
+      ]
+    },
+    {
+      "path": "crates/orcel-browser-host/src/verify.rs",
+      "donor": "playwright",
+      "source": [
+        "packages/playwright-core/src/tools/backend/verify.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/protocol/version.ts",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/protocol/version.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/protocol/errors.ts",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/protocol/errors.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/protocol/validation.ts",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/protocol/validation.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/protocol/index.ts",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/protocol/index.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/client/client.ts",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/client/client.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/client/state.ts",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/client/state.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/client/index.ts",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/client/index.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/conformance.test.ts",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/conformance/index.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/client/state.js",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/client/state.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/protocol/errors.js",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/protocol/errors.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/protocol/index.js",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/protocol/index.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/protocol/validation.js",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/protocol/validation.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/ui/js/agentkit/protocol/version.js",
+      "donor": "agent-native",
+      "source": [
+        "packages/agentkit/src/protocol/version.ts"
+      ]
+    },
+    {
+      "path": "crates/orcel-journal/src/resume.rs",
+      "donor": "agent-native",
+      "source": [
+        "packages/core/src/agent/tool-call-journal.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/extract/chunk.ts",
+      "donor": "browser-use",
+      "source": [
+        "browser_use/dom/markdown_extractor.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/extract/chunk.test.ts",
+      "donor": "browser-use",
+      "source": [
+        "browser_use/dom/markdown_extractor.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/extract/clean.ts",
+      "donor": "browser-use",
+      "source": [
+        "browser_use/dom/markdown_extractor.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/extract/markdown.ts",
+      "donor": "browser-use",
+      "source": [
+        "browser_use/dom/serializer/html_serializer.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/extract/model.ts",
+      "donor": "browser-use",
+      "source": [
+        "browser_use/dom/service.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/webmcp/declarative.ts",
+      "donor": "webmcp",
+      "source": [
+        "packages/webmcp-polyfill/src/declarative-forms.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/extract/relevance.ts",
+      "donor": "crawl4ai",
+      "source": [
+        "crawl4ai/content_filter_strategy.py",
+        "crawl4ai/utils.py"
+      ]
+    },
+    {
+      "path": "crates/orceld/src/search.rs",
+      "donor": "agent-reach",
+      "source": [
+        "agent_reach/channels/base.py",
+        "agent_reach/probe.py",
+        "agent_reach/doctor.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-doc-parser/third_party/lopdf/",
+      "donor": "lopdf",
+      "source": [
+        "lopdf-0.45.0/"
+      ],
+      "patches": "apps/orcel-doc-parser/third_party/lopdf/PATCHES.md"
+    },
+    {
+      "path": "apps/orcel-agent/third_party/deer-flow/",
+      "donor": "deer-flow",
+      "source": [
+        "LICENSE"
+      ],
+      "patches": "none"
+    },
+    {
+      "path": "apps/orcel-agent/orcel_agent/loop_detection.py",
+      "donor": "deer-flow",
+      "source": [
+        "backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-agent/orcel_agent/todos.py",
+      "donor": "deer-flow",
+      "source": [
+        "backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-agent/third_party/langchain/",
+      "donor": "langchain",
+      "source": [
+        "licenses/LICENSE"
+      ],
+      "patches": "none"
+    },
+    {
+      "path": "apps/orcel-agent/orcel_agent/todos.py",
+      "donor": "langchain",
+      "source": [
+        "langchain/agents/middleware/todo.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-agent/orcel_agent/compaction.py",
+      "donor": "langchain",
+      "source": [
+        "langchain/agents/middleware/summarization.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-doc-parser/tests/fixtures/workbooks/excel-12-sample/",
+      "donor": "apache-poi",
+      "source": [
+        "test-data/spreadsheet/SampleSS.xlsx"
+      ],
+      "patches": "none"
+    },
+    {
+      "path": "apps/orcel-doc-parser/tests/fixtures/workbooks/excel-12-with-various-data/",
+      "donor": "apache-poi",
+      "source": [
+        "test-data/spreadsheet/WithVariousData.xlsx"
+      ],
+      "patches": "none"
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/xpath.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/xpathUtils.ts",
+        "packages/extension/utils.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/dom-tree.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/domTree.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/a11y-tree.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/a11yTree.ts",
+        "packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/tree-format.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/treeFormatUtils.ts",
+        "packages/extension/understudy/a11y/snapshot/capture.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/capture.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/capture.ts",
+        "packages/extension/understudy/a11y/snapshot/a11yTree.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/schema-extract.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/services/extractService.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/targets.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/services/actService.ts",
+        "packages/extension/services/observeService.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/outline/dom-tree.test.ts",
+      "donor": "stagehand",
+      "source": [
+        "packages/extension/understudy/a11y/snapshot/domTree.test.ts"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/",
+        "computer-use/native/windows/ComputerUse.Windows.Runtime/"
+      ],
+      "patches": "apps/orcel-computer-host/third_party/hcu/PATCHES.md"
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/roles.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_role_ontology.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/identity.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_snapshot_identity.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/refs.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_ref_registry.go",
+        "computer-use/internal/core/ax_ref_minting.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/render.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_renderer.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/diff.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_semantic_diff.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/layout.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/native/windows/ComputerUse.Windows.Runtime/WindowsDesktopLayoutDiagnostics.cs",
+        "computer-use/native/windows/ComputerUse.Windows.Runtime/DesktopProvider.cs"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/batch.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_batch_plan.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/refs_test.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_ref_registry_test.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/render_test.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_renderer_test.go",
+        "computer-use/internal/core/ax_semantic_diff_test.go",
+        "computer-use/internal/core/ax_batch_plan_test.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-agent/orcel_agent/task_graph.py",
+      "donor": "agent-s",
+      "source": [
+        "gui_agents/s2/utils/common_utils.py",
+        "gui_agents/s2/agents/manager.py",
+        "gui_agents/s2/memory/procedural_memory.py"
+      ]
+    },
+    {
+      "path": "apps/orcel-agent/orcel_agent/orchestrator.py",
+      "donor": "agent-s",
+      "source": [
+        "gui_agents/s2/agents/agent_s.py",
+        "gui_agents/s2/agents/manager.py",
+        "gui_agents/s2/memory/procedural_memory.py",
+        "gui_agents/s2/utils/common_utils.py",
+        "gui_agents/s3/agents/worker.py",
+        "gui_agents/s3/utils/common_utils.py",
+        "gui_agents/s3/utils/formatters.py",
+        "gui_agents/s3/memory/procedural_memory.py"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "path": "apps/orcel-contain/Cargo.toml",
+      "reason": "Manifest comment naming the Cua notice of the adapted containment files."
+    },
+    {
+      "path": "apps/orcel-contain/README.md",
+      "reason": "Documents the Cua-adapted containment files."
+    },
+    {
+      "path": "apps/orcel-control-room/README.md",
+      "reason": "Documents the agent-native client port."
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/THIRD_PARTY_NOTICES.md",
+      "reason": "The shell's third-party notice file."
+    },
+    {
+      "path": "apps/orcel-doc-parser/Cargo.toml",
+      "reason": "Manifest comment naming the FD-06 port and its notice."
+    },
+    {
+      "path": "apps/orcel-doc-parser/README.md",
+      "reason": "Documents the FD-06 port and the vendored lopdf."
+    },
+    {
+      "path": "apps/orcel-doc-parser/tests/fixtures/WORKBOOKS.md",
+      "reason": "Source and hashes of the Apache POI workbook fixtures."
+    },
+    {
+      "path": "apps/orcel-agent/third_party/PROVENANCE.json",
+      "reason": "The Orcel Agent's DeerFlow provenance record (consolidated by the deer-flow donor)."
+    },
+    {
+      "path": "scripts/generate-sbom.mjs",
+      "reason": "Release SBOM generator; names the Firecrawl notice for the FD-06 component."
+    },
+    {
+      "path": "scripts/third-party-notices.mjs",
+      "reason": "Release notice generator; names the donor notices it bundles."
+    },
+    {
+      "path": "scripts/check-donor-provenance.test.mjs",
+      "reason": "This gate's own tests; the notice names are fixture vectors."
+    },
+    {
+      "path": "apps/orcel-agent/THIRD_PARTY_LICENSES.md",
+      "reason": "Licence inventory of the Orcel Agent's Python dependencies; names their licences."
+    },
+    {
+      "path": "apps/orcel-agent/requirements-notes.md",
+      "reason": "Dependency notes of the Orcel Agent; names dependency licences."
+    },
+    {
+      "path": "apps/orcel-agent/tools/licenses.py",
+      "reason": "The Orcel Agent's own dependency licence listing; names dependency licences."
+    },
+    {
+      "path": "apps/orcel-approval-helper-linux/deny.toml",
+      "reason": "cargo-deny configuration of that workspace; names the system GTK libraries' licence."
+    },
+    {
+      "path": "apps/orcel-native-host/deny.toml",
+      "reason": "cargo-deny configuration of that workspace; lists dependency licences."
+    },
+    {
+      "path": "apps/orcel-control-room/src-tauri/deny.toml",
+      "reason": "cargo-deny configuration of that workspace; lists dependency licences."
+    },
+    {
+      "path": "apps/orcel-mcp/src/p20-architecture.test.ts",
+      "reason": "Test that checks the P20 donor ledger names each donor's licence; no donor code."
+    },
+    {
+      "path": "tests/benchmarks/README.md",
+      "reason": "Describes the cua-driver-bench taskpack, which is fetched at its pin, not copied."
+    },
+    {
+      "path": "tests/benchmarks/taskpacks/cua-driver-bench.lock.json",
+      "reason": "Pin record of the cua-driver-bench taskpack (fetched, not copied)."
+    },
+    {
+      "path": "tests/benchmarks/tests/test_taskpack.py",
+      "reason": "Test of the taskpack pin record."
+    },
+    {
+      "path": "crates/orceld/tests/dependency_direction.rs",
+      "reason": "The section 3.2 dependency-direction test; licence ids appear only as test data."
+    },
+    {
+      "path": "scripts/check-agpl-markers.mjs",
+      "reason": "The licence-marker gate; names the markers it looks for."
+    },
+    {
+      "path": "scripts/check-agpl-markers.test.mjs",
+      "reason": "Tests of the licence-marker gate; planted licence headers are its vectors."
+    },
+    {
+      "path": "scripts/check-cargo-deny-policy.test.mjs",
+      "reason": "Tests of the root deny.toml; licence ids are its vectors."
+    },
+    {
+      "path": "scripts/check-npm-licenses.mjs",
+      "reason": "The npm lockfile gate; names licence families in its report."
+    },
+    {
+      "path": "scripts/check-npm-licenses.test.mjs",
+      "reason": "Tests of the npm lockfile gate; licence ids are its vectors."
+    },
+    {
+      "path": "scripts/check-donor-provenance.mjs",
+      "reason": "The provenance gate."
+    },
+    {
+      "path": "scripts/licence-gate-lib.mjs",
+      "reason": "The gates' shared library: the licence-marker patterns themselves."
+    },
+    {
+      "path": "scripts/licence-gate-fixture.mjs",
+      "reason": "The gates' test helper."
+    },
+    {
+      "path": "tests/benchmarks/LICENSE-cua-bench.txt",
+      "reason": "The preserved MIT licence of the cua-bench donor (blob 98422212), cited by the cua-bench donor entry."
+    },
+    {
+      "path": "apps/web/public/fonts/OFL-BricolageGrotesque.txt",
+      "reason": "Published SIL Open Font License text of Bricolage Grotesque (ateliertriay/bricolage). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
+    },
+    {
+      "path": "apps/web/public/fonts/OFL-Geist.txt",
+      "reason": "Published SIL Open Font License text of Geist and Geist Mono (vercel/geist-font). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
+    },
+    {
+      "path": "apps/web/public/fonts/OFL-InstrumentSerif.txt",
+      "reason": "Published SIL Open Font License text of Instrument Serif (Instrument/instrument-serif). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
+    },
+    {
+      "path": "crates/orcel-browser-host/src/worker_outline.rs",
+      "reason": "New Orcel code (W2-03 host policy gate and wire types; donor_path null in docs/orcel/stagehand_provenance.json); it names the Stagehand notice because the worker files it gates are Stagehand-derived."
+    },
+    {
+      "path": "docs/orcel/implementation-readiness/prep/W2_01_HCU_INTEGRATION.md",
+      "reason": "W2-01 module map and integration record for the HCU semantic layer."
+    },
+    {
+      "path": "apps/orcel-agent/orcel_agent/verification.py",
+      "reason": "New Orcel code (W2-02 dialog detection, recovery limits and completion checks); no Agent S code copied. Agent S's comparative judge is a design reference only, recorded under 'references' in docs/orcel/agent_s_provenance.json."
+    },
+    {
+      "path": "docs/orcel/implementation-readiness/prep/W2_02_AGENT_S_INTEGRATION.md",
+      "reason": "W2-02 module map and integration record for the Agent S orchestration primitives."
+    }
+  ],
+  "authorizations": {
+    "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17": {
+      "records": [
+        "docs/orcel/grants/2026-11-17-founder-attestation.md",
+        "docs/orcel/notices/licence-policy.json"
+      ],
+      "verbatim": "all sources i have sent to you and all sources in the repo are legally and i have permission to copy all of them and re name them to orcel. so not worry about the licness anymore",
+      "nature": "Owner-asserted by the founder; no copyright-holder-signed grant is in the repository."
+    }
+  }
+}

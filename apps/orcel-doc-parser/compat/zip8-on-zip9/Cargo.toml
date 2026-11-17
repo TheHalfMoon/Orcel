@@ -1,0 +1,27 @@
+# anydoc's zip 8 requirement, served by zip 9.6.1 (Orcel's own crate, not a
+# crates.io release). anydoc 0.2.2, and every release up to 0.2.4, asks for
+# `zip = "^8.6.0"`. zip 8.6.0 carries RUSTSEC-2026-0545, -0546, -0547 and
+# -0548, and each is fixed only in zip 9. This crate takes zip 8's name and a
+# zip 8 version, so that requirement resolves here through the parser
+# workspace's `[patch.crates-io]`. It re-exports zip 9.6.1 from crates.io. No
+# zip 8 code is built, and the only zip in the graph is the audited 9.6.1.
+# README.md explains why this is sound for anydoc and when to remove it.
+[package]
+name = "zip"
+version = "8.6.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "anydoc's zip 8 requirement served by zip 9.6.1 for orcel-doc-parser"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The version and features the parser pins (apps/orcel-doc-parser/Cargo.toml).
+zip9 = { package = "zip", version = "=9.6.1", default-features = false, features = ["deflate"] }
+
+[features]
+# anydoc asks for `deflate` with no default features. The parser's own pin
+# already enables zip 9's `deflate`, so this feature only has to exist.
+deflate = ["zip9/deflate"]

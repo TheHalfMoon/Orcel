@@ -18,7 +18,7 @@
   "privacyPolicyURL": "https://github.com/TheHalfMoon/Orcel/blob/main/docs/legal/PRIVACY.md",
   "termsOfServiceURL": "https://github.com/TheHalfMoon/Orcel/blob/main/docs/legal/TERMS.md",
   "securityURL": "https://github.com/TheHalfMoon/Orcel/blob/main/SECURITY.md",
-  "brandColor": "#080808",
+  "brandColor": "#090C12",
   "defaultPrompt": [
     "List the files in my project workspace.",
     "Show me the uncommitted Git changes in my repository.",
