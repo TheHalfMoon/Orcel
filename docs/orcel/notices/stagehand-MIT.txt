@@ -1,0 +1,47 @@
+Stagehand (browserbase/stagehand@82827a219512f0399cb159720a63f7d271d21480)
+
+W2-03 copies and adapts, from packages/extension/understudy/a11y/snapshot/ at
+that commit, xpathUtils.ts (blob a5b8d34230e4e33a2e3829a64919e4bac3c8ef61),
+domTree.ts (blob 02c589d7f9799ba9c66894cd7ba9a4ae99d6aabf), a11yTree.ts (blob
+2d3a626f9645f29b817a7a30a7cfbc3343da9c5e), treeFormatUtils.ts (blob
+4928894ca32684f7cc854578c3ddaee9d6305a1a) and capture.ts (blob
+6706bef9c7bd654bfd161129ae8be8cb78dffaba), and from packages/extension/ the
+deterministic parts of services/actService.ts (blob
+17187189c111f8a668da90099da16bff0efeaa77), services/observeService.ts (blob
+9d042ffa191a2af222d8ed4b0094c457c8db8086), services/extractService.ts (blob
+3193fbe656b1af3bca0a0a4c0d3e076e9d1cc731) and utils.ts (blob
+ade45fa134cb6f19773376ff4be48d6ff603c8af), into
+apps/orcel-browser-worker/src/outline/, modified for Orcel as described in
+those files. Tests ported from domTree.test.ts (blob
+b5764e92f51f900170575b8c5b53fb40314456bd) live in
+apps/orcel-browser-worker/src/outline/dom-tree.test.ts.
+docs/orcel/stagehand_provenance.json records the provenance. Browserbase
+transports, telemetry, the server-side cache (services/cacheService.ts) and
+every language-model call are not copied.
+
+Authorization: OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17.
+
+The upstream license (LICENSE, blob 683c709c95b54b899bb1a49207cd5bff296ba087),
+verbatim:
+
+MIT License
+
+Copyright (c) 2024 Browserbase Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
