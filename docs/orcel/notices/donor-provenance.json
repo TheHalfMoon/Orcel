@@ -235,6 +235,18 @@
       ],
       "earlier_records": [],
       "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "hcu": {
+      "repo": "microsoft/Hybrid-Computer-Use",
+      "commit": "00eaeebe8ac0d275e46f875bdb5347e5f326faa1",
+      "licence": "MIT",
+      "notice": "apps/orcel-computer-host/third_party/hcu/LICENSE",
+      "repository_notice": "docs/orcel/notices/hybrid-computer-use-MIT.txt",
+      "records": [
+        "docs/orcel/hcu_semantic_provenance.json"
+      ],
+      "earlier_records": [],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
     }
   },
   "files": [
@@ -770,6 +782,82 @@
       "source": [
         "packages/extension/understudy/a11y/snapshot/domTree.test.ts"
       ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/",
+        "computer-use/native/windows/ComputerUse.Windows.Runtime/"
+      ],
+      "patches": "apps/orcel-computer-host/third_party/hcu/PATCHES.md"
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/roles.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_role_ontology.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/identity.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_snapshot_identity.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/refs.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_ref_registry.go",
+        "computer-use/internal/core/ax_ref_minting.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/render.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_renderer.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/diff.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_semantic_diff.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/layout.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/native/windows/ComputerUse.Windows.Runtime/WindowsDesktopLayoutDiagnostics.cs",
+        "computer-use/native/windows/ComputerUse.Windows.Runtime/DesktopProvider.cs"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/batch.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_batch_plan.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/refs_test.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_ref_registry_test.go"
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/render_test.go",
+      "donor": "hcu",
+      "source": [
+        "computer-use/internal/core/ax_renderer_test.go",
+        "computer-use/internal/core/ax_semantic_diff_test.go",
+        "computer-use/internal/core/ax_batch_plan_test.go"
+      ]
     }
   ],
   "references": [
@@ -912,6 +1000,10 @@
     {
       "path": "crates/orcel-browser-host/src/worker_outline.rs",
       "reason": "New Orcel code (W2-03 host policy gate and wire types; donor_path null in docs/orcel/stagehand_provenance.json); it names the Stagehand notice because the worker files it gates are Stagehand-derived."
+    },
+    {
+      "path": "docs/orcel/implementation-readiness/prep/W2_01_HCU_INTEGRATION.md",
+      "reason": "W2-01 module map and integration record for the HCU semantic layer."
     }
   ],
   "authorizations": {
