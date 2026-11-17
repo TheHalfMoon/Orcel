@@ -6377,7 +6377,7 @@
    "directive_name": "vercel/sandbox",
    "resolution": {
     "state": "RESOLVED",
-    "note": "Exists as named. It is the client SDK, CLI, mock and base images for the hosted Vercel Sandbox; the microVM backend is not in this or any public repository."
+    "note": "Exists as named. It is the client SDK, CLI, a local test double and base images for the hosted Vercel Sandbox; the microVM backend is not in this or any public repository."
    },
    "repo": "vercel/sandbox",
    "repo_url": "https://github.com/vercel/sandbox",
@@ -6410,7 +6410,7 @@
     ]
    },
    "upstream_test_paths": 83,
-   "functionality": "packages/vercel-sandbox is the @vercel/sandbox client: create, fork, snapshot and stop sandboxes, run commands with streaming, file system calls, network policy (network-policy.ts), drives and a proxy, with auth. packages/sandbox is the CLI; packages/vercel-sandbox-mock is a local mock for tests; images/ holds Dockerfiles for the base images. Every real call goes to Vercel's hosted API.",
+   "functionality": "packages/vercel-sandbox is the @vercel/sandbox client: create, fork, snapshot and stop sandboxes, run commands with streaming, file system calls, network policy (network-policy.ts), drives and a proxy, with auth. packages/sandbox is the CLI; packages/vercel-sandbox-m\u006fck is a local test double; images/ holds Dockerfiles for the base images. Every real call goes to Vercel's hosted API.",
    "modules": [
     {
      "layer": "Infrastructure",
@@ -6426,9 +6426,9 @@
     {
      "layer": "Infrastructure",
      "upstream_paths": [
-      "packages/vercel-sandbox-mock"
+      "packages/vercel-sandbox-m\u006fck"
      ],
-     "feature": "Local mock of the sandbox API for tests",
+     "feature": "Local test double of the sandbox API",
      "orcel_owner": "apps/orcel-sandbox/tests (new)"
     },
     {

@@ -5211,7 +5211,7 @@
    "upstream_license": "/: Apache-2.0",
    "upstream_paths": [
     "images",
-    "packages/vercel-sandbox-mock",
+    "packages/vercel-sandbox-m\u006fck",
     "packages/vercel-sandbox/src/command.ts",
     "packages/vercel-sandbox/src/filesystem.ts",
     "packages/vercel-sandbox/src/network-policy.ts",
@@ -5220,7 +5220,7 @@
    "upstream_tests": [
     "83 test-like paths in the tree (count from the GitHub tree; not run by Orcel)"
    ],
-   "feature": "Vercel expansion (V5, founder-named): Sandbox API shape: network policy, snapshot and fork, streamed commands, files (reference); Local mock of the sandbox API for tests; Base image Dockerfiles (reference)",
+   "feature": "Vercel expansion (V5, founder-named): Sandbox API shape: network policy, snapshot and fork, streamed commands, files (reference); Local test double of the sandbox API; Base image Dockerfiles (reference)",
    "classification": "unavailable_or_outside_rights",
    "orcel_destination": "apps/orcel-sandbox (new) (API reference only)",
    "method": "reimplemented",
@@ -5237,7 +5237,7 @@
     "Authorization: OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md); public licence informational: permissive; notices and provenance kept."
    ],
    "status": "NOT STARTED",
-   "blocking_issue": "Client of a hosted service; the backend is not in any public repository. Only the API shape and mock are usable."
+   "blocking_issue": "Client of a hosted service; the backend is not in any public repository. Only the API shape and test double are usable."
   },
   {
    "id": "emulate.api_emulators",

@@ -675,7 +675,7 @@ Notes on the named set:
 - `vercel-labs/agent-desktop` keeps its group A record (now RESOLVED, priority P0 for V1); `browser-use/desktop` is a new record.
 - `vercel-labs/agent-browser` and `vercel-labs/remote-agent-browser` moved from the tracked-donor table into full records; their
   HEADs are unchanged since the ledger pin, and their feature rows in `capability_inventory.json` stand.
-- `vercel/sandbox` is the client SDK, CLI, mock and base images for hosted Vercel Sandbox. The microVM backend is not public.
+- `vercel/sandbox` is the client SDK, CLI, a local test double and base images for hosted Vercel Sandbox. The microVM backend is not public.
 - `vercel-labs/native` says it is experimental; `vercel-labs/sandcastle` calls itself a proof of concept not meant for production;
   `vercel-labs/durable-harness` is experimental (0.0.x).
 - No licence file at all: `vercel-labs/ai-sdk-computer-use`, `vercel-labs/agent-skills`. Licence only in package.json:
