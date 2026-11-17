@@ -41,7 +41,7 @@ Last updated: 2026-11-17, main at `4a8491c9` (#789; SG-000119 A5 merged as `1bae
 | Clipboard privacy (content its app marks private) | Partial | #672 → `4893bcc5` (Windows), #681 → `cbae3987` (Linux, macOS) | `xp15_*` tests in CI only (they touch a real clipboard) | Linux check-then-read gap; forged X11 TARGETS with property NONE; unmarked content; Wayland and macOS untested with a marked copy | Runtime evidence on Wayland and macOS | Disposable desktop for marked-copy runs |
 | Contained parser scratch and run directories | Done (qualified) | #671 → `7300fbb9`, #674 → `5f82044c`, #675 → `dd91822c` | doc-parser and contained-tier tests | — | none | none |
 | macOS contained memory sampler | Done (qualified) | #688 → `74489605` | `a_zombie_is_recognised_as_exited_at_once` | macOS has no memory rlimit; the ceiling is sampled | none | none |
-| Doc parser zip advisories | Partial | `apps/orcel-doc-parser/.cargo/audit.toml` | supply-chain audit job | Recorded exceptions, not accepted risk. F5 slice 1 (#754, not merged) ships the parser in the Windows release with no caller in a release build, so the exceptions would be in shipped code, still recorded as unreachable | Remove when anydoc accepts zip ≥ 9 | Upstream anydoc |
+| Doc parser zip advisories | Remediated, pending merge | `apps/orcel-doc-parser/Cargo.toml` (zip `=9.6.1`), `apps/orcel-doc-parser/compat/zip8-on-zip9` | supply-chain audit job | zip 8.6.0 is out of the graph (branch `fix/doc-parser-zip-9`): anydoc's zip 8 requirement is served by zip 9.6.1 through a path re-export, and the audit list is empty | Remove the re-export when anydoc accepts zip ≥ 9 | Upstream anydoc |
 
 ## Computer-use capabilities
 
