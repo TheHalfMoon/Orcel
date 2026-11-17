@@ -35,6 +35,7 @@ import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
 import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState } from "./worker.js";
 import { capturePng, fullPageClip, runExclusive, ScreenshotError } from "./screenshot.js";
+import { denyDesktopPermissions, interceptFileChoosers } from "./desktop-guard.js";
 import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -75,6 +76,17 @@ const playwrightLauncher: Launcher = {
       handleSIGHUP: false,
       timeout: ENGINE_LAUNCH_TIMEOUT_MS
     });
+    // SG-000135 OB-04: no page gets the clipboard or any other permission,
+    // and no file chooser reaches the desktop (desktop-guard.ts). A refusal
+    // fails the launch.
+    try {
+      await denyDesktopPermissions(context);
+    } catch (error) {
+      await context.close().catch(() => {});
+      throw error;
+    }
+    context.on("page", interceptFileChoosers);
+    for (const existing of context.pages()) interceptFileChoosers(existing);
     // Each host navigation runs in a fresh page: Chromium can commit an
     // earlier refused navigation's error page late (even more than once),
     // which would interrupt a navigation in the same page. The previous

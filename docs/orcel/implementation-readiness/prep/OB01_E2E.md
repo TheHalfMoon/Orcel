@@ -176,6 +176,21 @@ Scripted run on this PC, 2026-11-17 (Edge 157.0.4341.60, Windows 11 Home 10.0.26
 - 12 OB-04 approvals. MCP exits 0, 0 and 0. No Edge and no session folder left. The mission above: 15 receipts chained (head `0cf236d3b08963e7...`), whole session 16537 ms.
 - **Scripted consent, not human acceptance.**
 
+After the security judge's fixes (2026-11-18), the run also expects and checks:
+
+- three profile-use prompts (the first use of a profile in each MCP session), each saying the profile may be signed in;
+- one Visible window prompt;
+- every page prompt in a persistent profile naming it;
+- every receipt of a profile session carrying `profile` (digest domain `orcel-ob04-receipt/2`).
+
+It no longer requires the Visible window to stay out of the foreground, because the engine activates it when Windows allows (see `OB04_MODES_PROFILES.md`, section 2a). It records whether the window did, and requires the cursor and clipboard to be unchanged. The run passed:
+
+- 16 OB-04 prompts, all approved.
+- Shadow desktop unchanged.
+- The cookie was kept across the restart, and no cookie crossed between the two profiles.
+- The Visible window took the foreground (no human input; the recorded residual). Cursor and clipboard unchanged.
+- The mission: 15 receipts chained (head `31e397a95c9e6179...`). MCP exits 0, 0, 0 and 0. Nothing left.
+
 ## Not covered
 
 - The founder-present run (above).

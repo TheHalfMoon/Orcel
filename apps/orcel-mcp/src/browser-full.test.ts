@@ -140,7 +140,7 @@ test("browser_full is desktop_structured plus the broker tools, and only the fou
 });
 
 test("the broker contract follows the annotation, effect and approval rules", () => {
-  const soft = ["browser_open", "browser_click", "browser_fill", "browser_select", "browser_tabs", "browser_profile_create", "browser_profile_delete"];
+  const soft = ["browser_session_create", "browser_open", "browser_click", "browser_fill", "browser_select", "browser_tabs", "browser_profile_create", "browser_profile_delete"];
   for (const [name, entry] of Object.entries(BROWSER_FULL_CONTRACT)) {
     const a = entry.annotations;
     assert.equal(entry.remote, "local_only", name);

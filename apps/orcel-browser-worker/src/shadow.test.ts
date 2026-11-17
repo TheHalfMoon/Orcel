@@ -15,8 +15,9 @@ const src = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 /// Calls and flags that would touch the person's desktop.
 const FORBIDDEN: readonly RegExp[] = [
   /bringToFront/,
-  /clipboard/i,
-  /grantPermissions/,
+  /navigator\.clipboard|clipboard\.(read|write)|readText|writeText/,
+  // Permissions are only ever all refused: grantPermissions([]) only.
+  /\.grantPermissions\((?!\[\]\))/,
   /SetForegroundWindow|AllowSetForegroundWindow|BringWindowToTop|SetActiveWindow|SwitchToThisWindow/,
   /SendInput|keybd_event|mouse_event|SetCursorPos|AttachThreadInput/,
   /OpenClipboard|SetClipboardData|EmptyClipboard/,
@@ -45,6 +46,15 @@ test("SG-000135 OB-04: no worker source raises a window, uses the clipboard or s
     }
   }
   assert.deepEqual(hits, []);
+});
+
+test("SG-000135 OB-04: every launch denies all permissions and intercepts file choosers", () => {
+  const entry = readFileSync(join(src, "entry.ts"), "utf8");
+  assert.match(entry, /await denyDesktopPermissions\(context\);/);
+  assert.match(entry, /context\.on\("page", interceptFileChoosers\);/);
+  assert.match(entry, /for \(const existing of context\.pages\(\)\) interceptFileChoosers\(existing\);/);
+  const guard = readFileSync(join(src, "desktop-guard.ts"), "utf8");
+  assert.match(guard, /await context\.grantPermissions\(\[\]\);/);
 });
 
 test("SG-000135 OB-04: the engine runs headless unless the argv is the exact Visible form", () => {

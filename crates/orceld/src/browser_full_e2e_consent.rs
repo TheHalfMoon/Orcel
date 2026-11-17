@@ -47,10 +47,23 @@ const MISSION_ACTIONS: [&str; 4] = [
 
 /// SG-000135 OB-04: the exact titles of the two profile writes
 /// (`live_dispatch.rs`) the harness's profile missions ask for.
-const PROFILE_ACTIONS: [&str; 2] = [
+const PROFILE_ACTIONS: [&str; 3] = [
     "create an Orcel-managed browser profile",
     "delete an Orcel-managed browser profile",
+    "use an Orcel-managed browser profile in a session",
 ];
+
+/// SG-000135 OB-04: the exact title of a Visible session's window approval;
+/// approved only when its whole target is one well-formed session id.
+const VISIBLE_ACTION: &str = "open a visible Orcel browser window";
+
+/// Whether `target` is exactly `orcel-browser-session:` and a well-formed
+/// broker session id.
+fn names_session(target: &str) -> bool {
+    target
+        .strip_prefix("orcel-browser-session:")
+        .is_some_and(|id| crate::browser_broker::parse_session_id(id).is_ok())
+}
 
 /// SG-000135 OB-04: the only profiles whose writes the scripted consent
 /// approves: names the harness makes, `ob04-e2e-` and a checked suffix.
@@ -63,6 +76,7 @@ const E2E_PROFILE_TARGET: &str = "orcel-browser-profile:ob04-e2e-";
 pub(crate) fn approves(prompt: &ApprovalPrompt) -> bool {
     (MISSION_ACTIONS.contains(&prompt.action.as_str()) && names_fixture(&prompt.target))
         || (PROFILE_ACTIONS.contains(&prompt.action.as_str()) && names_e2e_profile(&prompt.target))
+        || (prompt.action == VISIBLE_ACTION && names_session(&prompt.target))
 }
 
 /// Whether `target` is exactly a harness profile: the prefix, then a
@@ -116,7 +130,7 @@ pub(crate) fn broker() -> Result<LocalApprovalBroker, String> {
             "event": "scripted_consent_started",
             "at_ms": now_ms(),
             "pid": std::process::id(),
-            "rule": "approve only the four mission actions (navigate, type, choose, open a link) whose whole target is https://fixture.test, and the two Orcel-managed profile writes (create, delete) of a harness profile (orcel-browser-profile:ob04-e2e-*); deny every other prompt",
+            "rule": "approve only the four mission actions (navigate, type, choose, open a link) whose whole target is https://fixture.test, the Orcel-managed profile create, delete and use prompts of a harness profile (orcel-browser-profile:ob04-e2e-*), and a Visible window prompt naming one well-formed session id; deny every other prompt",
         }),
     )
     .map_err(|error| format!("write {CONSENT_LOG_ENV}: {error}"))?;
@@ -221,6 +235,20 @@ mod tests {
         for action in PROFILE_ACTIONS {
             assert!(dispatch.contains(&format!("\"{action}\"")), "{action}");
         }
+        // The Visible window: exactly one well-formed session id.
+        assert!(approves(&prompt(
+            VISIBLE_ACTION,
+            "orcel-browser-session:bs-0123456789abcdef-1-0001020304050607"
+        )));
+        for target in [
+            "orcel-browser-session:bs-1",
+            "orcel-browser-session:bs-0123456789abcdef-1-0001020304050607 ",
+            "orcel-browser-profile:ob04-e2e-keep",
+            "https://fixture.test/",
+        ] {
+            assert!(!approves(&prompt(VISIBLE_ACTION, target)), "{target:?}");
+        }
+        assert!(dispatch.contains(&format!("\"{VISIBLE_ACTION}\"")));
     }
 
     #[test]

@@ -403,9 +403,12 @@ export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([
  */
 export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
   browser_session_create: {
-    capability: "browser.session", operation: "create", effect: "read", approval: "none", remote: "local_only",
+    // SG-000135 OB-04: SOFT when it opens a Visible window or uses a
+    // persistent profile for the first time in this MCP session; a Shadow
+    // session on an ephemeral profile asks nothing.
+    capability: "browser.session", operation: "create", effect: "write", approval: "SOFT", remote: "local_only",
     outputBound: "one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name)",
-    annotations: { ...read("Create isolated browser session"), idempotentHint: false }
+    annotations: change("Create isolated browser session", { destructive: false, idempotent: false })
   },
   browser_open: {
     capability: "browser.session", operation: "open", effect: "network", approval: "SOFT", remote: "local_only",
@@ -469,7 +472,7 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
   // creating and deleting each ask the owner (SOFT) first.
   browser_profiles: {
     capability: "browser.session", operation: "profiles", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "at most 16 Orcel-managed profiles: name, creation time and whether a session holds it; never a path, cookie or stored value",
+    outputBound: "at most 16 Orcel-managed profiles: name, creation time, the MCP session that created it (display only) and whether a session holds it; never a path, cookie or stored value",
     annotations: read("List Orcel browser profiles")
   },
   browser_profile_create: {

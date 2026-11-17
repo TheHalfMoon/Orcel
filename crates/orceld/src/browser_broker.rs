@@ -76,7 +76,8 @@ pub(crate) const MAX_TASK_CHARS: usize = 64;
 /// Ended sessions remembered so a late request learns why its session ended.
 const ENDED_MEMORY: usize = 64;
 /// Domain separation for receipt digests.
-const RECEIPT_DOMAIN: &str = "orcel-ob01-receipt/1";
+/// SG-000135 OB-04: version 2 adds the session's persistent profile.
+const RECEIPT_DOMAIN: &str = "orcel-ob04-receipt/2";
 
 /// The broker's budgets. Configured by orceld only; never a caller's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,9 +110,11 @@ pub(crate) enum SessionMode {
     /// foreground window: the default.
     #[default]
     Shadow,
-    /// A headed engine window of its own, named as an Orcel agent session,
-    /// never raised over the person's foreground by Orcel. Chosen by the
-    /// caller; it never advertises no-interference.
+    /// A headed engine window of its own, named as an Orcel agent session.
+    /// Orcel never activates it, but the engine may bring it to the front
+    /// when it opens and when it opens a page (measured; see
+    /// OB04_MODES_PROFILES.md). Chosen by the caller and approved by the
+    /// owner; it never advertises no-interference.
     Visible,
 }
 
@@ -353,6 +356,10 @@ pub(crate) struct EndReport {
     /// SG-000135 OB-04: the persistent profile the session held, kept (and
     /// released for the next session), if any.
     pub persistent_profile: Option<String>,
+    /// SG-000135 OB-04: the worker could not be confirmed gone, so the
+    /// persistent profile stays locked (quarantined) for this orceld's life,
+    /// and no later session can open it while an engine may still run in it.
+    pub profile_quarantined: bool,
 }
 
 impl EndReport {
@@ -365,6 +372,7 @@ impl EndReport {
             "profile_mode": if self.persistent_profile.is_some() { "persistent" } else { "ephemeral" },
             "profile": self.persistent_profile,
             "profile_kept": self.persistent_profile.is_some(),
+            "profile_quarantined": self.profile_quarantined,
         })
     }
 }
@@ -387,6 +395,9 @@ pub(crate) struct Receipt {
     pub evidence_sha256: Option<String>,
     /// The approval broker's record id, for an approved action.
     pub record_id: Option<String>,
+    /// SG-000135 OB-04: the persistent Orcel-managed profile the session
+    /// acted in, or `None` for an ephemeral profile.
+    pub profile: Option<String>,
     pub at_ms: u64,
     /// The previous receipt's digest in this session (empty for the first).
     pub previous_sha256: String,
@@ -407,6 +418,7 @@ impl Receipt {
             "evidence_kind": self.evidence_kind,
             "evidence_sha256": self.evidence_sha256,
             "record_id": self.record_id,
+            "profile": self.profile,
             "at_ms": self.at_ms,
             "previous_sha256": self.previous_sha256,
             "receipt_sha256": self.receipt_sha256,
@@ -503,6 +515,7 @@ impl<W> BrokerSession<W> {
             evidence_kind: record.evidence_kind,
             evidence_sha256: record.evidence_sha256,
             record_id: record.record_id,
+            profile: self.profile_name().map(str::to_owned),
             at_ms,
             previous_sha256: previous,
             receipt_sha256: String::new(),
@@ -569,6 +582,7 @@ fn receipt_digest(receipt: &Receipt) -> String {
         receipt.evidence_kind.clone(),
         optional(&receipt.evidence_sha256),
         optional(&receipt.record_id),
+        optional(&receipt.profile),
         receipt.at_ms.to_string(),
         receipt.previous_sha256.clone(),
     ] {
@@ -596,6 +610,12 @@ pub(crate) struct Broker<W> {
     pending_removal: Vec<PathBuf>,
     /// The approval epoch this broker last saw.
     epoch: Option<u64>,
+    /// SG-000135 OB-04: persistent profiles whose session's worker could not
+    /// be confirmed gone, kept locked for this orceld's life.
+    quarantined: Vec<crate::browser_profiles::ProfileLease>,
+    /// SG-000135 OB-04: (client, profile) pairs the owner approved for use
+    /// in this orceld (one MCP session's life).
+    profile_approvals: std::collections::BTreeSet<(String, String)>,
     /// This instance's lock, held for the broker's (orceld's) lifetime.
     _instance_lock: File,
 }
@@ -635,6 +655,8 @@ impl<W: SessionWorker> Broker<W> {
             counter: 0,
             pending_removal: Vec::new(),
             epoch: None,
+            quarantined: Vec::new(),
+            profile_approvals: std::collections::BTreeSet::new(),
             _instance_lock: lock,
         };
         broker.sweep_leftovers();
@@ -901,6 +923,7 @@ impl<W: SessionWorker> Broker<W> {
     /// transport whose orceld outlives one client.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn end_client(&mut self, client: &str) -> Vec<EndReport> {
+        self.profile_approvals.retain(|(owner, _)| owner != client);
         let ids: Vec<String> = self
             .sessions
             .values()
@@ -923,12 +946,21 @@ impl<W: SessionWorker> Broker<W> {
     }
 
     fn end(&mut self, id: &str, reason: EndReason) -> Option<EndReport> {
-        let session = self.sessions.remove(id)?;
+        let mut session = self.sessions.remove(id)?;
         let root = session.dirs.root.clone();
         let persistent_profile = session.profile_name().map(str::to_owned);
+        let profile = session.profile.take();
         // The worker first; the persistent profile's lock is released only
-        // when the rest of the session drops, after the worker is gone.
+        // after the worker is confirmed gone. If it is not, the profile stays
+        // locked (quarantined) for this orceld's life.
         let worker_ended = session.worker.shutdown();
+        let profile_quarantined = match profile {
+            Some(lease) if !worker_ended => {
+                self.quarantined.push(lease);
+                true
+            }
+            _ => false,
+        };
         // The worker removes its own profile on a clean shutdown; the
         // session's directory (profiles, staging, page store) goes here,
         // retried while a just-ended process may still hold a file, then
@@ -958,7 +990,22 @@ impl<W: SessionWorker> Broker<W> {
             worker_ended,
             profile_removed,
             persistent_profile,
+            profile_quarantined,
         })
+    }
+
+    /// SG-000135 OB-04: whether the owner already approved `client` using
+    /// the persistent profile `name` in this orceld.
+    pub(crate) fn profile_approved(&self, client: &str, name: &str) -> bool {
+        self.profile_approvals
+            .contains(&(client.to_owned(), name.to_owned()))
+    }
+
+    /// SG-000135 OB-04: record that the owner approved `client` using the
+    /// persistent profile `name` (for this orceld's life).
+    pub(crate) fn note_profile_approved(&mut self, client: &str, name: &str) {
+        self.profile_approvals
+            .insert((client.to_owned(), name.to_owned()));
     }
 
     /// The open sessions of `client`, in id order.
@@ -1073,7 +1120,9 @@ mod tests {
             self.shutdowns
                 .borrow_mut()
                 .push(self.profile_marker.clone());
-            true
+            // OB-04: a worker whose profile holds "stuck" cannot be
+            // confirmed gone.
+            !matches!(std::fs::read(&self.profile_marker), Ok(bytes) if bytes == b"stuck")
         }
     }
 
@@ -1781,7 +1830,7 @@ mod tests {
     fn ob04_a_persistent_profile_outlives_its_session_and_serves_the_next_one() -> Outcome {
         let mut scene = Scene::new("persist");
         let store = scene.store().map_err(boxed)?;
-        store.create("work", 1).map_err(boxed)?;
+        store.create("work", "client-a", 1).map_err(boxed)?;
         let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
         let lease = store.acquire("work").map_err(boxed)?;
         let data = lease.data_dir.clone();
@@ -1851,8 +1900,8 @@ mod tests {
     fn ob04_sessions_on_different_profiles_share_no_profile_staging_or_downloads() -> Outcome {
         let mut scene = Scene::new("isolate");
         let store = scene.store().map_err(boxed)?;
-        store.create("alpha", 1).map_err(boxed)?;
-        store.create("beta", 1).map_err(boxed)?;
+        store.create("alpha", "client-a", 1).map_err(boxed)?;
+        store.create("beta", "client-a", 1).map_err(boxed)?;
         let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
         let open = |scene: &mut Scene, broker: &mut Broker<TestWorker>, name: &str| {
             let lease = store.acquire(name).map_err(boxed)?;
@@ -1932,7 +1981,7 @@ mod tests {
     fn ob04_a_refused_session_releases_the_profile_it_was_given() -> Outcome {
         let mut scene = Scene::new("release");
         let store = scene.store().map_err(boxed)?;
-        store.create("work", 1).map_err(boxed)?;
+        store.create("work", "client-a", 1).map_err(boxed)?;
         let budgets = Budgets {
             per_client: 0,
             ..Budgets::DEFAULT
@@ -1950,6 +1999,76 @@ mod tests {
         );
         assert!(refused.is_err());
         assert!(store.acquire("work").is_ok(), "released with the refusal");
+        Ok(())
+    }
+
+    #[test]
+    fn ob04_a_profile_whose_worker_is_not_confirmed_gone_stays_locked() -> Outcome {
+        let mut scene = Scene::new("quarantine");
+        let store = scene.store().map_err(boxed)?;
+        store.create("work", "client-a", 1).map_err(boxed)?;
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let lease = store.acquire("work").map_err(boxed)?;
+        let id = scene
+            .create_in(
+                &mut broker,
+                "client-a",
+                SessionOptions {
+                    mode: SessionMode::Shadow,
+                    profile: Some(lease),
+                },
+                "stuck",
+            )
+            .map_err(boxed)?;
+        let report = broker.close("client-a", &id).map_err(boxed)?;
+        assert!(!report.worker_ended);
+        assert!(report.profile_quarantined);
+        assert_eq!(report.to_json()["profile_quarantined"], true);
+        assert!(
+            store.acquire("work").is_err(),
+            "quarantined for this orceld's life"
+        );
+        assert!(store.check_delete("work").is_err());
+        drop(broker);
+        assert!(
+            store.acquire("work").is_ok(),
+            "released when the orceld ends"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ob04_profile_approvals_are_per_client_and_receipts_name_the_profile() -> Outcome {
+        let mut scene = Scene::new("approvals");
+        let store = scene.store().map_err(boxed)?;
+        store.create("work", "client-a", 1).map_err(boxed)?;
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        assert!(!broker.profile_approved("client-a", "work"));
+        broker.note_profile_approved("client-a", "work");
+        assert!(broker.profile_approved("client-a", "work"));
+        assert!(!broker.profile_approved("client-b", "work"));
+        assert!(!broker.profile_approved("client-a", "other"));
+        let lease = store.acquire("work").map_err(boxed)?;
+        let id = scene
+            .create_in(
+                &mut broker,
+                "client-a",
+                SessionOptions {
+                    mode: SessionMode::Shadow,
+                    profile: Some(lease),
+                },
+                "x",
+            )
+            .map_err(boxed)?;
+        let session = broker.session("client-a", &id).map_err(boxed)?;
+        let receipt = session.record(record("browser_open", "done"), 1);
+        assert_eq!(receipt.profile.as_deref(), Some("work"));
+        let mut other = receipt.clone();
+        other.profile = None;
+        assert_ne!(receipt_digest(&receipt), receipt_digest(&other));
+        assert_eq!(receipt.to_json()["profile"], "work");
+        broker.end_client("client-a");
+        assert!(!broker.profile_approved("client-a", "work"));
         Ok(())
     }
 }

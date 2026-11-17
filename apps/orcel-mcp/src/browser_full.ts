@@ -42,8 +42,9 @@ import {
  * - SG-000135 OB-04: `browser_session_create` takes an optional `mode`:
  *   `shadow` (the default: headless, never the person's mouse, keyboard,
  *   clipboard, focus or foreground window) or `visible` (a headed window of
- *   its own, titled as an Orcel agent session, which Orcel never raises over
- *   the person's foreground; it never claims no-interference). It also
+ *   its own, titled as an Orcel agent session; the engine may bring it to
+ *   the front when it opens and when it opens a page, so it asks the owner
+ *   first and never claims no-interference). It also
  *   takes an optional `profile`: the name of a persistent Orcel-managed
  *   profile (never a path or a person's browser profile), whose cookies and
  *   site storage persist across sessions; one live session per profile.
@@ -203,7 +204,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_session_create",
     {
-      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes. mode: shadow (default) runs headless and never touches your mouse, keyboard, clipboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", which Orcel never raises over the window you are using (it does not claim no-interference). profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
+      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes. mode: shadow (default) runs headless and never touches your mouse, keyboard, clipboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", after fresh local Orcel approval; the browser may bring it to the front when it opens and when it opens a page, so it does not claim no-interference. profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). A Visible session, and the first use of a persistent profile in this MCP session, each ask fresh local Orcel approval first (the profile may be signed in to sites); every page prompt in a persistent profile names it. Pages get no clipboard or other permission and no file dialog. At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
       inputSchema: browserSessionCreateSchema(defaultWorkspace)
     },
     async ({ workspace_id, task, mode, profile }) =>

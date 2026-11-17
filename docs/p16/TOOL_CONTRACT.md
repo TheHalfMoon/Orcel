@@ -104,7 +104,7 @@ which orceld's broker maps onto the existing live host actions. Under this profi
 
 | Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `browser_session_create` | `browser.session/create` | read | none | local-only | yes | no | no | no | one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name) |
+| `browser_session_create` | `browser.session/create` | write | SOFT | local-only | no | no | no | no | one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name) |
 | `browser_open` | `browser.session/open` | network | SOFT | local-only | no | no | no | yes | the session's page id, the committed URL, status and generation, and one provisional receipt |
 | `browser_snapshot` | `browser.session/snapshot` | read | none | local-only | yes | no | yes | no | one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one provisional receipt |
 | `browser_click` | `browser.session/click` | network | SOFT | local-only | no | no | no | yes | the opened URL, status and generation, and one provisional receipt |
@@ -116,6 +116,6 @@ which orceld's broker maps onto the existing live host actions. Under this profi
 | `browser_tabs` | `browser.session/tabs` | network | SOFT | local-only | no | no | no | yes | the session's tabs (at most 8: page id, generation, URL without credentials, query or fragment, and which is active), a new tab's navigation result, and one provisional receipt |
 | `browser_close` | `browser.session/close` | read | none | local-only | yes | no | no | no | whether the session's worker ended and its profile was removed |
 | `browser_task_status` | `browser.session/status` | read | none | local-only | yes | no | yes | no | the session's state, budgets and at most 128 provisional receipts |
-| `browser_profiles` | `browser.session/profiles` | read | none | local-only | yes | no | yes | no | at most 16 Orcel-managed profiles: name, creation time and whether a session holds it; never a path, cookie or stored value |
+| `browser_profiles` | `browser.session/profiles` | read | none | local-only | yes | no | yes | no | at most 16 Orcel-managed profiles: name, creation time, the MCP session that created it (display only) and whether a session holds it; never a path, cookie or stored value |
 | `browser_profile_create` | `browser.session/profile_create` | write | SOFT | local-only | no | no | no | no | the new profile's name and creation time |
 | `browser_profile_delete` | `browser.session/profile_delete` | destructive | SOFT | local-only | no | yes | no | no | the deleted profile's name |

@@ -100,7 +100,7 @@ const APPROVED_ACTIONS = 5;
 // Longer than the MCP edge's own 10-minute approval timeout, so a dialog that
 // waits for a person ends as orceld's answer, not as this client giving up.
 const CALL_TIMEOUT_MS = 11 * 60_000;
-const RECEIPT_DOMAIN = "orcel-ob01-receipt/1";
+const RECEIPT_DOMAIN = "orcel-ob04-receipt/2";
 /// SG-000135 OB-04: the harness's own profile names (the scripted consent
 /// approves profile writes for `ob04-e2e-*` only).
 const KEEP_PROFILE = "ob04-e2e-keep";
@@ -288,7 +288,7 @@ function receiptDigest(receipt) {
     RECEIPT_DOMAIN, String(receipt.seq), receipt.session_id, receipt.action, optional(receipt.page_id),
     optional(receipt.generation_before), optional(receipt.generation_after), receipt.outcome,
     optional(receipt.failure_code), receipt.evidence_kind, optional(receipt.evidence_sha256),
-    optional(receipt.record_id), String(receipt.at_ms), receipt.previous_sha256
+    optional(receipt.record_id), optional(receipt.profile), String(receipt.at_ms), receipt.previous_sha256
   ];
   const hash = createHash("sha256");
   for (const part of parts) {
@@ -803,7 +803,7 @@ async function ob04Missions(options, paths, env) {
   };
   const profilesRoot = join(paths.root, ".orcel", "browser-profile", "live", "named-profiles");
   if (options.consent === "founder") {
-    process.stdout.write("OB04-E2E founder run: Orcel approval dialogs follow for two profile creations, seven page openings and two profile deletions. Read each and answer it yourself.\n");
+    process.stdout.write("OB04-E2E founder run: Orcel approval dialogs follow for two profile creations, three first uses of a profile, one Visible window, eight page openings and two profile deletions. Read each and answer it yourself.\n");
   }
 
   // Phase 1 (FA-H, first orceld): two profiles; a cookie in the first.
@@ -814,7 +814,7 @@ async function ob04Missions(options, paths, env) {
   ok(await call(first, "browser_profile_create", { name: OTHER_PROFILE }, true), "browser_profile_create other");
   refused(await call(first, "browser_profile_create", { name: KEEP_PROFILE }), "INVALID_REQUEST", "a second profile of one name");
   refused(await call(first, "browser_session_create", { profile: "ob04-e2e-missing" }), "TARGET_STALE", "a session on a missing profile");
-  const keepCreate = ok(await call(first, "browser_session_create", { task: "OB-04 keep", profile: KEEP_PROFILE }), "browser_session_create keep");
+  const keepCreate = ok(await call(first, "browser_session_create", { task: "OB-04 keep", profile: KEEP_PROFILE }, true), "browser_session_create keep");
   require_(keepCreate.profile_mode === "persistent" && keepCreate.profile === KEEP_PROFILE && keepCreate.mode === "shadow", `the session holds the persistent profile: ${JSON.stringify(keepCreate)}`);
   const firstSession = keepCreate.session_id;
   require_(await openAndSee(first, firstSession, "/ob04-show", "OB-04 cookie is absent"), "a new profile has no cookie");
@@ -835,8 +835,8 @@ async function ob04Missions(options, paths, env) {
   // two concurrent sessions on different profiles share nothing.
   const second = await openClient(env, "second");
   refused(await call(second, "browser_task_status", { session_id: firstSession }), "TARGET_STALE", "the earlier orceld's session id");
-  const keepAgain = ok(await call(second, "browser_session_create", { task: "OB-04 keep again", profile: KEEP_PROFILE }), "browser_session_create keep again");
-  const otherCreate = ok(await call(second, "browser_session_create", { task: "OB-04 other", profile: OTHER_PROFILE }), "browser_session_create other");
+  const keepAgain = ok(await call(second, "browser_session_create", { task: "OB-04 keep again", profile: KEEP_PROFILE }, true), "browser_session_create keep again");
+  const otherCreate = ok(await call(second, "browser_session_create", { task: "OB-04 other", profile: OTHER_PROFILE }, true), "browser_session_create other");
   const keepSession = keepAgain.session_id;
   const otherSession = otherCreate.session_id;
   const restartKept = await openAndSee(second, keepSession, "/ob04-show", "OB-04 cookie is alpha");
@@ -854,6 +854,14 @@ async function ob04Missions(options, paths, env) {
   require_(isolation.keep_profile_processes === 1 && isolation.other_profile_processes === 1, `each session runs its own Edge in its own profile: ${JSON.stringify(isolation)}`);
   const status = ok(await call(second, "browser_task_status", { session_id: otherSession }), "browser_task_status other");
   require_(status.profile === OTHER_PROFILE && status.profile_mode === "persistent", `the status names the profile: ${JSON.stringify({ profile: status.profile, profile_mode: status.profile_mode })}`);
+  const otherReceipts = status.receipts ?? [];
+  let otherPrevious = "";
+  for (const receipt of otherReceipts) {
+    require_(receipt.profile === OTHER_PROFILE, `every receipt names the profile: ${JSON.stringify(receipt)}`);
+    require_(receipt.previous_sha256 === otherPrevious && receiptDigest(receipt) === receipt.receipt_sha256, `receipt ${receipt.seq} of the profile session recomputes and chains`);
+    otherPrevious = receipt.receipt_sha256;
+  }
+  require_(otherReceipts.length >= 4, `the profile session has its receipts: ${otherReceipts.length}`);
   refused(await call(second, "browser_profile_delete", { name: KEEP_PROFILE }), "TARGET_STALE", "deleting a profile a session holds");
   ok(await call(second, "browser_close", { session_id: otherSession }), "browser_close other");
   refused(await call(second, "browser_session_create", { profile: KEEP_PROFILE }), "TARGET_STALE", "a second live session on one profile");
@@ -869,7 +877,7 @@ async function ob04Missions(options, paths, env) {
   // Phase 3: a Visible session opens a real headed window of its own.
   const third = await openClient(env, "visible");
   const visibleBefore = desktopProbe();
-  const visibleCreate = ok(await call(third, "browser_session_create", { task: "OB-04 visible", mode: "visible" }), "browser_session_create visible");
+  const visibleCreate = ok(await call(third, "browser_session_create", { task: "OB-04 visible", mode: "visible" }, true), "browser_session_create visible");
   require_(visibleCreate.mode === "visible" && visibleCreate.no_interference === false, `a Visible session never claims no-interference: ${JSON.stringify(visibleCreate)}`);
   const visibleSession = visibleCreate.session_id;
   require_(await openAndSee(third, visibleSession, "/ob01-form", "Orcel Browser mission"), "the Visible session opens the fixture form");
@@ -892,8 +900,11 @@ async function ob04Missions(options, paths, env) {
   process.stdout.write(`OB04-E2E visible session: ${JSON.stringify(visible)}\n`);
   require_(visible.headed && visible.pipe && !visible.remote_debugging_port, "the Visible Edge is headed, pipe-driven, with no remote debugging port");
   require_(visible.titled_windows >= 1, `the Visible session has a window titled ${VISIBLE_TITLE}`);
-  require_(!visible.took_foreground, "the Visible window did not take the foreground");
-  require_(visible.desktop.verdict !== "CHANGED" || (visible.desktop.foreground_unchanged && visible.desktop.cursor_unchanged), `the Visible session left the foreground and cursor as they were: ${JSON.stringify(visible.desktop)}`);
+  // The engine may activate its own window when it opens and when it opens
+  // a page (Windows allows it once its foreground lock has expired): that is
+  // the recorded Visible residual, reported, never claimed absent. The
+  // cursor and the clipboard must still be untouched.
+  require_(visible.desktop.human_input_during || (visible.desktop.cursor_unchanged && visible.desktop.clipboard_unchanged), `the Visible session left the cursor and clipboard as they were: ${JSON.stringify(visible.desktop)}`);
   ok(await call(third, "browser_close", { session_id: visibleSession }), "browser_close visible");
   const thirdExit = await third.close();
   const windowsLeft = desktopProbe(edgeVisible.map((entry) => entry.ProcessId)).windows.length;
@@ -941,6 +952,19 @@ async function main() {
       const expectedPrompts = APPROVED_ACTIONS + summary.ob04.approvals;
       require_(prompts.length === expectedPrompts && prompts.every((prompt) => prompt.decision === "approved"), `${expectedPrompts} scripted SOFT prompts, each approved: ${prompts.length}`);
       summary.scripted_prompts = prompts.map((prompt) => ({ action: prompt.action, target: prompt.target }));
+      // SG-000135 OB-04: the first use of each profile in each MCP session
+      // asked (three times), the Visible window asked once, and every page
+      // prompt in a persistent profile names that profile.
+      const uses = prompts.filter((prompt) => prompt.action === "use an Orcel-managed browser profile in a session");
+      require_(uses.length === 3, `three profile-use prompts: ${uses.length}`);
+      require_(uses.every((prompt) => prompt.dialog_text.includes("may be signed in")), "each profile-use prompt says the profile may be signed in");
+      require_(prompts.filter((prompt) => prompt.action === "open a visible Orcel browser window").length === 1, "one Visible window prompt");
+      for (const name of [KEEP_PROFILE, OTHER_PROFILE]) {
+        const named = prompts.filter((prompt) => prompt.action === "navigate isolated browser page" && prompt.dialog_text.includes(`Orcel-managed browser profile ${name}`));
+        require_(named.length >= 2, `the page prompts in ${name} name it: ${named.length}`);
+      }
+      const unnamed = prompts.filter((prompt) => prompt.action === "navigate isolated browser page" && prompt.dialog_text.includes("Orcel-managed browser profile"));
+      summary.profile_named_page_prompts = unnamed.length;
     }
     writeFileSync(join(evidenceDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
     const steps = summary.steps.map((step) => `${step.tool}=${step.ok ? "ok" : "refused"}/${step.ms}ms`).join(" ");
