@@ -72,6 +72,9 @@ export interface A11yNode {
   /// Orcel: the engine computed this name from another element, or did not
   /// say how it computed it.
   borrowedName?: boolean | undefined;
+  /// Orcel: an iframe or frame host; its child document is a separate list
+  /// (dropped from the outline as a leaf), so its missing children are expected.
+  frameHost?: boolean | undefined;
 }
 
 export interface A11yOptions {
@@ -137,6 +140,7 @@ export function decorateRoles(nodes: AxNode[], opts: A11yOptions): A11yNode[] {
       childIds: n.childIds,
       encodedId,
       control,
+      frameHost: asRole(n) === "Iframe" || asRole(n) === "IframePresentational" || tag === "iframe" || tag === "frame",
       borrowedName: name !== undefined && name.length > 0 && nameIsBorrowed(n, role)
     };
   });
@@ -230,7 +234,9 @@ export function withholdNames(nodes: A11yNode[], incomplete = false): number {
   const childrenOf = new Map<string, A11yNode[]>();
   let missing = incomplete;
   for (const n of nodes) {
-    for (const id of n.childIds ?? []) if (!byId.has(id)) missing = true;
+    // A frame host lists its child document's root, which lives in that
+    // frame's own list: not a sign of a cut.
+    if (n.frameHost !== true) for (const id of n.childIds ?? []) if (!byId.has(id)) missing = true;
     if (n.parentId === undefined) continue;
     const parent = byId.get(n.parentId);
     if (parent === undefined) {

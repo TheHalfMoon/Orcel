@@ -112,9 +112,18 @@ into its only child, so running it first would drop the control mark of,
 say, an unnamed contenteditable span. When the list is incomplete, every
 name except a text node's own text is withheld, because a missing node may
 be a control whose value a name was computed from. The list counts as
-incomplete when a child the engine names is missing, when the DOM index
-stopped at its 50,000-node bound, or when more than 100,000 AX nodes came
-back. The engine is asked for at most 128 accessibility levels, and the
+incomplete in any of these cases:
+
+- a child the engine names is missing (except an iframe's or frame's
+  child-document root, which lives in that frame's own list and is dropped
+  as a leaf);
+- the DOM index, or the hydration of a shallow DOM read, stopped at its
+  50,000-node bound;
+- more than 100,000 AX nodes came back.
+
+Whether Edge lists an iframe's child-document root among the iframe node's
+children is modelled from the CDP shape, not yet measured on a real engine
+(pending, with the rest of the live-engine evidence below). The engine is asked for at most 128 accessibility levels, and the
 tree build is capped at 128 levels, so a deep page is cut rather than
 overflowing the stack.
 
@@ -173,8 +182,8 @@ Both capabilities are denied by default until these amendments land:
   Progress and CDP stack, which needs the whole pnpm workspace installed. The
   applicable tests were ported to `node:test` instead.
 - Worker (`node --test`, named files, all non-native suites plus
-  `scripts/dev-pin.test.mjs`): **239 passed, 0 failed**. This includes the
-  new `outline/dom-tree.test.js` (10 tests, 4 of them ported from Stagehand),
+  `scripts/dev-pin.test.mjs`): **240 passed, 0 failed**. This includes the
+  new `outline/dom-tree.test.js` (11 tests, 4 of them ported from Stagehand),
   `outline/outline.test.js` (14, including the security-review cases: an
   unnamed editable node lifted by pruning, a truncated DOM index, and a
   20,000-level page), 3 new protocol tests and 3 new worker

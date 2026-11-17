@@ -139,7 +139,8 @@ function fixtureAx(): AxNode[] {
     { nodeId: "25", role: { value: "listitem" }, parentId: "22", childIds: ["26"], backendDOMNodeId: 25 },
     text("26", 26, "25", "Child free"),
     { nodeId: "33", role: { value: "heading" }, name: { value: "No sources" }, parentId: "4", backendDOMNodeId: 33 },
-    { nodeId: "27", role: { value: "Iframe" }, parentId: "4", backendDOMNodeId: 27 },
+    // The iframe lists its child document's root, which is not in this list.
+    { nodeId: "27", role: { value: "Iframe" }, parentId: "4", childIds: ["frame-root"], backendDOMNodeId: 27 },
     // A node of the iframe's document: never part of the main outline.
     { nodeId: "31", role: { value: "textbox" }, name: contents("inner"), parentId: "4", backendDOMNodeId: 31 }
   ];
@@ -261,6 +262,24 @@ test("decorated roles and name withholding follow the module rules", () => {
   ];
   withholdNames(cut);
   assert.deepEqual(cut.map((n) => n.name), ["", "Fees"]);
+  // An iframe's child-document root is expected to be missing (that
+  // document is a separate list, dropped as a leaf): not a cut.
+  const framed: A11yNode[] = [
+    { nodeId: "h", role: "heading", name: "Fees", childIds: ["t"] },
+    { nodeId: "t", role: "StaticText", name: "Fees", parentId: "h" },
+    { nodeId: "f", role: "Iframe", frameHost: true, childIds: ["frame-root"] }
+  ];
+  assert.equal(withholdNames(framed), 0);
+  assert.deepEqual(framed.map((n) => n.name), ["Fees", "Fees", undefined]);
+  const iframeFlags = decorateRoles(
+    [
+      { nodeId: "a", role: { value: "Iframe" }, backendDOMNodeId: 1 },
+      { nodeId: "b", role: { value: "generic" }, backendDOMNodeId: 2 },
+      { nodeId: "c", role: { value: "generic" }, backendDOMNodeId: 3 }
+    ],
+    { tagNameMap: { "0-2": "frame", "0-3": "div" }, scrollableMap: {}, encode: (be: number) => `0-${be}` }
+  );
+  assert.deepEqual(iframeFlags.map((n) => n.frameHost), [true, true, false]);
   // Stagehand's static-text dedupe.
   const parent: A11yNode = { nodeId: "x", role: "link", name: "Read  more" };
   const kids: A11yNode[] = [

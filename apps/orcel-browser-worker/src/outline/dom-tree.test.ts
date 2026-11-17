@@ -118,6 +118,26 @@ test("the index stops at its node bound and says so", async () => {
   assert.equal(index.truncated, true);
 });
 
+test("a hydration cut at its bound marks the index truncated", async () => {
+  // A deep page: the full read fails, a shallow one comes back, and the
+  // hydration walk passes its bound on nodes the index does not count (no
+  // backend id), so only the hydration's own report can flag the cut.
+  const kids: CdpDomNode[] = Array.from({ length: MAX_DOM_NODES + 10 }, () => ({ nodeType: 3, nodeName: "#text" }));
+  const root: CdpDomNode = { backendNodeId: 1, nodeType: 9, nodeName: "#document", childNodeCount: kids.length, children: kids };
+  const { session } = recorder(async (method, params) => {
+    if (method === "DOM.getDocument") {
+      if (params?.depth === -1) throw new Error("CBOR: stack limit exceeded");
+      return { root };
+    }
+    return {};
+  });
+  const index = await buildSessionDomIndex(session, true);
+  assert.equal(index.absByBe.size, 1);
+  assert.equal(index.truncated, true);
+  const small: CdpDomNode = { nodeId: 1, backendNodeId: 1, nodeType: 9, nodeName: "#document", childNodeCount: 0, children: [] };
+  assert.equal(await hydrateDomTree(session, small, true), false);
+});
+
 test("a passed deadline stops the index", async () => {
   const { session } = recorder(async (method) => (method === "DOM.getDocument" ? { root: { backendNodeId: 1, nodeType: 9, nodeName: "#document" } } : {}));
   await assert.rejects(buildSessionDomIndex(session, true, Date.now() - 1), OutlineTimeout);

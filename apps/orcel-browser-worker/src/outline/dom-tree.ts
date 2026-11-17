@@ -77,7 +77,7 @@ export function collectDomTraversalTargets(node: CdpDomNode): CdpDomNode[] {
  * Rehydrate a truncated DOM tree by repeatedly calling DOM.describeNode with
  * decreasing depths. Any non-CBOR failure is surfaced directly.
  */
-export async function hydrateDomTree(session: CdpReader, root: CdpDomNode, pierce: boolean, deadline?: number): Promise<void> {
+export async function hydrateDomTree(session: CdpReader, root: CdpDomNode, pierce: boolean, deadline?: number): Promise<boolean> {
   const stack: CdpDomNode[] = [root];
   const expandedNodeIds = new Set<number>();
   const expandedBackendIds = new Set<number>();
@@ -86,7 +86,9 @@ export async function hydrateDomTree(session: CdpReader, root: CdpDomNode, pierc
   while (stack.length) {
     checkDeadline(deadline);
     // Orcel: a hydration never walks more nodes than the index keeps.
-    if (++visited > MAX_DOM_NODES) return;
+    // The cut is reported (true): un-hydrated branches carry no tags, so the
+    // index built on this tree is incomplete.
+    if (++visited > MAX_DOM_NODES) return true;
     const node = stack.pop()!;
     const nodeId = typeof node.nodeId === "number" && node.nodeId > 0 ? node.nodeId : undefined;
     const backendId = typeof node.backendNodeId === "number" && node.backendNodeId > 0 ? node.backendNodeId : undefined;
@@ -132,7 +134,11 @@ export async function hydrateDomTree(session: CdpReader, root: CdpDomNode, pierc
       stack.push(child);
     }
   }
+  return false;
 }
+
+/// Orcel: roots whose hydration stopped at MAX_DOM_NODES (incomplete trees).
+const hydrationCut = new WeakSet<CdpDomNode>();
 
 /**
  * Attempt DOM.getDocument with progressively shallower depths until CBOR stops
@@ -148,7 +154,7 @@ export async function getDomTreeWithFallback(session: CdpReader, pierce: boolean
       const { root } = (await session.send("DOM.getDocument", { depth, pierce })) as { root: CdpDomNode };
 
       if (depth !== -1) {
-        await hydrateDomTree(session, root, pierce, deadline);
+        if (await hydrateDomTree(session, root, pierce, deadline)) hydrationCut.add(root);
       }
 
       return root;
@@ -198,7 +204,8 @@ export async function buildSessionDomIndex(session: CdpReader, pierce: boolean, 
   const contentDocRootByIframe = new Map<number, number>();
   const enterByBe = new Map<number, number>();
   const exitByBe = new Map<number, number>();
-  let truncated = false;
+  // A hydration that stopped at its bound leaves the tree incomplete.
+  let truncated = hydrationCut.has(root);
 
   type Entry = {
     node: CdpDomNode;
