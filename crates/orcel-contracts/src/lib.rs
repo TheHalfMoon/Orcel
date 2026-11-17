@@ -1,9 +1,49 @@
+//! Orcel wire contracts.
+//!
+//! A leaf crate: serde and serde_json only, no IO, no platform code. The
+//! contracts v1 modules (spec section 4) are wire types and pure shape
+//! checks only: no issuance, no authority checking, no secret material and
+//! no runtime behaviour. Issuance and checking stay in `orcel-policy` and
+//! `orcel-approval`.
+
+pub mod canonical;
+pub mod capability;
+pub mod error;
+pub mod event;
+pub mod identity;
+pub mod indicator;
+pub mod job;
+pub mod lease;
 pub mod prompt_display;
+pub mod session;
+pub mod sidecar;
+pub mod tool;
+pub mod web;
+
+#[cfg(test)]
+mod schema_tests;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use canonical::{canonical_json, canonical_json_value, CanonicalJsonError};
+pub use error::FailureCode;
+pub use job::ExecutionState;
+pub use lease::{AuthorityMode, ExecutorClass};
+
 pub const INTERNAL_PROTOCOL_VERSION: u32 = 1;
+
+/// Identifiers are opaque strings of at most this many bytes (spec
+/// section 4.0).
+pub const MAX_ID_BYTES: usize = 256;
+
+/// A top-level contracts v1 wire object, which carries
+/// `"contract": "orcel.<name>/<major>"` (spec section 4.0). A major bump is
+/// a breaking change; additive optional fields keep the major.
+pub trait Contract {
+    /// The exact `contract` value of this major.
+    const CONTRACT: &'static str;
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestEnvelope {
@@ -19,35 +59,13 @@ pub struct RequestEnvelope {
     pub arguments: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum FailureCode {
-    InvalidRequest,
-    CapabilityDenied,
-    WorkspaceDenied,
-    PathEscape,
-    PathRaceDetected,
-    ApprovalRequired,
-    ApprovalDenied,
-    ApprovalUnavailable,
-    TargetStale,
-    ProviderUnavailable,
-    ProcessTimeout,
-    ProcessTerminationUnverified,
-    OutputLimit,
-    PostconditionFailed,
-    InternalError,
-    /// SG-000055: a remote-context request without an exact active local
-    /// remote-session lease. Never satisfiable by the remote side.
-    RemoteSessionInactive,
-}
-
 /// SG-000055 remote dispatch context.
 ///
 /// Supplied only by the local device uplink from an authenticated, verified
 /// relay route; never derived from tool arguments. It grants nothing: it only
 /// selects the local remote-session lease that `orceld` must find active.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemoteContext {
     pub principal: String,

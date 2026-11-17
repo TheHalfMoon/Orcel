@@ -34,7 +34,8 @@ MAY_HAVE_ACTED: frozenset[str] = frozenset(
     {"POSTCONDITION_FAILED", "PROCESS_TIMEOUT", "PROCESS_TERMINATION_UNVERIFIED", "OUTPUT_LIMIT"}
 )
 
-#: orceld's FailureCode values -> static guidance. Keep in step with the enum.
+#: orceld's FailureCode values -> static guidance. Keep in step with the enum
+#: (OUTCOME_UNKNOWN has its own text, UNKNOWN_OUTCOME_TEXT).
 GUIDANCE: dict[str, str] = {
     "INVALID_REQUEST": _FINAL + "Check the tool's arguments against its schema before trying a different call.",
     "CAPABILITY_DENIED": _FINAL + "This operation is not allowed here. Choose another read-only approach or finish.",
@@ -54,6 +55,17 @@ GUIDANCE: dict[str, str] = {
     "POSTCONDITION_FAILED": _AFTER + "Orcel could not verify the expected result. Observe again before relying on it.",
     "INTERNAL_ERROR": _FINAL + "Orcel failed internally. Choose another approach or finish.",
     "REMOTE_SESSION_INACTIVE": _FINAL + "There is no active remote session for this call.",
+    "LEASE_REQUIRED": _FINAL + "This needs standing permission from the person, which this agent does not request on its own.",
+    "LEASE_INVALID": _FINAL + "The standing permission does not cover this call or has changed. Do not try to get around it.",
+    "LEASE_UNSUPPORTED_PLATFORM": _FINAL + "Standing permissions are not available on this device. Choose another approach or finish.",
+    "INDICATOR_UNAVAILABLE": _FINAL + "Full Control is paused because its on-screen indicator is not running.",
+    "UNSUPPORTED": _FINAL + "This capability is not supported here. Choose another approach or finish.",
+    "POLICY_BLOCKED": _FINAL + "Policy blocks this capability. Do not try other tools to get around it.",
+    "JOB_NOT_FOUND": _FINAL + "The job is unknown, expired or not yours. Do not guess other job ids.",
+    "QUEUE_FULL": _FINAL + "Orcel is at a queue or storage limit. Finish, or try a smaller request later.",
+    "RATE_LIMITED": _FINAL + "A per-site budget is used up. Do not call this site again now.",
+    "AUTHORITY_UNAVAILABLE": _FINAL + "The Orcel authority service is not available, so Full Control is unavailable.",
+    "PERMISSION_REQUIRED": _FINAL + "This opt-in feature is not enabled for this client.",
 }
 
 UNKNOWN_OUTCOME_TEXT = (

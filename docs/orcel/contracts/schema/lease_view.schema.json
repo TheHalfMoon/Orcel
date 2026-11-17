@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LeaseView",
+  "description": "Wire projection of an SG-000093 lease. It carries no secret and is never\naccepted as proof of authority.",
+  "type": "object",
+  "properties": {
+    "authority_epoch": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "binding_digest": {
+      "description": "SG-000093 binding digest (unchanged encoding).",
+      "type": "string"
+    },
+    "contract": {
+      "description": "`\"orcel.lease-view/1\"`.",
+      "type": "string"
+    },
+    "executors": {
+      "description": "Executor classes enabled now, not the profile ceiling.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExecutorClass"
+      }
+    },
+    "expires_at_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "issued_at_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "lease_id": {
+      "description": "Domain-separated SHA-256 (SG-000093, unchanged encoding).",
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "#/$defs/AuthorityMode"
+    },
+    "state": {
+      "$ref": "#/$defs/LeaseState"
+    }
+  },
+  "required": [
+    "contract",
+    "lease_id",
+    "mode",
+    "binding_digest",
+    "authority_epoch",
+    "issued_at_ms",
+    "expires_at_ms",
+    "executors",
+    "state"
+  ],
+  "$defs": {
+    "AuthorityMode": {
+      "description": "SG-000093 authority mode. Moved from `orcel-policy` with identical serde\nspellings; `orcel-policy` re-exports it.",
+      "type": "string",
+      "enum": [
+        "safe",
+        "full_user",
+        "full_admin",
+        "persistent_admin",
+        "remote_full_control"
+      ]
+    },
+    "ExecutorClass": {
+      "description": "SG-000093 executor class. Moved from `orcel-policy` with identical serde\nspellings; `orcel-policy` re-exports it.",
+      "type": "string",
+      "enum": [
+        "desktop_observation",
+        "desktop_input",
+        "shell_process",
+        "filesystem",
+        "browser",
+        "web",
+        "visual_agent",
+        "admin",
+        "remote"
+      ]
+    },
+    "LeaseState": {
+      "type": "string",
+      "enum": [
+        "active",
+        "expired",
+        "revoked",
+        "invalidated"
+      ]
+    }
+  }
+}

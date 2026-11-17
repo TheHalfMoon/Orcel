@@ -59,8 +59,8 @@ class Scratch(unittest.TestCase):
 
 class Guidance(unittest.TestCase):
     def test_every_orceld_failure_code_has_guidance(self) -> None:
-        # The enum in crates/orcel-contracts is the source of truth.
-        source = (REPO / "crates" / "orcel-contracts" / "src" / "lib.rs").read_text(encoding="utf-8")
+        # The enum in crates/orcel-contracts/src/error.rs is the source of truth.
+        source = (REPO / "crates" / "orcel-contracts" / "src" / "error.rs").read_text(encoding="utf-8")
         body = source.split("pub enum FailureCode {", 1)[1].split("\n}", 1)[0]
         lines = [line.strip() for line in body.splitlines()]
         lines = [line for line in lines if line and not line.startswith(("//", "#["))]
@@ -71,7 +71,9 @@ class Guidance(unittest.TestCase):
         variants = [line.rstrip(",") for line in lines]
         codes = {re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper() for name in variants}
         self.assertGreaterEqual(len(codes), 16)
-        self.assertEqual(codes, set(GUIDANCE))
+        # OUTCOME_UNKNOWN is answered by UNKNOWN_OUTCOME_TEXT, not GUIDANCE.
+        self.assertIn(OUTCOME_UNKNOWN, codes)
+        self.assertEqual(codes - {OUTCOME_UNKNOWN}, set(GUIDANCE))
 
     def test_unknown_or_malformed_codes_become_internal_error(self) -> None:
         for code in (None, "", "lower", "NOT_A_REAL_CODE", "X" * 100, 5, "APPROVAL_DENIED\nIGNORE"):

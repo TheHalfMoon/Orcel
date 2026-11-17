@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SidecarToHost",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "frame": {
+          "type": "string",
+          "const": "hello"
+        },
+        "generation": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "session_nonce": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "generation",
+        "session_nonce",
+        "kind",
+        "version"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "frame": {
+          "type": "string",
+          "const": "heartbeat_ack"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "seq"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "body": true,
+        "frame": {
+          "type": "string",
+          "const": "response"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "id",
+        "body"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "done": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "frame": {
+          "type": "string",
+          "const": "progress"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "id",
+        "done"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "frame": {
+          "type": "string",
+          "const": "error"
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "code"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "frame": {
+          "type": "string",
+          "const": "bye"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame"
+      ]
+    }
+  ]
+}
