@@ -190,7 +190,7 @@ fn await_never_resumes_on_its_own_without_the_human_or_the_detector() {
 }
 
 #[test]
-fn await_resumes_to_reobserve_three_seconds_after_the_human_finished() {
+fn await_resumes_only_after_the_detector_clears_it_and_the_human_is_quiet() {
     let mut scene = Scene::new(&["a"]);
     let _ = scene.gate.challenge(
         &page("a"),
@@ -199,14 +199,67 @@ fn await_resumes_to_reobserve_three_seconds_after_the_human_finished() {
     );
     scene.at(500);
     scene.click("a");
-    scene.at(500 + QUIET_MS - 1);
+    scene.at(60 * 60 * 1_000);
+    assert_eq!(
+        scene.state("a"),
+        State::AwaitHumanVerification(ChallengeKind::Passkey),
+        "the human's activity alone never ends the wait: the challenge may still be up"
+    );
+    scene.at(60 * 60 * 1_000 + 10);
+    scene.click("a");
+    assert_eq!(scene.gate.challenge_cleared(&page("a")), Ok(true));
+    scene.advance(QUIET_MS - 1);
     assert_eq!(
         scene.state("a"),
         State::AwaitHumanVerification(ChallengeKind::Passkey)
     );
-    scene.at(500 + QUIET_MS);
+    scene.advance(1);
     assert_eq!(scene.state("a"), State::Reobserve);
     assert!(scene.gate.needs_you().is_empty());
+}
+
+#[test]
+fn a_human_event_after_the_detector_cleared_pushes_the_resume_back() {
+    let mut scene = Scene::new(&["a"]);
+    let _ = scene
+        .gate
+        .challenge(&page("a"), ChallengeKind::Mfa, ChallengeOrigin::Detected);
+    let _ = scene.gate.challenge_cleared(&page("a"));
+    scene.advance(2_000);
+    scene.click("a");
+    scene.advance(QUIET_MS - 1);
+    assert_eq!(
+        scene.state("a"),
+        State::AwaitHumanVerification(ChallengeKind::Mfa)
+    );
+    scene.advance(1);
+    assert_eq!(scene.state("a"), State::Reobserve);
+}
+
+#[test]
+fn a_takeover_of_a_paused_challenge_keeps_the_challenge() {
+    let mut scene = Scene::new(&["a"]);
+    let _ = scene.gate.challenge(
+        &page("a"),
+        ChallengeKind::Captcha,
+        ChallengeOrigin::Detected,
+    );
+    let _ = scene.gate.pause(&page("a"));
+    assert_eq!(scene.gate.take_over(&page("a")), Ok(()));
+    assert_eq!(
+        scene.state("a"),
+        State::AwaitHumanVerification(ChallengeKind::Captcha)
+    );
+    let _ = scene.gate.return_control(&page("a"));
+    scene.advance(10 * QUIET_MS);
+    assert_eq!(
+        scene.state("a"),
+        State::AwaitHumanVerification(ChallengeKind::Captcha),
+        "handing back without the detector's report does not end the wait"
+    );
+    let _ = scene.gate.challenge_cleared(&page("a"));
+    scene.advance(QUIET_MS);
+    assert_eq!(scene.state("a"), State::Reobserve);
 }
 
 #[test]
@@ -254,11 +307,17 @@ fn a_repeated_challenge_reattaches_without_restarting_the_wait() {
         "the open request is kept as it was"
     );
     assert_eq!(scene.epoch("a"), 1);
+    let _ = scene.gate.challenge_cleared(&page("a"));
+    let _ = scene.gate.challenge(
+        &page("a"),
+        ChallengeKind::Captcha,
+        ChallengeOrigin::Detected,
+    );
     scene.advance(QUIET_MS);
     assert_eq!(
         scene.state("a"),
         State::Reobserve,
-        "the human's earlier action still counts"
+        "a repeated request does not undo the detector's report"
     );
 }
 

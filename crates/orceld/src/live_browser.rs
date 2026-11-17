@@ -469,6 +469,9 @@ pub struct LiveBrowser {
     takeover: TakeoverGate,
     /// The gate's ticket for the write in progress, if it admitted one.
     gate_ticket: Option<WriteTicket>,
+    /// The page's latest committed URL (B1: the path in an action's
+    /// stable key).
+    page_url: Option<String>,
     /// Test builds only: a shorter reply budget for dispatched frames.
     #[cfg(test)]
     reply_timeout: Option<std::time::Duration>,
@@ -709,6 +712,31 @@ pub(crate) fn form_prompt(
 }
 
 /// SG-000120 RJ-02: how a dispatched form action's journal intent closes.
+/// B1: what makes two form actions the same action for the idempotency
+/// guard: its kind and value, and the field's role, name and ordinal as the
+/// host bound them. Hashed by the gate, never kept or logged.
+fn form_material(action: &BindAction, form: &BoundForm) -> String {
+    let (kind, value) = match action {
+        BindAction::Fill { value, .. } => ("fill", value.clone()),
+        BindAction::Select { label, .. } => ("select", label.clone()),
+        BindAction::Check { checked, .. } => ("check", checked.to_string()),
+        BindAction::PressEnter { .. } => ("enter", String::new()),
+        other => ("other", format!("{other:?}")),
+    };
+    let ordinal = form
+        .ordinal
+        .map(|ordinal| format!("{}/{}", ordinal.position, ordinal.count))
+        .unwrap_or_default();
+    [
+        kind,
+        form.role.as_str(),
+        form.name.as_str(),
+        ordinal.as_str(),
+        value.as_str(),
+    ]
+    .join("\u{0}")
+}
+
 /// Executed is `done`; a refusal the host gives before the worker could act
 /// (a changed binding, a replayed record, the wrong control, a stale or
 /// covered target, a busy worker) is `failed`, nothing done; anything else
@@ -784,6 +812,7 @@ impl LiveBrowser {
             host_ended: None,
             takeover: TakeoverGate::from_switch(),
             gate_ticket: None,
+            page_url: None,
             #[cfg(test)]
             reply_timeout: None,
             #[cfg(test)]
@@ -855,6 +884,10 @@ impl LiveBrowser {
             // unknown: record it lost, and end the host before anything
             // reads the destination.
             Err(error) => {
+                // B1: settle the write as uncertain while its page's
+                // session still exists; end_host closes the page.
+                self.takeover
+                    .after_write(self.gate_ticket.take(), "unknown");
                 self.end_host();
                 (DispatchOutcome::Lost, Err(error))
             }
@@ -874,6 +907,7 @@ impl LiveBrowser {
         if let Some(page) = self.page.take() {
             let _ = self.pages.close_page(&page.page_id);
             self.takeover.page_closed(&page.page_id);
+            self.page_url = None;
         }
     }
 
@@ -964,7 +998,10 @@ impl LiveBrowser {
                     &format!("live-lifetime:{lifetime}"),
                     POLICY_REVISION,
                 ) {
-                    Ok(page) => self.page = Some(page),
+                    Ok(page) => {
+                        self.takeover.page_opened(&page.page_id);
+                        self.page = Some(page);
+                    }
                     Err(error) => {
                         self.end_host();
                         return Err(from_page(error));
@@ -1103,7 +1140,7 @@ impl LiveBrowser {
             self.end_lifetime();
             self.open_public(workspace, url)?;
         }
-        let navigated = self.navigate(workspace, approval, url);
+        let navigated = self.navigate_approved(workspace, approval, url);
         if navigated.is_err() && switched {
             // A denied or failed switch leaves no lifetime, as decision 2
             // says: the fresh one never held a document of this page.
@@ -1169,7 +1206,7 @@ impl LiveBrowser {
             node_id: node_id.into(),
             role: "link".into(),
         };
-        let (token, digest, binding) = self.ask(
+        let (token, digest, binding, _target) = self.ask(
             workspace,
             approval,
             &action,
@@ -1253,6 +1290,7 @@ impl LiveBrowser {
             });
         match moved {
             Ok(next) => {
+                self.page_url = Some(url.to_owned());
                 self.page = Some(next.clone());
                 Ok(next)
             }
@@ -1273,7 +1311,7 @@ impl LiveBrowser {
         approval: &impl ApprovalBroker,
         action: &BindAction,
         title: &str,
-    ) -> Result<(ApprovedToken, String, String), ProviderError> {
+    ) -> Result<(ApprovedToken, String, String, String), ProviderError> {
         // What the prompt shows: where the action goes, and for a download
         // also where the file lands (all of it bound into the digest).
         let lifetime = self.lifetime.clone().ok_or_else(|| {
@@ -1325,7 +1363,7 @@ impl LiveBrowser {
         let token = approval
             .request_token(&prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))?;
-        Ok((token, digest, binding))
+        Ok((token, digest, binding, target))
     }
 
     /// B1: ask the takeover gate before an agent write on `page_id`. It
@@ -1341,6 +1379,28 @@ impl LiveBrowser {
         self.takeover.after_write(self.gate_ticket.take(), "failed");
         self.gate_ticket = self.takeover.before_write(page_id, kind, material, class)?;
         Ok(())
+    }
+
+    /// B1: give the write in progress the key of its stable material: the
+    /// page's origin and URL path, the action's kind and `material` (a
+    /// stable description of its target, never a node id).
+    fn gate_rekey(&mut self, kind: &str, material: &str) -> Result<(), ProviderError> {
+        let origin = self
+            .page
+            .as_ref()
+            .map(|page| page.current_origin.clone())
+            .unwrap_or_default();
+        let rekeyed = self.takeover.rekey(
+            self.gate_ticket.as_ref(),
+            &origin,
+            self.page_url.as_deref(),
+            kind,
+            material,
+        );
+        if rekeyed.is_err() {
+            self.gate_ticket = None;
+        }
+        rekeyed
     }
 
     /// B1: ask the gate again right before the approval is spent: a person
@@ -1381,14 +1441,31 @@ impl LiveBrowser {
             .map_err(|error| ProviderError::new(error.code, error.message))
     }
 
-    /// An approved navigation of the lifetime's page.
+    /// An approved navigation of the lifetime's page. B1: asks the
+    /// takeover gate first, as every agent write does.
     pub fn navigate(
         &mut self,
         workspace: &Workspace,
         approval: &impl ApprovalBroker,
         url: &str,
     ) -> Result<(String, u16), ProviderError> {
-        let (token, digest, binding) = self.ask(
+        let page_id = self
+            .page
+            .as_ref()
+            .map(|page| page.page_id.clone())
+            .unwrap_or_default();
+        self.gate_write(&page_id, "navigate", url, ActionClass::Repeatable)?;
+        self.navigate_approved(workspace, approval, url)
+    }
+
+    /// The approved navigation itself, once the gate admitted it.
+    fn navigate_approved(
+        &mut self,
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        url: &str,
+    ) -> Result<(String, u16), ProviderError> {
+        let (token, digest, binding, _target) = self.ask(
             workspace,
             approval,
             &BindAction::Navigate { url: url.into() },
@@ -1478,6 +1555,10 @@ impl LiveBrowser {
                 ))
             }
         };
+        // B1: the stable key names the field by its role, name and ordinal
+        // (never its node id), so a renumbered observation still finds an
+        // Enter whose outcome is unknown.
+        self.gate_rekey("form", &form_material(&action, &form))?;
         let digest = approval_digest(
             &workspace.id,
             &lifetime,
@@ -1506,18 +1587,25 @@ impl LiveBrowser {
             sink,
             crate::mutation_journal::opaque(workspace, request, &digest, &journal_target),
         )?;
+        let mut gate_refused = false;
         let approved = approval
             .request_token(&prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))
-            .and_then(|token| self.gate_confirm().map(|()| token))
+            .and_then(|token| {
+                self.gate_confirm()
+                    .inspect_err(|_| gate_refused = true)
+                    .map(|()| token)
+            })
             .and_then(|token| Self::consume(workspace, approval, &token, digest).map(|()| token));
         let token = match approved {
             Ok(token) => token,
             Err(refusal) => {
                 intent.abandon(match refusal.code {
-                    FailureCode::ApprovalDenied => "approval_denied",
                     // B1: a person took the page over during the prompt.
-                    FailureCode::TargetStale => "target_stale",
+                    // Only the gate's own refusal is named so; with the
+                    // gate off this never happens.
+                    _ if gate_refused => "target_stale",
+                    FailureCode::ApprovalDenied => "approval_denied",
                     _ => "approval_unavailable",
                 });
                 return Err(refusal);
@@ -1744,7 +1832,7 @@ impl LiveBrowser {
         )?;
         let folder = folder.to_string_lossy().into_owned();
         let folder_for_record = folder.clone();
-        let (token, digest, binding) = self.ask(
+        let (token, digest, binding, target) = self.ask(
             workspace,
             approval,
             &BindAction::Download {
@@ -1755,7 +1843,10 @@ impl LiveBrowser {
             },
             "download from isolated browser page",
         )?;
-        // B1: nothing is journaled or spent while a person holds the page.
+        // B1: nothing is journaled or spent while a person holds the page,
+        // nor for a download of the same link to the same name whose
+        // earlier outcome is unknown.
+        self.gate_rekey("download", &format!("{target}\u{0}{relative}"))?;
         self.gate_confirm()?;
         let record_id = token.record_id.clone();
         // The intent is durable before the approval is spent: if orceld
@@ -1992,6 +2083,7 @@ mod tests {
             host_ended,
             takeover: TakeoverGate::from_switch(),
             gate_ticket: None,
+            page_url: None,
             reply_timeout: None,
             after_consume: None,
         }

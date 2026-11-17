@@ -8,3 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# HMAC-SHA256 marker tags (the workspace's sha2) under a per-process key
+# from the OS random source (getrandom 0.4, already in the lock graph).
+sha2.workspace = true
+getrandom = "0.4"

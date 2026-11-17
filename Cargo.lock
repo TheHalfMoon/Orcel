@@ -988,6 +988,10 @@ dependencies = [
 [[package]]
 name = "orcel-browser-session"
 version = "0.2.0"
+dependencies = [
+ "getrandom",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "orcel-contracts"

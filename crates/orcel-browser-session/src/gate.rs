@@ -30,12 +30,17 @@
 
 use crate::lock_decision::{self, Hold};
 use crate::machine::ResourceSession;
+use crate::{uncertain, Reason, SharedLedger, UncertainLedger};
 use crate::{
     ActionClass, ActionKey, AgentMarker, ChallengeKind, ChallengeOrigin, Clock, ControlError,
     Effect, InjectionLedger, InputSource, ObservedInput, ReadTicket, Reads, Refusal, ResourceId,
     State, Target, TaskId, WriteFate, WriteOutcome, WriteTicket,
 };
 use std::collections::BTreeMap;
+
+/// The most resources one gate tracks. Past it a claim is refused, and a
+/// caller that cannot claim a page must refuse to act on it (fail closed).
+pub const MAX_RESOURCES: usize = 256;
 
 /// What the gate made of one input event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +65,7 @@ pub struct SessionGate<C: Clock> {
     clock: C,
     reads: Reads,
     ledger: InjectionLedger,
+    uncertain: SharedLedger,
     owned: BTreeMap<ResourceId, Owned>,
 }
 
@@ -74,10 +80,19 @@ impl<C: Clock> SessionGate<C> {
     /// holds. (Verification, pause and cancel always block reads.)
     #[must_use]
     pub fn with_reads(clock: C, reads: Reads) -> Self {
+        Self::with_ledger(clock, reads, UncertainLedger::shared())
+    }
+
+    /// A gate whose idempotency guard uses `uncertain`, which may be
+    /// shared with other gates (one per host lifetime, say), so an
+    /// uncertain action stays refused after its page or host is gone.
+    #[must_use]
+    pub fn with_ledger(clock: C, reads: Reads, uncertain: SharedLedger) -> Self {
         Self {
             clock,
             reads,
             ledger: InjectionLedger::new(),
+            uncertain,
             owned: BTreeMap::new(),
         }
     }
@@ -91,7 +106,8 @@ impl<C: Clock> SessionGate<C> {
     /// already owns changes nothing.
     ///
     /// # Errors
-    /// `OwnedByAnotherTask` if another task owns it.
+    /// `OwnedByAnotherTask` if another task owns it; `Full` once the gate
+    /// tracks [`MAX_RESOURCES`].
     pub fn claim(&mut self, resource: ResourceId, task: TaskId) -> Result<(), ControlError> {
         if let Some(owned) = self.owned.get(&resource) {
             return if owned.task == task {
@@ -100,14 +116,31 @@ impl<C: Clock> SessionGate<C> {
                 Err(ControlError::OwnedByAnotherTask)
             };
         }
+        if self.owned.len() >= MAX_RESOURCES {
+            return Err(ControlError::Full);
+        }
         let session = ResourceSession::new(self.clock.now());
         self.owned.insert(resource, Owned { task, session });
         Ok(())
     }
 
     /// The resource closed or its task let it go: its session ends with it.
+    /// What it knew to be uncertain (including consequential writes sent
+    /// whose outcome never came back) stays in the task's ledger.
     pub fn release(&mut self, resource: &ResourceId) -> Option<TaskId> {
-        self.owned.remove(resource).map(|owned| owned.task)
+        let owned = self.owned.remove(resource)?;
+        let task = owned.task;
+        let mut ledger = uncertain::lock(&self.uncertain);
+        for key in owned.session.into_uncertain() {
+            let _ = ledger.record(&task, key);
+        }
+        Some(task)
+    }
+
+    /// The shared ledger this gate's idempotency guard uses.
+    #[must_use]
+    pub fn uncertain_ledger(&self) -> SharedLedger {
+        SharedLedger::clone(&self.uncertain)
     }
 
     /// The task that owns `resource`.
@@ -152,7 +185,8 @@ impl<C: Clock> SessionGate<C> {
     /// Issue a marker for one agent action on `resource`; the engine adapter
     /// attaches it to the input that action dispatches.
     pub fn issue_marker(&mut self, resource: &ResourceId) -> AgentMarker {
-        self.ledger.issue(resource)
+        let now = self.clock.now();
+        self.ledger.issue(resource, now)
     }
 
     /// The action finished: its marker no longer vouches for input.
@@ -162,10 +196,10 @@ impl<C: Clock> SessionGate<C> {
 
     /// One input event the engine adapter saw.
     pub fn observe_input(&mut self, event: &ObservedInput) -> InputVerdict {
-        if self.ledger.classify(event) == InputSource::Agent {
+        let now = self.clock.now();
+        if self.ledger.classify(event, now) == InputSource::Agent {
             return InputVerdict::Agent;
         }
-        let now = self.clock.now();
         match self.owned.get_mut(&event.resource) {
             Some(owned) => {
                 owned.session.human_input(event.phase, now);
@@ -240,14 +274,46 @@ impl<C: Clock> SessionGate<C> {
         basis: u64,
     ) -> Result<Option<WriteTicket>, Refusal> {
         let now = self.clock.now();
-        match self.owned.get_mut(resource) {
-            Some(owned) => owned
-                .session
-                .begin_write(resource, key, class, basis, now)
-                .map(Some)
-                .map_err(|reason| Self::refusal(resource, reason)),
-            None => Ok(None),
+        let Some(owned) = self.owned.get_mut(resource) else {
+            return Ok(None);
+        };
+        {
+            let ledger = uncertain::lock(&self.uncertain);
+            if ledger.contains(&owned.task, &key)
+                || (class == ActionClass::Consequential && ledger.is_full())
+            {
+                return Err(Self::refusal(resource, Reason::OutcomeUncertain));
+            }
         }
+        owned
+            .session
+            .begin_write(resource, key, class, basis, now)
+            .map(Some)
+            .map_err(|reason| Self::refusal(resource, reason))
+    }
+
+    /// Give a pending write the key of its stable action material, once
+    /// the caller knows it (after binding the target, before sending). The
+    /// idempotency guard applies to that key from then on.
+    ///
+    /// # Errors
+    /// `OutcomeUncertain` for a key whose earlier dispatch is uncertain (in
+    /// the task's ledger or the session), or a consequential action with it
+    /// already pending; `TargetStale` for a ticket no longer pending. A
+    /// refused ticket is invalidated.
+    pub fn rekey(&mut self, ticket: &WriteTicket, key: ActionKey) -> Result<(), Refusal> {
+        let now = self.clock.now();
+        let Some(owned) = self.owned.get_mut(&ticket.resource) else {
+            return Err(Self::refusal(&ticket.resource, Reason::TargetStale));
+        };
+        if uncertain::lock(&self.uncertain).contains(&owned.task, &key) {
+            let _ = owned.session.invalidate(ticket);
+            return Err(Self::refusal(&ticket.resource, Reason::OutcomeUncertain));
+        }
+        owned
+            .session
+            .rekey(ticket, key, now)
+            .map_err(|reason| Self::refusal(&ticket.resource, reason))
     }
 
     /// Check `ticket` again right before it is sent.
@@ -272,7 +338,11 @@ impl<C: Clock> SessionGate<C> {
         match self.owned.get_mut(&ticket.resource) {
             Some(owned) => {
                 owned.session.advance(now);
-                owned.session.finish_write(ticket, outcome)
+                let (fate, recorded) = owned.session.finish_write_keyed(ticket, outcome);
+                if let Some(key) = recorded {
+                    let _ = uncertain::lock(&self.uncertain).record(&owned.task, key);
+                }
+                fate
             }
             None => WriteFate::NotPending,
         }
@@ -281,9 +351,22 @@ impl<C: Clock> SessionGate<C> {
     /// The outcome of `key`'s uncertain dispatch on `resource` was
     /// established; it may be sent again.
     pub fn reconcile(&mut self, resource: &ResourceId, key: &ActionKey) -> bool {
-        self.owned
-            .get_mut(resource)
-            .is_some_and(|owned| owned.session.reconcile(key))
+        let Some(owned) = self.owned.get_mut(resource) else {
+            return false;
+        };
+        let in_session = owned.session.reconcile(key);
+        let in_ledger = uncertain::lock(&self.uncertain).reconcile(&owned.task, key);
+        in_session || in_ledger
+    }
+
+    /// The outcome of `key`'s uncertain dispatch for `task` was
+    /// established, whether or not the task still owns a resource.
+    pub fn reconcile_task(&mut self, task: &TaskId, key: &ActionKey) -> bool {
+        let mut any = false;
+        for owned in self.owned.values_mut().filter(|owned| owned.task == *task) {
+            any |= owned.session.reconcile(key);
+        }
+        uncertain::lock(&self.uncertain).reconcile(task, key) || any
     }
 
     fn control(

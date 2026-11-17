@@ -24,7 +24,8 @@
 //!   Input events carry their kind only, never their contents.
 //! - The idempotency guard: a consequential write (submit, purchase,
 //!   publish) whose outcome is uncertain is never admitted again until its
-//!   outcome is reconciled.
+//!   outcome is reconciled. [`UncertainLedger`] keeps those actions per
+//!   task, past the page's session and, shared, past a host restart.
 //! - [`Clock`]: injectable time ([`SystemClock`], [`ManualClock`]).
 //!
 //! The gate holds no authority. It can refuse or pause an operation; it
@@ -46,16 +47,19 @@ mod input;
 mod lock_decision;
 mod machine;
 mod refusal;
+mod uncertain;
 
 pub use clock::{Clock, ManualClock, Millis, SystemClock};
-pub use gate::{InputVerdict, SessionGate};
+pub use gate::{InputVerdict, SessionGate, MAX_RESOURCES};
 pub use ids::{ActionKey, ResourceId, TaskId};
 pub use input::{
     AgentMarker, InjectionLedger, InputKind, InputPhase, InputSource, ObservedInput,
-    MAX_OPEN_MARKERS,
+    MARKER_TAG_BYTES, MARKER_TTL_MS, MAX_OPEN_MARKERS,
 };
 pub use machine::{
     ActionClass, ChallengeKind, ChallengeOrigin, Effect, ReadTicket, Reads, ResourceSession, State,
-    Target, WriteFate, WriteOutcome, WriteTicket, QUIET_MS,
+    Target, WriteFate, WriteOutcome, WriteTicket, MAX_PENDING_WRITES, MAX_UNCERTAIN_ACTIONS,
+    PENDING_TTL_MS, QUIET_MS,
 };
 pub use refusal::{ControlError, Reason, Refusal, RefusalClass};
+pub use uncertain::{SharedLedger, UncertainLedger, MAX_LEDGER_ACTIONS};
