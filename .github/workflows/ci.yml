@@ -161,6 +161,11 @@ jobs:
       # against a disposable window, and the W2-01 live identity check of
       # a semantic action on that window. The SG-000095 raw-input
       # qualification tests are left to their own native qualification.
+      # macOS runners do not ship Go; pin the toolchain from go.mod on every OS.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: apps/orcel-computer-host/go.mod
+          cache: false
       - name: Go computer host tests
         shell: bash
         env:
