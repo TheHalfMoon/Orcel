@@ -1,0 +1,823 @@
+{
+  "schemaVersion": "orcel-design-handoff/1",
+  "version": "1.0.0",
+  "status": "review",
+  "supersedes": null,
+  "identity": {
+    "name": "Orcel People First",
+    "edition": "v5 (proposed)",
+    "notes": "Proposed, not approved. The identity is the People First v5 of PR #811, which is open and unmerged; the live identity on main is still v4 (Night Window). Packaged by engineering from ORCEL_Design_System_v1 without editing any design content; approval can only come from the founder."
+  },
+  "source": {
+    "session": "Orcel Design session (ORCEL Design System v1), packaged by the engineering session",
+    "createdOn": "2026-11-18",
+    "reference": "ORCEL_Design_System_v1 folder on the founder's PC (assets/, tokens/orcel.tokens.json, handoff/components.md). Provenance only."
+  },
+  "assets": [
+    {
+      "path": "assets/logo/orcel-lockup-ink.svg",
+      "kind": "lockup",
+      "sha256": "dbbad2bd70e03bac627b91af6ab9c653f70fac773920c9562439f9d5d391464e",
+      "background": "light"
+    },
+    {
+      "path": "assets/logo/orcel-lockup-mono-ink.svg",
+      "kind": "lockup",
+      "sha256": "da5c437c72f035ff0e75c86549fe470fad91a9f5f4d0d31f11c3c4b56adff779",
+      "background": "light"
+    },
+    {
+      "path": "assets/logo/orcel-lockup-mono-white.svg",
+      "kind": "lockup",
+      "sha256": "d3b968048e5a115e5c1d2ebf7b8f6b6ddba65e655bd5245178fe397a1b171d1a",
+      "background": "dark"
+    },
+    {
+      "path": "assets/logo/orcel-lockup-white.svg",
+      "kind": "lockup",
+      "sha256": "efb5dcec5a8efe5ee106e2f943b7793cc2df9f45e9c0201592351aac1870cf65",
+      "background": "dark"
+    },
+    {
+      "path": "assets/logo/orcel-mark-ink.svg",
+      "kind": "mark",
+      "sha256": "4fd75f0db824e207c68436313b46091ca3160708f5a0d8c5554cd6ae4000cc5d",
+      "background": "light"
+    },
+    {
+      "path": "assets/logo/orcel-mark-red.svg",
+      "kind": "mark",
+      "sha256": "a7ed37db677642ad8a23b5d40f023c070a57be972597522f6e33aaa57b02acab",
+      "background": "light"
+    },
+    {
+      "path": "assets/logo/orcel-mark-small-red.svg",
+      "kind": "mark",
+      "sha256": "85d82a22d542b88fd29edfc750b7e13afcff09b17372beef0a72d06bfcd24454",
+      "background": "light"
+    },
+    {
+      "path": "assets/logo/orcel-mark-white.svg",
+      "kind": "mark",
+      "sha256": "7345ae1c7c13250ecb1427f6a10141e6d340096854e5cb20bb8f77a548c1c679",
+      "background": "dark"
+    },
+    {
+      "path": "assets/logo/orcel-wordmark-ink.svg",
+      "kind": "wordmark",
+      "sha256": "508344eec3f921ac2158f35c3932c1f0f298fd4d66ceaf848d2b34e9eb69d622",
+      "background": "light"
+    },
+    {
+      "path": "assets/logo/orcel-wordmark-white.svg",
+      "kind": "wordmark",
+      "sha256": "250d65a004590ef3882bd7e5ed6053b53b585713c9b3f0afd3018d56ea3e5c3b",
+      "background": "dark"
+    },
+    {
+      "path": "assets/logo/product-icon-agent.svg",
+      "kind": "app-tile",
+      "sha256": "412561d4327431f550b0d4f52a346d4cfccc30e7fa4d48cee25c00e32ccf1f26",
+      "background": "any"
+    },
+    {
+      "path": "assets/logo/product-icon-browser.svg",
+      "kind": "app-tile",
+      "sha256": "853c5cf2498c63787b53c226ef683cfe360ae6b0cceb3a2da5069f69b221befd",
+      "background": "any"
+    },
+    {
+      "path": "assets/logo/product-icon-cluster.svg",
+      "kind": "app-tile",
+      "sha256": "e6060b31011ebacf10ad843509483522ae4e96bf9d2a64d205744d9995a96d86",
+      "background": "any"
+    },
+    {
+      "path": "assets/logo/product-icon-mcp.svg",
+      "kind": "app-tile",
+      "sha256": "c6d9160fc170fe99fa3bcd3355d4abce92a0304c3f9507158c38d1442d12e713",
+      "background": "any"
+    },
+    {
+      "path": "assets/logo/product-icon-orcel.svg",
+      "kind": "app-tile",
+      "sha256": "1096a47fceabb9119f100fcd498336bb187fc77b6723cadb37af761c7fa8be8d",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/agents.svg",
+      "kind": "ui-icon",
+      "sha256": "4ab761cba474d3ddbe742e66b3c0d7ea627b3f10c1b8424526b797990a38b38f",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/alert.svg",
+      "kind": "ui-icon",
+      "sha256": "b57e07ed5fee6b01fcfe9ee0682ffdcf46448fe12f5bf7ade7e88c0fbf43fcda",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/arrow-left.svg",
+      "kind": "ui-icon",
+      "sha256": "72382784574227c358d17a5cd1578c5ca13cca6e5f5630c860657a1e61a9097f",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/arrow-right.svg",
+      "kind": "ui-icon",
+      "sha256": "82510f37f511428570276f6bd0cd0d3cbebe1a08e8a5dd6883288b1e77afc901",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/arrow-up.svg",
+      "kind": "ui-icon",
+      "sha256": "a1108055ef58e4a7b560492510624ceccb8bee95fe2b4dfd3a57bbabc591a259",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/bell.svg",
+      "kind": "ui-icon",
+      "sha256": "ae2aad0ea30bb4540aaac69596babe7865b358db372645f33656e04e5263be4f",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/bookmark.svg",
+      "kind": "ui-icon",
+      "sha256": "6f5f533d1b3eb01c06faea5b5762e6b45e8ca7f94d9fe6175e0c691cd583ed7b",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/check.svg",
+      "kind": "ui-icon",
+      "sha256": "3ef662858534c23dfedfa5616ffe14e4dc7116cb50b599eef360dc2e589f207f",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/chevron-down.svg",
+      "kind": "ui-icon",
+      "sha256": "053996a6bfb1eb080fe373493ed317b8b69e57be3ff39a0fc9a11b3cda8515fa",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/chevron-left.svg",
+      "kind": "ui-icon",
+      "sha256": "98147bbc195828f316a0c169c145449118aa118943faa3c3bff2a05d0cf23db6",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/chevron-right.svg",
+      "kind": "ui-icon",
+      "sha256": "028a4633797b36323d110648483579757c0ff635a2582faf33abd22f8263ef70",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/chevron-up.svg",
+      "kind": "ui-icon",
+      "sha256": "ba29fef5662e6fa19b1edb68c9124f1b29122c54b16b3335d585585fac430498",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/clock.svg",
+      "kind": "ui-icon",
+      "sha256": "17132005193e604f655551cdda2fe17ca0fa46ee35081f437870d2d394a6ec3b",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/command.svg",
+      "kind": "ui-icon",
+      "sha256": "17f726d4021c395641526f5cd829c2e91cb3fd262c93ef6bdf532248a02d69c5",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/copy.svg",
+      "kind": "ui-icon",
+      "sha256": "e5be3a3e6b23ac6a01bbc4a3f1c0b7766c429c9628df6b3ba161c0d7ce09003e",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/cpu.svg",
+      "kind": "ui-icon",
+      "sha256": "a2dd1a7e4625f87d0017f0eacc10575acf5b1c00801147b9006918544e34cc8e",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/download.svg",
+      "kind": "ui-icon",
+      "sha256": "b3fc3bcdf074551cb1124adf3a2b78aabec2c952d0b1865bd8d7fcc1734314a8",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/external.svg",
+      "kind": "ui-icon",
+      "sha256": "fff7cc9b652ccca0fa6c3c34234725dfbebdcfa430ab3437f95848d75a6182ea",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/eye.svg",
+      "kind": "ui-icon",
+      "sha256": "1704afd5c60320c7f6504ef85afdfaa2c798a5c54e9bee5529068d5ce1ff1717",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/file.svg",
+      "kind": "ui-icon",
+      "sha256": "96817bb6e63852aa6c53ad5ac6e09e6a1a7483225314180587c3172031795922",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/filter.svg",
+      "kind": "ui-icon",
+      "sha256": "2c6a340308130166535a14248357f6f6bd8971815589ecafae307862cf639466",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/folder.svg",
+      "kind": "ui-icon",
+      "sha256": "259dc1392d7238ec18a6df67d1a2626d9293aa39c6ce35ef5934ab7794350268",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/globe.svg",
+      "kind": "ui-icon",
+      "sha256": "fc6827151c5233b31e4738055cad105414b737238cc3413295f6ae2f370504f8",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/grid.svg",
+      "kind": "ui-icon",
+      "sha256": "5f8966dc9512deeda8712134624e2bce339da721a10e4e8480b0cc80efab92b0",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/hand.svg",
+      "kind": "ui-icon",
+      "sha256": "72270d6d18bf5a7be444ad01b9637e20d94d233fda80758e777ed00a571e81a1",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/history.svg",
+      "kind": "ui-icon",
+      "sha256": "c4f6af1d59ddee3a3ae81156418b1c789b44210b9f9d37e0becec1575d3911fa",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/home.svg",
+      "kind": "ui-icon",
+      "sha256": "e6d1e74d599f9084f0d150d3912fbd0580e43448d7058e05ffe988437e2d63a7",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/info.svg",
+      "kind": "ui-icon",
+      "sha256": "c7e604497747555669a45e2218d2b0f741a9b5202fbbc1defd8d28442e881c08",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/key.svg",
+      "kind": "ui-icon",
+      "sha256": "9e42143ba4e2073fa24d365855b07362827225c036fb7b1a8376a43a689cb681",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/layers.svg",
+      "kind": "ui-icon",
+      "sha256": "09f1504ea29f4dc5dfe887811a2ffb4a847f960de42a54cfde01ee5c8f58e32e",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/link.svg",
+      "kind": "ui-icon",
+      "sha256": "45777cff98f44ded2c38f8cb96a4839d3e18be061e0b3e09cacdb4fea3800c09",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/lock.svg",
+      "kind": "ui-icon",
+      "sha256": "2c64a2d35520fbca5fb479811ead71588868d6b5c2782788906fae1cb2d04220",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/message.svg",
+      "kind": "ui-icon",
+      "sha256": "6ee76674b0370ac0d35fa329baea65947790c3f69c02d67c112efce88c695ee0",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/mic.svg",
+      "kind": "ui-icon",
+      "sha256": "9a508a9b6d54e90bd403715b4f9029afb49a9821149dfa29cd2c061d2902550f",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/moon.svg",
+      "kind": "ui-icon",
+      "sha256": "92e2ba504143b61a7a4c36f1e38dc10b7de1c12dd094969cb4b69bd26ce6a3e2",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/more.svg",
+      "kind": "ui-icon",
+      "sha256": "98fc411989e994d8c6f86c3af1d5efcc1eb71e8784a09d7fa71d90e1c1f02cdb",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/paperclip.svg",
+      "kind": "ui-icon",
+      "sha256": "f4be1817b76027a624ea4a805c1fe077ea30f75783ea71d8d1a8ef326ffcb233",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/pause.svg",
+      "kind": "ui-icon",
+      "sha256": "0adaf70ec74b2535bde74369bf39e6c8a0ffd975c27769b102c54b8821420e4e",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/pen.svg",
+      "kind": "ui-icon",
+      "sha256": "c33b52adfad9a049dee433494d74436e5cbe9f775b01da940d9101357e8f7f9f",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/play.svg",
+      "kind": "ui-icon",
+      "sha256": "46a8daa100675c9385ea55e410ca17fcc5a35d486b9ad869368a2d9d6c093cd6",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/plug.svg",
+      "kind": "ui-icon",
+      "sha256": "f783bc3cd2846926c282c769e427b4e8251a289f42f9ceae5b3f3b44f78196e7",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/plus.svg",
+      "kind": "ui-icon",
+      "sha256": "edbcfd117e8a9c1cb791162651ef59611d17e469110df99f5f8a10e7a22f8a32",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/refresh.svg",
+      "kind": "ui-icon",
+      "sha256": "e078d466bc631be113b4cfcf0c8123c0ad0fee3ab6e0df84ffdd6b5821b09e6b",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/return.svg",
+      "kind": "ui-icon",
+      "sha256": "51d18fc7c15b41308a674aed3d0ba4e8965ad8eaafb57b23a0fc5853ead38b06",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/search.svg",
+      "kind": "ui-icon",
+      "sha256": "9802d15c2db2c5e3510d5a0cf412662209e35df78d0120397d83c77937fd0e46",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/server.svg",
+      "kind": "ui-icon",
+      "sha256": "58bac2dd5ad132e414ea27c201b67eea3ad8515963ff0cc11bbf44d195c75b59",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/shadow.svg",
+      "kind": "ui-icon",
+      "sha256": "417e3239d71ba161792566ad052a7de81096c203fa208521755199de34cb9532",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/shield-check.svg",
+      "kind": "ui-icon",
+      "sha256": "3ea534fdc75b38943e47645ae1e82ca9430a0948a31eae584f64bc83cac1ae98",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/shield.svg",
+      "kind": "ui-icon",
+      "sha256": "511554780b7be350d2518f917967be07394e6582b4108496be502fe936c66fad",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/sidebar.svg",
+      "kind": "ui-icon",
+      "sha256": "af35d237a92f2b0387e0c9deed84afe887f97d4c2d4e65b16db98c209426dc88",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/sliders.svg",
+      "kind": "ui-icon",
+      "sha256": "de28e0b9b003f8abae62fa62cf246363ea5685960ad94ce4e84586d37d43a26a",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/split.svg",
+      "kind": "ui-icon",
+      "sha256": "2697e78e74faa2986ed142699b2b4a27c20c6995b820b67d13183fb34ea3d125",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/star.svg",
+      "kind": "ui-icon",
+      "sha256": "9fe6c725c3835caf8d8b60b65dae30ce13afeb22606e36556e599ce21d8eadd1",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/stop.svg",
+      "kind": "ui-icon",
+      "sha256": "886e0a8f59f2dd14a762b295b5afd738d08040b3f7826d7d2437e74c34b0b546",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/sun.svg",
+      "kind": "ui-icon",
+      "sha256": "ab74cc02cba45b859311818a47e292f9fd6eb95e276dd140e61316d46019b577",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/terminal.svg",
+      "kind": "ui-icon",
+      "sha256": "55a81e2765d43f4a727651462b6a7375b53e0a29412eeeece6e2a78cb4811dcb",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/trash.svg",
+      "kind": "ui-icon",
+      "sha256": "881c8e6b59b13dc2efe1fcc174c757c910ef815d428a08c83524dfffd6ab8f34",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/user.svg",
+      "kind": "ui-icon",
+      "sha256": "f1b7c45ed482b67d77816bc76812b89cc56209a0d8cc5a532cc3ecc873e998a5",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/users.svg",
+      "kind": "ui-icon",
+      "sha256": "2b5fc95c60ddae1bc19703cec3db269cae480ca313be7ee40d327c5b4f408557",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/x.svg",
+      "kind": "ui-icon",
+      "sha256": "c3eb64a0a758383c82e54eb3d2303b4bac1e3d2d10883f895e9c73b8c46e5064",
+      "background": "any"
+    }
+  ],
+  "icons": {
+    "web": [],
+    "windows": [],
+    "macos": [],
+    "tauri": []
+  },
+  "tokens": {
+    "path": "tokens/tokens.json",
+    "format": "dtcg",
+    "sha256": "6947c51b4b511c1eea476926ce83bbeb9348205c8a210c10133790e90d16359d"
+  },
+  "components": [
+    {
+      "name": "button",
+      "spec": "components/button.md",
+      "sha256": "93ddeaa467507768c52d178f4b8242a023202f56dee273fe9db1a8fd614ccfd9",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "disabled",
+        "loading"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "keycap",
+      "spec": "components/keycap.md",
+      "sha256": "ba507ea52934bbea68704a0ca3e63d049f0ba6291e02ed0717454bad8343306c",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "text-input",
+      "spec": "components/text-input.md",
+      "sha256": "a9103570e8c5ec6bffdb60430da635adc279e073434805e8e8c29f4f7cd42202",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "disabled",
+        "error"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "textarea-and-composer",
+      "spec": "components/textarea-and-composer.md",
+      "sha256": "0d5f3add5f69aba3c1a4b4f5a5ef72b83c6a05cd1b1cbf0918fea938228c7157",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "select",
+      "spec": "components/select.md",
+      "sha256": "1fc9b8a2ef281c476a4865a02202e1d19d2e75a3778c53e04be8e61b263fbd52",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "combobox-and-command-palette",
+      "spec": "components/combobox-and-command-palette.md",
+      "sha256": "ae0505372c979165350591fc143beaa29a2ac371d1551b4d1ab8725d0b93508a",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "checkbox-radio-switch",
+      "spec": "components/checkbox-radio-switch.md",
+      "sha256": "9e572e64e69bcc22c6ac070b12cb095b057cb181f58522a7534a64f2558aa08f",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "segmented-control",
+      "spec": "components/segmented-control.md",
+      "sha256": "4d0b57db8ef6c1fa51b6ef8e7e33d710f3e98d7fc31dd4a82ab46f06d9e55208",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "tabs",
+      "spec": "components/tabs.md",
+      "sha256": "bc5115b28ee495f0ec2015d2a80bde0071453db409c3dcc1f0629745c7d1d0d4",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "menu-and-context-menu",
+      "spec": "components/menu-and-context-menu.md",
+      "sha256": "61cbb9f0c29e925d54f41d07b8a5c50f8f0f89d798a49d21d9b4eb5fb2121a76",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "dialog",
+      "spec": "components/dialog.md",
+      "sha256": "9f77949b69dee576e46bdb6828552b17b65237d0a7f7143137c8fd336bb7f98b",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "approval-dialog",
+      "spec": "components/approval-dialog.md",
+      "sha256": "1e7005ace0cf56efb8c88a40c53cb50c347e37274a735fb1877c036d39638034",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "popover",
+      "spec": "components/popover.md",
+      "sha256": "432ef2380ed55ed5cde5412d9268a1e8cd7aef8b6f67c9248f60702db603df5f",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "tooltip",
+      "spec": "components/tooltip.md",
+      "sha256": "85d9d1a19676a75d299575188f443555bfdcf33edc6fbd99ee58ad183aebf2f0",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "toast",
+      "spec": "components/toast.md",
+      "sha256": "ee852598e43d01f01f8a28be40a0f1d504d27ace84c64bbe7b27fce2113aae33",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "banner",
+      "spec": "components/banner.md",
+      "sha256": "bb098c563cd11f9c48d9dfe74ea26e1ba789a57d430c790cb19e379b69890762",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "badge",
+      "spec": "components/badge.md",
+      "sha256": "93ecdb18e8af74967c28032af66d08a2e33c6855bd2d9a997784fd5423143ead",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "agent-status-chip",
+      "spec": "components/agent-status-chip.md",
+      "sha256": "91d2462de917f17cbdcb90f3da4b4ce1e7c58ba7356ec597e19b635009393e9f",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "progress-bar-and-step-list",
+      "spec": "components/progress-bar-and-step-list.md",
+      "sha256": "54bfaed343ed6190a68acc5c27df86e2dddf00e0ab3a64a0d0b2e565fb8f7cfd",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "skeleton",
+      "spec": "components/skeleton.md",
+      "sha256": "af284995b2c48577573a92ede08c6865e0d4fa556891e3aa5bbc6fc1ddea47f4",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "table",
+      "spec": "components/table.md",
+      "sha256": "a3325b7298071c0ea500b725bd324d04f48168f91ada13631078985e66811389",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "list-row",
+      "spec": "components/list-row.md",
+      "sha256": "2a5a6d95b5c7cdee48bad8ec9414e43bb14e3931229a3c4a297df64bfd07c3a0",
+      "states": [
+        "hover",
+        "focus",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "card",
+      "spec": "components/card.md",
+      "sha256": "85e619c8999aa9fffe3254ef0504917c25575b273a8df91aa661f059b20d4a15",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "avatar",
+      "spec": "components/avatar.md",
+      "sha256": "af4784603068bcc137c98b5ee8ce757557ee4f44edacb37a0fe5d95684049922",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "navigation-web-header",
+      "spec": "components/navigation-web-header.md",
+      "sha256": "bc7226a45f1f6fd30c44504ea614caf6babc5154750e32813cd69cce85879a81",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "website"
+      ]
+    },
+    {
+      "name": "navigation-app-sidebar",
+      "spec": "components/navigation-app-sidebar.md",
+      "sha256": "4e76141a2394ceaa8533516fb60a9c486372f0469bc477a12d7b410edf13640b",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "control-room"
+      ]
+    },
+    {
+      "name": "window-chrome",
+      "spec": "components/window-chrome.md",
+      "sha256": "5893952978e7f2677129ce9665cd30c9b1e22d2e7f05529d4ed2cd0a62b8ce1a",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "takeover",
+      "spec": "components/takeover.md",
+      "sha256": "0b0a56e75124e2bc0f46d7a6a3e973c45f731207685711cb8c649899eda12ca0",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "shadow-mode-surface",
+      "spec": "components/shadow-mode-surface.md",
+      "sha256": "d5771af86f660f8211dbce5c8245bb0275917f4daec6d814ccdee1fd8f30bd02",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "empty-state",
+      "spec": "components/empty-state.md",
+      "sha256": "15a0f119bee806770b5b59fdf52bd215b856985d2b8269842eeb598d61ce50d4",
+      "states": [
+        "default"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    }
+  ],
+  "screens": [],
+  "notices": []
+}
