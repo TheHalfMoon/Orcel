@@ -6,9 +6,9 @@
 //! lifetime uses it, the host requires:
 //!
 //! - an absolute path whose leaf is `data`, with no `User Data` component
-//!   anywhere (the folder name every Chromium-family browser gives its
-//!   personal profile root; Orcel's layout never uses it), so a personal
-//!   Chrome, Edge or Chromium profile is refused even if it were named;
+//!   anywhere (the folder name every Chromium-family browser gives a
+//!   person's own profile root; Orcel's layout never uses it), so a person's
+//!   own Chrome, Edge or Chromium profile is refused even if it were named;
 //! - a real directory: neither it nor its parent is a junction, symbolic
 //!   link or other reparse point;
 //! - the Orcel profile marker: an empty directory is marked on first use,
@@ -65,7 +65,7 @@ pub fn checked_dir(dir: &Path) -> Result<PathBuf, HostError> {
             Component::Normal(name) => {
                 let name = name.to_string_lossy();
                 if name.eq_ignore_ascii_case("User Data") {
-                    return Err(refused("a browser's personal profile folder is never used"));
+                    return Err(refused("a browser's own user-data folder is never used"));
                 }
                 leaf = Some(name.into_owned());
             }
@@ -112,6 +112,13 @@ pub fn mark_or_adopt(
     }
     crate::profile::adopt_profile(&dir, family)
 }
+
+// SG-000135 OB-04: the junction tests spawn `cmd /C mklink /J`, so they
+// live in a test-only file the qualification scan admits only under this
+// exact declaration (sg000085_qualification.rs).
+#[cfg(all(test, windows))]
+#[path = "persistent_profile_tests.rs"]
+mod junction_tests;
 
 #[cfg(test)]
 mod tests {
@@ -164,7 +171,7 @@ mod tests {
         std::fs::create_dir_all(&foreign)?;
         std::fs::write(foreign.join("Local State"), b"{}")?;
         assert!(mark_or_adopt(&foreign, "Edge:x").is_err());
-        // A personal profile root, by name, however it is reached.
+        // A browser's own user-data root, by name, however it is reached.
         let personal = root.0.join("Edge").join("User Data").join("data");
         std::fs::create_dir_all(&personal)?;
         assert!(checked_dir(&personal).is_err());
@@ -176,46 +183,6 @@ mod tests {
         assert!(checked_dir(Path::new("relative\\data")).is_err());
         assert!(checked_dir(&root.0.join("missing").join("data")).is_err());
         assert!(checked_dir(&root.0.join("someone").join("..").join("data")).is_err());
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn ob04_a_junction_is_never_followed() -> Result<(), HostError> {
-        let root = Root::new("junction")?;
-        let target = root.0.join("target");
-        std::fs::create_dir_all(target.join("data"))?;
-        let link = root.0.join("link");
-        let made = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&link)
-            .arg(&target)
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
-        if !made {
-            // No junction could be made here; nothing to check.
-            return Ok(());
-        }
-        assert!(
-            checked_dir(&link.join("data")).is_err(),
-            "parent is a junction"
-        );
-        let leaf_link = root.0.join("p").join("data");
-        std::fs::create_dir_all(root.0.join("p"))?;
-        let made = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&leaf_link)
-            .arg(target.join("data"))
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
-        if made {
-            assert!(
-                checked_dir(&leaf_link).is_err(),
-                "the data folder is a junction"
-            );
-        }
         Ok(())
     }
 }

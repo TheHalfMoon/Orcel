@@ -1278,6 +1278,25 @@ fn no_shell_script_or_remote_process_surface_exists() {
         && discovery.contains(
             "#[cfg(all(test, not(windows), not(target_os = \"macos\")))]\n#[path = \"discovery_linux_tests.rs\"]\nmod linux_tests;\n",
         );
+    // SG-000135 OB-04 (recorded rule change, prep/OB04_MODES_PROFILES.md):
+    // the persistent-profile junction tests (`cmd /C mklink /J`, fixed
+    // arguments), admitted only while persistent_profile.rs declares them
+    // once, privately, under #[cfg(all(test, windows))], and no other source
+    // names their file.
+    let persistent_profile = sources
+        .iter()
+        .find(|(file, _)| file == "persistent_profile.rs")
+        .map(|(_, text)| text.replace("\r\n", "\n"))
+        .expect("persistent_profile.rs is a crate source");
+    let junction_tests_named_elsewhere = sources.iter().any(|(file, text)| {
+        file != "persistent_profile.rs" && text.contains("persistent_profile_tests.rs")
+    });
+    let junction_tests_only = !junction_tests_named_elsewhere
+        && persistent_profile.matches("mod junction_tests;").count() == 1
+        && !persistent_profile.contains("pub mod junction_tests")
+        && persistent_profile.contains(
+            "#[cfg(all(test, windows))]\n#[path = \"persistent_profile_tests.rs\"]\nmod junction_tests;\n",
+        );
     for (file, text) in &sources {
         if text.contains("Command::new") {
             assert!(
@@ -1292,7 +1311,8 @@ fn no_shell_script_or_remote_process_surface_exists() {
                     // and gpgv (the signature check), recorded the same way.
                     || (file == "discovery_linux_tests.rs" && linux_tests_only)
                     || (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
-                    || (file == "unix_cleanup.rs" && unix_test_only("unix_cleanup")),
+                    || (file == "unix_cleanup.rs" && unix_test_only("unix_cleanup"))
+                    || (file == "persistent_profile_tests.rs" && junction_tests_only),
                 "unexpected process spawn in {file}"
             );
         }

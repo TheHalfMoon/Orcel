@@ -160,3 +160,14 @@ Run after the security judge's fixes, 2026-11-18 (Edge 157, scripted consent):
 - **Engine updates for persistent profiles.** The marker survives an Edge update. Downgrading Edge below the version that last wrote a profile is refused by Edge itself.
 - **A named client.** A profile is owned by the local owner, not by one named MCP client (section 2).
 - **Founder-present run.** Every approval above was scripted consent.
+
+## 9. Recorded rule change: the qualification scan
+
+`crates/orcel-browser-host/tests/sg000085_qualification.rs` forbids process spawns in the host crate's sources except an allowlist with structural guards. SG-000135 OB-04 adds one entry: `persistent_profile_tests.rs`, the persistent-profile junction tests. They run `cmd /C mklink /J` with fixed arguments in Windows test builds only.
+
+The entry is admitted only while all three of these hold:
+- `persistent_profile.rs` declares the file exactly once, privately, as `#[cfg(all(test, windows))]` / `#[path = "persistent_profile_tests.rs"]` / `mod junction_tests;`.
+- No other source names the file.
+- The production module spawns nothing.
+
+This mirrors the existing `linux_tests_only` and `unix_test_only` guards.
