@@ -122,12 +122,18 @@ fn the_runbook_table_and_its_start_process_lines_are_the_same_commands() {
     let text = runbook();
     let table = uac_table(&text);
     let lines = start_process_lines(&text);
-    assert_eq!(table.len(), 9);
+    // The count follows the table; the check is set equality: every line
+    // matches exactly one row and every row exactly one line.
+    assert!(!table.is_empty());
     assert_eq!(
         table.len(),
         lines.len(),
         "one Start-Process line per table row"
     );
+    let commands: Vec<String> = lines
+        .iter()
+        .map(|(file, arguments)| format!("\"{file}\" {arguments}"))
+        .collect();
     for (file, arguments) in &lines {
         let command = format!("\"{file}\" {arguments}");
         let rows: Vec<_> = table
@@ -137,15 +143,32 @@ fn the_runbook_table_and_its_start_process_lines_are_the_same_commands() {
         assert_eq!(rows.len(), 1, "exactly one table row for {command}");
         assert_eq!(&rows[0].1, file, "program location of {}", rows[0].0);
     }
-    let steps: Vec<&str> = table.iter().map(|(step, _, _)| step.as_str()).collect();
-    for step in [
+    for (step, _, exact) in &table {
+        assert_eq!(
+            commands.iter().filter(|command| *command == exact).count(),
+            1,
+            "exactly one Start-Process line for the row {step}"
+        );
+    }
+    // Every elevated step the runbook offers, each once. The install
+    // procedure's rows are one procedure (no alternative staging, install
+    // or uninstall path); the others are steps after the install.
+    let mut steps: Vec<&str> = table.iter().map(|(step, _, _)| step.as_str()).collect();
+    steps.sort_unstable();
+    let mut expected = vec![
         "Stage",
+        "Remove the staging",
         "Install",
         "Uninstall",
         "Uninstall, keeping the state",
-    ] {
-        assert!(steps.contains(&step), "{step}");
-    }
+        "Start the service",
+        "Enroll",
+        "Replace the key",
+        "Reset",
+        "Reset the audit anchor",
+    ];
+    expected.sort_unstable();
+    assert_eq!(steps, expected, "the elevated steps the runbook offers");
     let long: Vec<&str> = text
         .lines()
         .filter(|line| line.len() >= 2000)
@@ -561,7 +584,7 @@ fn the_e2e_runs_the_runbook_lines_in_a_hostile_environment() {
         "hostile environment armed",
         "no planted module and no profiler DLL ran in any elevated step",
         "NotVerified 'pinned TPM root equals the certificate on this machine'",
-        "runbook command lines found: 9 Start-Process lines, each matching its UAC table row",
+        "runbook command lines found: every Start-Process line matches exactly one UAC table row and back",
         "if ($Report.result -ne 'pass') { exit 1 }",
     ] {
         assert!(text.contains(needle), "{needle}");

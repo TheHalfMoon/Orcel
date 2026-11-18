@@ -462,16 +462,22 @@ function Invoke-E2E {
   # The runbook's lines: every table row has its Start-Process line, each names an absolute program.
   $commands = @(Get-RunbookCommands)
   $rows = @(Get-RunbookTableRows)
-  $complete = ($commands.Count -eq 9) -and ($rows.Count -eq $commands.Count) -and (@($commands | Where-Object { -not $_.FilePath -or -not $_.Arguments -or -not [IO.Path]::IsPathRooted($_.FilePath) }).Count -eq 0)
+  # The count follows the table; the check is set equality (each line matches exactly one row, each row
+  # exactly one line).
+  $complete = ($commands.Count -gt 0) -and ($rows.Count -eq $commands.Count) -and (@($commands | Where-Object { -not $_.FilePath -or -not $_.Arguments -or -not [IO.Path]::IsPathRooted($_.FilePath) }).Count -eq 0)
   foreach ($command in $commands) {
     $exact = '`"' + $command.FilePath + '" ' + $command.Arguments + '`'
     if (@($rows | Where-Object { $_.Replace('\|', '|').Contains($exact) }).Count -ne 1) { $complete = $false }
+  }
+  foreach ($row in $rows) {
+    $matched = @($commands | Where-Object { $row.Replace('\|', '|').Contains('`"' + $_.FilePath + '" ' + $_.Arguments + '`') })
+    if ($matched.Count -ne 1) { $complete = $false }
   }
   $stage = Select-Command $commands { $_.Arguments -like '*mkdir "C:\Program Files\OrcelStaging"*' } 'Stage'
   $install = Select-Command $commands { $_.FilePath -eq $StagedAuthority -and $_.Arguments -like 'install *' } 'Install'
   $uninstall = Select-Command $commands { $_.Arguments -like '* uninstall && rmdir *' } 'Uninstall'
   $removeStaging = Select-Command $commands { $_.Arguments -like '*rmdir /s /q "C:\Program Files\OrcelStaging" && echo REMOVED*' } 'Remove the staging'
-  Check 'runbook command lines found: 9 Start-Process lines, each matching its UAC table row' $complete "$($commands.Count) lines, $($rows.Count) table rows"
+  Check 'runbook command lines found: every Start-Process line matches exactly one UAC table row and back' $complete "$($commands.Count) lines, $($rows.Count) table rows"
   Check 'the elevated steps start no PowerShell and no .NET program' (-not (@($stage, $removeStaging, $install, $uninstall) | Where-Object { ($_.FilePath + ' ' + $_.Arguments) -match 'powershell|pwsh|\.ps1' })) 'Stage and Uninstall: cmd.exe with System32 tools; Install: the staged native binary'
 
   # The binaries: no C runtime DLL imported; orcel-authority.exe resolves its imports from System32 only.

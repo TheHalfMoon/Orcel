@@ -441,7 +441,7 @@ for your commit (Actions, the run, Artifacts; or
 `gh run download <run-id> --repo TheHalfMoon/Orcel --name authority-install-e2e-report`), records every check
 and lists separately (`not_verified`) what the runner could not show:
 
-- **Runbook:** all nine `Start-Process` lines parse and each matches its UAC table row; no elevated step
+- **Runbook:** every `Start-Process` line parses and matches exactly one UAC table row, and every row one line; no elevated step
   starts PowerShell or a .NET program.
 - **Binaries:** none of the three imports a C runtime DLL (the release build links it statically), and
   `orcel-authority.exe` imports only KnownDLLs and API sets, resolves them from System32 only
