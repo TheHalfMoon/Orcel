@@ -192,6 +192,12 @@ pub(crate) fn admit_listed(
     Ok(out)
 }
 
+/// Only the trusted orceld image (the service's `orceld` role, observed from
+/// the pipe) uses service leases; any other orceld sees none and asks.
+pub(crate) fn status_admits_leases(status: &Value) -> bool {
+    status["caller_role"].as_str() == Some("orceld")
+}
+
 /// The SHA-256 the service's audit records for one covered browser action.
 pub(crate) fn action_digest(action: &CoveredAction) -> String {
     let material = format!(
@@ -319,7 +325,7 @@ impl LeaseSource for ServiceLeaseSource {
         let (status, verifier) = Self::verified(client)?;
         // Only the trusted orceld image may Authorize: any other orceld
         // asks for every action, as before.
-        if status["caller_role"].as_str() != Some("orceld") {
+        if !status_admits_leases(&status) {
             return Ok(None);
         }
         let listed = client.list().map_err(provider)?;
@@ -715,6 +721,22 @@ mod tests {
         assert!(admit_browser_lease(&forged, &verifier).is_err());
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    /// A dev orceld (role interactive or other at the service) never uses a
+    /// service lease; only the trusted image does.
+    #[test]
+    fn sg132_only_the_trusted_orceld_role_uses_service_leases() {
+        assert!(status_admits_leases(
+            &serde_json::json!({"caller_role": "orceld"})
+        ));
+        for role in ["interactive", "other", "Orceld", ""] {
+            assert!(
+                !status_admits_leases(&serde_json::json!({"caller_role": role})),
+                "{role}"
+            );
+        }
+        assert!(!status_admits_leases(&serde_json::json!({})));
     }
 
     /// Review F5: the desktop action digest names the action's target and

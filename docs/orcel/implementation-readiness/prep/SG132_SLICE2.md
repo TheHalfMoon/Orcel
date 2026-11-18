@@ -134,10 +134,11 @@ Tests: `review_reverify_the_builtin_administrator_needs_admin_approval_mode`,
 
 Not verified (recorded in every enrollment's `attestation.not_verified` and in Status `deferred`):
 
-- that the key **requires a Hello gesture**: the attestation does not state it. KeyCredentialManager keys do,
-  and step 5's signature is the evidence that this key signed once after a gesture. An attested TPM key made
-  some other way (NCrypt with a Microsoft AIK) would also pass the check; the elevation and the fingerprint
-  in the service's box are the gates against that, and an elevated attacker owns the machine anyway.
+- that the key **requires a Hello gesture** (residual): the attestation does not state it, and step 5's
+  signature shows only that the enrolling process could use the key. An attested TPM key made some other way
+  (NCrypt with a Microsoft AIK) would also pass the check; the elevation, the trusted CLI image and the
+  fingerprint in the service's box are the gates against that, and an elevated attacker owns the machine
+  anyway.
 - **freshness**: `GetAttestationAsync` takes no nonce, so `extraData` is not the service's.
 - **AIK revocation**: no CRL or OCSP is fetched (the service has no network access).
 - **real hardware output**: no Hello key was created on this PC (that prompts). The parser follows the
@@ -211,80 +212,83 @@ lease. A Hello failure cancels the intent.
 
 ## 6. Threat model updates (same-user agent with Full Control)
 
-| Attack | Slice 2 answer |
-| --- | --- |
-| Enroll its own key | Needs an elevated token (UAC secure desktop), an attested TPM key and a Yes on the fingerprint box. Residual: with UAC below "Always notify", auto-elevation bypasses exist; the runbook requires "Always notify". An agent that is already elevated owns the machine. |
-| Replace or reset the founder's key | Same gates; the box says REPLACES/REMOVE with the old fingerprint; all leases end and the epoch moves. |
-| Forge or widen a browser lease | Needs the service's ECDSA key (DPAPI-wrapped under the virtual account, ACL-protected); orceld verifies every lease with the service-reported key. |
-| Replay a revoked lease | The service lists it as revoked (not admitted); counters only grow; orceld refuses a service counter behind what it saw. |
-| Use a lease from a dev orceld it controls | Only the trusted `%ProgramFiles%\Orcel\orceld.exe` gets `Authorize`; residual (slice 1): a same-user process can start or inject into that image. |
-| Answer the confirmation or Hello | Unchanged from slice 1: confirmation input protection is WP1-10 (`confirmation_input_protected: false`); Hello needs the gesture. |
-| Submit, pay, post through a covered action | Routine-only classification, GET-only covered clicks, non-GET blocking, secret refusal (OB-08, unchanged). |
+Every row names the tests that show its claim, or says it is not shown. "UNVERIFIED (founder run)" means only
+the installed service on real hardware can show it; "residual" means it is a known limit, not a guarantee. Test
+names are Rust test functions: `core_tests` and `attestation_tests` are in `crates/orcel-authority/src/`,
+`console_harness` and `install_script` in `crates/orcel-authority/tests/`, `ob08_lease_tests` and
+`authority_link` in `crates/orceld/src/`. "Scripted E2E" is `scripts/browser-full-e2e.mjs --consent scripted`
+(scripted consent stands in for the unlock, the confirmation and Hello; not human acceptance).
 
-## 7. What the founder must do
+| Attack | Claim | Evidence |
+| --- | --- | --- |
+| Enroll its own key without elevation | Refused: the service reads elevation from the caller's token | `core_tests::enrollment_needs_an_elevated_owner_and_a_verified_attestation`; `console_harness::issuance_is_refused_to_orceld_and_to_claimed_agent_origins` (console mode refuses enrollment and reset). That the installed service reads a real elevated token: UNVERIFIED (founder run) |
+| Enroll from a process other than the installed CLI | Refused unless the observed image is a trusted owner CLI | `core_tests::review_f1_enroll_and_reset_need_always_notify_and_every_intent_the_owner_cli`; `caller::tests::roles_follow_observed_facts`; `service::tests::trusted_images_outside_program_files_orcel_are_refused`; `install_script::the_trusted_orceld_is_the_program_files_copy_and_directories_are_created_protected`. Residual: a process running as the user can start that image |
+| Enroll while UAC would not prompt | Refused unless UAC is Always notify on the secure desktop, and from the built-in Administrator unless `FilterAdministratorToken` is 1 | `core_tests::review_f1_enroll_and_reset_need_always_notify_and_every_intent_the_owner_cli`, `core_tests::review_reverify_the_builtin_administrator_needs_admin_approval_mode`, `uac::tests::the_uac_policy_is_read_without_writing`. That the UAC prompt appears on the secure desktop and shows the expected command line: UNVERIFIED (founder run). Residual: an agent already elevated owns the machine |
+| Enroll a software or unattested key | Refused unless the attestation verifies to the pinned root | `attestation_tests::the_attestation_must_be_about_the_enrolled_tpm_key`, `attestation_tests::the_statement_must_be_signed_by_an_aik_chaining_to_a_pinned_root`, `attestation_tests::malformed_blobs_are_refused`, `attestation_tests::the_pinned_microsoft_tpm_root_on_this_pc_is_self_signed_and_current` (built vectors plus the real root). A real `GetAttestationAsync` buffer: UNVERIFIED (founder run). Residual: an attested key may be gesture-free and is not bound to this PC's TPM; no freshness |
+| Enroll a key the owner did not see | Enrolled only after a Yes on a box showing its fingerprint, then the new key's own signature | `core_tests::enrollment_shows_the_fingerprint_and_enrolls_only_after_the_new_key_signs`. That `WTSSendMessageW` from the virtual account reaches the console session: UNVERIFIED (founder run) |
+| Replace or reset the owner's key | Same gates; the box names the old fingerprint; every lease of the user ends and the epoch moves; the new Hello key never overwrites the enrolled one | `core_tests::re_enrollment_needs_replace_and_ends_every_lease_of_the_user`, `core_tests::a_reset_needs_elevation_and_a_confirmed_yes`, `authority_grant::hello::tests::sg132_a_new_key_never_takes_the_enrolled_slot` |
+| Delete the owner's Hello keys | Denial of service only: grants fail closed until the owner enrolls again | Residual (documented); no test, it needs Windows Hello |
+| Record a grant and approve it itself | Needs the owner CLI image, a service-observed unlock, a Yes on the service's box bound into the challenge, and the enrolled key's signature | `core_tests::issuance_is_refused_for_every_non_owner_caller`, `core_tests::a_grant_binds_the_code_the_requesting_process_and_the_confirmation_text`, `core_tests::a_wrong_code_or_signature_is_refused_and_consumes_the_intent`, `core_tests::the_window_closes_and_a_no_or_a_timeout_ends_the_intent`. Residual (C-27 f, WP1-10): a same-user process can imitate the box or try to answer it (`confirmation_input_protected: false`) |
+| Rely on Hello as consent | Not claimed: Hello shows presence and key possession only; the human gate is the Yes after a service-observed unlock | Residual (review F2); the box text: `core_tests::review_f4_f7_browser_authorize_checks_family_and_origin_and_the_box_says_browser` |
+| Forge or widen a browser lease | orceld admits only leases whose ECDSA signature verifies with the service's key and whose scope is canonical | `ob08_lease_tests::ob08_only_service_signed_browser_leases_are_admitted`, `ob08_lease_tests::ob08_review_unimplemented_families_are_never_admitted`, `authority_link::tests::sg132_browser_leases_are_admitted_only_with_the_service_ecdsa_key`, `console_harness::a_scripted_grant_issues_a_signed_browser_lease_over_the_pipe` (with `--features authority-scripted-consent`); scripted E2E. That the installed state directory is unreadable to the user: `acl::tests::*` check the rules; on the installed service UNVERIFIED (founder run, runbook step 5) |
+| Use a lease beyond its family or origin | The service's `Authorize` refuses a family or origin the lease does not name | `core_tests::review_f4_f7_browser_authorize_checks_family_and_origin_and_the_box_says_browser`; orceld side: `ob08_lease_tests::ob08_anything_not_positively_routine_or_out_of_scope_asks` |
+| Replay a revoked or older lease | A revoked lease is not admitted; counters only grow; orceld refuses a service counter behind what it saw | `core_tests::revoke_stop_lock_and_expiry_move_the_counters_and_end_leases`, `ob08_lease_tests::ob08_revoke_between_decision_and_dispatch_refuses_at_once`, `ob08_lease_tests::ob08_review_a_service_that_went_back_refuses`, `ob08_lease_tests::ob08_every_change_found_right_before_dispatch_refuses`; scripted E2E (the action after the revoke refused `lease_invalid`) |
+| Use a lease from a dev orceld it controls | Only the trusted orceld image gets `Authorize` and sees service leases | `console_harness::authorize_needs_the_trusted_orceld_image_and_a_live_lease`, `authority_link::tests::sg132_only_the_trusted_orceld_role_uses_service_leases`. Residual (slice 1): a same-user process can start or inject into that image |
+| Keep acting after the owner intervenes | A person's input, an emergency revoke, session end or an unreachable service ends the lease's use | `ob08_lease_tests::ob08_human_interruption_ends_lease_use`, `ob08_lease_tests::ob08_an_emergency_revoke_after_caching_ends_the_lease`, `ob08_lease_tests::ob08_session_end_revokes_the_lease_at_the_service`, `authority_link::tests::sg132_an_unreachable_service_covers_nothing` |
+| Submit, pay, post or send a secret through a covered action | Routine-only classification, GET-only covered clicks, non-GET blocking, secret refusal | `browser_impact::tests::submit_send_buy_publish_and_delete_links_are_high_impact`, `browser_impact::tests::unreadable_or_empty_names_are_unknown_never_routine` (`crates/orcel-contracts`), `worker_navigation::tests::ob08_the_lease_guard_refuses_every_page_request_but_get` (`crates/orcel-browser-host`), `ob08_lease_tests::ob08_review_secret_values_are_never_typed_under_a_lease`; scripted E2E (the submit link asked; no post or beacon left the posting page) |
+| Act on the desktop with a stale or user-readable lease | With the service installed only a service lease and its `Authorize` count; the audit names the action's arguments | `authority_link::tests::sg132_the_desktop_action_digest_binds_target_and_arguments`. The gate against an installed service: UNVERIFIED (founder run); without the service the deprecated store behaves as before (existing `full_control_store` tests) |
 
-1. Install per [SG132_INSTALL_RUNBOOK.md](SG132_INSTALL_RUNBOOK.md) from a hash-pinned build of this branch's
-   reviewed commit (UAC set to "Always notify").
-2. Check `orcel authority status`: `mode service`, `enrollment available true`.
-3. Compare the pinned root: `Get-ChildItem Cert:\LocalMachine\CA | Where-Object Thumbprint -eq
-   D4FFDB19BA590FFFAA34DB5F4B568706A2978436`, its SHA-256 must be `870c7a35...a999da` and match Microsoft's
-   published Microsoft TPM Root Certificate Authority 2014.
-4. Elevated and directly (runbook step 7, checking the UAC prompt's details against the runbook's table): `Start-Process -Verb RunAs -FilePath
-   "$env:ProgramFiles\Orcel\orcel.exe" -ArgumentList 'authority','enroll','--pause'`. Create the key in the Hello prompt; compare the code
-   and fingerprint printed with the Orcel Authority box; Yes; one more Hello gesture. If attestation fails, send
-   the CLI's message: that is the hardware fact this slice could not record.
-5. From a normal terminal: `& "$env:ProgramFiles\Orcel\orcel.exe" full-control grant` (narrow default), then Win+L and unlock; compare code,
-   process and scope in the box; Yes; Hello. Then `orcel full-control status` and `orceld authority-status`.
-6. Browser: in an MCP session, `browser_session_create` returns `session_id` and `client_ref`; then
-   `orcel browser grant --session <id> --client-ref <ref> --origin https://<site>`.
-7. Check Event Viewer (Application, source Orcel): 4102 intents, 4104 enrollment, 4101 granted scope; each
-   ends in `|sig=` that verifies with `authority-public\lease-signing-key.json`.
+## 7. What the founder must do (all UNVERIFIED until the founder runs them)
+
+None of these steps has run: they need the installed service, UAC and Windows Hello, which this work could
+not use. Each step says what it is the first evidence of.
+
+1. Install per [SG132_INSTALL_RUNBOOK.md](SG132_INSTALL_RUNBOOK.md) from a hash-pinned build of the reviewed
+   commit, with UAC set to "Always notify" and the UAC prompt's details checked against the runbook's table.
+   First evidence of: the install script on a real machine (only its `-WhatIf` preview is tested,
+   `install_script::the_whatif_preview_runs_unelevated_in_every_shell_and_checks_hashes`).
+2. `orcel authority status`: `mode service`, `enrollment available true`, `UAC always notify on secure desktop
+   true`. First evidence of: the service start checks and the UAC read under the virtual account.
+3. Compare the pinned root (runbook step 6). Already checked on this PC by
+   `attestation_tests::the_pinned_microsoft_tpm_root_on_this_pc_is_self_signed_and_current`; the founder
+   compares it with Microsoft's published value.
+4. Enroll (runbook step 7, the UAC prompt's details checked): compare the code and fingerprint with the box;
+   Yes; one more Hello gesture. First evidence of: KeyCredentialManager from an elevated process, a real
+   attestation buffer, the service-rendered box. If attestation fails, report the CLI's message.
+5. A first desktop grant (runbook step 8): Win+L, unlock, compare code, process and scope; Yes; Hello. First
+   evidence of: the service-observed unlock and a real Hello signature.
+6. A browser grant (runbook step 9) and one routine browser action through the installed orceld. First
+   evidence of: OB-08 against the installed service (the scripted E2E used the console harness).
+7. Event Viewer (Application, source Orcel): 4102, 4104, 4101, each ending in `|sig=` that verifies with
+   `authority-public\lease-signing-key.json`.
 
 ## Tests
 
-- `cargo test -p orcel-authority`: 46 unit tests, including attestation against built test vectors (valid
-  chain; root from the chain or from the store; wrong key; name mismatch; missing fixedTPM, fixedParent,
-  sensitiveDataOrigin, sign; restricted; tampered statement; non-AIK signer; no AIK usage; unknown critical
-  extension; expired; unpinned root; real pin list refuses the test root; malformed blobs), one recorded real
-  vector (the Microsoft TPM root from this PC's store: pinned hash, self-signed, CA, current), DER bounds and
-  times, enrollment (elevation, roles, claimed origins, attestation refused, no root, console mode, fingerprint
-  box, wrong signer, full flow, grant with the new key), replace (epoch, leases end, old key fails), reset (No
-  keeps, Yes removes once), browser grant limits (families, 17 origins, principal); 10 console-harness
-  integration tests (enrollment and reset refused in console mode; with `--features authority-scripted-consent`,
-  a whole browser grant over the pipe, a wrong presence refused, the lease verified with the published key,
-  `Authorize` orceld-only, revoke); 5 install-script tests.
-- `cargo test -p orceld -- ob08 sg132`: 26 tests: service-signed admission (stranger key, changed body,
-  desktop lease, unimplemented family, list states), real ECDSA admission, the cache (coverage, one read and one
-  `Authorize` per action, refused `Authorize`, scope, binding drift, epoch and counter, emergency revoke after
-  caching, revoke and every change before dispatch, interruption, session end revokes at the service, status),
-  management (issue refused, list, revoke, malformed), agents/MCP/remote refused, an unreachable service covers
-  nothing.
-- `cargo test -p orcel-policy browser_lease`, `cargo test -p orcel-lifecycle sg132` (scope parsing, narrow
-  default, browser limits, fingerprint), the release-blocker sweep (dev issuance gone; scripted consent
-  confined), dependency direction.
-- Scripted E2E (`scripts/browser-full-e2e.mjs --consent scripted`): builds the authority console harness with
-  `authority-scripted-consent`; the grant goes over the authority pipe; orceld finds the harness through
-  `ORCEL_E2E_AUTHORITY` (only in its `browser-full-scripted-consent` test build). The scripted stand-in exists
-  only in those test features; the sweep confines `authority-scripted-consent`. Run on this PC (2026-11-18,
-  installed Edge, worker `node_modules` copied from a checkout with the same lockfiles): passed, 58 steps, 54
-  receipts chained (head `1f104b2da9c7862a`), 7 SOFT prompts, 0 STRONG prompts in orceld, 1 scripted authority
-  confirmation; service lease `al-b1a54bc9...`; 25 routine actions plus 3 on the posting page under it with 0
-  prompts, no page post or beacon left; after the revoke the next open was refused `lease_invalid: the browser
-  lease was revoked` and the one after asked. Scripted consent: not human acceptance.
-- Test environment note: Orcel's private-root checks refuse a TEMP under `D:\` (Authenticated Users may write
-  there), so the suites ran with TEMP in the user profile outside AppData; with that, `cargo test -p
-  orcel-authority -p orceld -p orcel-lifecycle -p orcel-policy -p orcel-approval` passes (clipboard tests left
-  to CI).
+Counts at head (Windows, TEMP in the user profile outside AppData; clipboard tests left to CI):
+
+- `cargo test -p orcel-authority`: 50 unit tests (`attestation_tests`, `core_tests`, `der`, `lease`,
+  `caller`, `win::*` including `uac`), 9 `console_harness` tests (10 with `--features
+  authority-scripted-consent`, which adds `a_scripted_grant_issues_a_signed_browser_lease_over_the_pipe`), 5
+  `install_script` tests.
+- `cargo test -p orceld -- ob08 sg132`: 28 tests (`ob08_lease_tests`, `authority_link::tests`).
+- `cargo test -p orcel-lifecycle sg132`: 4 tests (scope parsing, narrow default, browser limits, fingerprint,
+  key slots); `cargo test -p orcel-policy browser_lease`: 5 tests; the release-blocker sweep (dev issuance
+  gone; scripted consent confined) and dependency direction.
+- Scripted E2E, last run at `f4f72a93` after merging main: passed, 54 receipts chained (head
+  `64fc24cc2a52485d`), 25 routine actions and 3 on the posting page under a service lease with 0 prompts, the
+  submit asked, the action after the revoke refused `lease_invalid`, one scripted authority confirmation, and
+  OB-04's phases. Scripted consent: not human acceptance.
 
 ## Open risks
 
 1. Real `GetAttestationAsync` output was never parsed (no Hello prompt allowed here): a layout difference
-   refuses enrollment until fixed.
+   refuses enrollment until fixed (UNVERIFIED, founder run).
 2. KeyCredentialManager from an elevated process is untested here; if Windows refuses it, enrollment needs a
    split design (create unelevated, submit elevated).
-3. The attested key may be gesture-free, is not bound to this PC's TPM, and the attestation is not fresh
-   (section 2 and the review answers); Hello is not an independent gate.
-6. A standard account elevating with separate administrator credentials cannot enroll its own key (refused).
-7. A process running as the user can delete the Hello keys (denial of service, fail closed).
-4. Confirmation input protection (WP1-10) and the trusted-orceld-by-path residual are unchanged from slice 1.
-5. The branch carries OB-03 (#806) until it merges; OB-08 needs its independent security re-judge on this shape.
+3. Residual: the attested key may be gesture-free, is not bound to this PC's TPM, and the attestation is not
+   fresh (section 2 and the review answers); Hello is not an independent gate.
+4. Residual: confirmation input protection (WP1-10) and the trusted-image-by-path weakness are unchanged from
+   slice 1.
+5. A standard account elevating with separate administrator credentials cannot enroll its own key (refused).
+6. Residual: a process running as the user can delete the Hello keys (denial of service, fail closed).
+7. OB-08 needs its independent security re-judge on this shape.
