@@ -51,6 +51,11 @@
 //! disconnect, and on expiry) ends the leases, advances the epoch and the
 //! revocation counter, and writes `emergency_stop`.
 
+// WP1-03: anchors of orceld's own audit chain (a child module, so it keeps
+// to the core's own audit and Event Log paths).
+#[path = "chain_anchor.rs"]
+pub mod chain_anchor;
+
 use crate::attestation::AttestationReport;
 use crate::audit::{AuditChain, AuditRecord, Observed};
 use crate::caller::{CallerFacts, CallerRole, ClientPolicy};
@@ -319,6 +324,10 @@ enum Purpose {
     Reset {
         key_digest: String,
     },
+    /// WP1-03: abandon the held anchor of an audit chain (`held`).
+    AnchorReset {
+        held: orcel_contracts::event::AnchorRef,
+    },
 }
 
 impl Purpose {
@@ -327,6 +336,7 @@ impl Purpose {
             Self::Grant { .. } => "grant",
             Self::Enroll { .. } => "enroll",
             Self::Reset { .. } => "reset",
+            Self::AnchorReset { .. } => "anchor_reset",
         }
     }
 }
@@ -693,7 +703,7 @@ impl AuthorityCore {
         let op = request.op();
         let result = self.dispatch(caller, role, request);
         if let Err(error) = &result {
-            if !matches!(op, "status" | "intent_status") {
+            if !matches!(op, "status" | "intent_status" | "anchor_status") {
                 let detail = json!({
                     "op": op,
                     "decision": "refused",
@@ -755,6 +765,15 @@ impl AuthorityCore {
             } => self.authorize(caller, role, &lease_id, executor, claims),
             Request::Revoke { lease_id } => self.revoke(caller, role, &lease_id),
             Request::Stop => self.stop(caller, role),
+            Request::Anchor {
+                anchor,
+                link,
+                reset,
+            } => self.anchor_chain(caller, role, &anchor, link.as_ref(), reset.as_deref()),
+            Request::AnchorStatus { log } => self.anchor_status(caller, role, &log),
+            Request::AnchorReset { origin, log } => {
+                self.anchor_reset_begin(caller, role, origin, &log)
+            }
         }
     }
 
@@ -1535,6 +1554,9 @@ impl AuthorityCore {
             other => other.as_str().to_owned(),
         };
         if answer == ConfirmAnswer::Yes && in_window {
+            if let Purpose::AnchorReset { held } = self.intents[index].purpose.clone() {
+                return self.finish_anchor_reset(index, &held);
+            }
             if let Purpose::Reset { key_digest } = self.intents[index].purpose.clone() {
                 return self.finish_reset(index, &key_digest);
             }
@@ -2216,6 +2238,22 @@ fn confirmation_text(intent: &Intent) -> String {
             "An elevated program asked to REMOVE your enrolled Orcel Windows Hello key. Every Orcel lease of yours ends now, and no grant is possible until you enroll again.\n\nCode: {}\nKey fingerprint (SHA-256): {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel authority reset command printed this code.\n\nRemove this key?",
             intent.code,
             key_fingerprint(key_digest),
+        ),
+        Purpose::AnchorReset { held } if held.file_id == chain_anchor::RESET_MARK => format!(
+            "An elevated program asked to RESET the Orcel audit chain anchor of the log {} AGAIN. An earlier reset is still pending (no first file of it was anchored); this one supersedes it, and the service accepts only the new file this command opens.\n\nCode: {}\nLog: {}\nPending reset record: {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel audit reset-anchor command printed this code.\n\nReset this anchor again?",
+            held.log,
+            intent.code,
+            held.log,
+            held.digest,
+        ),
+        Purpose::AnchorReset { held } => format!(
+            "An elevated program asked to RESET the Orcel audit chain anchor of the log {}. The service stops holding the head below and accepts a NEW, unlinked first chain file for this log: nothing recorded before it is continued, and the new file says so. Do this only if you lost or replaced the audit chain yourself and cannot restore it.\n\nCode: {}\nLog: {}\nHeld chain file: {}\nHeld head: seq {}, digest {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel audit reset-anchor command printed this code.\n\nReset this anchor?",
+            held.log,
+            intent.code,
+            held.log,
+            held.file_id,
+            held.seq,
+            held.digest,
         ),
     }
 }

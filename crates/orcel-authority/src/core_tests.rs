@@ -15,8 +15,9 @@ use crate::core::{
 };
 use crate::error::{AuthorityError, ENROLLMENT_UNAVAILABLE};
 use crate::lease::{LeaseScope, SignedLease};
-use crate::protocol::{AuthorizeClaims, ClaimedOrigin, Request};
+use crate::protocol::{AuthorizeClaims, ChainLink, ClaimedOrigin, Request};
 use crate::{hex, sha256_hex, unhex, RunMode};
+use orcel_contracts::event::AnchorRef;
 use orcel_contracts::{ExecutorClass, FailureCode};
 use serde_json::Value;
 use std::cell::Cell;
@@ -86,8 +87,16 @@ impl PresenceVerifier for HashPresence {
 #[derive(Clone, Default)]
 struct Events(Arc<Mutex<Vec<(u32, String)>>>);
 
+thread_local! {
+    /// WP1-03: makes every Event Log write of this thread fail.
+    static EVENTS_FAIL: Cell<bool> = const { Cell::new(false) };
+}
+
 impl EventSink for Events {
     fn record(&self, event_id: u32, _error: bool, text: &str) -> Result<(), AuthorityError> {
+        if EVENTS_FAIL.with(Cell::get) {
+            return Err(AuthorityError::internal("the event log is unavailable"));
+        }
         self.0
             .lock()
             .map_err(|_| AuthorityError::internal("poisoned"))?
@@ -1337,6 +1346,205 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
     Ok(())
 }
 
+fn anchor_request(file: char, seq: u64, digest: char, link: Option<ChainLink>) -> Request {
+    anchor_after_reset(file, seq, digest, link, None)
+}
+
+fn anchor_after_reset(
+    file: char,
+    seq: u64,
+    digest: char,
+    link: Option<ChainLink>,
+    reset: Option<&str>,
+) -> Request {
+    Request::Anchor {
+        anchor: AnchorRef {
+            log: "orceld".to_owned(),
+            file_id: file.to_string().repeat(64),
+            seq,
+            digest: digest.to_string().repeat(64),
+        },
+        link,
+        reset: reset.map(str::to_owned),
+    }
+}
+
+fn link_to(file: char, seq: u64, digest: char) -> Option<ChainLink> {
+    Some(ChainLink {
+        previous_file_id: file.to_string().repeat(64),
+        previous_head_seq: seq,
+        previous_head_digest: digest.to_string().repeat(64),
+    })
+}
+
+/// WP1-03: orceld, and only orceld, can have the service hold an anchor of
+/// its own audit chain; the anchor is recorded as orceld's claim and
+/// written to the Event Log as a signed 4100 event.
+#[test]
+fn wp103_the_service_holds_orcelds_chain_anchor() -> Result<(), String> {
+    let dir = temp_dir("anchor")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    for caller in [owner(), other_process()] {
+        assert_eq!(
+            code(core.handle(&caller, anchor_request('a', 31, 'b', None))),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    let bad_log = Request::Anchor {
+        anchor: AnchorRef {
+            log: "authority".to_owned(),
+            file_id: "a".repeat(64),
+            seq: 31,
+            digest: "b".repeat(64),
+        },
+        link: None,
+        reset: None,
+    };
+    for bad in [
+        bad_log,
+        anchor_request('a', 31, 'B', None),
+        anchor_request('a', 31, 'b', link_to('Z', 1, 'c')),
+    ] {
+        assert_eq!(
+            code(core.handle(&orceld(), bad)),
+            Some(FailureCode::InvalidRequest)
+        );
+    }
+    let answer = ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    assert_eq!(answer["anchored"], Value::Bool(true));
+    assert_eq!(answer["event_id"], 4100);
+    let insertion = format!(
+        "orcel-anchor/1|orceld|{}|31|{}",
+        "a".repeat(64),
+        "b".repeat(64)
+    );
+    let written = events.with_id(4100);
+    assert!(
+        written
+            .iter()
+            .any(|text| text.contains(&insertion) && text.contains("|sig=")),
+        "{written:?}"
+    );
+    let audit =
+        std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
+    let record = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|record| record["kind"] == "anchor" && record["observed"]["role"] == "orceld")
+        .ok_or("an anchor record")?;
+    assert_eq!(record["asserted_by_session"]["digest"], "b".repeat(64));
+    assert_eq!(record["seq"], answer["authority_seq"]);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 review: per account and log the service refuses a seq
+/// regression or rewrite, answers a repeat without a second record, refuses
+/// a replacement file that does not link to the held one (and a file the
+/// log left), accepts a linked continuation, and caps the rate.
+#[test]
+fn wp103_the_service_refuses_rewrites_regressions_and_unlinked_files() -> Result<(), String> {
+    let dir = temp_dir("anchor-rules")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let count = || events.with_id(4100).len();
+    let before = count();
+    let repeat = ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    assert_eq!(repeat["duplicate"], Value::Bool(true));
+    assert_eq!(count(), before, "a repeat writes nothing");
+    for refused in [
+        anchor_request('a', 31, 'c', None),
+        anchor_request('a', 7, 'c', None),
+        // A new file with no link, a wrong link, or a head before the
+        // anchored record.
+        anchor_request('d', 31, 'e', None),
+        anchor_request('d', 31, 'e', link_to('f', 40, 'b')),
+        anchor_request('d', 31, 'e', link_to('a', 30, 'b')),
+        anchor_request('d', 31, 'e', link_to('a', 31, 'c')),
+    ] {
+        assert_eq!(
+            code(core.handle(&orceld(), refused)),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    ok(core.handle(&orceld(), anchor_request('a', 63, 'c', None)))?;
+    let moved = ok(core.handle(
+        &orceld(),
+        anchor_request('d', 31, 'e', link_to('a', 70, 'f')),
+    ))?;
+    assert_eq!(moved["new_file"], Value::Bool(true));
+    // The file the log left is refused from now on.
+    assert_eq!(
+        code(core.handle(&orceld(), anchor_request('a', 95, 'c', None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Another account's chain is its own.
+    let other_account = CallerFacts {
+        user_sid: "S-1-5-21-1-2-3-1002".to_owned(),
+        ..orceld()
+    };
+    ok(core.handle(&other_account, anchor_request('a', 31, 'b', None)))?;
+    // The rate cap.
+    let mut refused = None;
+    for n in 0..=crate::core::chain_anchor::ANCHORS_PER_MINUTE as u64 {
+        if let Err(error) = core.handle(&orceld(), anchor_request('d', 100 + n, 'e', None)) {
+            refused = Some(error);
+            break;
+        }
+    }
+    let refused = refused.ok_or("the rate cap never refused")?;
+    assert!(
+        refused.message.contains("in a minute"),
+        "{}",
+        refused.message
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 re-review: orceld reads back what the service holds of its chain
+/// (the verifier and a starting writer check against it), and every rule
+/// refusal carries the prefix orceld records as `link_refused`.
+#[test]
+fn wp103_the_service_reports_its_held_anchor_and_marks_rule_refusals() -> Result<(), String> {
+    let dir = temp_dir("anchor-status")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let status = |core: &mut AuthorityCore, caller: &CallerFacts| {
+        core.handle(
+            caller,
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"], Value::Null);
+    assert_eq!(
+        code(status(&mut core, &other_process())),
+        Some(FailureCode::CapabilityDenied)
+    );
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let held = ok(status(&mut core, &orceld()))?;
+    assert_eq!(held["held"]["file_id"], "a".repeat(64));
+    assert_eq!(held["held"]["seq"], 31);
+    assert_eq!(held["held"]["digest"], "b".repeat(64));
+    let refused = core
+        .handle(&orceld(), anchor_request('d', 31, 'e', None))
+        .err()
+        .ok_or("an unlinked file is refused")?;
+    assert!(
+        refused
+            .message
+            .starts_with(crate::core::chain_anchor::REFUSED_PREFIX),
+        "{}",
+        refused.message
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 #[test]
 fn review_f1_enroll_and_reset_need_always_notify_and_every_intent_the_owner_cli(
 ) -> Result<(), String> {
@@ -1507,6 +1715,276 @@ fn review_reverify_the_builtin_administrator_needs_admin_approval_mode() -> Resu
     FILTER_ADMINISTRATOR_TOKEN.with(|v| v.set(None));
     ok(begun)?;
     assert_eq!(status["uac"]["filter_administrator_token"], Value::from(1));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 owner recovery: only the elevated owner CLI may ask; the
+/// service-rendered confirmation names the log and the held head; No
+/// changes nothing; Yes records a signed `anchor_reset`, reports the reset
+/// to orceld and the CLI, accepts a new unlinked first file, and keeps
+/// refusing the abandoned one.
+#[test]
+fn wp103_an_owner_anchor_reset_is_elevated_confirmed_and_recorded() -> Result<(), String> {
+    let dir = temp_dir("anchor-reset")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let reset = || Request::AnchorReset {
+        origin: ClaimedOrigin::OwnerCli,
+        log: "orceld".to_owned(),
+    };
+    assert_eq!(
+        code(core.handle(&elevated_owner(), reset())),
+        Some(FailureCode::InvalidRequest),
+        "nothing held, nothing to reset"
+    );
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    for caller in [owner(), other_process(), orceld()] {
+        assert_eq!(
+            code(core.handle(&caller, reset())),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    let status = |core: &mut AuthorityCore, caller: &CallerFacts| {
+        core.handle(
+            caller,
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    // No: nothing changes.
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    assert_eq!(begun["held"]["seq"], 31);
+    let id = str_of(&begun, "intent_id")?;
+    let tasks = core.take_pending_confirmations();
+    let text = &tasks[0].text;
+    assert!(
+        text.contains("RESET") && text.contains("Log: orceld"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&"a".repeat(64)) && text.contains("seq 31"),
+        "{text}"
+    );
+    assert!(text.contains(&str_of(&begun, "code")?), "{text}");
+    core.confirmation_answer(&id, ConfirmAnswer::No)
+        .map_err(|e| e.to_string())?;
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"]["seq"], 31);
+    // Yes: reset, recorded and signed.
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.take_pending_confirmations();
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let done = ok(core.handle(&elevated_owner(), Request::IntentStatus { intent_id: id }))?;
+    assert_eq!(str_of(&done, "state")?, "completed");
+    let after = ok(status(&mut core, &orceld()))?;
+    assert_eq!(after["held"], Value::Null);
+    let digest = after["reset"]["event_digest"]
+        .as_str()
+        .ok_or("the reset record digest")?
+        .to_owned();
+    // The owner CLI reads the same status (to open the new file).
+    assert_eq!(
+        ok(status(&mut core, &owner()))?["reset"]["event_digest"],
+        digest.as_str()
+    );
+    assert!(
+        events
+            .with_id(crate::EVENT_ANCHOR)
+            .iter()
+            .any(|text| text.contains("orcel-anchor-reset/1|orceld|")
+                && text.contains(&format!("record {digest}"))
+                && text.contains("|sig=")),
+        "{:?}",
+        events.with_id(crate::EVENT_ANCHOR)
+    );
+    let audit =
+        std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
+    assert!(audit
+        .lines()
+        .any(|line| line.contains("\"kind\":\"anchor_reset\"") && line.contains(&digest)));
+    // Review: only the file the reset opened, naming the reset record, at
+    // one of its first anchors. A dropped-in unlinked file, a file naming
+    // another record, or a long chain grown before it asked are refused,
+    // and the status keeps reporting the reset until the right one comes.
+    let wrong = "f".repeat(64);
+    for refused in [
+        anchor_request('d', 31, 'e', None),
+        anchor_after_reset('d', 31, 'e', None, Some(&wrong)),
+        anchor_after_reset('d', 95, 'e', None, Some(&digest)),
+    ] {
+        let error = core
+            .handle(&orceld(), refused)
+            .err()
+            .ok_or("refused after the reset")?;
+        assert!(
+            error
+                .message
+                .starts_with(crate::core::chain_anchor::REFUSED_PREFIX),
+            "{}",
+            error.message
+        );
+        assert_eq!(
+            ok(status(&mut core, &orceld()))?["reset"]["event_digest"],
+            digest.as_str()
+        );
+    }
+    let fresh = ok(core.handle(
+        &orceld(),
+        anchor_after_reset('d', 31, 'e', None, Some(&digest)),
+    ))?;
+    assert_eq!(fresh["new_file"], Value::Bool(true));
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"]["seq"], 31);
+    assert_eq!(
+        code(core.handle(&orceld(), anchor_request('a', 63, 'c', None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 review: the Event Log entry is written before the state commits,
+/// so a failed entry leaves the held anchor (and a pending reset) as it was.
+#[test]
+fn wp103_a_failed_event_log_write_commits_no_anchor_state() -> Result<(), String> {
+    let dir = temp_dir("anchor-event-fails")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let status = |core: &mut AuthorityCore| {
+        core.handle(
+            &orceld(),
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    EVENTS_FAIL.with(|fail| fail.set(true));
+    let failed = core.handle(&orceld(), anchor_request('a', 63, 'c', None));
+    EVENTS_FAIL.with(|fail| fail.set(false));
+    assert!(failed.is_err());
+    assert_eq!(ok(status(&mut core))?["held"]["seq"], 31);
+    // A confirmed reset whose entry fails resets nothing.
+    let begun = ok(core.handle(
+        &elevated_owner(),
+        Request::AnchorReset {
+            origin: ClaimedOrigin::OwnerCli,
+            log: "orceld".to_owned(),
+        },
+    ))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.take_pending_confirmations();
+    EVENTS_FAIL.with(|fail| fail.set(true));
+    let answered = core.confirmation_answer(&id, ConfirmAnswer::Yes);
+    EVENTS_FAIL.with(|fail| fail.set(false));
+    assert!(answered.is_err());
+    let after = ok(status(&mut core))?;
+    assert_eq!(after["held"]["seq"], 31, "{after}");
+    assert!(after.get("reset").is_none_or(Value::is_null), "{after}");
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 re-review: a pending reset can be reset again by the owner (same
+/// gate and box; the new record supersedes the old), and the owner CLI
+/// anchors the opening record of the file the reset opened, after which no
+/// other file naming the same reset digest is adopted.
+#[test]
+fn wp103_a_pending_reset_can_be_reset_again_and_its_opening_is_anchored_by_the_cli(
+) -> Result<(), String> {
+    let dir = temp_dir("anchor-rereset")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let reset = || Request::AnchorReset {
+        origin: ClaimedOrigin::OwnerCli,
+        log: "orceld".to_owned(),
+    };
+    let status = |core: &mut AuthorityCore| {
+        core.handle(
+            &orceld(),
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    let confirm = |core: &mut AuthorityCore| -> Result<String, String> {
+        let begun = ok(core.handle(&elevated_owner(), reset()))?;
+        let id = str_of(&begun, "intent_id")?;
+        let tasks = core.take_pending_confirmations();
+        let text = tasks
+            .first()
+            .map(|task| task.text.clone())
+            .unwrap_or_default();
+        core.confirmation_answer(&id, ConfirmAnswer::Yes)
+            .map_err(|e| e.to_string())?;
+        // Reported once, which frees the session's intent slot.
+        ok(core.handle(&elevated_owner(), Request::IntentStatus { intent_id: id }))?;
+        Ok(text)
+    };
+    confirm(&mut core)?;
+    let first = ok(status(&mut core))?["reset"]["event_digest"]
+        .as_str()
+        .ok_or("a pending reset")?
+        .to_owned();
+    // The file of that reset was lost or refused: reset again.
+    let text = confirm(&mut core)?;
+    assert!(text.contains("AGAIN") && text.contains(&first), "{text}");
+    let second = ok(status(&mut core))?["reset"]["event_digest"]
+        .as_str()
+        .ok_or("a pending reset")?
+        .to_owned();
+    assert_ne!(first, second);
+    // The superseded reset no longer opens anything.
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            anchor_after_reset('d', 0, 'd', None, Some(&first))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // The owner CLI may anchor only seq 0, only in the reset state, and only
+    // elevated (the enrollment checks): the non-elevated installed CLI is
+    // refused.
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            anchor_after_reset('d', 0, 'd', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(
+            &elevated_owner(),
+            anchor_after_reset('d', 5, 'e', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let opened = ok(core.handle(
+        &elevated_owner(),
+        anchor_after_reset('d', 0, 'd', None, Some(&second)),
+    ))?;
+    assert_eq!(opened["new_file"], Value::Bool(true));
+    assert_eq!(ok(status(&mut core))?["held"]["file_id"], "d".repeat(64));
+    // A forged replacement naming the same public digest is not adopted.
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            anchor_after_reset('f', 0, 'f', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(
+            &elevated_owner(),
+            anchor_after_reset('f', 0, 'f', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // orceld continues the anchored file.
+    ok(core.handle(&orceld(), anchor_request('d', 31, 'c', None)))?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

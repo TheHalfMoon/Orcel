@@ -205,6 +205,29 @@ impl AuthorityClient {
     pub fn list(&self) -> Result<Value, AuthorityError> {
         self.call(&Request::List)
     }
+
+    /// WP1-03: the latest anchor the service holds of this account's `log`
+    /// (`Value::Null` when it holds none).
+    pub fn anchor_status(&self, log: &str) -> Result<Value, AuthorityError> {
+        self.call(&Request::AnchorStatus {
+            log: log.to_owned(),
+        })
+    }
+
+    /// WP1-03: asks the service to hold an anchor of orceld's audit chain;
+    /// `reset` is the owner reset record digest a post-reset file names.
+    pub fn anchor(
+        &self,
+        anchor: &orcel_contracts::event::AnchorRef,
+        link: Option<crate::protocol::ChainLink>,
+        reset: Option<String>,
+    ) -> Result<Value, AuthorityError> {
+        self.call(&Request::Anchor {
+            anchor: anchor.clone(),
+            link,
+            reset,
+        })
+    }
 }
 
 #[cfg(windows)]

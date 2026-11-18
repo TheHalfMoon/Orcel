@@ -681,11 +681,11 @@ mod full {
                     .map_err(|error| crate::state_unavailable("browser profile", &error))?
                     .join("live")
                     .join("broker");
-                *slot = Some(Broker::start(
-                    root,
-                    instance_id(random8()?),
-                    Budgets::DEFAULT,
-                )?);
+                // OB-05 step 1: receipts are chained into orceld's audit log.
+                *slot = Some(
+                    Broker::start(root, instance_id(random8()?), Budgets::DEFAULT)?
+                        .with_audit_chain(crate::audit_chain::shared()),
+                );
             }
             match slot.as_mut() {
                 Some(broker) => action(broker),
@@ -1143,6 +1143,18 @@ mod full {
             orcel_approval::now_ms(),
         );
         session.page_id = after.map(|(page, _)| page);
+        // WP1-03 / OB-05: the request's dispatch record was written before
+        // the action ran (orceld refuses the request otherwise); a receipt
+        // the chain refused withholds the action's result.
+        if let crate::browser_broker::ReceiptAudit::Failed(error) = &receipt.audit {
+            return Err(ProviderError::new(
+                FailureCode::InternalError,
+                format!(
+                    "the audit chain refused browser session receipt {}; its result is withheld: {error}",
+                    receipt.seq
+                ),
+            ));
+        }
         match result {
             Ok(mut done) => {
                 if let Value::Object(map) = &mut done.reply {

@@ -23,6 +23,8 @@ test = true
 orcel-approval = { path = "../orcel-approval" }
 # SG-000132 slice 2: the authority service client (enrollment and grants).
 orcel-authority = { path = "../orcel-authority" }
+# WP1-03: `orcel audit reset-anchor` opens the new first chain file.
+orcel-audit = { path = "../orcel-audit" }
 orcel-contracts = { path = "../orcel-contracts" }
 fs4.workspace = true
 orcel-platform = { path = "../orcel-platform" }

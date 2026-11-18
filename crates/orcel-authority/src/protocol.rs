@@ -13,6 +13,7 @@
 
 use crate::error::AuthorityError;
 use crate::lease::LeaseScope;
+use orcel_contracts::event::AnchorRef;
 use orcel_contracts::{ExecutorClass, FailureCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -89,6 +90,12 @@ pub enum Request {
     },
     /// Slice 2: remove the caller's enrolled key (elevated, confirmed).
     ResetEnrollment { origin: ClaimedOrigin },
+    /// WP1-03: the owner's recovery for a lost or replaced audit chain.
+    /// Only the installed owner CLI, elevated, under UAC Always notify (the
+    /// enrollment checks); a service-rendered confirmation names the log and
+    /// the held head it abandons; on Yes the service records a signed
+    /// `anchor_reset` and accepts a new, unlinked first file for the log.
+    AnchorReset { origin: ClaimedOrigin, log: String },
     /// Where the caller's pending intent stands; carries the challenge once
     /// the confirmation was answered Yes.
     IntentStatus { intent_id: String },
@@ -118,6 +125,35 @@ pub enum Request {
     /// Spec C-28: end every lease of the caller's logon session, advance
     /// the epoch.
     Stop,
+    /// WP1-03: hold an anchor of orceld's own audit chain outside the user
+    /// session. orceld only; the anchor is recorded as orceld's claim in the
+    /// service's chain and written to the Event Log as event 4100. `link` is
+    /// the anchored file's link to the file it follows (absent for a log's
+    /// first file).
+    Anchor {
+        anchor: AnchorRef,
+        #[serde(default)]
+        link: Option<ChainLink>,
+        /// The service's owner anchor reset record digest the anchored
+        /// file's opening names (`anchor_reset`), for a file that starts
+        /// after a reset.
+        #[serde(default)]
+        reset: Option<String>,
+    },
+    /// WP1-03: the latest anchor the service holds of the caller account's
+    /// `log` (orceld only), so `orceld audit-verify` and a starting writer
+    /// can check the local chain against it.
+    AnchorStatus { log: String },
+}
+
+/// WP1-03: the file an anchored chain file follows, as its opening record
+/// states it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChainLink {
+    pub previous_file_id: String,
+    pub previous_head_seq: u64,
+    pub previous_head_digest: String,
 }
 
 impl Request {
@@ -128,6 +164,7 @@ impl Request {
             Self::GrantBegin { .. } => "grant_begin",
             Self::EnrollBegin { .. } => "enroll_begin",
             Self::ResetEnrollment { .. } => "reset_enrollment",
+            Self::AnchorReset { .. } => "anchor_reset",
             Self::IntentStatus { .. } => "intent_status",
             Self::PresenceComplete { .. } => "presence_complete",
             Self::CancelIntent { .. } => "cancel_intent",
@@ -136,6 +173,8 @@ impl Request {
             Self::Authorize { .. } => "authorize",
             Self::Revoke { .. } => "revoke",
             Self::Stop => "stop",
+            Self::Anchor { .. } => "anchor",
+            Self::AnchorStatus { .. } => "anchor_status",
         }
     }
 }
