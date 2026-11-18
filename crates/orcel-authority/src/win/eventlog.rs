@@ -1,6 +1,6 @@
 //! Event Log anchoring (spec 4.8 and 4.13): 4100 audit anchors, 4101
 //! granted scopes, 4102 intents and confirmation results, written to the
-//! Application log under the `Orcel` source the install script registers.
+//! Application log under the `Orcel` source `orcel-authority install` registers.
 //! Each event carries the service account's SID as its user SID, so an
 //! entry written by a user process under the same source name (any process
 //! can open an unregistered source) is told apart by its user field.

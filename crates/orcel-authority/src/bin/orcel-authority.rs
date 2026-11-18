@@ -1,7 +1,11 @@
 //! `orcel-authority.exe`: the Orcel authority service (SG-000132).
 //!
 //! - No arguments: run under the service control manager as
-//!   `OrcelAuthority` (installed by `scripts/install-orcel-authority.ps1`).
+//!   `OrcelAuthority`.
+//! - `install --authority-sha256 <hex> --orceld-sha256 <hex> --orcel-sha256
+//!   <hex> [--dry-run] [--pause]` and `uninstall [--keep-state] [--dry-run]
+//!   [--pause]`: the founder's elevated steps, run from the admin-only
+//!   staging folder (`win::install`; runbook SG132_INSTALL_RUNBOOK.md).
 //! - `--console --state-dir <dir> --pipe-suffix <suffix> [--trusted-orceld
 //!   <path>]...`: the development and test harness. It runs the same core
 //!   and pipe protocol under the current user with the given state
@@ -116,13 +120,29 @@ fn main() {
     }
     #[cfg(windows)]
     {
+        // First of all: every DLL loaded from here on (the delay-loaded
+        // wtsapi32, bcrypt and crypt32 included, with their dependencies)
+        // comes from System32 only, never from this program's folder.
+        if let Err(error) = orcel_authority::win::install_os::harden_dll_search() {
+            eprintln!("orcel-authority: {error}");
+            std::process::exit(1);
+        }
+        match args.first().map(String::as_str) {
+            Some("install") => {
+                std::process::exit(orcel_authority::win::install::install_main(&args[1..]))
+            }
+            Some("uninstall") => {
+                std::process::exit(orcel_authority::win::install::uninstall_main(&args[1..]))
+            }
+            _ => {}
+        }
         let result = if args.first().map(String::as_str) == Some("--console") {
             console(&args)
         } else if args.is_empty() {
             orcel_authority::win::service::dispatch().map_err(|error| error.to_string())
         } else {
             Err(format!(
-                "unknown arguments {args:?}; run with no arguments under the SCM, or --console"
+                "unknown arguments {args:?}; run with no arguments under the SCM, install, uninstall, or --console"
             ))
         };
         if let Err(error) = result {

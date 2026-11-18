@@ -1,6 +1,6 @@
 //! The protected state directory check (spec 4.13 "State").
 //!
-//! The install script creates `%ProgramData%\Orcel\authority` with a
+//! `orcel-authority install` creates `%ProgramData%\Orcel\authority` with a
 //! protected DACL: `NT SERVICE\OrcelAuthority`, `SYSTEM` and
 //! `BUILTIN\Administrators` full control, nobody else. The service refuses
 //! to start unless the directory's DACL is protected (no inherited ACEs)
@@ -125,7 +125,7 @@ pub fn evaluate(
     }
     if !protected {
         return Err(AuthorityError::unavailable(
-            "the authority state directory inherits ACEs; run the install script to protect it",
+            "the authority state directory inherits ACEs; reinstall with orcel-authority install to protect it",
         ));
     }
     if let Some((sid, mask)) = aces
@@ -167,7 +167,7 @@ pub fn evaluate_parent(
 /// Owner SID, whether the DACL is protected, and the allow ACEs.
 type Security = (String, bool, Vec<(String, u32)>);
 
-fn read_security(path: &Path, effective: bool) -> Result<Security, AuthorityError> {
+pub(crate) fn read_security(path: &Path, effective: bool) -> Result<Security, AuthorityError> {
     let wide_path = wide(&path.to_string_lossy());
     let mut owner: *mut std::ffi::c_void = std::ptr::null_mut();
     let mut dacl: *mut ACL = std::ptr::null_mut();

@@ -623,8 +623,8 @@ fn the_browser_lease_dev_issuance_feature_is_gone() {
 /// stand-in for the unlock, the confirmation and Windows Hello) never
 /// reaches a development or release build. Only the authority's manifest
 /// (which defines it, empty, never as a default), the source that compiles
-/// it, its console tests, the end-to-end script and documentation may name
-/// it.
+/// it, its console tests, the end-to-end script, the CI install E2E script
+/// and documentation may name it.
 #[test]
 fn the_authority_scripted_consent_feature_never_reaches_a_release_build() {
     let root = repo_root();
@@ -639,6 +639,10 @@ fn the_authority_scripted_consent_feature_never_reaches_a_release_build() {
             || relative == "crates/orcel-authority/src/bin/orcel-authority.rs"
             || relative == "crates/orcel-authority/tests/console_harness.rs"
             || relative == "scripts/browser-full-e2e.mjs"
+            // The CI install E2E runs the console tests with it (`cargo
+            // test`, a debug test build); the installed binaries come from
+            // the release artifact, built without it.
+            || relative == "scripts/authority-install-e2e.ps1"
             || relative.starts_with("docs/");
         if !allowed {
             hits.push(relative);

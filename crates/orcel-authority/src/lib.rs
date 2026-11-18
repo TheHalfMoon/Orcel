@@ -70,7 +70,7 @@ pub const SERVICE_PIPE_NAME: &str = r"\\.\pipe\orcel-authority";
 /// never hold (squat) the installed service's name.
 pub const CONSOLE_PIPE_PREFIX: &str = r"\\.\pipe\orcel-authority-console-";
 
-/// The Event Log source the install script registers (spec 4.8).
+/// The Event Log source `orcel-authority install` registers (spec 4.8).
 pub const EVENT_SOURCE: &str = "Orcel";
 
 /// Event id of an audit chain anchor (spec 4.8).

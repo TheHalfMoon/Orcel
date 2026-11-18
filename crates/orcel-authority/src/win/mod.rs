@@ -5,6 +5,8 @@ pub mod confirm;
 pub mod crypto;
 pub mod eventlog;
 pub mod identity;
+pub mod install;
+pub mod install_os;
 pub mod pipe;
 pub mod roots;
 pub mod runtime;

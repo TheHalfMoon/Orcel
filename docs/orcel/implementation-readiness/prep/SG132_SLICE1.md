@@ -43,10 +43,12 @@ with the published public key without ever holding the private key.
 | `crates/orcel-authority/src/win/eventlog.rs` | Event Log source `Orcel` (4100 to 4103); console mode writes a file |
 | `crates/orcel-authority/src/win/confirm.rs` | `WTSSendMessageW` confirmation |
 | `crates/orcel-authority/src/win/runtime.rs`, `service.rs` | Shared runtime, SCM entry, start checks, session changes |
-| `crates/orcel-authority/src/bin/orcel-authority.rs` | `orcel-authority.exe` (service, or `--console` harness) |
+| `crates/orcel-authority/src/bin/orcel-authority.rs` | `orcel-authority.exe` (service, `install` / `uninstall`, or `--console` harness) |
 | `crates/orceld/src/authority_link.rs` | orceld's link: `ServiceOwnerChannel`, `orceld authority-status`, `orceld authority-verify` |
-| `scripts/install-orcel-authority.ps1` | The founder's elevated install (hash-pinned artifact only) and uninstall |
-| `.github/workflows/ci.yml` job `authority-artifact` | Builds both binaries for the exact commit and uploads them with `SHA256SUMS.txt` as a workflow artifact (no release) |
+| `crates/orcel-authority/src/win/install.rs`, `install_os.rs` | The founder's elevated install and uninstall, native (no PowerShell or .NET): run from the admin-only staging folder, which it verifies up to the volume root; known folders, never environment variables; System32-only DLL search; binaries hashed and copied through held handles; rollback on failure |
+| `crates/orcel-authority/build.rs`, `scripts/check-authority-binaries.ps1` | Links `orcel-authority.exe` with `/DEPENDENTLOADFLAG:0x800` (its imports resolve from System32 only, never from the staging folder); the CI release build links the C runtime statically; the script checks both on the artifact |
+| `.github/workflows/ci.yml` job `authority-artifact` | Builds the three binaries for the exact commit, attests the build provenance of every file, checks it with `gh attestation verify` and uploads them with `SHA256SUMS.txt` as a workflow artifact (no release) |
+| `.github/workflows/ci.yml` job `authority-install-e2e`, `scripts/authority-install-e2e.ps1` | Runs the runbook's Stage, Install and Uninstall command lines on a disposable runner in a hostile environment and checks staging ACLs, refusals, rollback, install, fail-closed grant and reset, recovery and uninstall (JSON report) |
 
 Deviation from the spec's layout: the service binary lives in `crates/orcel-authority` (`[[bin]]`) instead of
 `apps/orcel-authority-service`, because `crates/orceld/tests/dependency_direction.rs` refuses path packages
@@ -132,8 +134,8 @@ and when `lease-signing.key` is missing while audit records exist (it never sile
 
 `\\.\pipe\orcel-authority`, created at start with `FILE_FLAG_FIRST_PIPE_INSTANCE` and `PIPE_REJECT_REMOTE_CLIENTS`:
 a pre-existing name makes the service refuse to run (event 4103). SDDL
-`O:<svc>G:<svc>D:P(A;;FA;;;<svc>)(A;;0x00120003;;;IU)`: INTERACTIVE gets exactly
-`FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | READ_CONTROL`, never `FILE_APPEND_DATA`
+`O:<svc>G:<svc>D:P(A;;FA;;;<svc>)(A;;0x00120083;;;IU)`: INTERACTIVE gets exactly
+`FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE | READ_CONTROL` (`CreateFileW` adds `FILE_READ_ATTRIBUTES` to every open, so without it every non-owner client is refused; found by the CI install E2E), never `FILE_APPEND_DATA`
 (`FILE_CREATE_PIPE_INSTANCE`) or `GENERIC_WRITE`. Clients open with exactly that mask and, before sending
 anything, check `GetNamedPipeServerProcessId` against the service PID from `QueryServiceStatusEx` and the pipe
 owner against the SID of `NT SERVICE\OrcelAuthority`. Console mode uses `\\.\pipe\orcel-authority-console-<s>`.
