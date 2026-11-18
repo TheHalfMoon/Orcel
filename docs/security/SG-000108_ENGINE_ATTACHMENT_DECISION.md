@@ -751,12 +751,19 @@ A fresh-context judge's first round on this slice was BLOCK. The destination-nam
       - the page probe saw 0 datagrams and 0 connections to the LAN, with 36 ephemeral ICE UDP endpoints, so the WebRTC probe ran;
       - the unconfined control still showed mDNS sockets on 5353.
     - **One failure, recorded:** in run 39881425295 two fixture navigations hit their typed `TimedOut` bound, and one worker did not answer `bye` and was ended non-gracefully, with its profile removed. No confinement probe failed. The non-graceful shutdown stopped that test before its process-death and residue checks ran, so those are unverified for that run; the shutdown report showed `job_empty` and `profile_removed` true. This is the transient class tracked in #438, also seen on Chromium 155, and the confined argv is unchanged. If 156 later fails clearly more often than 155, the qualification is revisited.
+  - **Chrome 157:** windows-latest image 20261116.315.1, Chromium 157.0.8103.79, added by #819. A10 refused it at every launch, so on that image every native host test that starts a lifetime failed with `Unavailable(UnsupportedEngine)` (for example run 44390226553, job Node / windows-latest). The evidence is CI's native suite on that engine, on #819's head `1b935a7`, with the argv unchanged.
+    - **Full pass:** run 44407506268, attempt 2 (job 135189483917). The suite reported `SG108-EVIDENCE engine: Chromium 157.0.8103.79 (worker qualified: true)`. The host's 38/38 native tests drove real 157 lifetimes, the #324 endpoint tests included:
+      - the confined lifetime's idle endpoints over 90 s were `[]`;
+      - the page probe saw 0 datagrams and 0 connections to the LAN, with 36 ephemeral ICE UDP endpoints, so the WebRTC probe ran;
+      - the unconfined control still showed mDNS sockets on 5353.
+    - The worker-host 10/10, the orceld live 6/6 and the dev-host stages also passed, but on CI they pass by refusing the lifetime typed (`managed policy present`), so they do not drive a 157 lifetime there. The worker's own `npm test` passed 269/269.
+    - Attempt 1 of the same run landed on the older image 20261103.298.1 (Chromium 156.0.8078.80) and passed; it is not 157 evidence. The runner image rollout is gradual, so CI may run either major until it completes.
 - **Why a list of qualified majors, not a range.** The engine-drift risk above means a new engine can change how it honours a confinement flag. The leaks #324 found came from services that only some engine builds start. So "supported" means that every probe re-ran on that version, not that playwright-core can attach. A range would admit versions no probe has run on.
 - **What it is checked with.**
   - **Discovery, unchanged:** the engine's kind, path and Authenticode publisher are verified as before (SG-000074).
   - **The window, at launch.** Unit tests:
     - `only_qualified_engine_versions_run_the_worker`;
-    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 158, Chrome 158 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule. The first test also asserts that Chromium 154 is qualified while Edge 154 stays refused: each kind has its own majors (Edge 156 is qualified since #480, Edge 157 since the change that qualified it, below, and Chrome 157 since its own CI qualification).
+    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 158, Chrome 158 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule. The first test also asserts that Chromium 154 is qualified while Edge 154 stays refused: each kind has its own majors (Edge 156 is qualified since #480, Edge 157 since the change that qualified it, below, and Chrome 157 since #819).
   - **Native:** every native test runs under the window on the installed engine, which the suite reports once per run.
   - **`an_engine_replaced_after_discovery_is_refused_at_launch`:**
     - a held, qualified engine (a copy of the installed Edge) passes `validate_launch`;

@@ -61,9 +61,9 @@ impl EngineKind {
 /// - Chrome 156: windows-latest image 20261021 (Chromium 156.0.8078.48):
 ///   four full native-suite passes with the endpoint probes on #431's head
 ///   (runs recorded in the engine-attachment decision, A10).
-/// - Chrome 157: windows-latest runner Chromium 157.0.8103.79: the native
-///   suite passes with the endpoint probes on the PR that added it (runs
-///   recorded in the engine-attachment decision, A10).
+/// - Chrome 157: windows-latest image 20261116 (Chromium 157.0.8103.79):
+///   a full native-suite pass with the endpoint probes on #819's head
+///   (run recorded in the engine-attachment decision, A10).
 ///
 /// A new major is added only by a PR whose own native-suite run passes on
 /// it. Any other kind or major is refused at launch with a typed error.
