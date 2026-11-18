@@ -632,25 +632,25 @@
     {
       "path": "assets/illustrations/character-approving.svg",
       "kind": "illustration",
-      "sha256": "f03643b4661d91af28c457e4afd9d64654263688c82b7d23d343f92094c17ef1",
+      "sha256": "1fb1b2c135449612e3dff728e8389c7e247784da926e0e72d1efe1fa3c38ff5f",
       "background": "light"
     },
     {
       "path": "assets/illustrations/character-delegating.svg",
       "kind": "illustration",
-      "sha256": "45d626ad85404f017826afdcec0842eb3ed9e7ae06f18c185fb5c4158834a875",
+      "sha256": "c35b95b90423a72602c9344590950ca1c88b6c38d4febd6532e00ffda06b5d5e",
       "background": "light"
     },
     {
       "path": "assets/illustrations/character-directing.svg",
       "kind": "illustration",
-      "sha256": "5ab06ee3168b573d15cd9d3aff08f972e3b99dba0bbdff48f88ada4482746c55",
+      "sha256": "41a57884ed8f52b5cdd78f7a490b07fafbc50dc9be1c1640152e8ec8ea9be113",
       "background": "light"
     },
     {
       "path": "assets/illustrations/character-reviewing.svg",
       "kind": "illustration",
-      "sha256": "99f7d85f19f72a5b20a00cf04e60e58877ace361a0bc190f81ea509e3cee82c1",
+      "sha256": "0a10827a8eaf808ccd1121285ecff1023a09188f3b431351b53e2b55f52a7afa",
       "background": "light"
     },
     {
