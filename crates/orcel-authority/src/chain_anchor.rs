@@ -21,11 +21,21 @@
 //!
 //! The same anchor twice is answered as held without a second record.
 //! Everything the caller sends is its claim (`asserted_by_session`).
+//!
+//! Owner recovery (`AnchorReset`): a lost or replaced chain would otherwise
+//! stop Orcel for good. The installed owner CLI, elevated under UAC Always
+//! notify (the enrollment checks), records a reset intent; the service
+//! renders a confirmation naming the log and the held head it abandons; on
+//! Yes it records a signed `anchor_reset` in its chain and the Event Log and
+//! accepts the next new, unlinked first file of that log. The CLI opens that
+//! file with the reset record's digest, and the verifier reports it as
+//! `reset_by_owner`.
 
-use super::{is_lower_hex, observed, write_atomically, AuthorityCore};
+use super::{is_lower_hex, observed, write_atomically, AuthorityCore, Awaiting, Purpose};
 use crate::caller::{CallerFacts, CallerRole};
 use crate::error::AuthorityError;
 use crate::protocol::ChainLink;
+use crate::protocol::ClaimedOrigin;
 use orcel_contracts::event::AnchorRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -40,6 +50,9 @@ pub const CHAIN_ANCHORS_FILE: &str = "chain-anchors.json";
 pub const ANCHORS_PER_MINUTE: usize = 120;
 /// The only log anchored here.
 const ORCELD_LOG: &str = "orceld";
+/// `file_id` of a log whose anchor the owner reset: the next new first file
+/// is accepted. `seq` and `digest` then hold the reset record's.
+const RESET_MARK: &str = "reset-by-owner";
 /// Files a log left that are still refused by id.
 const MAX_LEFT_FILES: usize = 64;
 const CONTRACT: &str = "orcel.authority-chain-anchors/1";
@@ -88,6 +101,16 @@ fn decide(
     let Some(held) = held else {
         return Ok(Decision::Hold { new_file: true });
     };
+    if held.file_id == RESET_MARK {
+        return if held.left_files.contains(&anchor.file_id) {
+            Err(AuthorityError::denied(format!(
+                "{REFUSED_PREFIX}the owner reset this log's anchor; the file it abandoned is not \
+                 accepted again"
+            )))
+        } else {
+            Ok(Decision::Hold { new_file: true })
+        };
+    }
     if anchor.file_id == held.file_id {
         return if anchor.seq > held.seq {
             Ok(Decision::Hold { new_file: false })
@@ -147,15 +170,20 @@ impl AuthorityCore {
         role: CallerRole,
         log: &str,
     ) -> Result<Value, AuthorityError> {
-        if role != CallerRole::Orceld {
+        let owner_cli = role == CallerRole::Interactive && self.policy.is_owner_cli(caller);
+        if role != CallerRole::Orceld && !owner_cli {
             return Err(AuthorityError::denied(
-                "only orceld (a configured trusted image) may read its chain anchors",
+                "only orceld or the installed Orcel CLI may read the chain anchors",
             ));
         }
         Self::require_known(role, caller)?;
         let anchors = self.load_chain_anchors()?;
         Ok(
             match anchors.logs.get(&format!("{}|{log}", caller.user_sid)) {
+                Some(held) if held.file_id == RESET_MARK => json!({
+                    "held": Value::Null,
+                    "reset": {"event_digest": held.digest, "authority_seq": held.seq},
+                }),
                 Some(held) => json!({
                     "held": {
                         "log": log,
@@ -167,6 +195,115 @@ impl AuthorityCore {
                 None => json!({"held": Value::Null}),
             },
         )
+    }
+
+    /// `Request::AnchorReset`: the owner's elevated, confirmed recovery.
+    pub(super) fn anchor_reset_begin(
+        &mut self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        origin: ClaimedOrigin,
+        log: &str,
+    ) -> Result<Value, AuthorityError> {
+        self.require_elevated_owner(caller, role, origin)?;
+        if log != ORCELD_LOG {
+            return Err(AuthorityError::invalid(
+                "only orceld's audit chain is anchored here",
+            ));
+        }
+        let anchors = self.load_chain_anchors()?;
+        let held = anchors
+            .logs
+            .get(&format!("{}|{log}", caller.user_sid))
+            .filter(|held| held.file_id != RESET_MARK)
+            .ok_or_else(|| {
+                AuthorityError::invalid("the service holds no anchor of this log; nothing to reset")
+            })?;
+        let held = AnchorRef {
+            log: log.to_owned(),
+            file_id: held.file_id.clone(),
+            seq: held.seq,
+            digest: held.digest.clone(),
+        };
+        let asserted = json!({
+            "origin": origin,
+            "anchor_reset": {"log": log, "file_id": held.file_id, "seq": held.seq, "digest": held.digest},
+        });
+        let mut answer = self.record_confirmed_intent(
+            caller,
+            role,
+            Purpose::AnchorReset { held: held.clone() },
+            asserted,
+        )?;
+        answer["held"] = json!({"file_id": held.file_id, "seq": held.seq, "digest": held.digest});
+        Ok(answer)
+    }
+
+    /// A confirmed anchor reset: the held head is abandoned (its file joins
+    /// the files the log left), a signed `anchor_reset` is recorded, and the
+    /// next new first file of the log is accepted.
+    pub(super) fn finish_anchor_reset(
+        &mut self,
+        index: usize,
+        held: &AnchorRef,
+    ) -> Result<(), AuthorityError> {
+        let sid = self.intents[index].sid.clone();
+        let intent_id = self.intents[index].id.clone();
+        let key = format!("{sid}|{}", held.log);
+        let mut anchors = self.load_chain_anchors()?;
+        let Some(current) = anchors.logs.get(&key).cloned() else {
+            self.intents.remove(index);
+            return Err(AuthorityError::invalid(
+                "the held anchor is gone; nothing was reset",
+            ));
+        };
+        if current.file_id != held.file_id
+            || current.seq != held.seq
+            || current.digest != held.digest
+        {
+            self.intents.remove(index);
+            return Err(AuthorityError::invalid(
+                "the held anchor moved while the reset was pending; nothing was reset",
+            ));
+        }
+        let record = self.audit_service(
+            "anchor_reset",
+            json!({
+                "decision": "reset",
+                "intent_id": intent_id,
+                "log": held.log,
+                "abandoned": {"file_id": held.file_id, "seq": held.seq, "digest": held.digest},
+            }),
+        )?;
+        let mut left_files = current.left_files;
+        left_files.push(current.file_id);
+        if left_files.len() > MAX_LEFT_FILES {
+            left_files.remove(0);
+        }
+        anchors.logs.insert(
+            key,
+            LogState {
+                file_id: RESET_MARK.to_owned(),
+                seq: record.seq,
+                digest: record.digest.clone(),
+                left_files,
+                recent_ms: current.recent_ms,
+            },
+        );
+        let bytes = serde_json::to_vec_pretty(&anchors).map_err(|error| {
+            AuthorityError::internal(format!("encode the chain anchors: {error}"))
+        })?;
+        write_atomically(&self.chain_anchors_path(), &bytes)?;
+        self.intents[index].state = Awaiting::Done;
+        self.event(
+            crate::EVENT_ANCHOR,
+            false,
+            &format!(
+                "orcel-anchor-reset/1|{}|{}|{}|{}|record {}",
+                held.log, held.file_id, held.seq, held.digest, record.digest
+            ),
+        )?;
+        Ok(())
     }
 
     /// `Request::Anchor`.

@@ -763,6 +763,13 @@ fn handle_browser_lease(
     // SG-000132 slice 2: orceld issues no lease; list and revoke go to the
     // authority service.
     let _ = approval;
+    // WP1-03: the dispatch record first. A revoke only takes authority away,
+    // so, like `task.stop`, it is never withheld for want of a record.
+    if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+        if request.capability != "browser.lease.revoke" {
+            return *refused;
+        }
+    }
     let manager = authority_link::ServiceLeaseManager::for_this_build();
     let result = browser_lease::dispatch_management(&manager, &request, orcel_approval::now_ms());
     finish(audit, request, POLICY_REVISION, result)

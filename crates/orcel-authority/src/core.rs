@@ -324,6 +324,10 @@ enum Purpose {
     Reset {
         key_digest: String,
     },
+    /// WP1-03: abandon the held anchor of an audit chain (`held`).
+    AnchorReset {
+        held: orcel_contracts::event::AnchorRef,
+    },
 }
 
 impl Purpose {
@@ -332,6 +336,7 @@ impl Purpose {
             Self::Grant { .. } => "grant",
             Self::Enroll { .. } => "enroll",
             Self::Reset { .. } => "reset",
+            Self::AnchorReset { .. } => "anchor_reset",
         }
     }
 }
@@ -764,6 +769,9 @@ impl AuthorityCore {
                 self.anchor_chain(caller, role, &anchor, link.as_ref())
             }
             Request::AnchorStatus { log } => self.anchor_status(caller, role, &log),
+            Request::AnchorReset { origin, log } => {
+                self.anchor_reset_begin(caller, role, origin, &log)
+            }
         }
     }
 
@@ -1544,6 +1552,9 @@ impl AuthorityCore {
             other => other.as_str().to_owned(),
         };
         if answer == ConfirmAnswer::Yes && in_window {
+            if let Purpose::AnchorReset { held } = self.intents[index].purpose.clone() {
+                return self.finish_anchor_reset(index, &held);
+            }
             if let Purpose::Reset { key_digest } = self.intents[index].purpose.clone() {
                 return self.finish_reset(index, &key_digest);
             }
@@ -2225,6 +2236,15 @@ fn confirmation_text(intent: &Intent) -> String {
             "An elevated program asked to REMOVE your enrolled Orcel Windows Hello key. Every Orcel lease of yours ends now, and no grant is possible until you enroll again.\n\nCode: {}\nKey fingerprint (SHA-256): {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel authority reset command printed this code.\n\nRemove this key?",
             intent.code,
             key_fingerprint(key_digest),
+        ),
+        Purpose::AnchorReset { held } => format!(
+            "An elevated program asked to RESET the Orcel audit chain anchor of the log {}. The service stops holding the head below and accepts a NEW, unlinked first chain file for this log: nothing recorded before it is continued, and the new file says so. Do this only if you lost or replaced the audit chain yourself and cannot restore it.\n\nCode: {}\nLog: {}\nHeld chain file: {}\nHeld head: seq {}, digest {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel audit reset-anchor command printed this code.\n\nReset this anchor?",
+            held.log,
+            intent.code,
+            held.log,
+            held.file_id,
+            held.seq,
+            held.digest,
         ),
     }
 }

@@ -305,6 +305,60 @@ fn reset() -> Result<Output, LifecycleError> {
     ))
 }
 
+/// WP1-03 `orcel audit reset-anchor [--pause]`: the owner's recovery for a
+/// lost or replaced audit chain (SG132_INSTALL_RUNBOOK.md).
+pub fn audit(args: &mut Args) -> Result<Output, LifecycleError> {
+    let action = args.positional("audit action (reset-anchor)")?;
+    match action.as_str() {
+        "reset-anchor" => {
+            let pause = args.flag("--pause");
+            args.finish()?;
+            let result = reset_anchor();
+            if let Err(error) = &result {
+                eprintln!("orcel audit reset-anchor: {error}");
+            }
+            pause_if(pause);
+            result
+        }
+        other => Err(LifecycleError::usage(format!(
+            "unknown audit action {other:?}; run orcel help"
+        ))),
+    }
+}
+
+#[cfg(windows)]
+fn reset_anchor() -> Result<Output, LifecycleError> {
+    use authority_grant::hello;
+    if !hello::this_process_is_elevated() {
+        return Err(LifecycleError::prerequisite(
+            "start `orcel audit reset-anchor` elevated, directly (Start-Process -Verb RunAs on %ProgramFiles%\\Orcel\\orcel.exe): the UAC prompt on the secure desktop is the human gate",
+        ));
+    }
+    let chain = orcel_audit::default_audit_path()
+        .map(|plain| orcel_audit::chain_path_for(&plain))
+        .map_err(|error| LifecycleError::state(format!("resolve the audit chain: {error}")))?;
+    let client = installed_client()?;
+    let status =
+        authority_grant::run_anchor_reset(&client, orcel_audit::ORCELD_LOG, &mut progress)?;
+    let opened = authority_grant::open_reset_chain(&chain, &status)?;
+    Ok(Output {
+        exit_code: 0,
+        human: format!(
+            "The Orcel authority service reset its audit anchor of orceld's chain (record {}). A new first chain file was opened at {}; it is reported as reset_by_owner by `orceld audit-verify`. Restart orceld so it writes to the new file.\n",
+            status["reset"]["event_digest"].as_str().unwrap_or("?"),
+            chain.display()
+        ),
+        json: json!({ "ok": true, "anchor_reset": opened }),
+    })
+}
+
+#[cfg(not(windows))]
+fn reset_anchor() -> Result<Output, LifecycleError> {
+    Err(LifecycleError::prerequisite(
+        "the Orcel authority service is Windows only in this slice",
+    ))
+}
+
 /// `orcel browser grant|leases|revoke` (SG-000135 Full Access through the
 /// service only).
 pub fn browser(args: &mut Args) -> Result<Output, LifecycleError> {

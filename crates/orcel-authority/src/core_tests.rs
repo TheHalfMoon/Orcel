@@ -1698,3 +1698,100 @@ fn review_reverify_the_builtin_administrator_needs_admin_approval_mode() -> Resu
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+/// WP1-03 owner recovery: only the elevated owner CLI may ask; the
+/// service-rendered confirmation names the log and the held head; No
+/// changes nothing; Yes records a signed `anchor_reset`, reports the reset
+/// to orceld and the CLI, accepts a new unlinked first file, and keeps
+/// refusing the abandoned one.
+#[test]
+fn wp103_an_owner_anchor_reset_is_elevated_confirmed_and_recorded() -> Result<(), String> {
+    let dir = temp_dir("anchor-reset")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let reset = || Request::AnchorReset {
+        origin: ClaimedOrigin::OwnerCli,
+        log: "orceld".to_owned(),
+    };
+    assert_eq!(
+        code(core.handle(&elevated_owner(), reset())),
+        Some(FailureCode::InvalidRequest),
+        "nothing held, nothing to reset"
+    );
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    for caller in [owner(), other_process(), orceld()] {
+        assert_eq!(
+            code(core.handle(&caller, reset())),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    let status = |core: &mut AuthorityCore, caller: &CallerFacts| {
+        core.handle(
+            caller,
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    // No: nothing changes.
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    assert_eq!(begun["held"]["seq"], 31);
+    let id = str_of(&begun, "intent_id")?;
+    let tasks = core.take_pending_confirmations();
+    let text = &tasks[0].text;
+    assert!(
+        text.contains("RESET") && text.contains("Log: orceld"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&"a".repeat(64)) && text.contains("seq 31"),
+        "{text}"
+    );
+    assert!(text.contains(&str_of(&begun, "code")?), "{text}");
+    core.confirmation_answer(&id, ConfirmAnswer::No)
+        .map_err(|e| e.to_string())?;
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"]["seq"], 31);
+    // Yes: reset, recorded and signed.
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.take_pending_confirmations();
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let done = ok(core.handle(&elevated_owner(), Request::IntentStatus { intent_id: id }))?;
+    assert_eq!(str_of(&done, "state")?, "completed");
+    let after = ok(status(&mut core, &orceld()))?;
+    assert_eq!(after["held"], Value::Null);
+    let digest = after["reset"]["event_digest"]
+        .as_str()
+        .ok_or("the reset record digest")?
+        .to_owned();
+    // The owner CLI reads the same status (to open the new file).
+    assert_eq!(
+        ok(status(&mut core, &owner()))?["reset"]["event_digest"],
+        digest.as_str()
+    );
+    assert!(
+        events
+            .with_id(crate::EVENT_ANCHOR)
+            .iter()
+            .any(|text| text.contains("orcel-anchor-reset/1|orceld|")
+                && text.contains(&format!("record {digest}"))
+                && text.contains("|sig=")),
+        "{:?}",
+        events.with_id(crate::EVENT_ANCHOR)
+    );
+    let audit =
+        std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
+    assert!(audit
+        .lines()
+        .any(|line| line.contains("\"kind\":\"anchor_reset\"") && line.contains(&digest)));
+    // The new unlinked first file is accepted; the abandoned one is not.
+    let fresh = ok(core.handle(&orceld(), anchor_request('d', 31, 'e', None)))?;
+    assert_eq!(fresh["new_file"], Value::Bool(true));
+    assert_eq!(
+        code(core.handle(&orceld(), anchor_request('a', 63, 'c', None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}

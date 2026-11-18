@@ -90,6 +90,12 @@ pub enum Request {
     },
     /// Slice 2: remove the caller's enrolled key (elevated, confirmed).
     ResetEnrollment { origin: ClaimedOrigin },
+    /// WP1-03: the owner's recovery for a lost or replaced audit chain.
+    /// Only the installed owner CLI, elevated, under UAC Always notify (the
+    /// enrollment checks); a service-rendered confirmation names the log and
+    /// the held head it abandons; on Yes the service records a signed
+    /// `anchor_reset` and accepts a new, unlinked first file for the log.
+    AnchorReset { origin: ClaimedOrigin, log: String },
     /// Where the caller's pending intent stands; carries the challenge once
     /// the confirmation was answered Yes.
     IntentStatus { intent_id: String },
@@ -153,6 +159,7 @@ impl Request {
             Self::GrantBegin { .. } => "grant_begin",
             Self::EnrollBegin { .. } => "enroll_begin",
             Self::ResetEnrollment { .. } => "reset_enrollment",
+            Self::AnchorReset { .. } => "anchor_reset",
             Self::IntentStatus { .. } => "intent_status",
             Self::PresenceComplete { .. } => "presence_complete",
             Self::CancelIntent { .. } => "cancel_intent",
