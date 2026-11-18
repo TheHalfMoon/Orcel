@@ -55,6 +55,13 @@ import {
  *   a Shadow session a re-run in a Visible one). Once Orcel's own read-only
  *   check no longer sees it and three quiet seconds passed, the page must be
  *   observed again (`browser_snapshot`) before any action.
+ * - SG-000135 OB-06: in a Visible session, keyboard or mouse input while
+ *   the session's own window is in front is a person taking the browser
+ *   over: every action on the session's pages is refused with
+ *   `HUMAN_TAKEOVER` (nothing was done) until three seconds pass with no
+ *   such input; then the page must be observed again before any action.
+ *   Orcel only reads when the last input happened and which window is in
+ *   front; it never injects input. A Shadow session has no window.
  * - SG-000135 OB-04: `browser_session_create` takes an optional `mode`:
  *   `shadow` (the default: headless; Orcel never uses the person's mouse,
  *   keyboard, clipboard, focus or foreground window, though a page can still
@@ -348,7 +355,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_task_status",
     {
-      description: `Read the session's state, budgets and its provisional receipts: one per action, with the page, generation before and after, outcome, evidence digest and a digest chain. Receipts are Orcel's own records, never a model summary. Also lists under needs_you each page that waits for a person to complete a sign-in, code, passkey or CAPTCHA check (Orcel never completes one; actions on it are refused with HUMAN_VERIFICATION_REQUIRED), and the active page's state; read it again until the page no longer needs you, then take a new snapshot before acting. full_access is the session's Full Access lease, read-only: its origins, action families, expiry and whether it is active; no tool can issue, widen or renew one. ${DEV_ONLY}`,
+      description: `Read the session's state, budgets and its provisional receipts: one per action, with the page, generation before and after, outcome, evidence digest and a digest chain. Receipts are Orcel's own records, never a model summary. Also lists under needs_you each page that waits for a person to complete a sign-in, code, passkey or CAPTCHA check (Orcel never completes one; actions on it are refused with HUMAN_VERIFICATION_REQUIRED), and the active page's state; read it again until the page no longer needs you, then take a new snapshot before acting. While a person uses a Visible session's window, actions are refused with HUMAN_TAKEOVER and page_state is HUMAN_OVERRIDE or QUIET; three seconds after their last input it moves on, and a new snapshot comes before acting. full_access is the session's Full Access lease, read-only: its origins, action families, expiry and whether it is active; no tool can issue, widen or renew one. ${DEV_ONLY}`,
       inputSchema: browserSessionSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id }) => forward("browser_task_status", workspace_id, { session_id }, OBSERVE_TIMEOUT_MS)

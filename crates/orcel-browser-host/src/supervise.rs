@@ -44,6 +44,13 @@ impl SupervisedChild {
         self.inner.is_alive()
     }
 
+    /// SG-000135 OB-06: an owned handle of the family's job, for membership
+    /// queries only.
+    #[cfg(windows)]
+    pub fn job_handle(&self) -> Option<std::os::windows::io::OwnedHandle> {
+        self.inner.job_handle()
+    }
+
     /// Terminate the whole supervised family and confirm it is gone.
     /// Returns true only when no process remains.
     pub fn shutdown(self) -> Result<bool, HostError> {
@@ -203,6 +210,18 @@ pub(crate) mod platform {
                 }
                 Waiter::Child(child) => matches!(child.try_wait(), Ok(None)),
             }
+        }
+
+        /// SG-000135 OB-06: a handle of this child's job of its own (the
+        /// same access), so a caller can ask whether a process belongs to
+        /// the supervised family (every descendant stays in the job: it
+        /// allows no breakaway). `None` if it could not be duplicated.
+        pub fn job_handle(&self) -> Option<std::os::windows::io::OwnedHandle> {
+            use std::os::windows::io::{BorrowedHandle, RawHandle};
+            // SAFETY: the job handle is open for as long as `self` lives,
+            // which outlives this borrow; the clone is a new handle.
+            let borrowed = unsafe { BorrowedHandle::borrow_raw(self.job.handle() as RawHandle) };
+            borrowed.try_clone_to_owned().ok()
         }
 
         pub fn shutdown(mut self) -> Result<bool, HostError> {

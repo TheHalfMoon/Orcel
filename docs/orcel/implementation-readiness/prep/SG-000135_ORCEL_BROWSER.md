@@ -113,7 +113,9 @@ Dependencies:
 
 1. The multi-origin model. The default is to relaunch for each set of admitted origins; the other option is to
    widen the resolver rules by lease.
-2. Where human events come from in Visible mode, given that page script stays forbidden.
+2. Where human events come from in Visible mode, given that page script stays forbidden. Recorded by OB-06: the OS
+   last-input instant while the session's own window is in front, read-only
+   ([`OB06_HUMAN_TAKEOVER.md`](OB06_HUMAN_TAKEOVER.md)).
 3. The headed argv set.
 4. The signals that mark an action as high-impact. A submit's effect cannot be known in advance; this is recorded
    as a limit, as SG-000122 did.

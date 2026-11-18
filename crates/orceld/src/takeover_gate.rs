@@ -41,17 +41,27 @@
 //! must observe it again before it writes. The agent has no call that can
 //! clear a challenge.
 //!
-//! Nothing feeds human input events into the gate yet: the engine adapter
-//! that reports trusted input events per page (and attaches Orcel's markers
-//! to the agent's own) is the next step, through
-//! [`TakeoverGate::session_gate`]. Its one caller is the live browser, so
-//! outside the live builds the module is unused (its declaration allows
-//! that).
+//! SG-000135 OB-06: a Visible session's window is watched for a person's
+//! input (`human_input.rs`: the operating system's last-input instant while
+//! the session's own window is in front; no page script, no OS input
+//! injection). Every reading that shows such input puts every page of the
+//! session in `HUMAN_OVERRIDE` from the instant the input happened; each
+//! further input restarts the 3000 ms quiet period, measured on the gate's
+//! monotonic clock. The source is read again right before every gate
+//! decision (read, write, dispatch, a write's end, a page opening, a status
+//! read), so a decision never misses input the operating system already
+//! saw. While a page is held, every agent action on it is refused with
+//! `HUMAN_TAKEOVER` (never queued: the agent reads the status and observes
+//! again). A Shadow session has no window and no source: only the explicit
+//! controls of [`TakeoverGate::session_gate`] could hold it, and no caller
+//! offers them yet. The gate's one caller is the live browser, so outside
+//! the live builds the module is unused (its declaration allows that).
 
+use crate::human_input::HumanInputMonitor;
 use orcel_browser_session::{
-    ActionClass, ActionKey, ChallengeKind, ChallengeOrigin, Clock, ReadTicket, Reads, Reason,
-    Refusal, RefusalClass, ResourceId, SessionGate, SharedLedger, State, SystemClock, TaskId,
-    UncertainLedger, WriteOutcome, WriteTicket,
+    ActionClass, ActionKey, ChallengeKind, ChallengeOrigin, Clock, InputKind, InputPhase,
+    ObservedInput, ReadTicket, Reads, Reason, Refusal, RefusalClass, ResourceId, SessionGate,
+    SharedLedger, State, SystemClock, TaskId, UncertainLedger, WriteOutcome, WriteTicket, QUIET_MS,
 };
 use orcel_contracts::FailureCode;
 use orcel_provider_fs::ProviderError;
@@ -103,6 +113,12 @@ pub(crate) struct TakeoverGate<C: Clock = SystemClock> {
     pending_class: Option<ActionClass>,
     /// The client-scoped key of the consequential write in progress.
     pending_client_key: Option<ActionKey>,
+    /// SG-000135 OB-06: a Visible session's input source (`None` for a
+    /// Shadow session, or while the gate is off).
+    human: Option<HumanInputMonitor>,
+    /// SG-000135 OB-06: the latest person's input on the session's window
+    /// the gate was handed, on its clock.
+    last_human: Option<orcel_browser_session::Millis>,
 }
 
 impl TakeoverGate<SystemClock> {
@@ -132,6 +148,35 @@ impl TakeoverGate<SystemClock> {
         ));
         self.ledger = Some(ledger);
     }
+
+    /// SG-000135 OB-06: watch a Visible session's window for a person's
+    /// input. `host_pid` and `host_created` name the browser host the
+    /// session launched; the engine's windows belong to its descendants.
+    /// Called once the gate is on, before any page opens.
+    ///
+    /// # Errors
+    /// `PROVIDER_UNAVAILABLE` when the gate is off or this operating system
+    /// has no input source: a Visible session then does not run (fail
+    /// closed), since no person's input could hold the agent.
+    #[cfg_attr(not(feature = "live-browser-dev"), allow(dead_code))]
+    pub(crate) fn watch_visible_window(
+        &mut self,
+        probe: Option<Box<dyn crate::human_input::InputProbe>>,
+    ) -> Result<(), ProviderError> {
+        let unavailable = || {
+            ProviderError::new(
+                FailureCode::ProviderUnavailable,
+                "a visible browser session needs a source of the person's input on this system, and there is none; nothing was opened",
+            )
+        };
+        let clock = *self.gate.as_ref().ok_or_else(unavailable)?.clock();
+        let probe = probe.ok_or_else(unavailable)?;
+        self.human = Some(HumanInputMonitor::polling(
+            probe,
+            Box::new(move || clock.now()),
+        ));
+        Ok(())
+    }
 }
 
 impl<C: Clock> TakeoverGate<C> {
@@ -145,6 +190,8 @@ impl<C: Clock> TakeoverGate<C> {
             ledger: None,
             pending_class: None,
             pending_client_key: None,
+            human: None,
+            last_human: None,
         }
     }
 
@@ -168,7 +215,106 @@ impl<C: Clock> TakeoverGate<C> {
             ledger: Some(ledger),
             pending_class: None,
             pending_client_key: None,
+            human: None,
+            last_human: None,
         }
+    }
+
+    /// SG-000135 OB-06: read `monitor` for a person's input before every
+    /// decision (tests give a scripted one; a Visible session's comes from
+    /// `watch_visible_window`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn watch(&mut self, monitor: HumanInputMonitor) {
+        self.human = Some(monitor);
+    }
+
+    /// SG-000135 OB-06: where a person's input comes from, for the status:
+    /// `visible_window` while a Visible session's window is watched, `none`
+    /// otherwise (a Shadow session has no window).
+    #[cfg_attr(not(feature = "live-browser-dev"), allow(dead_code))]
+    pub(crate) fn input_source(&self) -> &'static str {
+        if self.gate.is_some() && self.human.is_some() {
+            "visible_window"
+        } else {
+            "none"
+        }
+    }
+
+    /// SG-000135 OB-06: hand the person's latest input, if the source saw
+    /// any since the last decision, to every page the gate tracks, dated
+    /// when it happened. Which tab the person touched is not known, so all
+    /// of the session's pages are held (the safe side).
+    fn drain_human(&mut self) {
+        let (Some(monitor), Some(gate)) = (self.human.as_ref(), self.gate.as_mut()) else {
+            return;
+        };
+        let Some(at) = monitor.take() else {
+            return;
+        };
+        self.last_human = self.last_human.max(Some(at));
+        for page in self.basis.keys() {
+            person_on(gate, page, at);
+        }
+    }
+
+    /// SG-000135 OB-06: an Orcel approval prompt is about to show. The
+    /// input that answers it is not a person on the browser.
+    pub(crate) fn prompt_started(&mut self) {
+        self.drain_human();
+        if let Some(monitor) = &self.human {
+            monitor.prompt_started();
+        }
+    }
+
+    /// SG-000135 OB-06: the prompt closed; `answered` when a person
+    /// approved or denied it (only then is the input around its end the
+    /// answer rather than a person on the browser).
+    pub(crate) fn prompt_ended(&mut self, answered: bool) {
+        if let Some(monitor) = &self.human {
+            monitor.prompt_ended(answered);
+        }
+    }
+
+    /// SG-000135 OB-06: refuse an agent operation on the session as a whole
+    /// (opening, switching or closing a tab, adopting a popup, closing the
+    /// session) while a person holds any of it: their latest input on the
+    /// session's window is less than 3000 ms old, or a page is in
+    /// `HUMAN_OVERRIDE` or `QUIET`. Other holds (a page to observe again, a
+    /// challenge) concern their own page only.
+    ///
+    /// # Errors
+    /// `HUMAN_TAKEOVER`.
+    pub(crate) fn hold_session(&mut self) -> Result<(), ProviderError> {
+        self.drain_human();
+        let Some(gate) = self.gate.as_mut() else {
+            return Ok(());
+        };
+        let now = gate.clock().now();
+        if let Some(at) = self.last_human {
+            if now.since(at) < QUIET_MS {
+                let reason = if now > at {
+                    Reason::Quiet
+                } else {
+                    Reason::HumanOverride
+                };
+                return Err(refused(&Refusal {
+                    resource: ResourceId::new("session"),
+                    reason,
+                }));
+            }
+        }
+        for page in self.basis.keys() {
+            let resource = ResourceId::new(page.as_str());
+            if let Some(state @ (State::HumanOverride | State::Quiet)) = gate.state(&resource) {
+                let reason = if state == State::Quiet {
+                    Reason::Quiet
+                } else {
+                    Reason::HumanOverride
+                };
+                return Err(refused(&Refusal { resource, reason }));
+            }
+        }
+        Ok(())
     }
 
     /// SG-000135 OB-01: pages opened from now on belong to `task` (a broker
@@ -278,6 +424,7 @@ impl<C: Clock> TakeoverGate<C> {
     /// `page_id`'s state as of now (None when the gate is off or does not
     /// track it).
     pub(crate) fn page_state(&mut self, page_id: &str) -> Option<State> {
+        self.drain_human();
         self.gate
             .as_mut()
             .and_then(|gate| gate.state(&ResourceId::new(page_id)))
@@ -285,12 +432,21 @@ impl<C: Clock> TakeoverGate<C> {
 
     /// The live page opened: the live task owns it.
     pub(crate) fn page_opened(&mut self, page_id: &str) {
+        self.drain_human();
         if let Some(gate) = self.gate.as_mut() {
             if gate
                 .claim(ResourceId::new(page_id), TaskId::new(self.task.as_str()))
                 .is_ok()
             {
                 self.basis.insert(page_id.to_owned(), 0);
+                // SG-000135 OB-06: a page that opens while a person holds
+                // the session (a new tab, an adopted popup) is held with
+                // the rest, from the person's latest input.
+                if let Some(at) = self.last_human {
+                    if gate.clock().now().since(at) < QUIET_MS {
+                        person_on(gate, page_id, at);
+                    }
+                }
             }
         }
     }
@@ -308,6 +464,7 @@ impl<C: Clock> TakeoverGate<C> {
         &mut self,
         page_id: &str,
     ) -> Result<Option<ReadTicket>, ProviderError> {
+        self.drain_human();
         match self.gate.as_mut() {
             Some(gate) => {
                 Self::tracked(gate, page_id)?;
@@ -337,6 +494,7 @@ impl<C: Clock> TakeoverGate<C> {
         material: &str,
         class: ActionClass,
     ) -> Result<Option<WriteTicket>, ProviderError> {
+        self.drain_human();
         let Some(gate) = self.gate.as_mut() else {
             return Ok(None);
         };
@@ -436,6 +594,7 @@ impl<C: Clock> TakeoverGate<C> {
         &mut self,
         ticket: Option<&WriteTicket>,
     ) -> Result<(), ProviderError> {
+        self.drain_human();
         match (self.gate.as_mut(), ticket) {
             (Some(gate), Some(ticket)) => gate
                 .confirm_dispatch(ticket)
@@ -446,7 +605,13 @@ impl<C: Clock> TakeoverGate<C> {
 
     /// The write finished: `outcome` is the journal's word for it (`done`,
     /// `failed`, or anything else for unknown).
+    ///
+    /// SG-000135 OB-06: a person's input while the write was in flight is
+    /// handed to the gate first, so the write is settled as superseded (its
+    /// outcome is still recorded, and an uncertain consequential one is
+    /// still never admitted again) and nothing planned before it is sent.
     pub(crate) fn after_write(&mut self, ticket: Option<WriteTicket>, outcome: &str) {
+        self.drain_human();
         let client_key = self.pending_client_key.take();
         self.pending_class = None;
         if let (Some(key), Some(client), Some(ledger)) = (client_key, &self.client, &self.ledger) {
@@ -466,6 +631,20 @@ impl<C: Clock> TakeoverGate<C> {
             let _ = gate.finish_write(&ticket, outcome);
         }
     }
+}
+
+/// SG-000135 OB-06: a person's input at `at` on the session's window,
+/// on `page`.
+fn person_on<C: Clock>(gate: &mut SessionGate<C>, page: &str, at: orcel_browser_session::Millis) {
+    let _ = gate.observe_input_at(
+        &ObservedInput {
+            resource: ResourceId::new(page),
+            kind: InputKind::Device,
+            phase: InputPhase::Instant,
+            marker: None,
+        },
+        at,
+    );
 }
 
 /// A length-prefixed SHA-256 over `parts`, as an action key.
@@ -530,10 +709,21 @@ pub(crate) fn link_identity(url: &str) -> String {
 
 /// A refusal as orceld's closed failure code. A page that waits for a
 /// person's verification (SG-000135 OB-07) is `HUMAN_VERIFICATION_REQUIRED`
-/// ("Needs you"); the contract has no paused code, so every other refusal
-/// is `TARGET_STALE` (nothing was done; observe again later), and the
-/// message says which: paused, stale or ended.
+/// ("Needs you"); a page a person is using, or stopped using less than
+/// three seconds ago (SG-000135 OB-06), is `HUMAN_TAKEOVER`, whose message
+/// still starts "browser session paused" (a person interrupted the
+/// session); every other refusal is `TARGET_STALE` (nothing was done;
+/// observe again later), and the message says which: paused, stale or
+/// ended.
 fn refused(refusal: &Refusal) -> ProviderError {
+    if matches!(refusal.reason, Reason::HumanOverride | Reason::Quiet) {
+        return ProviderError::new(
+            FailureCode::HumanTakeover,
+            format!(
+                "browser session paused: {refusal}; the agent may act on it again 3 seconds after the person's last input, after observing it again"
+            ),
+        );
+    }
     if refusal.reason == Reason::AwaitingHumanVerification {
         return ProviderError::new(
             FailureCode::HumanVerificationRequired,
@@ -599,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn a_human_on_the_page_refuses_reads_and_writes_as_paused_target_stale() {
+    fn a_human_on_the_page_refuses_reads_and_writes_as_human_takeover() {
         let (_clock, mut gate) = on();
         human(&mut gate, "page-1");
         for refusal in [
@@ -608,7 +798,7 @@ mod tests {
                 .err(),
         ] {
             assert!(
-                matches!(&refusal, Some(error) if error.code == FailureCode::TargetStale
+                matches!(&refusal, Some(error) if error.code == FailureCode::HumanTakeover
                     && error.message.starts_with("browser session paused: human_override")),
                 "{refusal:?}"
             );
@@ -642,7 +832,7 @@ mod tests {
         assert!(ticket.is_some());
         human(&mut gate, "page-1");
         let refused = gate.before_dispatch(ticket.as_ref());
-        assert!(matches!(refused, Err(e) if e.code == FailureCode::TargetStale));
+        assert!(matches!(refused, Err(e) if e.code == FailureCode::HumanTakeover));
     }
 
     #[test]
@@ -1231,5 +1421,402 @@ mod tests {
             "{again:?}"
         );
         assert_eq!(authorized.get(), 0, "the lease was never used");
+    }
+}
+
+/// SG-000135 OB-06: the takeover gate driven by a Visible session's input
+/// source, on a manual clock and a scripted operating system (no real
+/// input is read or sent).
+#[cfg(test)]
+mod ob06_tests {
+    use super::*;
+    use crate::human_input::{HumanInputMonitor, InputProbe, Sample};
+    use orcel_browser_session::{ManualClock, QUIET_MS};
+    use std::sync::{Arc, Mutex, MutexGuard};
+
+    /// What the scripted operating system reports.
+    #[derive(Default)]
+    struct Os {
+        last_input: u32,
+        input_at: u64,
+        session_in_front: bool,
+        front_unknown: bool,
+        unreadable: bool,
+    }
+
+    struct ScriptedOs {
+        os: Arc<Mutex<Os>>,
+        clock: ManualClock,
+    }
+
+    impl InputProbe for ScriptedOs {
+        fn sample(&mut self) -> Option<Sample> {
+            let os = self.os.lock().unwrap_or_else(PoisonError::into_inner);
+            if os.unreadable {
+                return None;
+            }
+            Some(Sample {
+                last_input: os.last_input,
+                idle_ms: self.clock.now().0.saturating_sub(os.input_at),
+                session_in_front: os.session_in_front,
+                front_unknown: os.front_unknown,
+            })
+        }
+    }
+
+    struct Session {
+        clock: ManualClock,
+        os: Arc<Mutex<Os>>,
+        gate: TakeoverGate<ManualClock>,
+    }
+
+    impl Session {
+        /// A Visible session's gate with one page, its window in front.
+        fn visible(clock: &ManualClock) -> Self {
+            let os = Arc::new(Mutex::new(Os {
+                session_in_front: true,
+                ..Os::default()
+            }));
+            let mut gate = TakeoverGate::on(clock.clone());
+            let now = clock.clone();
+            gate.watch(HumanInputMonitor::manual(
+                Box::new(ScriptedOs {
+                    os: Arc::clone(&os),
+                    clock: clock.clone(),
+                }),
+                Box::new(move || now.now()),
+            ));
+            gate.page_opened("page-1");
+            Self {
+                clock: clock.clone(),
+                os,
+                gate,
+            }
+        }
+
+        fn os(&self) -> MutexGuard<'_, Os> {
+            self.os.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+
+        /// A key or click by the person now; `in_front` says whether the
+        /// session's window was in front.
+        fn input(&self, in_front: bool) {
+            let now = self.clock.now().0;
+            let mut os = self.os();
+            os.last_input = os.last_input.wrapping_add(1);
+            os.input_at = now;
+            os.session_in_front = in_front;
+        }
+
+        fn read(&mut self) -> Result<Option<ReadTicket>, ProviderError> {
+            self.gate.before_read("page-1")
+        }
+
+        fn write(&mut self, node: &str) -> Result<Option<WriteTicket>, ProviderError> {
+            self.gate
+                .before_write("page-1", "click", node, ActionClass::Repeatable)
+        }
+
+        /// A write admitted and finished at once.
+        fn write_done(&mut self, node: &str) -> bool {
+            match self.write(node) {
+                Ok(Some(ticket)) => {
+                    self.gate.after_write(Some(ticket), "done");
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        /// A read that observes the page afresh.
+        fn observe(&mut self) {
+            let ticket = self.read().ok().flatten();
+            assert!(ticket.is_some(), "the read is admitted");
+            self.gate.observed(ticket);
+        }
+    }
+
+    fn takeover<T: std::fmt::Debug>(result: &Result<T, ProviderError>) -> bool {
+        matches!(result, Err(error) if error.code == FailureCode::HumanTakeover
+            && error.message.starts_with("browser session paused: "))
+    }
+
+    #[test]
+    fn ob06_the_first_input_pauses_and_the_agent_resumes_exactly_3000_ms_after_it() {
+        let clock = ManualClock::at(1_000);
+        let mut session = Session::visible(&clock);
+        assert!(session.write_done("n1"));
+        clock.advance(100);
+        session.input(true);
+        let refused = session.write("n1");
+        assert!(takeover(&refused), "{refused:?}");
+        assert!(takeover(&session.read()), "reads are held too");
+        assert_eq!(
+            session.gate.page_state("page-1"),
+            Some(State::HumanOverride)
+        );
+        clock.advance(1);
+        assert_eq!(session.gate.page_state("page-1"), Some(State::Quiet));
+        clock.advance(QUIET_MS - 2);
+        assert!(takeover(&session.read()), "2999 ms after the input");
+        clock.advance(1);
+        assert_eq!(session.gate.page_state("page-1"), Some(State::Reobserve));
+        // The person's edits come first: a write before a fresh look is stale.
+        let stale = session.write("n1");
+        assert!(
+            matches!(&stale, Err(e) if e.code == FailureCode::TargetStale
+                && e.message.contains("reobserve_required")),
+            "{stale:?}"
+        );
+        session.observe();
+        assert!(session.write_done("n1"));
+    }
+
+    #[test]
+    fn ob06_every_input_restarts_the_quiet_period() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        for _ in 0..3 {
+            clock.advance(2_000);
+            session.input(true);
+            assert!(takeover(&session.read()));
+        }
+        clock.advance(QUIET_MS - 1);
+        assert!(takeover(&session.read()), "counted from the last input");
+        clock.advance(1);
+        assert!(session.read().is_ok());
+    }
+
+    #[test]
+    fn ob06_input_reported_late_still_counts_from_when_it_happened() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        clock.advance(500);
+        session.input(true);
+        // The gate first hears of it 2000 ms later (no decision meanwhile).
+        clock.advance(2_000);
+        assert!(takeover(&session.read()));
+        // Dated by its age plus one timer step (16 ms), never by the report.
+        clock.advance(QUIET_MS - 2_000);
+        assert!(takeover(&session.read()), "the timer step margin");
+        clock.advance(crate::human_input::TICK_MARGIN_MS);
+        assert!(
+            session.read().is_ok(),
+            "3000 ms after the input (and its margin), not after the report"
+        );
+    }
+
+    #[test]
+    fn ob06_input_in_another_window_or_the_agents_own_input_holds_nothing() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        clock.advance(100);
+        session.input(false);
+        assert!(session.write_done("n1"));
+        // The agent's own page input goes over the debugging pipe: the
+        // operating system's last input does not move.
+        clock.advance(100);
+        assert!(session.write_done("n2"));
+        assert_eq!(session.gate.input_source(), "visible_window");
+    }
+
+    #[test]
+    fn ob06_input_during_an_action_in_flight_supersedes_it_and_holds_the_next() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        let ticket = session.write("n1").ok().flatten();
+        assert!(ticket.is_some());
+        assert!(session.gate.before_dispatch(ticket.as_ref()).is_ok());
+        // The frame is on its way; the person clicks meanwhile.
+        clock.advance(40);
+        session.input(true);
+        session.gate.after_write(ticket, "done");
+        assert!(takeover(&session.write("n2")));
+        // After the quiet, nothing planned before the person acted goes.
+        clock.advance(QUIET_MS);
+        assert!(session.write("n2").is_err());
+        session.observe();
+        assert!(session.write_done("n2"));
+    }
+
+    #[test]
+    fn ob06_a_person_taking_over_between_approval_and_send_stops_the_send() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        let ticket = session.write("n1").ok().flatten();
+        session.gate.prompt_started();
+        clock.advance(4_000);
+        // The person goes to the browser while the prompt is up.
+        session.input(true);
+        clock.advance(2_000);
+        session.gate.prompt_ended(true);
+        let refused = session.gate.before_dispatch(ticket.as_ref());
+        assert!(takeover(&refused), "{refused:?}");
+    }
+
+    #[test]
+    fn ob06_the_click_that_answers_an_orcel_prompt_is_not_a_takeover() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        let ticket = session.write("n1").ok().flatten();
+        session.gate.prompt_started();
+        clock.advance(3_000);
+        // The answer, seen with the browser already back in front.
+        session.input(true);
+        clock.advance(20);
+        session.gate.prompt_ended(true);
+        // Its key release reaching the browser right after.
+        clock.advance(80);
+        session.input(true);
+        assert!(session.gate.before_dispatch(ticket.as_ref()).is_ok());
+    }
+
+    #[test]
+    fn ob06_sessions_are_independent_and_shadow_has_no_source() {
+        let clock = ManualClock::at(0);
+        let mut a = Session::visible(&clock);
+        let mut b = Session::visible(&clock);
+        // Only one window is in front: the person types in session A's.
+        b.os().session_in_front = false;
+        clock.advance(10);
+        a.input(true);
+        assert!(takeover(&a.write("n1")));
+        assert!(b.write_done("n1"));
+        // A Shadow session has no window and no source.
+        let mut shadow = TakeoverGate::on(clock.clone());
+        shadow.page_opened("page-1");
+        assert_eq!(shadow.input_source(), "none");
+        assert!(matches!(
+            shadow.before_write("page-1", "click", "n1", ActionClass::Repeatable),
+            Ok(Some(_))
+        ));
+    }
+
+    #[test]
+    fn ob06_a_held_session_can_still_be_stopped_and_closed() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        clock.advance(10);
+        session.input(true);
+        assert!(takeover(&session.read()));
+        // Stop (cancel) applies at once, whatever holds the page.
+        if let Some(gate) = session.gate.session_gate() {
+            assert!(gate.cancel(&ResourceId::new("page-1")).is_ok());
+        }
+        let ended = session.read();
+        assert!(
+            matches!(&ended, Err(e) if e.code == FailureCode::TargetStale
+                && e.message.starts_with("browser session ended")),
+            "{ended:?}"
+        );
+        clock.advance(QUIET_MS * 2);
+        assert!(session.read().is_err(), "a cancelled page never resumes");
+        // An emergency stop ends the session: its pages close.
+        session.gate.page_closed("page-1");
+        assert_eq!(session.gate.page_state("page-1"), None);
+    }
+
+    #[test]
+    fn ob06_input_with_a_window_in_front_that_could_not_be_checked_holds_the_agent() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        clock.advance(10);
+        session.input(false);
+        session.os().front_unknown = true;
+        assert!(takeover(&session.read()), "fail closed");
+        // With nothing new, an unchecked window holds nothing more.
+        clock.advance(QUIET_MS);
+        assert!(session.read().is_ok());
+    }
+
+    #[test]
+    fn ob06_an_unreadable_operating_system_holds_the_agent() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        session.os().unreadable = true;
+        clock.advance(QUIET_MS * 2);
+        assert!(takeover(&session.read()), "fail closed");
+        session.os().unreadable = false;
+        clock.advance(QUIET_MS);
+        assert!(session.read().is_ok());
+    }
+
+    #[test]
+    fn ob06_a_page_opened_during_a_hold_is_held_with_the_rest() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        clock.advance(10);
+        session.input(true);
+        // A new tab or an adopted popup opens 100 ms after the input.
+        clock.advance(100);
+        session.gate.page_opened("page-2");
+        assert!(takeover(&session.read()));
+        let refused = session
+            .gate
+            .before_write("page-2", "navigate", "u", ActionClass::Repeatable);
+        assert!(takeover(&refused), "{refused:?}");
+        // Both resume 3000 ms after the input (dated with its timer-step
+        // margin); a page opened later is free.
+        clock.advance(QUIET_MS - 100 + crate::human_input::TICK_MARGIN_MS);
+        assert!(session.read().is_ok());
+        assert!(session.gate.before_read("page-2").is_ok());
+        session.gate.page_opened("page-3");
+        assert!(matches!(
+            session
+                .gate
+                .before_write("page-3", "navigate", "u", ActionClass::Repeatable),
+            Ok(Some(_))
+        ));
+    }
+
+    #[test]
+    fn ob06_no_tab_opens_switches_or_closes_and_the_session_does_not_close_during_a_hold() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        assert!(session.gate.hold_session().is_ok());
+        clock.advance(10);
+        session.input(true);
+        let refused = session.gate.hold_session();
+        assert!(takeover(&refused), "{refused:?}");
+        clock.advance(QUIET_MS - 1);
+        assert!(takeover(&session.gate.hold_session()));
+        clock.advance(1);
+        assert!(session.gate.hold_session().is_ok());
+        // A session with no page yet is held by the input alone.
+        let mut empty = Session::visible(&clock);
+        empty.gate.page_closed("page-1");
+        clock.advance(5);
+        empty.input(true);
+        assert!(takeover(&empty.gate.hold_session()));
+        // A page that only needs observing again does not hold the session.
+        clock.advance(QUIET_MS);
+        assert!(empty.gate.hold_session().is_ok());
+    }
+
+    #[test]
+    fn ob06_a_prompt_that_fails_unanswered_does_not_mask_input() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        for _ in 0..3 {
+            clock.advance(1_000);
+            session.gate.prompt_started();
+            session.input(true);
+            clock.advance(2);
+            session.gate.prompt_ended(false);
+            assert!(takeover(&session.read()));
+        }
+    }
+
+    #[test]
+    fn ob06_the_last_check_right_before_the_send_sees_late_input() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        let ticket = session.write("n1").ok().flatten();
+        assert!(session.gate.before_dispatch(ticket.as_ref()).is_ok());
+        // Spending the approval took a while; the person typed meanwhile.
+        clock.advance(1_500);
+        session.input(true);
+        assert!(takeover(&session.gate.before_dispatch(ticket.as_ref())));
+        session.gate.after_write(ticket, "failed");
     }
 }

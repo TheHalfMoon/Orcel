@@ -83,6 +83,14 @@ windows-sys = { version = "0.52", features = [
   "Win32_System_Pipes",
   "Win32_System_RemoteDesktop",
   "Win32_System_Threading",
+  # SG-000135 OB-06, read-only (human_input.rs): GetLastInputInfo,
+  # GetTickCount, GetForegroundWindow, GetWindowThreadProcessId and
+  # IsProcessInJob. tests/ob04_shadow_scan.rs keeps every input, focus,
+  # foreground and clipboard mutation out of all of orceld's sources.
+  "Win32_System_JobObjects",
+  "Win32_System_SystemInformation",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 # XP-19 secret storage. Windows uses DPAPI through windows-sys above

@@ -118,6 +118,23 @@ pub struct LiveVerification {
     pub evidence_sha256: String,
 }
 
+/// SG-000135 OB-06: whether a person answered an approval prompt: it was
+/// approved, or denied by the person. A prompt that timed out unanswered
+/// (`UNANSWERED_DENIAL`), or failed for any other reason, was not.
+fn prompt_answered<T>(result: &Result<T, orcel_approval::ApprovalError>) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            error.code == FailureCode::ApprovalDenied
+                && !error.message.starts_with(orcel_approval::UNANSWERED_DENIAL)
+        }
+    }
+}
+
+/// SG-000135 OB-06: the refusal code of a frame the takeover gate stopped
+/// right before it was sent (nothing reached the host).
+pub(crate) const GATE_REFUSED: &str = "orceld:human_takeover";
+
 /// What became of a consumed approval (slice 2: the "consumed, not
 /// dispatched" record of decision 3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1022,6 +1039,8 @@ pub(crate) fn form_outcome(outcome: &DispatchOutcome) -> &'static str {
                     // refused at the route before anything opened (the
                     // host answers outcomeunknown once it opened).
                     | "unavailable:submissionrefused"
+                    // SG-000135 OB-06: orceld's gate refused it before send.
+                    | GATE_REFUSED
             ) =>
         {
             "failed"
@@ -1125,6 +1144,19 @@ impl LiveBrowser {
         record_id: &str,
         request: &WorkerHostRequest,
     ) -> Result<WorkerHostReply, ProviderError> {
+        // SG-000135 OB-06: the takeover gate's last word, right before the
+        // frame goes (spending the approval or checking the lease can take
+        // seconds). A person who took the page over meanwhile stops it: the
+        // approval is spent, nothing is sent, and the write ends `failed`.
+        if let Err(error) = self.takeover.before_dispatch(self.gate_ticket.as_ref()) {
+            self.note_gate_refusal(&error);
+            self.outcomes.push(ApprovalOutcome {
+                record_id: record_id.to_owned(),
+                outcome: DispatchOutcome::Refused(GATE_REFUSED.to_owned()),
+                lease_id: None,
+            });
+            return Err(error);
+        }
         #[cfg(test)]
         if let Some(mut hook) = self.after_consume.take() {
             if let Some(pid) = self.supervisor.worker_host().map(|host| host.pid()) {
@@ -1237,8 +1269,8 @@ impl LiveBrowser {
                 }
             }
         }
-        let token = approval
-            .request_token(prompt)
+        let token = self
+            .request_token(approval, prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))?;
         Ok(Authority::Approval {
             token,
@@ -1804,10 +1836,27 @@ impl LiveBrowser {
         title: &str,
     ) -> Result<(ApprovedToken, String, String, String), ProviderError> {
         let bound = self.bind_prompt(workspace, action, title)?;
-        let token = approval
-            .request_token(&bound.prompt)
+        let token = self
+            .request_token(approval, &bound.prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))?;
         Ok((token, bound.digest, bound.binding, bound.target))
+    }
+
+    /// Ask the owner's approval for `prompt`. SG-000135 OB-06: the takeover
+    /// gate is told the prompt is up, so the click or key that answers it
+    /// is not taken for a person on a Visible session's browser window.
+    fn request_token(
+        &mut self,
+        approval: &impl ApprovalBroker,
+        prompt: &ApprovalPrompt,
+    ) -> Result<ApprovedToken, orcel_approval::ApprovalError> {
+        self.takeover.prompt_started();
+        let token = approval.request_token(prompt);
+        // Only a prompt a person answered (approved or denied) excuses the
+        // input around its end; one that timed out unanswered does not.
+        let answered = prompt_answered(&token);
+        self.takeover.prompt_ended(answered);
+        token
     }
 
     /// The host's binding for `action` and the prompt a person would see
@@ -2635,6 +2684,8 @@ impl LiveBrowser {
         url: Option<&str>,
     ) -> Result<(PageRecord, Option<(String, u16)>), ProviderError> {
         self.require_lifetime()?;
+        // SG-000135 OB-06: no new tab opens in a window a person is using.
+        self.takeover.hold_session()?;
         if let Some(url) = url {
             let origin = orcel_provider_browser::parse_destination_url(url)
                 .map_err(from_page)?
@@ -2727,6 +2778,8 @@ impl LiveBrowser {
             .position(|tab| tab.page.page_id == page_id)
             .ok_or_else(unknown_tab)?;
         self.takeover.before_read(page_id)?;
+        // SG-000135 OB-06: the active tab never changes under a person.
+        self.takeover.hold_session()?;
         let worker_tab = self.background[index].worker_tab;
         let state = self.tab_frame(&WorkerHostRequest::TabSwitch { tab: worker_tab })?;
         if state.active != worker_tab {
@@ -2794,6 +2847,10 @@ impl LiveBrowser {
         page_id: &str,
         prefer: Option<u32>,
     ) -> Result<(), ProviderError> {
+        // SG-000135 OB-06: no tab closes, and no other becomes active, while
+        // a person holds the session (a new tab whose navigation was
+        // refused stays open until then).
+        self.takeover.hold_session()?;
         let active = self
             .page
             .as_ref()
@@ -2871,6 +2928,36 @@ impl LiveBrowser {
     /// page is opened.
     pub fn enable_takeover_gate(&mut self) {
         self.takeover.enable();
+    }
+
+    /// SG-000135 OB-06: a Visible session's window is watched for a
+    /// person's input (the engine's windows are this browser host's
+    /// descendants). Called after `enable_takeover_gate`, before any page
+    /// opens.
+    ///
+    /// # Errors
+    /// `PROVIDER_UNAVAILABLE` when no input source exists here; the caller
+    /// must then not run the Visible session.
+    pub fn watch_visible_window(&mut self) -> Result<(), ProviderError> {
+        let probe = self
+            .supervisor
+            .worker_host()
+            .and_then(|host| host.job_handle())
+            .map(crate::human_input::for_job);
+        self.takeover.watch_visible_window(probe)
+    }
+
+    /// SG-000135 OB-06: refuse to close the session while a person holds
+    /// its window (`HUMAN_TAKEOVER`); an emergency stop, the end of the MCP
+    /// session and orceld's own shutdown still end it.
+    pub fn check_not_held(&mut self) -> Result<(), ProviderError> {
+        self.takeover.hold_session()
+    }
+
+    /// SG-000135 OB-06: where a person's input comes from (`visible_window`
+    /// or `none`), for the session status.
+    pub fn takeover_input_source(&self) -> &'static str {
+        self.takeover.input_source()
     }
 
     /// SG-000135 OB-07: the status of the active page's navigation that
@@ -3146,7 +3233,8 @@ impl LiveBrowser {
         // a failed consume) never reach here.
         if matches!(
             self.outcomes.last(),
-            Some(o) if o.record_id == record_id && matches!(o.outcome, DispatchOutcome::Refused(_))
+            Some(o) if o.record_id == record_id
+                && matches!(&o.outcome, DispatchOutcome::Refused(code) if code != GATE_REFUSED)
         ) {
             self.end_lifetime();
         }
@@ -3226,6 +3314,37 @@ impl LiveBrowser {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ob06_only_a_prompt_a_person_answered_counts_as_answered() {
+        use orcel_approval::ApprovalError;
+        let error = |code, message: &str| -> Result<(), ApprovalError> {
+            Err(ApprovalError {
+                code,
+                message: message.to_owned(),
+            })
+        };
+        assert!(prompt_answered(&Ok::<(), ApprovalError>(())));
+        assert!(prompt_answered(&error(
+            FailureCode::ApprovalDenied,
+            "local user denied the operation"
+        )));
+        assert!(!prompt_answered(&error(
+            FailureCode::ApprovalDenied,
+            orcel_approval::UNANSWERED_DENIAL
+        )));
+        assert!(!prompt_answered(&error(
+            FailureCode::ApprovalDenied,
+            &format!(
+                "{}; the decision was not recorded: x",
+                orcel_approval::UNANSWERED_DENIAL
+            )
+        )));
+        assert!(!prompt_answered(&error(
+            FailureCode::ApprovalUnavailable,
+            "approval ledger is unavailable"
+        )));
+    }
+
     use super::*;
 
     /// B1: a form action's stable material names the field by its position,

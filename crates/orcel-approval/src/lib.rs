@@ -805,7 +805,17 @@ impl ApprovalPrompt {
 pub enum ApprovalDecision {
     Approved,
     Denied,
+    /// The prompt closed with no answer (it timed out). The operation is
+    /// denied and recorded exactly as `Denied`; only the error's message
+    /// ([`UNANSWERED_DENIAL`]) says that nobody answered (SG-000135 OB-06:
+    /// the takeover gate excuses no input around an unanswered prompt).
+    Unanswered,
 }
+
+/// The message of the `APPROVAL_DENIED` error for a prompt that timed out
+/// with no answer ([`ApprovalDecision::Unanswered`]).
+pub const UNANSWERED_DENIAL: &str =
+    "the approval prompt timed out with no answer; the operation was denied";
 
 #[derive(Debug, Clone)]
 pub struct ApprovalError {
@@ -1335,17 +1345,19 @@ impl LocalApprovalBroker {
                     epoch: record.epoch,
                 })
             }
-            Ok(ApprovalDecision::Denied) => {
+            Ok(decision @ (ApprovalDecision::Denied | ApprovalDecision::Unanswered)) => {
                 let recorded = ledger.record_decision(
                     prompt,
                     RecordedDecision::Denied,
                     PresenceOutcome::Denied,
                     "soft-button",
                 );
-                Err(with_recording(
-                    ApprovalError::denied("local user denied the operation"),
-                    recorded,
-                ))
+                let message = if decision == ApprovalDecision::Unanswered {
+                    UNANSWERED_DENIAL
+                } else {
+                    "local user denied the operation"
+                };
+                Err(with_recording(ApprovalError::denied(message), recorded))
             }
             Err(error) => {
                 let recorded = ledger.record_decision(
@@ -2673,8 +2685,10 @@ fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, Approval
     let body = prompt_text::dialog_body(prompt);
     match windows_dialog::ask_yes_no(&body, "Orcel approval SOFT", windows_dialog::DIALOG_TIMEOUT) {
         DialogAnswer::Yes => Ok(ApprovalDecision::Approved),
-        // An unanswered prompt denies, as it does on macOS and Linux.
-        DialogAnswer::No | DialogAnswer::TimedOut => Ok(ApprovalDecision::Denied),
+        DialogAnswer::No => Ok(ApprovalDecision::Denied),
+        // An unanswered prompt denies, as it does on macOS and Linux, and
+        // says that nobody answered (SG-000135 OB-06).
+        DialogAnswer::TimedOut => Ok(ApprovalDecision::Unanswered),
         DialogAnswer::Unexpected(result) => Err(ApprovalError::unavailable(format!(
             "Windows approval prompt returned unexpected result {result}"
         ))),
@@ -3169,6 +3183,39 @@ mod soft_decider_tests {
             .iter()
             .all(|record| record.decision != RecordedDecision::Approved));
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// SG-000135 OB-06: a prompt that timed out with no answer denies and
+    /// is recorded as a denial, and its message says nobody answered.
+    #[test]
+    fn an_unanswered_prompt_denies_and_says_so() {
+        let path = temp_ledger("unanswered");
+        let broker = LocalApprovalBroker::with_path_and_soft_decider(
+            &path,
+            Arc::new(NoPresenceVerifier),
+            Arc::new(|_| ApprovalDecision::Unanswered),
+        );
+        let error = broker
+            .request_token(&prompt(&"d".repeat(64)))
+            .expect_err("denied");
+        assert_eq!(error.code, FailureCode::ApprovalDenied);
+        assert!(
+            error.message.starts_with(UNANSWERED_DENIAL),
+            "{}",
+            error.message
+        );
+        let history = broker.history(10);
+        assert!(history
+            .iter()
+            .any(|record| record.decision == RecordedDecision::Denied));
+        assert!(history
+            .iter()
+            .all(|record| record.decision != RecordedDecision::Approved));
+        let _ = std::fs::remove_file(&path);
+        let fixed = crate::test_support::FixedApprovalBroker(ApprovalDecision::Unanswered)
+            .request_token(&prompt(&"e".repeat(64)))
+            .expect_err("denied");
+        assert_eq!(fixed.message, UNANSWERED_DENIAL);
     }
 }
 
@@ -3917,6 +3964,7 @@ pub mod test_support {
                 ApprovalDecision::Denied => Err(ApprovalError::denied(
                     "local user denied the operation in test",
                 )),
+                ApprovalDecision::Unanswered => Err(ApprovalError::denied(UNANSWERED_DENIAL)),
             }
         }
 

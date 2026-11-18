@@ -32,6 +32,7 @@ const FORBIDDEN: &[&str] = &[
     "keybd_event",
     "mouse_event",
     "SetCursorPos",
+    "SetFocus",
     "OpenClipboard",
     "SetClipboardData",
     "GetClipboardData",
@@ -87,16 +88,25 @@ fn ob04_no_browser_path_source_moves_focus_input_cursor_or_clipboard() -> Outcom
     ] {
         sources(&root.join(dir), "rs", &mut files)?;
     }
+    // SG-000135 OB-06: orceld's windows-sys now has the keyboard-and-mouse
+    // and windowing features (for the Visible session's read-only input
+    // source, human_input.rs), so every orceld source is scanned, not only
+    // the browser path. No file is exempt.
+    let mut orceld = Vec::new();
+    sources(&root.join("crates/orceld/src"), "rs", &mut orceld)?;
     for file in [
         "browser_broker.rs",
         "browser_full.rs",
         "browser_profiles.rs",
+        "human_input.rs",
         "live_browser.rs",
         "live_dispatch.rs",
         "takeover_gate.rs",
     ] {
-        files.push(root.join("crates/orceld/src").join(file));
+        let path = root.join("crates/orceld/src").join(file);
+        assert!(orceld.contains(&path), "{file} is scanned");
     }
+    files.extend(orceld);
     let worker = root.join("apps/orcel-browser-worker/src");
     let mut worker_files = Vec::new();
     sources(&worker, "ts", &mut worker_files)?;

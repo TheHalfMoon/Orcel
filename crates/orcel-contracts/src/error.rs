@@ -64,11 +64,16 @@ pub enum FailureCode {
     /// done; Orcel never completes one, and the agent may act on the page
     /// again only after the check is gone and it has observed the page anew.
     HumanVerificationRequired,
+    /// SG-000135 OB-06: a person is using the session's browser window, or
+    /// stopped less than three seconds ago. Nothing was done; the agent may
+    /// act on the page again only after three seconds with no human input
+    /// and a fresh observation of the page.
+    HumanTakeover,
 }
 
 impl FailureCode {
     /// Every variant, in declaration order.
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::InvalidRequest,
         Self::CapabilityDenied,
         Self::WorkspaceDenied,
@@ -98,6 +103,7 @@ impl FailureCode {
         Self::AuthorityUnavailable,
         Self::PermissionRequired,
         Self::HumanVerificationRequired,
+        Self::HumanTakeover,
     ];
 
     /// The HTTP status a REST or Firecrawl-compatible front answers with
@@ -118,7 +124,10 @@ impl FailureCode {
             | Self::PermissionRequired => 403,
             Self::JobNotFound => 404,
             Self::ProcessTimeout => 408,
-            Self::TargetStale | Self::PathRaceDetected | Self::HumanVerificationRequired => 409,
+            Self::TargetStale
+            | Self::PathRaceDetected
+            | Self::HumanVerificationRequired
+            | Self::HumanTakeover => 409,
             Self::OutputLimit => 413,
             Self::QueueFull | Self::RateLimited => 429,
             Self::PostconditionFailed

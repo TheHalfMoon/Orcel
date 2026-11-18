@@ -39,8 +39,10 @@ MAY_HAVE_ACTED: frozenset[str] = frozenset(
 #: gate does not make such a refusal final: the same call may go again once
 #: the page was observed afresh (a successful read-only call), which is the
 #: only way back to a page the person has finished with. orceld keeps
-#: refusing the call for as long as the page waits.
-AWAIT_PERSON: frozenset[str] = frozenset({"HUMAN_VERIFICATION_REQUIRED"})
+#: refusing the call for as long as the page waits. SG-000135 OB-06 adds
+#: HUMAN_TAKEOVER: a person is using the session's browser window, and the
+#: agent waits until three seconds after their last input.
+AWAIT_PERSON: frozenset[str] = frozenset({"HUMAN_VERIFICATION_REQUIRED", "HUMAN_TAKEOVER"})
 
 #: orceld's FailureCode values -> static guidance. Keep in step with the enum
 #: (OUTCOME_UNKNOWN has its own text, UNKNOWN_OUTCOME_TEXT).
@@ -79,6 +81,12 @@ GUIDANCE: dict[str, str] = {
         "check, which Orcel never completes or skips. Do not look for a way around it. The run must wait "
         "for the person: read the session status until it no longer reports needs_you, then observe the "
         "page again. Only after that new observation may the same action be proposed again, or finish."),
+    "HUMAN_TAKEOVER": (
+        "Nothing was done: a person is using this browser session's window, or stopped less than three "
+        "seconds ago. Their changes to the page come first. Do not act around them. The run must wait for "
+        "the person: read the session status until its page_state is no longer HUMAN_OVERRIDE or QUIET "
+        "(three seconds after their last input), then observe the page again. Only after that new "
+        "observation may the same action be proposed again, or finish."),
 }
 
 UNKNOWN_OUTCOME_TEXT = (

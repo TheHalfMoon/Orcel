@@ -209,6 +209,29 @@ impl<C: Clock> SessionGate<C> {
         }
     }
 
+    /// One input event a source reported after the fact, which happened at
+    /// `at` on the gate's clock (SG-000135 OB-06: the OS input source
+    /// reads when the last input happened). An instant later than now is
+    /// taken as now. The quiet period counts from the latest human instant
+    /// the resource has seen, so a late report never stretches it. Callers
+    /// report instants in increasing order (an older one would start a new
+    /// intervention without moving the quiet period).
+    pub fn observe_input_at(&mut self, event: &ObservedInput, at: crate::Millis) -> InputVerdict {
+        let now = self.clock.now();
+        let at = at.min(now);
+        if self.ledger.classify(event, now) == InputSource::Agent {
+            return InputVerdict::Agent;
+        }
+        match self.owned.get_mut(&event.resource) {
+            Some(owned) => {
+                owned.session.advance(now);
+                owned.session.human_input(event.phase, at);
+                InputVerdict::Human
+            }
+            None => InputVerdict::Unowned,
+        }
+    }
+
     /// Whether an agent operation on `target` with `effect` may proceed.
     ///
     /// # Errors
