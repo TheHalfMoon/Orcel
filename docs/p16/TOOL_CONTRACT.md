@@ -120,4 +120,18 @@ which orceld's broker maps onto the existing live host actions. Under this profi
 | `browser_profile_create` | `browser.session/profile_create` | write | SOFT | local-only | no | no | no | no | the new profile's name and creation time |
 | `browser_profile_delete` | `browser.session/profile_delete` | destructive | SOFT | local-only | no | yes | no | no | the deleted profile's name |
 
-SG-000135 OB-07: a session page that shows a sign-in, one-time code, passkey or CAPTCHA check waits for the person ("Needs you"). Orcel never solves, skips or fills one. Every action on that page is refused with `HUMAN_VERIFICATION_REQUIRED` before any prompt. Successful page replies and `browser_task_status` list such pages under `needs_you` (page id, kind, closed signal names, a fixed reason and the handoff), and the status also gives the active page's `page_state`. The page resumes only after Orcel's own read-only check no longer sees the challenge and three quiet seconds have passed, and only once the agent has taken a new snapshot. See `docs/orcel/implementation-readiness/prep/OB07_CHALLENGE_HANDOFF.md`.
+SG-000135 OB-07: every broker session's pages go through orceld's takeover gate (`browser_structured` keeps it off).
+The gate can only refuse, before any approval prompt, and nothing is done when it does:
+
+- A page that shows a sign-in, one-time code, passkey or CAPTCHA check waits for the person ("Needs you"). Orcel never
+  solves, skips or fills one. Every action on that page, read or write, is refused with `HUMAN_VERIFICATION_REQUIRED`.
+  Successful page replies and `browser_task_status` list such pages under `needs_you` (page id, kind, closed signal
+  names, a fixed reason and the handoff), and the status also gives the active page's `page_state`. The page resumes
+  only after Orcel's own read-only check no longer sees the challenge and three quiet seconds have passed.
+- After such a wait (or any other hold), a write before a new `browser_snapshot` is refused `TARGET_STALE`
+  (`reobserve_required`), and a write planned on an older observation is refused `TARGET_STALE` (`target_stale`).
+- A consequential write (an Enter that may submit, or a download; no tool of this profile sends one yet) whose outcome
+  is unknown is never admitted again, from this session or another session of the same MCP client, until it is
+  reconciled: `TARGET_STALE` (`outcome_uncertain`).
+
+See `docs/orcel/implementation-readiness/prep/OB07_CHALLENGE_HANDOFF.md`.

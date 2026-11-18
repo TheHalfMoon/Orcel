@@ -39,6 +39,17 @@
 // engine's DOM snapshot, and has no solving, token, provider or callback
 // code at all.
 
+/// The page was between documents (a navigation in flight, or the document
+/// changed during the capture): nothing was classified; ask again later.
+export class ChallengeBusy extends Error {
+  constructor() {
+    super("busy");
+  }
+}
+
+/// Why a check gave no report: `busy` (ask again later) or `failed`.
+export type ChallengeFailure = "busy" | "failed";
+
 /// The kinds a page can be classified as.
 export type ChallengeKind = "none" | "captcha" | "mfa" | "sign_in" | "passkey";
 

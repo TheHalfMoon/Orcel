@@ -64,6 +64,22 @@ const lines = [
   "| Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |",
   "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
   ...Object.keys(BROWSER_FULL_CONTRACT).map((name) => row(name, BROWSER_FULL_CONTRACT[name])),
+  "",
+  "SG-000135 OB-07: every broker session's pages go through orceld's takeover gate (`browser_structured` keeps it off).",
+  "The gate can only refuse, before any approval prompt, and nothing is done when it does:",
+  "",
+  "- A page that shows a sign-in, one-time code, passkey or CAPTCHA check waits for the person (\"Needs you\"). Orcel never",
+  "  solves, skips or fills one. Every action on that page, read or write, is refused with `HUMAN_VERIFICATION_REQUIRED`.",
+  "  Successful page replies and `browser_task_status` list such pages under `needs_you` (page id, kind, closed signal",
+  "  names, a fixed reason and the handoff), and the status also gives the active page's `page_state`. The page resumes",
+  "  only after Orcel's own read-only check no longer sees the challenge and three quiet seconds have passed.",
+  "- After such a wait (or any other hold), a write before a new `browser_snapshot` is refused `TARGET_STALE`",
+  "  (`reobserve_required`), and a write planned on an older observation is refused `TARGET_STALE` (`target_stale`).",
+  "- A consequential write (an Enter that may submit, or a download; no tool of this profile sends one yet) whose outcome",
+  "  is unknown is never admitted again, from this session or another session of the same MCP client, until it is",
+  "  reconciled: `TARGET_STALE` (`outcome_uncertain`).",
+  "",
+  "See `docs/orcel/implementation-readiness/prep/OB07_CHALLENGE_HANDOFF.md`.",
   ""
 ];
 writeFileSync(join(repo, "docs", "p16", "TOOL_CONTRACT.md"), lines.join("\n"));

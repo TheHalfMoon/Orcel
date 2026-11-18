@@ -39,7 +39,7 @@ import { denyDesktopPermissions, interceptFileChoosers } from "./desktop-guard.j
 import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
 import { extractBySchema } from "./outline/schema-extract.js";
-import { CHALLENGE_STYLES, classifyChallenge, type ChallengeSnapshot } from "./challenge.js";
+import { ChallengeBusy, CHALLENGE_STYLES, classifyChallenge, type ChallengeSnapshot } from "./challenge.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
 if (startup !== null) {
@@ -456,6 +456,8 @@ const playwrightLauncher: Launcher = {
         // page is focused, scrolled, clicked or filled. Only a closed kind
         // and closed signal names leave this function.
         const { tab, page } = activeTab();
+        // A tab between documents is not classified: "ask again later".
+        if (watches.get(page)?.loading === true) throw new ChallengeBusy();
         const before = page.url();
         const session = await context.newCDPSession(page);
         const captured = (await captureWithin(
@@ -466,7 +468,7 @@ const playwrightLauncher: Launcher = {
           CAPTURE_TIMEOUT_MS
         )) as unknown as ChallengeSnapshot;
         const url = page.url();
-        if (before !== url || tabs.active !== tab) throw new Error("the document changed during the check");
+        if (before !== url || tabs.active !== tab || watches.get(page)?.loading === true) throw new ChallengeBusy();
         // The recorded status is this document's only while the tab still
         // shows the URL it was recorded for.
         const report = classifyChallenge(captured, committedUrl !== "" && url === committedUrl ? status : 0);

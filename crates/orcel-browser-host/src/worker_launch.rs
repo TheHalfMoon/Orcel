@@ -838,8 +838,11 @@ pub(crate) enum WorkerReply {
         signals: Vec<String>,
         truncated: bool,
     },
+    /// `busy`: a navigation was in flight or the document changed during
+    /// the capture (ask again later); `failed`: anything else.
     ChallengeFailed {
         chl_id: u64,
+        reason: String,
     },
     Error {
         code: String,
@@ -3733,9 +3736,16 @@ mod platform {
                         moved: seen != url,
                     })
                 }
-                WorkerReply::ChallengeFailed { chl_id: done } if done == chl_id => {
-                    Err(HostError::Unavailable(UnavailableReason::ActionFailed))
-                }
+                WorkerReply::ChallengeFailed {
+                    chl_id: done,
+                    reason,
+                } if done == chl_id => Err(HostError::Unavailable(match reason.as_str() {
+                    // Between documents: nothing was classified; the
+                    // caller asks again later.
+                    "busy" => UnavailableReason::NavigationInFlight,
+                    "failed" => UnavailableReason::ActionFailed,
+                    _ => UnavailableReason::ProtocolViolation,
+                })),
                 // Out of step with the worker: the lifetime ends.
                 _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             }
@@ -6374,14 +6384,18 @@ mod tests {
                 Err(UnavailableReason::TargetStale)
             ));
         }
-        assert!(matches!(
-            reply(r#"{"frame":"challenge_failed","chl_id":4}"#),
-            Ok(WorkerReply::ChallengeFailed { chl_id: 4 })
-        ));
+        for reason in ["busy", "failed"] {
+            let text = format!(r#"{{"frame":"challenge_failed","chl_id":4,"reason":"{reason}"}}"#);
+            assert!(
+                matches!(reply(&text), Ok(WorkerReply::ChallengeFailed { chl_id: 4, reason: ref seen }) if seen == reason),
+                "{text}"
+            );
+        }
         for bad in [
+            r#"{"frame":"challenge_failed","chl_id":4}"#,
             r#"{"frame":"challenge_report","chl_id":4,"tab":2,"url":"u","kind":"captcha","signals":[],"truncated":false,"text":"page"}"#,
             r#"{"frame":"challenge_report","chl_id":4,"url":"u","kind":"captcha","signals":[],"truncated":false}"#,
-            r#"{"frame":"challenge_failed","chl_id":4,"reason":"x"}"#,
+            r#"{"frame":"challenge_failed","chl_id":4,"reason":"busy","text":"page"}"#,
         ] {
             assert!(reply(bad).is_err(), "{bad}");
         }

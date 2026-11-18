@@ -541,6 +541,8 @@ pub struct LiveBrowser {
     /// navigation that orceld dispatched, with the URL it committed (the
     /// detector counts a status only while the page still shows that URL).
     page_status: std::collections::HashMap<String, (String, u16)>,
+    /// SG-000135 OB-07: the page the detector last ran on, and when.
+    last_challenge_check: Option<(String, std::time::Instant)>,
     /// Test builds only: a shorter reply budget for dispatched frames.
     #[cfg(test)]
     reply_timeout: Option<std::time::Duration>,
@@ -613,9 +615,59 @@ pub(crate) const DETECTOR_UNAVAILABLE: &str = "detector_unavailable";
 #[derive(Debug, Clone)]
 struct ChallengeNote {
     signals: Vec<String>,
-    checked: std::time::Instant,
     /// The detector has since reported it gone (the quiet period runs).
     gone: bool,
+}
+
+/// SG-000135 OB-07: the host's closed code for a page between documents.
+const NAVIGATION_IN_FLIGHT: &str = "unavailable:navigationinflight";
+
+/// SG-000135 OB-07: what one detector run said about the active page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Detection {
+    /// A challenge of this kind, with the detector's signals.
+    Seen(ChallengeKind, Vec<String>),
+    /// Nothing that asks for a person.
+    Clear,
+    /// The page was between documents: nothing was classified.
+    Busy,
+    /// The detector could not answer.
+    Unavailable,
+}
+
+/// SG-000135 OB-07: what the live browser does about a detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChallengeStep {
+    /// The page waits for the person (or keeps waiting).
+    Hold(ChallengeKind, Vec<String>),
+    /// Tell the gate, once, that the challenge is gone.
+    ReportGone,
+    /// Already reported gone: the quiet period runs on.
+    StillGone,
+    /// Nothing waits: drop any note.
+    Forget,
+    /// Nothing learned: check again later (a held page stays held).
+    Later,
+}
+
+/// SG-000135 OB-07: the decision for one detection, given whether the page
+/// already waits and whether its disappearance was already reported. A
+/// page between documents (a navigation in flight, or a document that
+/// changed during the capture) is never held for that alone: it is checked
+/// again on the next action or status read. Any other detector failure
+/// holds the page (fail closed). The gate is told a challenge is gone once
+/// per disappearance, so repeated checks cannot push the quiet period back.
+fn challenge_step(detection: Detection, waiting: bool, reported_gone: bool) -> ChallengeStep {
+    match detection {
+        Detection::Seen(kind, signals) => ChallengeStep::Hold(kind, signals),
+        Detection::Clear if !waiting => ChallengeStep::Forget,
+        Detection::Clear if reported_gone => ChallengeStep::StillGone,
+        Detection::Clear => ChallengeStep::ReportGone,
+        Detection::Busy => ChallengeStep::Later,
+        Detection::Unavailable => {
+            ChallengeStep::Hold(ChallengeKind::Other, vec![DETECTOR_UNAVAILABLE.to_owned()])
+        }
+    }
 }
 
 /// SG-000135 OB-07: the gate's kind for the detector's word (None for
@@ -983,6 +1035,7 @@ impl LiveBrowser {
             active_tab: None,
             challenges: std::collections::HashMap::new(),
             page_status: std::collections::HashMap::new(),
+            last_challenge_check: None,
             #[cfg(test)]
             reply_timeout: None,
             #[cfg(test)]
@@ -2493,19 +2546,32 @@ impl LiveBrowser {
     }
 
     /// SG-000135 OB-07: run the engine's read-only challenge detector on
-    /// the active page and tell the takeover gate what it saw. A page that
-    /// shows a sign-in, one-time code, passkey or CAPTCHA check waits for
-    /// the person; a page that waits and no longer shows one is reported
-    /// gone (the gate then holds it for the quiet period and asks for a
-    /// fresh observation). While a page waits, the detector runs at most
-    /// once per `CHALLENGE_RECHECK`. A detector that cannot answer for a
-    /// page with a document holds that page (fail closed: "Needs you").
+    /// the active page and tell the takeover gate what it saw (see
+    /// `challenge_step`). A page that shows a sign-in, one-time code,
+    /// passkey or CAPTCHA check waits for the person; a page that waits and
+    /// no longer shows one is reported gone (the gate then holds it for the
+    /// quiet period and asks for a fresh observation). While a page waits,
+    /// the detector runs at most once per `CHALLENGE_RECHECK`. A page
+    /// between documents (a navigation in flight) is checked again later; a
+    /// detector that cannot answer otherwise holds the page (fail closed:
+    /// "Needs you").
     ///
     /// This is orceld's own read, never the agent's: it bypasses the gate's
     /// read refusal because nothing of the page crosses (a closed kind and
     /// closed signal names), and it never types, clicks, submits or solves.
     /// Nothing happens with the gate off or without a committed document.
     pub fn check_challenge(&mut self) {
+        self.run_challenge_check(false);
+    }
+
+    /// As [`Self::check_challenge`], but at most once per
+    /// `CHALLENGE_RECHECK` for the active page whether or not it waits: for
+    /// status reads, which an agent may repeat as fast as it likes.
+    pub fn check_challenge_throttled(&mut self) {
+        self.run_challenge_check(true);
+    }
+
+    fn run_challenge_check(&mut self, throttled: bool) {
         if !self.takeover.is_on() || self.lifetime.is_none() || self.page_url.is_none() {
             return;
         }
@@ -2513,62 +2579,56 @@ impl LiveBrowser {
             return;
         };
         let waiting = self.takeover.awaiting(&page_id).is_some();
-        if waiting
-            && self
-                .challenges
-                .get(&page_id)
-                .is_some_and(|note| note.checked.elapsed() < CHALLENGE_RECHECK)
-        {
+        let recent = self
+            .last_challenge_check
+            .as_ref()
+            .is_some_and(|(page, at)| *page == page_id && at.elapsed() < CHALLENGE_RECHECK);
+        if recent && (waiting || throttled) {
             return;
         }
         let status = match (self.page_status.get(&page_id), self.page_url.as_deref()) {
             (Some((url, status)), Some(now)) if url == now => *status,
             _ => 0,
         };
-        let finding = match self.request(&WorkerHostRequest::DetectChallenge { status }) {
-            Ok(WorkerHostReply::Challenge { kind, signals, .. }) => Ok((kind, signals)),
-            Ok(_) => Err(()),
-            Err(_) => Err(()),
+        let busy = refused(NAVIGATION_IN_FLIGHT).message;
+        let detection = match self.request(&WorkerHostRequest::DetectChallenge { status }) {
+            Ok(WorkerHostReply::Challenge { kind, signals, .. }) => match challenge_kind(&kind) {
+                Some(kind) => Detection::Seen(kind, signals),
+                None => Detection::Clear,
+            },
+            Err(error) if error.message == busy => Detection::Busy,
+            Ok(_) | Err(_) => Detection::Unavailable,
         };
         // A lost host closed the page: nothing is left to hold.
         if self.page.as_ref().map(|page| page.page_id.as_str()) != Some(page_id.as_str()) {
             return;
         }
         let checked = std::time::Instant::now();
-        let (kind, signals) = match finding {
-            Ok((kind, signals)) => match challenge_kind(&kind) {
-                Some(kind) => (kind, signals),
-                None => {
-                    if !waiting {
-                        self.challenges.remove(&page_id);
-                        return;
-                    }
-                    // Reported gone once per disappearance: a report each
-                    // check would push the quiet period back for ever.
-                    let reported = self.challenges.get(&page_id).is_some_and(|note| note.gone);
-                    if reported || self.takeover.challenge_gone(&page_id) {
-                        let note = self.challenges.entry(page_id).or_insert(ChallengeNote {
-                            signals: Vec::new(),
-                            checked,
-                            gone: true,
-                        });
-                        note.gone = true;
-                        note.checked = checked;
-                    }
-                    return;
+        self.last_challenge_check = Some((page_id.clone(), checked));
+        let reported = self.challenges.get(&page_id).is_some_and(|note| note.gone);
+        match challenge_step(detection, waiting, reported) {
+            ChallengeStep::Hold(kind, signals) => {
+                if self.takeover.challenge_detected(&page_id, kind) {
+                    self.challenges.insert(
+                        page_id,
+                        ChallengeNote {
+                            signals,
+                            gone: false,
+                        },
+                    );
                 }
-            },
-            Err(()) => (ChallengeKind::Other, vec![DETECTOR_UNAVAILABLE.to_owned()]),
-        };
-        if self.takeover.challenge_detected(&page_id, kind) {
-            self.challenges.insert(
-                page_id,
-                ChallengeNote {
-                    signals,
-                    checked,
-                    gone: false,
-                },
-            );
+            }
+            ChallengeStep::ReportGone => {
+                if self.takeover.challenge_gone(&page_id) {
+                    if let Some(note) = self.challenges.get_mut(&page_id) {
+                        note.gone = true;
+                    }
+                }
+            }
+            ChallengeStep::Forget => {
+                self.challenges.remove(&page_id);
+            }
+            ChallengeStep::StillGone | ChallengeStep::Later => {}
         }
     }
 
@@ -2829,6 +2889,59 @@ mod tests {
 
     /// B1: a form action's stable material names the field by its position,
     /// never the count of same-named fields, nor its node id.
+    /// SG-000135 OB-07: a page between documents is checked again later,
+    /// never held for that alone; a held page stays held; other detector
+    /// failures hold the page; a disappearance is reported once.
+    #[test]
+    fn ob07_a_navigation_in_flight_is_checked_again_later_not_held() {
+        assert_eq!(
+            challenge_step(Detection::Busy, false, false),
+            ChallengeStep::Later
+        );
+        assert_eq!(
+            challenge_step(Detection::Busy, true, false),
+            ChallengeStep::Later
+        );
+        assert_eq!(
+            challenge_step(Detection::Busy, true, true),
+            ChallengeStep::Later
+        );
+        assert_eq!(
+            challenge_step(Detection::Unavailable, false, false),
+            ChallengeStep::Hold(ChallengeKind::Other, vec![DETECTOR_UNAVAILABLE.to_owned()])
+        );
+        assert_eq!(
+            challenge_step(
+                Detection::Seen(ChallengeKind::Mfa, vec!["otp_field".into()]),
+                false,
+                false
+            ),
+            ChallengeStep::Hold(ChallengeKind::Mfa, vec!["otp_field".into()])
+        );
+        assert_eq!(
+            challenge_step(Detection::Clear, false, false),
+            ChallengeStep::Forget
+        );
+        assert_eq!(
+            challenge_step(Detection::Clear, true, false),
+            ChallengeStep::ReportGone
+        );
+        assert_eq!(
+            challenge_step(Detection::Clear, true, true),
+            ChallengeStep::StillGone
+        );
+        // The host's busy code is the one the live browser recognises.
+        assert_eq!(
+            refused(NAVIGATION_IN_FLIGHT).code,
+            FailureCode::TargetStale,
+            "a navigation in flight is never a held page"
+        );
+        assert_ne!(
+            refused(NAVIGATION_IN_FLIGHT).message,
+            refused("unavailable:actionfailed").message
+        );
+    }
+
     #[test]
     fn b1_form_material_keys_on_the_position_not_the_count() {
         let field = |count: usize| BoundForm {
@@ -2969,6 +3082,7 @@ mod tests {
             active_tab: None,
             challenges: std::collections::HashMap::new(),
             page_status: std::collections::HashMap::new(),
+            last_challenge_check: None,
             reply_timeout: None,
             after_consume: None,
         }

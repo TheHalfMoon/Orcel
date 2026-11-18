@@ -9,7 +9,7 @@ import { NavigationError, TabError, Worker, type EngineSession, type Launcher, t
 import { MAX_SCREENSHOT_PIECE_CHARS, ScreenshotError } from "./screenshot.js";
 import type { BoundedOutline } from "./outline/capture.js";
 import type { SchemaField, SchemaValue } from "./outline/schema-extract.js";
-import type { ChallengeReport } from "./challenge.js";
+import { ChallengeBusy, type ChallengeReport } from "./challenge.js";
 
 class FakeEngine implements EngineSession {
   closed = 0;
@@ -557,7 +557,13 @@ test("OB-07: a challenge check answers a closed report, and fails typed while a 
     throw new Error("capture timed out");
   };
   await second.worker.receive({ frame: "challenge", chl_id: 3, url: "", status: 0 });
-  assert.deepEqual(second.sent.at(-1), { frame: "challenge_failed", chl_id: 3 });
+  assert.deepEqual(second.sent.at(-1), { frame: "challenge_failed", chl_id: 3, reason: "failed" });
+  // A document that changed during the capture is "busy": ask again later.
+  engine.challengeBehavior = async () => {
+    throw new ChallengeBusy();
+  };
+  await second.worker.receive({ frame: "challenge", chl_id: 6, url: "", status: 0 });
+  assert.deepEqual(second.sent.at(-1), { frame: "challenge_failed", chl_id: 6, reason: "busy" });
   // While a navigation runs, nothing is classified.
   let release: () => void = () => {};
   engine.navigateBehavior = (url) => new Promise((resolve) => (release = () => resolve({ url, status: 200 })));
@@ -565,7 +571,7 @@ test("OB-07: a challenge check answers a closed report, and fails typed while a 
   await new Promise((resolve) => setImmediate(resolve));
   const calls = engine.challengeCalls.length;
   await second.worker.receive({ frame: "challenge", chl_id: 5, url: "", status: 0 });
-  assert.deepEqual(second.sent.at(-1), { frame: "challenge_failed", chl_id: 5 });
+  assert.deepEqual(second.sent.at(-1), { frame: "challenge_failed", chl_id: 5, reason: "busy" });
   assert.equal(engine.challengeCalls.length, calls);
   release();
 });

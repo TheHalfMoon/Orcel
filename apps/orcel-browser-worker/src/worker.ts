@@ -41,7 +41,7 @@ import type { FormAction } from "./actions/form.js";
 import type { DismissedDialog } from "./actions/dialogs.js";
 import type { BoundedOutline } from "./outline/capture.js";
 import type { SchemaField, SchemaValue } from "./outline/schema-extract.js";
-import type { ChallengeReport } from "./challenge.js";
+import { ChallengeBusy, type ChallengeReport } from "./challenge.js";
 
 export type LaunchSpec = Extract<HostFrame, { frame: "launch" }>;
 
@@ -488,15 +488,15 @@ export class Worker {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         // A document being replaced is not classified: the host asks again.
         if (this.navigating) {
-          this.send({ frame: "challenge_failed", chl_id: frame.chl_id });
+          this.send({ frame: "challenge_failed", chl_id: frame.chl_id, reason: "busy" });
           return;
         }
         try {
           const { tab, url, report } = await this.session.challenge(frame.url, frame.status);
           if (Buffer.byteLength(url) > MAX_URL_BYTES) throw new Error("the page URL is too long");
           this.send({ frame: "challenge_report", chl_id: frame.chl_id, tab, url, kind: report.kind, signals: report.signals, truncated: report.truncated });
-        } catch {
-          this.send({ frame: "challenge_failed", chl_id: frame.chl_id });
+        } catch (error) {
+          this.send({ frame: "challenge_failed", chl_id: frame.chl_id, reason: error instanceof ChallengeBusy ? "busy" : "failed" });
         }
         return;
       }

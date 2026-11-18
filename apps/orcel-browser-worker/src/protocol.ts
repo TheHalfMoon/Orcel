@@ -17,7 +17,7 @@ import type { DismissedDialog } from "./actions/dialogs.js";
 import { MAX_SCREENSHOT_PIECES, type ScreenshotFailure } from "./screenshot.js";
 import type { TabInfo } from "./tabs.js";
 import type { OutlineNode } from "./outline/capture.js";
-import type { ChallengeKind, ChallengeSignal } from "./challenge.js";
+import type { ChallengeFailure, ChallengeKind, ChallengeSignal } from "./challenge.js";
 import { MAX_SCHEMA_FIELDS, SCHEMA_TAKES, type SchemaField, type SchemaTake, type SchemaValue } from "./outline/schema-extract.js";
 
 /// One form field to enter when executing a tool (host-validated).
@@ -333,7 +333,9 @@ export type WorkerFrame =
   | { frame: "schema_extraction_failed"; xs_id: number }
   /// SG-000135 OB-07: a closed kind and closed signal names, never page text.
   | { frame: "challenge_report"; chl_id: number; tab: number; url: string; kind: ChallengeKind; signals: ChallengeSignal[]; truncated: boolean }
-  | { frame: "challenge_failed"; chl_id: number }
+  /// `busy`: a navigation was in flight or the document changed during the
+  /// capture (nothing was classified; ask again later); `failed`: anything else.
+  | { frame: "challenge_failed"; chl_id: number; reason: ChallengeFailure }
   | { frame: "error"; code: ErrorCode };
 
 export class ProtocolViolation extends Error {}

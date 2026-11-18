@@ -970,12 +970,12 @@ mod full {
             }),
             FullAction::Status { session } => with_broker(|broker| {
                 broker.check_epoch(probe())?;
-                // SG-000135 OB-07: a page that waits for the person is
-                // checked again here (at most once a second), so the status
-                // read is also how the session notices the check is gone.
+                // SG-000135 OB-07: the active page is checked again here (at
+                // most once a second, held or not), so the status read is
+                // also how the session notices the check is gone.
                 let (needs_you, page_state) = {
                     let live = broker.session(client, session)?;
-                    live.worker.check_challenge();
+                    live.worker.check_challenge_throttled();
                     let pages = live.worker.needs_you();
                     (
                         crate::browser_broker::needs_you_json(live.mode, &pages),
