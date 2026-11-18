@@ -133,8 +133,8 @@ and when `lease-signing.key` is missing while audit records exist (it never sile
 
 `\\.\pipe\orcel-authority`, created at start with `FILE_FLAG_FIRST_PIPE_INSTANCE` and `PIPE_REJECT_REMOTE_CLIENTS`:
 a pre-existing name makes the service refuse to run (event 4103). SDDL
-`O:<svc>G:<svc>D:P(A;;FA;;;<svc>)(A;;0x00120003;;;IU)`: INTERACTIVE gets exactly
-`FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | READ_CONTROL`, never `FILE_APPEND_DATA`
+`O:<svc>G:<svc>D:P(A;;FA;;;<svc>)(A;;0x00120083;;;IU)`: INTERACTIVE gets exactly
+`FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE | READ_CONTROL` (`CreateFileW` adds`FILE_READ_ATTRIBUTES` to every open, so without it every non-owner client is refused; found by the CI install E2E), never `FILE_APPEND_DATA`
 (`FILE_CREATE_PIPE_INSTANCE`) or `GENERIC_WRITE`. Clients open with exactly that mask and, before sending
 anything, check `GetNamedPipeServerProcessId` against the service PID from `QueryServiceStatusEx` and the pipe
 owner against the SID of `NT SERVICE\OrcelAuthority`. Console mode uses `\\.\pipe\orcel-authority-console-<s>`.

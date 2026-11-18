@@ -5,8 +5,12 @@
 //!   before it sends anything. In console mode it is the current user.
 //! - DACL, protected (no inheritance): the server's account full control,
 //!   and `NT AUTHORITY\INTERACTIVE` (`IU`) exactly [`CLIENT_ACCESS`] =
-//!   `FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | READ_CONTROL`.
-//!   `READ_CONTROL` lets a client read the owner for its check. Nothing
+//!   `FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE |
+//!   READ_CONTROL`. `READ_CONTROL` lets a client read the owner for its check.
+//!   `FILE_READ_ATTRIBUTES` is required: `CreateFileW` always adds it (and
+//!   `SYNCHRONIZE`) to the access it asks for, so a client that is not the
+//!   owner is refused without it (the CI install E2E found every client of
+//!   the installed service refused, 2026-11-18). Nothing
 //!   grants `FILE_APPEND_DATA`, whose bit on a pipe is
 //!   `FILE_CREATE_PIPE_INSTANCE`, or `GENERIC_WRITE` / `GENERIC_ALL`, which
 //!   map to it, so no user process can add a rogue server instance while
@@ -27,6 +31,8 @@ pub const FILE_READ_DATA: u32 = 0x0000_0001;
 pub const FILE_WRITE_DATA: u32 = 0x0000_0002;
 /// On a named pipe this bit is `FILE_CREATE_PIPE_INSTANCE`.
 pub const FILE_APPEND_DATA: u32 = 0x0000_0004;
+/// Added by `CreateFileW` to every open; reads attributes only.
+pub const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
 pub const FILE_CREATE_PIPE_INSTANCE: u32 = FILE_APPEND_DATA;
 pub const DELETE: u32 = 0x0001_0000;
 pub const READ_CONTROL: u32 = 0x0002_0000;
@@ -38,7 +44,8 @@ pub const GENERIC_WRITE: u32 = 0x4000_0000;
 
 /// Exactly what `INTERACTIVE` is granted, and exactly what a client asks
 /// for in `CreateFileW`.
-pub const CLIENT_ACCESS: u32 = FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE | READ_CONTROL;
+pub const CLIENT_ACCESS: u32 =
+    FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE | READ_CONTROL;
 
 /// Whether a client mask stays clear of every right that could create a
 /// pipe instance or change the pipe's security.
@@ -84,7 +91,7 @@ mod tests {
 
     #[test]
     fn the_client_ace_is_exactly_read_write_synchronize_read_control() {
-        assert_eq!(CLIENT_ACCESS, 0x0012_0003);
+        assert_eq!(CLIENT_ACCESS, 0x0012_0083);
         assert!(client_mask_is_safe(CLIENT_ACCESS));
         assert_eq!(CLIENT_ACCESS & FILE_CREATE_PIPE_INSTANCE, 0);
         for unsafe_mask in [
@@ -105,7 +112,7 @@ mod tests {
         let sddl = pipe_sddl(sid).map_err(|e| e.to_string())?;
         assert_eq!(
             sddl,
-            format!("O:{sid}G:{sid}D:P(A;;FA;;;{sid})(A;;0x00120003;;;IU)")
+            format!("O:{sid}G:{sid}D:P(A;;FA;;;{sid})(A;;0x00120083;;;IU)")
         );
         assert!(sddl.contains("D:P("), "the DACL is protected");
         assert!(!sddl.contains(";GW;") && !sddl.contains(";GA;;;IU"));
