@@ -281,8 +281,7 @@ function New-StandardUser {
 
 function Invoke-AsStandardUserProcess([string]$File, [string]$Arguments, [int]$TimeoutSeconds = 120) {
   # A separate process with the standard user's interactive logon (CreateProcessWithLogonW): its token carries
-  # INTERACTIVE, which the authority pipe requires. The hosted runner's own job process is a service logon,
-  # which the pipe refuses. The process runs in the runner's session, not an active console session.
+  # INTERACTIVE, which the authority pipe requires; it is not elevated and not the console session's logon.
   $id = [guid]::NewGuid().ToString('N')
   $out = Join-Path $script:UserIo "$id.out"
   $err = Join-Path $script:UserIo "$id.err"
@@ -513,45 +512,54 @@ foreach ($rights in @('ReadPermissions', 'ReadData, WriteData, ReadPermissions, 
   $anchors = @(Get-OrcelEvents 4100 $installedAt)
   Check 'Event Log: anchor event 4100 written by the service' ($anchors.Count -gt 0) "$($anchors.Count) event(s)"
 
-  $serviceLogon = Invoke-Process $InstalledOrceld 'authority-status' 60
-  Check 'the runner''s own service-logon process (not INTERACTIVE) cannot open the authority pipe' (($serviceLogon.ExitCode -ne 0) -and ($serviceLogon.Output -match 'AuthorityUnavailable')) "exit $($serviceLogon.ExitCode)"
-
-  # ---- Fail closed without Windows Hello (as the standard user, an interactive logon).
-  $statusRun = Invoke-AsStandardUserProcess $InstalledOrcel 'authority status --json' 60
-  $cli = $null
-  try { $cli = ($statusRun.Stdout | ConvertFrom-Json).authority } catch { $cli = $null }
-  $Report.installed_service_status = $cli
-  Check 'orcel authority status: no key enrolled for this caller' ($cli -and $cli.caller_enrolled -eq $false -and $cli.can_issue -eq $false) $(if ($cli) { "role $($cli.caller_role), elevated $($cli.caller_elevated), enrollment_available $($cli.enrollment_available), uac_always_notify $($cli.uac_always_notify_on_secure_desktop)" } else { 'no status' })
-  $epochBefore = if ($cli) { $cli.epoch } else { $null }
-
-  $grant = Invoke-AsStandardUserProcess $InstalledOrcel 'full-control grant' 60
-  Check 'installed service: grant refused without an enrolled Windows Hello key (fail closed)' (($grant.ExitCode -ne 0) -and ($grant.Output -match 'no Windows Hello key')) "exit $($grant.ExitCode)"
-
-  $reset = Invoke-AsStandardUserProcess $InstalledOrcel 'authority reset' 60
-  $by = switch -Regex ($reset.Output) {
-    'UAC set to Always notify' { 'the UAC policy gate (not Always notify on the secure desktop)'; break }
-    'interactive logon' { 'the caller role gate (no interactive console logon)'; break }
-    'elevated' { 'the elevation gate'; break }
-    'no key is enrolled' { 'the enrolled-key gate'; break }
-    default { $null }
+  # ---- Fail closed without Windows Hello, for two callers: the runner's job process (the elevated
+  # administrator of the active console session, so it reaches the service's own gates) and the standard user
+  # (an interactive logon, not elevated, not the console session).
+  $callers = [ordered]@{
+    'elevated administrator (console session)' = { param($exe, $arguments) Invoke-Process $exe $arguments 60 }
+    'standard user' = { param($exe, $arguments) Invoke-AsStandardUserProcess $exe $arguments 60 }
   }
-  $Report.reset_refused_by = $by
-  Check 'installed service: enrollment-class request (reset) refused' (($reset.ExitCode -ne 0) -and $by) "exit $($reset.ExitCode); refused by $by"
-  if ($uac.always_notify_on_secure_desktop -eq $false -and $by -eq 'the UAC policy gate (not Always notify on the secure desktop)') {
-    Check 'installed service refuses enrollment-class requests when UAC is not Always notify' $true ($uac | ConvertTo-Json -Compress)
-  }
+  $Report.installed_service_status = [ordered]@{}
+  $Report.reset_refused_by = [ordered]@{}
+  foreach ($caller in $callers.Keys) {
+    $invoke = $callers[$caller]
+    $statusRun = & $invoke $InstalledOrcel 'authority status --json'
+    $cli = $null
+    try { $cli = ($statusRun.Stdout | ConvertFrom-Json).authority } catch { $cli = $null }
+    $Report.installed_service_status[$caller] = $cli
+    Check "${caller}: orcel authority status reaches the service; no key enrolled, nothing can be issued" ($cli -and $cli.mode -eq 'service' -and $cli.caller_enrolled -eq $false -and $cli.can_issue -eq $false) $(if ($cli) { "role $($cli.caller_role), elevated $($cli.caller_elevated), owner CLI $($cli.caller_is_owner_cli), enrollment_available $($cli.enrollment_available), uac_always_notify $($cli.uac_always_notify_on_secure_desktop)" } else { 'no status' })
+    $epochBefore = if ($cli) { $cli.epoch } else { $null }
 
-  if ($cli -and $cli.enrollment_available -ne $true) {
-    $enroll = Invoke-AsStandardUserProcess $InstalledOrcel 'authority enroll' 60
-    Check 'installed service: enroll refused (no TPM attestation roots or not elevated)' (($enroll.ExitCode -ne 0) -and ($enroll.Output -match 'enrollment is refused|elevated')) "exit $($enroll.ExitCode)"
-  } else {
-    Write-Host 'enroll not attempted: enrollment is available on this runner, and enroll would open Windows Hello.'
-  }
+    $grant = & $invoke $InstalledOrcel 'full-control grant'
+    Check "${caller}: grant refused without an enrolled Windows Hello key (fail closed)" (($grant.ExitCode -ne 0) -and ($grant.Output -match 'no Windows Hello key')) "exit $($grant.ExitCode)"
 
-  $after = Invoke-AsStandardUserProcess $InstalledOrcel 'authority status --json' 60
-  $cliAfter = $null
-  try { $cliAfter = ($after.Stdout | ConvertFrom-Json).authority } catch { $cliAfter = $null }
-  Check 'after the refusals: still no enrolled key, epoch unchanged' ($cliAfter -and $cliAfter.caller_enrolled -eq $false -and $cliAfter.epoch -eq $epochBefore) $(if ($cliAfter) { "epoch $($cliAfter.epoch)" } else { 'no status' })
+    $reset = & $invoke $InstalledOrcel 'authority reset'
+    $by = switch -Regex ($reset.Output) {
+      'UAC set to Always notify' { 'the service: UAC is not Always notify on the secure desktop'; break }
+      'interactive logon' { 'the service: no interactive logon in the active console session'; break }
+      'no key is enrolled' { 'the service: no key is enrolled'; break }
+      'elevated' { 'the CLI: not elevated'; break }
+      default { $null }
+    }
+    $Report.reset_refused_by[$caller] = $by
+    Check "${caller}: enrollment-class request (reset) refused" (($reset.ExitCode -ne 0) -and $by) "exit $($reset.ExitCode); refused by $by"
+    if ($caller -like 'elevated*' -and $cli -and $cli.caller_role -eq 'interactive' -and $cli.caller_elevated -eq $true -and $uac.always_notify_on_secure_desktop -eq $false) {
+      # The elevated owner CLI in the console session passes every earlier gate, so the service's UAC gate decides.
+      Check 'installed service refuses enrollment-class requests because UAC is not Always notify' ($by -eq 'the service: UAC is not Always notify on the secure desktop') ("runner UAC " + ($uac | ConvertTo-Json -Compress))
+    }
+
+    if ($cli -and $cli.enrollment_available -ne $true) {
+      $enroll = & $invoke $InstalledOrcel 'authority enroll'
+      Check "${caller}: enroll refused (no pinned TPM root here, or not elevated)" (($enroll.ExitCode -ne 0) -and ($enroll.Output -match 'enrollment is refused|elevated')) "exit $($enroll.ExitCode)"
+    } else {
+      Write-Host "enroll not attempted for ${caller}: enrollment is available here, and enroll would open Windows Hello."
+    }
+
+    $after = & $invoke $InstalledOrcel 'authority status --json'
+    $cliAfter = $null
+    try { $cliAfter = ($after.Stdout | ConvertFrom-Json).authority } catch { $cliAfter = $null }
+    Check "${caller}: after the refusals still no enrolled key, epoch unchanged" ($cliAfter -and $cliAfter.caller_enrolled -eq $false -and $cliAfter.epoch -eq $epochBefore) $(if ($cliAfter) { "epoch $($cliAfter.epoch)" } else { 'no status' })
+  }
 
   # ---- Recovery.
   $keyId = if ($status) { $status.key_id } else { $null }

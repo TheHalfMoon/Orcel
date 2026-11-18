@@ -358,15 +358,14 @@ values filled in) and fails on any mismatch. Its report, `authority-install-e2e.
 - **Clean install:** the Install line; service running, automatic, as `NT SERVICE\OrcelAuthority`; the state
   directory and its files unreadable for the standard user, the public key readable, `%ProgramFiles%\Orcel`
   not writable for that user; `orceld authority-status` in service mode.
-- **Fail closed without Windows Hello:** the runner's own job process (a service logon, not INTERACTIVE) cannot
-  open the authority pipe at all. Run as the temporary standard user (an interactive logon, but not the active
-  console session and not elevated), `orcel authority status` shows no enrolled key, `orcel full-control
-  grant` is refused (no enrolled Windows Hello key), `orcel authority reset` and `enroll` are refused, and the
-  epoch is unchanged. The report names the gate that refused (`reset_refused_by`) and records the runner's
-  UAC values. A hosted runner cannot show the service's own "UAC is not Always notify" refusal (no
-  elevated owner CLI in an active console session can reach it there); the core test
-  `review_f1_enroll_and_reset_need_always_notify_and_every_intent_the_owner_cli` covers that gate, and on your
-  PC `orcel authority status` shows the values the service reads.
+- **Fail closed without Windows Hello**, for two callers: the runner's job process (the elevated administrator
+  of the runner's active console session, the closest a runner comes to you starting the owner CLI elevated)
+  and the temporary standard user (an interactive logon, not elevated). For both, `orcel authority status`
+  reaches the service and shows no enrolled key and nothing issuable; `orcel full-control grant` is refused
+  (no enrolled Windows Hello key); `orcel authority reset` and `enroll` are refused; the epoch is unchanged.
+  The hosted runner's UAC is not "Always notify" (its values are in the report), and the elevated owner CLI's
+  reset must be refused by the service for exactly that reason; the report names the gate for each caller
+  (`reset_refused_by`).
 - **Recovery:** a restart keeps `key_id`; with `lease-signing.key` missing and audit history present the
   service refuses to start (event 4103); with the key back it starts with the same `key_id`.
 - **Uninstall:** the Uninstall line; every row of the table above reversed and the staging gone.
