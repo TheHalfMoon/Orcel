@@ -59,6 +59,7 @@ impl ChallengeFinding {
 /// known signals each at most once and in vocabulary order, and a kind of
 /// `none` exactly when no signal makes one (a blocked status alone makes
 /// none).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn check_report(kind: &str, signals: &[String]) -> Result<(), HostError> {
     let violation = || HostError::Unavailable(UnavailableReason::ProtocolViolation);
     if !CHALLENGE_KINDS.contains(&kind) {
