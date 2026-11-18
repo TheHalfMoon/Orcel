@@ -1114,6 +1114,10 @@
       "reason": "Published SIL Open Font License text of Geist and Geist Mono (vercel/geist-font). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
     },
     {
+      "path": "apps/web/public/fonts/OFL-Inter.txt",
+      "reason": "Published SIL Open Font License text of Inter (rsms/inter). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The brand wordmark is outlined from Inter Display; the licence text is kept as the font's notice."
+    },
+    {
       "path": "apps/web/public/fonts/OFL-InstrumentSerif.txt",
       "reason": "Published SIL Open Font License text of Instrument Serif (Instrument/instrument-serif). The website (apps/web/app/layout.tsx) loads the font through next/font, which downloads it at build time; no font file or font source is in the repository, so there is no donor file to pin. The licence text is kept as the font's notice."
     },
