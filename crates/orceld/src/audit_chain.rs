@@ -55,6 +55,21 @@ impl Anchorer for ServiceAnchorer {
         let answer = AuthorityClient::installed().and_then(|client| client.anchor(anchor, link));
         outcome(answer)
     }
+
+    /// What the installed service holds of this account's chain; `None`
+    /// when the service is absent or does not answer (the chain is then
+    /// unanchored and says so).
+    fn held(&self, log: &str) -> Option<AnchorRef> {
+        let answer = AuthorityClient::installed()
+            .and_then(|client| client.anchor_status(log))
+            .ok()?;
+        held_of(&answer)
+    }
+}
+
+/// The held anchor in an `AnchorStatus` answer.
+fn held_of(answer: &serde_json::Value) -> Option<AnchorRef> {
+    serde_json::from_value(answer.get("held")?.clone()).ok()
 }
 
 fn outcome(answer: Result<serde_json::Value, orcel_authority::AuthorityError>) -> AnchorOutcome {
@@ -66,6 +81,17 @@ fn outcome(answer: Result<serde_json::Value, orcel_authority::AuthorityError>) -
         Ok(other) => AnchorOutcome::Unanchored {
             reason: format!("the authority service did not confirm the anchor: {other}"),
         },
+        // A rule refusal (an unlinked file, a rewrite, a file the log left)
+        // fails the chain closed; anything else leaves it unanchored.
+        Err(error)
+            if error
+                .message
+                .starts_with(orcel_authority::core::chain_anchor::REFUSED_PREFIX) =>
+        {
+            AnchorOutcome::Refused {
+                reason: error.message,
+            }
+        }
         Err(error) => AnchorOutcome::Unanchored {
             reason: format!("authority service: {error}"),
         },
@@ -111,7 +137,7 @@ pub(crate) fn run_cli(args: &[String]) -> Option<i32> {
         }
     };
     let result = if command == "audit-verify" {
-        verify(&path)
+        verify_with_held(&path, ServiceAnchorer.held(orcel_audit::ORCELD_LOG))
     } else {
         move_aside(&path)
     };
@@ -143,9 +169,14 @@ pub(crate) fn move_aside(path: &std::path::Path) -> Result<(String, i32), String
     Ok((text, EXIT_INTACT))
 }
 
-/// The report as JSON text and the exit code it earns.
-pub(crate) fn verify(path: &std::path::Path) -> Result<(String, i32), String> {
-    let report = orcel_audit::verify_file(path)
+/// The report as JSON text and the exit code it earns, checked against
+/// `held`, the anchor the authority service holds (when it is present): a
+/// chain replaced by a fresh file is then Broken, not Intact.
+pub(crate) fn verify_with_held(
+    path: &std::path::Path,
+    held: Option<AnchorRef>,
+) -> Result<(String, i32), String> {
+    let report = orcel_audit::verify_with_anchors(path, held.as_slice())
         .map_err(|error| format!("read {}: {error}", path.display()))?;
     let code = match report.verdict {
         orcel_audit::Verdict::Intact => EXIT_INTACT,
@@ -155,7 +186,20 @@ pub(crate) fn verify(path: &std::path::Path) -> Result<(String, i32), String> {
         orcel_audit::Verdict::Recovered => EXIT_RECOVERED,
         orcel_audit::Verdict::Truncated => EXIT_TRUNCATED,
     };
-    let text = serde_json::to_string_pretty(&report)
+    let mut value =
+        serde_json::to_value(&report).map_err(|error| format!("encode the report: {error}"))?;
+    if let serde_json::Value::Object(map) = &mut value {
+        map.insert(
+            "held_anchor_source".into(),
+            serde_json::Value::from(if held.is_some() {
+                SERVICE_HOLDER
+            } else {
+                "none: the authority service is absent or holds no anchor of this chain; \
+                 anchor records in the file are claims only"
+            }),
+        );
+    }
+    let text = serde_json::to_string_pretty(&value)
         .map_err(|error| format!("encode the report: {error}"))?;
     Ok((text, code))
 }
@@ -166,6 +210,76 @@ mod tests {
     use orcel_audit::AuditLogger;
     use orcel_contracts::RequestEnvelope;
     use serde_json::{json, Value};
+
+    fn verify(path: &std::path::Path) -> Result<(String, i32), String> {
+        verify_with_held(path, None)
+    }
+
+    /// A holder that holds one anchor and answers it, as the service does.
+    struct Holds(AnchorRef);
+
+    impl Anchorer for Holds {
+        fn anchor(&self, _anchor: &AnchorRef, _link: Option<&ChainLink>) -> AnchorOutcome {
+            AnchorOutcome::Unanchored {
+                reason: "test".to_owned(),
+            }
+        }
+        fn held(&self, _log: &str) -> Option<AnchorRef> {
+            Some(self.0.clone())
+        }
+    }
+
+    /// Re-review: with the service holding an anchor, a chain deleted and
+    /// reopened fresh verifies Broken, and after a restart every dispatch
+    /// is refused (fail closed).
+    #[test]
+    fn audit_chain_a_deleted_chain_is_broken_and_refuses_dispatch_when_anchors_are_held(
+    ) -> Result<(), String> {
+        let dir = sandbox("deleted")?;
+        let plain = dir.join("audit.jsonl");
+        let logger = AuditLogger::new(&plain).map_err(|e| e.to_string())?;
+        let mut last = None;
+        for n in 0..3 {
+            last = Some(
+                logger
+                    .chain()
+                    .append(orcel_audit::EventDraft::new(
+                        orcel_contracts::event::AuditEventKind::Request,
+                        json!({"n": n}),
+                    ))
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        let held = last.ok_or("records")?.at;
+        let chain = logger.chain().path().to_path_buf();
+        assert_eq!(verify_with_held(&chain, Some(held.clone()))?.1, EXIT_INTACT);
+        std::fs::remove_file(&chain).map_err(|e| e.to_string())?;
+        // A restarted orceld: a new logger whose anchor holder holds the
+        // old file's anchor.
+        let restarted = AuditLogger::new(&plain).map_err(|e| e.to_string())?;
+        restarted
+            .chain()
+            .set_anchorer(std::sync::Arc::new(Holds(held.clone())));
+        let refused = crate::audit_before_dispatch(&restarted, &request(7), "p1")
+            .err()
+            .ok_or("the dispatch should be refused")?;
+        let error = refused.error.ok_or("an error")?;
+        assert!(
+            error.message.contains("does not continue"),
+            "{}",
+            error.message
+        );
+        let (text, code) = verify_with_held(&chain, Some(held))?;
+        assert_eq!(code, EXIT_BROKEN, "{text}");
+        assert!(text.contains("unlinked_file"));
+        assert!(text.contains(SERVICE_HOLDER));
+        // Without a held anchor the same file only verifies as claims.
+        let (text, code) = verify(&chain)?;
+        assert_eq!(code, EXIT_INTACT, "{text}");
+        assert!(text.contains("claims only"));
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
 
     fn sandbox(label: &str) -> Result<PathBuf, String> {
         let dir = std::env::temp_dir().join(format!(
@@ -234,7 +348,10 @@ mod tests {
         assert_eq!(code, EXIT_INTACT, "{text}");
         let report: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
         assert_eq!(report["previous_head_seq"], 1, "the last verifiable record");
-        logger
+        // A new orceld continues the linked file (the logger above verified
+        // records the new file does not keep, so it refuses).
+        AuditLogger::new(dir.join("audit.jsonl"))
+            .map_err(|e| e.to_string())?
             .record(&request(9), "p1", "SUCCESS")
             .map_err(|e| e.to_string())?;
         std::fs::write(&chain, original.replacen("r-1", "r-9", 1)).map_err(|e| e.to_string())?;
@@ -262,6 +379,24 @@ mod tests {
         assert!(
             matches!(&absent, AnchorOutcome::Unanchored { reason } if reason.contains("not installed")),
             "{absent:?}"
+        );
+        let refused = outcome(Err(orcel_authority::AuthorityError::denied(format!(
+            "{}the chain file does not link",
+            orcel_authority::core::chain_anchor::REFUSED_PREFIX
+        ))));
+        assert!(
+            matches!(refused, AnchorOutcome::Refused { .. }),
+            "{refused:?}"
+        );
+        let rate = outcome(Err(orcel_authority::AuthorityError::denied(
+            "more than 120 anchors of this log in a minute",
+        )));
+        assert!(matches!(rate, AnchorOutcome::Unanchored { .. }));
+        assert_eq!(held_of(&json!({"held": null})), None);
+        assert_eq!(
+            held_of(&json!({"held": {"log": "orceld", "file_id": "a", "seq": 3, "digest": "b"}}))
+                .map(|held| held.seq),
+            Some(3)
         );
         let unconfirmed = outcome(Ok(json!({"anchored": false})));
         assert!(matches!(unconfirmed, AnchorOutcome::Unanchored { .. }));
@@ -359,41 +494,74 @@ mod tests {
         Ok(())
     }
 
-    /// Every dispatch call in orceld's request path is preceded by the
-    /// write-before-dispatch guard.
+    /// Every call to a dispatch function (any `dispatch*` function or
+    /// `authorize_enrollment`) inside one of orceld's request entry points
+    /// (any `handle_*` function), discovered by scanning the source, is
+    /// preceded by the write-before-dispatch guard in the same function. A
+    /// new entry point or call site without it fails here.
     #[test]
     fn audit_chain_every_dispatch_site_writes_its_record_first() {
         let main = include_str!("sg000039_main.rs");
-        let production = main
-            .split("#[cfg(test)]\nmod tests {")
-            .next()
-            .unwrap_or_default();
         let report = include_str!("report_task.rs");
-        for (source, call) in [
-            (production, "remote_lease::authorize_enrollment("),
-            (production, "executable_admin::dispatch_registry("),
-            (production, "remote_lease::dispatch_lease_management("),
-            (production, "secret_store::dispatch("),
-            (production, "live_dispatch::dispatch(&"),
-            (production, "live_dispatch::dispatch_full("),
-            (production, "let result = dispatch_with("),
-            (report, "match dispatch(&decision.workspace"),
-        ] {
-            let lines: Vec<&str> = source.lines().collect();
-            let sites: Vec<usize> = lines
-                .iter()
-                .enumerate()
-                .filter(|(_, line)| line.contains(call))
-                .map(|(index, _)| index)
-                .collect();
-            assert_eq!(sites.len(), 1, "{call}");
-            let before = &lines[sites[0].saturating_sub(12)..sites[0]];
-            assert!(
-                before
+        let mut found = 0;
+        for (file, source) in [("sg000039_main.rs", main), ("report_task.rs", report)] {
+            let production = source
+                .split("\n#[cfg(test)]\nmod tests {")
+                .next()
+                .unwrap_or_default();
+            let mut function = String::new();
+            let mut body: Vec<&str> = Vec::new();
+            for line in production.lines() {
+                let top = ["fn ", "pub fn ", "pub(crate) fn ", "pub(super) fn "]
                     .iter()
-                    .any(|line| line.contains("audit_before_dispatch(")),
-                "{call} runs without its dispatch record first"
-            );
+                    .find_map(|prefix| line.strip_prefix(prefix));
+                if let Some(rest) = top {
+                    function = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    body.clear();
+                }
+                if function.starts_with("handle_") {
+                    for call in dispatch_calls(line) {
+                        found += 1;
+                        let recent = &body[body.len().saturating_sub(12)..];
+                        assert!(
+                            recent.iter().any(|line| line.contains("audit_before_dispatch(")),
+                            "{file}: {function} calls {call} without writing its dispatch record first"
+                        );
+                    }
+                }
+                body.push(line);
+            }
         }
+        assert!(
+            found >= 8,
+            "only {found} dispatch sites were found; the scan is broken"
+        );
+    }
+
+    /// The dispatch functions `line` calls (not defines).
+    fn dispatch_calls(line: &str) -> Vec<String> {
+        let code = line.split("//").next().unwrap_or_default();
+        let mut calls = Vec::new();
+        let mut word = String::new();
+        let mut previous = String::new();
+        for c in code.chars().chain(std::iter::once(' ')) {
+            if c.is_alphanumeric() || c == '_' {
+                word.push(c);
+                continue;
+            }
+            if !word.is_empty() {
+                if c == '('
+                    && previous != "fn"
+                    && (word.starts_with("dispatch") || word == "authorize_enrollment")
+                {
+                    calls.push(word.clone());
+                }
+                previous = std::mem::take(&mut word);
+            }
+        }
+        calls
     }
 }

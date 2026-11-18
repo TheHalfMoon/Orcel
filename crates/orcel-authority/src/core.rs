@@ -543,7 +543,7 @@ impl AuthorityCore {
         let op = request.op();
         let result = self.dispatch(caller, role, request);
         if let Err(error) = &result {
-            if !matches!(op, "status" | "intent_status") {
+            if !matches!(op, "status" | "intent_status" | "anchor_status") {
                 let detail = json!({
                     "op": op,
                     "decision": "refused",
@@ -593,6 +593,7 @@ impl AuthorityCore {
             Request::Anchor { anchor, link } => {
                 self.anchor_chain(caller, role, &anchor, link.as_ref())
             }
+            Request::AnchorStatus { log } => self.anchor_status(caller, role, &log),
         }
     }
 

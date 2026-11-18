@@ -36,7 +36,7 @@
 //! refuses a file two replacements on until it restarts.
 
 use crate::anchor::{AnchorOutcome, Anchorer, LocalMarker};
-use crate::redact::{bounded, sha256_hex};
+use crate::redact::{bounded, field_text, sha256_hex};
 use crate::{MAX_FIELD_CHARS, MAX_TARGET_CHARS};
 use orcel_contracts::event::{
     AnchorRef, AuditEvent, AuditEventKind, ANCHOR_INTERVAL_EVENTS, GENESIS_PREV_DIGEST,
@@ -61,6 +61,8 @@ pub const MAX_LINE_BYTES: usize = 64 * 1024;
 const LOCK_WAIT: Duration = Duration::from_secs(10);
 /// `previous_file_id` of a log's first file.
 pub const NO_PREVIOUS_FILE: &str = "none";
+/// The `status` of an anchor event whose holder refused the file.
+pub const LINK_REFUSED: &str = "link_refused";
 
 /// What the operator is told when a chain does not verify.
 pub const RECOVERY_HINT: &str = "run `orceld audit-verify` to see where; \
@@ -348,6 +350,11 @@ struct Cursor {
     head: String,
     file_id: Option<String>,
     link: Option<ChainLink>,
+    /// Why this chain refuses further records: the anchor holder refused a
+    /// file that does not continue the one it holds anchors of, or this
+    /// file conflicts with the head the holder holds. Fail closed until the
+    /// operator restores the file the holder knows.
+    refused: Option<String>,
 }
 
 impl Cursor {
@@ -359,7 +366,55 @@ impl Cursor {
             head: GENESIS_PREV_DIGEST.to_owned(),
             file_id: None,
             link: None,
+            refused: None,
         }
+    }
+}
+
+/// Why the current file conflicts with `held`, the anchor the holder holds
+/// for this log, or `None` when it continues it: the same file holding that
+/// record, or a file linked to the held file at or past the held seq.
+pub(crate) fn held_conflict(
+    held: &AnchorRef,
+    file_id: &str,
+    link: Option<&ChainLink>,
+    next_seq: u64,
+    digest_at_held: Option<&str>,
+) -> Option<String> {
+    if held.file_id == file_id {
+        if held.seq >= next_seq {
+            return Some(format!(
+                "the anchor holder holds seq {} of this file, past its end (records were cut)",
+                held.seq
+            ));
+        }
+        if digest_at_held != Some(held.digest.as_str()) {
+            return Some(format!(
+                "the record at seq {} is not the one the anchor holder holds",
+                held.seq
+            ));
+        }
+        return None;
+    }
+    match link {
+        Some(link) if link.previous_file_id == held.file_id => {
+            if link.previous_head_seq > held.seq
+                || (link.previous_head_seq == held.seq && link.previous_head_digest == held.digest)
+            {
+                None
+            } else {
+                Some(
+                    "this file links to the held file at a head before, or other than, the \
+                     anchored record"
+                        .to_owned(),
+                )
+            }
+        }
+        _ => Some(
+            "this file does not continue the file the anchor holder holds anchors of \
+             (the chain was replaced, not continued)"
+                .to_owned(),
+        ),
     }
 }
 
@@ -519,15 +574,17 @@ impl ChainWriter {
     /// is due an anchor, asks the anchorer (outside the file lock) and
     /// records its answer as an `anchor` event.
     pub fn append(&self, draft: EventDraft) -> Result<Appended, ChainError> {
-        let (mut appended, link) = self.append_one(draft)?;
+        let (mut appended, link) = self.append_one(draft, false)?;
         if anchor_due(&appended.event) {
             let outcome = self.anchorer().anchor(&appended.at, link.as_ref());
             let marker = EventDraft {
                 asserted_by_session: false,
                 ..EventDraft::new(AuditEventKind::Anchor, outcome.detail(&appended.at))
             };
+            // A refusal is recorded even though it stops the chain.
+            let refused = matches!(outcome, AnchorOutcome::Refused { .. });
             appended.anchor = Some(
-                self.append_one(marker)
+                self.append_one(marker, refused)
                     .map(|_| outcome)
                     .map_err(|error| error.to_string()),
             );
@@ -535,11 +592,30 @@ impl ChainWriter {
         Ok(appended)
     }
 
-    fn append_one(&self, draft: EventDraft) -> Result<(Appended, Option<ChainLink>), ChainError> {
+    fn append_one(
+        &self,
+        draft: EventDraft,
+        record_refusal: bool,
+    ) -> Result<(Appended, Option<ChainLink>), ChainError> {
         let mut cursor = self.cursor();
         let _lock = lock(&self.lock_path)?;
         self.sync(&mut cursor)?;
+        if let (Some(reason), false) = (&cursor.refused, record_refusal) {
+            return Err(ChainError::Broken {
+                seq: cursor.next_seq,
+                reason: format!("refused: {reason}"),
+            });
+        }
+        let refusal = (draft.kind == AuditEventKind::Anchor && record_refusal).then(|| {
+            draft.detail["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        });
         let appended = self.write_event(&mut cursor, draft)?;
+        if let Some(reason) = refusal {
+            cursor.refused = Some(format!("the anchor holder refused this file: {reason}"));
+        }
         Ok((appended, cursor.link.clone()))
     }
 
@@ -554,7 +630,22 @@ impl ChainWriter {
             match opening_of(&self.path).map_err(|error| io_error("read the chain", error))? {
                 Some((opening, _)) if opening.digest == known => {}
                 Some((_, Some(link))) if link.previous_file_id == known => {
-                    // Moved aside and continued by a linked file.
+                    // Moved aside and continued by a linked file, which must
+                    // keep every record this writer verified.
+                    let verified_head = cursor.next_seq.saturating_sub(1);
+                    if link.previous_head_seq < verified_head
+                        || (link.previous_head_seq == verified_head
+                            && link.previous_head_digest != cursor.head)
+                    {
+                        return Err(ChainError::Broken {
+                            seq: cursor.next_seq,
+                            reason: format!(
+                                "the linked file continues from seq {}, before the head this \
+                                 writer verified (seq {verified_head}): records were dropped",
+                                link.previous_head_seq
+                            ),
+                        });
+                    }
                     *cursor = Cursor::empty();
                 }
                 Some(_) => {
@@ -593,6 +684,15 @@ impl ChainWriter {
                 ),
             });
         }
+        // A writer reading the file from its start (a new process, or a
+        // linked replacement) checks it against the anchor the holder holds.
+        let from_start = cursor.len == 0;
+        let held = if from_start {
+            self.anchorer().held(&self.log)
+        } else {
+            None
+        };
+        let mut digest_at_held = None;
         if let Some(mut file) = file.filter(|_| end > cursor.len) {
             file.seek(SeekFrom::Start(cursor.len))
                 .map_err(|error| io_error("read the chain", error))?;
@@ -602,7 +702,18 @@ impl ChainWriter {
                     .step()
                     .map_err(|error| io_error("read the chain", error))?
                 {
-                    Step::Event(_, length) => {
+                    Step::Event(event, length) => {
+                        if held.as_ref().is_some_and(|held| held.seq == event.seq) {
+                            digest_at_held = Some(event.digest.clone());
+                        }
+                        if event.kind == AuditEventKind::Anchor
+                            && event.detail["status"] == LINK_REFUSED
+                        {
+                            cursor.refused = Some(format!(
+                                "the anchor holder refused this file: {}",
+                                event.detail["reason"].as_str().unwrap_or_default()
+                            ));
+                        }
                         cursor.len += length;
                         cursor.next_seq = scanner.next_seq;
                         cursor.head.clone_from(&scanner.head);
@@ -629,13 +740,26 @@ impl ChainWriter {
                             });
                         }
                         cursor.verified = true;
-                        return self.quarantine_tail(cursor, &bytes);
+                        self.quarantine_tail(cursor, &bytes)?;
+                        break;
                     }
                 }
             }
         }
         cursor.verified = true;
-        self.open_file_if_empty(cursor, None, None)
+        self.open_file_if_empty(cursor, None, None)?;
+        if let (Some(held), Some(file_id)) = (&held, cursor.file_id.clone()) {
+            if let Some(conflict) = held_conflict(
+                held,
+                &file_id,
+                cursor.link.as_ref(),
+                cursor.next_seq,
+                digest_at_held.as_deref(),
+            ) {
+                cursor.refused = Some(conflict);
+            }
+        }
+        Ok(())
     }
 
     /// Moves a torn last line aside, cuts it from the chain and records
@@ -709,9 +833,7 @@ impl ChainWriter {
     }
 
     fn write_event(&self, cursor: &mut Cursor, draft: EventDraft) -> Result<Appended, ChainError> {
-        let field = |value: Option<String>| {
-            value.map(|value| bounded(&value, MAX_FIELD_CHARS).into_owned())
-        };
+        let field = |value: Option<String>| value.map(|value| field_text(&value, MAX_FIELD_CHARS));
         let mut event = AuditEvent {
             contract: AuditEvent::CONTRACT.to_owned(),
             seq: cursor.next_seq,
@@ -729,7 +851,7 @@ impl ChainWriter {
             caller_pid: draft.caller_pid,
             caller_image: draft
                 .caller_image
-                .map(|image| bounded(&image, MAX_TARGET_CHARS).into_owned()),
+                .map(|image| field_text(&image, MAX_TARGET_CHARS)),
             detail: draft.detail,
             digest: String::new(),
         };

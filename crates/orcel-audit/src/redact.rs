@@ -26,6 +26,34 @@ pub(crate) fn bounded(value: &str, max: usize) -> Cow<'_, str> {
     }
 }
 
+/// Whether `c` could hide or reorder text in a reader: a C0 or C1 control,
+/// a line or paragraph separator, or a bidirectional mark or override.
+fn is_unsafe(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}' | '\u{2029}' | '\u{061C}' | '\u{200E}' | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// `value` with every unsafe character replaced by U+FFFD, bounded to
+/// `max` characters: what the chain keeps of a client-chosen field.
+pub(crate) fn field_text(value: &str, max: usize) -> String {
+    let cleaned: Cow<'_, str> = if value.chars().any(is_unsafe) {
+        Cow::Owned(
+            value
+                .chars()
+                .map(|c| if is_unsafe(c) { '\u{FFFD}' } else { c })
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(value)
+    };
+    bounded(&cleaned, max).into_owned()
+}
+
 /// SHA-256 of `bytes`, lowercase hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
@@ -113,6 +141,11 @@ mod tests {
         );
         assert_eq!(image_name(r"C:\x\bad|name.exe"), None);
         assert_eq!(image_name(&"a".repeat(65)), None);
+        assert_eq!(
+            field_text("a\u{7}b\u{85}c\u{2028}d\u{202E}e\u{2067}f\u{200F}", 64),
+            "a\u{FFFD}b\u{FFFD}c\u{FFFD}d\u{FFFD}e\u{FFFD}f\u{FFFD}"
+        );
+        assert_eq!(field_text("plain-id", 64), "plain-id");
         assert_eq!(
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"

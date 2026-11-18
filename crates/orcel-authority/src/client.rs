@@ -191,6 +191,14 @@ impl AuthorityClient {
         self.call(&Request::List)
     }
 
+    /// WP1-03: the latest anchor the service holds of this account's `log`
+    /// (`Value::Null` when it holds none).
+    pub fn anchor_status(&self, log: &str) -> Result<Value, AuthorityError> {
+        self.call(&Request::AnchorStatus {
+            log: log.to_owned(),
+        })
+    }
+
     /// WP1-03: asks the service to hold an anchor of orceld's audit chain.
     pub fn anchor(
         &self,

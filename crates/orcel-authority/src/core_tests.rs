@@ -1021,3 +1021,44 @@ fn wp103_the_service_refuses_rewrites_regressions_and_unlinked_files() -> Result
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+/// WP1-03 re-review: orceld reads back what the service holds of its chain
+/// (the verifier and a starting writer check against it), and every rule
+/// refusal carries the prefix orceld records as `link_refused`.
+#[test]
+fn wp103_the_service_reports_its_held_anchor_and_marks_rule_refusals() -> Result<(), String> {
+    let dir = temp_dir("anchor-status")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let status = |core: &mut AuthorityCore, caller: &CallerFacts| {
+        core.handle(
+            caller,
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"], Value::Null);
+    assert_eq!(
+        code(status(&mut core, &other_process())),
+        Some(FailureCode::CapabilityDenied)
+    );
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let held = ok(status(&mut core, &orceld()))?;
+    assert_eq!(held["held"]["file_id"], "a".repeat(64));
+    assert_eq!(held["held"]["seq"], 31);
+    assert_eq!(held["held"]["digest"], "b".repeat(64));
+    let refused = core
+        .handle(&orceld(), anchor_request('d', 31, 'e', None))
+        .err()
+        .ok_or("an unlinked file is refused")?;
+    assert!(
+        refused
+            .message
+            .starts_with(crate::core::chain_anchor::REFUSED_PREFIX),
+        "{}",
+        refused.message
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}

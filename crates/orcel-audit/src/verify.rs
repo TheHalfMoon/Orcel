@@ -10,7 +10,7 @@
 //! cannot show is said in the report's `tamper_evidence`.
 
 use crate::anchor::UNANCHORED_NOTE;
-use crate::chain::{anchor_due, Scanner, Step, NO_PREVIOUS_FILE};
+use crate::chain::{anchor_due, ChainLink, Scanner, Step, LINK_REFUSED, NO_PREVIOUS_FILE};
 use orcel_contracts::event::{AnchorRef, AuditEventKind};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -56,12 +56,11 @@ pub struct AnchorCheck {
     pub file_id: String,
     pub seq: u64,
     pub digest: String,
-    /// `match`; `conflict` (the record there has another digest);
-    /// `beyond_end` (the file was cut); `previous_file_head` (the head this
-    /// file links to, matching); `previous_file` (an earlier record of the
-    /// linked file: verify that file for it); `beyond_link` (past the head
-    /// this file says it follows: that file was cut before it was moved
-    /// aside); `unlinked_file` (a file this one does not link to).
+    /// `match` (this file or a moved-aside file it continues holds that
+    /// record); `conflict` (the record there has another digest);
+    /// `beyond_end` (past the file's end, or past the head its successor
+    /// claims: whole records were cut); `unlinked_file` (a file of the log
+    /// this chain does not continue).
     pub result: &'static str,
 }
 
@@ -94,7 +93,65 @@ pub struct VerifyReport {
     pub last_verified_anchor_seq: Option<u64>,
     /// Anchors supplied by the caller, checked.
     pub anchor_checks: Vec<AnchorCheck>,
+    /// The moved-aside files this one continues, newest first, each checked
+    /// to end at the head its successor claims.
+    pub predecessors: Vec<Predecessor>,
     pub tamper_evidence: String,
+}
+
+/// A moved-aside file the chain continues.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Predecessor {
+    pub file: String,
+    pub file_id: String,
+    pub head_seq: u64,
+}
+
+/// The most moved-aside files the verifier follows back.
+const MAX_PREDECESSORS: usize = 16;
+
+/// What one file holds for the checks: its id, its link and the file its
+/// opening names, its verifiable prefix, and the digests of wanted records.
+struct FileScan {
+    file_id: Option<String>,
+    link: Option<ChainLink>,
+    moved: Option<String>,
+    next_seq: u64,
+    head: String,
+    digests: BTreeMap<u64, String>,
+}
+
+/// The verifiable prefix of a moved-aside file (it may end in the break
+/// that got it moved aside).
+fn scan_prefix(path: &Path, wanted: &[u64]) -> io::Result<FileScan> {
+    let mut scanner = Scanner::new(BufReader::new(File::open(path)?));
+    let mut moved = None;
+    let mut digests = BTreeMap::new();
+    while let Step::Event(event, _) = scanner.step()? {
+        if event.seq == 0 {
+            moved = moved_name(&event.detail);
+        }
+        if wanted.contains(&event.seq) {
+            digests.insert(event.seq, event.digest.clone());
+        }
+    }
+    Ok(FileScan {
+        file_id: scanner.file_id,
+        link: scanner.link,
+        moved,
+        next_seq: scanner.next_seq,
+        head: scanner.head,
+        digests,
+    })
+}
+
+/// The moved-aside file an opening record names, if it is a plain name
+/// beside the chain.
+fn moved_name(detail: &serde_json::Value) -> Option<String> {
+    detail["moved_aside"]["file"]
+        .as_str()
+        .filter(|name| !name.is_empty() && !name.contains(['/', '\\']) && *name != "..")
+        .map(str::to_owned)
 }
 
 /// [`verify_with_anchors`] with no anchor held outside the file.
@@ -141,6 +198,7 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
         anchors_verified: 0,
         last_verified_anchor_seq: None,
         anchor_checks: Vec::new(),
+        predecessors: Vec::new(),
         tamper_evidence: String::new(),
     };
     let file = match File::open(path) {
@@ -157,6 +215,7 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
     let wanted: Vec<u64> = held.iter().map(|anchor| anchor.seq).collect();
     let mut digests: BTreeMap<u64, String> = BTreeMap::new();
     let mut by = String::new();
+    let mut moved: Option<String> = None;
     let mut scanner = Scanner::new(BufReader::new(file));
     let mut line = 0u64;
     loop {
@@ -177,6 +236,9 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
         };
         if anchor_due(&event) || wanted.contains(&event.seq) {
             digests.insert(event.seq, event.digest.clone());
+        }
+        if event.seq == 0 {
+            moved = moved_name(&event.detail);
         }
         if event.kind == AuditEventKind::Rotation
             && event.detail["action"] == "quarantined_torn_tail"
@@ -201,6 +263,16 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
                     "an anchor record names a record this file does not hold",
                 );
                 break;
+            }
+            if event.detail["status"] == LINK_REFUSED {
+                record_break(
+                    &mut report,
+                    Verdict::Broken,
+                    line,
+                    event.seq,
+                    "the anchor holder refused this file: it does not continue the file the \
+                     holder holds anchors of",
+                );
             }
             if event.detail["status"] == "anchored" {
                 report.anchors_claimed += 1;
@@ -230,15 +302,82 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
         report.head_seq = Some(scanner.next_seq - 1);
         report.head_digest = Some(scanner.head.clone());
     }
+    // Each file the held anchors may name: this one, then every moved-aside
+    // file it continues (claimed head, digests of wanted records).
+    let mut files: BTreeMap<String, (u64, BTreeMap<u64, String>)> = BTreeMap::new();
+    if let Some(file_id) = &report.file_id {
+        files.insert(
+            file_id.clone(),
+            (report.events.saturating_sub(1), digests.clone()),
+        );
+    }
+    let mut next = scanner.link.clone().map(|link| (link, moved));
+    let dir = path.parent().unwrap_or(Path::new("."));
+    while let Some((link, moved)) = next.take() {
+        if report.predecessors.len() >= MAX_PREDECESSORS {
+            break;
+        }
+        let Some(name) = moved else {
+            record_break(
+                &mut report,
+                Verdict::Broken,
+                1,
+                0,
+                "the opening record links to a previous file but names no moved-aside file",
+            );
+            break;
+        };
+        let scan = match scan_prefix(&dir.join(&name), &wanted) {
+            Ok(scan) => scan,
+            Err(error) => {
+                record_break(
+                    &mut report,
+                    Verdict::Broken,
+                    0,
+                    link.previous_head_seq,
+                    &format!(
+                        "the moved-aside file {name} this chain continues cannot be read: {error}"
+                    ),
+                );
+                break;
+            }
+        };
+        let ends_at_head = scan.file_id.as_deref() == Some(link.previous_file_id.as_str())
+            && scan.next_seq == link.previous_head_seq + 1
+            && scan.head == link.previous_head_digest;
+        if !ends_at_head {
+            record_break(
+                &mut report,
+                Verdict::Broken,
+                0,
+                link.previous_head_seq,
+                &format!(
+                    "the moved-aside file {name} does not end at the head this chain says it \
+                     continues"
+                ),
+            );
+            break;
+        }
+        report.predecessors.push(Predecessor {
+            file: name,
+            file_id: link.previous_file_id.clone(),
+            head_seq: link.previous_head_seq,
+        });
+        files.insert(
+            link.previous_file_id.clone(),
+            (link.previous_head_seq, scan.digests),
+        );
+        next = scan.link.map(|link| (link, scan.moved));
+    }
     for anchor in held {
-        let result = check_held(anchor, &report, &digests);
+        let result = check_held(anchor, &files);
         match result {
             "match" => {
                 report.anchors_verified += 1;
                 report.last_verified_anchor_seq =
                     report.last_verified_anchor_seq.max(Some(anchor.seq));
             }
-            "beyond_end" | "beyond_link" => record_break(
+            "beyond_end" => record_break(
                 &mut report,
                 Verdict::Truncated,
                 0,
@@ -273,35 +412,24 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
     Ok(report)
 }
 
+/// A held anchor against the files the chain holds: `files` maps a file id
+/// to its head (for a moved-aside file, the head its successor claims) and
+/// the digests of the wanted records.
 fn check_held(
     anchor: &AnchorRef,
-    report: &VerifyReport,
-    digests: &BTreeMap<u64, String>,
+    files: &BTreeMap<String, (u64, BTreeMap<u64, String>)>,
 ) -> &'static str {
-    if Some(&anchor.file_id) == report.file_id.as_ref() {
-        return if anchor.seq >= report.events {
-            "beyond_end"
-        } else if digests.get(&anchor.seq) == Some(&anchor.digest) {
-            "match"
-        } else {
-            "conflict"
-        };
+    let Some((head, digests)) = files.get(&anchor.file_id) else {
+        return "unlinked_file";
+    };
+    if anchor.seq > *head {
+        return "beyond_end";
     }
-    if Some(&anchor.file_id) == report.previous_file_id.as_ref() {
-        let head = report.previous_head_seq.unwrap_or(0);
-        return if anchor.seq > head {
-            "beyond_link"
-        } else if anchor.seq == head {
-            if report.previous_head_digest.as_ref() == Some(&anchor.digest) {
-                "previous_file_head"
-            } else {
-                "conflict"
-            }
-        } else {
-            "previous_file"
-        };
+    if digests.get(&anchor.seq) == Some(&anchor.digest) {
+        "match"
+    } else {
+        "conflict"
     }
-    "unlinked_file"
 }
 
 fn tamper_evidence(report: &VerifyReport, by: &str) -> String {

@@ -15,6 +15,10 @@
 //! - an anchor for a file the log already left;
 //! - more than [`ANCHORS_PER_MINUTE`] anchors per log in a minute.
 //!
+//! Every refusal of these rules starts with [`REFUSED_PREFIX`], so orceld
+//! records it as `link_refused` and fails closed, unlike an unavailable
+//! service or the rate cap.
+//!
 //! The same anchor twice is answered as held without a second record.
 //! Everything the caller sends is its claim (`asserted_by_session`).
 
@@ -26,6 +30,9 @@ use orcel_contracts::event::AnchorRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+
+/// The start of every rule refusal's message.
+pub const REFUSED_PREFIX: &str = "chain anchor refused: ";
 
 /// The file in the service's state directory.
 pub const CHAIN_ANCHORS_FILE: &str = "chain-anchors.json";
@@ -88,16 +95,16 @@ fn decide(
             Ok(Decision::Duplicate)
         } else {
             Err(AuthorityError::denied(format!(
-                "the service holds seq {} of this chain file; an anchor at or below it with \
-                 another record is a rewrite",
+                "{REFUSED_PREFIX}the service holds seq {} of this chain file; an anchor at or \
+                 below it with another record is a rewrite",
                 held.seq
             )))
         };
     }
     if held.left_files.contains(&anchor.file_id) {
-        return Err(AuthorityError::denied(
-            "this log already moved on from that chain file",
-        ));
+        return Err(AuthorityError::denied(format!(
+            "{REFUSED_PREFIX}this log already moved on from that chain file"
+        )));
     }
     let linked = link.is_some_and(|link| {
         link.previous_file_id == held.file_id
@@ -105,10 +112,10 @@ fn decide(
             && (link.previous_head_seq > held.seq || link.previous_head_digest == held.digest)
     });
     if !linked {
-        return Err(AuthorityError::denied(
-            "the chain file does not link to the file the service holds anchors of (replaced, \
-             not continued); move the old file aside so the new one links to it",
-        ));
+        return Err(AuthorityError::denied(format!(
+            "{REFUSED_PREFIX}the chain file does not link to the file the service holds anchors \
+             of (replaced, not continued)"
+        )));
     }
     Ok(Decision::Hold { new_file: true })
 }
@@ -131,6 +138,35 @@ impl AuthorityCore {
                 "read the chain anchors: {error}"
             ))),
         }
+    }
+
+    /// `Request::AnchorStatus`.
+    pub(super) fn anchor_status(
+        &self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        log: &str,
+    ) -> Result<Value, AuthorityError> {
+        if role != CallerRole::Orceld {
+            return Err(AuthorityError::denied(
+                "only orceld (a configured trusted image) may read its chain anchors",
+            ));
+        }
+        Self::require_known(role, caller)?;
+        let anchors = self.load_chain_anchors()?;
+        Ok(
+            match anchors.logs.get(&format!("{}|{log}", caller.user_sid)) {
+                Some(held) => json!({
+                    "held": {
+                        "log": log,
+                        "file_id": held.file_id,
+                        "seq": held.seq,
+                        "digest": held.digest,
+                    },
+                }),
+                None => json!({"held": Value::Null}),
+            },
+        )
     }
 
     /// `Request::Anchor`.

@@ -27,6 +27,11 @@ pub enum AnchorOutcome {
     Anchored { by: String, receipt: Value },
     /// Not held anywhere outside this file.
     Unanchored { reason: String },
+    /// The holder refused the anchor because this file does not continue
+    /// the file it holds anchors of (or would rewrite a held record). The
+    /// chain records it as `link_refused` and refuses every later record:
+    /// fail closed.
+    Refused { reason: String },
 }
 
 impl AnchorOutcome {
@@ -51,6 +56,11 @@ impl AnchorOutcome {
                 "reason": crate::redact::bounded(reason, crate::MAX_FIELD_CHARS),
                 "note": UNANCHORED_NOTE,
             }),
+            Self::Refused { reason } => json!({
+                "anchor": anchor,
+                "status": crate::chain::LINK_REFUSED,
+                "reason": crate::redact::bounded(reason, crate::MAX_FIELD_CHARS),
+            }),
         }
     }
 }
@@ -65,6 +75,13 @@ pub const UNANCHORED_NOTE: &str = "local marker only: no anchor outside the user
 /// without linking to it.
 pub trait Anchorer: Send + Sync {
     fn anchor(&self, anchor: &AnchorRef, link: Option<&ChainLink>) -> AnchorOutcome;
+
+    /// The latest anchor the holder holds for `log`, if it can be asked. A
+    /// writer reading its file from the start refuses to append when the
+    /// file does not continue it.
+    fn held(&self, _log: &str) -> Option<AnchorRef> {
+        None
+    }
 }
 
 /// No external holder: every anchor is a local, unanchored marker.

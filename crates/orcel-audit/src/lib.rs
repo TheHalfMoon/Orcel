@@ -37,7 +37,7 @@ use orcel_platform::paths;
 pub use orcel_platform::PlatformError;
 #[cfg(test)]
 use redact::TRUNCATED;
-use redact::{bounded, image_name, target_detail};
+use redact::{bounded, field_text, image_name, target_detail};
 use serde::Serialize;
 use std::borrow::Cow;
 use std::ffi::OsString;
@@ -332,7 +332,7 @@ fn chain_draft(
         serde_json::json!({
             "pid": caller.pid,
             "start_generation": caller.start_generation,
-            "generation_source": bounded(&caller.generation_source, MAX_FIELD_CHARS),
+            "generation_source": field_text(&caller.generation_source, MAX_FIELD_CHARS),
             "executable_name": executable.ok().and_then(image_name),
             "executable_sha256": executable.ok().map(|path| sha256_hex(path.as_bytes())),
             "executable_unavailable_sha256":
@@ -343,11 +343,11 @@ fn chain_draft(
         "source": ORCELD_LOG,
         "phase": if dispatching { "before_dispatch" } else { "outcome" },
         "timestamp_ms": u64::try_from(event.timestamp_ms).unwrap_or(u64::MAX),
-        "client_session_id": event.client_session_id,
-        "workspace_id": event.workspace_id,
+        "client_session_id": field_text(&request.client_session_id, MAX_FIELD_CHARS),
+        "workspace_id": field_text(&request.workspace_id, MAX_FIELD_CHARS),
         "target": request.target.as_deref().map(target_detail),
-        "policy_revision": bounded(event.policy_revision, MAX_FIELD_CHARS),
-        "outcome": (!dispatching).then(|| bounded(event.outcome, MAX_FIELD_CHARS)),
+        "policy_revision": field_text(event.policy_revision, MAX_FIELD_CHARS),
+        "outcome": (!dispatching).then(|| field_text(event.outcome, MAX_FIELD_CHARS)),
         "caller": caller_detail,
     });
     EventDraft {

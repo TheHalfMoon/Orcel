@@ -117,6 +117,10 @@ pub enum Request {
         #[serde(default)]
         link: Option<ChainLink>,
     },
+    /// WP1-03: the latest anchor the service holds of the caller account's
+    /// `log` (orceld only), so `orceld audit-verify` and a starting writer
+    /// can check the local chain against it.
+    AnchorStatus { log: String },
 }
 
 /// WP1-03: the file an anchored chain file follows, as its opening record
@@ -145,6 +149,7 @@ impl Request {
             Self::Revoke { .. } => "revoke",
             Self::Stop => "stop",
             Self::Anchor { .. } => "anchor",
+            Self::AnchorStatus { .. } => "anchor_status",
         }
     }
 }
