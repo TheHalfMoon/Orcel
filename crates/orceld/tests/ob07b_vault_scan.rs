@@ -11,17 +11,23 @@
 //!
 //! This test pins that decision on the whole browser path (the browser host
 //! crate, the session-state crate, the browser provider, every orceld
-//! source, the Node worker and the MCP server): no source calls the
-//! Autofill or WebAuthn domains, opens the engine's credential, autofill or
-//! cookie stores, changes the password-manager preferences, reads or writes
-//! cookies in bulk, or names a tool that would fill a login. Comments may
-//! name them to say they are never used.
+//! source, Orcel's own native-host sources, the Node worker and the MCP
+//! server): no production source calls the Autofill or WebAuthn domains,
+//! opens the engine's credential, autofill or cookie stores, changes the
+//! password-manager preferences, answers an HTTP authentication challenge,
+//! types free text, records traffic, reads or writes cookies in bulk, reads
+//! a request body outside the one gated submission path, or names a tool
+//! that would fill a login. Comments may name them to say they are never
+//! used. Inline Rust test modules (`#[cfg(test)] mod name { ... }`) are
+//! left out, and only those: every other line is scanned (out-of-line test
+//! files too), and each key file proves it.
 
 use std::path::{Path, PathBuf};
 
 type Outcome = Result<(), Box<dyn std::error::Error>>;
 
-/// Calls and names that would let Orcel trigger, read or store a login.
+/// Calls and names that would let Orcel trigger, read, answer or store a
+/// login.
 const FORBIDDEN: &[&str] = &[
     // CDP domains: card and address autofill from caller data; a virtual
     // authenticator (excluded by SG-000135, never a passkey bypass).
@@ -31,12 +37,28 @@ const FORBIDDEN: &[&str] = &[
     "Login Data",
     "Web Data",
     "\"Cookies\"",
+    "/Cookies",
+    "\\\\Cookies",
     "os_crypt",
     "encrypted_key",
     // Password-manager preferences.
     "credentials_enable_service",
     "password_manager",
     "PasswordManager",
+    // HTTP authentication answered by Orcel (a credential in Orcel's hands).
+    "httpCredentials",
+    "setHTTPCredentials",
+    "continueWithAuth",
+    "ProvideCredentials",
+    "handleAuthRequests",
+    // Free typing into a page outside the guarded fill (Playwright's fill in
+    // actions/form.ts, which refuses secret fields).
+    "Input.insertText",
+    "keyboard.type",
+    "pressSequentially",
+    // Recording traffic or page state (request bodies, cookies, fields).
+    "recordHar",
+    "tracing.start",
     // Bulk cookie reads and writes (a sign-in carried out of the browser).
     "getAllCookies",
     "Storage.getCookies",
@@ -46,6 +68,8 @@ const FORBIDDEN: &[&str] = &[
     ".cookies(",
     "addCookies",
     "storageState",
+    // Request bodies: only the gated submission path reads one.
+    "postData",
     // Tool names a later packet must not add without a new decision.
     "browser_autofill",
     "browser_login",
@@ -53,6 +77,51 @@ const FORBIDDEN: &[&str] = &[
     "browser_credential",
     "browser_sign_in",
 ];
+
+/// The one place each token may appear, and why.
+const ALLOWED: &[(&str, &str)] = &[
+    // requestDetail describes a request's body; the worker sends it to the
+    // host only while an approved form execution is armed (worker.ts
+    // `withheldBody`), for Submission::check.
+    ("postData", "apps/orcel-browser-worker/src/routing.ts"),
+];
+
+/// Production code each key file must have had scanned (its last
+/// production item, or one near the end), so a test-module cut that
+/// stopped early fails here.
+const SCANNED_MARKERS: &[(&str, &str)] = &[
+    (
+        "crates/orceld/src/browser_broker.rs",
+        "pub(crate) fn instance_id(",
+    ),
+    (
+        "crates/orceld/src/browser_full.rs",
+        "pub(crate) fn live_request(",
+    ),
+    (
+        "crates/orceld/src/browser_profiles.rs",
+        "fn engine_running(",
+    ),
+    ("crates/orceld/src/live_browser.rs", "fn sha256_bytes("),
+    (
+        "crates/orceld/src/live_dispatch.rs",
+        "fn regex_free_dated_pdfs(",
+    ),
+    ("crates/orceld/src/takeover_gate.rs", "fn refused(refusal"),
+    ("crates/orceld/src/human_input.rs", "pub(crate) fn in_job("),
+    (
+        "crates/orcel-browser-host/src/worker_launch.rs",
+        "pub fn launch_worker(",
+    ),
+    (
+        "crates/orcel-browser-host/src/worker_navigation.rs",
+        "impl Submission {",
+    ),
+];
+
+/// Every Rust file keeps at least this share of its lines after its test
+/// modules are left out.
+const MIN_SCANNED_SHARE: f64 = 0.2;
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
@@ -90,10 +159,112 @@ fn is_ts_test(path: &Path) -> bool {
     })
 }
 
-/// Rust sources up to their first `#[cfg(test)]` module: tests may build
-/// fake profile folders (for example a foreign `Local State`).
-fn production_part(text: &str) -> &str {
-    text.split("#[cfg(test)]").next().unwrap_or(text)
+/// Whether `line` (indentation removed) opens an inline module:
+/// `mod name {`, `pub mod name {` or `pub(...) mod name {`.
+fn opens_module(line: &str) -> bool {
+    let rest = line
+        .strip_prefix("pub ")
+        .or_else(|| {
+            line.strip_prefix("pub(")
+                .and_then(|after| after.split_once(") ").map(|(_, rest)| rest))
+        })
+        .unwrap_or(line);
+    let Some(name) = rest
+        .strip_prefix("mod ")
+        .and_then(|after| after.strip_suffix(" {"))
+    else {
+        return false;
+    };
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The lines of a Rust source outside its test modules, with their line
+/// numbers. Only a `#[cfg(test)]` attribute on an inline module is cut, from
+/// the attribute to the module's closing brace at the module's own
+/// indentation (rustfmt's layout). A `#[cfg(test)]` on anything else (a
+/// function, a statement, a `use`, an out-of-line `mod name;`) cuts
+/// nothing. If no closing brace is found, nothing is cut: the scan errs
+/// toward reading more.
+fn production_lines(text: &str) -> Vec<(usize, &str)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut keep = vec![true; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() == "#[cfg(test)]" {
+            let mut j = i + 1;
+            while j < lines.len() && {
+                let next = lines[j].trim();
+                next.is_empty() || next.starts_with("#[")
+            } {
+                j += 1;
+            }
+            if let Some(line) = lines.get(j) {
+                let rest = line.trim_start();
+                let indent = &line[..line.len() - rest.len()];
+                if opens_module(rest.trim_end()) {
+                    let close = format!("{indent}}}");
+                    if let Some(end) = (j + 1..lines.len()).find(|&k| lines[k].trim_end() == close)
+                    {
+                        keep[i..=end].iter_mut().for_each(|kept| *kept = false);
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    lines
+        .into_iter()
+        .enumerate()
+        .filter(|(number, _)| keep[*number])
+        .collect()
+}
+
+fn relative(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn scan_line(file: &str, number: usize, line: &str, hits: &mut Vec<String>) {
+    if is_comment(line) {
+        return;
+    }
+    for call in FORBIDDEN {
+        if line.contains(call)
+            && !ALLOWED
+                .iter()
+                .any(|(token, allowed)| token == call && *allowed == file)
+        {
+            hits.push(format!("{file}:{}: {call}", number + 1));
+        }
+    }
+}
+
+#[test]
+fn ob07b_production_lines_leave_out_test_modules_only() {
+    let text = "fn a() {}\n#[cfg(test)]\nfn helper() { Autofill. }\n#[cfg(test)]\nuse x;\n\
+                mod full {\n    #[cfg(test)]\n    mod tests {\n        fn t() {}\n    }\n    fn kept() {}\n}\n\
+                #[cfg(test)]\n#[allow(dead_code)]\nmod tests {\n    fn t() { \"}\" }\n}\nfn last() {}\n\
+                #[cfg(test)]\nmod unclosed {\n    fn t() {}\n";
+    let kept: Vec<&str> = production_lines(text)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    // A cfg(test) function, a use and an unclosed module stay scanned.
+    assert!(kept.contains(&"fn helper() { Autofill. }"));
+    assert!(kept.contains(&"use x;"));
+    assert!(kept.contains(&"    fn t() {}"));
+    // Inline test modules, nested or not, are left out; what follows stays.
+    assert!(!kept.contains(&"        fn t() {}"));
+    assert!(!kept.contains(&"    fn t() { \"}\" }"));
+    assert!(kept.contains(&"    fn kept() {}"));
+    assert!(kept.contains(&"fn last() {}"));
+    assert!(opens_module("pub(crate) mod a_b {"));
+    assert!(!opens_module("mod tests;"));
+    assert!(!opens_module("fn mod_x() {"));
 }
 
 #[test]
@@ -105,19 +276,12 @@ fn ob07b_no_browser_path_source_triggers_reads_or_stores_a_saved_login() -> Outc
         "crates/orcel-browser-session/src",
         "crates/orcel-provider-browser/src",
         "crates/orceld/src",
+        // Orcel's own native host. Its vendored third_party donor code is a
+        // separate desktop-automation surface outside the browser path, and
+        // is not scanned here.
+        "apps/orcel-native-host/src",
     ] {
         sources(&root.join(dir), "rs", &mut rust)?;
-    }
-    for file in [
-        "browser_broker.rs",
-        "browser_full.rs",
-        "browser_profiles.rs",
-        "live_browser.rs",
-        "live_dispatch.rs",
-        "takeover_gate.rs",
-    ] {
-        let path = root.join("crates/orceld/src").join(file);
-        assert!(rust.contains(&path), "{file} is scanned");
     }
     assert!(rust.len() > 60, "the Rust sources were found");
     let mut typescript = Vec::new();
@@ -129,27 +293,35 @@ fn ob07b_no_browser_path_source_triggers_reads_or_stores_a_saved_login() -> Outc
     typescript.retain(|path| !is_ts_test(path));
 
     let mut hits = Vec::new();
-    let mut scan = |file: &Path, text: &str| {
-        for (number, line) in text.lines().enumerate() {
-            if is_comment(line) {
-                continue;
-            }
-            for call in FORBIDDEN {
-                if line.contains(call) {
-                    hits.push(format!("{}:{}: {call}", file.display(), number + 1));
-                }
-            }
-        }
-    };
+    let mut short = Vec::new();
+    let mut markers: Vec<(&str, &str)> = SCANNED_MARKERS.to_vec();
     for file in &rust {
+        let name = relative(&root, file);
         let text = std::fs::read_to_string(file)?;
-        // Test modules are in-file; this test file itself is not under src.
-        scan(file, production_part(&text));
+        let total = text.lines().count();
+        let kept = production_lines(&text);
+        if total > 0 && (kept.len() as f64) < MIN_SCANNED_SHARE * total as f64 {
+            short.push(format!("{name}: {} of {total} lines", kept.len()));
+        }
+        for (number, line) in &kept {
+            scan_line(&name, *number, line, &mut hits);
+        }
+        markers.retain(|(marker_file, marker)| {
+            !(*marker_file == name && kept.iter().any(|(_, line)| line.contains(marker)))
+        });
     }
     for file in &typescript {
+        let name = relative(&root, file);
         let text = std::fs::read_to_string(file)?;
-        scan(file, &text);
+        for (number, line) in text.lines().enumerate() {
+            scan_line(&name, number, line, &mut hits);
+        }
     }
+    assert!(
+        markers.is_empty(),
+        "production code not scanned in: {markers:#?}"
+    );
+    assert!(short.is_empty(), "too little scanned: {short:#?}");
     assert!(
         hits.is_empty(),
         "saved-login handling on the browser path: {hits:#?}"
@@ -158,20 +330,15 @@ fn ob07b_no_browser_path_source_triggers_reads_or_stores_a_saved_login() -> Outc
 }
 
 #[test]
-fn ob07b_secret_fields_stay_refused_to_fill_and_type() -> Outcome {
-    // The worker's secret-field rule (SG-000122, kept by SG-000135) is the
-    // other half: no agent action may put a value into a password or
-    // one-time-code field, so a credential enters only through the person
-    // or the browser's own vault.
-    let form =
-        std::fs::read_to_string(repo().join("apps/orcel-browser-worker/src/actions/form.ts"))?;
-    for selector in [
-        ":not([type=\"password\" i])",
-        ":not([autocomplete~=\"current-password\" i])",
-        ":not([autocomplete~=\"new-password\" i])",
-        ":not([autocomplete~=\"one-time-code\" i])",
-    ] {
-        assert!(form.contains(selector), "form.ts keeps {selector}");
-    }
+fn ob07b_a_request_body_leaves_the_worker_only_for_an_armed_execution() -> Outcome {
+    // The worker's only route question to the host goes through
+    // `withheldBody`, armed only while an approved form execution runs, for
+    // its top-level document (worker.test.ts tests the behaviour).
+    let worker = std::fs::read_to_string(repo().join("apps/orcel-browser-worker/src/worker.ts"))?;
+    assert!(worker.contains(
+        "const detail = withheldBody(query.detail ?? { method: \"GET\", contentType: \"\", body: \"\", bodyBytes: 0 }, this.executing && query.kind === \"document\");"
+    ));
+    assert_eq!(worker.matches("frame: \"route_request\"").count(), 1);
+    assert_eq!(worker.matches("this.executing = true;").count(), 1);
     Ok(())
 }

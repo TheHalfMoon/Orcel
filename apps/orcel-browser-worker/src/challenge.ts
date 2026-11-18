@@ -41,6 +41,8 @@
 
 /// The page was between documents (a navigation in flight, or the document
 /// changed during the capture): nothing was classified; ask again later.
+import { rememberSecretField, wasSecretField, type SecretMemory } from "./secret-memory.js";
+
 export class ChallengeBusy extends Error {
   constructor() {
     super("busy");
@@ -103,6 +105,9 @@ export interface ChallengeSnapshot {
       nodeName?: number[];
       nodeValue?: number[];
       attributes?: number[][];
+      /// The engine's stable id per node (kept across snapshots of the same
+      /// document), used only to remember password fields (OB-07b).
+      backendNodeId?: number[];
     };
     layout?: {
       nodeIndex?: number[];
@@ -135,6 +140,8 @@ const OWNER_TAGS = new Set(["label", "button", "a", "h1", "h2", "h3", "legend", 
 const OWNER_ROLES = new Set(["button", "link", "heading", "dialog", "alertdialog"]);
 /// Input types that take typed text (a code field may be any of them).
 const TEXT_TYPES = new Set(["", "text", "tel", "number", "password", "email", "search"]);
+/// `autocomplete` tokens that mark a password field whatever its type.
+const PASSWORD_TOKENS = new Set(["current-password", "new-password"]);
 /// Controls that can submit or continue.
 const BUTTON_TYPES = new Set(["submit", "button", "image"]);
 
@@ -142,6 +149,8 @@ interface Element {
   tag: string;
   attrs: Map<string, string>;
   parent: number;
+  /// The engine's backend node id, when the snapshot carries one.
+  backend?: number;
 }
 
 /// One document, as the detector reads it.
@@ -230,6 +239,7 @@ function readDocument(
   const names = nodes.nodeName ?? [];
   const values = nodes.nodeValue ?? [];
   const attributes = nodes.attributes ?? [];
+  const backends = nodes.backendNodeId ?? [];
   for (let i = 0; i < count; i++) {
     doc.parents.push(parentIndex[i] ?? -1);
     if (types[i] !== 1) continue;
@@ -239,7 +249,13 @@ function readDocument(
       const name = text(flat[a]).toLowerCase();
       if (name && !attrs.has(name)) attrs.set(name, text(flat[a + 1]));
     }
-    doc.elements.set(i, { tag: text(names[i]).toLowerCase(), attrs, parent: parentIndex[i] ?? -1 });
+    const backend = backends[i];
+    doc.elements.set(i, {
+      tag: text(names[i]).toLowerCase(),
+      attrs,
+      parent: parentIndex[i] ?? -1,
+      ...(typeof backend === "number" && Number.isSafeInteger(backend) && backend > 0 ? { backend } : {})
+    });
   }
   const layoutNodes = raw?.layout?.nodeIndex ?? [];
   const styles = raw?.layout?.styles ?? [];
@@ -292,7 +308,11 @@ function fieldHint(doc: Doc, node: number, element: Element, labels: Map<string,
 
 /// Classify one engine snapshot. `status` is the committed document's HTTP
 /// status when the host knows it is this document's (0 otherwise).
-export function classifyChallenge(snapshot: ChallengeSnapshot, status: number): ChallengeReport {
+/// `memory` (SG-000135 OB-07b) is the page's record of fields that were
+/// password fields: each password field seen is added, and a field that was
+/// one still counts as one after a "show password" toggle made it a text
+/// field (`secret-memory.ts`).
+export function classifyChallenge(snapshot: ChallengeSnapshot, status: number, memory?: SecretMemory): ChallengeReport {
   const seen = new Set<ChallengeSignal>();
   const cue = { text: "" };
   let budget = MAX_CHALLENGE_NODES;
@@ -331,14 +351,20 @@ export function classifyChallenge(snapshot: ChallengeSnapshot, status: number): 
         if (marked) seen.add("captcha_widget");
       }
       if (INTERSTITIAL_IDS.has(id) || classes.includes("cf-browser-verification")) seen.add("challenge_interstitial");
+      const autocomplete = tokens(element.attrs.get("autocomplete"));
+      // OB-07b: a password field (by type or by a password autocomplete
+      // token) is remembered, shown or not; a field remembered as one is
+      // still one after a page toggled it to plain text.
+      const passwordLike = element.tag === "input" && TEXT_TYPES.has(type) && (type === "password" || autocomplete.some((token) => PASSWORD_TOKENS.has(token)));
+      if (memory && passwordLike) rememberSecretField(memory, element.backend, element.attrs.get("name"), element.attrs.get("id"));
+      const password = passwordLike || (memory !== undefined && element.tag === "input" && TEXT_TYPES.has(type) && wasSecretField(memory, element.backend));
       // Fields: only shown, typed-text inputs count.
       if (!shown || element.tag !== "input" || !TEXT_TYPES.has(type)) continue;
-      const autocomplete = tokens(element.attrs.get("autocomplete"));
       if (autocomplete.includes("webauthn")) seen.add("webauthn_autocomplete");
       if (!doc.submittable(node)) continue;
-      if (type === "password") seen.add("password_field");
+      if (password) seen.add("password_field");
       if (autocomplete.includes("one-time-code")) seen.add("otp_autocomplete");
-      if (type !== "password" && OTP_HINT.test(fieldHint(doc, node, element, labels))) seen.add("otp_field");
+      if (!password && OTP_HINT.test(fieldHint(doc, node, element, labels))) seen.add("otp_field");
       if (element.attrs.get("maxlength") === "1") singles.set(element.parent, (singles.get(element.parent) ?? 0) + 1);
     }
     for (const count of singles.values()) if (count >= 4 && count <= 8) seen.add("otp_split");

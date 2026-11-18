@@ -5,7 +5,7 @@ import { validLaunch } from "./fixtures.js";
 import { encodeFrame, type WorkerFrame } from "./protocol.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
 import type { FormAction } from "./actions/form.js";
-import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState, describeLaunchError } from "./worker.js";
+import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState, describeLaunchError, withheldBody } from "./worker.js";
 import { MAX_SCREENSHOT_PIECE_CHARS, ScreenshotError } from "./screenshot.js";
 import type { BoundedOutline } from "./outline/capture.js";
 import type { SchemaField, SchemaValue } from "./outline/schema-extract.js";
@@ -882,6 +882,46 @@ test("execution runs outside the queue and reports the opened document or a type
   await worker.receive({ frame: "execute", exec_id: 2, tool: "search", fields });
   await settle();
   assert.deepEqual(sent.at(-1), { frame: "execution_failed", exec_id: 2, reason: "denied" });
+});
+
+test("OB-07b: a request body reaches the host only for an approved execution's document", async () => {
+  const { worker, sent, policy, engine } = await launched();
+  // A dummy sign-in post (no real credential): the field values must never
+  // cross to the host outside an approved execution.
+  const form = { method: "POST", contentType: "application/x-www-form-urlencoded", body: "user=a&pw=dummy-not-real", bodyBytes: 24 };
+  const routed = (id: number) => sent.find((frame) => frame.frame === "route_request" && frame.request_id === id);
+  const pending: Promise<boolean>[] = [];
+  pending.push(policy.decide({ kind: "document", url: "https://fixture.test/login", origin: "https://fixture.test", detail: form }));
+  pending.push(policy.decide({ kind: "fetch", url: "https://fixture.test/api", origin: "https://fixture.test", detail: form }));
+  engine.executeBehavior = async () => {
+    pending.push(policy.decide({ kind: "document", url: "https://fixture.test/search", origin: "https://fixture.test", detail: form }));
+    pending.push(policy.decide({ kind: "fetch", url: "https://fixture.test/api", origin: "https://fixture.test", detail: form }));
+    return { url: "https://fixture.test/search", status: 200, structured: [], structuredComplete: true };
+  };
+  await worker.receive({ frame: "execute", exec_id: 1, tool: "search", fields: [] });
+  await settle();
+  pending.push(policy.decide({ kind: "document", url: "https://fixture.test/login", origin: "https://fixture.test", detail: form }));
+  const withheld = { method: "POST", content_type: "application/x-www-form-urlencoded", body: null, body_bytes: 0 };
+  assert.deepEqual(routed(1), { frame: "route_request", request_id: 1, kind: "document", url: "https://fixture.test/login", origin: "https://fixture.test", ...withheld });
+  assert.deepEqual(routed(2), { frame: "route_request", request_id: 2, kind: "fetch", url: "https://fixture.test/api", origin: "https://fixture.test", ...withheld });
+  assert.deepEqual(routed(3), {
+    frame: "route_request",
+    request_id: 3,
+    kind: "document",
+    url: "https://fixture.test/search",
+    origin: "https://fixture.test",
+    method: "POST",
+    content_type: "application/x-www-form-urlencoded",
+    body: form.body,
+    body_bytes: form.bodyBytes
+  });
+  assert.deepEqual(routed(4), { frame: "route_request", request_id: 4, kind: "fetch", url: "https://fixture.test/api", origin: "https://fixture.test", ...withheld });
+  assert.deepEqual(routed(5), { frame: "route_request", request_id: 5, kind: "document", url: "https://fixture.test/login", origin: "https://fixture.test", ...withheld });
+  assert.ok(!JSON.stringify(sent.filter((frame) => frame.frame === "route_request" && frame.request_id !== 3)).includes("dummy-not-real"));
+  for (let id = 1; id <= 5; id++) await worker.receive({ frame: "route_decision", request_id: id, allow: false });
+  assert.deepEqual(await Promise.all(pending), [false, false, false, false, false]);
+  // No body at all stays an empty body.
+  assert.deepEqual(withheldBody({ method: "GET", contentType: "", body: "", bodyBytes: 0 }, false), { method: "GET", contentType: "", body: "", bodyBytes: 0 });
 });
 
 test("OB-03: a screenshot is served in bounded pieces on request, released after the last, or fails typed", async () => {

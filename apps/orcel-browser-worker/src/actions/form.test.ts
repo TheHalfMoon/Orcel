@@ -33,12 +33,14 @@ function matchesCss(element: Element, css: string): boolean {
   return css.split(/,\s*(?![^()]*\))/).some((raw) => {
     const part = raw.trim();
     const head = part.split(":not(")[0]!;
-    const nots = [...part.matchAll(/:not\(\[([\w-]+)([~*]?)="([^"]+)"(?: i)?\]\)/g)];
+    const nots = [...part.matchAll(/:not\(\[([\w-]+)([~*^$]?)="([^"]+)"(?: i)?\]\)/g)];
     const excluded = nots.some(([, name, op, value]) => {
       const actual = (attrs[name!] ?? (name === "type" ? "text" : "")).toLowerCase();
       const wanted = value!.toLowerCase();
       if (op === "~") return actual.split(/\s+/).includes(wanted);
       if (op === "*") return actual.includes(wanted);
+      if (op === "^") return actual.startsWith(wanted);
+      if (op === "$") return actual.endsWith(wanted);
       return actual === wanted;
     });
     if (excluded) return false;
@@ -267,14 +269,65 @@ test("BR-02 fill refuses secret fields, non-controls and the wrong kind of input
 });
 
 test("BR-02 a field turned secret after the check is still not filled", async () => {
-  // The secret check reads four attributes; right after it, the page turns
-  // the field into a password. The fill resolves its own locator, which
-  // excludes password fields, so nothing is typed.
+  // The secret check reads six attributes; during it, the page turns the
+  // field into a password. OB-07b: the check after focus sees it and
+  // refuses before any text goes in.
   const field: Element = { tag: "input", attrs: { type: "text", name: "code" }, flipAfterReads: 4 };
   const { stub, calls } = page({ e1: [field] });
-  await assert.rejects(formAction(stub, "e1", { action: "fill", value: "1234" }), reason("timeout"));
+  await assert.rejects(formAction(stub, "e1", { action: "fill", value: "1234" }), reason("denied"));
   assert.equal(field.attrs?.type, "password", "the page flipped the field after the check");
   assert.deepEqual(calls, [], "nothing was typed");
+  // Turned secret during the second check: its later reads resolve the
+  // fill's own locator, which excludes password fields, so they fail and
+  // the field counts as secret; nothing is typed either.
+  const late: Element = { tag: "input", attrs: { type: "text", name: "code" }, flipAfterReads: 7 };
+  const second = page({ e1: [late] });
+  await assert.rejects(formAction(second.stub, "e1", { action: "fill", value: "1234" }), reason("denied"));
+  assert.equal(late.attrs?.type, "password");
+  assert.deepEqual(second.calls, [], "nothing was typed");
+});
+
+test("OB-07b fill refuses password-like fields by label, placeholder, PIN name or password autocomplete, and only those", async () => {
+  const { stub, calls } = page({
+    e1: [{ tag: "input", attrs: { type: "text", "aria-label": "Password" } }],
+    e2: [{ tag: "input", attrs: { type: "text", placeholder: "Enter your passcode" } }],
+    e3: [{ tag: "input", attrs: { type: "text", name: "pin" } }],
+    e4: [{ tag: "input", attrs: { type: "text", id: "card-pin" } }],
+    e5: [{ tag: "input", attrs: { type: "text", autocomplete: "current-password" } }],
+    e6: [{ tag: "input", attrs: { type: "text", autocomplete: "username new-password" } }],
+    e7: [{ tag: "input", attrs: { type: "text", name: "pin_code" } }],
+    // Not secret: "pin" inside another word, and an ordinary username.
+    e8: [{ tag: "input", attrs: { type: "text", name: "shipping_city" } }],
+    e9: [{ tag: "input", attrs: { type: "email", autocomplete: "username", "aria-label": "Email" } }]
+  });
+  for (const ref of ["e1", "e2", "e3", "e4", "e5", "e6", "e7"]) {
+    await assert.rejects(formAction(stub, ref, { action: "fill", value: "x" }), reason("denied"), ref);
+  }
+  assert.deepEqual(calls, [], "nothing was typed into a secret field");
+  await formAction(stub, "e8", { action: "fill", value: "Riyadh" });
+  await formAction(stub, "e9", { action: "fill", value: "a@example.test" });
+  assert.deepEqual(calls, ['fill "Riyadh"', 'fill "a@example.test"']);
+});
+
+test("OB-07b the fill locator itself excludes every secret field, whatever the first check said", async () => {
+  // A page that answers the attribute reads as "text" but whose element is
+  // a password field when the fill resolves: the fill's own locator
+  // (FILLABLE, with NOT_SECRET) never resolves to it.
+  for (const attrs of [
+    { type: "password" },
+    { type: "text", autocomplete: "current-password" },
+    { type: "text", name: "pass" },
+    { type: "text", name: "pin" },
+    { type: "text", placeholder: "password" }
+  ]) {
+    const field: Element = { tag: "input", attrs: { type: "text" } };
+    const { stub, calls } = page({ e1: [field] });
+    // Swap the element's attributes after the control was resolved.
+    const pending = formAction(stub, "e1", { action: "fill", value: "x" });
+    field.attrs = attrs;
+    await assert.rejects(pending, (error: unknown) => error instanceof NavigationError && (error.reason === "denied" || error.reason === "timeout"), JSON.stringify(attrs));
+    assert.deepEqual(calls, [], JSON.stringify(attrs));
+  }
 });
 
 test("BR-02 the role and name fallback acts on the one matching control, with the same checks", async () => {

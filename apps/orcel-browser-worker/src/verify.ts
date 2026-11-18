@@ -30,6 +30,7 @@
 // checked against, so such a field cannot be guessed.
 
 import type { Locator, Page } from "playwright-core";
+import { existingSecretMemory, wasSecretName } from "./secret-memory.js";
 
 /// Probes in one verification (mirrors the host).
 export const MAX_VERIFY_PROBES = 16;
@@ -103,8 +104,23 @@ async function field(page: VerifyPage, ref: string, kind: string): Promise<Locat
   return (await control.count().catch(() => 0)) === 1 ? control : "not_a_field";
 }
 
-/// Whether a form control looks secret (its type, `autocomplete`, name or
-/// id): its value is never read, and it is never filled (BR-02).
+/// SG-000135 OB-07b: what an accessible label or placeholder says about a
+/// secret field.
+const SECRET_HINT = /pass(?:word|code|phrase)|one[\s_-]?time (?:code|password)|(?:^|[^a-z])pin(?:$|[^a-z])|security code/i;
+
+/// The page a locator belongs to, when it can say (a test stub may not).
+function pageOfControl(control: Locator): object | undefined {
+  try {
+    return typeof control.page === "function" ? control.page() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/// Whether a form control looks secret (its type, `autocomplete`, name,
+/// id, accessible label or placeholder, or OB-07b: it was a password field
+/// on this page before a "show password" toggle): its value is never read,
+/// and it is never filled (BR-02).
 export async function isSecretField(control: Locator): Promise<boolean> {
   // A read that fails counts as secret (fail closed); an absent attribute
   // reads as empty.
@@ -116,11 +132,15 @@ export async function isSecretField(control: Locator): Promise<boolean> {
       return UNREADABLE;
     }
   };
-  const values = [await read("type"), await read("autocomplete"), await read("name"), await read("id")];
+  const values = [await read("type"), await read("autocomplete"), await read("name"), await read("id"), await read("aria-label"), await read("placeholder")];
   if (values.some((value) => value === UNREADABLE)) return true;
-  const [type, autocomplete, name, id] = values as string[];
+  const [type, autocomplete, name, id, label, placeholder] = values as string[];
   if (type!.toLowerCase() === "password") return true;
   if (SECRET_AUTOCOMPLETE.test(autocomplete!)) return true;
+  if ([label!, placeholder!].some((text) => SECRET_HINT.test(text))) return true;
+  const page = pageOfControl(control);
+  const memory = page === undefined ? undefined : existingSecretMemory(page);
+  if (memory !== undefined && wasSecretName(memory, name!, id!)) return true;
   return [name!, id!].some((text) => SECRET_NAME.test(text) || SECRET_CAMEL.test(text));
 }
 

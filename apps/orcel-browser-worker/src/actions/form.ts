@@ -78,7 +78,14 @@ const NOT_SECRET = [
   ':not([type="password" i])',
   ':not([autocomplete~="current-password" i]):not([autocomplete~="new-password" i]):not([autocomplete~="one-time-code" i])',
   ':not([autocomplete~="cc-number" i]):not([autocomplete~="cc-csc" i]):not([autocomplete~="cc-exp" i]):not([autocomplete~="cc-exp-month" i]):not([autocomplete~="cc-exp-year" i])',
-  ...["pass", "pwd", "otp", "cvc", "cvv", "csc", "secret", "token"].map((part) => `:not([name*="${part}" i]):not([id*="${part}" i])`)
+  ...["pass", "pwd", "otp", "cvc", "cvv", "csc", "secret", "token"].map((part) => `:not([name*="${part}" i]):not([id*="${part}" i])`),
+  // SG-000135 OB-07b: a PIN by name or id. "pin" as a whole word part only
+  // (never "shipping" or "spinner"); isSecretField checks the same rule.
+  ...["name", "id"].flatMap((attr) =>
+    [`[${attr}="pin" i]`, `[${attr}^="pin-" i]`, `[${attr}^="pin_" i]`, `[${attr}$="-pin" i]`, `[${attr}$="_pin" i]`, `[${attr}*="pincode" i]`, `[${attr}*="pin-code" i]`, `[${attr}*="pin_code" i]`].map((selector) => `:not(${selector})`)
+  ),
+  // SG-000135 OB-07b: an accessible label or placeholder naming a password.
+  ...["password", "passcode", "passphrase"].map((part) => `:not([aria-label*="${part}" i]):not([placeholder*="${part}" i])`)
 ].join("");
 /// SG-000122: a single-line text field: an input whose type state is text,
 /// search, email, url or tel. HTML matches the type attribute ASCII
@@ -162,6 +169,12 @@ export async function formAction(page: FormPage, ref: string, action: FormAction
     switch (action.action) {
       case "fill":
         if (await isSecretField(own)) throw new NavigationError("denied");
+        // SG-000135 OB-07b: a page may turn the field secret once it has
+        // focus (a "show password" style swap): check again right before
+        // the text goes in, and refuse if it is no longer this one
+        // non-secret field.
+        await own.focus(options);
+        if ((await own.count().catch(() => 0)) !== 1 || (await isSecretField(own))) throw new NavigationError("denied");
         await own.fill(action.value, options);
         return;
       case "select": {

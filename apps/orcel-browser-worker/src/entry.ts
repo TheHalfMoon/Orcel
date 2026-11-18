@@ -40,6 +40,7 @@ import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry 
 import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
 import { extractBySchema } from "./outline/schema-extract.js";
 import { ChallengeBusy, CHALLENGE_STYLES, classifyChallenge, type ChallengeSnapshot } from "./challenge.js";
+import { secretMemory } from "./secret-memory.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
 if (startup !== null) {
@@ -471,7 +472,7 @@ const playwrightLauncher: Launcher = {
         if (before !== url || tabs.active !== tab || watches.get(page)?.loading === true) throw new ChallengeBusy();
         // The recorded status is this document's only while the tab still
         // shows the URL it was recorded for.
-        const report = classifyChallenge(captured, committedUrl !== "" && url === committedUrl ? status : 0);
+        const report = classifyChallenge(captured, committedUrl !== "" && url === committedUrl ? status : 0, secretMemory(page));
         return { tab, url, report };
       },
       async observe() {

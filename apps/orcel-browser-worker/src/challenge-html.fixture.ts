@@ -24,6 +24,7 @@ interface Built {
   attributes: number[][];
   layout: number[];
   styles: number[][];
+  backends: Map<number, number>;
 }
 
 /// Build one document from `html`, interning strings into `strings`.
@@ -34,7 +35,7 @@ function buildDocument(html: string, strings: string[]): { built: Built; title: 
     strings.push(value);
     return strings.length - 1;
   };
-  const built: Built = { types: [], names: [], values: [], parents: [], attributes: [], layout: [], styles: [] };
+  const built: Built = { types: [], names: [], values: [], parents: [], attributes: [], layout: [], styles: [], backends: new Map() };
   // The document node.
   built.types.push(9);
   built.names.push(intern("#document"));
@@ -107,6 +108,10 @@ function buildDocument(html: string, strings: string[]): { built: Built; title: 
       built.parents.push(parent.node);
       built.attributes.push(attrs.flatMap(([name, value]) => [intern(name), intern(value)]));
       const attr = (name: string) => attrs.find(([key]) => key === name)?.[1];
+      // A fixture names an element's engine identity with data-backend, so
+      // two snapshots can show "the same" element (OB-07b).
+      const backend = Number(attr("data-backend"));
+      if (Number.isSafeInteger(backend) && backend > 0) built.backends.set(node, backend);
       const style = (attr("style") ?? "").replace(/\s+/g, "").toLowerCase();
       const shown =
         parent.shown &&
@@ -152,7 +157,8 @@ export function snapshotOf(html: string, ...frames: string[]): ChallengeSnapshot
         nodeType: built.types,
         nodeName: built.names,
         nodeValue: built.values,
-        attributes: built.attributes
+        attributes: built.attributes,
+        backendNodeId: built.types.map((_, node) => built.backends.get(node) ?? 1_000_000 * (index + 1) + node)
       },
       layout: { nodeIndex: built.layout, styles: built.styles }
     };
