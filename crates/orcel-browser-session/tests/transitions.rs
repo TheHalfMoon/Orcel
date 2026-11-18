@@ -518,3 +518,45 @@ fn agent_calls_never_end_a_human_hold() {
     }
     assert_eq!(scene.state("a"), State::HumanOverride);
 }
+
+/// SG-000135 OB-06: an event reported after the fact counts from when it
+/// happened, so the quiet period ends exactly 3000 ms after it, and an
+/// instant in the future is taken as now.
+#[test]
+fn an_event_reported_late_counts_its_quiet_from_when_it_happened() {
+    use orcel_browser_session::{Millis, ObservedInput};
+    let mut scene = Scene::new(&["a", "b"]);
+    scene.at(1_000);
+    let event = |id: &str| ObservedInput {
+        resource: page(id),
+        kind: InputKind::Device,
+        phase: InputPhase::Instant,
+        marker: None,
+    };
+    assert_eq!(
+        scene.gate.observe_input_at(&event("a"), Millis(400)),
+        InputVerdict::Human
+    );
+    assert_eq!(scene.epoch("a"), 1);
+    assert_eq!(scene.state("a"), State::Quiet);
+    scene.at(400 + QUIET_MS - 1);
+    assert_eq!(scene.state("a"), State::Quiet);
+    scene.at(400 + QUIET_MS);
+    assert_eq!(scene.state("a"), State::Reobserve);
+    // A future instant is now: its quiet ends 3000 ms from now.
+    let now = 400 + QUIET_MS;
+    assert_eq!(
+        scene
+            .gate
+            .observe_input_at(&event("b"), Millis(now + 60_000)),
+        InputVerdict::Human
+    );
+    scene.at(now + QUIET_MS - 1);
+    assert_eq!(scene.state("b"), State::Quiet);
+    scene.at(now + QUIET_MS);
+    assert_eq!(scene.state("b"), State::Reobserve);
+    assert_eq!(
+        scene.gate.observe_input_at(&event("nobody"), Millis(now)),
+        InputVerdict::Unowned
+    );
+}

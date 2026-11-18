@@ -848,6 +848,15 @@ mod full {
         // gate (browser_structured keeps the build's switch), so a page that
         // needs the person is refused to the agent.
         browser.enable_takeover_gate();
+        // SG-000135 OB-06: a Visible window is watched for the person's
+        // input, which pauses the agent until 3 s after their last input. A
+        // Visible session with no input source does not run (fail closed).
+        if mode == SessionMode::Visible {
+            if let Err(error) = browser.watch_visible_window() {
+                let _ = browser.shutdown();
+                return Err(error);
+            }
+        }
         browser.set_task(session_id);
         browser.set_client(client);
         // SG-000135 OB-08: the session's Full Access lease cache, over the
@@ -990,13 +999,14 @@ mod full {
                 // SG-000135 OB-07: the active page is checked again here (at
                 // most once a second, held or not), so the status read is
                 // also how the session notices the check is gone.
-                let (needs_you, page_state) = {
+                let (needs_you, page_state, takeover_input) = {
                     let live = broker.session(client, session)?;
                     live.worker.check_challenge_throttled();
                     let pages = live.worker.needs_you();
                     (
                         crate::browser_broker::needs_you_json(live.mode, &pages),
                         live.worker.page_state(),
+                        live.worker.takeover_input_source(),
                     )
                 };
                 // SG-000135 OB-08: the session's lease, read-only (scope
@@ -1010,6 +1020,9 @@ mod full {
                 if let Value::Object(map) = &mut status {
                     map.insert("needs_you".into(), needs_you);
                     map.insert("page_state".into(), json!(page_state));
+                    // SG-000135 OB-06: where a person's input that pauses
+                    // the agent comes from (`visible_window` or `none`).
+                    map.insert("takeover_input".into(), json!(takeover_input));
                     map.insert("full_access".into(), lease);
                 }
                 Ok(status)
@@ -1105,6 +1118,7 @@ mod full {
                 FailureCode::ApprovalDenied => "denied",
                 FailureCode::TargetStale
                 | FailureCode::HumanVerificationRequired
+                | FailureCode::HumanTakeover
                 | FailureCode::CapabilityDenied
                 | FailureCode::InvalidRequest
                 | FailureCode::OutputLimit => "refused",

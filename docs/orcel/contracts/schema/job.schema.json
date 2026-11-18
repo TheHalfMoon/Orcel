@@ -266,6 +266,11 @@
           "description": "SG-000135 OB-07: the page waits for a person to complete a sign-in,\none-time code, passkey or CAPTCHA check (\"Needs you\"). Nothing was\ndone; Orcel never completes one, and the agent may act on the page\nagain only after the check is gone and it has observed the page anew.",
           "type": "string",
           "const": "HUMAN_VERIFICATION_REQUIRED"
+        },
+        {
+          "description": "SG-000135 OB-06: a person is using the session's browser window, or\nstopped less than three seconds ago. Nothing was done; the agent may\nact on the page again only after three seconds with no human input\nand a fresh observation of the page.",
+          "type": "string",
+          "const": "HUMAN_TAKEOVER"
         }
       ]
     },

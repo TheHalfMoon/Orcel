@@ -95,7 +95,7 @@ class Guidance(unittest.TestCase):
     def test_a_page_waiting_for_a_person_says_wait_then_observe_never_final(self) -> None:
         from orcel_agent.failures import AWAIT_PERSON
 
-        self.assertEqual(AWAIT_PERSON, frozenset({"HUMAN_VERIFICATION_REQUIRED"}))
+        self.assertEqual(AWAIT_PERSON, frozenset({"HUMAN_VERIFICATION_REQUIRED", "HUMAN_TAKEOVER"}))
         text = GUIDANCE["HUMAN_VERIFICATION_REQUIRED"]
         self.assertNotIn("Proposing it again ends the run", text)
         self.assertNotIn("Orcel refused", text)
@@ -103,6 +103,14 @@ class Guidance(unittest.TestCase):
                        "Only after that new observation"):
             self.assertIn(needed, text)
         self.assertIn("never completes or skips", text)
+
+    def test_a_person_taking_the_browser_over_says_wait_three_seconds_then_observe(self) -> None:
+        text = GUIDANCE["HUMAN_TAKEOVER"]
+        self.assertNotIn("Proposing it again ends the run", text)
+        self.assertNotIn("Orcel refused", text)
+        for needed in ("Nothing was done", "wait for the person", "three seconds", "page_state",
+                       "observe the page again", "Only after that new observation", "come first"):
+            self.assertIn(needed, text)
 
     def test_guidance_is_static_and_never_widens(self) -> None:
         for code, text in GUIDANCE.items():
@@ -187,6 +195,21 @@ class GateFailures(Scratch):
         again.prepare()
         again.dispatch(ToolCall("fs_read", {"path": "y"}))
         again.dispatch(ToolCall("fs_read", {"path": "y"}))
+
+    def test_a_person_taking_the_browser_over_is_not_final_but_owes_an_observation(self) -> None:
+        from orcel_agent.agent import AgentStop
+
+        both = frozenset({"fs_read", "fs_write"})
+        edge = Edge(answer=ToolOutcome(ok=False, error_code="HUMAN_TAKEOVER"))
+        agent = self.agent(edge, allowlist=both)
+        agent.prepare()
+        agent.dispatch(ToolCall("fs_write", {"path": "x"}))
+        with self.assertRaises(AgentStop) as stop:
+            agent.dispatch(ToolCall("fs_write", {"path": "x"}))
+        self.assertEqual(stop.exception.outcome, "reobserve-before-mutation")
+        edge.answer = ToolOutcome(ok=True, result={"text": "page"})
+        agent.dispatch(ToolCall("fs_read", {"path": "x"}))
+        self.assertTrue(agent.dispatch(ToolCall("fs_write", {"path": "x"})).ok)
 
     def test_edge_failure_and_planner_error_keep_the_store_for_resume(self) -> None:
         class Broken:

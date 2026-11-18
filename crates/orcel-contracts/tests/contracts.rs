@@ -534,6 +534,11 @@ fn human_verification_required_has_the_frozen_wire_spelling() {
 }
 
 #[test]
+fn human_takeover_has_the_frozen_wire_spelling() {
+    assert_eq!(spelling(&FailureCode::HumanTakeover), "HUMAN_TAKEOVER");
+}
+
+#[test]
 fn permission_required_has_the_frozen_wire_spelling() {
     assert_eq!(
         spelling(&FailureCode::PermissionRequired),
@@ -576,6 +581,7 @@ fn declared_index(code: &FailureCode) -> usize {
         FailureCode::AuthorityUnavailable => 26,
         FailureCode::PermissionRequired => 27,
         FailureCode::HumanVerificationRequired => 28,
+        FailureCode::HumanTakeover => 29,
     }
 }
 
@@ -620,6 +626,7 @@ fn every_failure_code_maps_to_the_spec_http_status() {
         ("AUTHORITY_UNAVAILABLE", 503),
         ("PERMISSION_REQUIRED", 403),
         ("HUMAN_VERIFICATION_REQUIRED", 409),
+        ("HUMAN_TAKEOVER", 409),
     ];
     assert_eq!(
         table.len(),

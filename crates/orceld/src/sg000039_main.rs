@@ -90,6 +90,18 @@ mod fs_mutation;
 mod git_fetch;
 mod git_mutation;
 mod git_push;
+// SG-000135 OB-06: the person's input source for a Visible browser session
+// (the OS last-input instant while the session's own window is in front).
+// Its one caller is the takeover gate's Visible-session path, which only the
+// Windows live builds reach.
+#[cfg_attr(
+    not(all(
+        windows,
+        any(feature = "live-browser-test", feature = "live-browser-dev")
+    )),
+    allow(dead_code)
+)]
+mod human_input;
 mod journal_owner;
 #[cfg(all(
     windows,
@@ -939,6 +951,7 @@ fn finish(
                 FailureCode::ApprovalUnavailable => "APPROVAL_UNAVAILABLE",
                 FailureCode::TargetStale => "TARGET_STALE",
                 FailureCode::HumanVerificationRequired => "HUMAN_VERIFICATION_REQUIRED",
+                FailureCode::HumanTakeover => "HUMAN_TAKEOVER",
                 FailureCode::ProcessTimeout => "PROCESS_TIMEOUT",
                 FailureCode::ProcessTerminationUnverified => "PROCESS_TERMINATION_UNVERIFIED",
                 FailureCode::OutputLimit => "OUTPUT_LIMIT",

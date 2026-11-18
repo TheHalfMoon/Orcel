@@ -91,6 +91,8 @@ fn ob04_no_browser_path_source_moves_focus_input_cursor_or_clipboard() -> Outcom
         "browser_broker.rs",
         "browser_full.rs",
         "browser_profiles.rs",
+        // SG-000135 OB-06: the Visible session's input source only reads.
+        "human_input.rs",
         "live_browser.rs",
         "live_dispatch.rs",
         "takeover_gate.rs",

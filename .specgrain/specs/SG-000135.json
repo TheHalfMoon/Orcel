@@ -318,6 +318,7 @@
     {
       "id": "OB-06",
       "title": "Human takeover state machine with the 3000 ms quiet timer",
+      "status": "IMPLEMENTED on browser/ob06-takeover, not merged: the B1 gate is fed a Visible session's input (GetLastInputInfo while the session's own window is in front, read every 25 ms and before every gate decision; no page script, hook or OS input injection), every page of the session is held and refused HUMAN_TAKEOVER until 3000 ms after the last input on the gate's monotonic clock, then re-observed; Shadow has no source. Open choice 2 recorded there. Founder-present run pending. See docs/orcel/implementation-readiness/prep/OB06_HUMAN_TAKEOVER.md.",
       "depends_on": [
         "OB-05"
       ],

@@ -139,6 +139,7 @@ fn handle_request(
                 FailureCode::ApprovalUnavailable => "APPROVAL_UNAVAILABLE",
                 FailureCode::TargetStale => "TARGET_STALE",
                 FailureCode::HumanVerificationRequired => "HUMAN_VERIFICATION_REQUIRED",
+                FailureCode::HumanTakeover => "HUMAN_TAKEOVER",
                 FailureCode::ProcessTimeout => "PROCESS_TIMEOUT",
                 FailureCode::ProcessTerminationUnverified => "PROCESS_TERMINATION_UNVERIFIED",
                 FailureCode::OutputLimit => "OUTPUT_LIMIT",

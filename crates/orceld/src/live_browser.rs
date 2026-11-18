@@ -1237,8 +1237,8 @@ impl LiveBrowser {
                 }
             }
         }
-        let token = approval
-            .request_token(prompt)
+        let token = self
+            .request_token(approval, prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))?;
         Ok(Authority::Approval {
             token,
@@ -1804,10 +1804,24 @@ impl LiveBrowser {
         title: &str,
     ) -> Result<(ApprovedToken, String, String, String), ProviderError> {
         let bound = self.bind_prompt(workspace, action, title)?;
-        let token = approval
-            .request_token(&bound.prompt)
+        let token = self
+            .request_token(approval, &bound.prompt)
             .map_err(|error| ProviderError::new(error.code, error.message))?;
         Ok((token, bound.digest, bound.binding, bound.target))
+    }
+
+    /// Ask the owner's approval for `prompt`. SG-000135 OB-06: the takeover
+    /// gate is told the prompt is up, so the click or key that answers it
+    /// is not taken for a person on a Visible session's browser window.
+    fn request_token(
+        &mut self,
+        approval: &impl ApprovalBroker,
+        prompt: &ApprovalPrompt,
+    ) -> Result<ApprovedToken, orcel_approval::ApprovalError> {
+        self.takeover.prompt_started();
+        let token = approval.request_token(prompt);
+        self.takeover.prompt_ended();
+        token
     }
 
     /// The host's binding for `action` and the prompt a person would see
@@ -2871,6 +2885,25 @@ impl LiveBrowser {
     /// page is opened.
     pub fn enable_takeover_gate(&mut self) {
         self.takeover.enable();
+    }
+
+    /// SG-000135 OB-06: a Visible session's window is watched for a
+    /// person's input (the engine's windows are this browser host's
+    /// descendants). Called after `enable_takeover_gate`, before any page
+    /// opens.
+    ///
+    /// # Errors
+    /// `PROVIDER_UNAVAILABLE` when no input source exists here; the caller
+    /// must then not run the Visible session.
+    pub fn watch_visible_window(&mut self) -> Result<(), ProviderError> {
+        self.takeover
+            .watch_visible_window(self.host_pid, self.host_started)
+    }
+
+    /// SG-000135 OB-06: where a person's input comes from (`visible_window`
+    /// or `none`), for the session status.
+    pub fn takeover_input_source(&self) -> &'static str {
+        self.takeover.input_source()
     }
 
     /// SG-000135 OB-07: the status of the active page's navigation that

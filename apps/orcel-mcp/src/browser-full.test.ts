@@ -440,6 +440,7 @@ test("OB-07: a Needs-you refusal keeps its typed code, and the status lists the 
       if (name === "browser_task_status") {
         assert.match(config.description ?? "", /needs_you/);
         assert.match(config.description ?? "", /HUMAN_VERIFICATION_REQUIRED/);
+        assert.match(config.description ?? "", /HUMAN_TAKEOVER/);
       }
       handlers.set(name, handler);
     }

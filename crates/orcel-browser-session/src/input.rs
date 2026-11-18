@@ -56,6 +56,10 @@ pub enum InputKind {
     Edit,
     /// A focus change inside the page.
     Focus,
+    /// Keyboard or pointer input the operating system saw while the
+    /// session's own window was in front (SG-000135 OB-06, Visible mode);
+    /// which of the two is not known.
+    Device,
 }
 
 /// Where an event sits in an input that spans time.
