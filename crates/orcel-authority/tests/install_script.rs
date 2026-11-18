@@ -17,20 +17,46 @@ fn repo_file(relative: &[&str]) -> PathBuf {
     path
 }
 
+/// The file's text with LF line ends (a Windows checkout may convert them).
+fn read_lf(relative: &[&str]) -> String {
+    std::fs::read_to_string(repo_file(relative))
+        .unwrap_or_else(|error| panic!("{relative:?}: {error}"))
+        .replace("\r\n", "\n")
+}
+
 fn script() -> String {
-    std::fs::read_to_string(repo_file(&["scripts", "install-orcel-authority.ps1"]))
-        .expect("the install script")
+    read_lf(&["scripts", "install-orcel-authority.ps1"])
 }
 
 fn runbook() -> String {
-    std::fs::read_to_string(repo_file(&[
+    read_lf(&[
         "docs",
         "orcel",
         "implementation-readiness",
         "prep",
         "SG132_INSTALL_RUNBOOK.md",
-    ]))
-    .expect("the runbook")
+    ])
+}
+
+/// Elevated steps load PowerShell modules only from `$PSHOME\Modules`: the
+/// default module path starts with the user's Documents folder, where a
+/// process running as the user could plant a module the elevated step
+/// would autoload (Get-Acl, Get-FileHash, Copy-Item are all autoloaded).
+#[test]
+fn elevated_steps_load_modules_only_from_pshome() {
+    let text = script();
+    let reset = position(&text, "$env:PSModulePath = Join-Path $PSHOME 'Modules'");
+    assert!(
+        reset < position(&text, "function Get-Sha256"),
+        "before any cmdlet runs"
+    );
+    let lines = start_process_lines(&runbook());
+    for (_, arguments) in lines.iter().filter(|(_, a)| a.contains("-Command")) {
+        assert!(
+            arguments.contains("-Command \"$ErrorActionPreference = 'Stop'; $env:PSModulePath = Join-Path $PSHOME 'Modules'; "),
+            "{arguments}"
+        );
+    }
 }
 
 fn position(text: &str, needle: &str) -> usize {

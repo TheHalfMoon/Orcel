@@ -90,6 +90,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Elevated, so modules load only from Windows' own folder: the default module path starts with the user's
+# Documents folder, where anything running as that user could plant a module this script would autoload.
+# (It also keeps a PowerShell 7 module path, inherited from the shell that started this, out of Windows PowerShell.)
+$env:PSModulePath = Join-Path $PSHOME 'Modules'
 
 $ServiceName = 'OrcelAuthority'
 $ServiceAccount = 'NT SERVICE\OrcelAuthority'
