@@ -10,6 +10,11 @@
 //   ABORT <host> <path> <ms>  (the connection closed before it finished)
 // (#438: the last two tell a stalled response from a stalled page load.)
 // It exits when its stdin closes, so the test owns its lifetime.
+// SG-000135 OB-07: a stdin line `OB07-CLEAR <captcha|otp>` stands in for the
+// person completing that fixture challenge (test-only; no real CAPTCHA or
+// code service exists here): the challenge page, which polls
+// /ob07-state, then takes its own widget or code field away, and Orcel's
+// read-only detector has to notice that by itself.
 
 import { execFileSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
@@ -262,6 +267,40 @@ ${ob03Field(260, 'type="text" autocomplete="cc-number" name="number" aria-label=
 ${ob03Field(340, 'type="text" name="user_password_confirm" aria-label="Confirm"')}
 <p style="position:absolute;left:40px;top:420px">OB-03 second tab reached</p>
 </body>`;
+// SG-000135 OB-07: fixture challenge pages (no real CAPTCHA, code or
+// sign-in service). The CAPTCHA page carries an hCaptcha-style widget
+// container, the code page a one-time-code field, both in a form with a
+// button; each polls /ob07-state and removes its own challenge once the
+// harness reports the "person" done. The sign-in page answers 401 with a
+// password form. The pages' own script is the fixture's, never Orcel's.
+const ob07State = { captcha: "waiting", otp: "waiting" };
+const ob07Poll = (name, gate, done) => `<script>
+(function poll() {
+  fetch("/ob07-state?c=${name}", { cache: "no-store" }).then(function (r) { return r.text(); }).then(function (s) {
+    if (s === "cleared") { var g = document.getElementById("${gate}"); if (g) g.remove(); document.getElementById("state").textContent = "${done}"; }
+    else setTimeout(poll, 300);
+  }, function () { setTimeout(poll, 300); });
+})();
+</script>`;
+const OB07_CAPTCHA = `<!doctype html><meta charset="utf-8"><title>OB-07 check</title>
+<h1>OB-07 security check</h1>
+<form id="gate" action="/ob07-captcha" method="post">
+<div class="h-captcha" data-sitekey="10000000-ffff-ffff-ffff-000000000001" style="width:300px;height:78px;border:1px solid #888"></div>
+<button type="submit">Continue</button></form>
+<p id="state">OB-07 waiting for a person</p>
+${ob07Poll("captcha", "gate", "OB-07 verified by a person")}`;
+const OB07_OTP = `<!doctype html><meta charset="utf-8"><title>OB-07 code</title>
+<h1>OB-07 second step</h1>
+<form id="code-form" action="/ob07-otp" method="post">
+<label>Verification code <input autocomplete="one-time-code" inputmode="numeric" name="code"></label>
+<button type="submit">Verify</button></form>
+<p id="state">OB-07 code requested</p>
+${ob07Poll("otp", "code-form", "OB-07 code accepted")}`;
+const OB07_LOGIN = `<!doctype html><meta charset="utf-8"><title>OB-07 sign in</title>
+<h1>Sign in to continue</h1>
+<form action="/ob07-login" method="post"><label>Email <input type="email" name="email"></label>
+<label>Password <input type="password" name="password"></label><button type="submit">Sign in</button></form>`;
+
 // SG-000122 slice A5: form-control names. The control-character name uses
 // U+0081, a C1 control that HTML's numeric-reference rule keeps (&#x85;
 // becomes U+2026 there) and that the accessible-name computation does not
@@ -608,6 +647,18 @@ trailer << /Root 1 0 R >>
     response.setHeader("content-type", "application/json");
     return response.end("{}");
   }
+  // SG-000135 OB-07: the fixture challenges' state, and the 401 sign-in.
+  if (path.startsWith("/ob07-state")) {
+    const name = /[?&]c=(captcha|otp)(?:&|$)/.exec(path)?.[1];
+    response.setHeader("content-type", "text/plain");
+    response.setHeader("cache-control", "no-store");
+    return response.end(name ? ob07State[name] : "unknown");
+  }
+  if (path === "/ob07-login") {
+    response.statusCode = 401;
+    response.setHeader("content-type", "text/html");
+    return response.end(OB07_LOGIN);
+  }
   response.setHeader("content-type", "text/html");
   if (path === "/mixed") {
     // Reporting API: CSP violations are reported by the network service.
@@ -615,7 +666,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
   if (path === "/form-names") response.setHeader("content-type", "text/html; charset=utf-8");
-  const pages = { "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/ob03-secret": OB03_SECRET, "/ob08-form": OB08_FORM, "/ob08-next": OB08_NEXT, "/ob08-submitted": OB08_SUBMITTED, "/ob08-scripts": OB08_POST, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
+  const pages = { "/ob07-captcha": OB07_CAPTCHA, "/ob07-otp": OB07_OTP, "/ob01-form": OB01_FORM, "/ob01-done": OB01_DONE, "/ob03-secret": OB03_SECRET, "/ob08-form": OB08_FORM, "/ob08-next": OB08_NEXT, "/ob08-submitted": OB08_SUBMITTED, "/ob08-scripts": OB08_POST, "/enter-form": ENTER_FORM, "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/form-names": FORM_NAMES, "/frame-names": FRAME_NAMES, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });
@@ -628,5 +679,20 @@ server.on("secureConnection", () => process.stdout.write("TLSOK\n"));
 server.on("tlsClientError", (error) => process.stdout.write(`TLSERR ${error.code ?? "unknown"}\n`));
 server.listen({ port: 443, host: "127.0.0.1" }, () => process.stdout.write(`READY ${spki}\n`));
 process.stdin.resume();
+// SG-000135 OB-07: the harness's stand-in for the person (see the header).
+let ob07Input = "";
+process.stdin.on("data", (chunk) => {
+  ob07Input += chunk.toString("utf8");
+  let newline;
+  while ((newline = ob07Input.indexOf("\n")) >= 0) {
+    const line = ob07Input.slice(0, newline).trim();
+    ob07Input = ob07Input.slice(newline + 1);
+    const clear = /^OB07-CLEAR (captcha|otp)$/.exec(line);
+    if (clear) {
+      ob07State[clear[1]] = "cleared";
+      process.stdout.write(`OB07-CLEARED ${clear[1]}\n`);
+    }
+  }
+});
 process.stdin.on("end", () => process.exit(0));
 process.stdin.on("error", () => process.exit(0));

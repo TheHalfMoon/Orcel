@@ -87,8 +87,22 @@ class Guidance(unittest.TestCase):
             # Never the plain "Orcel refused this exact call" prefix.
             self.assertFalse(GUIDANCE[code].startswith("Orcel refused"), code)
             self.assertIn("may have acted", GUIDANCE[code], code)
-        for code in set(GUIDANCE) - MAY_HAVE_ACTED - {"APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"}:
+        from orcel_agent.failures import AWAIT_PERSON
+
+        for code in set(GUIDANCE) - MAY_HAVE_ACTED - AWAIT_PERSON - {"APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"}:
             self.assertIn("Proposing it again ends the run", GUIDANCE[code], code)
+
+    def test_a_page_waiting_for_a_person_says_wait_then_observe_never_final(self) -> None:
+        from orcel_agent.failures import AWAIT_PERSON
+
+        self.assertEqual(AWAIT_PERSON, frozenset({"HUMAN_VERIFICATION_REQUIRED"}))
+        text = GUIDANCE["HUMAN_VERIFICATION_REQUIRED"]
+        self.assertNotIn("Proposing it again ends the run", text)
+        self.assertNotIn("Orcel refused", text)
+        for needed in ("Nothing was done", "wait for the person", "needs_you", "observe the page again",
+                       "Only after that new observation"):
+            self.assertIn(needed, text)
+        self.assertIn("never completes or skips", text)
 
     def test_guidance_is_static_and_never_widens(self) -> None:
         for code, text in GUIDANCE.items():
@@ -146,6 +160,33 @@ class GateFailures(Scratch):
         with self.assertRaises(AgentStop) as stop:
             again.dispatch(ToolCall("fs_write", {"path": "y"}))
         self.assertEqual(stop.exception.outcome, "reobserve-before-mutation")
+
+    def test_a_page_waiting_for_a_person_is_not_final_but_owes_an_observation(self) -> None:
+        from orcel_agent.agent import AgentStop
+
+        both = frozenset({"fs_read", "fs_write"})
+        edge = Edge(answer=ToolOutcome(ok=False, error_code="HUMAN_VERIFICATION_REQUIRED"))
+        agent = self.agent(edge, allowlist=both)
+        agent.prepare()
+        agent.dispatch(ToolCall("fs_write", {"path": "x"}))
+        # Not a final refusal, but no mutation before a fresh observation.
+        with self.assertRaises(AgentStop) as stop:
+            agent.dispatch(ToolCall("fs_write", {"path": "x"}))
+        self.assertEqual(stop.exception.outcome, "reobserve-before-mutation")
+        # A read refused while the page waits does not count as observing.
+        agent.dispatch(ToolCall("fs_read", {"path": "x"}))
+        with self.assertRaises(AgentStop):
+            agent.dispatch(ToolCall("fs_write", {"path": "x"}))
+        # Once a read succeeds (the person is done), the same call may go again.
+        edge.answer = ToolOutcome(ok=True, result={"text": "page"})
+        agent.dispatch(ToolCall("fs_read", {"path": "x"}))
+        step = agent.dispatch(ToolCall("fs_write", {"path": "x"}))
+        self.assertTrue(step.ok)
+        # And after a resume the waiting refusal is still not final.
+        again = self.agent(Edge(answer=ToolOutcome(ok=False, error_code="HUMAN_VERIFICATION_REQUIRED")), allowlist=both)
+        again.prepare()
+        again.dispatch(ToolCall("fs_read", {"path": "y"}))
+        again.dispatch(ToolCall("fs_read", {"path": "y"}))
 
     def test_edge_failure_and_planner_error_keep_the_store_for_resume(self) -> None:
         class Broken:

@@ -188,7 +188,7 @@ test("BR-07: verify probes are closed, bounded and exact", () => {
 });
 
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 19 }), { frame: "hello", generation: 19 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 20 }), { frame: "hello", generation: 20 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -196,11 +196,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 19 },
+    { generation: 20 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 19, extra: true },
+    { frame: "hello", generation: 20, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },
@@ -594,4 +594,26 @@ test("W2-03: outline and schema replies fit one frame", () => {
   const nodes = [{ id: "0-1", role: "heading", name: "x".repeat(512), xpath: "/html[1]", children: [] }];
   assert.ok(encodeFrame({ frame: "outlined", out_id: 1, tab: 1_000_000, url: "https://fixture.test/", truncated: false, nodes }).length < MAX_FRAME_BYTES);
   assert.ok(encodeFrame({ frame: "schema_extracted", xs_id: 1, tab: 1_000_000, url: "https://fixture.test/", truncated: false, values: [{ key: "k", found: false }] }).length < MAX_FRAME_BYTES);
+});
+
+test("OB-07: a challenge frame carries an id, the committed URL or nothing, and a status", () => {
+  assert.deepEqual(parseHostFrame({ frame: "challenge", chl_id: 4, url: "https://fixture.test/login", status: 401 }), {
+    frame: "challenge",
+    chl_id: 4,
+    url: "https://fixture.test/login",
+    status: 401
+  });
+  assert.deepEqual(parseHostFrame({ frame: "challenge", chl_id: 1, url: "", status: 0 }), { frame: "challenge", chl_id: 1, url: "", status: 0 });
+  for (const bad of [
+    { frame: "challenge", chl_id: 0, url: "", status: 0 },
+    { frame: "challenge", chl_id: 1, url: "", status: -1 },
+    { frame: "challenge", chl_id: 1, url: "", status: 1000 },
+    { frame: "challenge", chl_id: 1, url: "", status: 1.5 },
+    { frame: "challenge", chl_id: 1, url: "https://x/\u0000", status: 200 },
+    { frame: "challenge", chl_id: 1, url: "x".repeat(2049), status: 200 },
+    { frame: "challenge", chl_id: 1, status: 200 },
+    { frame: "challenge", chl_id: 1, url: "", status: 0, script: "solve()" }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
 });

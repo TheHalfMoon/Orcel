@@ -43,8 +43,9 @@ pub struct JobProcess {
 /// observed nodes); generation 17 is SG-000122 slice A5 (form-control nodes
 /// marked `named`).
 /// 18 is W2-03's outline and extract_schema (PR #797, on main); 19 is
-/// SG-000135 OB-03: `screenshot`, `screenshot_more` and the tab frames.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 19;
+/// SG-000135 OB-03: `screenshot`, `screenshot_more` and the tab frames;
+/// 20 is SG-000135 OB-07: the read-only challenge detector (`challenge`).
+pub const WORKER_PROTOCOL_GENERATION: u32 = 20;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -603,6 +604,14 @@ pub(crate) enum WorkerRequest<'a> {
         xs_id: u64,
         fields: &'a [crate::worker_outline::SchemaField],
     },
+    /// SG-000135 OB-07: classify the active tab's document, read-only;
+    /// `status` is the committed document's recorded HTTP status (0 when
+    /// unknown), which counts only while the tab still shows `url`.
+    Challenge {
+        chl_id: u64,
+        url: &'a str,
+        status: u16,
+    },
     Shutdown,
 }
 
@@ -819,6 +828,22 @@ pub(crate) enum WorkerReply {
     SchemaExtractionFailed {
         xs_id: u64,
     },
+    /// SG-000135 OB-07: a closed kind and closed signal names (checked by
+    /// `challenge::check_report`), never page text.
+    ChallengeReport {
+        chl_id: u64,
+        tab: u32,
+        url: String,
+        kind: String,
+        signals: Vec<String>,
+        truncated: bool,
+    },
+    /// `busy`: a navigation was in flight or the document changed during
+    /// the capture (ask again later); `failed`: anything else.
+    ChallengeFailed {
+        chl_id: u64,
+        reason: String,
+    },
     Error {
         code: String,
     },
@@ -854,7 +879,8 @@ pub(crate) fn reply_tab_check(
         | WorkerReply::Discovered { tab, .. }
         | WorkerReply::Waited { tab, .. }
         | WorkerReply::Outlined { tab, .. }
-        | WorkerReply::SchemaExtracted { tab, .. } => (*tab, false),
+        | WorkerReply::SchemaExtracted { tab, .. }
+        | WorkerReply::ChallengeReport { tab, .. } => (*tab, false),
         // No page: the lifecycle, the route stack, typed failures (nothing
         // was done), the dialog log (every page's) and the tab reports
         // (which `tab_request` checks and follows itself).
@@ -881,6 +907,7 @@ pub(crate) fn reply_tab_check(
         | WorkerReply::TabFailed { .. }
         | WorkerReply::OutlineFailed { .. }
         | WorkerReply::SchemaExtractionFailed { .. }
+        | WorkerReply::ChallengeFailed { .. }
         | WorkerReply::Error { .. } => return Ok(active),
     };
     if tab == 0 || tab > crate::page_capture::MAX_TAB_ID {
@@ -1820,6 +1847,8 @@ mod platform {
         next_shot: u64,
         next_tab_req: u64,
         active_tab: Option<u32>,
+        /// SG-000135 OB-07: challenge check ids.
+        next_chl: u64,
         next_act: u64,
         next_dl: u64,
         next_exec: u64,
@@ -1952,6 +1981,7 @@ mod platform {
             next_shot: 0,
             next_tab_req: 0,
             active_tab: None,
+            next_chl: 0,
             next_act: 0,
             next_dl: 0,
             next_exec: 0,
@@ -3665,6 +3695,62 @@ mod platform {
             }
         }
 
+        /// SG-000135 OB-07: classify the active tab's document as a
+        /// challenge only a person can get past, read-only (the worker reads
+        /// the engine's DOM and layout snapshot; no page script runs).
+        /// `status` is the HTTP status the caller recorded for the committed
+        /// document (0 when unknown); the worker counts it only while the
+        /// tab still shows that document's URL. A tab that moved on its own
+        /// is classified as it is now (`moved`). Nothing but the closed
+        /// vocabulary crosses.
+        pub fn detect_challenge(
+            &mut self,
+            status: u16,
+        ) -> Result<crate::challenge::ChallengeFinding, HostError> {
+            self.ensure_alive()?;
+            let (url, _) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document to classify".into()))?;
+            self.next_chl += 1;
+            let chl_id = self.next_chl;
+            self.send(&WorkerRequest::Challenge {
+                chl_id,
+                url: &url,
+                status,
+            })?;
+            match self.reply(WORKER_OBSERVATION_TIMEOUT)? {
+                WorkerReply::ChallengeReport {
+                    chl_id: done,
+                    url: seen,
+                    kind,
+                    signals,
+                    truncated,
+                    ..
+                } if done == chl_id => {
+                    crate::challenge::check_report(&kind, &signals)?;
+                    Ok(crate::challenge::ChallengeFinding {
+                        kind,
+                        signals,
+                        truncated,
+                        moved: seen != url,
+                    })
+                }
+                WorkerReply::ChallengeFailed {
+                    chl_id: done,
+                    reason,
+                } if done == chl_id => Err(HostError::Unavailable(match reason.as_str() {
+                    // Between documents: nothing was classified; the
+                    // caller asks again later.
+                    "busy" => UnavailableReason::NavigationInFlight,
+                    "failed" => UnavailableReason::ActionFailed,
+                    _ => UnavailableReason::ProtocolViolation,
+                })),
+                // Out of step with the worker: the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
         /// SG-000135 OB-03: a bounded PNG of the active tab's committed
         /// document (the viewport, or with `full_page` the page from its
         /// top within the bounds), secret fields masked by the worker. The
@@ -4685,6 +4771,16 @@ mod fallback {
             &mut self,
             _full_page: bool,
         ) -> Result<crate::page_capture::PageScreenshot, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity (SG-000135 OB-07): no worker ever exists off Windows.
+        pub fn detect_challenge(
+            &mut self,
+            _status: u16,
+        ) -> Result<crate::challenge::ChallengeFinding, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))
@@ -6068,7 +6164,7 @@ mod tests {
 
     #[test]
     fn w2_03_outline_and_schema_frames_match_the_typescript_vocabulary() {
-        assert_eq!(WORKER_PROTOCOL_GENERATION, 19);
+        assert_eq!(WORKER_PROTOCOL_GENERATION, 20);
         let json = |request: &WorkerRequest<'_>| serde_json::to_string(request).unwrap();
         assert_eq!(
             json(&WorkerRequest::Outline { out_id: 3 }),
@@ -6282,12 +6378,62 @@ mod tests {
         ));
     }
 
+    /// SG-000135 OB-07: the challenge frames match the TypeScript
+    /// vocabulary exactly, and a report is a read of the tab it names.
+    #[test]
+    fn ob07_challenge_frames_are_exact() {
+        assert_eq!(
+            serde_json::to_string(&WorkerRequest::Challenge {
+                chl_id: 4,
+                url: "https://fixture.test/login",
+                status: 401,
+            })
+            .ok()
+            .as_deref(),
+            Some(
+                r#"{"frame":"challenge","chl_id":4,"url":"https://fixture.test/login","status":401}"#
+            )
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        let report = reply(
+            r#"{"frame":"challenge_report","chl_id":4,"tab":2,"url":"https://fixture.test/login","kind":"sign_in","signals":["password_field","http_auth"],"truncated":false}"#,
+        );
+        assert!(
+            matches!(&report, Ok(WorkerReply::ChallengeReport { chl_id: 4, tab: 2, kind, signals, .. })
+                if kind == "sign_in" && signals.len() == 2),
+            "{report:?}"
+        );
+        if let Ok(report) = &report {
+            assert!(matches!(reply_tab_check(Some(2), report), Ok(Some(2))));
+            // A report from another tab is a stale read, never an act.
+            assert!(matches!(
+                reply_tab_check(Some(1), report),
+                Err(UnavailableReason::TargetStale)
+            ));
+        }
+        for reason in ["busy", "failed"] {
+            let text = format!(r#"{{"frame":"challenge_failed","chl_id":4,"reason":"{reason}"}}"#);
+            assert!(
+                matches!(reply(&text), Ok(WorkerReply::ChallengeFailed { chl_id: 4, reason: ref seen }) if seen == reason),
+                "{text}"
+            );
+        }
+        for bad in [
+            r#"{"frame":"challenge_failed","chl_id":4}"#,
+            r#"{"frame":"challenge_report","chl_id":4,"tab":2,"url":"u","kind":"captcha","signals":[],"truncated":false,"text":"page"}"#,
+            r#"{"frame":"challenge_report","chl_id":4,"url":"u","kind":"captcha","signals":[],"truncated":false}"#,
+            r#"{"frame":"challenge_failed","chl_id":4,"reason":"busy","text":"page"}"#,
+        ] {
+            assert!(reply(bad).is_err(), "{bad}");
+        }
+    }
+
     /// SG-000135 OB-03: the screenshot and tab frames match the
     /// TypeScript vocabulary exactly; failures are typed.
     #[test]
     fn ob03_screenshot_and_tab_frames_are_exact() {
         let json = |request: &WorkerRequest<'_>| serde_json::to_string(request).unwrap();
-        assert_eq!(WORKER_PROTOCOL_GENERATION, 19);
+        assert_eq!(WORKER_PROTOCOL_GENERATION, 20);
         assert_eq!(
             json(&WorkerRequest::Screenshot {
                 shot_id: 2,

@@ -46,6 +46,15 @@ import {
  *   navigation rules admitted its page.
  * - `browser_close` ends the session and removes its profile;
  *   `browser_task_status` returns its provisional receipts.
+ * - SG-000135 OB-07: a page that shows a sign-in, one-time code, passkey or
+ *   CAPTCHA check waits for the person ("Needs you"). Orcel never solves,
+ *   skips or fills one. Every action on that page is refused with
+ *   `HUMAN_VERIFICATION_REQUIRED` (nothing was done); replies and
+ *   `browser_task_status` list it under `needs_you` (page id, kind, closed
+ *   signal names, a fixed reason and the handoff: the Visible window, or for
+ *   a Shadow session a re-run in a Visible one). Once Orcel's own read-only
+ *   check no longer sees it and three quiet seconds passed, the page must be
+ *   observed again (`browser_snapshot`) before any action.
  * - SG-000135 OB-04: `browser_session_create` takes an optional `mode`:
  *   `shadow` (the default: headless; Orcel never uses the person's mouse,
  *   keyboard, clipboard, focus or foreground window, though a page can still
@@ -339,7 +348,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_task_status",
     {
-      description: `Read the session's state, budgets and its provisional receipts: one per action, with the page, generation before and after, outcome, evidence digest and a digest chain. Receipts are Orcel's own records, never a model summary. full_access is the session's Full Access lease, read-only: its origins, action families, expiry and whether it is active; no tool can issue, widen or renew one. ${DEV_ONLY}`,
+      description: `Read the session's state, budgets and its provisional receipts: one per action, with the page, generation before and after, outcome, evidence digest and a digest chain. Receipts are Orcel's own records, never a model summary. Also lists under needs_you each page that waits for a person to complete a sign-in, code, passkey or CAPTCHA check (Orcel never completes one; actions on it are refused with HUMAN_VERIFICATION_REQUIRED), and the active page's state; read it again until the page no longer needs you, then take a new snapshot before acting. full_access is the session's Full Access lease, read-only: its origins, action families, expiry and whether it is active; no tool can issue, widen or renew one. ${DEV_ONLY}`,
       inputSchema: browserSessionSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id }) => forward("browser_task_status", workspace_id, { session_id }, OBSERVE_TIMEOUT_MS)

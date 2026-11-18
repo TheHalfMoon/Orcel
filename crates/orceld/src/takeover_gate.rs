@@ -24,18 +24,34 @@
 //! approval broker, never in its place, and nothing it answers can make an
 //! action proceed that the broker or policy would refuse.
 //!
-//! The switch is off by default (the `browser-takeover-gate` feature, which
-//! no build enables) until SG-000135 defines the browser session broker
-//! this gate belongs to. Off, every call admits and records nothing.
-//! Nothing feeds human input into the gate yet: the engine adapter that
-//! reports trusted input events per page (and attaches Orcel's markers to
-//! the agent's own) is the next step, through [`TakeoverGate::session_gate`].
-//! Its one caller is the live browser, so outside the live builds the module
-//! is unused (its declaration allows that).
+//! For `browser_structured` the switch stays off by default (the
+//! `browser-takeover-gate` feature, which no build enables): off, every call
+//! admits and records nothing. SG-000135 OB-07 turns the gate on for every
+//! `browser_full` broker session (`TakeoverGate::enable`), whatever the
+//! build's switch, so a challenge page ("Needs you") is refused there.
+//!
+//! SG-000135 OB-07: the engine's read-only challenge detector reports what
+//! it sees on a session's page here. A detected sign-in, one-time code,
+//! passkey or CAPTCHA moves the page to `AWAIT_HUMAN_VERIFICATION`
+//! ([`TakeoverGate::challenge_detected`]); every agent read and write on it
+//! is then refused with `HUMAN_VERIFICATION_REQUIRED`. Only the detector's
+//! later report that the challenge is gone
+//! ([`TakeoverGate::challenge_gone`]) starts the way back, and only after
+//! three quiet seconds does the page move to `REOBSERVE`, where the agent
+//! must observe it again before it writes. The agent has no call that can
+//! clear a challenge.
+//!
+//! Nothing feeds human input events into the gate yet: the engine adapter
+//! that reports trusted input events per page (and attaches Orcel's markers
+//! to the agent's own) is the next step, through
+//! [`TakeoverGate::session_gate`]. Its one caller is the live browser, so
+//! outside the live builds the module is unused (its declaration allows
+//! that).
 
 use orcel_browser_session::{
-    ActionClass, ActionKey, Clock, ReadTicket, Reads, Refusal, RefusalClass, ResourceId,
-    SessionGate, SharedLedger, SystemClock, TaskId, UncertainLedger, WriteOutcome, WriteTicket,
+    ActionClass, ActionKey, ChallengeKind, ChallengeOrigin, Clock, ReadTicket, Reads, Reason,
+    Refusal, RefusalClass, ResourceId, SessionGate, SharedLedger, State, SystemClock, TaskId,
+    UncertainLedger, WriteOutcome, WriteTicket,
 };
 use orcel_contracts::FailureCode;
 use orcel_provider_fs::ProviderError;
@@ -97,6 +113,24 @@ impl TakeoverGate<SystemClock> {
         } else {
             Self::off()
         }
+    }
+
+    /// SG-000135 OB-07: turn the gate on for a `browser_full` broker
+    /// session, whatever the build's switch, on the process's shared
+    /// uncertain-action ledger. Called before the session opens any page;
+    /// a gate already on is left as it is.
+    #[cfg_attr(not(feature = "live-browser-dev"), allow(dead_code))]
+    pub(crate) fn enable(&mut self) {
+        if self.gate.is_some() {
+            return;
+        }
+        let ledger = process_ledger();
+        self.gate = Some(SessionGate::with_ledger(
+            SystemClock::new(),
+            Reads::Block,
+            SharedLedger::clone(&ledger),
+        ));
+        self.ledger = Some(ledger);
     }
 }
 
@@ -204,6 +238,49 @@ impl<C: Clock> TakeoverGate<C> {
                 })
                 .collect(),
         )
+    }
+
+    /// Whether the gate is on.
+    pub(crate) fn is_on(&self) -> bool {
+        self.gate.is_some()
+    }
+
+    /// SG-000135 OB-07: the engine's challenge detector saw `kind` on
+    /// `page_id`: the page waits for the person ("Needs you"). Seen again
+    /// while it waits, the wait goes on and any report that it was gone is
+    /// forgotten. False when the gate is off or does not track the page.
+    pub(crate) fn challenge_detected(&mut self, page_id: &str, kind: ChallengeKind) -> bool {
+        self.gate.as_mut().is_some_and(|gate| {
+            gate.challenge(&ResourceId::new(page_id), kind, ChallengeOrigin::Detected)
+                .is_ok()
+        })
+    }
+
+    /// SG-000135 OB-07: the detector no longer sees `page_id`'s challenge.
+    /// The page leaves the wait only after the quiet period, into
+    /// `REOBSERVE`. Only the detector calls this: no agent request reaches
+    /// it. True when the page was waiting.
+    pub(crate) fn challenge_gone(&mut self, page_id: &str) -> bool {
+        self.gate.as_mut().is_some_and(|gate| {
+            gate.challenge_cleared(&ResourceId::new(page_id))
+                .unwrap_or(false)
+        })
+    }
+
+    /// SG-000135 OB-07: the challenge `page_id` waits on, if it waits.
+    pub(crate) fn awaiting(&mut self, page_id: &str) -> Option<ChallengeKind> {
+        match self.page_state(page_id) {
+            Some(State::AwaitHumanVerification(kind)) => Some(kind),
+            _ => None,
+        }
+    }
+
+    /// `page_id`'s state as of now (None when the gate is off or does not
+    /// track it).
+    pub(crate) fn page_state(&mut self, page_id: &str) -> Option<State> {
+        self.gate
+            .as_mut()
+            .and_then(|gate| gate.state(&ResourceId::new(page_id)))
     }
 
     /// The live page opened: the live task owns it.
@@ -451,10 +528,20 @@ pub(crate) fn link_identity(url: &str) -> String {
     format!("{origin}{path}")
 }
 
-/// A refusal as orceld's closed failure code. The contract has no paused
-/// code yet, so every refusal is `TARGET_STALE` (nothing was done; observe
-/// again later), and the message says which: paused, stale or ended.
+/// A refusal as orceld's closed failure code. A page that waits for a
+/// person's verification (SG-000135 OB-07) is `HUMAN_VERIFICATION_REQUIRED`
+/// ("Needs you"); the contract has no paused code, so every other refusal
+/// is `TARGET_STALE` (nothing was done; observe again later), and the
+/// message says which: paused, stale or ended.
 fn refused(refusal: &Refusal) -> ProviderError {
+    if refusal.reason == Reason::AwaitingHumanVerification {
+        return ProviderError::new(
+            FailureCode::HumanVerificationRequired,
+            format!(
+                "needs_you: {refusal}; Orcel never completes or skips it; read browser_task_status until the page no longer needs you, then observe it again"
+            ),
+        );
+    }
     let class = match refusal.reason.class() {
         RefusalClass::Paused => "browser session paused",
         RefusalClass::Stale => "browser session stale",
@@ -600,7 +687,8 @@ mod tests {
         }
         let refused = gate.before_read("page-1");
         assert!(
-            matches!(&refused, Err(e) if e.message.contains("await_human_verification")),
+            matches!(&refused, Err(e) if e.code == FailureCode::HumanVerificationRequired
+                && e.message.starts_with("needs_you: await_human_verification")),
             "{refused:?}"
         );
         gate.page_closed("page-1");
@@ -915,6 +1003,96 @@ mod tests {
             .is_err());
     }
 
+    /// SG-000135 OB-07: a detected challenge refuses every read and write
+    /// with HUMAN_VERIFICATION_REQUIRED; only the detector's report that it
+    /// is gone, then three quiet seconds, end the wait, and then the page
+    /// must be observed again before a write.
+    #[test]
+    fn ob07_a_detected_challenge_holds_until_the_detector_clears_it_and_the_quiet_passes() {
+        let (clock, mut gate) = on();
+        assert!(gate.is_on());
+        assert_eq!(gate.awaiting("page-1"), None);
+        assert!(gate.challenge_detected("page-1", ChallengeKind::Mfa));
+        assert_eq!(gate.awaiting("page-1"), Some(ChallengeKind::Mfa));
+        for refused in [
+            gate.before_read("page-1").err(),
+            gate.before_write("page-1", "click", "n1", ActionClass::Repeatable)
+                .err(),
+            gate.before_write(
+                "page-1",
+                "navigate",
+                "https://x.test/",
+                ActionClass::Repeatable,
+            )
+            .err(),
+        ] {
+            assert!(
+                matches!(&refused, Some(e) if e.code == FailureCode::HumanVerificationRequired),
+                "{refused:?}"
+            );
+        }
+        // Time alone never ends it.
+        clock.advance(10 * QUIET_MS);
+        assert_eq!(gate.awaiting("page-1"), Some(ChallengeKind::Mfa));
+        // The detector reports it gone: still held for the quiet period.
+        assert!(gate.challenge_gone("page-1"));
+        clock.advance(QUIET_MS - 1);
+        assert!(matches!(
+            gate.before_read("page-1"),
+            Err(e) if e.code == FailureCode::HumanVerificationRequired
+        ));
+        // A later report that it is gone restarts the quiet from then (the
+        // live browser reports it once per disappearance).
+        assert!(gate.challenge_gone("page-1"));
+        clock.advance(QUIET_MS - 1);
+        assert_eq!(gate.awaiting("page-1"), Some(ChallengeKind::Mfa));
+        clock.advance(1);
+        assert_eq!(gate.awaiting("page-1"), None);
+        assert_eq!(gate.page_state("page-1"), Some(State::Reobserve));
+        // A write before observing again is stale; after it, admitted.
+        let stale = gate.before_write("page-1", "click", "n1", ActionClass::Repeatable);
+        assert!(
+            matches!(&stale, Err(e) if e.code == FailureCode::TargetStale
+                && e.message.contains("reobserve_required")),
+            "{stale:?}"
+        );
+        let read = gate.before_read("page-1").ok().flatten();
+        gate.observed(read);
+        assert!(matches!(
+            gate.before_write("page-1", "click", "n1", ActionClass::Repeatable),
+            Ok(Some(_))
+        ));
+        // Gone with no challenge waiting changes nothing.
+        assert!(!gate.challenge_gone("page-1"));
+        // Another page of the session is never held by this one's challenge.
+        gate.page_opened("page-2");
+        assert!(gate.challenge_detected("page-1", ChallengeKind::Captcha));
+        assert!(matches!(gate.before_read("page-2"), Ok(Some(_))));
+    }
+
+    #[test]
+    fn ob07_enable_turns_an_off_gate_on_and_keeps_its_task_and_client() {
+        let mut gate = TakeoverGate::from_switch();
+        gate.set_task("bs-0123456789abcdef-1-0001020304050607");
+        gate.enable();
+        assert!(gate.is_on());
+        gate.page_opened("page-e");
+        assert_eq!(
+            gate.gate
+                .as_ref()
+                .and_then(|inner| inner.owner(&ResourceId::new("page-e")))
+                .map(|task| task.as_str().to_owned()),
+            Some("bs-0123456789abcdef-1-0001020304050607".to_owned())
+        );
+        assert!(gate.challenge_detected("page-e", ChallengeKind::SignIn));
+        assert!(gate.before_read("page-e").is_err());
+        // An off gate reports nothing and refuses nothing.
+        let mut off: TakeoverGate<ManualClock> = TakeoverGate::off();
+        assert!(!off.challenge_detected("page-e", ChallengeKind::Captcha));
+        assert!(!off.challenge_gone("page-e"));
+        assert_eq!(off.awaiting("page-e"), None);
+    }
+
     #[test]
     fn the_refusal_message_never_carries_the_action_material() {
         let (_clock, mut gate) = on();
@@ -925,5 +1103,133 @@ mod tests {
             matches!(&refused, Err(e) if !e.message.contains("hunter2")),
             "{refused:?}"
         );
+    }
+
+    /// SG-000135 OB-07 with OB-08: HUMAN_VERIFICATION_REQUIRED stays ahead of
+    /// any Full Access lease. The live browser asks the gate (`gate_write`)
+    /// before it consults the lease (`authorize`) and again (`gate_confirm`)
+    /// before the lease is used (`spend`, the service's Authorize). On a page
+    /// awaiting the person, both refuse with HUMAN_VERIFICATION_REQUIRED, and
+    /// the lease is never used: the service's Authorize is never asked.
+    #[test]
+    fn ob07_ob08_a_covered_action_on_a_page_awaiting_verification_is_refused_without_lease_use() {
+        use crate::browser_lease::{
+            AuthorityView, CoveredAction, FullAccess, LeaseDecision, LeaseMoment, LeaseQuery,
+            LeaseSource, SecretMatcher,
+        };
+        use orcel_contracts::browser_impact::Impact;
+        use orcel_policy::browser_lease::{client_ref, BrowserFamily, BrowserLease};
+        use orcel_provider_fs::ProviderError;
+        use std::cell::{Cell, RefCell};
+        use std::rc::Rc;
+
+        const SESSION: &str = "bs-0123456789abcdef-1-0001020304050607";
+        const NOW: u64 = 1_800_000_000_000;
+        let client = client_ref("mcp-client-a");
+        let lease = BrowserLease {
+            lease_id: format!("al-{}", "7".repeat(32)),
+            client_ref: client.clone(),
+            session_id: SESSION.into(),
+            windows_user_sid: "S-1-5-21-1-2-3-1001".into(),
+            logon_session_id: 42,
+            authority_epoch: 5,
+            revocations_at_issue: 2,
+            origins: vec!["https://fixture.test".into()],
+            families: vec![BrowserFamily::Navigate, BrowserFamily::Click],
+            issued_at_ms: NOW,
+            expires_at_ms: NOW + 60 * 60_000,
+            task: None,
+            principal_id: client.clone(),
+            requester: "pid 7 orcel.exe (via the Orcel authority service)".into(),
+        };
+        struct Source {
+            lease: BrowserLease,
+            authorized: Rc<Cell<usize>>,
+        }
+        impl LeaseSource for Source {
+            fn read(&self) -> Result<Option<AuthorityView>, ProviderError> {
+                Ok(Some(AuthorityView {
+                    epoch: 5,
+                    revocations: 2,
+                    leases: vec![self.lease.clone()],
+                }))
+            }
+            fn authorize(&self, _action: &CoveredAction) -> Result<(), ProviderError> {
+                self.authorized.set(self.authorized.get() + 1);
+                Ok(())
+            }
+            fn end_session(&self, _session_id: &str) {}
+        }
+        struct NoSecrets;
+        impl SecretMatcher for NoSecrets {
+            fn matches(&self, _value: &str) -> Result<bool, ()> {
+                Ok(false)
+            }
+        }
+        let authorized = Rc::new(Cell::new(0));
+        let mut access = FullAccess::new(
+            SESSION,
+            &client,
+            None,
+            Box::new(Source {
+                lease,
+                authorized: Rc::clone(&authorized),
+            }),
+            Box::new(NoSecrets),
+            Some(("S-1-5-21-1-2-3-1001".into(), 42)),
+        );
+        let decisions = RefCell::new(Vec::new());
+        let (_clock, mut gate) = on();
+        let moment = |gate: &TakeoverGate<ManualClock>| LeaseMoment {
+            approval_epoch: Some(1),
+            now_ms: NOW + 1_000,
+            interventions: gate.interventions(),
+        };
+        let query = LeaseQuery {
+            family: BrowserFamily::Click,
+            also: None,
+            effect_origin: "https://fixture.test",
+            committed_origin: Some("https://fixture.test"),
+            impact: Impact::Routine,
+            page_id: "page-1",
+        };
+        // Before any challenge the lease covers the click (the live order).
+        let ticket = gate
+            .before_write("page-1", "click", "n1", ActionClass::Repeatable)
+            .ok()
+            .flatten();
+        let used = match access.decide(&query, &moment(&gate)) {
+            LeaseDecision::Covered(used) => Some(used),
+            other => {
+                decisions.borrow_mut().push(format!("{other:?}"));
+                None
+            }
+        };
+        assert!(
+            used.is_some(),
+            "covered before the challenge: {decisions:?}"
+        );
+        // The detector sees a CAPTCHA while the action is pending: the check
+        // right before the lease would be used refuses it.
+        if let Some(session) = gate.session_gate() {
+            let _ = session.challenge(
+                &ResourceId::new("page-1"),
+                ChallengeKind::Captcha,
+                ChallengeOrigin::Detected,
+            );
+        }
+        let refused = gate.before_dispatch(ticket.as_ref());
+        assert!(
+            matches!(&refused, Err(e) if e.code == FailureCode::HumanVerificationRequired),
+            "{refused:?}"
+        );
+        // A new covered action on the waiting page is refused before the
+        // lease is consulted at all.
+        let again = gate.before_write("page-1", "click", "n2", ActionClass::Repeatable);
+        assert!(
+            matches!(&again, Err(e) if e.code == FailureCode::HumanVerificationRequired),
+            "{again:?}"
+        );
+        assert_eq!(authorized.get(), 0, "the lease was never used");
     }
 }

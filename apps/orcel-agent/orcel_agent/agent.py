@@ -40,7 +40,7 @@ from typing import Any, Optional, Protocol
 
 from .edge import APPROVAL_CALL_TIMEOUT_S, EdgeError, ToolOutcome, ToolSpec
 from .events import EventLog
-from .failures import MAY_HAVE_ACTED
+from .failures import AWAIT_PERSON, MAY_HAVE_ACTED
 from .journal import OUTCOME_UNKNOWN, DispatchJournal, digest
 from .planner import Finish, Planner, Step, ToolCall
 from .store import RunStore
@@ -194,6 +194,9 @@ class Agent:
                     self._completed.add(key)
                 else:
                     self._must_reobserve = False
+            elif entry.error_code in AWAIT_PERSON:
+                # OB-07: nothing was done; a fresh observation is owed.
+                self._must_reobserve = True
             else:
                 self._refused.add(key)
                 if entry.error_code in APPROVAL_DENIED:
@@ -265,6 +268,13 @@ class Agent:
                 self._completed.add(key)
             else:
                 self._must_reobserve = False
+            return step
+        if outcome.error_code in AWAIT_PERSON:
+            # SG-000135 OB-07: the page waits for a person and nothing was
+            # done. The call is not final, but nothing changes state again
+            # until a read-only call succeeds (orceld refuses every read of a
+            # waiting page, and refuses this call for as long as it waits).
+            self._must_reobserve = True
             return step
         self._refused.add(key)
         if mutating and outcome.error_code in MAY_HAVE_ACTED:

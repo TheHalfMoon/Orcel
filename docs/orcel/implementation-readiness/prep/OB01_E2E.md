@@ -239,6 +239,38 @@ It no longer requires the Visible window to stay out of the foreground, because 
 - The Visible window took the foreground (no human input; the recorded residual). Cursor and clipboard unchanged.
 - The mission: 15 receipts chained (head `31e397a95c9e6179...`). MCP exits 0, 0, 0 and 0. Nothing left.
 
+## OB-07 extension: challenge handoff (SG-000135 OB-07)
+
+Design: `OB07_CHALLENGE_HANDOFF.md`. After the OB-04 phases, the script runs an OB-07 mission. It uses a Shadow session in its own MCP session (an orceld of its own). `--only ob07` runs this mission alone. The fixture serves three test-only challenge pages. There is no real CAPTCHA, code or sign-in service, and everything stays on loopback:
+
+- `/ob07-captcha`: an hCaptcha-style widget container in a form with a button.
+- `/ob07-otp`: a `one-time-code` field in a form with a button.
+- `/ob07-login`: HTTP 401 with an email and password form.
+
+The first two poll `/ob07-state` and take their own widget or field away once the harness writes `OB07-CLEAR <captcha|otp>` to the fixture's stdin. That line is the scripted stand-in for the person. Orcel learns of it only through its own read-only detector.
+
+| # | Step | Expected |
+|---|---|---|
+| 1 | `browser_session_create` | Shadow session |
+| 2 | `browser_open` the OB-01 form | ok, `needs_you` empty (SOFT) |
+| 3 | `browser_open` `/ob07-captcha` | ok, `needs_you`: one page, `captcha`, `captcha_widget`, `handoff: rerun_in_visible`, no page text or site key (SOFT) |
+| 4-8 | snapshot, screenshot, extract, verify, open another URL | each refused `HUMAN_VERIFICATION_REQUIRED`, message `needs_you: ...`, no approval prompt |
+| 9-10 | `browser_task_status`, then again after 4 s | `page_state: AWAIT_HUMAN_VERIFICATION`; time alone never clears it |
+| | scripted person clears the CAPTCHA | status polls until `clearing: true`, then until `needs_you` is empty and `page_state: REOBSERVE`; the resume is at least the quiet period after the detector saw it gone |
+| 11 | `browser_open` | refused `TARGET_STALE` `reobserve_required` (observe first) |
+| 12-13 | `browser_snapshot`, `browser_verify` | ok; the page shows the person's result |
+| 14-17 | the code page: open, snapshot refused, scripted clear, resume, snapshot, verify | as for the CAPTCHA, kind `mfa`, signal `otp_autocomplete` (SOFT for the open) |
+| 18-19 | `browser_open` `/ob07-login`, snapshot | status 401; `sign_in` with `password_field` and `http_auth`; snapshot refused |
+| 20-21 | `browser_task_status`, `browser_close` | 7 refused receipts, each `refused` with no approval record; the session closes while a page waits |
+
+The script then checks that each challenge page was requested exactly once (nothing was submitted or reloaded), that no Edge is left, and that the scripted consent saw exactly the 4 page openings.
+
+Scripted runs on this PC, 2026-11-18 (Edge 157, Windows 11 Home 10.0.26300):
+
+- `--only ob07`: every step passed. The CAPTCHA was seen gone 2128 ms after the scripted person, and the session resumed 3236 ms later. The code was seen gone after 1100 ms and resumed 3264 ms later. Page requests: captcha 1, otp 1, login 1. 4 approvals, MCP exit 0.
+- The whole script (OB-01, OB-03, OB-04 and OB-07, with the takeover gate now on for every broker session) passed. The OB-01/OB-03 mission produced 15 receipts chained (head `1432a3c2870e14f0`), 5 approval records, nothing left. OB-04 passed with 16 approvals and the cookie kept across the restart. In OB-07, the CAPTCHA was seen gone after 2158 ms and resumed 3106 ms later; the code was seen gone after 2182 ms and resumed 3060 ms later. The Shadow and Visible desktop comparisons were recorded as inconclusive because the person at the PC gave input during the run.
+- **Scripted consent and a scripted person, not human acceptance.** No real CAPTCHA, code or passkey site was used.
+
 ## Not covered
 
 - The founder-present run (above).

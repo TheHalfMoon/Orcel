@@ -56,6 +56,16 @@
 //     foreground (and, with no human input, the foreground is unchanged).
 //     Nothing in this script sends keyboard or mouse input.
 //
+// SG-000135 OB-07 adds a challenge-handoff mission in a Shadow session of
+// its own: fixture CAPTCHA, one-time-code and 401 sign-in pages (no real
+// CAPTCHA or code service; loopback only) are detected by Orcel's read-only
+// detector; every action on such a page is refused HUMAN_VERIFICATION_REQUIRED
+// with no approval prompt; browser_task_status lists the page under
+// needs_you; a scripted "person" (a stdin line to the fixture, which then
+// takes its own widget or code field away) clears it; the session notices
+// that only through the same detector, resumes after the quiet period, and
+// must observe the page again before acting. Nothing is resubmitted.
+//
 // Two consent modes, never mixed:
 //   --consent scripted  TEST HARNESS. Builds orceld with the test-only
 //                       `browser-full-scripted-consent` feature: the real
@@ -86,7 +96,8 @@
 //
 // Options: --consent scripted|founder (required), --skip-build (use the
 // binaries already built for this mode), --evidence <dir> (default: a new
-// folder under the user's home), --keep-state (keep the isolated state root).
+// folder under the user's home), --keep-state (keep the isolated state root),
+// --only ob07 (run the OB-07 mission alone).
 // Environment: CARGO_TARGET_DIR is honoured. node_modules for
 // apps/orcel-browser-worker and the root workspace must already be installed.
 
@@ -150,18 +161,20 @@ function require_(condition, message) {
 }
 
 function parseArgs(argv) {
-  const options = { consent: null, skipBuild: false, evidence: null, keepState: false };
+  const options = { consent: null, skipBuild: false, evidence: null, keepState: false, only: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--consent") options.consent = argv[++index] ?? null;
     else if (arg === "--skip-build") options.skipBuild = true;
     else if (arg === "--evidence") options.evidence = argv[++index] ?? null;
     else if (arg === "--keep-state") options.keepState = true;
+    else if (arg === "--only") options.only = argv[++index] ?? null;
     else fail(`unknown argument ${arg}`);
   }
   if (options.consent !== "scripted" && options.consent !== "founder") {
     fail("--consent scripted (test harness) or --consent founder (real dialogs) is required");
   }
+  if (options.only !== null && options.only !== "ob07") fail("--only takes ob07");
   return options;
 }
 
@@ -1238,6 +1251,162 @@ async function ob04Missions(options, paths, env) {
   };
 }
 
+/// SG-000135 OB-07: challenge handoff ("Needs you") on fixture challenges,
+/// in a Shadow session of its own MCP session. Each fixture challenge is
+/// detected by Orcel's read-only detector, every action on the page is
+/// refused HUMAN_VERIFICATION_REQUIRED (with no approval prompt), the status
+/// lists the page, and a scripted "person" (a stdin line to the fixture,
+/// which takes the fixture's own widget away) clears it; the session then
+/// resumes only through the same detector, after the quiet period, and only
+/// once the page was observed again. Nothing is resubmitted.
+async function ob07Mission(options, paths, env, fixture) {
+  const steps = [];
+  let approvals = 0;
+  const call = async (client, tool, args, approved = false) => {
+    const step = await client.call(tool, args);
+    steps.push({ tool, ok: step.ok, ms: step.ms, code: step.ok ? null : step.body?.error?.code ?? null });
+    const outcome = step.ok ? "ok" : `refused ${step.body?.error?.code ?? "?"}`;
+    process.stdout.write(`OB07-E2E step ${steps.length} ${tool}: ${outcome} in ${step.ms} ms\n`);
+    if (approved && step.ok) approvals += 1;
+    return step;
+  };
+  const ok = (step, what) => {
+    require_(step.ok, `${what}: ${JSON.stringify(step.body)}`);
+    return step.body.result;
+  };
+  const refused = (step, code, what) => {
+    require_(!step.ok && step.body?.error?.code === code, `${what} is refused ${code}: ${JSON.stringify(step.body)}`);
+    return step.body.error.message ?? "";
+  };
+  const prompts = () => {
+    if (options.consent !== "scripted" || !existsSync(paths.consentLog)) return 0;
+    return readFileSync(paths.consentLog, "utf8").trim().split("\n").filter((line) => line.includes("\"soft_prompt\"")).length;
+  };
+  const sleep = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+  /// Read browser_task_status until `done(status)`; returns the times seen.
+  const pollStatus = async (client, session, done, limitMs) => {
+    const started = Date.now();
+    const seen = [];
+    for (;;) {
+      const status = ok(await client.call("browser_task_status", { session_id: session }), "browser_task_status (poll)");
+      seen.push({ at: Date.now(), needs_you: status.needs_you, page_state: status.page_state });
+      if (done(status)) return { status, seen };
+      require_(Date.now() - started < limitMs, `the status did not reach the expected state within ${limitMs} ms: ${JSON.stringify(seen.slice(-3))}`);
+      await sleep(200);
+    }
+  };
+  /// The scripted person clears the fixture challenge `name`; the session
+  /// must notice it through the detector (clearing), wait the quiet
+  /// period, and resume in REOBSERVE.
+  const clearAndResume = async (client, session, name) => {
+    const cleared = new Promise((resolvePromise) => {
+      const listener = (chunk) => {
+        if (chunk.toString("utf8").includes(`OB07-CLEARED ${name}`)) {
+          fixture.child.stdout.off("data", listener);
+          resolvePromise(Date.now());
+        }
+      };
+      fixture.child.stdout.on("data", listener);
+    });
+    fixture.child.stdin.write(`OB07-CLEAR ${name}\n`);
+    const clearedAt = await cleared;
+    const gone = await pollStatus(client, session, (status) => (status.needs_you ?? []).some((page) => page.clearing === true) || (status.needs_you ?? []).length === 0, 15_000);
+    const goneAt = gone.seen.at(-1).at;
+    const resumed = await pollStatus(client, session, (status) => (status.needs_you ?? []).length === 0 && status.page_state === "REOBSERVE", 15_000);
+    const resumedAt = resumed.seen.at(-1).at;
+    const sawClearing = gone.status.needs_you?.some((page) => page.clearing === true) === true;
+    return { cleared_at: clearedAt, detector_saw_gone_ms: goneAt - clearedAt, resumed_ms_after_gone: resumedAt - goneAt, saw_clearing: sawClearing, polls: gone.seen.length + resumed.seen.length };
+  };
+  if (options.consent === "founder") {
+    process.stdout.write("OB07-E2E founder run: Orcel approval dialogs follow for four page openings on the fixture. Read each and answer it yourself. The fixture challenges are cleared by the script, not by you.\n");
+  }
+
+  const client = await openClient(env, "ob07");
+  const create = ok(await call(client, "browser_session_create", { task: "OB-07 challenge handoff" }), "browser_session_create");
+  require_(create.mode === "shadow", `the OB-07 session is Shadow: ${JSON.stringify(create)}`);
+  const session = create.session_id;
+  if (options.consent === "scripted") {
+    // The build must be the scripted-consent one, checked before any
+    // approval, so no real dialog can come up unanswered.
+    const log = existsSync(paths.consentLog) ? readFileSync(paths.consentLog, "utf8") : "";
+    require_(log.includes("\"scripted_consent_started\""), "orceld is not the scripted-consent build (no consent log header); stopping before any approval");
+  }
+
+  // A plain page needs nobody.
+  const form = ok(await call(client, "browser_open", { session_id: session, url: FORM_URL }, true), "browser_open form");
+  require_(Array.isArray(form.needs_you) && form.needs_you.length === 0, `a plain page needs nobody: ${JSON.stringify(form.needs_you)}`);
+
+  // CAPTCHA: detected, every action refused with no prompt, listed in status.
+  const captcha = ok(await call(client, "browser_open", { session_id: session, url: `${FIXTURE}/ob07-captcha` }, true), "browser_open captcha");
+  const captchaNeed = captcha.needs_you?.[0];
+  require_(captcha.needs_you?.length === 1 && captchaNeed.kind === "captcha" && captchaNeed.signals.includes("captcha_widget") && captchaNeed.page_id === captcha.page_id && captchaNeed.handoff === "rerun_in_visible" && captchaNeed.clearing === false, `the CAPTCHA page needs the person: ${JSON.stringify(captcha.needs_you)}`);
+  require_(!JSON.stringify(captcha.needs_you).includes("OB-07") && !JSON.stringify(captcha.needs_you).includes("10000000-ffff"), "needs_you carries no page text or widget key");
+  const promptsBefore = prompts();
+  const refusedMessages = [];
+  refusedMessages.push(refused(await call(client, "browser_snapshot", { session_id: session }), "HUMAN_VERIFICATION_REQUIRED", "a snapshot of the CAPTCHA page"));
+  refusedMessages.push(refused(await call(client, "browser_screenshot", { session_id: session, expected_generation: captcha.generation }), "HUMAN_VERIFICATION_REQUIRED", "a screenshot of the CAPTCHA page"));
+  refusedMessages.push(refused(await call(client, "browser_extract", { session_id: session, expected_generation: captcha.generation }), "HUMAN_VERIFICATION_REQUIRED", "an extraction of the CAPTCHA page"));
+  refusedMessages.push(refused(await call(client, "browser_verify", { session_id: session, expected_generation: captcha.generation, checks: [{ kind: "url_is", url: `${FIXTURE}/ob07-captcha` }] }), "HUMAN_VERIFICATION_REQUIRED", "a verification of the CAPTCHA page"));
+  refusedMessages.push(refused(await call(client, "browser_open", { session_id: session, url: FORM_URL }), "HUMAN_VERIFICATION_REQUIRED", "leaving the CAPTCHA page"));
+  require_(prompts() === promptsBefore, "no action on the CAPTCHA page asked for approval");
+  require_(refusedMessages.every((message) => message.startsWith("needs_you:")), `each refusal says needs_you: ${JSON.stringify(refusedMessages)}`);
+  const waiting = ok(await call(client, "browser_task_status", { session_id: session }), "browser_task_status (waiting)");
+  require_(waiting.page_state === "AWAIT_HUMAN_VERIFICATION" && waiting.needs_you?.[0]?.kind === "captcha", `the status says the page needs you: ${JSON.stringify({ page_state: waiting.page_state, needs_you: waiting.needs_you })}`);
+  // Time alone never clears it.
+  await sleep(4_000);
+  const stillWaiting = ok(await call(client, "browser_task_status", { session_id: session }), "browser_task_status (still waiting)");
+  require_(stillWaiting.page_state === "AWAIT_HUMAN_VERIFICATION" && stillWaiting.needs_you?.[0]?.clearing === false, "four seconds later the page still needs you");
+  const captchaResume = await clearAndResume(client, session, "captcha");
+  process.stdout.write(`OB07-E2E captcha resume: ${JSON.stringify(captchaResume)}\n`);
+  require_(captchaResume.resumed_ms_after_gone >= 2_800, `the session resumed only after the quiet period: ${captchaResume.resumed_ms_after_gone} ms`);
+  // Resumed, but the agent must observe again before acting.
+  const stale = refused(await call(client, "browser_open", { session_id: session, url: FORM_URL }), "TARGET_STALE", "acting before observing again");
+  require_(stale.includes("reobserve_required"), `the refusal asks for a new observation: ${stale}`);
+  const after = ok(await call(client, "browser_snapshot", { session_id: session }), "browser_snapshot after the CAPTCHA");
+  const afterNodes = flatten(after.nodes);
+  require_(!afterNodes.some((node) => node.role === "button" && node.untrusted_name?.text === "Continue"), "the observation shows the page as the person left it");
+  const verified = ok(await call(client, "browser_verify", { session_id: session, expected_generation: after.generation, checks: [{ kind: "text_visible", text: "OB-07 verified by a person" }] }), "browser_verify after the CAPTCHA");
+  require_(verified.verified === true, "the page shows the person's result");
+
+  // One-time code: the same path.
+  const otp = ok(await call(client, "browser_open", { session_id: session, url: `${FIXTURE}/ob07-otp` }, true), "browser_open code page");
+  require_(otp.needs_you?.[0]?.kind === "mfa" && otp.needs_you[0].signals.includes("otp_autocomplete"), `the code page needs the person: ${JSON.stringify(otp.needs_you)}`);
+  refused(await call(client, "browser_snapshot", { session_id: session }), "HUMAN_VERIFICATION_REQUIRED", "a snapshot of the code page");
+  const otpResume = await clearAndResume(client, session, "otp");
+  process.stdout.write(`OB07-E2E otp resume: ${JSON.stringify(otpResume)}\n`);
+  require_(otpResume.resumed_ms_after_gone >= 2_800, `the code page resumed only after the quiet period: ${otpResume.resumed_ms_after_gone} ms`);
+  const otpAfter = ok(await call(client, "browser_snapshot", { session_id: session }), "browser_snapshot after the code");
+  ok(await call(client, "browser_verify", { session_id: session, expected_generation: otpAfter.generation, checks: [{ kind: "text_visible", text: "OB-07 code accepted" }] }), "browser_verify after the code");
+
+  // Sign-in wall: HTTP 401 with a password form; it stays until the session ends.
+  const login = ok(await call(client, "browser_open", { session_id: session, url: `${FIXTURE}/ob07-login` }, true), "browser_open sign-in page");
+  require_(login.status === 401, `the sign-in page answers 401: ${login.status}`);
+  require_(login.needs_you?.[0]?.kind === "sign_in" && login.needs_you[0].signals.includes("password_field") && login.needs_you[0].signals.includes("http_auth"), `the sign-in wall needs the person: ${JSON.stringify(login.needs_you)}`);
+  refused(await call(client, "browser_snapshot", { session_id: session }), "HUMAN_VERIFICATION_REQUIRED", "a snapshot of the sign-in page");
+
+  const status = ok(await call(client, "browser_task_status", { session_id: session }), "browser_task_status (final)");
+  const refusedReceipts = (status.receipts ?? []).filter((receipt) => receipt.failure_code === "HUMAN_VERIFICATION_REQUIRED");
+  require_(refusedReceipts.length >= 7 && refusedReceipts.every((receipt) => receipt.outcome === "refused" && receipt.record_id === null), `each refused action has a refused receipt without an approval: ${refusedReceipts.length}`);
+  const closed = ok(await call(client, "browser_close", { session_id: session }), "browser_close");
+  require_(closed.worker_ended === true, "the session closes while a page needs the person");
+  const exit = await client.close();
+  require_(edgeProcessesUnder(paths.root).length === 0, "no Edge is left after the OB-07 mission");
+  // Nothing was resubmitted: each challenge page was requested once, and
+  // nothing was posted to it.
+  const hits = (path) => fixture.hits.filter((hit) => hit === `fixture.test ${path}`).length;
+  const resubmitted = { captcha: hits("/ob07-captcha"), otp: hits("/ob07-otp"), login: hits("/ob07-login") };
+  require_(resubmitted.captcha === 1 && resubmitted.otp === 1 && resubmitted.login === 1, `each challenge page was requested exactly once (nothing submitted): ${JSON.stringify(resubmitted)}`);
+  return {
+    steps,
+    approvals,
+    captcha: captchaResume,
+    otp: otpResume,
+    refused_receipts: refusedReceipts.length,
+    page_requests: resubmitted,
+    mcp_exit_code: exit
+  };
+}
+
 async function main() {
   require_(process.platform === "win32", "this mission is Windows-only evidence");
   const options = parseArgs(process.argv.slice(2));
@@ -1265,14 +1434,26 @@ async function main() {
   try {
     if (options.consent === "scripted") paths.authority = await startAuthority(paths, built);
     const spki = await fixture.ready;
+    if (options.only === "ob07") {
+      const ob07 = await ob07Mission(options, paths, missionEnv(options, paths, spki), fixture);
+      if (options.consent === "scripted") {
+        const prompts = readFileSync(paths.consentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((line) => line.event === "soft_prompt");
+        require_(prompts.length === ob07.approvals && prompts.every((prompt) => prompt.decision === "approved"), `${ob07.approvals} scripted SOFT prompts, each approved: ${prompts.length}`);
+        ob07.scripted_prompts = prompts.map((prompt) => ({ action: prompt.action, target: prompt.target }));
+      }
+      writeFileSync(join(evidenceDir, "summary.json"), `${JSON.stringify({ ob07 }, null, 2)}\n`);
+      process.stdout.write(ob07Evidence(options, ob07, evidenceDir));
+      return;
+    }
     summary = await mission(options, paths, spki, fixture);
     summary.ob04 = await ob04Missions(options, paths, missionEnv(options, paths, spki));
+    summary.ob07 = await ob07Mission(options, paths, missionEnv(options, paths, spki), fixture);
     const ledger = join(root, ".orcel");
     summary.approval_ledger_files = existsSync(ledger) ? readdirSync(ledger) : [];
     if (options.consent === "scripted") {
       const lines = readFileSync(paths.consentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
       const prompts = lines.filter((line) => line.event === "soft_prompt");
-      const expectedPrompts = APPROVED_ACTIONS + summary.ob04.approvals;
+      const expectedPrompts = APPROVED_ACTIONS + summary.ob04.approvals + summary.ob07.approvals;
       require_(prompts.length === expectedPrompts && prompts.every((prompt) => prompt.decision === "approved"), `${expectedPrompts} scripted SOFT prompts, each approved: ${prompts.length}`);
       summary.scripted_prompts = prompts.map((prompt) => ({ action: prompt.action, target: prompt.target }));
       // SG-000135 OB-04: the first use of each profile in each MCP session
@@ -1312,6 +1493,7 @@ async function main() {
         `visible: ${ob04.visible.titled_windows} titled window(s), took foreground ${ob04.visible.took_foreground}, above foreground ${ob04.visible.above_foreground}, desktop ${ob04.visible.desktop.verdict}; ` +
         `${ob04.approvals} OB-04 approvals, MCP exits ${ob04.mcp_exit_codes.join("/")}\n`
     );
+    process.stdout.write(ob07Evidence(options, summary.ob07, evidenceDir));
     process.stdout.write(
       `OB01-E2E-EVIDENCE ${options.consent} consent: ${steps}; ${summary.receipts_count} receipts chained (head ${summary.chain_head.slice(0, 16)}), ` +
         `${summary.approvals_recorded.length} approval records, profile removed, ${summary.edge_left} Edge left, ` +
@@ -1339,6 +1521,17 @@ async function main() {
       }
     }
   }
+}
+
+/// SG-000135 OB-07: the mission's one-line evidence.
+function ob07Evidence(options, ob07, evidenceDir) {
+  return (
+    `OB07-E2E-EVIDENCE ${options.consent} consent: captcha detected, ${ob07.refused_receipts} actions refused HUMAN_VERIFICATION_REQUIRED with no prompt; ` +
+    `captcha gone seen ${ob07.captcha.detector_saw_gone_ms} ms after the scripted person, resumed ${ob07.captcha.resumed_ms_after_gone} ms later; ` +
+    `code gone seen ${ob07.otp.detector_saw_gone_ms} ms, resumed ${ob07.otp.resumed_ms_after_gone} ms later; sign-in 401 held; ` +
+    `page requests ${JSON.stringify(ob07.page_requests)}; ${ob07.approvals} approvals; MCP exit ${ob07.mcp_exit_code}; evidence ${evidenceDir}` +
+    (options.consent === "scripted" ? " (SCRIPTED consent and a SCRIPTED person: not human acceptance)\n" : "\n")
+  );
 }
 
 main().catch((error) => {
