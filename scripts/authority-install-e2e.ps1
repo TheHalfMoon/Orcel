@@ -190,9 +190,15 @@ function Get-Snapshot {
     program_files_orcel = Get-Tree $ProgramFilesOrcel
     program_data_orcel = Get-Tree $ProgramDataOrcel
     event_source = [bool](Test-Path -LiteralPath $EventKey)
-    service_profile = [bool](Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$sid'" -ErrorAction SilentlyContinue)
   }
   return ($state | ConvertTo-Json -Compress)
+}
+
+function Test-ServiceProfileHandled([string]$Output) {
+  # The virtual account's profile is removed, or the installer said it was left (Windows still holds it loaded).
+  $sid = Get-ServiceSid
+  $present = [bool](Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$sid'" -ErrorAction SilentlyContinue)
+  return [pscustomobject]@{ Ok = ((-not $present) -or ($Output -match 'PROFILE LEFT')); Detail = "profile present: $present" }
 }
 
 function Get-StagingFingerprint {
@@ -281,6 +287,7 @@ function Invoke-AsStandardUserProcess([string]$File, [string]$Arguments, [int]$T
   $out = Join-Path $script:UserIo "$id.out"
   $err = Join-Path $script:UserIo "$id.err"
   $process = Start-Process -FilePath $File -ArgumentList $Arguments -Credential $script:UserCredential -WorkingDirectory $script:UserIo -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden
+  $null = $process.Handle  # keeps the handle, so ExitCode is available after the exit
   if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     throw "$File $Arguments (as $UserName) did not finish within $TimeoutSeconds seconds"
@@ -443,6 +450,8 @@ function Invoke-E2E {
   $afterRollback = Get-Snapshot
   Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue
   Check 'rollback: install failing at its last step undoes every change' (($run.ExitCode -ne 0) -and ($run.Output -match '>> sc\.exe create') -and ($run.Output -match 'every change it made was rolled back') -and ($afterRollback -eq $baseline)) "exit $($run.ExitCode); after: $afterRollback"
+  $profileState = Test-ServiceProfileHandled $run.Output
+  Check 'rollback: the virtual account profile removed, or reported as left' $profileState.Ok $profileState.Detail
 
   # ---- Clean install with the runbook's line.
   $installedAt = Get-Date
@@ -479,6 +488,25 @@ function Invoke-E2E {
   Check 'state directory and files unreadable for a standard user' ((-not $access.list_state) -and @($access.readable_state_files).Count -eq 0 -and ($stateNames -contains 'config.json') -and ($stateNames -contains 'lease-signing.key')) "state files: $($stateNames -join ','); readable by the user: $(@($access.readable_state_files) -join ',')"
   Check 'public key readable for a standard user' $access.read_public_key $PublicKey
   Check 'installed binaries and folders not writable for a standard user' (-not ($access.create_in_program_files_orcel -or $access.write_installed_orcel -or $access.write_installed_orceld -or $access.create_in_program_data_orcel)) ($access | ConvertTo-Json -Compress)
+
+  # Diagnostics for the record: the pipe's security as the standard user sees it, its groups, and which
+  # access masks it can open the pipe with.
+  $diag = Join-Path $script:UserIo 'pipe-diagnostics.ps1'
+  Set-Content -LiteralPath $diag -Encoding ascii -Value @'
+$name = '\\.\pipe\orcel-authority'
+try { 'sddl ' + ([System.Security.AccessControl.FileSecurity]::new($name, [System.Security.AccessControl.AccessControlSections]'Access, Owner')).GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]'Access, Owner') } catch { 'sddl unreadable: ' + $_.Exception.Message }
+foreach ($rights in @('ReadPermissions', 'ReadData, WriteData, ReadPermissions, Synchronize')) {
+  try {
+    $client = New-Object System.IO.Pipes.NamedPipeClientStream -ArgumentList '.', 'orcel-authority', ([System.IO.Pipes.PipeAccessRights]$rights), ([System.IO.Pipes.PipeOptions]::None), ([System.Security.Principal.TokenImpersonationLevel]::Impersonation), ([System.IO.HandleInheritability]::None)
+    $client.Connect(3000); $client.Dispose(); "open [$rights]: ok"
+  } catch { "open [$rights]: " + $_.Exception.Message }
+}
+& whoami.exe /groups /fo csv | Select-String -Pattern 'INTERACTIVE|Mandatory|SERVICE|BATCH'
+& whoami.exe /priv /fo csv | Select-String -Pattern 'Impersonate'
+'@
+  $pipeDiag = Invoke-AsStandardUserProcess 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' "-NoProfile -ExecutionPolicy Bypass -File `"$diag`"" 60
+  $runnerGroups = (& whoami.exe /groups /fo csv | Select-String -Pattern 'INTERACTIVE|Mandatory|SERVICE|BATCH' | ForEach-Object { $_.Line }) -join ' ; '
+  $Report['pipe_diagnostics'] = [ordered]@{ standard_user = $pipeDiag.Output; runner_groups = $runnerGroups }
 
   $status = Get-AuthorityStatus
   Check 'orceld authority-status: service mode with a key id' ($status -and $status.mode -eq 'service' -and $status.key_id) $(if ($status) { "key_id $($status.key_id), epoch $($status.epoch)" } else { 'no status' })
@@ -558,7 +586,7 @@ function Invoke-E2E {
   Check 'console-mode scripted-consent tests pass (grant/revoke outcome recorded)' (($tests.ExitCode -eq 0) -and ($outcome -match '^(ran|skipped):')) $outcome
 
   $tpm = Invoke-Process $cargo 'test --locked -p orcel-authority --lib tpm_root -- --nocapture --test-threads=1' 1800
-  $line = @($tpm.Output -split "`r?`n" | Where-Object { $_ -like 'TPM-ROOT-2014:*' }) | Select-Object -First 1
+  $line = if ($tpm.Output -match 'TPM-ROOT-2014: [^\r\n]*') { $Matches[0] } else { $null }
   $Report.tpm_root_2014 = $line
   Check 'TPM root tests pass (pin equals the root found by name, if present; lookalike refused)' (($tpm.ExitCode -eq 0) -and $line) "$line"
 
@@ -566,6 +594,8 @@ function Invoke-E2E {
   $run = Invoke-Documented $uninstall $values
   $final = Get-Snapshot
   Check 'uninstall (runbook line) reverses every change and removes the staging' (($run.ExitCode -eq 0) -and ($final -eq $baseline) -and -not (Test-Path -LiteralPath $Staging)) "exit $($run.ExitCode); after: $final"
+  $profileState = Test-ServiceProfileHandled $run.Output
+  Check 'uninstall: the virtual account profile removed, or reported as left' $profileState.Ok $profileState.Detail
 }
 
 try {

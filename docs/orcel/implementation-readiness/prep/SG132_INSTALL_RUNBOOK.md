@@ -108,7 +108,7 @@ passes no arguments, and every step above needs them, so do not use Explorer for
 | 4 | State directory created with its security in one call: owner Administrators, protected DACL with SYSTEM, Administrators and the service full control, no access for users; `config.json` trusting only `%ProgramFiles%\Orcel\orceld.exe` (Authorize) and `%ProgramFiles%\Orcel\orcel.exe` (grant, enrollment and reset intents) | `%ProgramData%\Orcel\authority` | Deleted (kept with `-KeepState`) |
 | 5 | Public key directory created the same way: SYSTEM and Administrators full control, the service modify, Users read and execute | `%ProgramData%\Orcel\authority-public` | Deleted |
 | 6 | Event Log source `Orcel` in the Application log, unless it exists (marked `OrcelInstalledBy`) | `HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\Orcel` | Removed only if this script created it |
-| 7 | Starts the service and waits until it runs and has published its public key; Windows may create a profile for the virtual account (it holds the account's DPAPI keys) | SCM, user profiles | Profile removed (`Win32_UserProfile`) |
+| 7 | Starts the service and waits until it runs and has published its public key; Windows may create a profile for the virtual account (it holds the account's DPAPI keys) | SCM, user profiles | Profile removed (`Win32_UserProfile`); if Windows still holds it loaded, the script prints `PROFILE LEFT` with the command to remove it after a restart |
 
 The script reads back the owner and DACL of every directory it creates and stops on any difference. **If any
 step fails, it undoes every change it already made, newest first, and says "every change it made was rolled
