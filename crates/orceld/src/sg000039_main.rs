@@ -44,6 +44,11 @@ mod browser_lease;
 // create and delete).
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_profiles;
+// SG-000135 OB-05: evidence receipts on the audit chain (intent before
+// dispatch, receipt after, content-addressed evidence files) and their
+// verifier, which `orceld audit-verify --receipts` runs in every build.
+#[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+mod browser_receipts;
 // SG-000135 OB-01 end-to-end harness, test builds only: the scripted SOFT
 // consent. Compiled only with both live browser features and the harness
 // feature, never in a development or release build.

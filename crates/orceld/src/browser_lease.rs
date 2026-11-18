@@ -302,6 +302,9 @@ pub(crate) struct LeaseMoment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LeaseUse {
     pub lease_id: String,
+    /// SG-000135 OB-05: the authority service's epoch the lease was checked
+    /// at (the receipt names it with the lease).
+    pub authority_epoch: u64,
     /// The one-shot record id the host frame carries (unique per session).
     pub record_id: String,
     page_id: String,
@@ -323,6 +326,7 @@ impl LeaseUse {
     pub(crate) fn missing(decision: &str) -> Self {
         Self {
             lease_id: format!("missing: {decision}"),
+            authority_epoch: 0,
             record_id: String::new(),
             page_id: String::new(),
             family: BrowserFamily::Read,
@@ -614,6 +618,7 @@ impl FullAccess {
                 lease.lease_id.get(3..19).unwrap_or("")
             ),
             lease_id: lease.lease_id,
+            authority_epoch: epoch,
             page_id: query.page_id.to_owned(),
             family: query.family,
             origin,

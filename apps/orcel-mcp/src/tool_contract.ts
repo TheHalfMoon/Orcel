@@ -412,49 +412,49 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
   },
   browser_open: {
     capability: "browser.session", operation: "open", effect: "network", approval: "SOFT", remote: "local_only",
-    outputBound: "the session's page id, the committed URL, status and generation, and one provisional receipt",
+    outputBound: "the session's page id, the committed URL, status and generation, and one evidence receipt",
     annotations: change("Open URL in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_snapshot: {
     capability: "browser.session", operation: "snapshot", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one provisional receipt",
+    outputBound: "one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one evidence receipt",
     annotations: read("Snapshot isolated browser session page")
   },
   browser_click: {
     capability: "browser.session", operation: "click", effect: "network", approval: "SOFT", remote: "local_only",
-    outputBound: "the opened URL, status and generation, and one provisional receipt",
+    outputBound: "the opened URL, status and generation, and one evidence receipt",
     annotations: change("Open a link in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_fill: {
     capability: "browser.session", operation: "fill", effect: "network", approval: "SOFT", remote: "local_only",
-    outputBound: "the page id, generation, node id, committed URL, record id and one provisional receipt; never the value",
+    outputBound: "the page id, generation, node id, committed URL, record id and one evidence receipt; never the value",
     annotations: change("Fill a text field in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_select: {
     capability: "browser.session", operation: "select", effect: "network", approval: "SOFT", remote: "local_only",
-    outputBound: "the page id, generation, node id, committed URL, record id and one provisional receipt; never the option label",
+    outputBound: "the page id, generation, node id, committed URL, record id and one evidence receipt; never the option label",
     annotations: change("Choose an option in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_verify: {
     capability: "browser.session", operation: "verify", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "at most 16 pass or fail results with fixed evidence words and counts, the committed URL, a report digest and one provisional receipt",
+    outputBound: "at most 16 pass or fail results with fixed evidence words and counts, the committed URL, a report digest and one evidence receipt",
     annotations: read("Verify isolated browser session page")
   },
   browser_extract: {
     capability: "browser.session", operation: "extract", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one provisional receipt",
+    outputBound: "the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one evidence receipt",
     annotations: read("Extract isolated browser session page")
   },
   // SG-000135 OB-03: a bounded, masked screenshot of the session's own
   // active tab (never another session, app or the desktop), and its tabs.
   browser_screenshot: {
     capability: "browser.session", operation: "screenshot", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "one PNG image of the session's active tab, at most 2 MiB and 2048 x 4096 CSS pixels, secret fields masked, its size and SHA-256, and one provisional receipt that keeps the digest only",
+    outputBound: "one PNG image of the session's active tab, at most 2 MiB and 2048 x 4096 CSS pixels, secret fields masked, its size and SHA-256, and one evidence receipt that keeps the digest only",
     annotations: read("Screenshot isolated browser session page")
   },
   browser_tabs: {
     capability: "browser.session", operation: "tabs", effect: "network", approval: "SOFT", remote: "local_only",
-    outputBound: "the session's tabs (at most 8: page id, generation, URL without credentials, query or fragment, and which is active), a new tab's navigation result, and one provisional receipt",
+    outputBound: "the session's tabs (at most 8: page id, generation, URL without credentials, query or fragment, and which is active), a new tab's navigation result, and one evidence receipt",
     annotations: change("Manage tabs of isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_close: {
@@ -464,7 +464,7 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
   },
   browser_task_status: {
     capability: "browser.session", operation: "status", effect: "read", approval: "none", remote: "local_only",
-    outputBound: "the session's state, budgets, at most 128 provisional receipts and its Full Access lease status (read-only)",
+    outputBound: "the session's state, budgets, at most 128 evidence receipts, measured latency and its Full Access lease status (read-only)",
     annotations: read("Read isolated browser session status")
   },
   // SG-000135 OB-04: persistent Orcel-managed profiles under orceld's own

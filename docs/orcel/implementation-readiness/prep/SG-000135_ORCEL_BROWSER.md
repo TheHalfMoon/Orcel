@@ -70,7 +70,7 @@ actions, remote browser path, takeover or challenge detection.
 Dependencies:
 
 - PR #794 (contracts) must merge before OB-01 and OB-08.
-- WP1-03 (the audit chain) must merge before OB-05.
+- WP1-03 (the audit chain) must merge before OB-05. It merged as #813; OB-05 is recorded in [`OB05_EVIDENCE_RECEIPTS.md`](OB05_EVIDENCE_RECEIPTS.md).
 - PR #797 should merge before `browser_extract`, so that there is one extract path.
 
 ## Rule changes recorded before implementation
