@@ -1,5 +1,13 @@
 # ORCEL Design System v1: engineering intake assessment
 
+> **Update 2026-11-18 (text-only packages):** the required review gate cannot review binary files, so the contract now
+> forbids them in a package (`CONTRACT.md` sections 2.7 to 2.9). The 20 committed PNG, ICO and ICNS icon exports and
+> the 12 screen PNGs were removed from `design/handoff/1.0.0/`; the manifest declares the icons as `generated`
+> entries that `scripts/render-design-handoff.mjs` renders at build (every icon PNG pixel-identical to the Design
+> session's export; the social card differs only by its live-text fonts), and the screens as board references. The
+> validator accepts the package at `review` with three notes; before approval the Design session regenerates the
+> package with static SVG screen sources and an outlined social-card tagline.
+
 > **Update 2026-11-18:** the Design session delivered a corrected package (118 SVG, 21 icon exports, 30 component specs, 12 screens, 4 notices; 2.1 MB), now in `design/handoff/1.0.0/`. The validator accepts it with 0 problems at status `review`. The approval card is now a read-only Needs-you notice (the OS prompt confirms), notifications only open Orcel, leases are requested in-app and confirmed in the authority service box plus Hello, Extend/rollback were removed, Fill from vault is person-triggered and non-secret only, and the brand SVGs are byte-identical to PR #811. The findings below describe the first package and are kept for the record; the founder questions in section 5 of IMPLEMENTATION.md remain open, and the package must not be approved before PR #811 is decided.
 
 

@@ -750,39 +750,80 @@
         "role": "favicon-ico",
         "path": "icons/web/favicon.ico",
         "format": "ico",
-        "sha256": "0b92dc0112e599924782b202f78ae4827fbf40e842ee6015c6f48e7058d4aee0"
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render",
+          "sizes": [
+            16,
+            32,
+            48
+          ]
+        }
       },
       {
         "role": "apple-touch-icon",
         "path": "icons/web/apple-touch-icon.png",
         "format": "png",
-        "sha256": "eb961b6009785a6d77d4a30733567b8bc5bfcf0220cdf2e2f684f12053e52b88",
         "width": 180,
-        "height": 180
+        "height": 180,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "full-bleed",
+          "plate": "#F7F3EB"
+        }
       },
       {
         "role": "icon-192",
         "path": "icons/web/icon-192.png",
         "format": "png",
-        "sha256": "21ef28ebc78d437dc48822a1158165d73f2f7c17da1f2e6b4336cd0cbf6a634c",
         "width": 192,
-        "height": 192
+        "height": 192,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render"
+        }
       },
       {
         "role": "icon-512",
         "path": "icons/web/icon-512.png",
         "format": "png",
-        "sha256": "9e40991938803087ef7aa72dda2aa95ac452e7a54bcc1e1627dbc99735746b4c",
         "width": 512,
-        "height": 512
+        "height": 512,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render"
+        }
       },
       {
         "role": "social-card",
         "path": "icons/web/social-card.png",
         "format": "png",
-        "sha256": "bf8fe09b0df34cbc0d913e39ddb3e5ff1764060ff2010476fec959f3d53b281c",
         "width": 1200,
-        "height": 630
+        "height": 630,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-social-dark.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render"
+        }
       }
     ],
     "windows": [
@@ -790,63 +831,135 @@
         "role": "app-ico",
         "path": "icons/windows/orcel.ico",
         "format": "ico",
-        "sha256": "e60f4c3f01bd6c10a15260c7c529d2d6b0f29316f02b78a60b9c5739b12e43f5"
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render",
+          "sizes": [
+            16,
+            24,
+            32,
+            48,
+            64,
+            256
+          ]
+        }
       },
       {
         "role": "msix-square44",
         "path": "icons/windows/Square44x44Logo.png",
         "format": "png",
-        "sha256": "edea0f2a2207ae09780a0b6faf1bf59478e52b9a87d951b3195e865959360c04",
         "width": 44,
-        "height": 44
+        "height": 44,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "full-bleed",
+          "plate": "#F7F3EB"
+        }
       },
       {
         "role": "msix-square44-scale200",
         "path": "icons/windows/Square44x44Logo.scale-200.png",
         "format": "png",
-        "sha256": "8471a5afa45d71d2e14680acc22824bb1bb6a7aaff8dbe228ab4cf7293d38bb8",
         "width": 88,
-        "height": 88
+        "height": 88,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "full-bleed",
+          "plate": "#F7F3EB"
+        }
       },
       {
         "role": "msix-square150",
         "path": "icons/windows/Square150x150Logo.png",
         "format": "png",
-        "sha256": "1a2d30d1b87b501f4b2d651a730f8ea1c6165ad5a86ee28e4e296d5b588bad2c",
         "width": 150,
-        "height": 150
+        "height": 150,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "full-bleed",
+          "plate": "#F7F3EB"
+        }
       },
       {
         "role": "msix-square150-scale200",
         "path": "icons/windows/Square150x150Logo.scale-200.png",
         "format": "png",
-        "sha256": "edecb74038a79f1de1bc1e7996a84a22e76a0a861b8f7c44b1341fb6df4558aa",
         "width": 300,
-        "height": 300
+        "height": 300,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "full-bleed",
+          "plate": "#F7F3EB"
+        }
       },
       {
         "role": "msix-store",
         "path": "icons/windows/StoreLogo.png",
         "format": "png",
-        "sha256": "5205d7f26b7df6bfca37105f95aa92e0a19c29088ad491aff6efd663e885b768",
         "width": 50,
-        "height": 50
+        "height": 50,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "full-bleed",
+          "plate": "#F7F3EB"
+        }
       },
       {
         "role": "msix-store-scale200",
         "path": "icons/windows/StoreLogo.scale-200.png",
         "format": "png",
-        "sha256": "5c74964e5d0b7457f05aacc6e0cf4ed6370c208128821cc9bd3eb75db6e0f96a",
         "width": 100,
-        "height": 100
+        "height": 100,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "full-bleed",
+          "plate": "#F7F3EB"
+        }
       },
       {
         "role": "msix-wide310",
         "path": "icons/windows/Wide310x150Logo.png",
         "format": "png",
-        "sha256": "b36aa429a51386c350715c8a367583f6827abaf6c0e408a0fd8ad49988889d72",
         "width": 310,
-        "height": 150
+        "height": 150,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-lockup-black.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "centered-on-plate",
+          "plate": "#F7F3EB",
+          "contentHeight": 54
+        }
       }
     ],
     "macos": [
@@ -854,7 +967,23 @@
         "role": "app-icns",
         "path": "icons/macos/orcel.icns",
         "format": "icns",
-        "sha256": "981f61483f9113463242833ed6c80cabc3c0e5f8c5576b261e874a00d33ca9a6"
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render",
+          "sizes": [
+            16,
+            32,
+            64,
+            128,
+            256,
+            512,
+            1024
+          ]
+        }
       }
     ],
     "tauri": [
@@ -862,45 +991,104 @@
         "role": "tauri-32",
         "path": "icons/tauri/32x32.png",
         "format": "png",
-        "sha256": "6b27c5e58407a6753794ee7c2386dd0f9f46672e9af9fd432e6552a579b51e0d",
         "width": 32,
-        "height": 32
+        "height": 32,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render"
+        }
       },
       {
         "role": "tauri-128",
         "path": "icons/tauri/128x128.png",
         "format": "png",
-        "sha256": "f97a990b55f33a4ab689b96551c98db392efde6e7524413755744d74309244d0",
         "width": 128,
-        "height": 128
+        "height": 128,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render"
+        }
       },
       {
         "role": "tauri-128-2x",
         "path": "icons/tauri/128x128@2x.png",
         "format": "png",
-        "sha256": "4388803370baae19a5fe74c65c532b27cb0643395b9203c62fd1766e559989ff",
         "width": 256,
-        "height": 256
+        "height": 256,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render"
+        }
       },
       {
         "role": "tauri-icon",
         "path": "icons/tauri/icon.png",
         "format": "png",
-        "sha256": "9e40991938803087ef7aa72dda2aa95ac452e7a54bcc1e1627dbc99735746b4c",
         "width": 512,
-        "height": 512
+        "height": 512,
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render"
+        }
       },
       {
         "role": "tauri-ico",
         "path": "icons/tauri/icon.ico",
         "format": "ico",
-        "sha256": "e60f4c3f01bd6c10a15260c7c529d2d6b0f29316f02b78a60b9c5739b12e43f5"
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render",
+          "sizes": [
+            16,
+            24,
+            32,
+            48,
+            64,
+            256
+          ]
+        }
       },
       {
         "role": "tauri-icns",
         "path": "icons/tauri/icon.icns",
         "format": "icns",
-        "sha256": "981f61483f9113463242833ed6c80cabc3c0e5f8c5576b261e874a00d33ca9a6"
+        "generated": {
+          "sources": [
+            "assets/brand/orcel-app-icon.svg"
+          ],
+          "generator": "scripts/render-design-handoff.mjs",
+          "generatorVersion": "1.0.0",
+          "recipe": "render",
+          "sizes": [
+            16,
+            32,
+            64,
+            128,
+            256,
+            512,
+            1024
+          ]
+        }
       }
     ]
   },
@@ -1472,98 +1660,86 @@
     {
       "surface": "website",
       "name": "website-home",
-      "path": "screens/website-home.png",
       "theme": "light",
       "width": 1440,
-      "sha256": "c14784107b5342a5f6fcc039367f121bf04cb794c19a070de0bd9e9411cf6ae1"
+      "board": "WebHome.dc.html"
     },
     {
       "surface": "website",
       "name": "website-shadow-mode",
-      "path": "screens/website-shadow-mode.png",
       "theme": "light",
       "width": 1440,
-      "sha256": "ec101af8edff972e191d4a8d69be4a07cb67fb8cb506e9271985523423c53f6a"
+      "board": "WebShadowMode.dc.html"
     },
     {
       "surface": "website",
       "name": "website-docs",
-      "path": "screens/website-docs.png",
       "theme": "light",
       "width": 1440,
-      "sha256": "932c99ccad7842ea7a62d0f11d89049fb0cec863d177dd2b6c266fbfbd2283bb"
+      "board": "WebDocs.dc.html"
     },
     {
       "surface": "website",
       "name": "website-home-phone",
-      "path": "screens/website-home-phone.png",
       "theme": "light",
       "width": 390,
-      "sha256": "e2123d61f96e3bd644e0f827bbd01e8c828b3400e203ebd0707b4eda08e5f6ee"
+      "board": "WebHomePhone.dc.html"
     },
     {
       "surface": "website",
       "name": "website-home-320",
-      "path": "screens/website-home-320.png",
       "theme": "light",
       "width": 320,
-      "sha256": "f1f0537673b68f2480177fd94d07d4d205b3b10a85f0dd7cb327d874e5487aa0"
+      "board": "WebHome320.dc.html"
     },
     {
       "surface": "control-room",
       "name": "control-room-workspace",
-      "path": "screens/control-room-workspace.png",
       "theme": "light",
       "width": 1600,
-      "sha256": "9bf0db1abb62756e4cc8e168f083e32a4d3ee551220297d3fadb46e370be0c94"
+      "board": "AppWorkspace.dc.html"
     },
     {
       "surface": "control-room",
       "name": "control-room-needs-you",
-      "path": "screens/control-room-needs-you.png",
       "theme": "light",
       "width": 1600,
-      "sha256": "28863e1a99fb34dc598e83293d6b160ea54f09f8860374c070bdce368b7edcd0"
+      "board": "AppApprovals.dc.html"
     },
     {
       "surface": "control-room",
       "name": "control-room-compact",
-      "path": "screens/control-room-compact.png",
       "theme": "light",
       "width": 1680,
-      "sha256": "d9fa11bcef26f3630b1a61d9595563d94b2e05b1e2b608c2aaa96516b7f4b518"
+      "board": "AppCompact.dc.html"
     },
     {
       "surface": "control-room",
       "name": "control-room-dark",
-      "path": "screens/control-room-dark.png",
       "theme": "dark",
       "width": 1600,
-      "sha256": "a9da9e1134c70c029d7a6dcf900578399ce382b8971bb19e9553e6b4b1b3be9a"
+      "board": "AppDark.dc.html"
     },
     {
       "surface": "browser",
       "name": "browser-agent-panel",
-      "path": "screens/browser-agent-panel.png",
       "theme": "light",
       "width": 1600,
-      "sha256": "2f5e16877c4b4ef194c811ebcb8941be1297b0c30eb7190ad0356c2c172c16ee"
+      "board": "BrowserAgent.dc.html"
     },
     {
       "surface": "browser",
       "name": "browser-takeover",
-      "path": "screens/browser-takeover.png",
       "theme": "light",
       "width": 1600,
-      "sha256": "599b40318465b197fa9f61173cb73beddb3c1e4b2a210429c3906d6501868e7b"
+      "board": "BrowserTakeover.dc.html"
     },
     {
       "surface": "browser",
       "name": "browser-dark",
-      "path": "screens/browser-dark.png",
       "theme": "dark",
       "width": 1600,
-      "sha256": "ee2c5b466d06b088e6e5ed88fb8d9fe87a909efa986641e1f9009b6ac4813f6b"
+      "board": "BrowserDark.dc.html"
     }
   ],
   "notices": [
