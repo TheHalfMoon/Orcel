@@ -16,9 +16,10 @@ with the elevated, installed `orcel.exe` and grant leases through the service ("
    Documents folder and any .NET program loads a profiler named in your user environment
    (`HKCU\Environment`), both writable by anything running as you, before a single line of the step runs. The
    Stage and Uninstall steps are `C:\Windows\System32\cmd.exe` running only System32 tools by full path (they
-   first reset `PATH`, `SystemRoot` and `windir`, which your user environment could redirect); the Install step
-   is the staged, hash-checked native `orcel-authority.exe`, which takes no folder from the environment and,
-   after start, loads DLLs from System32 only.
+   first reset `PATH`, `SystemRoot`, `windir` and `COMSPEC`, which your user environment could redirect); the Install step
+   is the staged, hash-checked native `orcel-authority.exe`, which takes no folder from the environment and
+   loads every DLL from System32 only: the DLLs it imports (its image says so, `DependentLoadFlags` 0x800,
+   and it imports no C runtime DLL at all) and, after start, any DLL it loads.
 2. **Nothing an elevated step consumes can be changed by a standard user.** The three binaries are staged in
    `C:\Program Files\OrcelStaging`: owner Administrators; SYSTEM and Administrators full control; Users read and
    execute; nothing inherited from `C:\Program Files`. `orcel-authority install` refuses to run, with nothing
@@ -69,15 +70,16 @@ not depend on your shell is the UAC prompt itself, drawn on the secure desktop. 
 
 `orcel-authority.exe` and `orcel.exe` are not code-signed in this slice, so UAC shows them as "Unknown
 publisher"; the path and command line check is what identifies them, and the Stage step's hash check is what
-makes the staged `orcel-authority.exe` the reviewed bytes. `/k` and `--pause` only keep the window open so you
-can read it.
+makes the staged `orcel-authority.exe` the reviewed bytes. `& pause` and `--pause` only keep the window open until you
+have read it: press a key (or Enter) and the elevated window closes; never leave an elevated window open.
 
 | Step | Program location | Exact command line |
 | --- | --- | --- |
-| Stage | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && mkdir "C:\Program Files\OrcelStaging" && (C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /setowner *S-1-5-32-544 && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" && copy /b /y "<download-folder>\orcel-authority.exe" "C:\Program Files\OrcelStaging" && copy /b /y "<download-folder>\orceld.exe" "C:\Program Files\OrcelStaging" && copy /b /y "<download-folder>\orcel.exe" "C:\Program Files\OrcelStaging" && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /setowner *S-1-5-32-544 /L && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /reset /L && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel-authority.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<authority-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orceld.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<orceld-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<orcel-sha256>" && echo STAGED: the three files match their SHA-256 values \|\| (rmdir /s /q "C:\Program Files\OrcelStaging" & echo STAGING REFUSED: a step failed or a SHA-256 did not match; the folder was removed & C:\Windows\System32\cmd.exe /d /c exit 1))"` |
+| Stage | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /c "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && set "COMSPEC=C:\Windows\System32\cmd.exe" && mkdir "C:\Program Files\OrcelStaging" && (C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /setowner *S-1-5-32-544 && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" && copy /b /y "<download-folder>\orcel-authority.exe" "C:\Program Files\OrcelStaging\orcel-authority.exe" && copy /b /y "<download-folder>\orceld.exe" "C:\Program Files\OrcelStaging\orceld.exe" && copy /b /y "<download-folder>\orcel.exe" "C:\Program Files\OrcelStaging\orcel.exe" && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /setowner *S-1-5-32-544 /L && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /reset /L && C:\Windows\System32\cmd.exe /d /c dir /b /a "C:\Program Files\OrcelStaging" \| C:\Windows\System32\find.exe /c /v "" \| C:\Windows\System32\findstr.exe /l /x /c:"3" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel-authority.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<authority-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orceld.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<orceld-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<orcel-sha256>" && echo STAGED: exactly the three files, each with its SHA-256 \|\| (rmdir /s /q "C:\Program Files\OrcelStaging" & echo STAGING REFUSED: the folder was removed & C:\Windows\System32\cmd.exe /d /c exit 1)) & pause"` |
+| Remove the staging | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /c "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && set "COMSPEC=C:\Windows\System32\cmd.exe" && rmdir /s /q "C:\Program Files\OrcelStaging" && echo REMOVED: the staging folder & pause"` |
 | Install | `C:\Program Files\OrcelStaging\orcel-authority.exe` | `"C:\Program Files\OrcelStaging\orcel-authority.exe" install --authority-sha256 <authority-sha256> --orceld-sha256 <orceld-sha256> --orcel-sha256 <orcel-sha256> --pause` |
-| Uninstall | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed"` |
-| Uninstall, keeping the state | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall --keep-state && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed"` |
+| Uninstall | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /c "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && set "COMSPEC=C:\Windows\System32\cmd.exe" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed & pause"` |
+| Uninstall, keeping the state | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /c "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && set "COMSPEC=C:\Windows\System32\cmd.exe" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall --keep-state && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed & pause"` |
 | Start the service | `C:\Windows\System32\sc.exe` | `"C:\Windows\System32\sc.exe" start OrcelAuthority` |
 | Enroll | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority enroll --pause` |
 | Replace the key | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority enroll --replace --pause` |
@@ -88,21 +90,26 @@ below show it plain.)
 
 What the Stage line does, so you can read it on the prompt: `/d` skips cmd's AutoRun, `/e:on` and `/v:off` fix
 the command extensions and turn off delayed expansion whatever your registry says; it resets `PATH`,
-`SystemRoot` and `windir`; it creates `C:\Program Files\OrcelStaging` and stops if it already exists; it makes
-Administrators the folder's owner and replaces its permissions with exactly SYSTEM and Administrators full
-control and Users read and execute, nothing inherited; it copies the three files from `<download-folder>`; it
-makes Administrators their owner and gives them exactly the folder's permissions (`/reset`); it checks each
-copy's SHA-256 with `certutil` against your three values; and if any step fails it deletes the folder and says
-`STAGING REFUSED`. The Uninstall lines run the staged `orcel-authority.exe uninstall` and then delete the
-staging folder (`rmdir` does not follow junctions).
+`SystemRoot`, `windir` and `COMSPEC`; it creates `C:\Program Files\OrcelStaging` and stops if it already exists;
+it makes Administrators the folder's owner and replaces its permissions with exactly SYSTEM and Administrators
+full control and Users read and execute, nothing inherited; it copies each of the three files from
+`<download-folder>` to its own file name in the folder (never to the folder as a whole, so a source that is
+really a folder can bring nothing else along); it makes Administrators their owner and gives them exactly the
+folder's permissions (`/reset`); it checks that the folder holds exactly three entries (a DLL beside the
+program would load into it when it runs elevated); it checks each copy's SHA-256 with `certutil` against your
+three values; and if any step fails it deletes the folder and says `STAGING REFUSED`. The Uninstall lines run
+the staged `orcel-authority.exe uninstall` and then delete the staging folder; Remove the staging only deletes
+it (`rmdir` does not follow junctions). None of them runs `orcel-authority.exe` from a folder you have not
+checked: Remove the staging runs nothing from it.
 
 The `Start-Process` lines that produce exactly these command lines (CI runs these lines' command lines):
 
 ```powershell
-Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && mkdir "C:\Program Files\OrcelStaging" && (C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /setowner *S-1-5-32-544 && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" && copy /b /y "<download-folder>\orcel-authority.exe" "C:\Program Files\OrcelStaging" && copy /b /y "<download-folder>\orceld.exe" "C:\Program Files\OrcelStaging" && copy /b /y "<download-folder>\orcel.exe" "C:\Program Files\OrcelStaging" && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /setowner *S-1-5-32-544 /L && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /reset /L && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel-authority.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<authority-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orceld.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<orceld-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<orcel-sha256>" && echo STAGED: the three files match their SHA-256 values || (rmdir /s /q "C:\Program Files\OrcelStaging" & echo STAGING REFUSED: a step failed or a SHA-256 did not match; the folder was removed & C:\Windows\System32\cmd.exe /d /c exit 1))"'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /c "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && set "COMSPEC=C:\Windows\System32\cmd.exe" && mkdir "C:\Program Files\OrcelStaging" && (C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /setowner *S-1-5-32-544 && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" && copy /b /y "<download-folder>\orcel-authority.exe" "C:\Program Files\OrcelStaging\orcel-authority.exe" && copy /b /y "<download-folder>\orceld.exe" "C:\Program Files\OrcelStaging\orceld.exe" && copy /b /y "<download-folder>\orcel.exe" "C:\Program Files\OrcelStaging\orcel.exe" && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /setowner *S-1-5-32-544 /L && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /reset /L && C:\Windows\System32\cmd.exe /d /c dir /b /a "C:\Program Files\OrcelStaging" | C:\Windows\System32\find.exe /c /v "" | C:\Windows\System32\findstr.exe /l /x /c:"3" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel-authority.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<authority-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orceld.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<orceld-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<orcel-sha256>" && echo STAGED: exactly the three files, each with its SHA-256 || (rmdir /s /q "C:\Program Files\OrcelStaging" & echo STAGING REFUSED: the folder was removed & C:\Windows\System32\cmd.exe /d /c exit 1)) & pause"'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /c "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && set "COMSPEC=C:\Windows\System32\cmd.exe" && rmdir /s /q "C:\Program Files\OrcelStaging" && echo REMOVED: the staging folder & pause"'
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\OrcelStaging\orcel-authority.exe' -ArgumentList 'install --authority-sha256 <authority-sha256> --orceld-sha256 <orceld-sha256> --orcel-sha256 <orcel-sha256> --pause'
-Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed"'
-Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall --keep-state && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed"'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /c "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && set "COMSPEC=C:\Windows\System32\cmd.exe" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed & pause"'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /c "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && set "COMSPEC=C:\Windows\System32\cmd.exe" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall --keep-state && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed & pause"'
 Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\sc.exe' -ArgumentList 'start OrcelAuthority'
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority enroll --pause'
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority enroll --replace --pause'
@@ -200,8 +207,8 @@ process running as you; the binding checks are the hashes on the UAC-checked com
 ### 4. Stage, elevated
 
 Start the **Stage** line of the table above (your `<download-folder>` and three hashes), and check the UAC
-prompt against the table. The window must end with `STAGED: the three files match their SHA-256 values`, the
-three hashes printed above it, and no error. `STAGING REFUSED` means the folder was removed again: check the
+prompt against the table. The window must end with `STAGED: exactly the three files, each with its SHA-256`, the
+count `3` and the three hashes printed above it, and no error; press a key to close it. `STAGING REFUSED` means the folder was removed again: check the
 download and the hashes. "A subdirectory or file ... already exists" means an earlier staging is still there:
 uninstall first (it removes the staging), or inspect the folder.
 
@@ -220,19 +227,19 @@ entries have none:
 
 <!-- expected-staging-acl -->
 ```text
-C:\Program Files\OrcelStaging NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+C:\Program Files\OrcelStaging BUILTIN\Users:(OI)(CI)(RX)
 BUILTIN\Administrators:(OI)(CI)(F)
-BUILTIN\Users:(OI)(CI)(RX)
+NT AUTHORITY\SYSTEM:(OI)(CI)(F)
 Successfully processed 1 files; Failed processing 0 files
-C:\Program Files\OrcelStaging\orcel-authority.exe NT AUTHORITY\SYSTEM:(I)(F)
-BUILTIN\Administrators:(I)(F)
-BUILTIN\Users:(I)(RX)
-C:\Program Files\OrcelStaging\orcel.exe NT AUTHORITY\SYSTEM:(I)(F)
-BUILTIN\Administrators:(I)(F)
-BUILTIN\Users:(I)(RX)
-C:\Program Files\OrcelStaging\orceld.exe NT AUTHORITY\SYSTEM:(I)(F)
-BUILTIN\Administrators:(I)(F)
-BUILTIN\Users:(I)(RX)
+C:\Program Files\OrcelStaging\orcel-authority.exe BUILTIN\Users:(I)(OI)(CI)(RX)
+BUILTIN\Administrators:(I)(OI)(CI)(F)
+NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+C:\Program Files\OrcelStaging\orcel.exe BUILTIN\Users:(I)(OI)(CI)(RX)
+BUILTIN\Administrators:(I)(OI)(CI)(F)
+NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
+C:\Program Files\OrcelStaging\orceld.exe BUILTIN\Users:(I)(OI)(CI)(RX)
+BUILTIN\Administrators:(I)(OI)(CI)(F)
+NT AUTHORITY\SYSTEM:(I)(OI)(CI)(F)
 Successfully processed 3 files; Failed processing 0 files
 orcel-authority.exe BUILTIN\Administrators
 orcel.exe BUILTIN\Administrators
@@ -241,8 +248,9 @@ BUILTIN\Administrators protected=True
 ```
 
 Any other entry (Authenticated Users, Everyone, INTERACTIVE, your own account, CREATOR OWNER, OWNER RIGHTS),
-any other file, a missing `protected=True`, or another owner: stop, and run the Uninstall line (which deletes
-the staging folder). The installer makes the same checks itself before it changes anything.
+any other file, a missing `protected=True`, or another owner: stop, and run the Remove the staging line (it
+runs nothing from the folder, it only deletes it). The installer makes the same checks itself before it changes
+anything.
 
 ### 6. Preview (changes nothing; not elevated)
 
@@ -374,8 +382,8 @@ for every pull request, every push to `main` and every manual dispatch, on a dis
 where it is an administrator. On `main` it installs the very files the "Authority service artifact" job built
 and attested in the same run; elsewhere it builds them the same way (so the attestation, its `gh attestation
 verify` step and the attested download first run on the push to `main`; the report says which source it used).
-It takes the Stage, Install and Uninstall command lines from this file's `Start-Process` lines (only `/k` made
-`/c` and `--pause` removed, the `<...>` values filled in) and launches them with a hostile environment: a
+It takes the Stage, Remove the staging, Install and Uninstall command lines from this file's `Start-Process`
+lines (only `& pause` and `--pause` removed, the `<...>` values filled in) and launches them with a hostile environment: a
 PowerShell module planted in the runner account's Documents folder that shadows the cmdlets an elevated
 PowerShell would load, a .NET profiler (`COR_PROFILER`, also written to `HKCU\Environment`) pointing at a
 canary DLL, and `PATH`, `SystemRoot`, `ProgramFiles` and `ProgramData` pointing at a decoy folder. A positive
@@ -385,15 +393,22 @@ for your commit (Actions, the run, Artifacts; or
 `gh run download <run-id> --repo TheHalfMoon/Orcel --name authority-install-e2e-report`), records every check
 and lists separately (`not_verified`) what the runner could not show:
 
-- **Runbook:** all eight `Start-Process` lines parse and each matches its UAC table row; no elevated step
+- **Runbook:** all nine `Start-Process` lines parse and each matches its UAC table row; no elevated step
   starts PowerShell or a .NET program.
-- **Staging:** the Stage line with a wrong hash removes the folder and fails; the real one gives exactly the
+- **Binaries:** none of the three imports a C runtime DLL (the release build links it statically), and
+  `orcel-authority.exe` resolves every DLL it imports from System32 only (`DependentLoadFlags` 0x800), so a
+  DLL beside it is never loaded (`scripts/check-authority-binaries.ps1`, also run before the attestation).
+- **Staging:** the Stage line with a wrong hash removes the folder and fails; so does a download in which
+  `orcel-authority.exe` is really a folder holding the genuine program and a `wtsapi32.dll`; the real one gives exactly the
   ACL output in step 5; a temporary local standard user (created for the run) can read but cannot write,
-  append, create or re-permission anything in the staging folder; the Stage line refuses an existing folder.
+  append, create or re-permission anything in the staging folder; the Stage line refuses an existing folder;
+  the Remove the staging line deletes it.
 - **The old flaw:** a folder made like `mkdir C:\OrcelBuild` is writable by that standard user, and the
   installer refuses to run from it, with nothing changed.
-- **Failed installs, nothing changed:** a wrong hash, an extra file (a fake `version.dll`) in the staging
-  folder, a pre-existing `%ProgramData%\Orcel\authority`.
+- **Failed installs, nothing changed:** a wrong hash; a real canary DLL planted in the staging folder as
+  `wtsapi32.dll` and as `VCRUNTIME140.dll` (refused, and never loaded); a pre-existing
+  `%ProgramData%\Orcel\authority`; a `%ProgramData%\Orcel` a standard user created (refused, and the user's
+  folder and file left as they were).
 - **Rollback:** a pre-created `\\.\pipe\orcel-authority` makes the service start fail after every other change;
   the system is then exactly as before the install.
 - **Clean install:** the Install line; nothing lands in the decoy folders; service running, automatic, as

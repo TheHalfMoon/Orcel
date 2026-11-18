@@ -1848,8 +1848,17 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-      - name: Build orcel-authority, orceld and the orcel CLI (release, locked)
+      # The C runtime is linked statically, so the binaries import no VC++ runtime DLL (a DLL beside the
+      # staged program would otherwise be looked for in its folder); build.rs sets DependentLoadFlags 0x800.
+      - name: Build orcel-authority, orceld and the orcel CLI (release, locked, static C runtime)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --locked -p orcel-authority -p orceld -p orcel-lifecycle --bin orcel-authority --bin orceld --bin orcel
+      - name: Check the binaries (no C runtime DLL, System32-only imports)
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\scripts\check-authority-binaries.ps1" -Dir "$env:GITHUB_WORKSPACE\target\release"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Record the SHA-256 of each file
         shell: pwsh
         env:
@@ -1921,6 +1930,8 @@ jobs:
       - name: Build the artifact the same way (pull request, or a dispatch off main)
         if: needs.authority-artifact.result == 'skipped'
         shell: pwsh
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: |
           cargo build --release --locked -p orcel-authority -p orceld -p orcel-lifecycle --bin orcel-authority --bin orceld --bin orcel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

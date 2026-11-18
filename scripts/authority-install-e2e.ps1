@@ -173,8 +173,8 @@ function Select-Command($Commands, [scriptblock]$Where, [string]$What) {
 }
 
 function Invoke-Documented($Command, [hashtable]$Values, [hashtable]$Environment, [int]$TimeoutSeconds = 300) {
-  # As the founder starts it, minus what only keeps a window open: /k becomes /c, --pause goes.
-  $arguments = $Command.Arguments.Replace(' /k ', ' /c ').Replace(' --pause', '')
+  # As the founder starts it, minus what only keeps a window open: '& pause' and --pause go.
+  $arguments = $Command.Arguments.Replace(' & pause', '').Replace(' --pause', '')
   foreach ($key in $Values.Keys) { $arguments = $arguments.Replace($key, $Values[$key]) }
   if ($arguments -match '<[a-z0-9-]+>') { throw "A placeholder is left in: $arguments" }
   return Invoke-Process $Command.FilePath $arguments $TimeoutSeconds 'C:\Windows\System32' $Environment
@@ -290,7 +290,7 @@ function New-HostileEnvironment {
 #[no_mangle]
 pub extern "system" fn DllMain(_module: *mut u8, reason: u32, _reserved: *mut u8) -> i32 {
     if reason == 1 {
-        let path = format!("C:\\OrcelE2ECanary\\cor-profiler-loaded-{}.txt", std::process::id());
+        let path = format!("C:\\OrcelE2ECanary\\canary-dll-loaded-{}.txt", std::process::id());
         let _ = std::fs::write(path, b"loaded");
     }
     1
@@ -323,7 +323,7 @@ pub extern "system" fn DllMain(_module: *mut u8, reason: u32, _reserved: *mut u8
   $control = Invoke-Process "$System32\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -NonInteractive -Command "Join-Path a b"' 120 $Hostile @{
     COR_ENABLE_PROFILING = '1'; COR_PROFILER = $profiler; COR_PROFILER_PATH = $dll; PSModulePath = $environment.PSModulePath
   }
-  $profilerRan = @(Get-ChildItem -LiteralPath $CanaryDir -Filter 'cor-profiler-loaded-*.txt').Count -gt 0
+  $profilerRan = @(Get-ChildItem -LiteralPath $CanaryDir -Filter 'canary-dll-loaded-*.txt').Count -gt 0
   $moduleRan = @(Get-ChildItem -LiteralPath $CanaryDir -Filter 'psmodule-*.txt').Count -gt 0
   Check 'hostile environment armed: an elevated PowerShell started with it would run both canaries' ($profilerRan -and $moduleRan) "profiler canary loaded: $profilerRan; Documents module canary ran: $moduleRan; exit $($control.ExitCode)"
   Get-ChildItem -LiteralPath $CanaryDir -File | Remove-Item -Force
@@ -462,7 +462,7 @@ function Invoke-E2E {
   # The runbook's lines: every table row has its Start-Process line, each names an absolute program.
   $commands = @(Get-RunbookCommands)
   $rows = @(Get-RunbookTableRows)
-  $complete = ($commands.Count -eq 8) -and ($rows.Count -eq $commands.Count) -and (@($commands | Where-Object { -not $_.FilePath -or -not $_.Arguments -or -not [IO.Path]::IsPathRooted($_.FilePath) }).Count -eq 0)
+  $complete = ($commands.Count -eq 9) -and ($rows.Count -eq $commands.Count) -and (@($commands | Where-Object { -not $_.FilePath -or -not $_.Arguments -or -not [IO.Path]::IsPathRooted($_.FilePath) }).Count -eq 0)
   foreach ($command in $commands) {
     $exact = '`"' + $command.FilePath + '" ' + $command.Arguments + '`'
     if (@($rows | Where-Object { $_.Replace('\|', '|').Contains($exact) }).Count -ne 1) { $complete = $false }
@@ -470,8 +470,13 @@ function Invoke-E2E {
   $stage = Select-Command $commands { $_.Arguments -like '*mkdir "C:\Program Files\OrcelStaging"*' } 'Stage'
   $install = Select-Command $commands { $_.FilePath -eq $StagedAuthority -and $_.Arguments -like 'install *' } 'Install'
   $uninstall = Select-Command $commands { $_.Arguments -like '* uninstall && rmdir *' } 'Uninstall'
-  Check 'runbook command lines found: 8 Start-Process lines, each matching its UAC table row' $complete "$($commands.Count) lines, $($rows.Count) table rows"
-  Check 'the elevated steps start no PowerShell and no .NET program' (-not (@($stage, $install, $uninstall) | Where-Object { ($_.FilePath + ' ' + $_.Arguments) -match 'powershell|pwsh|\.ps1' })) 'Stage and Uninstall: cmd.exe with System32 tools; Install: the staged native binary'
+  $removeStaging = Select-Command $commands { $_.Arguments -like '*rmdir /s /q "C:\Program Files\OrcelStaging" && echo REMOVED*' } 'Remove the staging'
+  Check 'runbook command lines found: 9 Start-Process lines, each matching its UAC table row' $complete "$($commands.Count) lines, $($rows.Count) table rows"
+  Check 'the elevated steps start no PowerShell and no .NET program' (-not (@($stage, $removeStaging, $install, $uninstall) | Where-Object { ($_.FilePath + ' ' + $_.Arguments) -match 'powershell|pwsh|\.ps1' })) 'Stage and Uninstall: cmd.exe with System32 tools; Install: the staged native binary'
+
+  # The binaries: no C runtime DLL imported; orcel-authority.exe resolves its imports from System32 only.
+  $pe = Invoke-Process "$System32\WindowsPowerShell\v1.0\powershell.exe" "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$RepoRoot\scripts\check-authority-binaries.ps1`" -Dir `"$ArtifactDir`"" 120
+  Check 'binaries: no C runtime DLL imported, orcel-authority.exe DependentLoadFlags 0x800 (System32 only)' ($pe.ExitCode -eq 0) (($pe.Output -split "`r?`n" | Where-Object { $_ -match 'DependentLoadFlags|PASS|FAIL' }) -join ' / ')
 
   # Clean baseline.
   $baseline = Get-Snapshot
@@ -497,6 +502,19 @@ function Invoke-E2E {
   $before = Get-Snapshot
   $run = Invoke-Process (Join-Path $OldBuildDir 'orcel-authority.exe') "install $hashArgs" 120 'C:\Windows\System32' $hostileEnv
   Check 'the installer refuses to run from anywhere but the staging folder, nothing changed' (($run.ExitCode -ne 0) -and ($run.Output -match 'Nothing was changed') -and ($run.Output -match 'refused:') -and ((Get-Snapshot) -eq $before)) "exit $($run.ExitCode)"
+
+  # ---- Stage from a download in which orcel-authority.exe is a folder holding the genuine program and a
+  # wtsapi32.dll: nothing but the three named files may land in the staging folder.
+  $folderSource = Join-Path $env:RUNNER_TEMP 'orcel-download-folder-source'
+  New-Item -ItemType Directory -Force -Path (Join-Path $folderSource 'orcel-authority.exe') | Out-Null
+  Copy-Item -LiteralPath (Join-Path $ArtifactDir 'orcel-authority.exe') -Destination (Join-Path $folderSource 'orcel-authority.exe\a.exe')
+  Copy-Item -LiteralPath $Report.hostile_environment.canary_dll -Destination (Join-Path $folderSource 'orcel-authority.exe\wtsapi32.dll')
+  foreach ($name in @('orceld.exe', 'orcel.exe')) { Copy-Item -LiteralPath (Join-Path $ArtifactDir $name) -Destination $folderSource }
+  $sourced = $values.Clone()
+  $sourced['<download-folder>'] = $folderSource
+  $run = Invoke-Documented $stage $sourced $hostileEnv
+  $strayDlls = @(Get-ChildItem -LiteralPath 'C:\Program Files' -Filter 'wtsapi32.dll' -Recurse -Depth 2 -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+  Check 'Stage refuses a source that is a folder (program plus wtsapi32.dll) and removes the staging folder' (($run.ExitCode -ne 0) -and ($run.Output -match 'STAGING REFUSED') -and -not (Test-Path -LiteralPath $Staging) -and $strayDlls.Count -eq 0) "exit $($run.ExitCode); stray DLLs: $($strayDlls -join ', ')"
 
   # ---- Stage, with a wrong hash first.
   $wrong = $values.Clone()
@@ -537,11 +555,34 @@ function Invoke-E2E {
   $run = Invoke-Process $StagedAuthority "install --authority-sha256 $('0' * 64) --orceld-sha256 $($values['<orceld-sha256>']) --orcel-sha256 $($values['<orcel-sha256>'])" 120 'C:\Windows\System32' $hostileEnv
   Check 'failed install: wrong hash refused, nothing changed' (($run.ExitCode -ne 0) -and ($run.Output -match 'SHA-256 mismatch') -and ((Get-Snapshot) -eq $baseline)) "exit $($run.ExitCode)"
 
-  $planted = Join-Path $Staging 'version.dll'
-  Set-Content -LiteralPath $planted -Value 'not a DLL' -Encoding ascii
+  # A real canary DLL planted beside the staged program under the names it would otherwise look for there.
+  # The program must start (its imports come from System32 only, and it imports no C runtime DLL), refuse
+  # the extra entry, and never load the canary. (A wrongly loaded wtsapi32.dll lacks the exports the program
+  # imports, so the program would not even start and print its refusal.)
+  foreach ($dllName in @('wtsapi32.dll', 'VCRUNTIME140.dll')) {
+    $planted = Join-Path $Staging $dllName
+    Copy-Item -LiteralPath $Report.hostile_environment.canary_dll -Destination $planted
+    $hitsBefore = @(Get-CanaryHits).Count
+    $run = Invoke-Process $StagedAuthority "install $hashArgs" 120 'C:\Windows\System32' $hostileEnv
+    Remove-Item -LiteralPath $planted -Force
+    $hitsAfter = @(Get-CanaryHits).Count
+    Check "failed install: a canary $dllName in the staging folder is refused and never loaded, nothing changed" (($run.ExitCode -ne 0) -and ($run.Output -match 'unexpected entry') -and ($hitsAfter -eq $hitsBefore) -and ((Get-Snapshot) -eq $baseline)) "exit $($run.ExitCode); canary loads: $($hitsAfter - $hitsBefore)"
+  }
+
+  # A %ProgramData%\Orcel a standard user created (with a file of theirs in it): refused, nothing changed,
+  # and the user's folder and file are left exactly as they were.
+  $userData = Invoke-AsStandardUser {
+    try {
+      [void][IO.Directory]::CreateDirectory($ProgramDataOrcel)
+      [IO.File]::WriteAllText((Join-Path $ProgramDataOrcel 'users-file.txt'), 'mine')
+      $true
+    } catch { $false }
+  }
+  $before = Get-Snapshot
   $run = Invoke-Process $StagedAuthority "install $hashArgs" 120 'C:\Windows\System32' $hostileEnv
-  Remove-Item -LiteralPath $planted -Force
-  Check 'failed install: an extra file in the staging folder is refused, nothing changed' (($run.ExitCode -ne 0) -and ($run.Output -match 'unexpected entry') -and ((Get-Snapshot) -eq $baseline)) "exit $($run.ExitCode)"
+  $userFileKept = (Test-Path -LiteralPath (Join-Path $ProgramDataOrcel 'users-file.txt'))
+  Check 'failed install: a %ProgramData%\Orcel created by a standard user is refused, nothing changed, the user''s file kept' ($userData -and ($run.ExitCode -ne 0) -and ($run.Output -match 'Nothing was changed') -and $userFileKept -and ((Get-Snapshot) -eq $before)) "created by the user: $userData; exit $($run.ExitCode); file kept: $userFileKept"
+  if (Test-Path -LiteralPath $ProgramDataOrcel) { Remove-Item -LiteralPath $ProgramDataOrcel -Recurse -Force }
 
   New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
   $before = Get-Snapshot
@@ -705,6 +746,12 @@ function Invoke-E2E {
   Check 'uninstall (runbook line) reverses every change and removes the staging' (($run.ExitCode -eq 0) -and ($final -eq $baseline) -and -not (Test-Path -LiteralPath $Staging)) "exit $($run.ExitCode); after: $final"
   $profileState = Test-ServiceProfileHandled $run.Output
   Check 'uninstall: the virtual account profile removed, or reported as left' $profileState.Ok $profileState.Detail
+
+  # The Remove the staging line (the runbook's remedy for a staging folder that fails step 5) deletes it.
+  $run = Invoke-Documented $stage $values $hostileEnv
+  $restaged = ($run.ExitCode -eq 0) -and (Test-Path -LiteralPath $Staging)
+  $run = Invoke-Documented $removeStaging $values $hostileEnv
+  Check 'the Remove the staging line deletes the staging folder and runs nothing from it' ($restaged -and ($run.ExitCode -eq 0) -and ($run.Output -match 'REMOVED') -and -not (Test-Path -LiteralPath $Staging) -and ((Get-Snapshot) -eq $baseline)) "exit $($run.ExitCode)"
 
   $hits = @(Get-CanaryHits)
   Check 'no planted module and no profiler DLL ran in any elevated step' ($hits.Count -eq 0) "canary files: $($hits -join ', ')"

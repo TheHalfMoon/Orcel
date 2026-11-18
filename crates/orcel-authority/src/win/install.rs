@@ -322,15 +322,24 @@ fn hold_and_hash(paths: &Paths, args: &InstallArgs) -> Result<Held, String> {
 
 /// A folder that may pre-exist: admin-owned, and nobody else may add,
 /// delete or rename entries or change it.
-fn check_existing_dir(path: &Path, owners: &[&str]) -> Result<(), String> {
-    if !path.exists() {
+fn check_existing_dir(path: &Path, owners: &[&str], protected: bool) -> Result<(), String> {
+    if std::fs::symlink_metadata(path).is_err() {
         return Ok(());
     }
     let mut problems = os::object_problems(path, os::CONTENT_CHANGE_RIGHTS);
-    if let Ok((owner, _, _)) = super::acl::read_security(path, true) {
-        if !owners.iter().any(|ok| ok.eq_ignore_ascii_case(&owner)) {
-            problems.push(format!("{} is owned by {owner}", path.display()));
+    match super::acl::read_security(path, false) {
+        Ok((owner, is_protected, _)) => {
+            if !owners.iter().any(|ok| ok.eq_ignore_ascii_case(&owner)) {
+                problems.push(format!("{} is owned by {owner}", path.display()));
+            }
+            if protected && !is_protected {
+                problems.push(format!(
+                    "{} inherits permissions (its DACL is not protected)",
+                    path.display()
+                ));
+            }
         }
+        Err(error) => problems.push(error.message),
     }
     if problems.is_empty() {
         Ok(())
@@ -339,6 +348,33 @@ fn check_existing_dir(path: &Path, owners: &[&str]) -> Result<(), String> {
             "{}; inspect it, fix its ACL or remove it first. Nothing was changed.",
             problems.join("; ")
         ))
+    }
+}
+
+/// Who may own an existing `%ProgramData%\Orcel`.
+const DATA_OWNERS: [&str; 2] = [SYSTEM_SID, ADMINISTRATORS_SID];
+
+/// Creates `path` with its protected DACL, or, if it already exists, checks
+/// it as [`check_existing_dir`] does: `Ok(true)` when this run created it.
+/// The create is the existence test, so a folder a user slips in after the
+/// checks is refused, never written into.
+fn create_or_verify(
+    path: &Path,
+    sddl: &str,
+    expected: &[(&str, u32)],
+    owners: &[&str],
+    protected: bool,
+) -> Result<bool, String> {
+    match os::create_protected_dir_unless_present(path, sddl, expected)? {
+        os::Created::New => Ok(true),
+        os::Created::AlreadyPresent => {
+            check_existing_dir(path, owners, protected)?;
+            println!(
+                "{} exists; checked (admin-owned, nobody else may change it).",
+                path.display()
+            );
+            Ok(false)
+        }
     }
 }
 
@@ -407,9 +443,9 @@ fn install(args: &InstallArgs) -> Result<(), String> {
         }
     }
     let privileged = os::PRIVILEGED;
-    check_existing_dir(&paths.files_orcel, &privileged)?;
-    check_existing_dir(&paths.files_authority, &privileged)?;
-    check_existing_dir(&paths.data_orcel, &[SYSTEM_SID, ADMINISTRATORS_SID])?;
+    check_existing_dir(&paths.files_orcel, &privileged, false)?;
+    check_existing_dir(&paths.files_authority, &privileged, false)?;
+    check_existing_dir(&paths.data_orcel, &DATA_OWNERS, true)?;
     if let Some(key) = os::open_key(EVENT_KEY) {
         check_key_rights(&key, &format!(r"HKLM\{EVENT_KEY}"))
             .map_err(|error| format!("{error}; inspect it first. Nothing was changed."))?;
@@ -476,24 +512,32 @@ fn apply(
         (ADMINISTRATORS_SID, FULL),
         (USERS, READ_EXECUTE),
     ];
-    if !paths.files_orcel.exists() {
-        made.files_orcel = true;
-        os::create_protected_dir(&paths.files_orcel, ORCEL_FILES_SDDL, &files_expected)?;
-    }
-    if !paths.files_authority.exists() {
-        made.files_authority = true;
-        os::create_protected_dir(&paths.files_authority, ORCEL_FILES_SDDL, &files_expected)?;
-    }
-    made.authority = true;
+    // Each folder is created, or, if it exists (even if it appeared after the
+    // checks), verified again; a change is recorded only once this run made it.
+    made.files_orcel = create_or_verify(
+        &paths.files_orcel,
+        ORCEL_FILES_SDDL,
+        &files_expected,
+        &os::PRIVILEGED,
+        false,
+    )?;
+    made.files_authority = create_or_verify(
+        &paths.files_authority,
+        ORCEL_FILES_SDDL,
+        &files_expected,
+        &os::PRIVILEGED,
+        false,
+    )?;
     os::copy_held(
         &mut held.authority,
         &paths.installed_authority,
         &args.authority,
     )?;
-    made.orceld = true;
+    made.authority = true;
     os::copy_held(&mut held.orceld, &paths.installed_orceld, &args.orceld)?;
-    made.orcel = true;
+    made.orceld = true;
     os::copy_held(&mut held.orcel, &paths.installed_orcel, &args.orcel)?;
+    made.orcel = true;
     for (path, expected) in [
         (&paths.installed_authority, &args.authority),
         (&paths.installed_orceld, &args.orceld),
@@ -523,12 +567,16 @@ fn apply(
     let service_sid = super::account_sid(crate::SERVICE_ACCOUNT).map_err(|error| error.message)?;
     made.service_sid = Some(service_sid.clone());
 
-    if !paths.data_orcel.exists() {
-        made.data_orcel = true;
-        os::create_protected_dir(&paths.data_orcel, ORCEL_DATA_SDDL, &files_expected)?;
+    made.data_orcel = create_or_verify(
+        &paths.data_orcel,
+        ORCEL_DATA_SDDL,
+        &files_expected,
+        &DATA_OWNERS,
+        true,
+    )?;
+    if made.data_orcel {
         std::fs::write(&paths.marker, MARKER).map_err(|error| error.to_string())?;
     }
-    made.state_dir = true;
     os::create_protected_dir(
         &paths.state_dir,
         &format!("O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{service_sid})"),
@@ -538,6 +586,7 @@ fn apply(
             (&service_sid, FULL),
         ],
     )?;
+    made.state_dir = true;
     let config = serde_json::json!({
         "trusted_orceld_images": [paths.installed_orceld],
         "trusted_owner_cli_images": [paths.installed_orcel],
@@ -547,12 +596,12 @@ fn apply(
         config.to_string(),
     )
     .map_err(|error| format!("write config.json: {error}"))?;
-    made.public_dir = true;
     os::create_protected_dir(
         &paths.public_dir,
         &format!("O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;{service_sid})(A;OICI;0x1200a9;;;BU)"),
         &[(SYSTEM_SID, FULL), (ADMINISTRATORS_SID, FULL), (&service_sid, MODIFY), (USERS, READ_EXECUTE)],
     )?;
+    made.public_dir = true;
 
     match os::create_new_key(EVENT_KEY)? {
         Some(key) => {

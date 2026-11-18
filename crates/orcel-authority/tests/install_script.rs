@@ -122,7 +122,7 @@ fn the_runbook_table_and_its_start_process_lines_are_the_same_commands() {
     let text = runbook();
     let table = uac_table(&text);
     let lines = start_process_lines(&text);
-    assert_eq!(table.len(), 8);
+    assert_eq!(table.len(), 9);
     assert_eq!(
         table.len(),
         lines.len(),
@@ -193,7 +193,7 @@ fn cmd_steps_name_every_program_by_full_path_and_reset_the_environment() {
             continue;
         }
         let body = exact
-            .split_once(" /s /k \"")
+            .split_once(" /s /c \"")
             .map(|(head, rest)| {
                 assert_eq!(
                     head, "\"C:\\Windows\\System32\\cmd.exe\" /d /e:on /v:off",
@@ -201,9 +201,9 @@ fn cmd_steps_name_every_program_by_full_path_and_reset_the_environment() {
                 );
                 rest
             })
-            .unwrap_or_else(|| panic!("{step}: /s /k"));
+            .unwrap_or_else(|| panic!("{step}: /s /c"));
         assert!(body.starts_with(
-            "set \"PATH=C:\\Windows\\System32\" && set \"SystemRoot=C:\\Windows\" && set \"windir=C:\\Windows\" && "
+            "set \"PATH=C:\\Windows\\System32\" && set \"SystemRoot=C:\\Windows\" && set \"windir=C:\\Windows\" && set \"COMSPEC=C:\\Windows\\System32\\cmd.exe\" && "
         ), "{step}");
         // Every program file named in the line sits in System32, the
         // staging folder or (as a copy source) the download folder.
@@ -236,11 +236,19 @@ fn the_stage_line_locks_the_folder_and_checks_every_copy_before_anything_runs_fr
         &format!(
             r#"C:\Windows\System32\icacls.exe "{STAGING}" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX""#
         ),
-        &format!(r#"copy /b /y "<download-folder>\orcel-authority.exe" "{STAGING}""#),
-        &format!(r#"copy /b /y "<download-folder>\orceld.exe" "{STAGING}""#),
-        &format!(r#"copy /b /y "<download-folder>\orcel.exe" "{STAGING}""#),
+        // Each copy names its destination file: a source that is really a
+        // folder cannot bring other files (a DLL) into the staging folder.
+        &format!(
+            r#"copy /b /y "<download-folder>\orcel-authority.exe" "{STAGING}\orcel-authority.exe""#
+        ),
+        &format!(r#"copy /b /y "<download-folder>\orceld.exe" "{STAGING}\orceld.exe""#),
+        &format!(r#"copy /b /y "<download-folder>\orcel.exe" "{STAGING}\orcel.exe""#),
         &format!(r#"C:\Windows\System32\icacls.exe "{STAGING}\*" /setowner *S-1-5-32-544 /L"#),
         &format!(r#"C:\Windows\System32\icacls.exe "{STAGING}\*" /reset /L"#),
+        // Exactly three entries in the folder.
+        &format!(
+            r#"C:\Windows\System32\cmd.exe /d /c dir /b /a "{STAGING}" | C:\Windows\System32\find.exe /c /v "" | C:\Windows\System32\findstr.exe /l /x /c:"3""#
+        ),
         &format!(
             r#"C:\Windows\System32\certutil.exe -hashfile "{STAGING}\orcel-authority.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<authority-sha256>""#
         ),
@@ -250,9 +258,9 @@ fn the_stage_line_locks_the_folder_and_checks_every_copy_before_anything_runs_fr
         &format!(
             r#"C:\Windows\System32\certutil.exe -hashfile "{STAGING}\orcel.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<orcel-sha256>""#
         ),
-        &"echo STAGED: the three files match their SHA-256 values || (".to_owned(),
+        &"echo STAGED: exactly the three files, each with its SHA-256 || (".to_owned(),
         &format!(r#"rmdir /s /q "{STAGING}" & echo STAGING REFUSED"#),
-        &r"C:\Windows\System32\cmd.exe /d /c exit 1))".to_owned(),
+        &r"C:\Windows\System32\cmd.exe /d /c exit 1)) & pause".to_owned(),
     ];
     let mut last = 0;
     for needle in ordered {
@@ -270,6 +278,76 @@ fn the_stage_line_locks_the_folder_and_checks_every_copy_before_anything_runs_fr
         "pub const STAGED_FILES: [&str; 3] = [\"orcel-authority.exe\", \"orceld.exe\", \"orcel.exe\"];"
     ));
     assert!(source.contains("pub const STAGING_DIR_NAME: &str = \"OrcelStaging\";"));
+    // No copy names the folder alone as its destination.
+    assert!(!stage.contains(&format!(r#"" "{STAGING}" &&"#)));
+}
+
+/// Review 2 finding 1 (d) and 5: removing a staging folder that failed the
+/// check runs nothing from it, and every cmd window closes after a key.
+#[test]
+fn removing_the_staging_runs_nothing_from_it_and_windows_close() {
+    let text = runbook();
+    let lines = start_process_lines(&text);
+    let (file, remove) = command_for(&lines, "echo REMOVED");
+    assert_eq!(file, r"C:\Windows\System32\cmd.exe");
+    assert!(remove.contains(&format!(r#"rmdir /s /q "{STAGING}" && echo REMOVED"#)));
+    assert!(
+        !remove.contains(&format!("{STAGING}\\")),
+        "runs no program from the folder"
+    );
+    for (_, arguments) in lines.iter().filter(|(file, _)| file.ends_with(r"\cmd.exe")) {
+        assert!(arguments.ends_with(" & pause\""), "{arguments}");
+        assert!(
+            !arguments.contains(" /k "),
+            "no elevated prompt is left open"
+        );
+    }
+    let step5 = &text
+        [position(&text, "### 5. Check the staging folder")..position(&text, "### 6. Preview")];
+    assert!(step5.contains("run the Remove the staging line"));
+    assert!(!step5.contains("run the Uninstall line"));
+}
+
+/// Review 2 finding 1 (c): the authority image resolves its imports from
+/// System32 only (DependentLoadFlags 0x800, set by build.rs), whatever is in
+/// its folder. The C runtime is linked statically in the CI release build;
+/// scripts/check-authority-binaries.ps1 checks that on the artifact.
+#[cfg(windows)]
+#[test]
+fn the_authority_image_resolves_its_imports_from_system32_only() {
+    let bytes = std::fs::read(env!("CARGO_BIN_EXE_orcel-authority")).expect("the binary");
+    let u16_at = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+    let u32_at =
+        |at: usize| u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+    let pe = u32_at(0x3c) as usize;
+    assert_eq!(u32_at(pe), 0x0000_4550, "PE signature");
+    let coff = pe + 4;
+    let sections = u16_at(coff + 2) as usize;
+    let optional = coff + 20;
+    assert_eq!(u16_at(optional), 0x20b, "PE32+");
+    let table = optional + u16_at(coff + 16) as usize;
+    let load_config_rva = u32_at(optional + 112 + 8 * 10);
+    assert_ne!(load_config_rva, 0, "a load configuration directory");
+    let offset = (0..sections)
+        .map(|i| table + 40 * i)
+        .find_map(|s| {
+            let va = u32_at(s + 12);
+            let size = u32_at(s + 8).max(u32_at(s + 16));
+            (load_config_rva >= va && load_config_rva < va + size)
+                .then(|| (load_config_rva - va + u32_at(s + 20)) as usize)
+        })
+        .expect("the section holding the load configuration");
+    assert!(
+        u32_at(offset) >= 0x50,
+        "the load configuration holds DependentLoadFlags"
+    );
+    assert_eq!(
+        u16_at(offset + 0x4e),
+        0x0800,
+        "LOAD_LIBRARY_SEARCH_SYSTEM32"
+    );
+    let build = read_lf(&["crates", "orcel-authority", "build.rs"]);
+    assert!(build.contains("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800"));
 }
 
 #[test]
@@ -383,10 +461,10 @@ fn the_runbook_documents_the_commit_proof_provenance_and_the_expected_staging_ac
     let block = &text[position(&text, "<!-- expected-staging-acl -->\n```text\n")..];
     let block = &block[..position(block, "\n```\n")];
     for line in [
-        r"C:\Program Files\OrcelStaging NT AUTHORITY\SYSTEM:(OI)(CI)(F)",
+        r"C:\Program Files\OrcelStaging BUILTIN\Users:(OI)(CI)(RX)",
+        r"NT AUTHORITY\SYSTEM:(OI)(CI)(F)",
         r"BUILTIN\Administrators:(OI)(CI)(F)",
-        r"BUILTIN\Users:(OI)(CI)(RX)",
-        r"C:\Program Files\OrcelStaging\orcel-authority.exe NT AUTHORITY\SYSTEM:(I)(F)",
+        r"C:\Program Files\OrcelStaging\orcel-authority.exe BUILTIN\Users:(I)(OI)(CI)(RX)",
         r"Successfully processed 3 files; Failed processing 0 files",
         r"BUILTIN\Administrators protected=True",
     ] {
@@ -410,7 +488,7 @@ fn the_e2e_runs_the_runbook_lines_in_a_hostile_environment() {
     let text = e2e();
     for needle in [
         "Get-RunbookCommands",
-        ".Replace(' /k ', ' /c ').Replace(' --pause', '')",
+        ".Replace(' & pause', '').Replace(' --pause', '')",
         "COR_PROFILER_PATH",
         "WindowsPowerShell\\Modules\\OrcelE2ECanary",
         "[Environment]::SetEnvironmentVariable($pair[0], $pair[1], 'User')",
@@ -418,7 +496,7 @@ fn the_e2e_runs_the_runbook_lines_in_a_hostile_environment() {
         "hostile environment armed",
         "no planted module and no profiler DLL ran in any elevated step",
         "NotVerified 'pinned TPM root equals the certificate on this machine'",
-        "runbook command lines found: 8 Start-Process lines, each matching its UAC table row",
+        "runbook command lines found: 9 Start-Process lines, each matching its UAC table row",
         "if ($Report.result -ne 'pass') { exit 1 }",
     ] {
         assert!(text.contains(needle), "{needle}");

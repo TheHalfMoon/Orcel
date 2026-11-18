@@ -9,7 +9,9 @@ use std::ffi::c_void;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
-use windows_sys::Win32::Foundation::{LocalFree, ERROR_ALREADY_EXISTS, ERROR_SUCCESS, HANDLE};
+use windows_sys::Win32::Foundation::{
+    LocalFree, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HANDLE,
+};
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
@@ -354,6 +356,28 @@ pub fn create_protected_dir(
     sddl: &str,
     expected: &[(&str, u32)],
 ) -> Result<(), String> {
+    match create_protected_dir_unless_present(path, sddl, expected)? {
+        Created::New => Ok(()),
+        Created::AlreadyPresent => Err(format!("{} already exists", path.display())),
+    }
+}
+
+/// Whether [create_protected_dir_unless_present] made the folder.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Created {
+    New,
+    AlreadyPresent,
+}
+
+/// As [create_protected_dir], but a folder that already exists is
+/// reported (and left untouched) so the caller can verify it: the create is
+/// the existence test, so nobody can slip one in between a check and a
+/// create.
+pub fn create_protected_dir_unless_present(
+    path: &Path,
+    sddl: &str,
+    expected: &[(&str, u32)],
+) -> Result<Created, String> {
     let security = descriptor(sddl)?;
     let attributes = SECURITY_ATTRIBUTES {
         nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -365,7 +389,7 @@ pub fn create_protected_dir(
     if unsafe { CreateDirectoryW(wide_path.as_ptr(), &attributes) } == 0 {
         let error = std::io::Error::last_os_error();
         if error.raw_os_error() == Some(ERROR_ALREADY_EXISTS as i32) {
-            return Err(format!("{} already exists", path.display()));
+            return Ok(Created::AlreadyPresent);
         }
         return Err(format!("create {}: {error}", path.display()));
     }
@@ -382,6 +406,8 @@ pub fn create_protected_dir(
         .collect();
     want.sort();
     if owner != ADMINISTRATORS_SID || !protected || have != want {
+        // Created just now by this call and still empty: removed again.
+        let _ = std::fs::remove_dir(path);
         return Err(format!(
             "the security of {} is not what was asked for (owner {owner}, protected {protected}, wanted {want:?}, found {have:?})",
             path.display()
@@ -391,7 +417,7 @@ pub fn create_protected_dir(
         "Created {} (owner Administrators, protected): {have:?}",
         path.display()
     );
-    Ok(())
+    Ok(Created::New)
 }
 
 /// Copies from the held, already hashed `source` into a new file (never one
@@ -412,24 +438,58 @@ pub fn copy_held(
         .share_mode(0)
         .open(destination)
         .map_err(|error| format!("create {}: {error}", destination.display()))?;
-    std::io::copy(source, &mut out).map_err(|error| error.to_string())?;
-    out.sync_all().map_err(|error| error.to_string())?;
-    let actual = sha256_of(&mut out)?;
-    if !actual.eq_ignore_ascii_case(expected) {
-        return Err(format!(
-            "SHA-256 mismatch for the copy {}: expected {expected}, found {actual}",
-            destination.display()
-        ));
+    let result = (|| {
+        std::io::copy(source, &mut out).map_err(|error| error.to_string())?;
+        out.sync_all().map_err(|error| error.to_string())?;
+        let actual = sha256_of(&mut out)?;
+        if !actual.eq_ignore_ascii_case(expected) {
+            return Err(format!(
+                "SHA-256 mismatch for the copy {}: expected {expected}, found {actual}",
+                destination.display()
+            ));
+        }
+        Ok(())
+    })();
+    drop(out);
+    if result.is_err() {
+        // The file this call created is removed again.
+        let _ = std::fs::remove_file(destination);
     }
-    Ok(())
+    result
 }
 
-/// Deletes a folder tree. The whole tree is scanned first and any reparse
-/// point refuses the delete before anything is deleted: a junction is never
-/// followed out of the tree.
+/// Deletes a folder tree. Refused unless every parent up to the volume root
+/// is admin-owned and nobody else may rename or delete entries in it (so the
+/// path cannot be redirected); then the whole tree is scanned and any
+/// reparse point refuses the delete before anything is deleted; then each
+/// entry is opened as itself (never following a reparse point), checked
+/// through that handle (attributes, and that its final path is where the
+/// walk expects it) and deleted through the same handle.
 pub fn remove_tree(path: &Path) -> Result<(), String> {
+    let mut problems = Vec::new();
+    let mut current = path.parent();
+    while let Some(parent) = current {
+        problems.extend(object_problems(parent, ENTRY_CHANGE_RIGHTS));
+        current = parent.parent();
+    }
+    if !problems.is_empty() {
+        return Err(format!(
+            "refusing to delete {}: {}",
+            path.display(),
+            problems.join("; ")
+        ));
+    }
+    delete_tree_verified(path)
+}
+
+/// The scan and the handle-checked delete of [`remove_tree`], without the
+/// parent check.
+pub fn delete_tree_verified(path: &Path) -> Result<(), String> {
     refuse_reparse_in_tree(path)?;
-    delete_tree(path)
+    let root = open_for_delete(path)?;
+    let base = final_path(&root)?;
+    drop(root);
+    delete_by_handle(path, &base)
 }
 
 fn refuse_reparse_in_tree(path: &Path) -> Result<(), String> {
@@ -453,37 +513,90 @@ fn refuse_reparse_in_tree(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn delete_tree(path: &Path) -> Result<(), String> {
-    if is_reparse_point(path)? {
+const DELETE_ACCESS: u32 = 0x0001_0000;
+const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+const SYNCHRONIZE: u32 = 0x0010_0000;
+const FILE_SHARE_ALL: u32 = 0x0000_0007;
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+
+/// Opens `path` itself (a reparse point is not followed) for deletion.
+fn open_for_delete(path: &Path) -> Result<std::fs::File, String> {
+    std::fs::OpenOptions::new()
+        .access_mode(DELETE_ACCESS | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+        .share_mode(FILE_SHARE_ALL)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|error| format!("open {} for deletion: {error}", path.display()))
+}
+
+fn same_final_path(a: &Path, b: &Path) -> bool {
+    a.to_string_lossy()
+        .trim_end_matches('\\')
+        .eq_ignore_ascii_case(b.to_string_lossy().trim_end_matches('\\'))
+}
+
+/// Deletes `path`, whose final path must be `expected`, through its own
+/// handle; a folder's entries first, each checked the same way.
+fn delete_by_handle(path: &Path, expected: &Path) -> Result<(), String> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
+    };
+    let handle = open_for_delete(path)?;
+    // SAFETY: zeroed plain data, filled by the call.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: a live handle and a valid out pointer.
+    if unsafe { GetFileInformationByHandle(handle.as_raw_handle() as HANDLE, &mut info) } == 0 {
+        return Err(format!(
+            "read the attributes of {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(format!(
             "{} is a reparse point; refusing to delete through it",
             path.display()
         ));
     }
-    let entries =
-        std::fs::read_dir(path).map_err(|error| format!("list {}: {error}", path.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let child = entry.path();
-        if is_reparse_point(&child)? {
-            return Err(format!(
-                "{} is a reparse point; refusing to delete through it",
-                child.display()
-            ));
-        }
-        if std::fs::symlink_metadata(&child)
-            .map_err(|error| error.to_string())?
-            .is_dir()
-        {
-            delete_tree(&child)?;
-        } else {
-            std::fs::remove_file(&child)
-                .map_err(|error| format!("delete {}: {error}", child.display()))?;
+    let actual = final_path(&handle)?;
+    if !same_final_path(&actual, expected) {
+        return Err(format!(
+            "{} resolves to {}, not {}; refusing to delete",
+            path.display(),
+            actual.display(),
+            expected.display()
+        ));
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        let entries =
+            std::fs::read_dir(path).map_err(|error| format!("list {}: {error}", path.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| error.to_string())?;
+            delete_by_handle(&entry.path(), &actual.join(entry.file_name()))?;
         }
     }
-    std::fs::remove_dir(path).map_err(|error| format!("delete {}: {error}", path.display()))
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: 1 };
+    // SAFETY: a live handle opened with DELETE access; the struct is the class's.
+    if unsafe {
+        SetFileInformationByHandle(
+            handle.as_raw_handle() as HANDLE,
+            FileDispositionInfo,
+            (&disposition as *const FILE_DISPOSITION_INFO).cast(),
+            std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(format!(
+            "delete {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    // The entry goes when this handle closes.
+    drop(handle);
+    Ok(())
 }
-
 // ---- Registry -------------------------------------------------------------------------------------------------
 
 use windows_sys::Win32::System::Registry::{
@@ -681,7 +794,8 @@ pub fn delete_key_tree(path: &str) -> Result<(), String> {
     if status != ERROR_SUCCESS {
         return Err(format!("delete HKLM\\{path}: Win32 error {status}"));
     }
-    // RegDeleteTreeW leaves the key itself.
+    // RegDeleteTreeW with a subkey name deletes the key itself too; this second call only covers a
+    // key it left (a missing key is the expected answer).
     let wide_parent_path = wide(path);
     // SAFETY: NUL-terminated path.
     let status = unsafe {
@@ -692,7 +806,7 @@ pub fn delete_key_tree(path: &str) -> Result<(), String> {
             0,
         )
     };
-    if status == ERROR_SUCCESS {
+    if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
         Ok(())
     } else {
         Err(format!("delete HKLM\\{path}: Win32 error {status}"))
@@ -1119,13 +1233,19 @@ mod tests {
         .output()
         .expect("mklink");
         assert!(made.status.success());
-        assert!(remove_tree(&tree).unwrap_err().contains("reparse point"));
+        assert!(delete_tree_verified(&tree)
+            .unwrap_err()
+            .contains("reparse point"));
+        // remove_tree also refuses a tree whose parents a user may change.
+        assert!(remove_tree(&tree)
+            .unwrap_err()
+            .contains("refusing to delete"));
         assert!(
             outside.join("keep.txt").exists(),
             "nothing behind the junction is deleted"
         );
         std::fs::remove_dir(tree.join("link")).expect("unlink");
-        remove_tree(&tree).expect("a plain tree is deleted");
+        delete_tree_verified(&tree).expect("a plain tree is deleted");
         assert!(!tree.exists());
         let _ = std::fs::remove_dir_all(&root);
     }
