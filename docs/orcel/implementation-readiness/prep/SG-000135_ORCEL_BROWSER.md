@@ -62,7 +62,7 @@ actions, remote browser path, takeover or challenge detection.
 | OB-04 | Shadow and Visible modes (headed argv), profile mode with persistent Orcel-managed profiles, `browser_structured` shapes routed through the broker | F, H, Shadow 1, 2 and 8; the Shadow half of E only |
 | OB-05 | Evidence receipts on the audit chain | J |
 | OB-06 | Takeover state machine, 3000 ms quiet timer | G |
-| OB-07 | Challenge handoff, autofill through the browser vault | I |
+| OB-07 | Challenge handoff, autofill through the browser vault ([`OB07_CHALLENGE_HANDOFF.md`](OB07_CHALLENGE_HANDOFF.md), [`OB07B_VAULT_AUTOFILL.md`](OB07B_VAULT_AUTOFILL.md)) | I |
 | OB-08 | Full Access lease caching (interim store, then the SG-000132 service) | E and Full Access 6 close here; Shadow 5, Full Access 4 |
 | OB-09 | Remote `browser_full` mapping for ChatGPT | D |
 | OB-10 | BrowserOS human browser, packaging, consented import (later, on a Chromium-sized build volume) | A, B, K, Shadow 7 |
