@@ -1038,6 +1038,7 @@ dependencies = [
  "fs4",
  "libc",
  "orcel-approval",
+ "orcel-authority",
  "orcel-contracts",
  "orcel-platform",
  "orcel-policy",

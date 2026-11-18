@@ -76,6 +76,17 @@ pub enum BrowserFamily {
     Download,
 }
 
+/// Slice 2 (SG-000135 OB-08 finding 5): the families orceld enforces under
+/// a browser lease. `read`, `scroll` and `download` stay in the vocabulary
+/// and are refused at the grant.
+pub const LEASABLE_BROWSER_FAMILIES: [BrowserFamily; 5] = [
+    BrowserFamily::Navigate,
+    BrowserFamily::Click,
+    BrowserFamily::Type,
+    BrowserFamily::Select,
+    BrowserFamily::Tabs,
+];
+
 /// What a lease covers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -250,6 +261,12 @@ impl LeaseScope {
                     if families[..index].contains(family) {
                         return Err(AuthorityError::invalid("an action family is named twice"));
                     }
+                    if !LEASABLE_BROWSER_FAMILIES.contains(family) {
+                        return Err(AuthorityError::invalid(format!(
+                            "the {} family cannot be leased: a browser lease names only navigate, click, type, select or tabs",
+                            family_name(*family)
+                        )));
+                    }
                 }
                 if let Some(task) = task {
                     check_task(task)?;
@@ -337,24 +354,34 @@ pub fn is_display_text(text: &str, max_chars: usize) -> bool {
         && !text.contains("  ")
 }
 
-/// `cl-` and 1 to 64 lowercase letters, digits or hyphens.
-pub fn is_client_ref(text: &str) -> bool {
-    text.strip_prefix("cl-").is_some_and(|rest| {
-        !rest.is_empty()
-            && rest.len() <= 64
-            && rest
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-    })
-}
-
-/// 1 to 128 ASCII letters, digits, `.`, `_` or `-`.
-pub fn is_session_id(text: &str) -> bool {
-    !text.is_empty()
-        && text.len() <= 128
+fn is_lower_hex_of(text: &str, length: usize) -> bool {
+    text.len() == length
         && text
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// OB-08's client reference: `cl-` and 32 lowercase hex characters.
+pub fn is_client_ref(text: &str) -> bool {
+    text.strip_prefix("cl-")
+        .is_some_and(|rest| is_lower_hex_of(rest, 32))
+}
+
+/// OB-01's broker session id: `bs-<16 hex>-<counter>-<16 hex>`.
+pub fn is_session_id(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix("bs-") else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.split('-').collect();
+    let [instance, counter, random] = parts.as_slice() else {
+        return false;
+    };
+    is_lower_hex_of(instance, 16)
+        && is_lower_hex_of(random, 16)
+        && !counter.is_empty()
+        && counter.len() <= 6
+        && !counter.starts_with('0')
+        && counter.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// `https://` plus a lowercase DNS host and an optional port other than

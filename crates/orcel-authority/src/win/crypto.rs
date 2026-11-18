@@ -10,6 +10,7 @@
 //! non-exportable key in the Microsoft Platform Crypto Provider (TPM) is a
 //! later slice; it changes the [`EcdsaP256Signer`] constructor only.
 
+use crate::attestation::{Hash, RsaVerifier};
 use crate::core::{Entropy, LeaseSigner, PresenceVerifier};
 use crate::error::AuthorityError;
 use crate::lease::{key_id_of, SignatureVerifier};
@@ -24,9 +25,9 @@ use windows_sys::Win32::Security::Cryptography::{
     CryptImportPublicKeyInfoEx2, CryptProtectData, CryptUnprotectData, BCRYPT_ALG_HANDLE,
     BCRYPT_ECCPRIVATE_BLOB, BCRYPT_ECCPUBLIC_BLOB, BCRYPT_ECDSA_P256_ALGORITHM,
     BCRYPT_ECDSA_PUBLIC_P256_MAGIC, BCRYPT_KEY_HANDLE, BCRYPT_KEY_LENGTH, BCRYPT_PAD_PKCS1,
-    BCRYPT_PKCS1_PADDING_INFO, BCRYPT_SHA256_ALGORITHM, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
-    CERT_PUBLIC_KEY_INFO, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_DECODE_ALLOC_FLAG, CRYPT_INTEGER_BLOB,
-    X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO,
+    BCRYPT_PKCS1_PADDING_INFO, BCRYPT_SHA256_ALGORITHM, BCRYPT_SHA384_ALGORITHM,
+    BCRYPT_USE_SYSTEM_PREFERRED_RNG, CERT_PUBLIC_KEY_INFO, CRYPTPROTECT_UI_FORBIDDEN,
+    CRYPT_DECODE_ALLOC_FLAG, CRYPT_INTEGER_BLOB, X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO,
 };
 
 /// DPAPI entropy binding the wrapped blob to its purpose.
@@ -463,31 +464,67 @@ impl PresenceVerifier for HelloKeyVerifier {
         challenge: &[u8],
         signature: &[u8],
     ) -> Result<(), AuthorityError> {
-        let key = import_spki_rsa(spki_der)?;
-        let hash = Sha256::digest(challenge);
-        let padding = BCRYPT_PKCS1_PADDING_INFO {
-            pszAlgId: BCRYPT_SHA256_ALGORITHM,
-        };
-        let len = u32::try_from(signature.len())
-            .map_err(|_| AuthorityError::invalid("signature too long"))?;
-        // SAFETY: `padding`, `hash` and `signature` live through the call.
-        let status = unsafe {
-            BCryptVerifySignature(
-                key.0,
-                (&padding as *const BCRYPT_PKCS1_PADDING_INFO).cast(),
-                hash.as_ptr(),
-                32,
-                signature.as_ptr(),
-                len,
-                BCRYPT_PAD_PKCS1,
-            )
-        };
-        if status == 0 {
+        if rsa_pkcs1_verify(spki_der, Hash::Sha256, challenge, signature)? {
             Ok(())
         } else {
             Err(AuthorityError::denied(
                 "the Windows Hello signature does not verify with the enrolled key",
             ))
+        }
+    }
+}
+
+/// RSASSA-PKCS1 v1.5 over `hash` of `message` with an SPKI key (at least
+/// 2048 bits). `Ok(false)` when the signature does not verify.
+fn rsa_pkcs1_verify(
+    spki_der: &[u8],
+    hash: Hash,
+    message: &[u8],
+    signature: &[u8],
+) -> Result<bool, AuthorityError> {
+    let key = import_spki_rsa(spki_der)?;
+    let digest = hash.digest(message);
+    let padding = BCRYPT_PKCS1_PADDING_INFO {
+        pszAlgId: match hash {
+            Hash::Sha256 => BCRYPT_SHA256_ALGORITHM,
+            Hash::Sha384 => BCRYPT_SHA384_ALGORITHM,
+        },
+    };
+    let len = u32::try_from(signature.len())
+        .map_err(|_| AuthorityError::invalid("signature too long"))?;
+    let digest_len =
+        u32::try_from(digest.len()).map_err(|_| AuthorityError::internal("digest length"))?;
+    // SAFETY: `padding`, `digest` and `signature` live through the call.
+    let status = unsafe {
+        BCryptVerifySignature(
+            key.0,
+            (&padding as *const BCRYPT_PKCS1_PADDING_INFO).cast(),
+            digest.as_ptr(),
+            digest_len,
+            signature.as_ptr(),
+            len,
+            BCRYPT_PAD_PKCS1,
+        )
+    };
+    Ok(status == 0)
+}
+
+/// CNG RSA PKCS#1 v1.5 verification for the attestation check (AIK
+/// statement and certificate signatures).
+pub struct CngRsaVerifier;
+
+impl RsaVerifier for CngRsaVerifier {
+    fn verify(
+        &self,
+        spki_der: &[u8],
+        hash: Hash,
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<(), AuthorityError> {
+        if rsa_pkcs1_verify(spki_der, hash, message, signature)? {
+            Ok(())
+        } else {
+            Err(AuthorityError::denied("an RSA signature does not verify"))
         }
     }
 }

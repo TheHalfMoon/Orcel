@@ -3993,12 +3993,29 @@ mod platform {
             select_latest_dated_link(&self.host_nodes)
         }
 
+        /// SG-000135 OB-08 review: refuse every page request but a GET for
+        /// the rest of this lifetime (`NavigationPolicy::guard_get_only`).
+        pub fn guard_get_only(&mut self) {
+            self.policy.guard_get_only();
+        }
+
         /// Forget every observed node but `keep` (the product caller's
         /// worker mode: only nodes Orcel actually received can be acted
         /// on, when a reply had to drop some to fit one frame).
         #[cfg(any(feature = "live-browser-test", feature = "live-browser-dev"))]
         pub(crate) fn retain_host_nodes(&mut self, keep: &std::collections::HashSet<String>) {
             self.host_nodes.retain(|id, _| keep.contains(id));
+        }
+
+        /// SG-000135 OB-08: the accessible name of this observed link, for
+        /// the host's own routine classification (`impact::classify_link`).
+        /// It never leaves the host.
+        pub fn link_name(&self, node_id: &str) -> Result<String, HostError> {
+            self.host_nodes
+                .get(node_id)
+                .filter(|node| node.role == "link")
+                .map(|node| node.name.clone())
+                .ok_or_else(|| HostError::Invalid("stale or unknown link".into()))
         }
 
         /// The destination an activation of this observed link would open
@@ -4707,6 +4724,16 @@ mod fallback {
 
         /// API parity: no worker ever exists off Windows.
         pub fn tabs(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn guard_get_only(&mut self) {}
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn link_name(&self, _node_id: &str) -> Result<String, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))

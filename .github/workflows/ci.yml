@@ -1842,8 +1842,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-      - name: Build orcel-authority and orceld (release, locked)
-        run: cargo build --release --locked -p orcel-authority -p orceld
+      - name: Build orcel-authority, orceld and the orcel CLI (release, locked)
+        run: cargo build --release --locked -p orcel-authority -p orceld -p orcel-lifecycle --bin orcel-authority --bin orceld --bin orcel
       - name: Record the SHA-256 of each binary
         shell: pwsh
         env:
@@ -1852,7 +1852,7 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'authority-artifact'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           $lines = @()
-          foreach ($name in @('orcel-authority.exe', 'orceld.exe')) {
+          foreach ($name in @('orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
             Copy-Item -LiteralPath (Join-Path 'target/release' $name) -Destination $out
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $out $name)).Hash.ToLowerInvariant()
             $lines += "$hash  $name"

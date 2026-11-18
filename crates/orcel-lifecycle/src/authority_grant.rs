@@ -1,0 +1,588 @@
+//! SG-000132 slice 2: the user-session side of the Orcel authority
+//! service's grant and enrollment flows.
+//!
+//! - `orcel authority enroll [--replace]` (from an ELEVATED terminal): creates
+//!   the Windows Hello key credential, reads its public key and TPM
+//!   attestation, sends them, prints the one-time code and the key
+//!   fingerprint, waits for the service-rendered confirmation, then signs the
+//!   challenge with the new key (one Hello gesture).
+//! - `orcel authority reset` (elevated): asks the service to remove the
+//!   enrolled key; the service confirms in its own box.
+//! - `orcel full-control grant` and `orcel browser grant`: record the intent,
+//!   print the one-time code, wait for the service-observed unlock and the
+//!   confirmation, then sign the challenge, which is bound to the digest of
+//!   the confirmation text, with the enrolled key.
+//!
+//! The service decides everything; this side only carries the human's
+//! answers. Every wait is bounded by the service's own intent and window
+//! timeouts.
+
+use crate::LifecycleError;
+use orcel_authority::client::AuthorityClient;
+use orcel_authority::lease::{BrowserFamily, LeaseScope, SignedLease, MAX_ORIGINS};
+use orcel_authority::protocol::{ClaimedOrigin, Request};
+use orcel_authority::{hex, sha256_hex, unhex, AuthorityError};
+use orcel_contracts::ExecutorClass;
+use serde_json::Value;
+use std::time::{Duration, Instant};
+
+/// How often the intent is polled.
+pub const POLL: Duration = Duration::from_millis(750);
+/// The longest wait: the intent's 5 minutes plus the 120 s window.
+pub const MAX_WAIT: Duration = Duration::from_secs(5 * 60 + 120 + 10);
+
+/// Signs a challenge with the user's Windows Hello key credential.
+pub trait HelloSigner {
+    fn sign(&self, challenge: &[u8]) -> Result<Vec<u8>, String>;
+}
+
+/// What `orcel authority enroll` needs from the Hello key it created.
+pub trait EnrollKey: HelloSigner {
+    fn public_key_spki(&self) -> Result<Vec<u8>, String>;
+    /// The attestation buffer and certificate chain buffer.
+    fn attestation(&self) -> Result<(Vec<u8>, Vec<u8>), String>;
+}
+
+fn authority(error: AuthorityError) -> LifecycleError {
+    LifecycleError::state(format!("the Orcel authority service refused: {error}"))
+}
+
+fn text(value: &Value, key: &str) -> Result<String, LifecycleError> {
+    value[key]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| LifecycleError::state(format!("the authority's answer has no {key}")))
+}
+
+/// The key fingerprint as the service shows it (16 groups of 4 hex digits
+/// of the SubjectPublicKeyInfo's SHA-256).
+pub fn fingerprint(spki: &[u8]) -> String {
+    orcel_authority::core::key_fingerprint(&sha256_hex(spki))
+}
+
+/// Parses `--executors` (comma separated, snake case) for a desktop grant.
+pub fn parse_executors(list: &str) -> Result<Vec<ExecutorClass>, LifecycleError> {
+    list.split(',')
+        .map(|name| {
+            serde_json::from_value::<ExecutorClass>(Value::String(name.trim().to_owned()))
+                .map_err(|_| {
+                    LifecycleError::usage(format!(
+                        "unknown executor {name:?}; use desktop_input, desktop_observation, filesystem, shell_process or visual_agent"
+                    ))
+                })
+        })
+        .collect()
+}
+
+/// The desktop scope a grant asks for: the narrow default (desktop input
+/// only, no roots, no shells) unless widened explicitly.
+pub fn desktop_scope(
+    executors: Option<Vec<ExecutorClass>>,
+    roots: Vec<String>,
+    shells: bool,
+) -> Result<Option<LeaseScope>, LifecycleError> {
+    if executors.is_none() && roots.is_empty() && !shells {
+        return Ok(None);
+    }
+    let mut executors = executors.unwrap_or_else(|| vec![ExecutorClass::DesktopInput]);
+    if shells && !executors.contains(&ExecutorClass::ShellProcess) {
+        executors.push(ExecutorClass::ShellProcess);
+    }
+    if !roots.is_empty() && !executors.contains(&ExecutorClass::Filesystem) {
+        executors.push(ExecutorClass::Filesystem);
+    }
+    let scope = LeaseScope::DesktopFullUser {
+        executors,
+        roots,
+        shells,
+    };
+    scope
+        .validate()
+        .map_err(|error| LifecycleError::usage(error.message))?;
+    Ok(Some(scope))
+}
+
+/// Parses `--families` (comma separated) for a browser grant.
+pub fn parse_families(list: &str) -> Result<Vec<BrowserFamily>, LifecycleError> {
+    list.split(',')
+        .map(|name| {
+            serde_json::from_value::<BrowserFamily>(Value::String(name.trim().to_owned())).map_err(
+                |_| {
+                    LifecycleError::usage(format!(
+                        "unknown family {name:?}; use navigate, click, type, select or tabs"
+                    ))
+                },
+            )
+        })
+        .collect()
+}
+
+/// The browser scope a grant asks for (SG-000135): one session, its
+/// client, 1 to 16 exact origins, routine families only.
+pub fn browser_scope(
+    session_id: String,
+    client_ref: String,
+    origins: Vec<String>,
+    families: Vec<BrowserFamily>,
+    task: Option<String>,
+) -> Result<LeaseScope, LifecycleError> {
+    if origins.len() > MAX_ORIGINS {
+        return Err(LifecycleError::usage(format!(
+            "a browser grant names at most {MAX_ORIGINS} origins"
+        )));
+    }
+    let scope = LeaseScope::BrowserFullAccess {
+        client_ref,
+        session_id,
+        origins,
+        families,
+        task,
+    };
+    scope
+        .validate()
+        .map_err(|error| LifecycleError::usage(error.message))?;
+    Ok(scope)
+}
+
+/// One grant request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantRequest {
+    pub scope: Option<LeaseScope>,
+    pub minutes: u64,
+    pub principal_id: String,
+    pub task: String,
+}
+
+/// Waits until the caller's intent awaits presence, then returns its
+/// challenge after checking the confirmation text's digest.
+fn await_presence(
+    client: &AuthorityClient,
+    intent_id: &str,
+    progress: &mut dyn FnMut(&str),
+) -> Result<(Vec<u8>, String), LifecycleError> {
+    let started = Instant::now();
+    let mut last_state = String::new();
+    loop {
+        let status = client
+            .call(&Request::IntentStatus {
+                intent_id: intent_id.to_owned(),
+            })
+            .map_err(|error| {
+                LifecycleError::state(format!(
+                    "the request ended without approval (refused, cancelled, timed out, or the window closed): {error}"
+                ))
+            })?;
+        let state = text(&status, "state")?;
+        if state != last_state {
+            match state.as_str() {
+                "awaiting_unlock" => progress(
+                    "Waiting for you to lock (Win+L) and unlock this PC; the Orcel Authority box appears after the unlock.",
+                ),
+                "awaiting_confirmation" => {
+                    progress("Waiting for your answer in the Orcel Authority box.")
+                }
+                _ => {}
+            }
+            last_state = state.clone();
+        }
+        if state == "awaiting_presence" {
+            let confirmation = text(&status, "confirmation_text")?;
+            let digest = text(&status, "confirmation_text_digest")?;
+            if sha256_hex(confirmation.as_bytes()) != digest {
+                return Err(LifecycleError::state(
+                    "the confirmation text does not match its digest; nothing was signed",
+                ));
+            }
+            let challenge = unhex(&text(&status, "challenge_hex")?)
+                .filter(|bytes| bytes.len() == 32)
+                .ok_or_else(|| LifecycleError::state("the challenge is not 32 bytes of hex"))?;
+            return Ok((challenge, digest));
+        }
+        if started.elapsed() > MAX_WAIT {
+            let _ = client.call(&Request::CancelIntent {
+                intent_id: intent_id.to_owned(),
+            });
+            return Err(LifecycleError::state(
+                "the request timed out and was cancelled",
+            ));
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// `orcel full-control grant` and `orcel browser grant` through the service.
+pub fn run_grant(
+    client: &AuthorityClient,
+    request: &GrantRequest,
+    signer: &dyn HelloSigner,
+    progress: &mut dyn FnMut(&str),
+) -> Result<SignedLease, LifecycleError> {
+    let begun = client
+        .call(&Request::GrantBegin {
+            origin: ClaimedOrigin::OwnerCli,
+            scope: request.scope.clone(),
+            minutes: Some(request.minutes),
+            principal_id: request.principal_id.clone(),
+            task: request.task.clone(),
+        })
+        .map_err(authority)?;
+    let intent_id = text(&begun, "intent_id")?;
+    let code = text(&begun, "code")?;
+    progress(&format!(
+        "Grant requested. One-time code: {code}\nThe Orcel Authority box must show this code and this process (pid {}). Lock your PC (Win+L) and unlock it within 5 minutes; choose Yes only if the code, process and scope match.",
+        std::process::id()
+    ));
+    let (challenge, digest) = await_presence(client, &intent_id, progress)?;
+    progress(&format!(
+        "You approved the confirmation (text digest {}). Windows Hello asks for your gesture to sign it.",
+        &digest[..16]
+    ));
+    let signature = signer.sign(&challenge).map_err(|error| {
+        let _ = client.call(&Request::CancelIntent {
+            intent_id: intent_id.clone(),
+        });
+        LifecycleError::state(format!("Windows Hello did not sign: {error}"))
+    })?;
+    let done = client
+        .call(&Request::PresenceComplete {
+            intent_id,
+            code,
+            signature_hex: hex(&signature),
+        })
+        .map_err(authority)?;
+    serde_json::from_value(done["lease"].clone())
+        .map_err(|error| LifecycleError::state(format!("the service returned no lease: {error}")))
+}
+
+/// `orcel authority enroll` (the caller is elevated; the service checks).
+pub fn run_enroll(
+    client: &AuthorityClient,
+    key: &dyn EnrollKey,
+    replace: bool,
+    progress: &mut dyn FnMut(&str),
+) -> Result<Value, LifecycleError> {
+    let spki = key
+        .public_key_spki()
+        .map_err(|error| LifecycleError::state(format!("read the key's public key: {error}")))?;
+    let (attestation, chain) = key.attestation().map_err(|error| {
+        LifecycleError::prerequisite(format!(
+            "the key cannot be attested on this PC, so enrollment stays refused (fail closed): {error}"
+        ))
+    })?;
+    let begun = client
+        .call(&Request::EnrollBegin {
+            origin: ClaimedOrigin::OwnerCli,
+            public_key_spki_hex: hex(&spki),
+            attestation_hex: hex(&attestation),
+            certificate_chain_hex: hex(&chain),
+            replace,
+        })
+        .map_err(authority)?;
+    let intent_id = text(&begun, "intent_id")?;
+    let code = text(&begun, "code")?;
+    let shown = text(&begun, "key_fingerprint")?;
+    let local = fingerprint(&spki);
+    if shown != local {
+        let _ = client.call(&Request::CancelIntent { intent_id });
+        return Err(LifecycleError::state(
+            "the service reports another fingerprint than this key's; the enrollment was cancelled",
+        ));
+    }
+    progress(&format!(
+        "Enrollment requested. One-time code: {code}\nKey fingerprint (SHA-256): {local}\nThe Orcel Authority box must show this code and this fingerprint. Choose Yes only if both match."
+    ));
+    let (challenge, _) = await_presence(client, &intent_id, progress)?;
+    progress("You approved. Windows Hello asks for your gesture once to prove the new key.");
+    let signature = key.sign(&challenge).map_err(|error| {
+        let _ = client.call(&Request::CancelIntent {
+            intent_id: intent_id.clone(),
+        });
+        LifecycleError::state(format!("Windows Hello did not sign: {error}"))
+    })?;
+    client
+        .call(&Request::PresenceComplete {
+            intent_id,
+            code,
+            signature_hex: hex(&signature),
+        })
+        .map_err(authority)
+}
+
+/// `orcel authority reset` (elevated): returns once the service removed
+/// the key, or the error if it did not.
+pub fn run_reset(
+    client: &AuthorityClient,
+    progress: &mut dyn FnMut(&str),
+) -> Result<(), LifecycleError> {
+    let begun = client
+        .call(&Request::ResetEnrollment {
+            origin: ClaimedOrigin::OwnerCli,
+        })
+        .map_err(authority)?;
+    let intent_id = text(&begun, "intent_id")?;
+    progress(&format!(
+        "Reset requested. One-time code: {}\nKey fingerprint (SHA-256): {}\nChoose Yes in the Orcel Authority box only if both match.",
+        text(&begun, "code")?,
+        text(&begun, "key_fingerprint")?
+    ));
+    let started = Instant::now();
+    loop {
+        let status = client
+            .call(&Request::IntentStatus {
+                intent_id: intent_id.clone(),
+            })
+            .map_err(|error| {
+                LifecycleError::state(format!(
+                    "the reset ended without approval (refused, timed out, or the window closed): {error}"
+                ))
+            })?;
+        if status["state"].as_str() == Some("completed") {
+            return Ok(());
+        }
+        if started.elapsed() > MAX_WAIT {
+            let _ = client.call(&Request::CancelIntent { intent_id });
+            return Err(LifecycleError::state(
+                "the reset timed out and was cancelled",
+            ));
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// The active leases of this user and logon session, as the service lists
+/// them.
+pub fn active_leases(client: &AuthorityClient) -> Result<Vec<SignedLease>, LifecycleError> {
+    let listed = client.list().map_err(authority)?;
+    Ok(listed["leases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry["state"].as_str() == Some("active"))
+        .filter_map(|entry| serde_json::from_value(entry["lease"].clone()).ok())
+        .collect())
+}
+
+/// The Windows Hello key credential (Windows only).
+#[cfg(windows)]
+pub mod hello {
+    use super::{EnrollKey, HelloSigner};
+    use orcel_approval::key_credential::{self, HelloKey};
+
+    pub struct Hello(pub HelloKey);
+
+    impl HelloSigner for Hello {
+        fn sign(&self, challenge: &[u8]) -> Result<Vec<u8>, String> {
+            self.0.sign(challenge)
+        }
+    }
+
+    impl EnrollKey for Hello {
+        fn public_key_spki(&self) -> Result<Vec<u8>, String> {
+            self.0.public_key_spki()
+        }
+
+        fn attestation(&self) -> Result<(Vec<u8>, Vec<u8>), String> {
+            self.0.attestation()
+        }
+    }
+
+    /// Every name a key of ours may have in the Hello container.
+    fn names() -> impl Iterator<Item = &'static str> {
+        key_credential::KEY_SLOTS
+            .into_iter()
+            .chain([key_credential::LEGACY_KEY_NAME])
+    }
+
+    /// The slot holding the key whose fingerprint the service has enrolled
+    /// (opening needs no prompt).
+    pub fn open_enrolled(fingerprint: &str) -> Result<(Hello, &'static str), String> {
+        for name in names() {
+            if let Ok(key) = key_credential::open(name) {
+                if key
+                    .public_key_spki()
+                    .is_ok_and(|spki| super::fingerprint(&spki) == fingerprint)
+                {
+                    return Ok((Hello(key), name));
+                }
+            }
+        }
+        Err("no Windows Hello key of this account matches the enrolled fingerprint".to_owned())
+    }
+
+    /// Review F6: a new key in the slot that does NOT hold the enrolled key
+    /// (Hello prompt), so the enrolled key stays until the service enrolled
+    /// the new one after the box's Yes.
+    pub fn create_beside(
+        enrolled: Option<&str>,
+        replace: bool,
+    ) -> Result<(Hello, &'static str), String> {
+        let active =
+            enrolled.and_then(|fingerprint| open_enrolled(fingerprint).ok().map(|(_, name)| name));
+        let slot = plan_new_slot(enrolled.is_some(), active, replace)?;
+        key_credential::create(slot, true).map(|key| (Hello(key), slot))
+    }
+
+    /// Review re-verify item 4: with a key enrolled at the service but no
+    /// slot holding it, a new key is created only under `--replace` (the
+    /// enrolled key is gone from Windows Hello, or another slot layout holds
+    /// it); otherwise nothing is touched.
+    pub fn plan_new_slot(
+        enrolled: bool,
+        active: Option<&str>,
+        replace: bool,
+    ) -> Result<&'static str, String> {
+        if enrolled && active.is_none() && !replace {
+            return Err(
+                "a key is enrolled but no Orcel Authority key in Windows Hello matches it; nothing was created (use --replace to enroll a new one)"
+                    .to_owned(),
+            );
+        }
+        Ok(new_key_slot(active))
+    }
+
+    /// The slot a new key goes into: never the one holding the enrolled key.
+    pub fn new_key_slot(active: Option<&str>) -> &'static str {
+        key_credential::KEY_SLOTS
+            .into_iter()
+            .find(|name| Some(*name) != active)
+            .unwrap_or(key_credential::KEY_SLOTS[0])
+    }
+
+    /// Removes every key of ours except `keep` (after a confirmed
+    /// enrollment), or all of them (after a confirmed reset).
+    pub fn delete_others(keep: Option<&str>) -> usize {
+        names()
+            .filter(|name| Some(*name) != keep)
+            .filter(|name| key_credential::delete(name).is_ok())
+            .count()
+    }
+    /// Whether this process runs elevated (observed from its own token; the
+    /// service checks the same on the pipe).
+    pub fn this_process_is_elevated() -> bool {
+        // SAFETY: the pseudo handle of this process needs no closing.
+        let process = unsafe { windows_sys::Win32::System::Threading::GetCurrentProcess() };
+        orcel_authority::win::identity::open_process_token(process)
+            .map(|token| orcel_authority::win::identity::token_elevated(&token))
+            .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::new_key_slot;
+        use orcel_approval::key_credential::{KEY_SLOTS, LEGACY_KEY_NAME};
+
+        /// Review F6: re-enrollment never writes the enrolled key's slot.
+        #[test]
+        fn sg132_a_new_key_never_takes_the_enrolled_slot() {
+            assert_eq!(new_key_slot(None), KEY_SLOTS[0]);
+            assert_eq!(new_key_slot(Some(KEY_SLOTS[0])), KEY_SLOTS[1]);
+            assert_eq!(new_key_slot(Some(KEY_SLOTS[1])), KEY_SLOTS[0]);
+            assert_eq!(new_key_slot(Some(LEGACY_KEY_NAME)), KEY_SLOTS[0]);
+            assert_ne!(KEY_SLOTS[0], KEY_SLOTS[1]);
+            // Enrolled but no slot matches: refused unless --replace.
+            assert!(super::plan_new_slot(true, None, false).is_err());
+            assert_eq!(super::plan_new_slot(true, None, true), Ok(KEY_SLOTS[0]));
+            assert_eq!(
+                super::plan_new_slot(true, Some(KEY_SLOTS[0]), true),
+                Ok(KEY_SLOTS[1])
+            );
+            assert_eq!(super::plan_new_slot(false, None, false), Ok(KEY_SLOTS[0]));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sg132_desktop_grants_default_to_the_narrow_scope_and_widen_explicitly() {
+        assert_eq!(desktop_scope(None, Vec::new(), false).ok(), Some(None));
+        let widened = desktop_scope(None, vec!["D:\\work".to_owned()], true);
+        let Ok(Some(LeaseScope::DesktopFullUser {
+            executors, shells, ..
+        })) = widened
+        else {
+            assert!(widened.is_ok(), "{widened:?}");
+            return;
+        };
+        assert!(shells);
+        assert!(executors.contains(&ExecutorClass::Filesystem));
+        assert!(executors.contains(&ExecutorClass::ShellProcess));
+        assert!(executors.contains(&ExecutorClass::DesktopInput));
+        let admin = parse_executors("admin");
+        assert!(admin.is_err() || desktop_scope(admin.ok(), Vec::new(), false).is_err());
+        assert!(desktop_scope(None, vec!["relative\\path".to_owned()], false).is_err());
+        assert!(parse_executors("desktop_input,nope").is_err());
+    }
+
+    #[test]
+    fn sg132_browser_grants_are_one_session_exact_origins_routine_families() {
+        let session = "bs-0123456789abcdef-1-0001020304050607".to_owned();
+        let client = format!("cl-{}", "ab".repeat(16));
+        let one = vec!["https://fixture.test".to_owned()];
+        let routine = parse_families("navigate,click,type,select,tabs");
+        assert!(routine.is_ok());
+        let routine = routine.unwrap_or_default();
+        assert!(browser_scope(
+            session.clone(),
+            client.clone(),
+            one.clone(),
+            routine.clone(),
+            None
+        )
+        .is_ok());
+        for family in ["scroll", "read", "download"] {
+            let families = parse_families(family).unwrap_or_default();
+            assert!(
+                browser_scope(session.clone(), client.clone(), one.clone(), families, None)
+                    .is_err(),
+                "{family}"
+            );
+        }
+        let seventeen: Vec<String> = (0..17).map(|n| format!("https://h{n}.test")).collect();
+        assert!(browser_scope(
+            session.clone(),
+            client.clone(),
+            seventeen,
+            routine.clone(),
+            None
+        )
+        .is_err());
+        for bad in [
+            "http://fixture.test",
+            "https://*.fixture.test",
+            "https://fixture.test/x",
+        ] {
+            assert!(
+                browser_scope(
+                    session.clone(),
+                    client.clone(),
+                    vec![bad.to_owned()],
+                    routine.clone(),
+                    None
+                )
+                .is_err(),
+                "{bad}"
+            );
+        }
+        assert!(browser_scope(
+            "bs-1".to_owned(),
+            client.clone(),
+            one.clone(),
+            routine.clone(),
+            None
+        )
+        .is_err());
+        assert!(browser_scope(session, "client".to_owned(), one, routine, None).is_err());
+        assert!(parse_families("submit").is_err());
+    }
+
+    #[test]
+    fn sg132_the_fingerprint_matches_the_service_rendering() {
+        let spki = b"spki bytes";
+        let shown = fingerprint(spki);
+        assert_eq!(shown.split(' ').count(), 16);
+        assert_eq!(shown.replace(' ', ""), sha256_hex(spki));
+    }
+}

@@ -939,7 +939,41 @@ pub fn emergency_revoke(args: &mut Args) -> Result<Output, LifecycleError> {
 pub fn full_control(args: &mut Args) -> Result<Output, LifecycleError> {
     let action = args.positional("full-control action (grant, revoke, status)")?;
     let layout = Layout::for_current_user()?;
+    // SG-000132 slice 2, desktop lease migration step: once the authority
+    // service is installed, grants come from it only. The user-readable
+    // store below is DEPRECATED: it keeps its existing behaviour where the
+    // service is not installed and never issues once it is.
+    let service = crate::authority_commands::use_service();
     match action.as_str() {
+        "grant" if service => crate::authority_commands::full_control_grant(args),
+        "revoke" if service => {
+            args.finish()?;
+            let revoked = crate::authority_commands::full_control_revoke()?;
+            // Authority reducing: a lease left in the deprecated store goes too.
+            let legacy = orcel_lifecycle::full_control::revoke_full_user(&layout)
+                .ok()
+                .flatten();
+            Ok(Output {
+                exit_code: 0,
+                human: format!(
+                    "Full User desktop leases revoked by the Orcel authority service: {}.\n",
+                    revoked["revoked"]
+                ),
+                json: json!({"ok": true, "service": revoked, "deprecated_store_epoch": legacy}),
+            })
+        }
+        "status" if service => {
+            args.finish()?;
+            let status = crate::authority_commands::full_control_status()?;
+            Ok(Output {
+                exit_code: 0,
+                human: format!(
+                    "Orcel authority service: epoch {}, enrolled {}, active leases {}.\n",
+                    status["epoch"], status["enrolled"], status["active_leases"]
+                ),
+                json: json!({"ok": true, "full_control": status}),
+            })
+        }
         "grant" => {
             let minutes = match args.value("--minutes")? {
                 Some(value) => value
@@ -953,6 +987,9 @@ pub fn full_control(args: &mut Args) -> Result<Output, LifecycleError> {
             let workspace = config.default_workspace().unwrap_or("default").to_string();
             eprintln!(
                 "Confirm with Windows Hello when prompted. Full User desktop control is bound to this exact live Orcel runtime session and expires automatically."
+            );
+            eprintln!(
+                "Note: this grant uses the DEPRECATED per-user authority store; install the Orcel authority service (SG132_INSTALL_RUNBOOK.md) so grants come from it."
             );
             let lease =
                 orcel_lifecycle::full_control::grant_full_user(&layout, &workspace, minutes)?;

@@ -37,12 +37,16 @@
 //! [`AuthorityError::unsupported`] (track X brings the LaunchDaemon and the
 //! systemd unit).
 
+pub mod attestation;
+#[cfg(all(test, windows))]
+mod attestation_tests;
 pub mod audit;
 pub mod caller;
 pub mod client;
 pub mod core;
 #[cfg(test)]
 mod core_tests;
+pub mod der;
 pub mod error;
 pub mod lease;
 pub mod pipe_sddl;
@@ -82,6 +86,9 @@ pub const EVENT_INTENT: u32 = 4102;
 /// Event id (error type) of a refused start, such as a pre-created pipe
 /// name (slice 1 addition; spec 4.13 asks for "an Event Log error").
 pub const EVENT_SERVICE_ERROR: u32 = 4103;
+
+/// Event id of a Windows Hello key enrolled, replaced or reset (slice 2).
+pub const EVENT_ENROLLED: u32 = 4104;
 
 /// How the authority runs. Some guarantees hold only as the installed
 /// service; [`RunMode::Console`] is the test and development harness.

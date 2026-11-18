@@ -1,3 +1,4 @@
+pub mod browser_lease;
 pub mod executable_registry;
 pub mod full_control;
 pub mod full_control_store;

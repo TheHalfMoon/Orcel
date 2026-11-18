@@ -3,13 +3,13 @@
 //! answer is a [`Response`]. Frames above [`MAX_FRAME_BYTES`] are refused.
 //!
 //! Spec 4.13 names `GrantBegin`, `GrantComplete`, `StandingBegin`,
-//! `StandingComplete`, `Authorize`, `Stop`, `Status` and `Heartbeat`. Slice 1
-//! implements `GrantBegin` (as [`Request::GrantBegin`]), the grant's
+//! `StandingComplete`, `Authorize`, `Stop`, `Status` and `Heartbeat`. Slices 1
+//! and 2 implement `GrantBegin` (as [`Request::GrantBegin`]), the grant's
 //! completion (as [`Request::PresenceComplete`], shared with enrollment),
 //! `Authorize`, `Stop` and `Status`, plus lease `Verify`, `List` and
-//! `Revoke`, and the enrollment of a Windows Hello public key. Standing
-//! approvals and the indicator heartbeat are later slices; their requests
-//! are not accepted yet.
+//! `Revoke`, and the attested enrollment and reset of a Windows Hello key.
+//! Standing approvals and the indicator heartbeat are later slices; their
+//! requests are not accepted yet.
 
 use crate::error::AuthorityError;
 use crate::lease::LeaseScope;
@@ -53,6 +53,11 @@ pub struct AuthorizeClaims {
     pub task: String,
     /// SHA-256 of the action's arguments, never the arguments themselves.
     pub action_digest: String,
+    /// Review F4: for a browser lease, the page's committed origin the
+    /// action lands on; the service checks it against the lease's origins
+    /// (and `operation` against its families). Absent for desktop actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,14 +75,21 @@ pub enum Request {
         principal_id: String,
         task: String,
     },
-    /// Enrollment of a Windows Hello public key. Always refused in slice 1
-    /// with `enrollment_unavailable`: it needs attested KeyCredentialManager
-    /// keys and an elevated (UAC secure desktop) enrollment caller, which
-    /// slice 2 brings (SG132_SLICE1.md).
+    /// Slice 2: enroll a Windows Hello key credential. The caller's token
+    /// must be elevated; the key's TPM attestation
+    /// (`KeyCredential.GetAttestationAsync`) must verify to a pinned root.
+    /// The service then renders a confirmation showing the key fingerprint;
+    /// on Yes the new key signs the challenge (`IntentStatus`,
+    /// `PresenceComplete`). `replace` replaces an enrolled key.
     EnrollBegin {
         origin: ClaimedOrigin,
         public_key_spki_hex: String,
+        attestation_hex: String,
+        certificate_chain_hex: String,
+        replace: bool,
     },
+    /// Slice 2: remove the caller's enrolled key (elevated, confirmed).
+    ResetEnrollment { origin: ClaimedOrigin },
     /// Where the caller's pending intent stands; carries the challenge once
     /// the confirmation was answered Yes.
     IntentStatus { intent_id: String },
@@ -140,6 +152,7 @@ impl Request {
             Self::Status => "status",
             Self::GrantBegin { .. } => "grant_begin",
             Self::EnrollBegin { .. } => "enroll_begin",
+            Self::ResetEnrollment { .. } => "reset_enrollment",
             Self::IntentStatus { .. } => "intent_status",
             Self::PresenceComplete { .. } => "presence_complete",
             Self::CancelIntent { .. } => "cancel_intent",

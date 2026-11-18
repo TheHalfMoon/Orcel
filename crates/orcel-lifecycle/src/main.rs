@@ -80,12 +80,32 @@ Approvals:
       desktop control, and every remote session lease (Windows Hello).
 
 Full User desktop control (local only):
-  orcel full-control grant [--minutes <1-720>]
-      Grant this exact live Orcel runtime session Full User desktop input for a
-      finite duration. Requires Windows Hello. Agents, MCP, donors, relay, and remote
-      callers cannot mint, widen, or renew this lease.
+  orcel full-control grant [--minutes <1-720>] [--executors <list>] [--root <path>]...
+      [--shells] [--client <name>] [--task <label>]
+      With the Orcel authority service installed: record a grant intent, print a
+      one-time code, then lock (Win+L) and unlock; the service shows the scope and
+      code, and after Yes Windows Hello signs. Default scope: desktop input only,
+      no roots, no shells, 30 minutes. Without the service: the deprecated per-user
+      grant of this exact live Orcel runtime session (Windows Hello). Agents, MCP,
+      donors, relay, and remote callers cannot mint, widen, or renew a lease.
   orcel full-control revoke               Revoke Full User desktop input immediately.
   orcel full-control status               Show Safe/Full User state and expiry.
+
+Orcel authority service (SG-000132; Windows):
+  orcel authority status                  Show the service's mode, epoch and enrollment.
+  orcel authority enroll [--replace] [--pause]
+      Started ELEVATED and directly (Start-Process -Verb RunAs on
+      %ProgramFiles%\\Orcel\\orcel.exe, never an elevated shell): create the Windows Hello
+      key beside any enrolled one, send its TPM attestation, confirm its fingerprint in the
+      service's box, and sign once with Windows Hello. --pause waits for Enter at the end.
+  orcel authority reset [--pause]         Started the same way: remove the enrolled key.
+
+Orcel Browser Full Access (SG-000135; leases come from the authority service only):
+  orcel browser grant --session <bs-...> --client-ref <cl-...> --origin <https://host>...
+      [--families navigate,click,type,select,tabs] [--task <label>] [--minutes <1-720>]
+      Up to 16 exact origins, routine families only, at most 12 hours.
+  orcel browser leases                    Show this session's active browser leases.
+  orcel browser revoke <lease id>         Revoke one browser lease.
 
 Protected executables (process_spawn never runs shells or interpreters):
   orcel exec add <id> <path.exe> [--subcommands a,b] [--deny-args x,y] [--max-args N]
@@ -119,6 +139,7 @@ Optional web search (off until a provider is enabled in ORCEL_SEARCH_PROVIDERS_J
 Every command accepts --json for machine-readable output.
 ";
 
+mod authority_commands;
 mod commands;
 
 pub(crate) struct Args {
@@ -273,8 +294,12 @@ fn action_of(rest: &[String]) -> Option<&str> {
 /// - listing workspaces, which only reads (see below).
 fn holds_lifecycle_lock(command: &str, rest: &[String]) -> bool {
     let action = action_of(rest);
-    let reduces_or_reads_authority =
-        command == "full-control" && matches!(action, Some("revoke" | "status"));
+    // SG-000132 slice 2: with the authority service installed, a grant
+    // waits on the person (unlock, confirmation, Hello) in the service, not
+    // on this install's state, so it does not hold the lock either.
+    let reduces_or_reads_authority = command == "full-control"
+        && (matches!(action, Some("revoke" | "status"))
+            || orcel_authority::client::service_installed());
     // Listing workspaces only reads the configuration (saved atomically) and asks orceld
     // for each folder's trust, up to 20 s each. Holding the lock for that blocked a grant,
     // an update or a workspace change for as long as the listing took.
@@ -347,6 +372,8 @@ fn run(args: &mut Args, json_output: bool) -> Result<Output, LifecycleError> {
         "approvals" => commands::approvals(args),
         "emergency-revoke" => commands::emergency_revoke(args),
         "full-control" => commands::full_control(args),
+        "authority" => authority_commands::authority(args),
+        "browser" => authority_commands::browser(args),
         "exec" => commands::exec(args),
         "remote" => commands::remote(args),
         "search" => commands::search(args),
