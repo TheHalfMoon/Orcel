@@ -1,0 +1,41 @@
+[package]
+name = "orcel-authority"
+description = "SG-000132 Orcel authority service: lease signing, epoch, revocation, grant window and audit, held outside the user session (Windows)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+autobins = false
+
+[[bin]]
+name = "orcel-authority"
+path = "src/bin/orcel-authority.rs"
+
+[dependencies]
+orcel-contracts = { path = "../orcel-contracts" }
+orcel-platform = { path = "../orcel-platform" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+# Spec section 7: windows-sys 0.52 only (no new crate). Services,
+# EventLog and RemoteDesktop are the features the spec names for this
+# packet; UI_WindowsAndMessaging carries the WTSSendMessageW message box
+# styles and the WTS_SESSION_* codes; Cryptography carries CNG (ECDSA P-256
+# lease signatures, RSA PKCS#1 Windows Hello signature checks) and DPAPI.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_System_EventLog",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Services",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }

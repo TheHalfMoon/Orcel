@@ -41,6 +41,8 @@ orcel-approval = { path = "../orcel-approval" }
 orcel-browser-host = { path = "../orcel-browser-host", optional = true }
 orcel-browser-session = { path = "../orcel-browser-session" }
 orcel-audit = { path = "../orcel-audit" }
+# SG-000132 slice 1: the authority service client (verify, Authorize).
+orcel-authority = { path = "../orcel-authority" }
 orcel-contracts = { path = "../orcel-contracts" }
 orcel-platform = { path = "../orcel-platform" }
 orcel-policy = { path = "../orcel-policy" }
