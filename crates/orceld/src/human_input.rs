@@ -14,10 +14,11 @@
 //!   happened (`GetLastInputInfo`, with `GetTickCount` to turn it into an
 //!   age). It says nothing about which key or where: no contents.
 //! - Which window is in front (`GetForegroundWindow`), and whether its
-//!   process is the session's engine: a descendant of the browser host this
-//!   session launched (`GetWindowThreadProcessId`, then the parent chain
-//!   from a process snapshot, each parent created no later than its child,
-//!   ending at the host's own pid and creation time).
+//!   process belongs to the session's browser family: the kill-on-close job
+//!   orceld put the session's browser host in, which every descendant (the
+//!   worker runtime, the engine and its children) stays in, since the job
+//!   allows no breakaway (`GetWindowThreadProcessId`, then
+//!   `IsProcessInJob`).
 //!
 //! A new last-input instant seen while the session's window is in front is
 //! a person's input. Orcel's own page input is dispatched over the engine's
@@ -33,15 +34,16 @@
 //!
 //! Orcel's own approval prompt is a window too: the click or key that
 //! answers it can reach the browser window once the prompt closes and the
-//! browser comes back to the front. Input within [`PROMPT_EDGE_BEFORE_MS`]
-//! before and [`PROMPT_EDGE_AFTER_MS`] after a prompt closed is therefore
-//! not counted (input during the prompt with the browser in front still
-//! is).
+//! browser comes back to the front. When a person answered a prompt
+//! (approved or denied it), input within [`PROMPT_EDGE_BEFORE_MS`] before
+//! and [`PROMPT_EDGE_AFTER_MS`] after it closed is not counted. A prompt
+//! that failed without an answer (refused before any dialog, unavailable)
+//! excuses nothing, so a prompt that fails fast and often cannot mask a
+//! person's input.
 //!
-//! A Shadow session has no window and never starts this source. On other
-//! operating systems no source exists yet ([`for_host`] answers `None`):
-//! macOS needs its own (later packet); the live browser is Windows-only
-//! today, so nothing on those systems can reach a Visible session.
+//! A Shadow session has no window and never starts this source. Only
+//! Windows has one ([`for_job`]); the live browser is Windows-only today,
+//! so no Visible session runs elsewhere (macOS needs its own, later).
 
 use orcel_browser_session::Millis;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,14 +54,25 @@ use std::time::Duration;
 /// How often the source's thread reads the operating system.
 pub(crate) const POLL_MS: u64 = 25;
 
-/// Input this long before an Orcel approval prompt closed is taken as the
-/// answer to the prompt, not as a person on the browser.
+/// Input this long before an answered Orcel approval prompt closed is taken
+/// as the answer (the click or key that closed it, then the dialog closing
+/// and orceld resuming), not as a person on the browser.
 pub(crate) const PROMPT_EDGE_BEFORE_MS: u64 = 500;
 
-/// Input this long after an Orcel approval prompt closed is taken as the
-/// rest of the answer (a key's release reaching the browser window), not
-/// as a person on the browser.
-pub(crate) const PROMPT_EDGE_AFTER_MS: u64 = 1_000;
+/// Input this long after an answered Orcel approval prompt closed is taken
+/// as the rest of the answer, not as a person on the browser. A dialog
+/// answers on the key's press or the button's release; what can follow is
+/// the key's release, which comes 50 to 150 ms after its press for ordinary
+/// typing and so lands within a few tens of milliseconds after the prompt
+/// closed. 250 ms covers it with margin and leaves a person who goes on to
+/// use the browser counted from their very next input.
+pub(crate) const PROMPT_EDGE_AFTER_MS: u64 = 250;
+
+/// `GetTickCount` (and the last-input tick) advance in steps of the system
+/// timer, 10 to 16 ms. An input's age read from them can be up to one step
+/// too large, so an input is dated this much later than its age says (never
+/// later than now): the quiet period then never ends before 3000 ms.
+pub(crate) const TICK_MARGIN_MS: u64 = 16;
 
 /// The most inputs held while a prompt is up. Past it the newest are
 /// dropped (the oldest, which a prompt's end cannot excuse, are kept).
@@ -109,7 +122,12 @@ impl InputFeed {
         if previous == sample.last_input || !sample.session_in_front {
             return;
         }
-        self.record(Millis(now.0.saturating_sub(sample.idle_ms)));
+        let at = now
+            .0
+            .saturating_sub(sample.idle_ms)
+            .saturating_add(TICK_MARGIN_MS)
+            .min(now.0);
+        self.record(Millis(at));
     }
 
     fn near_prompt_end(&self, at: Millis) -> bool {
@@ -137,15 +155,16 @@ impl InputFeed {
         self.prompt_open = true;
     }
 
-    /// The prompt closed at `end`: held input near its end was the answer;
-    /// the rest was a person on the browser.
-    pub(crate) fn prompt_ended(&mut self, end: Millis) {
+    /// The prompt closed at `end`. If a person `answered` it (approved or
+    /// denied), held input near its end was the answer and the rest was a
+    /// person on the browser; if not, all of it was.
+    pub(crate) fn prompt_ended(&mut self, end: Millis, answered: bool) {
         self.prompt_open = false;
-        self.last_prompt_end = Some(end);
+        if answered {
+            self.last_prompt_end = Some(end);
+        }
         for at in std::mem::take(&mut self.held) {
-            if !self.near_prompt_end(at) {
-                self.latest = self.latest.max(Some(at));
-            }
+            self.record(at);
         }
     }
 
@@ -258,11 +277,11 @@ impl HumanInputMonitor {
         });
     }
 
-    /// The prompt closed (it was answered, denied or failed).
-    pub(crate) fn prompt_ended(&self) {
+    /// The prompt closed; `answered` when a person approved or denied it.
+    pub(crate) fn prompt_ended(&self, answered: bool) {
         self.shared.with(|inner| {
             let end = (inner.now)();
-            inner.feed.prompt_ended(end);
+            inner.feed.prompt_ended(end, answered);
             inner.poll();
         });
     }
@@ -277,57 +296,74 @@ impl Drop for HumanInputMonitor {
     }
 }
 
-/// The input source for a Visible session whose browser host is `host_pid`,
-/// created at `host_created` (a FILETIME), on this operating system.
-#[cfg(windows)]
-pub(crate) fn for_host(host_pid: u32, host_created: u64) -> Option<Box<dyn InputProbe>> {
-    Some(Box::new(windows::WindowsProbe::new(host_pid, host_created)))
+/// Whether the window in front belongs to the session, remembered per
+/// window and process. Only a definite answer is remembered: a check that
+/// could not be made answers "not the session's" this time and is made
+/// again at the next reading, so a passing failure never blinds the source
+/// for the rest of the session.
+#[derive(Debug, Default)]
+pub(crate) struct Membership {
+    known: Option<(isize, u32, bool)>,
 }
 
-/// No input source exists here yet (macOS needs its own; the live browser
-/// is Windows-only today, so no Visible session runs here).
-#[cfg(not(windows))]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn for_host(_host_pid: u32, _host_created: u64) -> Option<Box<dyn InputProbe>> {
-    None
+impl Membership {
+    /// The verdict for `window` of process `pid`; `judge` answers `None`
+    /// when it could not tell.
+    pub(crate) fn verdict(
+        &mut self,
+        window: isize,
+        pid: u32,
+        judge: impl FnOnce(u32) -> Option<bool>,
+    ) -> bool {
+        if let Some((known_window, known_pid, verdict)) = self.known {
+            if known_window == window && known_pid == pid {
+                return verdict;
+            }
+        }
+        match judge(pid) {
+            Some(verdict) => {
+                self.known = Some((window, pid, verdict));
+                verdict
+            }
+            None => {
+                self.known = None;
+                false
+            }
+        }
+    }
+}
+
+/// The input source for a Visible session whose browser family is in
+/// `job` (an owned handle of the host's job).
+#[cfg(windows)]
+pub(crate) fn for_job(job: std::os::windows::io::OwnedHandle) -> Box<dyn InputProbe> {
+    Box::new(windows::WindowsProbe::new(job))
 }
 
 #[cfg(windows)]
 mod windows {
-    use super::{InputProbe, Sample};
-    use std::collections::HashMap;
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-        TH32CS_SNAPPROCESS,
-    };
+    use super::{InputProbe, Membership, Sample};
+    use std::os::windows::io::{AsRawHandle, OwnedHandle};
+    use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HANDLE};
+    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
     use windows_sys::Win32::System::SystemInformation::GetTickCount;
-    use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowThreadProcessId,
     };
 
-    /// The longest parent chain walked from a window's process to the host
-    /// (host, worker runtime, engine, engine child: a few hops).
-    const MAX_DEPTH: usize = 8;
-
-    /// Read-only Win32 readings for one session's browser host.
+    /// Read-only Win32 readings for one session's browser family.
     pub(crate) struct WindowsProbe {
-        host_pid: u32,
-        host_created: u64,
-        /// The window last judged, its process and the verdict.
-        cache: Option<(isize, u32, bool)>,
+        job: OwnedHandle,
+        membership: Membership,
     }
 
     impl WindowsProbe {
-        pub(crate) fn new(host_pid: u32, host_created: u64) -> Self {
+        pub(crate) fn new(job: OwnedHandle) -> Self {
             Self {
-                host_pid,
-                host_created,
-                cache: None,
+                job,
+                membership: Membership::default(),
             }
         }
 
@@ -340,14 +376,11 @@ mod windows {
             let mut pid: u32 = 0;
             // SAFETY: a window handle and an out-pointer to a local.
             unsafe { GetWindowThreadProcessId(window, &mut pid) };
-            if let Some((cached_window, cached_pid, verdict)) = self.cache {
-                if cached_window == window && cached_pid == pid {
-                    return verdict;
-                }
+            if pid == 0 {
+                return false;
             }
-            let verdict = descends_from(pid, self.host_pid, self.host_created);
-            self.cache = Some((window, pid, verdict));
-            verdict
+            let job = self.job.as_raw_handle() as HANDLE;
+            self.membership.verdict(window, pid, |pid| in_job(pid, job))
         }
     }
 
@@ -371,136 +404,68 @@ mod windows {
         }
     }
 
-    /// A process's creation time (FILETIME as one number), or `None`.
-    pub(crate) fn created(pid: u32) -> Option<u64> {
+    /// Whether process `pid` is in `job`; `None` when it could not be asked
+    /// (the process could not be opened, or the query failed).
+    pub(crate) fn in_job(pid: u32, job: HANDLE) -> Option<bool> {
         // SAFETY: a plain query-only open of a pid; closed below.
         let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if process == 0 {
             return None;
         }
-        let zero = FILETIME {
-            dwLowDateTime: 0,
-            dwHighDateTime: 0,
-        };
-        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
-        // SAFETY: a valid handle and out-pointers to locals.
-        let ok =
-            unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) };
+        let mut result: BOOL = 0;
+        // SAFETY: valid process and job handles, and an out-pointer to a local.
+        let ok = unsafe { IsProcessInJob(process, job, &mut result) };
         // SAFETY: closing the handle opened above, once.
         unsafe { CloseHandle(process) };
-        (ok != 0)
-            .then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
-    }
-
-    /// Every process's parent, from one snapshot.
-    fn parents() -> Option<HashMap<u32, u32>> {
-        // SAFETY: a process snapshot; closed below.
-        let snapshot: HANDLE = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-        if snapshot == INVALID_HANDLE_VALUE || snapshot == 0 {
-            return None;
-        }
-        let mut map = HashMap::new();
-        // SAFETY: PROCESSENTRY32W is plain data; all zero is a valid value.
-        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
-        entry.dwSize = u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap_or(0);
-        // SAFETY: a valid snapshot and an entry with its size set.
-        let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
-        while more {
-            map.insert(entry.th32ProcessID, entry.th32ParentProcessID);
-            // SAFETY: as above.
-            more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
-        }
-        // SAFETY: closing the snapshot opened above, once.
-        unsafe { CloseHandle(snapshot) };
-        Some(map)
-    }
-
-    /// Whether `pid` is `host_pid` (created at `host_created`) or one of
-    /// its descendants. Each parent must have been created no later than
-    /// its child, so a reused pid never makes a stranger a parent; any
-    /// unanswerable step answers no.
-    pub(crate) fn descends_from(pid: u32, host_pid: u32, host_created: u64) -> bool {
-        if pid == 0 || host_pid == 0 {
-            return false;
-        }
-        let Some(parents) = parents() else {
-            return false;
-        };
-        let mut current = pid;
-        let Some(mut current_created) = created(current) else {
-            return false;
-        };
-        for _ in 0..MAX_DEPTH {
-            if current == host_pid {
-                return current_created == host_created;
-            }
-            let Some(&parent) = parents.get(&current) else {
-                return false;
-            };
-            if parent == 0 || parent == current {
-                return false;
-            }
-            let Some(parent_created) = created(parent) else {
-                return false;
-            };
-            if parent_created > current_created {
-                return false;
-            }
-            current = parent;
-            current_created = parent_created;
-        }
-        false
+        (ok != 0).then_some(result != 0)
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
 
-        fn own() -> (u32, u64) {
-            let pid = std::process::id();
-            (pid, created(pid).unwrap_or(0))
+        fn new_job() -> OwnedHandle {
+            // SAFETY: null attributes and name are permitted.
+            let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            assert!(raw != 0, "a job");
+            // SAFETY: a fresh handle owned by nobody else.
+            unsafe { OwnedHandle::from_raw_handle(raw as _) }
         }
 
         #[test]
-        fn ob06_a_child_process_descends_from_its_parent_and_not_the_other_way() {
-            let (pid, started) = own();
-            assert!(started != 0);
-            assert!(
-                descends_from(pid, pid, started),
-                "a process is its own tree"
-            );
-            assert!(
-                !descends_from(pid, pid, started + 1),
-                "another creation time is another process"
-            );
+        fn ob06_a_process_in_the_job_belongs_and_one_outside_does_not() {
+            let job = new_job();
             let mut child = std::process::Command::new("cmd")
                 .args(["/C", "ping -n 4 127.0.0.1 >NUL"])
                 .spawn()
                 .expect("spawn a child");
             let child_pid = child.id();
-            let child_started = created(child_pid).unwrap_or(0);
-            assert!(
-                descends_from(child_pid, pid, started),
-                "the child is in our tree"
-            );
-            assert!(
-                !descends_from(pid, child_pid, child_started),
-                "we are not in the child's tree"
-            );
+            let raw_job = job.as_raw_handle() as HANDLE;
+            assert_eq!(in_job(child_pid, raw_job), Some(false));
+            // SAFETY: valid job and process handles.
+            let assigned =
+                unsafe { AssignProcessToJobObject(raw_job, child.as_raw_handle() as HANDLE) };
+            assert!(assigned != 0, "the child joins the job");
+            assert_eq!(in_job(child_pid, raw_job), Some(true));
+            assert_eq!(in_job(std::process::id(), raw_job), Some(false));
             let _ = child.kill();
             let _ = child.wait();
-            assert!(!descends_from(0, pid, started));
+            assert_eq!(in_job(0, raw_job), None, "no such process");
         }
 
         #[test]
         fn ob06_the_probe_reads_the_last_input_without_touching_anything() {
             // Read-only: GetLastInputInfo, GetTickCount, GetForegroundWindow.
-            let (pid, started) = own();
-            let mut probe = WindowsProbe::new(pid, started);
+            let mut probe = WindowsProbe::new(new_job());
             let first = probe.sample().expect("the OS reports the last input");
             let second = probe.sample().expect("again");
             assert!(second.idle_ms < 50 * 24 * 3_600_000);
-            assert_eq!(first.session_in_front, second.session_in_front);
+            assert!(
+                !first.session_in_front && !second.session_in_front,
+                "an empty job owns no window"
+            );
         }
     }
 }
@@ -508,6 +473,7 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::collections::VecDeque;
     use std::sync::atomic::AtomicU64;
 
@@ -528,12 +494,30 @@ mod tests {
         assert_eq!(feed.take(), None, "the same input again");
         feed.sample(Millis(1_200), sample(8, 30, false));
         assert_eq!(feed.take(), None, "input with another window in front");
-        feed.sample(Millis(1_300), sample(9, 20, true));
-        assert_eq!(feed.take(), Some(Millis(1_280)), "dated when it happened");
+        feed.sample(Millis(1_300), sample(9, 40, true));
+        assert_eq!(
+            feed.take(),
+            Some(Millis(1_300 - 40 + TICK_MARGIN_MS)),
+            "dated by its age, one timer step late"
+        );
         assert_eq!(feed.take(), None, "taken once");
         feed.sample(Millis(1_400), sample(10, 50, true));
-        feed.sample(Millis(1_500), sample(11, 10, true));
-        assert_eq!(feed.take(), Some(Millis(1_490)), "the latest wins");
+        feed.sample(Millis(1_500), sample(11, 30, true));
+        assert_eq!(
+            feed.take(),
+            Some(Millis(1_500 - 30 + TICK_MARGIN_MS)),
+            "the latest wins"
+        );
+    }
+
+    #[test]
+    fn ob06_the_timer_step_margin_never_dates_input_after_now() {
+        let mut feed = InputFeed::default();
+        feed.sample(Millis(0), sample(1, 0, true));
+        feed.sample(Millis(2_000), sample(2, 0, true));
+        assert_eq!(feed.take(), Some(Millis(2_000)));
+        feed.sample(Millis(3_000), sample(3, 5, true));
+        assert_eq!(feed.take(), Some(Millis(3_000)));
     }
 
     #[test]
@@ -552,14 +536,53 @@ mod tests {
         feed.sample(Millis(2_000), sample(2, 0, true));
         // The answering click, seen with the browser back in front: dropped.
         feed.sample(Millis(4_900), sample(3, 0, true));
-        feed.prompt_ended(Millis(5_000));
+        feed.prompt_ended(Millis(5_000), true);
         assert_eq!(feed.take(), Some(Millis(2_000)));
         // The key's release reaching the browser after the prompt closed.
-        feed.sample(Millis(5_300), sample(4, 0, true));
+        feed.sample(Millis(5_200), sample(4, 0, true));
         assert_eq!(feed.take(), None);
         // Input after the prompt's edge counts again.
-        feed.sample(Millis(6_100), sample(5, 0, true));
-        assert_eq!(feed.take(), Some(Millis(6_100)));
+        feed.sample(Millis(5_300), sample(5, 0, true));
+        assert_eq!(feed.take(), Some(Millis(5_300)));
+    }
+
+    #[test]
+    fn ob06_a_prompt_that_failed_unanswered_excuses_no_input() {
+        let mut feed = InputFeed::default();
+        feed.sample(Millis(0), sample(1, 0, false));
+        // An agent repeats a prompt that fails at once, about once a second,
+        // while the person types in the browser.
+        for second in 1..=5u32 {
+            let at = u64::from(second) * 1_000;
+            feed.prompt_started();
+            feed.sample(Millis(at), sample(second + 1, 0, true));
+            feed.prompt_ended(Millis(at + 2), false);
+            feed.sample(Millis(at + 100), sample(second + 100, 0, true));
+            assert_eq!(feed.take(), Some(Millis(at + 100)), "second {second}");
+        }
+    }
+
+    #[test]
+    fn ob06_only_a_definite_membership_answer_is_remembered() {
+        let mut membership = Membership::default();
+        let asked = Cell::new(0);
+        let failing = |_: u32| {
+            asked.set(asked.get() + 1);
+            None
+        };
+        assert!(!membership.verdict(10, 20, failing));
+        // A passing failure is asked again, and then a yes is remembered.
+        assert!(membership.verdict(10, 20, |_| {
+            asked.set(asked.get() + 1);
+            Some(true)
+        }));
+        assert!(membership.verdict(10, 20, |_| {
+            asked.set(asked.get() + 1);
+            Some(false)
+        }));
+        assert_eq!(asked.get(), 2, "the yes was remembered");
+        // Another window is asked afresh.
+        assert!(!membership.verdict(11, 20, |_| Some(false)));
     }
 
     struct Scripted(Arc<Mutex<VecDeque<Option<Sample>>>>);
@@ -579,7 +602,7 @@ mod tests {
     fn ob06_the_monitor_polls_before_handing_input_over_and_brackets_prompts() {
         let script = Arc::new(Mutex::new(VecDeque::from([
             sample(1, 0, true),
-            sample(2, 5, true),
+            sample(2, 20, true),
         ])));
         let clock = Arc::new(AtomicU64::new(100));
         let now_clock = Arc::clone(&clock);
@@ -588,8 +611,8 @@ mod tests {
             Box::new(move || Millis(now_clock.load(Ordering::SeqCst))),
         );
         clock.store(200, Ordering::SeqCst);
-        assert_eq!(monitor.take(), Some(Millis(195)));
-        // A prompt: the answering input near its end is dropped.
+        assert_eq!(monitor.take(), Some(Millis(200 - 20 + TICK_MARGIN_MS)));
+        // An answered prompt: the answering input near its end is dropped.
         script
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -598,7 +621,7 @@ mod tests {
         clock.store(900, Ordering::SeqCst);
         monitor.poll();
         clock.store(1_000, Ordering::SeqCst);
-        monitor.prompt_ended();
+        monitor.prompt_ended(true);
         assert_eq!(monitor.take(), None);
     }
 
@@ -610,10 +633,5 @@ mod tests {
         assert!(monitor.thread.is_some());
         std::thread::sleep(Duration::from_millis(POLL_MS * 3));
         drop(monitor);
-    }
-
-    #[test]
-    fn ob06_other_systems_have_no_source_yet() {
-        assert_eq!(for_host(1, 1).is_some(), cfg!(windows));
     }
 }

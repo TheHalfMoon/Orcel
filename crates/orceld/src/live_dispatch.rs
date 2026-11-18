@@ -992,6 +992,12 @@ mod full {
             }),
             FullAction::Close { session } => with_broker(|broker| {
                 broker.check_epoch(probe())?;
+                // SG-000135 OB-06: the agent never closes a window a person
+                // is using (HUMAN_TAKEOVER). An emergency stop, the end of
+                // the MCP session and orceld's shutdown still end it.
+                if let Ok(live) = broker.session(client, session) {
+                    live.worker.check_not_held()?;
+                }
                 broker.close(client, session).map(|report| report.to_json())
             }),
             FullAction::Status { session } => with_broker(|broker| {

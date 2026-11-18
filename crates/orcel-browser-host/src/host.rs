@@ -325,6 +325,13 @@ impl LiveWorkerHost {
         self.child.pid()
     }
 
+    /// SG-000135 OB-06: an owned handle of the host family's job (the host,
+    /// its worker runtime and the engine), for membership queries only.
+    #[cfg(windows)]
+    pub fn job_handle(&self) -> Option<std::os::windows::io::OwnedHandle> {
+        self.child.job_handle()
+    }
+
     /// One request, one reply, within `WORKER_HOST_REPLY_TIMEOUT`.
     pub fn request(
         &mut self,
