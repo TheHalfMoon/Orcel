@@ -186,6 +186,18 @@ fn record_break(report: &mut VerifyReport, verdict: Verdict, line: u64, seq: u64
 /// Verifies the chain at `path`, and `held` (anchors kept outside the
 /// file, such as the authority service's) against it.
 pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<VerifyReport> {
+    verify_with_holder(path, held, None)
+}
+
+/// [`verify_with_anchors`], and `reset`: the holder's owner anchor reset
+/// record digest when the holder is in its reset state. The file must then
+/// be the one that reset opened (its `anchor_reset` names that record);
+/// any other file, or one without `anchor_reset`, is Broken.
+pub fn verify_with_holder(
+    path: &Path,
+    held: &[AnchorRef],
+    reset: Option<&str>,
+) -> io::Result<VerifyReport> {
     let mut report = VerifyReport {
         path: path.display().to_string(),
         verdict: Verdict::Intact,
@@ -419,6 +431,24 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
             digest: anchor.digest.clone(),
             result,
         });
+    }
+    if let Some(reset) = reset {
+        let named = report
+            .reset_by_owner
+            .as_ref()
+            .and_then(|named| named["event_digest"].as_str());
+        if named != Some(reset) {
+            record_break(
+                &mut report,
+                Verdict::Broken,
+                1,
+                0,
+                &format!(
+                    "the anchor holder's owner reset (record {reset}) is not the one this file \
+                     starts from: a file dropped in after the reset"
+                ),
+            );
+        }
     }
     report.tamper_evidence = tamper_evidence(&report, &by);
     Ok(report)

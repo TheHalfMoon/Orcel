@@ -338,8 +338,19 @@ fn reset_anchor() -> Result<Output, LifecycleError> {
         .map(|plain| orcel_audit::chain_path_for(&plain))
         .map_err(|error| LifecycleError::state(format!("resolve the audit chain: {error}")))?;
     let client = installed_client()?;
-    let status =
-        authority_grant::run_anchor_reset(&client, orcel_audit::ORCELD_LOG, &mut progress)?;
+    // Resume: a reset the service already reports (an earlier run confirmed
+    // it but stopped before opening the file) goes straight to the file.
+    let earlier = client
+        .anchor_status(orcel_audit::ORCELD_LOG)
+        .map_err(|error| LifecycleError::state(error.to_string()))?;
+    let status = if earlier["reset"]["event_digest"].is_string() {
+        progress(
+            "The service already reports an anchor reset for this log; opening its chain file.",
+        );
+        earlier
+    } else {
+        authority_grant::run_anchor_reset(&client, orcel_audit::ORCELD_LOG, &mut progress)?
+    };
     let opened = authority_grant::open_reset_chain(&chain, &status)?;
     Ok(Output {
         exit_code: 0,

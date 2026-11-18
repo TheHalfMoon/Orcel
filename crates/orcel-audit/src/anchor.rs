@@ -69,17 +69,33 @@ impl AnchorOutcome {
 pub const UNANCHORED_NOTE: &str = "local marker only: no anchor outside the user session; \
      edits, deletions and reorders are evident, a rewrite of the whole file or a cut at its end is not";
 
+/// What a holder holds of a log: its latest anchor, or, after the owner
+/// reset it, the reset record digest the next first file must name.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HeldState {
+    pub anchor: Option<AnchorRef>,
+    pub reset: Option<String>,
+}
+
 /// Holds anchors outside the user session. `link` is the anchored file's
 /// link to the file it follows (`None` for a log's first file), so the
 /// holder can refuse an anchor for a file that replaced its known file
 /// without linking to it.
 pub trait Anchorer: Send + Sync {
-    fn anchor(&self, anchor: &AnchorRef, link: Option<&ChainLink>) -> AnchorOutcome;
+    /// `reset` is the holder's anchor reset record digest the anchored file's
+    /// opening names (`anchor_reset`), when the file starts after an owner
+    /// reset.
+    fn anchor(
+        &self,
+        anchor: &AnchorRef,
+        link: Option<&ChainLink>,
+        reset: Option<&str>,
+    ) -> AnchorOutcome;
 
     /// The latest anchor the holder holds for `log`, if it can be asked. A
     /// writer reading its file from the start refuses to append when the
     /// file does not continue it.
-    fn held(&self, _log: &str) -> Option<AnchorRef> {
+    fn held(&self, _log: &str) -> Option<HeldState> {
         None
     }
 }
@@ -89,7 +105,12 @@ pub trait Anchorer: Send + Sync {
 pub struct LocalMarker;
 
 impl Anchorer for LocalMarker {
-    fn anchor(&self, _anchor: &AnchorRef, _link: Option<&ChainLink>) -> AnchorOutcome {
+    fn anchor(
+        &self,
+        _anchor: &AnchorRef,
+        _link: Option<&ChainLink>,
+        _reset: Option<&str>,
+    ) -> AnchorOutcome {
         AnchorOutcome::Unanchored {
             reason: "no authority service anchors this chain".to_owned(),
         }

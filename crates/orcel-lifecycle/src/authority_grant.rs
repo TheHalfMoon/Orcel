@@ -391,10 +391,26 @@ pub fn run_anchor_reset(
 /// `AnchorStatus` answer). The current file, if any, is kept beside it.
 pub fn open_reset_chain(chain: &std::path::Path, status: &Value) -> Result<Value, LifecycleError> {
     let reset = &status["reset"];
-    if reset["event_digest"].as_str().is_none() {
+    let Some(digest) = reset["event_digest"].as_str() else {
         return Err(LifecycleError::state(
             "the authority service reports no anchor reset for this log",
         ));
+    };
+    // Idempotent: a chain that already starts from this reset is kept.
+    if let Ok(report) = orcel_audit::verify_file(chain) {
+        let named = report
+            .reset_by_owner
+            .as_ref()
+            .and_then(|named| named["event_digest"].as_str());
+        if named == Some(digest) {
+            return Ok(serde_json::json!({
+                "chain": chain.display().to_string(),
+                "new_file_id": report.file_id,
+                "abandoned_file_kept_as": null,
+                "already_open": true,
+                "reset": reset,
+            }));
+        }
     }
     let opened = orcel_audit::open_after_reset(chain, orcel_audit::ORCELD_LOG, reset.clone())
         .map_err(|error| LifecycleError::state(error.to_string()))?;
@@ -582,6 +598,11 @@ mod tests {
         );
         let report = orcel_audit::verify_file(&chain).map_err(|e| e.to_string())?;
         assert_eq!(report.verdict, orcel_audit::Verdict::ResetByOwner);
+        // Resumed (the service still reports the same reset): the file that
+        // reset opened is kept, not replaced again.
+        let again = open_reset_chain(&chain, &status).map_err(|e| e.to_string())?;
+        assert_eq!(again["already_open"], serde_json::Value::Bool(true));
+        assert_eq!(again["new_file_id"], opened["new_file_id"]);
         assert_eq!(
             report
                 .reset_by_owner

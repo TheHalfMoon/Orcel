@@ -247,6 +247,8 @@ pub(crate) struct Scanner<R> {
     pub head: String,
     pub file_id: Option<String>,
     pub link: Option<ChainLink>,
+    /// The holder's anchor reset record digest the opening names.
+    pub reset: Option<String>,
 }
 
 impl<R: BufRead> Scanner<R> {
@@ -257,6 +259,7 @@ impl<R: BufRead> Scanner<R> {
             head: GENESIS_PREV_DIGEST.to_owned(),
             file_id: None,
             link: None,
+            reset: None,
         }
     }
 
@@ -267,6 +270,7 @@ impl<R: BufRead> Scanner<R> {
             head: cursor.head.clone(),
             file_id: cursor.file_id.clone(),
             link: cursor.link.clone(),
+            reset: cursor.reset.clone(),
         }
     }
 
@@ -294,6 +298,9 @@ impl<R: BufRead> Scanner<R> {
                 if event.seq == 0 {
                     self.file_id = Some(event.digest.clone());
                     self.link = link;
+                    self.reset = event.detail["anchor_reset"]["event_digest"]
+                        .as_str()
+                        .map(str::to_owned);
                 }
                 self.next_seq += 1;
                 self.head.clone_from(&event.digest);
@@ -350,6 +357,8 @@ struct Cursor {
     head: String,
     file_id: Option<String>,
     link: Option<ChainLink>,
+    /// The holder's reset record digest the file's opening names.
+    reset: Option<String>,
     /// Why this chain refuses further records: the anchor holder refused a
     /// file that does not continue the one it holds anchors of, or this
     /// file conflicts with the head the holder holds. Fail closed until the
@@ -366,6 +375,7 @@ impl Cursor {
             head: GENESIS_PREV_DIGEST.to_owned(),
             file_id: None,
             link: None,
+            reset: None,
             refused: None,
         }
     }
@@ -574,9 +584,11 @@ impl ChainWriter {
     /// is due an anchor, asks the anchorer (outside the file lock) and
     /// records its answer as an `anchor` event.
     pub fn append(&self, draft: EventDraft) -> Result<Appended, ChainError> {
-        let (mut appended, link) = self.append_one(draft, false)?;
+        let (mut appended, link, reset) = self.append_one(draft, false)?;
         if anchor_due(&appended.event) {
-            let outcome = self.anchorer().anchor(&appended.at, link.as_ref());
+            let outcome = self
+                .anchorer()
+                .anchor(&appended.at, link.as_ref(), reset.as_deref());
             let marker = EventDraft {
                 asserted_by_session: false,
                 ..EventDraft::new(AuditEventKind::Anchor, outcome.detail(&appended.at))
@@ -596,7 +608,7 @@ impl ChainWriter {
         &self,
         draft: EventDraft,
         record_refusal: bool,
-    ) -> Result<(Appended, Option<ChainLink>), ChainError> {
+    ) -> Result<(Appended, Option<ChainLink>, Option<String>), ChainError> {
         let mut cursor = self.cursor();
         let _lock = lock(&self.lock_path)?;
         self.sync(&mut cursor)?;
@@ -616,7 +628,7 @@ impl ChainWriter {
         if let Some(reason) = refusal {
             cursor.refused = Some(format!("the anchor holder refused this file: {reason}"));
         }
-        Ok((appended, cursor.link.clone()))
+        Ok((appended, cursor.link.clone(), cursor.reset.clone()))
     }
 
     /// Brings `cursor` to the file's end under the lock: follows a linked
@@ -703,7 +715,11 @@ impl ChainWriter {
                     .map_err(|error| io_error("read the chain", error))?
                 {
                     Step::Event(event, length) => {
-                        if held.as_ref().is_some_and(|held| held.seq == event.seq) {
+                        if held
+                            .as_ref()
+                            .and_then(|held| held.anchor.as_ref())
+                            .is_some_and(|held| held.seq == event.seq)
+                        {
                             digest_at_held = Some(event.digest.clone());
                         }
                         if event.kind == AuditEventKind::Anchor
@@ -719,6 +735,7 @@ impl ChainWriter {
                         cursor.head.clone_from(&scanner.head);
                         cursor.file_id.clone_from(&scanner.file_id);
                         cursor.link.clone_from(&scanner.link);
+                        cursor.reset.clone_from(&scanner.reset);
                         cursor.verified = true;
                     }
                     Step::End => break,
@@ -749,13 +766,23 @@ impl ChainWriter {
         cursor.verified = true;
         self.open_file_if_empty(cursor, None, None, None)?;
         if let (Some(held), Some(file_id)) = (&held, cursor.file_id.clone()) {
-            if let Some(conflict) = held_conflict(
-                held,
-                &file_id,
-                cursor.link.as_ref(),
-                cursor.next_seq,
-                digest_at_held.as_deref(),
-            ) {
+            let conflict = match (&held.reset, &held.anchor) {
+                (Some(reset), _) => (cursor.reset.as_deref() != Some(reset.as_str())).then(|| {
+                    format!(
+                        "the owner reset the anchor holder's anchor (record {reset}); this file \
+                         does not start from that reset"
+                    )
+                }),
+                (None, Some(anchor)) => held_conflict(
+                    anchor,
+                    &file_id,
+                    cursor.link.as_ref(),
+                    cursor.next_seq,
+                    digest_at_held.as_deref(),
+                ),
+                (None, None) => None,
+            };
+            if let Some(conflict) = conflict {
                 cursor.refused = Some(conflict);
             }
         }
@@ -824,6 +851,10 @@ impl ChainWriter {
             |link| link.previous_head_digest.clone(),
         );
         cursor.link = link.cloned();
+        cursor.reset = reset
+            .as_ref()
+            .and_then(|reset| reset["event_digest"].as_str())
+            .map(str::to_owned);
         self.write_event(
             cursor,
             EventDraft {

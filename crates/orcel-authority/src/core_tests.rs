@@ -87,8 +87,16 @@ impl PresenceVerifier for HashPresence {
 #[derive(Clone, Default)]
 struct Events(Arc<Mutex<Vec<(u32, String)>>>);
 
+thread_local! {
+    /// WP1-03: makes every Event Log write of this thread fail.
+    static EVENTS_FAIL: Cell<bool> = const { Cell::new(false) };
+}
+
 impl EventSink for Events {
     fn record(&self, event_id: u32, _error: bool, text: &str) -> Result<(), AuthorityError> {
+        if EVENTS_FAIL.with(Cell::get) {
+            return Err(AuthorityError::internal("the event log is unavailable"));
+        }
         self.0
             .lock()
             .map_err(|_| AuthorityError::internal("poisoned"))?
@@ -1339,6 +1347,16 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
 }
 
 fn anchor_request(file: char, seq: u64, digest: char, link: Option<ChainLink>) -> Request {
+    anchor_after_reset(file, seq, digest, link, None)
+}
+
+fn anchor_after_reset(
+    file: char,
+    seq: u64,
+    digest: char,
+    link: Option<ChainLink>,
+    reset: Option<&str>,
+) -> Request {
     Request::Anchor {
         anchor: AnchorRef {
             log: "orceld".to_owned(),
@@ -1347,6 +1365,7 @@ fn anchor_request(file: char, seq: u64, digest: char, link: Option<ChainLink>) -
             digest: digest.to_string().repeat(64),
         },
         link,
+        reset: reset.map(str::to_owned),
     }
 }
 
@@ -1380,6 +1399,7 @@ fn wp103_the_service_holds_orcelds_chain_anchor() -> Result<(), String> {
             digest: "b".repeat(64),
         },
         link: None,
+        reset: None,
     };
     for bad in [
         bad_log,
@@ -1785,13 +1805,84 @@ fn wp103_an_owner_anchor_reset_is_elevated_confirmed_and_recorded() -> Result<()
     assert!(audit
         .lines()
         .any(|line| line.contains("\"kind\":\"anchor_reset\"") && line.contains(&digest)));
-    // The new unlinked first file is accepted; the abandoned one is not.
-    let fresh = ok(core.handle(&orceld(), anchor_request('d', 31, 'e', None)))?;
+    // Review: only the file the reset opened, naming the reset record, at
+    // one of its first anchors. A dropped-in unlinked file, a file naming
+    // another record, or a long chain grown before it asked are refused,
+    // and the status keeps reporting the reset until the right one comes.
+    let wrong = "f".repeat(64);
+    for refused in [
+        anchor_request('d', 31, 'e', None),
+        anchor_after_reset('d', 31, 'e', None, Some(&wrong)),
+        anchor_after_reset('d', 95, 'e', None, Some(&digest)),
+    ] {
+        let error = core
+            .handle(&orceld(), refused)
+            .err()
+            .ok_or("refused after the reset")?;
+        assert!(
+            error
+                .message
+                .starts_with(crate::core::chain_anchor::REFUSED_PREFIX),
+            "{}",
+            error.message
+        );
+        assert_eq!(
+            ok(status(&mut core, &orceld()))?["reset"]["event_digest"],
+            digest.as_str()
+        );
+    }
+    let fresh = ok(core.handle(
+        &orceld(),
+        anchor_after_reset('d', 31, 'e', None, Some(&digest)),
+    ))?;
     assert_eq!(fresh["new_file"], Value::Bool(true));
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"]["seq"], 31);
     assert_eq!(
         code(core.handle(&orceld(), anchor_request('a', 63, 'c', None))),
         Some(FailureCode::CapabilityDenied)
     );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 review: the Event Log entry is written before the state commits,
+/// so a failed entry leaves the held anchor (and a pending reset) as it was.
+#[test]
+fn wp103_a_failed_event_log_write_commits_no_anchor_state() -> Result<(), String> {
+    let dir = temp_dir("anchor-event-fails")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let status = |core: &mut AuthorityCore| {
+        core.handle(
+            &orceld(),
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    EVENTS_FAIL.with(|fail| fail.set(true));
+    let failed = core.handle(&orceld(), anchor_request('a', 63, 'c', None));
+    EVENTS_FAIL.with(|fail| fail.set(false));
+    assert!(failed.is_err());
+    assert_eq!(ok(status(&mut core))?["held"]["seq"], 31);
+    // A confirmed reset whose entry fails resets nothing.
+    let begun = ok(core.handle(
+        &elevated_owner(),
+        Request::AnchorReset {
+            origin: ClaimedOrigin::OwnerCli,
+            log: "orceld".to_owned(),
+        },
+    ))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.take_pending_confirmations();
+    EVENTS_FAIL.with(|fail| fail.set(true));
+    let answered = core.confirmation_answer(&id, ConfirmAnswer::Yes);
+    EVENTS_FAIL.with(|fail| fail.set(false));
+    assert!(answered.is_err());
+    let after = ok(status(&mut core))?;
+    assert_eq!(after["held"]["seq"], 31, "{after}");
+    assert!(after.get("reset").is_none_or(Value::is_null), "{after}");
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

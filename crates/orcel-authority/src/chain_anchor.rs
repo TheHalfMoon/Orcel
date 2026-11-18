@@ -53,6 +53,9 @@ const ORCELD_LOG: &str = "orceld";
 /// `file_id` of a log whose anchor the owner reset: the next new first file
 /// is accepted. `seq` and `digest` then hold the reset record's.
 const RESET_MARK: &str = "reset-by-owner";
+/// After a reset, the first anchor must name a record below this seq: the
+/// new file's first anchors, not a long chain grown before it asked.
+const MAX_FIRST_SEQ_AFTER_RESET: u64 = 2 * orcel_contracts::event::ANCHOR_INTERVAL_EVENTS;
 /// Files a log left that are still refused by id.
 const MAX_LEFT_FILES: usize = 64;
 const CONTRACT: &str = "orcel.authority-chain-anchors/1";
@@ -97,15 +100,29 @@ fn decide(
     held: Option<&LogState>,
     anchor: &AnchorRef,
     link: Option<&ChainLink>,
+    reset: Option<&str>,
 ) -> Result<Decision, AuthorityError> {
     let Some(held) = held else {
         return Ok(Decision::Hold { new_file: true });
     };
     if held.file_id == RESET_MARK {
+        // Only the first file the owner's reset opened: its opening names
+        // the reset record, and the anchor is one of its first.
         return if held.left_files.contains(&anchor.file_id) {
             Err(AuthorityError::denied(format!(
                 "{REFUSED_PREFIX}the owner reset this log's anchor; the file it abandoned is not \
                  accepted again"
+            )))
+        } else if reset != Some(held.digest.as_str()) {
+            Err(AuthorityError::denied(format!(
+                "{REFUSED_PREFIX}the owner reset this log's anchor (record {}); this file does \
+                 not start from that reset",
+                held.digest
+            )))
+        } else if anchor.seq >= MAX_FIRST_SEQ_AFTER_RESET {
+            Err(AuthorityError::denied(format!(
+                "{REFUSED_PREFIX}after an owner reset the first anchor must be one of the new \
+                 file's first records (seq below {MAX_FIRST_SEQ_AFTER_RESET})"
             )))
         } else {
             Ok(Decision::Hold { new_file: true })
@@ -293,8 +310,8 @@ impl AuthorityCore {
         let bytes = serde_json::to_vec_pretty(&anchors).map_err(|error| {
             AuthorityError::internal(format!("encode the chain anchors: {error}"))
         })?;
-        write_atomically(&self.chain_anchors_path(), &bytes)?;
-        self.intents[index].state = Awaiting::Done;
+        // The Event Log entry first: a failed entry leaves the held anchor in
+        // place (nothing reset).
         self.event(
             crate::EVENT_ANCHOR,
             false,
@@ -303,6 +320,8 @@ impl AuthorityCore {
                 held.log, held.file_id, held.seq, held.digest, record.digest
             ),
         )?;
+        write_atomically(&self.chain_anchors_path(), &bytes)?;
+        self.intents[index].state = Awaiting::Done;
         Ok(())
     }
 
@@ -313,6 +332,7 @@ impl AuthorityCore {
         role: CallerRole,
         anchor: &AnchorRef,
         link: Option<&ChainLink>,
+        reset: Option<&str>,
     ) -> Result<Value, AuthorityError> {
         if role != CallerRole::Orceld {
             return Err(AuthorityError::denied(
@@ -339,7 +359,7 @@ impl AuthorityCore {
         let key = format!("{}|{}", caller.user_sid, anchor.log);
         let mut anchors = self.load_chain_anchors()?;
         let held = anchors.logs.get(&key).cloned();
-        let new_file = match decide(held.as_ref(), anchor, link)? {
+        let new_file = match decide(held.as_ref(), anchor, link, reset)? {
             Decision::Duplicate => {
                 return Ok(json!({
                     "anchored": true,
@@ -371,8 +391,8 @@ impl AuthorityCore {
                 left_files.remove(0);
             }
         }
-        // Write before the answer: the record, then the state, then the
-        // Event Log entry.
+        // Write before the answer: the record, then the Event Log entry, and
+        // only then the state (a failed entry leaves the state unchanged).
         let record = self.audit(
             "anchor",
             json!({
@@ -403,8 +423,8 @@ impl AuthorityCore {
         let bytes = serde_json::to_vec_pretty(&anchors).map_err(|error| {
             AuthorityError::internal(format!("encode the chain anchors: {error}"))
         })?;
-        write_atomically(&self.chain_anchors_path(), &bytes)?;
         self.event(crate::EVENT_ANCHOR, false, &insertion)?;
+        write_atomically(&self.chain_anchors_path(), &bytes)?;
         Ok(json!({
             "anchored": true,
             "event_id": crate::EVENT_ANCHOR,

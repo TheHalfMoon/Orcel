@@ -134,6 +134,11 @@ pub enum Request {
         anchor: AnchorRef,
         #[serde(default)]
         link: Option<ChainLink>,
+        /// The service's owner anchor reset record digest the anchored
+        /// file's opening names (`anchor_reset`), for a file that starts
+        /// after a reset.
+        #[serde(default)]
+        reset: Option<String>,
     },
     /// WP1-03: the latest anchor the service holds of the caller account's
     /// `log` (orceld only), so `orceld audit-verify` and a starting writer

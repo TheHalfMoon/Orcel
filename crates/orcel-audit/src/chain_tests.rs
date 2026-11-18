@@ -328,7 +328,12 @@ struct HeldAnchors(std::sync::Mutex<Vec<AnchorRef>>);
 struct StrictHolder(std::sync::Mutex<Option<AnchorRef>>);
 
 impl Anchorer for StrictHolder {
-    fn anchor(&self, anchor: &AnchorRef, link: Option<&ChainLink>) -> AnchorOutcome {
+    fn anchor(
+        &self,
+        anchor: &AnchorRef,
+        link: Option<&ChainLink>,
+        _reset: Option<&str>,
+    ) -> AnchorOutcome {
         let Ok(mut held) = self.0.lock() else {
             return AnchorOutcome::Unanchored {
                 reason: "poisoned".to_owned(),
@@ -358,13 +363,22 @@ impl Anchorer for StrictHolder {
         }
     }
 
-    fn held(&self, _log: &str) -> Option<AnchorRef> {
-        self.0.lock().ok().and_then(|held| held.clone())
+    fn held(&self, _log: &str) -> Option<crate::HeldState> {
+        let anchor = self.0.lock().ok().and_then(|held| held.clone());
+        Some(crate::HeldState {
+            anchor,
+            reset: None,
+        })
     }
 }
 
 impl Anchorer for HeldAnchors {
-    fn anchor(&self, anchor: &AnchorRef, _link: Option<&ChainLink>) -> AnchorOutcome {
+    fn anchor(
+        &self,
+        anchor: &AnchorRef,
+        _link: Option<&ChainLink>,
+        _reset: Option<&str>,
+    ) -> AnchorOutcome {
         if let Ok(mut held) = self.0.lock() {
             held.push(anchor.clone());
         }
@@ -826,7 +840,10 @@ fn chain_a_deleted_chain_is_refused_when_anchors_are_held() -> TestResult {
     for n in 0..ANCHOR_INTERVAL_EVENTS {
         first.append(draft(n)).map_err(|e| e.to_string())?;
     }
-    let held = holder.held(ORCELD_LOG).ok_or("an anchor is held")?;
+    let held = holder
+        .held(ORCELD_LOG)
+        .and_then(|state| state.anchor)
+        .ok_or("an anchor is held")?;
     // A restart on the intact file appends.
     let again = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
     again.set_anchorer(holder.clone());
@@ -983,6 +1000,88 @@ fn chain_an_owner_reset_opens_a_visible_first_file() -> TestResult {
     let opened = crate::open_after_reset(&fresh, ORCELD_LOG, json!({"event_digest": "d"}))
         .map_err(|e| e.to_string())?;
     assert_eq!(opened.moved_to, None);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A holder in its reset state: it holds no anchor but the reset record the
+/// next first file must name.
+struct ResetHolder(String);
+
+impl Anchorer for ResetHolder {
+    fn anchor(
+        &self,
+        _anchor: &AnchorRef,
+        _link: Option<&ChainLink>,
+        reset: Option<&str>,
+    ) -> AnchorOutcome {
+        if reset == Some(self.0.as_str()) {
+            AnchorOutcome::Anchored {
+                by: "reset holder".to_owned(),
+                receipt: json!({}),
+            }
+        } else {
+            AnchorOutcome::Refused {
+                reason: "not the reset file".to_owned(),
+            }
+        }
+    }
+
+    fn held(&self, _log: &str) -> Option<crate::HeldState> {
+        Some(crate::HeldState {
+            anchor: None,
+            reset: Some(self.0.clone()),
+        })
+    }
+}
+
+/// Review: after the owner's Yes, only the file that reset opened is
+/// continued. A dropped-in unlinked file (or one naming another reset) is
+/// refused by writers and Broken for the verifier given the holder's reset.
+#[test]
+fn chain_after_a_reset_only_the_reset_file_is_accepted() -> TestResult {
+    let dir = sandbox("after-reset")?;
+    let digest = "e".repeat(64);
+    // The file the reset opened: writers continue it and pass the digest
+    // to the holder.
+    let path = dir.join("audit-chain.jsonl");
+    crate::open_after_reset(&path, ORCELD_LOG, json!({"event_digest": digest}))
+        .map_err(|e| e.to_string())?;
+    let writer = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    writer.set_anchorer(Arc::new(ResetHolder(digest.clone())));
+    let mut outcome = None;
+    for n in 0..ANCHOR_INTERVAL_EVENTS {
+        let appended = writer.append(draft(n)).map_err(|e| e.to_string())?;
+        if appended.anchor.is_some() {
+            outcome = appended.anchor;
+        }
+    }
+    assert!(
+        matches!(outcome, Some(Ok(AnchorOutcome::Anchored { .. }))),
+        "{outcome:?}"
+    );
+    let report = crate::verify_with_holder(&path, &[], Some(&digest)).map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::ResetByOwner, "{report:?}");
+    // A dropped-in unlinked file.
+    let dropped = dir.join("dropped-chain.jsonl");
+    write(&dropped, 1)?;
+    let refused = ChainWriter::open(&dropped, ORCELD_LOG).map_err(|e| e.to_string())?;
+    refused.set_anchorer(Arc::new(ResetHolder(digest.clone())));
+    let attempt = refused.append(draft(1));
+    assert!(
+        matches!(&attempt, Err(ChainError::Broken { reason, .. }) if reason.contains("does not start from that reset")),
+        "{attempt:?}"
+    );
+    let report =
+        crate::verify_with_holder(&dropped, &[], Some(&digest)).map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::Broken);
+    // A file naming another reset.
+    let other = dir.join("other-chain.jsonl");
+    crate::open_after_reset(&other, ORCELD_LOG, json!({"event_digest": "f".repeat(64)}))
+        .map_err(|e| e.to_string())?;
+    let report =
+        crate::verify_with_holder(&other, &[], Some(&digest)).map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::Broken);
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }

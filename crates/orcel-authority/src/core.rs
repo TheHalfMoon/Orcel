@@ -765,9 +765,11 @@ impl AuthorityCore {
             } => self.authorize(caller, role, &lease_id, executor, claims),
             Request::Revoke { lease_id } => self.revoke(caller, role, &lease_id),
             Request::Stop => self.stop(caller, role),
-            Request::Anchor { anchor, link } => {
-                self.anchor_chain(caller, role, &anchor, link.as_ref())
-            }
+            Request::Anchor {
+                anchor,
+                link,
+                reset,
+            } => self.anchor_chain(caller, role, &anchor, link.as_ref(), reset.as_deref()),
             Request::AnchorStatus { log } => self.anchor_status(caller, role, &log),
             Request::AnchorReset { origin, log } => {
                 self.anchor_reset_begin(caller, role, origin, &log)

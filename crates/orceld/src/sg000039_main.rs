@@ -764,14 +764,23 @@ fn handle_browser_lease(
     // authority service.
     let _ = approval;
     // WP1-03: the dispatch record first. A revoke only takes authority away,
-    // so, like `task.stop`, it is never withheld for want of a record.
-    if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
-        if request.capability != "browser.lease.revoke" {
+    // so, like `task.stop`, it is never withheld for want of a record: it
+    // runs, its outcome is `DISPATCHED_UNRECORDED` in the plain log, and the
+    // caller gets its real result.
+    let revoke = request.capability == "browser.lease.revoke";
+    let unrecorded = if revoke {
+        audit.record_dispatch(&request, POLICY_REVISION).is_err()
+    } else {
+        if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
             return *refused;
         }
-    }
+        false
+    };
     let manager = authority_link::ServiceLeaseManager::for_this_build();
     let result = browser_lease::dispatch_management(&manager, &request, orcel_approval::now_ms());
+    if unrecorded {
+        return finish_unrecorded(audit, request, result);
+    }
     finish(audit, request, POLICY_REVISION, result)
 }
 
@@ -888,6 +897,22 @@ pub(crate) fn audit_before_dispatch(
                 format!("audit write failed before dispatch; nothing was dispatched: {error}"),
             ))
         })
+}
+
+/// The response of an authority-reducing request (a revoke) that ran
+/// although its dispatch record could not be written: the plain log says
+/// `DISPATCHED_UNRECORDED` (the chain cannot take it), and the caller gets
+/// the real result, never an internal error for want of a record.
+fn finish_unrecorded(
+    audit: &AuditLogger,
+    request: RequestEnvelope,
+    result: Result<Value, ProviderError>,
+) -> ResponseEnvelope {
+    let _ = audit.record(&request, POLICY_REVISION, "DISPATCHED_UNRECORDED");
+    match result {
+        Ok(value) => ResponseEnvelope::success(&request, value, POLICY_REVISION),
+        Err(error) => ResponseEnvelope::failure(request.request_id, error.code, error.message),
+    }
 }
 
 /// Audit a dispatched request's outcome and build its response.

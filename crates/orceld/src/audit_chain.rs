@@ -13,7 +13,7 @@
 //! refuses, the chain records a local marker that says `unanchored`; orceld
 //! never calls its chain tamper-proof without the service.
 
-use orcel_audit::{AnchorOutcome, Anchorer, ChainLink, ChainWriter};
+use orcel_audit::{AnchorOutcome, Anchorer, ChainLink, ChainWriter, HeldState};
 use orcel_authority::client::AuthorityClient;
 use orcel_contracts::event::AnchorRef;
 use std::path::PathBuf;
@@ -46,30 +46,45 @@ pub(crate) const SERVICE_HOLDER: &str =
     "Orcel authority service (its audit chain and Event Log event 4100)";
 
 impl Anchorer for ServiceAnchorer {
-    fn anchor(&self, anchor: &AnchorRef, link: Option<&ChainLink>) -> AnchorOutcome {
+    fn anchor(
+        &self,
+        anchor: &AnchorRef,
+        link: Option<&ChainLink>,
+        reset: Option<&str>,
+    ) -> AnchorOutcome {
         let link = link.map(|link| orcel_authority::protocol::ChainLink {
             previous_file_id: link.previous_file_id.clone(),
             previous_head_seq: link.previous_head_seq,
             previous_head_digest: link.previous_head_digest.clone(),
         });
-        let answer = AuthorityClient::installed().and_then(|client| client.anchor(anchor, link));
+        let answer = AuthorityClient::installed()
+            .and_then(|client| client.anchor(anchor, link, reset.map(str::to_owned)));
         outcome(answer)
     }
 
     /// What the installed service holds of this account's chain; `None`
     /// when the service is absent or does not answer (the chain is then
     /// unanchored and says so).
-    fn held(&self, log: &str) -> Option<AnchorRef> {
+    fn held(&self, log: &str) -> Option<HeldState> {
         let answer = AuthorityClient::installed()
             .and_then(|client| client.anchor_status(log))
             .ok()?;
-        held_of(&answer)
+        Some(held_state_of(&answer))
     }
 }
 
 /// The held anchor in an `AnchorStatus` answer.
 fn held_of(answer: &serde_json::Value) -> Option<AnchorRef> {
     serde_json::from_value(answer.get("held")?.clone()).ok()
+}
+
+/// The held anchor, or the owner reset record digest the next first file
+/// must name, in an `AnchorStatus` answer.
+fn held_state_of(answer: &serde_json::Value) -> HeldState {
+    HeldState {
+        anchor: held_of(answer),
+        reset: answer["reset"]["event_digest"].as_str().map(str::to_owned),
+    }
 }
 
 fn outcome(answer: Result<serde_json::Value, orcel_authority::AuthorityError>) -> AnchorOutcome {
@@ -171,13 +186,20 @@ pub(crate) fn move_aside(path: &std::path::Path) -> Result<(String, i32), String
 }
 
 /// The report as JSON text and the exit code it earns, checked against
-/// `held`, the anchor the authority service holds (when it is present): a
-/// chain replaced by a fresh file is then Broken, not Intact.
+/// `held`, what the authority service holds (when it is present): its
+/// anchor, so a chain replaced by a fresh file is Broken, not Intact; or,
+/// after an owner reset, the reset record the file must start from.
 pub(crate) fn verify_with_held(
     path: &std::path::Path,
-    held: Option<AnchorRef>,
+    held: Option<HeldState>,
 ) -> Result<(String, i32), String> {
-    let report = orcel_audit::verify_with_anchors(path, held.as_slice())
+    let anchors: Vec<AnchorRef> = held
+        .as_ref()
+        .and_then(|held| held.anchor.clone())
+        .into_iter()
+        .collect();
+    let reset = held.as_ref().and_then(|held| held.reset.as_deref());
+    let report = orcel_audit::verify_with_holder(path, &anchors, reset)
         .map_err(|error| format!("read {}: {error}", path.display()))?;
     let code = match report.verdict {
         orcel_audit::Verdict::Intact => EXIT_INTACT,
@@ -193,7 +215,7 @@ pub(crate) fn verify_with_held(
     if let serde_json::Value::Object(map) = &mut value {
         map.insert(
             "held_anchor_source".into(),
-            serde_json::Value::from(if held.is_some() {
+            serde_json::Value::from(if !anchors.is_empty() || reset.is_some() {
                 SERVICE_HOLDER
             } else {
                 "none: the authority service is absent or holds no anchor of this chain; \
@@ -221,13 +243,21 @@ mod tests {
     struct Holds(AnchorRef);
 
     impl Anchorer for Holds {
-        fn anchor(&self, _anchor: &AnchorRef, _link: Option<&ChainLink>) -> AnchorOutcome {
+        fn anchor(
+            &self,
+            _anchor: &AnchorRef,
+            _link: Option<&ChainLink>,
+            _reset: Option<&str>,
+        ) -> AnchorOutcome {
             AnchorOutcome::Unanchored {
                 reason: "test".to_owned(),
             }
         }
-        fn held(&self, _log: &str) -> Option<AnchorRef> {
-            Some(self.0.clone())
+        fn held(&self, _log: &str) -> Option<HeldState> {
+            Some(HeldState {
+                anchor: Some(self.0.clone()),
+                reset: None,
+            })
         }
     }
 
@@ -254,7 +284,14 @@ mod tests {
         }
         let held = last.ok_or("records")?.at;
         let chain = logger.chain().path().to_path_buf();
-        assert_eq!(verify_with_held(&chain, Some(held.clone()))?.1, EXIT_INTACT);
+        let state = |anchor: AnchorRef| HeldState {
+            anchor: Some(anchor),
+            reset: None,
+        };
+        assert_eq!(
+            verify_with_held(&chain, Some(state(held.clone())))?.1,
+            EXIT_INTACT
+        );
         std::fs::remove_file(&chain).map_err(|e| e.to_string())?;
         // A restarted orceld: a new logger whose anchor holder holds the
         // old file's anchor.
@@ -271,7 +308,18 @@ mod tests {
             "{}",
             error.message
         );
-        let (text, code) = verify_with_held(&chain, Some(held))?;
+        let (text, code) = verify_with_held(&chain, Some(state(held)))?;
+        // After an owner reset, a file that does not start from the reset
+        // record is Broken too.
+        let after_reset = HeldState {
+            anchor: None,
+            reset: Some("e".repeat(64)),
+        };
+        assert_eq!(verify_with_held(&chain, Some(after_reset))?.1, EXIT_BROKEN);
+        assert_eq!(
+            held_state_of(&json!({"held": null, "reset": {"event_digest": "abc"}})).reset,
+            Some("abc".to_owned())
+        );
         assert_eq!(code, EXIT_BROKEN, "{text}");
         assert!(text.contains("unlinked_file"));
         assert!(text.contains(SERVICE_HOLDER));
@@ -496,6 +544,34 @@ mod tests {
         Ok(())
     }
 
+    /// Review: a revoke that ran although its dispatch record could not be
+    /// written reports its real result and is `DISPATCHED_UNRECORDED` in the
+    /// plain log, never an internal error.
+    #[test]
+    fn audit_chain_an_unrecorded_revoke_reports_its_real_result() -> Result<(), String> {
+        let dir = sandbox("unrecorded")?;
+        let plain = dir.join("audit.jsonl");
+        let logger = AuditLogger::new(&plain).map_err(|e| e.to_string())?;
+        logger
+            .record(&request(1), "p1", "SUCCESS")
+            .map_err(|e| e.to_string())?;
+        let chain = logger.chain().path().to_path_buf();
+        let text = std::fs::read_to_string(&chain).map_err(|e| e.to_string())?;
+        std::fs::write(&chain, text.replacen("r-1", "r-8", 1)).map_err(|e| e.to_string())?;
+        let broken = AuditLogger::new(&plain).map_err(|e| e.to_string())?;
+        let revoke = RequestEnvelope {
+            capability: "browser.lease.revoke".into(),
+            operation: "revoke".into(),
+            ..request(2)
+        };
+        assert!(broken.record_dispatch(&revoke, "p1").is_err());
+        let response = crate::finish_unrecorded(&broken, revoke, Ok(json!({"revoked": ["bl-1"]})));
+        assert!(response.error.is_none(), "{:?}", response.error);
+        let plain_text = std::fs::read_to_string(&plain).map_err(|e| e.to_string())?;
+        assert!(plain_text.contains("DISPATCHED_UNRECORDED"), "{plain_text}");
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
     /// Every call to a dispatch function (any `dispatch*` function or
     /// `authorize_enrollment`) inside one of orceld's request entry points
     /// (any `handle_*` function), discovered by scanning the source, is

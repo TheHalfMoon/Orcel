@@ -237,6 +237,10 @@ Only when the file the service holds anchors of is gone for good, reset the anch
    `orcel-anchor-reset/1|orceld|<file>|<seq>|<digest>|record <digest>`), and the command opens a new first
    chain file whose opening record names that reset record. Any file still at the chain's path is kept beside
    it as `audit-chain.jsonl.quarantine-reset-*`.
+   If the command stopped after your Yes (closed window, error), run it again: the service still reports the
+   reset, so it opens the file without a new box. Only that file is accepted: until its first anchor, the
+   service refuses any other first file (one that does not name the reset record, or a long chain grown
+   before it asked), and `orceld audit-verify` reports such a file as broken.
 7. Start your client again. `orceld audit-verify` now reports `reset_by_owner` (exit code 8), never a silent
    `intact`, and names the reset record; the next anchors the service holds are of the new file. The abandoned
    file stays refused by id.

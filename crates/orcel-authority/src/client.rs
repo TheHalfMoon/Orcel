@@ -214,15 +214,18 @@ impl AuthorityClient {
         })
     }
 
-    /// WP1-03: asks the service to hold an anchor of orceld's audit chain.
+    /// WP1-03: asks the service to hold an anchor of orceld's audit chain;
+    /// `reset` is the owner reset record digest a post-reset file names.
     pub fn anchor(
         &self,
         anchor: &orcel_contracts::event::AnchorRef,
         link: Option<crate::protocol::ChainLink>,
+        reset: Option<String>,
     ) -> Result<Value, AuthorityError> {
         self.call(&Request::Anchor {
             anchor: anchor.clone(),
             link,
+            reset,
         })
     }
 }
