@@ -494,6 +494,21 @@ setInterval(round, 5000);
     });
     return;
   }
+  // SG-000135 OB-04: a persistent cookie (an hour) set by a response
+  // header, no page script, and a page that shows which cookie arrived, so
+  // the mission can tell a kept profile from a fresh or another one.
+  const setCookie = /^\/ob04-set-(alpha|beta)$/.exec(path);
+  if (setCookie) {
+    response.setHeader("set-cookie", `ob04=${setCookie[1]}; Max-Age=3600; Path=/; Secure; HttpOnly; SameSite=Lax`);
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    return response.end(`<!doctype html><meta charset="utf-8"><title>OB-04 cookie set</title><p>OB-04 cookie set to ${setCookie[1]}</p>`);
+  }
+  if (path === "/ob04-show") {
+    const cookie = /(?:^|;\s*)ob04=(alpha|beta)(?:;|$)/.exec(request.headers.cookie ?? "");
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.setHeader("cache-control", "no-store");
+    return response.end(`<!doctype html><meta charset="utf-8"><title>OB-04 cookie</title><p>OB-04 cookie is ${cookie ? cookie[1] : "absent"}</p>`);
+  }
   if (path.startsWith("/track?")) {
     const number = new URL(path, "https://fixture.test").searchParams.get("number") ?? "";
     response.setHeader("content-type", "text/html; charset=utf-8");

@@ -96,6 +96,25 @@ export const FROZEN_FLAGS: readonly string[] = [
   "--no-service-autorun"
 ];
 
+/// SG-000135 OB-04: the one flag a Visible (headed) lifetime carries right
+/// after the frozen flags, which it takes without `--headless`. Mirrors
+/// VISIBLE_WINDOW_NAME_FLAG in crates/orcel-browser-host/src/confinement.rs.
+export const VISIBLE_WINDOW_NAME_FLAG = "--window-name=Orcel agent session";
+
+/// SG-000135 OB-04: the frozen flags of a Visible lifetime, in order: the
+/// SG-000074 set without `--headless`, then the window name.
+export const VISIBLE_FLAGS: readonly string[] = [
+  ...FROZEN_FLAGS.filter((flag) => flag !== "--headless"),
+  VISIBLE_WINDOW_NAME_FLAG
+];
+
+/// SG-000135 OB-04: whether a launch argv is a Visible (headed) one. Only
+/// an argv that launchRefusal accepted is ever launched, and the engine runs
+/// headless unless the argv is exactly the Visible form.
+export function isVisibleArgv(argv: readonly string[]): boolean {
+  return argv[0] !== "--headless" && VISIBLE_FLAGS.every((flag, index) => argv[index] === flag);
+}
+
 /// Fixed confinement values from the SG-000108 decision record. The two
 /// host-built values (resolver rules, bypass list) are checked for shape.
 export const NO_ROUTE_PROXY = "--proxy-server=http://0.0.0.0:9";
@@ -691,9 +710,12 @@ export function launchRefusal(launch: Extract<HostFrame, { frame: "launch" }>): 
     if (!ENGINE_ENV_ALLOWLIST.includes(key)) return `engine environment key ${key} is not allowed`;
   }
   const { argv } = launch;
-  const frozenCount = FROZEN_FLAGS.length;
+  // SG-000135 OB-04: the Shadow (headless) frozen flags, or exactly the
+  // Visible ones (no --headless, then the fixed window name).
+  const frozen = isVisibleArgv(argv) ? VISIBLE_FLAGS : FROZEN_FLAGS;
+  const frozenCount = frozen.length;
   for (let index = 0; index < frozenCount; index++) {
-    if (argv[index] !== FROZEN_FLAGS[index]) return "argv does not start with the frozen SG-000074 flags";
+    if (argv[index] !== frozen[index]) return "argv does not start with the frozen SG-000074 flags";
   }
   let rest = argv.slice(frozenCount);
   // Test fixtures only: one trusted certificate hash, accepted solely when

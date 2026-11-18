@@ -46,6 +46,18 @@ import {
  *   navigation rules admitted its page.
  * - `browser_close` ends the session and removes its profile;
  *   `browser_task_status` returns its provisional receipts.
+ * - SG-000135 OB-04: `browser_session_create` takes an optional `mode`:
+ *   `shadow` (the default: headless; Orcel never uses the person's mouse,
+ *   keyboard, clipboard, focus or foreground window, though a page can still
+ *   copy text to the clipboard after an approved click) or `visible` (a headed window of
+ *   its own, titled as an Orcel agent session; the engine may bring it to
+ *   the front when it opens and when it opens a page, so it asks the owner
+ *   first and never claims no-interference). It also
+ *   takes an optional `profile`: the name of a persistent Orcel-managed
+ *   profile (never a path or a person's browser profile), whose cookies and
+ *   site storage persist across sessions; one live session per profile.
+ *   `browser_profiles` lists them; `browser_profile_create` and
+ *   `browser_profile_delete` each ask the owner (SOFT) first.
  *
  * Only a Windows development build reaches a real browser; every other
  * build answers typed unavailable. The schemas are a first filter only:
@@ -56,6 +68,14 @@ const APPROVAL_TIMEOUT_MS = 10 * 60_000;
 const OBSERVE_TIMEOUT_MS = 4 * 60_000;
 const CREATE_TIMEOUT_MS = 2 * 60_000;
 const MAX_TASK_CHARS = 64;
+
+/** SG-000135 OB-04: an Orcel-managed profile name (never a path). */
+export const browserProfileNameSchema = z
+  .string()
+  .max(32)
+  .regex(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/, {
+    message: "profile is 1 to 32 lowercase letters, digits and inner hyphens"
+  });
 
 /** A broker session id as orceld mints it: `bs-<instance>-<n>-<random>`. */
 export const browserSessionIdSchema = z
@@ -74,8 +94,18 @@ export function browserSessionCreateSchema(defaultWorkspace: string) {
       .min(1)
       .max(MAX_TASK_CHARS)
       .refine((value) => !/\p{Cc}/u.test(value), { message: "task is one line with no control character" })
-      .optional()
+      .optional(),
+    mode: z.enum(["shadow", "visible"]).optional(),
+    profile: browserProfileNameSchema.optional()
   });
+}
+
+export function browserProfilesSchema(defaultWorkspace: string) {
+  return z.strictObject({ workspace_id: workspace(defaultWorkspace) });
+}
+
+export function browserProfileNameArgsSchema(defaultWorkspace: string) {
+  return z.strictObject({ workspace_id: workspace(defaultWorkspace), name: browserProfileNameSchema });
 }
 
 export function browserSessionSchema(defaultWorkspace: string) {
@@ -185,11 +215,16 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_session_create",
     {
-      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes, and client_ref, which the owner names to issue the session a Full Access lease (it grants nothing). The profile is ephemeral: browser_close, the end of this MCP session or an emergency stop removes it. At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
+      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes, and client_ref, which the owner names when asking the Orcel authority service for a Full Access lease (it grants nothing). mode: shadow (default) runs headless, and Orcel never uses your mouse, keyboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", after fresh local Orcel approval; the browser may bring it to the front when it opens and when it opens a page, so it does not claim no-interference. profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). A Visible session, and the first use of a persistent profile in this MCP session, each ask fresh local Orcel approval first (the profile may be signed in to sites); every page prompt in a persistent profile names it. Pages get no async clipboard or other permission and no file dialog, but in either mode a page can still copy text to your system clipboard after an approved click (the legacy execCommand("copy") path). At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
       inputSchema: browserSessionCreateSchema(defaultWorkspace)
     },
-    async ({ workspace_id, task }) =>
-      forward("browser_session_create", workspace_id, task === undefined ? {} : { task }, CREATE_TIMEOUT_MS)
+    async ({ workspace_id, task, mode, profile }) =>
+      forward(
+        "browser_session_create",
+        workspace_id,
+        { ...(task === undefined ? {} : { task }), ...(mode === undefined ? {} : { mode }), ...(profile === undefined ? {} : { profile }) },
+        CREATE_TIMEOUT_MS
+      )
   );
 
   server.registerTool(
@@ -308,5 +343,32 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
       inputSchema: browserSessionSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id }) => forward("browser_task_status", workspace_id, { session_id }, OBSERVE_TIMEOUT_MS)
+  );
+
+  server.registerTool(
+    "browser_profiles",
+    {
+      description: `List the persistent Orcel-managed browser profiles (at most 16): each one's name, when it was created and whether a session holds it now. Read-only, no approval. Never a path, cookie or stored value. Your own browsers' profiles are never listed or used. ${DEV_ONLY}`,
+      inputSchema: browserProfilesSchema(defaultWorkspace)
+    },
+    async ({ workspace_id }) => forward("browser_profiles", workspace_id, {}, OBSERVE_TIMEOUT_MS)
+  );
+
+  server.registerTool(
+    "browser_profile_create",
+    {
+      description: `Create a persistent Orcel-managed browser profile named name (1 to 32 lowercase letters, digits and inner hyphens), kept in Orcel's own protected state, after fresh local Orcel approval. Sessions that name it keep its cookies and site storage until it is deleted. ${DEV_ONLY}`,
+      inputSchema: browserProfileNameArgsSchema(defaultWorkspace)
+    },
+    async ({ workspace_id, name }) => forward("browser_profile_create", workspace_id, { name }, APPROVAL_TIMEOUT_MS)
+  );
+
+  server.registerTool(
+    "browser_profile_delete",
+    {
+      description: `Permanently delete the Orcel-managed browser profile named name and everything it holds, after fresh local Orcel approval. Refused while a session uses it. Your own browsers are never touched. ${DEV_ONLY}`,
+      inputSchema: browserProfileNameArgsSchema(defaultWorkspace)
+    },
+    async ({ workspace_id, name }) => forward("browser_profile_delete", workspace_id, { name }, APPROVAL_TIMEOUT_MS)
   );
 }

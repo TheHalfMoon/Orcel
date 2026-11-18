@@ -167,6 +167,15 @@ impl Engine {
             self.path.to_string_lossy()
         )
     }
+
+    /// SG-000135 OB-04: what a persistent Orcel-managed profile's marker
+    /// binds: the engine family and its verified path, without the version,
+    /// so an engine update (which upgrades the profile in place, as the
+    /// engine does for any profile) keeps the profile usable; another
+    /// engine, or the same family at another path, is still refused.
+    pub fn profile_family(&self) -> String {
+        format!("{:?}:{}", self.kind, self.path.to_string_lossy())
+    }
 }
 
 /// Where to look. Production scans isolated extra roots (none) plus the

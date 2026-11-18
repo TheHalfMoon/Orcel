@@ -11,7 +11,7 @@ import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
 import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
-import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, MAX_URL_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
+import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, isVisibleArgv, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, MAX_URL_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
@@ -35,6 +35,7 @@ import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
 import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState } from "./worker.js";
 import { capturePng, fullPageClip, runExclusive, ScreenshotError } from "./screenshot.js";
+import { denyDesktopPermissions, interceptFileChoosers } from "./desktop-guard.js";
 import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
 import { extractBySchema } from "./outline/schema-extract.js";
@@ -62,7 +63,10 @@ const playwrightLauncher: Launcher = {
       ignoreDefaultArgs: true,
       args: spec.argv,
       env: spec.env,
-      headless: true,
+      // SG-000135 OB-04: headless (Shadow) unless the host-built argv is
+      // exactly the Visible form launchRefusal accepted. Nothing here ever
+      // raises, focuses or activates the window.
+      headless: !isVisibleArgv(spec.argv),
       // Downloads never happen through the engine: an approved document is
       // captured by the redirect guard instead (slice 3d).
       acceptDownloads: false,
@@ -74,6 +78,17 @@ const playwrightLauncher: Launcher = {
       handleSIGHUP: false,
       timeout: ENGINE_LAUNCH_TIMEOUT_MS
     });
+    // SG-000135 OB-04: no page gets the clipboard or any other permission,
+    // and no file chooser reaches the desktop (desktop-guard.ts). A refusal
+    // fails the launch.
+    try {
+      await denyDesktopPermissions(context);
+    } catch (error) {
+      await context.close().catch(() => {});
+      throw error;
+    }
+    context.on("page", interceptFileChoosers);
+    for (const existing of context.pages()) interceptFileChoosers(existing);
     // Each host navigation runs in a fresh page: Chromium can commit an
     // earlier refused navigation's error page late (even more than once),
     // which would interrupt a navigation in the same page. The previous

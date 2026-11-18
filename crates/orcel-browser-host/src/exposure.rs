@@ -135,11 +135,15 @@ pub const BROWSER_FULL_MCP_TOOLS: &[&str] = &[
     "browser_tabs",
     "browser_close",
     "browser_task_status",
+    "browser_profiles",
+    "browser_profile_create",
+    "browser_profile_delete",
 ];
 
 /// The broker shape each `browser_full` tool forwards (tool, capability,
 /// operation), and the live host action it maps onto, if any. SG-000135
 /// OB-03 adds `browser_screenshot` and `browser_tabs`.
+/// SG-000135 OB-04 adds the persistent profiles' list, create and delete.
 pub const BROWSER_FULL_TOOL_SHAPES: &[(&str, &str, &str)] = &[
     ("browser_session_create", "browser.session", "create"),
     ("browser_open", "browser.session", "open"),
@@ -153,6 +157,17 @@ pub const BROWSER_FULL_TOOL_SHAPES: &[(&str, &str, &str)] = &[
     ("browser_tabs", "browser.session", "tabs"),
     ("browser_close", "browser.session", "close"),
     ("browser_task_status", "browser.session", "status"),
+    ("browser_profiles", "browser.session", "profiles"),
+    (
+        "browser_profile_create",
+        "browser.session",
+        "profile_create",
+    ),
+    (
+        "browser_profile_delete",
+        "browser.session",
+        "profile_delete",
+    ),
 ];
 
 /// Whether a capability and operation pair is within the maximum
@@ -287,15 +302,15 @@ mod tests {
     /// SG-000135 OB-02: the `browser_full` tools, one broker shape each,
     /// no denied shape, none of the uploads, and a profile of its own.
     #[test]
-    fn ob02_the_browser_full_set_is_twelve_broker_tools() {
-        assert_eq!(BROWSER_FULL_MCP_TOOLS.len(), 12);
+    fn ob02_the_browser_full_set_is_fifteen_broker_tools() {
+        assert_eq!(BROWSER_FULL_MCP_TOOLS.len(), 15);
         let tools: Vec<&str> = BROWSER_FULL_TOOL_SHAPES
             .iter()
             .map(|(t, _, _)| *t)
             .collect();
         assert_eq!(tools, BROWSER_FULL_MCP_TOOLS);
         let unique: HashSet<&str> = BROWSER_FULL_MCP_TOOLS.iter().copied().collect();
-        assert_eq!(unique.len(), 12);
+        assert_eq!(unique.len(), 15);
         for (tool, capability, _) in BROWSER_FULL_TOOL_SHAPES {
             assert_eq!(*capability, "browser.session", "{tool}");
             assert!(!is_denied_shape(tool), "{tool}");

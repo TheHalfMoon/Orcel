@@ -539,6 +539,10 @@ pub struct LiveBrowser {
     /// Orcel Browser B1: the human-intervention gate, asked before every
     /// agent action on the page (off until SG-000135; it can only refuse).
     takeover: TakeoverGate,
+    /// SG-000135 OB-04: the persistent Orcel-managed profile this browser
+    /// runs in, named in every approval prompt it asks; `None` for an
+    /// ephemeral profile.
+    profile_label: Option<String>,
     /// The gate's ticket for the write in progress, if it admitted one.
     gate_ticket: Option<WriteTicket>,
     /// The page's latest committed URL (B1: the path in an action's
@@ -684,6 +688,46 @@ fn origin_of(url: &str) -> String {
     orcel_provider_browser::parse_destination_url(url)
         .map(|parsed| parsed.origin)
         .unwrap_or_default()
+}
+
+/// SG-000135 OB-04: `prompt` with the persistent profile `profile` named,
+/// as the first preview line and (when `in_summary`, for a prompt whose
+/// summary is not a shown value) in the summary. With no profile the prompt
+/// is unchanged.
+pub(crate) fn profile_prompt(
+    profile: Option<&str>,
+    prompt: ApprovalPrompt,
+    in_summary: bool,
+) -> ApprovalPrompt {
+    let Some(name) = profile else {
+        return prompt;
+    };
+    let line =
+        format!("Profile: the Orcel-managed browser profile {name}; it may be signed in to sites");
+    let mut prompt = prompt;
+    if in_summary {
+        prompt.summary = format!("{} profile={name}", prompt.summary);
+    }
+    prompt.preview = Some(match prompt.preview.take() {
+        Some(orcel_approval::Preview::Content {
+            mut lines,
+            more_lines,
+        }) => {
+            lines.insert(0, ('>', line));
+            let mut more_lines = more_lines;
+            while lines.len() > orcel_approval::PREVIEW_LINES {
+                lines.pop();
+                more_lines += 1;
+            }
+            orcel_approval::Preview::Content { lines, more_lines }
+        }
+        Some(other) => other,
+        None => orcel_approval::Preview::Content {
+            lines: vec![('>', line)],
+            more_lines: 0,
+        },
+    });
+    prompt
 }
 
 /// SG-000122 slice A2: the approval prompt of one live form action, from
@@ -928,6 +972,7 @@ impl LiveBrowser {
             observed_roles: std::collections::HashMap::new(),
             host_ended: None,
             takeover: TakeoverGate::from_switch(),
+            profile_label: None,
             gate_ticket: None,
             page_url: None,
             background: Vec::new(),
@@ -1720,6 +1765,7 @@ impl LiveBrowser {
             } => prompt.downloading_to(format!("{folder}/{relative}")),
             _ => prompt,
         };
+        let prompt = self.with_profile(prompt, true);
         // Only a link's classification is the host's to give; anything it
         // does not name exactly `routine` is not routine.
         let impact = match (action, impact) {
@@ -1986,6 +2032,9 @@ impl LiveBrowser {
             &digest,
             earlier.as_deref(),
         )?;
+        // The form prompt's summary is the value shown exactly: the profile
+        // goes in the preview only.
+        let prompt = self.with_profile(prompt, false);
         let mut intent = crate::mutation_journal::pending(
             sink,
             crate::mutation_journal::opaque(workspace, request, &digest, &journal_target),
@@ -2690,6 +2739,19 @@ impl LiveBrowser {
         self.takeover.set_task(task);
     }
 
+    /// SG-000135 OB-04: the persistent profile this browser runs in; every
+    /// prompt it asks names it.
+    pub fn set_profile(&mut self, name: &str) {
+        self.profile_label = Some(name.to_owned());
+    }
+
+    /// SG-000135 OB-04: `prompt` with the persistent profile named, as the
+    /// first preview line and (for a prompt whose summary is not a shown
+    /// value) in the summary. An ephemeral browser's prompt is unchanged.
+    fn with_profile(&self, prompt: ApprovalPrompt, in_summary: bool) -> ApprovalPrompt {
+        profile_prompt(self.profile_label.as_deref(), prompt, in_summary)
+    }
+
     /// SG-000135 OB-01: the MCP client the broker session belongs to; the
     /// takeover gate keeps its uncertain consequential actions per client
     /// too.
@@ -3056,6 +3118,7 @@ mod tests {
             observed_roles: std::collections::HashMap::new(),
             host_ended,
             takeover: TakeoverGate::from_switch(),
+            profile_label: None,
             gate_ticket: None,
             page_url: None,
             background: Vec::new(),
@@ -3566,6 +3629,55 @@ mod tests {
             .position(|line| line.starts_with("Target: "))
             .expect("a Target line");
         lines[at + 1].clone()
+    }
+
+    /// SG-000135 OB-04: a prompt in a persistent profile names it (first
+    /// preview line, and in a navigation's summary); a form value's summary
+    /// is never changed; an ephemeral prompt is unchanged; the preview bound
+    /// holds.
+    #[test]
+    fn ob04_every_prompt_in_a_persistent_profile_names_it() -> Result<(), String> {
+        let base = || {
+            ApprovalPrompt::new(
+                "default",
+                "rev",
+                "navigate isolated browser page",
+                "https://fixture.test/",
+                "lifetime=l target=t",
+                "d",
+            )
+        };
+        let plain = base();
+        let same = profile_prompt(None, plain.clone(), true);
+        assert_eq!(same, plain);
+        let named = profile_prompt(Some("work"), base(), true);
+        assert!(named.summary.ends_with(" profile=work"));
+        let text = orcel_approval::soft_dialog_text(&named);
+        assert!(
+            text.contains("Orcel-managed browser profile work"),
+            "{text}"
+        );
+        assert!(text.contains("may be signed in"), "{text}");
+        let full = base().with_preview(orcel_approval::Preview::Content {
+            lines: (0..orcel_approval::PREVIEW_LINES)
+                .map(|n| ('>', format!("line {n}")))
+                .collect(),
+            more_lines: 0,
+        });
+        let value = profile_prompt(Some("work"), full, false);
+        assert_eq!(
+            value.summary, "lifetime=l target=t",
+            "a shown value is untouched"
+        );
+        let Some(orcel_approval::Preview::Content { lines, more_lines }) = &value.preview else {
+            return Err(format!("not a content preview: {:?}", value.preview));
+        };
+        assert_eq!(lines.len(), orcel_approval::PREVIEW_LINES);
+        assert!(lines
+            .first()
+            .is_some_and(|(_, line)| line.contains("profile work")));
+        assert_eq!(*more_lines, 1);
+        Ok(())
     }
 
     /// SG-000122 slice A2: a fill prompt shows exactly the bound value at
@@ -4301,6 +4413,8 @@ mod native {
                     profile_root: self.root.join("profiles"),
                     temp_dir: self.root.join("staging"),
                     state_root: self.root.join("state"),
+                    mode: orcel_browser_host::EngineMode::Shadow,
+                    persistent_profile: None,
                 },
                 &self.state(),
             )

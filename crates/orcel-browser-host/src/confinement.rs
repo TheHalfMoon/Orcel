@@ -235,11 +235,70 @@ pub fn proxy_bypass_list(destinations: &[AdmittedDestination]) -> Result<String,
     Ok(entries.join(";"))
 }
 
+/// SG-000135 OB-04: where an engine lifetime runs.
+///
+/// - `Shadow` (the default, and the only mode `browser_structured` ever
+///   uses) is the SG-000108 argv exactly: `--headless`, so the engine has no
+///   window, takes no focus and never touches the person's desktop.
+/// - `Visible` is the one amendment, for `browser_full` sessions whose
+///   caller chose it: the frozen flags without `--headless`, then
+///   [`VISIBLE_WINDOW_NAME_FLAG`] (the window's title names it an Orcel
+///   agent session), then exactly the same profile, pipe, confinement flags
+///   and blank page. Pipe-only attachment, the isolated profile and every
+///   destination rule are unchanged; no flag is added that raises,
+///   maximises or focuses the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EngineMode {
+    #[default]
+    Shadow,
+    Visible,
+}
+
+impl EngineMode {
+    /// The mode's name on the host command line and in replies.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shadow => "shadow",
+            Self::Visible => "visible",
+        }
+    }
+
+    /// Parse a mode name; anything else is refused.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "shadow" => Some(Self::Shadow),
+            "visible" => Some(Self::Visible),
+            _ => None,
+        }
+    }
+}
+
+/// SG-000135 OB-04: the one flag a Visible lifetime adds, right after the
+/// frozen flags: the engine window's title, so the person can tell an
+/// Orcel agent session from their own browser. A fixed value: no caller
+/// text ever reaches it.
+pub const VISIBLE_WINDOW_NAME_FLAG: &str = "--window-name=Orcel agent session";
+
+/// The frozen flag Visible mode leaves out.
+const HEADLESS_FLAG: &str = "--headless";
+
 /// Build the exact worker-launch argv: the SG-000074 frozen flags, the
-/// profile, the eight confinement flags, and the blank initial page.
+/// profile, the eight confinement flags, and the blank initial page. This
+/// is the Shadow argv; [`build_worker_argv_in`] builds either mode.
 pub fn build_worker_argv(
     profile_dir: &Path,
     destinations: &[AdmittedDestination],
+) -> Result<Vec<String>, HostError> {
+    build_worker_argv_in(profile_dir, destinations, EngineMode::Shadow)
+}
+
+/// SG-000135 OB-04: the exact worker-launch argv for `mode`. Shadow is
+/// [`build_worker_argv`]'s argv; Visible drops `--headless` and adds
+/// [`VISIBLE_WINDOW_NAME_FLAG`] after the frozen flags, nothing else.
+pub fn build_worker_argv_in(
+    profile_dir: &Path,
+    destinations: &[AdmittedDestination],
+    mode: EngineMode,
 ) -> Result<Vec<String>, HostError> {
     let profile = profile_dir
         .to_str()
@@ -247,7 +306,15 @@ pub fn build_worker_argv(
     if profile.is_empty() {
         return Err(HostError::Invalid("profile directory is empty".into()));
     }
-    let mut argv: Vec<String> = ALLOWED_FLAGS.iter().map(|flag| flag.to_string()).collect();
+    let mut argv: Vec<String> = match mode {
+        EngineMode::Shadow => ALLOWED_FLAGS.iter().map(|flag| flag.to_string()).collect(),
+        EngineMode::Visible => ALLOWED_FLAGS
+            .iter()
+            .filter(|flag| **flag != HEADLESS_FLAG)
+            .map(|flag| flag.to_string())
+            .chain(std::iter::once(VISIBLE_WINDOW_NAME_FLAG.to_string()))
+            .collect(),
+    };
     argv.push(format!("--user-data-dir={profile}"));
     argv.push(PIPE_FLAG.into());
     argv.push(format!("{RESOLVER_FLAG}={}", resolver_rules(destinations)?));
@@ -273,6 +340,19 @@ pub fn assert_worker_argv_exact(
     profile_dir: &Path,
     destinations: &[AdmittedDestination],
 ) -> Result<(), HostError> {
+    assert_worker_argv_exact_in(argv, profile_dir, destinations, EngineMode::Shadow)
+}
+
+/// SG-000135 OB-04: [`assert_worker_argv_exact`] for `mode`: the argv must
+/// equal, element for element, the one the host builds for that mode, so a
+/// Shadow lifetime never runs headed and a Visible one carries exactly the
+/// one window-name flag.
+pub fn assert_worker_argv_exact_in(
+    argv: &[String],
+    profile_dir: &Path,
+    destinations: &[AdmittedDestination],
+    mode: EngineMode,
+) -> Result<(), HostError> {
     // The exact comparison below already refuses these; this pass only
     // names the forbidden flag in the error.
     for arg in argv {
@@ -281,7 +361,7 @@ pub fn assert_worker_argv_exact(
             return Err(HostError::Invalid(format!("forbidden engine flag: {flag}")));
         }
     }
-    let expected = build_worker_argv(profile_dir, destinations)?;
+    let expected = build_worker_argv_in(profile_dir, destinations, mode)?;
     if argv != expected.as_slice() {
         return Err(HostError::Invalid(
             "worker argv differs from the host-built argv".into(),
@@ -551,6 +631,78 @@ mod tests {
         .collect();
         assert_eq!(argv, expected);
         assert_worker_argv_exact(&argv, &profile(), &destinations).unwrap();
+    }
+
+    /// SG-000135 OB-04: Shadow is the SG-000108 argv, unchanged; Visible
+    /// drops only `--headless` and adds only the fixed window name, and
+    /// neither mode's argv passes as the other's.
+    #[test]
+    fn ob04_visible_argv_differs_from_shadow_by_exactly_the_headless_and_window_name_flags(
+    ) -> Result<(), HostError> {
+        let destinations = vec![AdmittedDestination::admit(
+            "https://example.com/",
+            &FakeDns(vec![public_v4()]),
+        )?];
+        let shadow = build_worker_argv_in(&profile(), &destinations, EngineMode::Shadow)?;
+        assert_eq!(shadow, build_worker_argv(&profile(), &destinations)?);
+        assert_eq!(shadow.first().map(String::as_str), Some("--headless"));
+        let visible = build_worker_argv_in(&profile(), &destinations, EngineMode::Visible)?;
+        assert!(!visible.iter().any(|arg| arg == "--headless"));
+        let frozen = ALLOWED_FLAGS.len() - 1;
+        assert_eq!(
+            visible.get(frozen).map(String::as_str),
+            Some(VISIBLE_WINDOW_NAME_FLAG)
+        );
+        let mut rebuilt = visible.clone();
+        rebuilt.remove(frozen);
+        rebuilt.insert(0, "--headless".to_string());
+        assert_eq!(rebuilt, shadow, "only those two flags differ");
+        assert!(visible.iter().any(|arg| arg == "--remote-debugging-pipe"));
+        for arg in &visible {
+            let flag = arg.split('=').next().unwrap_or(arg);
+            assert!(!FORBIDDEN_FLAGS.contains(&flag), "{arg}");
+            for raising in [
+                "--start-maximized",
+                "--start-fullscreen",
+                "--kiosk",
+                "--app",
+            ] {
+                assert_ne!(flag, raising);
+            }
+        }
+        assert_worker_argv_exact_in(&visible, &profile(), &destinations, EngineMode::Visible)?;
+        assert_worker_argv_exact_in(&shadow, &profile(), &destinations, EngineMode::Shadow)?;
+        assert!(assert_worker_argv_exact_in(
+            &visible,
+            &profile(),
+            &destinations,
+            EngineMode::Shadow
+        )
+        .is_err());
+        assert!(assert_worker_argv_exact(&visible, &profile(), &destinations).is_err());
+        assert!(assert_worker_argv_exact_in(
+            &shadow,
+            &profile(),
+            &destinations,
+            EngineMode::Visible
+        )
+        .is_err());
+        let mut renamed = visible.clone();
+        if let Some(slot) = renamed.get_mut(frozen) {
+            *slot = "--window-name=My bank".to_string();
+        }
+        assert!(assert_worker_argv_exact_in(
+            &renamed,
+            &profile(),
+            &destinations,
+            EngineMode::Visible
+        )
+        .is_err());
+        assert_eq!(EngineMode::parse("visible"), Some(EngineMode::Visible));
+        assert_eq!(EngineMode::parse("shadow"), Some(EngineMode::Shadow));
+        assert_eq!(EngineMode::parse("Visible"), None);
+        assert_eq!(EngineMode::default(), EngineMode::Shadow);
+        Ok(())
     }
 
     #[test]
