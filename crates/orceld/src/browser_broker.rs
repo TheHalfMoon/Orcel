@@ -1052,6 +1052,66 @@ impl<W: SessionWorker> Broker<W> {
     }
 }
 
+/// SG-000135 OB-07: one page of a session that waits for the person
+/// ("Needs you"), as the challenge detector last reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NeedsYou {
+    pub page_id: String,
+    /// `sign_in`, `mfa`, `passkey`, `captcha` or `other` (the detector could
+    /// not answer, so the page is held).
+    pub kind: &'static str,
+    /// The detector's closed signal names.
+    pub signals: Vec<String>,
+    /// The detector no longer sees it; the page waits out the quiet period.
+    pub clearing: bool,
+}
+
+/// SG-000135 OB-07: why a page needs the person, in fixed words (never page
+/// text).
+fn needs_you_reason(kind: &str) -> &'static str {
+    match kind {
+        "captcha" => "a CAPTCHA or bot check is on the page; Orcel never solves or skips one",
+        "mfa" => "the page asks for a one-time code or another second factor; Orcel never enters one",
+        "sign_in" => "the page asks someone to sign in; Orcel never types a password, and the browser's own saved sign-in or the person completes it",
+        "passkey" => "the page asks for a passkey or security key; only the person can answer it",
+        _ => "Orcel could not check this page for a sign-in, code, passkey or CAPTCHA, so it waits for the person",
+    }
+}
+
+/// SG-000135 OB-07: the `needs_you` list a reply and `browser_task_status`
+/// carry: per waiting page its id, kind, closed signals, a fixed reason,
+/// whether the detector already sees it gone, and the handoff for the
+/// session's mode. A Shadow session has no window the person could use:
+/// its challenge ends the mission there, and the person completes the check
+/// in a Visible session (with a persistent profile, a sign-in carries over
+/// to the next Shadow run). A Visible session's person uses its window.
+pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
+    let handoff = match mode {
+        SessionMode::Visible => "visible_window",
+        SessionMode::Shadow => "rerun_in_visible",
+    };
+    let guidance = match mode {
+        SessionMode::Visible => "the person completes it in this session's window; once it no longer needs you (about three seconds after it is gone), observe the page again before acting",
+        SessionMode::Shadow => "a Shadow session has no window for the person: close this session; the person completes the check in a Visible session (a persistent profile keeps the sign-in), then run the task again",
+    };
+    Value::Array(
+        pages
+            .iter()
+            .map(|page| {
+                json!({
+                    "page_id": page.page_id,
+                    "kind": page.kind,
+                    "signals": page.signals,
+                    "reason": needs_you_reason(page.kind),
+                    "clearing": page.clearing,
+                    "handoff": handoff,
+                    "guidance": guidance,
+                })
+            })
+            .collect(),
+    )
+}
+
 fn unknown_session() -> ProviderError {
     ProviderError::new(
         FailureCode::TargetStale,
@@ -1491,6 +1551,29 @@ mod tests {
         let digest = receipt.receipt_sha256.clone();
         receipt.outcome = "failed".into();
         assert_ne!(receipt_digest(&receipt), digest);
+    }
+
+    #[test]
+    fn ob07_needs_you_names_the_page_kind_and_handoff_and_never_page_text() {
+        let pages = [NeedsYou {
+            page_id: "pg-0123".into(),
+            kind: "captcha",
+            signals: vec!["captcha_widget".into()],
+            clearing: false,
+        }];
+        let shadow = needs_you_json(SessionMode::Shadow, &pages);
+        assert_eq!(shadow[0]["page_id"], "pg-0123");
+        assert_eq!(shadow[0]["kind"], "captcha");
+        assert_eq!(shadow[0]["signals"][0], "captcha_widget");
+        assert_eq!(shadow[0]["handoff"], "rerun_in_visible");
+        assert_eq!(shadow[0]["clearing"], false);
+        let visible = needs_you_json(SessionMode::Visible, &pages);
+        assert_eq!(visible[0]["handoff"], "visible_window");
+        for kind in ["captcha", "mfa", "sign_in", "passkey", "other"] {
+            let text = needs_you_reason(kind);
+            assert!(!text.is_empty() && !text.contains("http"), "{kind}");
+        }
+        assert_eq!(needs_you_json(SessionMode::Shadow, &[]), json!([]));
     }
 
     #[test]

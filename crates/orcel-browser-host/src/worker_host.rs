@@ -269,6 +269,14 @@ pub enum WorkerHostRequest {
         tab: u32,
     },
     Tabs {},
+    /// SG-000135 OB-07: classify the active tab's document as a challenge
+    /// only a person can get past (a CAPTCHA, a one-time code, a sign-in
+    /// wall, a passkey prompt), read-only and without approval. `status` is
+    /// the HTTP status orceld recorded for the committed document (0 when
+    /// unknown). The reply is a closed kind and closed signal names only.
+    DetectChallenge {
+        status: u16,
+    },
     /// End the current lifetime (profile removed); the host keeps serving.
     Close {},
     Shutdown {},
@@ -497,6 +505,16 @@ pub enum WorkerHostReply {
     Tabs {
         active: u32,
         tabs: Vec<crate::page_capture::WorkerTab>,
+    },
+    /// SG-000135 OB-07: the active tab's classification: one of
+    /// `CHALLENGE_KINDS`, members of `CHALLENGE_SIGNALS`, whether the worker
+    /// read a bounded part, and whether the tab moved off the committed
+    /// document on its own. Never page text.
+    Challenge {
+        kind: String,
+        signals: Vec<String>,
+        truncated: bool,
+        moved: bool,
     },
     Closed {
         job_empty: bool,
@@ -989,6 +1007,17 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
             },
             Err(err) => refusal(&err),
         },
+        WorkerHostRequest::DetectChallenge { status } => {
+            match live.worker.detect_challenge(status) {
+                Ok(finding) => WorkerHostReply::Challenge {
+                    kind: finding.kind,
+                    signals: finding.signals,
+                    truncated: finding.truncated,
+                    moved: finding.moved,
+                },
+                Err(err) => refusal(&err),
+            }
+        }
         WorkerHostRequest::Extract {} => {
             match live
                 .worker
@@ -1773,6 +1802,43 @@ mod tests {
             serde_json::from_str::<WorkerHostReply>(&line).unwrap(),
             tabs
         );
+    }
+
+    #[test]
+    fn ob07_detect_challenge_takes_only_a_status_and_answers_closed_words() {
+        let request: Result<WorkerHostRequest, _> =
+            serde_json::from_str(r#"{"frame":"detect_challenge","status":401}"#);
+        assert!(matches!(
+            request,
+            Ok(WorkerHostRequest::DetectChallenge { status: 401 })
+        ));
+        for extra in [
+            r#"{"frame":"detect_challenge"}"#,
+            r#"{"frame":"detect_challenge","status":401,"solve":true}"#,
+            r#"{"frame":"detect_challenge","status":-1}"#,
+            r#"{"frame":"detect_challenge","status":70000}"#,
+            r#"{"frame":"solve_captcha"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<WorkerHostRequest>(extra).is_err(),
+                "{extra}"
+            );
+        }
+        let reply = WorkerHostReply::Challenge {
+            kind: "captcha".into(),
+            signals: vec!["captcha_widget".into()],
+            truncated: false,
+            moved: false,
+        };
+        let line = serde_json::to_string(&reply).unwrap_or_default();
+        assert_eq!(
+            line,
+            r#"{"frame":"challenge","kind":"captcha","signals":["captcha_widget"],"truncated":false,"moved":false}"#
+        );
+        assert!(matches!(
+            serde_json::from_str::<WorkerHostReply>(&line),
+            Ok(parsed) if parsed == reply
+        ));
     }
 
     #[test]

@@ -66,6 +66,11 @@ GUIDANCE: dict[str, str] = {
     "RATE_LIMITED": _FINAL + "A per-site budget is used up. Do not call this site again now.",
     "AUTHORITY_UNAVAILABLE": _FINAL + "The Orcel authority service is not available, so Full Control is unavailable.",
     "PERMISSION_REQUIRED": _FINAL + "This opt-in feature is not enabled for this client.",
+    "HUMAN_VERIFICATION_REQUIRED": _FINAL + (
+        "The page waits for a person to complete a sign-in, code, passkey or CAPTCHA check, which "
+        "Orcel never completes or skips. Nothing was done. Do not act on that page or look for a way "
+        "around the check; poll the session status until it no longer reports needs_you, then observe "
+        "the page again before acting, or finish."),
 }
 
 UNKNOWN_OUTCOME_TEXT = (

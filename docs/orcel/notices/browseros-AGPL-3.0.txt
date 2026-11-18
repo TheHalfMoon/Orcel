@@ -31,6 +31,15 @@ For Orcel Browser packet OB-03 (SG-000135, page screenshots):
   -> runExclusive in apps/orcel-browser-worker/src/screenshot.ts (captures of
   one page run one at a time; keyed by the page, no annotation overlay)
 
+For Orcel Browser packet OB-07 (SG-000135, challenge handoff):
+
+- packages/browseros-agent/crates/neo-sdk/neo-captcha/src/detect.rs
+  (blob c6883f3fdd54580d2fa18616b9b4696b48e38978)
+  -> the vendor frame hosts and widget markers in
+  apps/orcel-browser-worker/src/challenge.ts, as data only (read from the
+  engine's DOM snapshot; no page script, and none of the donor's solving,
+  token, provider or callback code)
+
 Each adapted file names its donor path and blob and lists Orcel's changes in
 its header; docs/orcel/browseros_provenance.json records the provenance.
 

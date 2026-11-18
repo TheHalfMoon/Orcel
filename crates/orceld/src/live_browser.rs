@@ -24,13 +24,14 @@
     allow(dead_code)
 )]
 
+use crate::browser_broker::NeedsYou;
 use crate::takeover_gate::TakeoverGate;
 use orcel_approval::{now_ms, ApprovalBroker, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
 use orcel_browser_host::worker_host::{
     BindAction, BoundForm, FormNavigation, WireCheck, WireNode, WorkerHostReply, WorkerHostRequest,
 };
 use orcel_browser_host::{Supervisor, WorkerHostLaunch};
-use orcel_browser_session::{ActionClass, WriteTicket};
+use orcel_browser_session::{ActionClass, ChallengeKind, WriteTicket};
 use orcel_contracts::FailureCode;
 use orcel_policy::{Workspace, POLICY_REVISION};
 use orcel_provider_browser::{PageRecord, PageState, PageStore};
@@ -533,6 +534,13 @@ pub struct LiveBrowser {
     /// id of `page`, once a tab request learned it.
     background: Vec<BackgroundTab>,
     active_tab: Option<u32>,
+    /// SG-000135 OB-07 (browser_full only): what the challenge detector
+    /// last reported for each page that waits for the person, by page id.
+    challenges: std::collections::HashMap<String, ChallengeNote>,
+    /// SG-000135 OB-07: the HTTP status of each page's latest committed
+    /// navigation that orceld dispatched, with the URL it committed (the
+    /// detector counts a status only while the page still shows that URL).
+    page_status: std::collections::HashMap<String, (String, u16)>,
     /// Test builds only: a shorter reply budget for dispatched frames.
     #[cfg(test)]
     reply_timeout: Option<std::time::Duration>,
@@ -591,6 +599,47 @@ fn host_error(error: orcel_browser_host::HostError) -> ProviderError {
 /// The page store's errors, as orceld's (same code and message).
 fn from_page(error: orcel_provider_browser::ProviderError) -> ProviderError {
     ProviderError::new(error.code, error.message)
+}
+
+/// SG-000135 OB-07: how often a page that waits for the person is checked
+/// again (on the agent's next request or status read).
+pub(crate) const CHALLENGE_RECHECK: std::time::Duration = std::time::Duration::from_millis(1_000);
+
+/// SG-000135 OB-07: the signal a page is held with when the detector could
+/// not answer for it (fail closed).
+pub(crate) const DETECTOR_UNAVAILABLE: &str = "detector_unavailable";
+
+/// SG-000135 OB-07: what the detector last reported for a waiting page.
+#[derive(Debug, Clone)]
+struct ChallengeNote {
+    signals: Vec<String>,
+    checked: std::time::Instant,
+    /// The detector has since reported it gone (the quiet period runs).
+    gone: bool,
+}
+
+/// SG-000135 OB-07: the gate's kind for the detector's word (None for
+/// `none`; an unknown word never arrives: the host checks the vocabulary).
+fn challenge_kind(kind: &str) -> Option<ChallengeKind> {
+    match kind {
+        "captcha" => Some(ChallengeKind::Captcha),
+        "mfa" => Some(ChallengeKind::Mfa),
+        "sign_in" => Some(ChallengeKind::SignIn),
+        "passkey" => Some(ChallengeKind::Passkey),
+        "none" => None,
+        _ => Some(ChallengeKind::Other),
+    }
+}
+
+/// SG-000135 OB-07: a challenge kind's wire name.
+pub(crate) fn challenge_name(kind: ChallengeKind) -> &'static str {
+    match kind {
+        ChallengeKind::SignIn => "sign_in",
+        ChallengeKind::Mfa => "mfa",
+        ChallengeKind::Passkey => "passkey",
+        ChallengeKind::Captcha => "captcha",
+        ChallengeKind::Other => "other",
+    }
 }
 
 /// SG-000135 OB-03: a tab id the session does not hold.
@@ -932,6 +981,8 @@ impl LiveBrowser {
             page_url: None,
             background: Vec::new(),
             active_tab: None,
+            challenges: std::collections::HashMap::new(),
+            page_status: std::collections::HashMap::new(),
             #[cfg(test)]
             reply_timeout: None,
             #[cfg(test)]
@@ -1393,6 +1444,7 @@ impl LiveBrowser {
         match reply? {
             WorkerHostReply::Activated { url, status } => {
                 self.follow(&url)?;
+                self.note_status(&url, status);
                 Ok((url, status))
             }
             _ => Err(ProviderError::new(
@@ -1656,6 +1708,7 @@ impl LiveBrowser {
                 // observation of this page goes stale. If the store cannot
                 // follow, the lifetime ends rather than act on either.
                 self.follow(&url)?;
+                self.note_status(&url, status);
                 Ok((url, status))
             }
             _ => Err(ProviderError::new(
@@ -2422,6 +2475,138 @@ impl LiveBrowser {
         self.takeover.set_client(client);
     }
 
+    /// SG-000135 OB-07: every page of this browser goes through the
+    /// takeover gate, whatever the build's switch (browser_full broker
+    /// sessions; `browser_structured` keeps the switch). Called before any
+    /// page is opened.
+    pub fn enable_takeover_gate(&mut self) {
+        self.takeover.enable();
+    }
+
+    /// SG-000135 OB-07: the status of the active page's navigation that
+    /// just committed `url`.
+    fn note_status(&mut self, url: &str, status: u16) {
+        if let Some(page) = &self.page {
+            self.page_status
+                .insert(page.page_id.clone(), (url.to_owned(), status));
+        }
+    }
+
+    /// SG-000135 OB-07: run the engine's read-only challenge detector on
+    /// the active page and tell the takeover gate what it saw. A page that
+    /// shows a sign-in, one-time code, passkey or CAPTCHA check waits for
+    /// the person; a page that waits and no longer shows one is reported
+    /// gone (the gate then holds it for the quiet period and asks for a
+    /// fresh observation). While a page waits, the detector runs at most
+    /// once per `CHALLENGE_RECHECK`. A detector that cannot answer for a
+    /// page with a document holds that page (fail closed: "Needs you").
+    ///
+    /// This is orceld's own read, never the agent's: it bypasses the gate's
+    /// read refusal because nothing of the page crosses (a closed kind and
+    /// closed signal names), and it never types, clicks, submits or solves.
+    /// Nothing happens with the gate off or without a committed document.
+    pub fn check_challenge(&mut self) {
+        if !self.takeover.is_on() || self.lifetime.is_none() || self.page_url.is_none() {
+            return;
+        }
+        let Some(page_id) = self.page.as_ref().map(|page| page.page_id.clone()) else {
+            return;
+        };
+        let waiting = self.takeover.awaiting(&page_id).is_some();
+        if waiting
+            && self
+                .challenges
+                .get(&page_id)
+                .is_some_and(|note| note.checked.elapsed() < CHALLENGE_RECHECK)
+        {
+            return;
+        }
+        let status = match (self.page_status.get(&page_id), self.page_url.as_deref()) {
+            (Some((url, status)), Some(now)) if url == now => *status,
+            _ => 0,
+        };
+        let finding = match self.request(&WorkerHostRequest::DetectChallenge { status }) {
+            Ok(WorkerHostReply::Challenge { kind, signals, .. }) => Ok((kind, signals)),
+            Ok(_) => Err(()),
+            Err(_) => Err(()),
+        };
+        // A lost host closed the page: nothing is left to hold.
+        if self.page.as_ref().map(|page| page.page_id.as_str()) != Some(page_id.as_str()) {
+            return;
+        }
+        let checked = std::time::Instant::now();
+        let (kind, signals) = match finding {
+            Ok((kind, signals)) => match challenge_kind(&kind) {
+                Some(kind) => (kind, signals),
+                None => {
+                    if !waiting {
+                        self.challenges.remove(&page_id);
+                        return;
+                    }
+                    // Reported gone once per disappearance: a report each
+                    // check would push the quiet period back for ever.
+                    let reported = self.challenges.get(&page_id).is_some_and(|note| note.gone);
+                    if reported || self.takeover.challenge_gone(&page_id) {
+                        let note = self.challenges.entry(page_id).or_insert(ChallengeNote {
+                            signals: Vec::new(),
+                            checked,
+                            gone: true,
+                        });
+                        note.gone = true;
+                        note.checked = checked;
+                    }
+                    return;
+                }
+            },
+            Err(()) => (ChallengeKind::Other, vec![DETECTOR_UNAVAILABLE.to_owned()]),
+        };
+        if self.takeover.challenge_detected(&page_id, kind) {
+            self.challenges.insert(
+                page_id,
+                ChallengeNote {
+                    signals,
+                    checked,
+                    gone: false,
+                },
+            );
+        }
+    }
+
+    /// SG-000135 OB-07: the pages that wait for the person now ("Needs
+    /// you"), with what the detector saw: a closed kind and closed signal
+    /// names, never page text. Notes of pages that no longer wait are
+    /// dropped.
+    pub fn needs_you(&mut self) -> Vec<NeedsYou> {
+        let pages: Vec<String> = self.challenges.keys().cloned().collect();
+        let mut out = Vec::new();
+        for page_id in pages {
+            match self.takeover.awaiting(&page_id) {
+                Some(kind) => {
+                    if let Some(note) = self.challenges.get(&page_id) {
+                        out.push(NeedsYou {
+                            page_id,
+                            kind: challenge_name(kind),
+                            signals: note.signals.clone(),
+                            clearing: note.gone,
+                        });
+                    }
+                }
+                None => {
+                    self.challenges.remove(&page_id);
+                }
+            }
+        }
+        out.sort_by(|a, b| a.page_id.cmp(&b.page_id));
+        out
+    }
+
+    /// SG-000135 OB-07: the active page's takeover-gate state, by the
+    /// design's name (None with the gate off or no page).
+    pub fn page_state(&mut self) -> Option<&'static str> {
+        let page_id = self.page.as_ref()?.page_id.clone();
+        self.takeover.page_state(&page_id).map(|state| state.name())
+    }
+
     fn require_lifetime(&self) -> Result<(), ProviderError> {
         if self.lifetime.is_none() {
             return Err(ProviderError::new(
@@ -2782,6 +2967,8 @@ mod tests {
             page_url: None,
             background: Vec::new(),
             active_tab: None,
+            challenges: std::collections::HashMap::new(),
+            page_status: std::collections::HashMap::new(),
             reply_timeout: None,
             after_consume: None,
         }

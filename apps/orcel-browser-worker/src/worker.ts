@@ -41,6 +41,7 @@ import type { FormAction } from "./actions/form.js";
 import type { DismissedDialog } from "./actions/dialogs.js";
 import type { BoundedOutline } from "./outline/capture.js";
 import type { SchemaField, SchemaValue } from "./outline/schema-extract.js";
+import type { ChallengeReport } from "./challenge.js";
 
 export type LaunchSpec = Extract<HostFrame, { frame: "launch" }>;
 
@@ -130,6 +131,11 @@ export interface EngineSession {
   /// `fullPage`), every secret field masked; rejects with ScreenshotError
   /// ("busy" while a navigation of the page is in flight).
   screenshot(fullPage: boolean): Promise<{ tab: number; url: string; png: Buffer; width: number; height: number; truncated: boolean }>;
+  /// SG-000135 OB-07: classify the active tab's document as a challenge
+  /// only a person can get past, read-only (the engine's DOM and layout
+  /// snapshot; no page script). `status` counts only while the tab still
+  /// shows `url`.
+  challenge(url: string, status: number): Promise<{ tab: number; url: string; report: ChallengeReport }>;
   /// SG-000135 OB-03: open a blank tab and make it active; rejects with
   /// TabError ("cap" at MAX_TABS).
   tabNew(): Promise<TabsState>;
@@ -475,6 +481,22 @@ export class Worker {
           this.send({ frame: "observed", obs_id: frame.obs_id, tab, url, truncated: snapshot.truncated, nodes: snapshot.nodes });
         } catch {
           this.send({ frame: "observation_failed", obs_id: frame.obs_id });
+        }
+        return;
+      }
+      case "challenge": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        // A document being replaced is not classified: the host asks again.
+        if (this.navigating) {
+          this.send({ frame: "challenge_failed", chl_id: frame.chl_id });
+          return;
+        }
+        try {
+          const { tab, url, report } = await this.session.challenge(frame.url, frame.status);
+          if (Buffer.byteLength(url) > MAX_URL_BYTES) throw new Error("the page URL is too long");
+          this.send({ frame: "challenge_report", chl_id: frame.chl_id, tab, url, kind: report.kind, signals: report.signals, truncated: report.truncated });
+        } catch {
+          this.send({ frame: "challenge_failed", chl_id: frame.chl_id });
         }
         return;
       }

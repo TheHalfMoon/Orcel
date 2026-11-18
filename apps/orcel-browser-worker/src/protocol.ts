@@ -17,6 +17,7 @@ import type { DismissedDialog } from "./actions/dialogs.js";
 import { MAX_SCREENSHOT_PIECES, type ScreenshotFailure } from "./screenshot.js";
 import type { TabInfo } from "./tabs.js";
 import type { OutlineNode } from "./outline/capture.js";
+import type { ChallengeKind, ChallengeSignal } from "./challenge.js";
 import { MAX_SCHEMA_FIELDS, SCHEMA_TAKES, type SchemaField, type SchemaTake, type SchemaValue } from "./outline/schema-extract.js";
 
 /// One form field to enter when executing a tool (host-validated).
@@ -50,8 +51,10 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// activate, form_action, verify, extract, screenshot, fetch_text, discover,
 /// execute, download, upload, wait_for, outline and extract_schema name the
 /// tab they acted on
-/// (`tab`), which the host checks against its own.
-export const WORKER_PROTOCOL_GENERATION = 19;
+/// (`tab`), which the host checks against its own; generation 20
+/// SG-000135 OB-07: the read-only challenge detector (`challenge`, answered
+/// by `challenge_report` or `challenge_failed`).
+export const WORKER_PROTOCOL_GENERATION = 20;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host; SG-000122: one option of a native select).
 export const MAX_FORM_VALUE_BYTES = 1024;
@@ -158,6 +161,10 @@ export type HostFrame =
   | { frame: "tabs"; tab_req: number }
   | { frame: "outline"; out_id: number }
   | { frame: "extract_schema"; xs_id: number; fields: SchemaField[] }
+  /// SG-000135 OB-07: classify the active tab's document; `status` is the
+  /// HTTP status the host recorded for its committed document `url` (0 when
+  /// unknown), used only while the tab still shows that URL.
+  | { frame: "challenge"; chl_id: number; url: string; status: number }
   | { frame: "shutdown" };
 
 /// SG-000135 OB-03: why a tab request failed. `last`: the only tab cannot
@@ -324,6 +331,9 @@ export type WorkerFrame =
   | { frame: "outline_failed"; out_id: number }
   | { frame: "schema_extracted"; xs_id: number; tab: number; url: string; truncated: boolean; values: SchemaValue[] }
   | { frame: "schema_extraction_failed"; xs_id: number }
+  /// SG-000135 OB-07: a closed kind and closed signal names, never page text.
+  | { frame: "challenge_report"; chl_id: number; tab: number; url: string; kind: ChallengeKind; signals: ChallengeSignal[]; truncated: boolean }
+  | { frame: "challenge_failed"; chl_id: number }
   | { frame: "error"; code: ErrorCode };
 
 export class ProtocolViolation extends Error {}
@@ -567,6 +577,14 @@ export function parseHostFrame(raw: unknown): HostFrame {
     case "outline": {
       exactKeys(raw, ["frame", "out_id"]);
       return { frame: "outline", out_id: positiveId(raw.out_id, "out_id") };
+    }
+    case "challenge": {
+      exactKeys(raw, ["frame", "chl_id", "url", "status"]);
+      const url = raw.url === "" ? "" : boundedString(raw.url, MAX_URL_BYTES, "challenge URL");
+      if (!Number.isSafeInteger(raw.status) || (raw.status as number) < 0 || (raw.status as number) > 999) {
+        throw new ProtocolViolation("challenge status is out of range");
+      }
+      return { frame: "challenge", chl_id: positiveId(raw.chl_id, "chl_id"), url, status: raw.status as number };
     }
     case "extract_schema": {
       exactKeys(raw, ["frame", "xs_id", "fields"]);

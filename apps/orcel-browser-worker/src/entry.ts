@@ -39,6 +39,7 @@ import { denyDesktopPermissions, interceptFileChoosers } from "./desktop-guard.j
 import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
 import { extractBySchema } from "./outline/schema-extract.js";
+import { CHALLENGE_STYLES, classifyChallenge, type ChallengeSnapshot } from "./challenge.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
 if (startup !== null) {
@@ -448,6 +449,28 @@ const playwrightLauncher: Launcher = {
         const { tab, page } = activeTab();
         const results = await runProbes(page, probes);
         return { tab, url: page.url(), results };
+      },
+      async challenge(committedUrl: string, status: number) {
+        // SG-000135 OB-07: the engine serialises its own DOM and layout
+        // (DOMSnapshot is a read): no page script runs, and nothing on the
+        // page is focused, scrolled, clicked or filled. Only a closed kind
+        // and closed signal names leave this function.
+        const { tab, page } = activeTab();
+        const before = page.url();
+        const session = await context.newCDPSession(page);
+        const captured = (await captureWithin(
+          {
+            capture: () => session.send("DOMSnapshot.captureSnapshot", { computedStyles: [...CHALLENGE_STYLES] }),
+            detach: () => session.detach()
+          },
+          CAPTURE_TIMEOUT_MS
+        )) as unknown as ChallengeSnapshot;
+        const url = page.url();
+        if (before !== url || tabs.active !== tab) throw new Error("the document changed during the check");
+        // The recorded status is this document's only while the tab still
+        // shows the URL it was recorded for.
+        const report = classifyChallenge(captured, committedUrl !== "" && url === committedUrl ? status : 0);
+        return { tab, url, report };
       },
       async observe() {
         const { tab, page } = activeTab();

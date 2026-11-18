@@ -526,6 +526,14 @@ fn authority_unavailable_has_the_frozen_wire_spelling() {
 }
 
 #[test]
+fn human_verification_required_has_the_frozen_wire_spelling() {
+    assert_eq!(
+        spelling(&FailureCode::HumanVerificationRequired),
+        "HUMAN_VERIFICATION_REQUIRED"
+    );
+}
+
+#[test]
 fn permission_required_has_the_frozen_wire_spelling() {
     assert_eq!(
         spelling(&FailureCode::PermissionRequired),
@@ -567,6 +575,7 @@ fn declared_index(code: &FailureCode) -> usize {
         FailureCode::OutcomeUnknown => 25,
         FailureCode::AuthorityUnavailable => 26,
         FailureCode::PermissionRequired => 27,
+        FailureCode::HumanVerificationRequired => 28,
     }
 }
 
@@ -610,6 +619,7 @@ fn every_failure_code_maps_to_the_spec_http_status() {
         ("OUTCOME_UNKNOWN", 500),
         ("AUTHORITY_UNAVAILABLE", 503),
         ("PERMISSION_REQUIRED", 403),
+        ("HUMAN_VERIFICATION_REQUIRED", 409),
     ];
     assert_eq!(
         table.len(),
