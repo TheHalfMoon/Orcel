@@ -142,6 +142,29 @@ pub trait AttestationVerifier: Send {
     ) -> Result<AttestationReport, AuthorityError>;
 }
 
+/// Slice 2 review F1 (a): the machine's UAC policy values (read-only).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UacSettings {
+    pub enable_lua: Option<u32>,
+    pub consent_prompt_behavior_admin: Option<u32>,
+    pub prompt_on_secure_desktop: Option<u32>,
+}
+
+impl UacSettings {
+    /// UAC on, "Always notify" for administrators, prompts on the secure
+    /// desktop. Anything missing or different is not.
+    pub fn always_notify_on_secure_desktop(&self) -> bool {
+        self.enable_lua == Some(1)
+            && self.consent_prompt_behavior_admin == Some(2)
+            && self.prompt_on_secure_desktop == Some(1)
+    }
+}
+
+/// Reads the UAC policy.
+pub trait UacPolicy: Send {
+    fn read(&self) -> UacSettings;
+}
+
 /// Writes Event Log entries (4100 to 4104).
 pub trait EventSink: Send {
     fn record(&self, event_id: u32, error: bool, text: &str) -> Result<(), AuthorityError>;
@@ -157,6 +180,7 @@ pub struct Services {
     pub signer: Box<dyn LeaseSigner>,
     pub presence: Box<dyn PresenceVerifier>,
     pub attestation: Box<dyn AttestationVerifier>,
+    pub uac: Box<dyn UacPolicy>,
     pub events: Box<dyn EventSink>,
     pub entropy: Box<dyn Entropy>,
     pub clock: fn() -> u64,
@@ -748,6 +772,9 @@ impl AuthorityCore {
                 .find(|key| key.windows_user_sid == caller.user_sid)
                 .map(|key| key_fingerprint(&key.key_digest)),
             "enrollment_available": self.mode == RunMode::Service && self.services.attestation.available(),
+            "uac": self.services.uac.read(),
+            "uac_always_notify_on_secure_desktop": self.services.uac.read().always_notify_on_secure_desktop(),
+            "caller_is_owner_cli": self.policy.is_owner_cli(caller),
             "can_issue": self.can_issue(),
             "deferred": DEFERRED,
         })
@@ -759,6 +786,7 @@ impl AuthorityCore {
 
     fn require_owner_path(
         &self,
+        caller: &CallerFacts,
         role: CallerRole,
         origin: ClaimedOrigin,
     ) -> Result<(), AuthorityError> {
@@ -782,6 +810,14 @@ impl AuthorityCore {
         if origin != ClaimedOrigin::OwnerCli {
             return Err(AuthorityError::denied(
                 "agent, MCP, orceld and remote self-grant is denied; only the owner's CLI may record a grant intent",
+            ));
+        }
+        // Review F1 (b): the requesting image must be the trusted, installed
+        // owner CLI (observed, never claimed). A same-user process can still
+        // start that image (C-27 e); the code, the box and Hello remain.
+        if !self.policy.is_owner_cli(caller) {
+            return Err(AuthorityError::denied(
+                "only the installed Orcel CLI (%ProgramFiles%\\Orcel\\orcel.exe) may record a grant, enrollment or reset intent",
             ));
         }
         Ok(())
@@ -819,7 +855,7 @@ impl AuthorityCore {
         principal_id: String,
         task: String,
     ) -> Result<Value, AuthorityError> {
-        self.require_owner_path(role, origin)?;
+        self.require_owner_path(caller, role, origin)?;
         let scope = scope.unwrap_or_else(LeaseScope::narrow_default);
         scope.validate()?;
         if let LeaseScope::BrowserFullAccess { client_ref, .. } = &scope {
@@ -1025,7 +1061,14 @@ impl AuthorityCore {
         role: CallerRole,
         origin: ClaimedOrigin,
     ) -> Result<(), AuthorityError> {
-        self.require_owner_path(role, origin)?;
+        self.require_owner_path(caller, role, origin)?;
+        let uac = self.services.uac.read();
+        if !uac.always_notify_on_secure_desktop() {
+            return Err(AuthorityError::denied(format!(
+                "enrollment and reset need UAC set to Always notify on the secure desktop (EnableLUA 1, ConsentPromptBehaviorAdmin 2, PromptOnSecureDesktop 1); this PC has {:?}, {:?}, {:?}",
+                uac.enable_lua, uac.consent_prompt_behavior_admin, uac.prompt_on_secure_desktop
+            )));
+        }
         if !caller.elevated {
             return Err(AuthorityError::denied(
                 "enrollment and reset need an elevated caller: run the orcel authority command from an elevated terminal (the UAC prompt on the secure desktop is the human gate)",
@@ -1876,6 +1919,38 @@ impl AuthorityCore {
                 "the lease was granted to another client principal",
             ));
         }
+        // Review F4: a browser action names a leased family and lands on a
+        // leased origin, as the service itself checks.
+        if let LeaseScope::BrowserFullAccess {
+            origins, families, ..
+        } = &body.scope
+        {
+            let family_named = families.iter().any(|family| {
+                serde_json::to_value(family)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .as_deref()
+                    == Some(claims.operation.as_str())
+            });
+            if !family_named {
+                return Err(AuthorityError::denied(
+                    "the browser lease does not name this action family",
+                ));
+            }
+            match claims.origin.as_deref() {
+                Some(origin) if origins.iter().any(|leased| leased == origin) => {}
+                Some(_) => {
+                    return Err(AuthorityError::denied(
+                        "the browser lease does not name this origin",
+                    ))
+                }
+                None => {
+                    return Err(AuthorityError::invalid(
+                        "a browser action names the origin it lands on",
+                    ))
+                }
+            }
+        }
         let authorization_id = format!("az-{}", hex(&self.random(16)?));
         // Write before dispatch: the record is on disk before the answer.
         self.audit(
@@ -1887,6 +1962,7 @@ impl AuthorityCore {
                 "principal_id": claims.principal_id,
                 "task": claims.task,
                 "action_digest": claims.action_digest,
+                "origin": claims.origin,
                 "executor": executor,
             }),
             observed(caller, role),
@@ -2084,9 +2160,19 @@ fn confirmation_text(intent: &Intent) -> String {
             principal_id,
             task,
         } => {
-            let warning = "Full Control acts with your Windows rights. Effects made through Windows outside Orcel's process trees (scheduled tasks, other programs) can persist after Stop, and Orcel cannot undo them. A program running as you can record a request like this and lock your PC, and can draw windows that imitate this one: if you did not just ask for exactly this, or the code or process differs from what your orcel command printed, choose No. Biometric Windows Hello is recommended; a PIN can be observed by programs running as you.";
+            let warning = "Full Control acts with your Windows rights. Effects made through Windows outside Orcel's process trees (scheduled tasks, other programs) can persist after Stop, and Orcel cannot undo them. A program running as you can record a request like this and lock your PC, and can draw windows that imitate this one: if you did not just ask for exactly this, or the code or process differs from what your orcel command printed, choose No. This box, after an unlock the service observed, is the approval; Windows Hello only confirms you are present. A PIN or fingerprint is recommended over face recognition.";
+            // Review F7: a browser lease is named as one.
+            let (what, question) = match scope {
+                LeaseScope::BrowserFullAccess { .. } => (
+                    "Orcel Browser Full Access (routine actions in one Orcel browser session)",
+                    "Approve this browser grant?",
+                ),
+                LeaseScope::DesktopFullUser { .. } => {
+                    ("Orcel Full Control", "Approve this grant?")
+                }
+            };
             format!(
-                "A program asked for Orcel Full Control. Approve only if you asked for exactly this:\n\nCode: {}\nScope: {}\nClient: {principal_id}\nTask: {task}\nExpires: {minutes} minutes after approval\nRequested by: {requested_by}\n\n{warning}\n\nApprove this grant?",
+                "A program asked for {what}. Approve only if you asked for exactly this:\n\nCode: {}\nScope: {}\nClient: {principal_id}\nTask: {task}\nExpires: {minutes} minutes after approval\nRequested by: {requested_by}\n\n{warning}\n\n{question}",
                 intent.code,
                 scope.describe(),
             )

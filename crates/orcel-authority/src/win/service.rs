@@ -118,11 +118,15 @@ pub fn check_trusted_images(
 ) -> Result<(), AuthorityError> {
     let required = program_files.join("Orcel");
     let prefix = format!("{}\\", required.to_string_lossy().to_lowercase());
-    for image in &policy.trusted_orceld_images {
+    for image in policy
+        .trusted_orceld_images
+        .iter()
+        .chain(&policy.trusted_owner_cli_images)
+    {
         let text = image.to_string_lossy().to_lowercase();
         if !text.starts_with(&prefix) || text.contains("\\..\\") {
             return Err(AuthorityError::unavailable(format!(
-                "the trusted orceld image {} is not under {}; reinstall with the hash-pinned orceld",
+                "the trusted image {} is not under {}; reinstall with the hash-pinned binaries",
                 image.display(),
                 required.display()
             )));
@@ -143,6 +147,7 @@ fn check_own_image(
     check_trusted_images(
         &ClientPolicy {
             trusted_orceld_images: vec![own],
+            trusted_owner_cli_images: Vec::new(),
         },
         program_files,
         service_sid,
@@ -275,7 +280,16 @@ mod tests {
         ] {
             let policy = ClientPolicy {
                 trusted_orceld_images: vec![PathBuf::from(image)],
+                trusted_owner_cli_images: Vec::new(),
             };
+            let cli = ClientPolicy {
+                trusted_orceld_images: Vec::new(),
+                trusted_owner_cli_images: vec![PathBuf::from(image.replace("orceld", "orcel"))],
+            };
+            assert!(
+                check_trusted_images(&cli, &program_files, "S-1-5-80-1-2-3-4-5").is_err(),
+                "{image}"
+            );
             assert!(
                 check_trusted_images(&policy, &program_files, "S-1-5-80-1-2-3-4-5").is_err(),
                 "{image}"
@@ -285,6 +299,9 @@ mod tests {
         let policy = ClientPolicy {
             trusted_orceld_images: vec![PathBuf::from(
                 r"C:\Program Files\Orcel\missing-orceld.exe",
+            )],
+            trusted_owner_cli_images: vec![PathBuf::from(
+                r"C:\Program Files\Orcel\missing-orcel.exe",
             )],
         };
         assert!(check_trusted_images(&policy, &program_files, "S-1-5-80-1-2-3-4-5").is_err());

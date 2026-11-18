@@ -53,20 +53,42 @@ fn lease_output(lease: &SignedLease) -> Output {
     }
 }
 
+/// The Hello key the service has enrolled for this user (matched by its
+/// fingerprint across our key slots).
 #[cfg(windows)]
-fn hello_signer() -> Result<authority_grant::hello::Hello, LifecycleError> {
-    authority_grant::hello::open().map_err(|error| {
-        LifecycleError::prerequisite(format!(
-            "the enrolled Windows Hello key could not be opened ({error}); run `orcel authority enroll` from an elevated terminal first"
-        ))
-    })
+fn hello_signer(client: &AuthorityClient) -> Result<authority_grant::hello::Hello, LifecycleError> {
+    let status = client
+        .status()
+        .map_err(|error| LifecycleError::state(error.to_string()))?;
+    let fingerprint = status["caller_key_fingerprint"].as_str().ok_or_else(|| {
+        LifecycleError::prerequisite(
+            "no Windows Hello key is enrolled for this user; run the elevated `orcel authority enroll` first",
+        )
+    })?;
+    authority_grant::hello::open_enrolled(fingerprint)
+        .map(|(key, _)| key)
+        .map_err(|error| {
+            LifecycleError::prerequisite(format!(
+                "the enrolled Windows Hello key could not be opened ({error}); a process running as you can delete Hello keys, so enroll again (`orcel authority enroll --replace`, elevated)"
+            ))
+        })
+}
+
+/// Review F1 (c): an elevated command started directly (Start-Process
+/// -Verb RunAs) keeps its window until Enter, so its output can be read.
+fn pause_if(pause: bool) {
+    if pause {
+        eprintln!("Press Enter to close this window.");
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+    }
 }
 
 /// The service grant shared by `full-control grant` and `browser grant`.
 #[cfg(windows)]
 fn service_grant(request: &GrantRequest) -> Result<Output, LifecycleError> {
     let client = installed_client()?;
-    let signer = hello_signer()?;
+    let signer = hello_signer(&client)?;
     let lease = authority_grant::run_grant(&client, request, &signer, &mut progress)?;
     Ok(lease_output(&lease))
 }
@@ -170,12 +192,24 @@ pub fn authority(args: &mut Args) -> Result<Output, LifecycleError> {
         }
         "enroll" => {
             let replace = args.flag("--replace");
+            let pause = args.flag("--pause");
             args.finish()?;
-            enroll(replace)
+            let result = enroll(replace);
+            if let Err(error) = &result {
+                eprintln!("orcel authority enroll: {error}");
+            }
+            pause_if(pause);
+            result
         }
         "reset" => {
+            let pause = args.flag("--pause");
             args.finish()?;
-            reset()
+            let result = reset();
+            if let Err(error) = &result {
+                eprintln!("orcel authority reset: {error}");
+            }
+            pause_if(pause);
+            result
         }
         other => Err(LifecycleError::usage(format!(
             "unknown authority action {other:?}; run orcel help"
@@ -188,7 +222,7 @@ fn enroll(replace: bool) -> Result<Output, LifecycleError> {
     use authority_grant::hello;
     if !hello::this_process_is_elevated() {
         return Err(LifecycleError::prerequisite(
-            "run `orcel authority enroll` from an elevated terminal: the UAC prompt on the secure desktop is the human gate for enrollment",
+            "start `orcel authority enroll` elevated, directly (Start-Process -Verb RunAs on %ProgramFiles%\\Orcel\\orcel.exe): the UAC prompt on the secure desktop is the human gate for enrollment",
         ));
     }
     let client = installed_client()?;
@@ -207,12 +241,17 @@ fn enroll(replace: bool) -> Result<Output, LifecycleError> {
         ));
     }
     progress("Windows Hello asks you to create the Orcel Authority key.");
-    // Past the check above, either nothing is enrolled (a key left in the
-    // Hello container by an unfinished enrollment is stale) or --replace was
-    // asked: the container's key of this name is replaced either way.
-    let key = hello::create(true)
+    // Review F6: the new key goes into the slot that does not hold the
+    // enrolled key, so a refused or unanswered box leaves the enrolled key
+    // untouched; only after the service enrolled the new key are the others
+    // deleted.
+    let (key, slot) = hello::create_beside(status["caller_key_fingerprint"].as_str())
         .map_err(|error| LifecycleError::state(format!("create the key: {error}")))?;
     let enrolled = authority_grant::run_enroll(&client, &key, replace, &mut progress)?;
+    let removed = hello::delete_others(Some(slot));
+    progress(&format!(
+        "Removed {removed} earlier Orcel Authority key(s) from Windows Hello."
+    ));
     Ok(Output {
         exit_code: 0,
         human: format!(
@@ -240,7 +279,7 @@ fn reset() -> Result<Output, LifecycleError> {
     }
     let client = installed_client()?;
     authority_grant::run_reset(&client, &mut progress)?;
-    let removed_locally = hello::delete().is_ok();
+    let removed_locally = hello::delete_others(None) > 0;
     Ok(Output {
         exit_code: 0,
         human: format!(

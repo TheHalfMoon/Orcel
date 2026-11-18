@@ -19,8 +19,9 @@ leases come from the service only. A PR from this branch carries OB-03's diff un
 
 Flow (all refusals fail closed and are audited):
 
-1. The founder opens an **elevated** terminal (UAC on the secure desktop is the human gate) and runs
-   `orcel authority enroll`. The CLI refuses to start unelevated, refuses when the service reports that it
+1. The founder starts `%ProgramFiles%\Orcel\orcel.exe authority enroll --pause` elevated and directly
+   (`Start-Process -Verb RunAs`; the UAC prompt on the secure desktop is the human gate, and UAC must be
+   "Always notify"). The CLI refuses to start unelevated, refuses when the service reports that it
    cannot verify attestations, and refuses when a key is already enrolled (unless `--replace`), so it never
    overwrites the Hello container's key by accident.
 2. The CLI creates the key with `KeyCredentialManager.RequestCreateAsync("Orcel Authority")` (Hello prompt;
@@ -29,7 +30,7 @@ Flow (all refusals fail closed and are audited):
    (`NotSupported`, `TemporaryFailure`, any error), enrollment stops there.
 3. `EnrollBegin { public key, attestation, certificate chain, replace }` reaches the service. The service checks,
    from the caller's token and never from a claim: interactive role in the active console session, owner-CLI
-   origin, **elevated token** (`TokenElevation` and integrity at least High), a readable requesting image and
+   origin, the **trusted owner CLI image**, UAC "Always notify" on the secure desktop, **elevated token** (`TokenElevation` and integrity at least High), a readable requesting image and
    creation time. Console mode never enrolls.
 4. The service verifies the attestation (section 2). Then it records an enrollment intent bound to the
    requesting process and renders its own confirmation box ("Orcel Authority", `WTSSendMessageW`) with the
@@ -37,7 +38,7 @@ Flow (all refusals fail closed and are audited):
    the same code and fingerprint; it also checks the fingerprint the service returned against the key it holds.
 5. On Yes, the service issues a 32-byte challenge,
    `SHA-256("orcel-authority-enrollment-challenge/1\n" || key digest | intent digest | text digest | nonce)`.
-   The NEW key signs it (one Hello gesture): possession, and proof that the key signs only after a gesture.
+   The NEW key signs it: possession of the key (whether a gesture was needed is not provable, section 2).
 6. Only then is the key enrolled (state, audit `enrollment`, Event Log **4104** with the fingerprint).
 
 Re-enrollment: `orcel authority enroll --replace` (elevated, same checks, the box says it REPLACES the old
@@ -48,6 +49,57 @@ Known limit: an elevated token of a *different* account (a standard user with ov
 enrolls a key for that admin account, not the standard user; grants by the standard user then find no key
 and are refused. Slice 2 supports an administrator account with UAC set to "Always notify" (the runbook's
 advice); standard-account enrollment is a later design.
+
+## Independent review of `6fb9d3d9` and the answers
+
+The review passed the code to merge and asked for these before the founder enrolls:
+
+- **F1 (a) UAC policy.** The service reads `EnableLUA`, `ConsentPromptBehaviorAdmin` and
+  `PromptOnSecureDesktop` from `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`
+  (read-only, `win/uac.rs`), reports them in Status (`uac`, `uac_always_notify_on_secure_desktop`) and refuses
+  enrollment and reset unless they are 1, 2 and 1 ("Always notify" on the secure desktop). A value it cannot
+  read counts as not set. A standard account elevating with separate administrator credentials stays
+  UNSUPPORTED: the elevated process runs as the administrator, whose Hello container is not the user's, so the
+  key would belong to the administrator and the user's grants would find no key (refused, fail closed).
+- **F1 (b) Trusted owner CLI.** Grant, enrollment and reset intents are refused unless the observed requesting
+  image is a configured trusted owner CLI. The installer copies the hash-pinned `orcel.exe` to
+  `%ProgramFiles%\Orcel\orcel.exe` (new `-OrcelSha256`; CI's artifact job builds and hashes it) and writes it
+  to `config.json` as `trusted_owner_cli_images`; the service applies the orceld path and ACL checks to it at
+  start. Status reports `caller_is_owner_cli`. Console mode takes `--trusted-cli` (tests and the scripted E2E
+  trust their own runner). Residual (as for orceld): a process running as the user can start that image.
+- **F1 (c) Elevated launches.** Every elevated step now starts one program directly from a normal shell
+  (`Start-Process -Verb RunAs` on `%ProgramFiles%\Orcel\orcel.exe ... --pause`, or on
+  `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <verified script>`), never an elevated terminal or a
+  shell that loads the user's profile (runbook, "How every elevated step is started").
+- **F2/F3 Residuals.** An attested key may be gesture-free (any TPM key certified by a Microsoft AIK passes the
+  attestation check; nothing in it says KeyCredentialManager made it or that it needs a gesture); the
+  attestation binds the key to *a* TPM with a Microsoft AIK, not to this PC's TPM (no EK or AIK of this PC is
+  pinned); and there is no freshness (no service nonce). Windows Hello is therefore not an independent gate:
+  the human gate is the Yes in the service-rendered box after a service-observed unlock (and, for enrollment,
+  the UAC prompt on the secure desktop). The box and the runbook recommend a PIN or fingerprint over face
+  recognition.
+- **F4 Browser Authorize.** `AuthorizeClaims` carries the action's `origin`; for a browser lease the service
+  refuses an `operation` that is not one of the lease's families and an origin that is not one of its origins
+  (a missing origin is invalid). orceld sends the committed origin the covered action lands on.
+- **F5 Desktop digest.** The desktop gate's action digest now binds the workspace, capability, operation,
+  target, arguments and time (`desktop_action_digest`).
+- **F6 Replacement order.** Keys live in two Hello slots ("Orcel Authority A" and "B"). `enroll --replace`
+  creates the new key in the slot that does not hold the enrolled key; the enrolled key is deleted only after
+  the service enrolled the new one (after the box's Yes and the new key's signature). Grants open the slot whose
+  key matches the service's enrolled fingerprint. A process running as the user can delete Hello keys: that is
+  a denial of service and fails closed (no key signs, grants are refused until the owner enrolls again).
+- **F7 Wording.** A browser grant's box says "Orcel Browser Full Access (routine actions in one Orcel browser
+  session)" and "Approve this browser grant?".
+
+Tests for the review: `review_f1_*` (default UAC refuses enrollment and reset, Status reports the values, any
+image but the trusted CLI is refused for grant and enrollment), `review_f4_f7_*` (family, origin and missing
+origin refused; browser box wording; desktop wording kept), `the_uac_policy_is_read_without_writing`,
+`roles_follow_observed_facts` (owner CLI match), the trusted-image prefix checks for the CLI, the install-script
+tests (orcel.exe hashed before and after copying, config), `sg132_the_desktop_action_digest_binds_target_and_arguments`,
+`sg132_a_new_key_never_takes_the_enrolled_slot`, and the console scripted grant with `--trusted-cli`. After
+merging main (OB-03, OB-04), the scripted E2E passed again on this PC (2026-11-18): 54 receipts chained (head
+`64fc24cc2a52485d`, receipt domain `orcel-ob08-receipt/3` with both `lease_id` and `profile`), the Full Access
+part as before, and OB-04's phases (16 approvals, cookie kept across the restart, profiles isolated).
 
 ## 2. What the attestation check verifies, and what it cannot
 
@@ -159,10 +211,11 @@ lease. A Hello failure cancels the intent.
 3. Compare the pinned root: `Get-ChildItem Cert:\LocalMachine\CA | Where-Object Thumbprint -eq
    D4FFDB19BA590FFFAA34DB5F4B568706A2978436`, its SHA-256 must be `870c7a35...a999da` and match Microsoft's
    published Microsoft TPM Root Certificate Authority 2014.
-4. From an **elevated** terminal: `orcel authority enroll`. Create the key in the Hello prompt; compare the code
+4. Elevated and directly (runbook step 7): `Start-Process -Verb RunAs -FilePath
+   "$env:ProgramFiles\Orcel\orcel.exe" -ArgumentList 'authority','enroll','--pause'`. Create the key in the Hello prompt; compare the code
    and fingerprint printed with the Orcel Authority box; Yes; one more Hello gesture. If attestation fails, send
    the CLI's message: that is the hardware fact this slice could not record.
-5. From a normal terminal: `orcel full-control grant` (narrow default), then Win+L and unlock; compare code,
+5. From a normal terminal: `& "$env:ProgramFiles\Orcel\orcel.exe" full-control grant` (narrow default), then Win+L and unlock; compare code,
    process and scope in the box; Yes; Hello. Then `orcel full-control status` and `orceld authority-status`.
 6. Browser: in an MCP session, `browser_session_create` returns `session_id` and `client_ref`; then
    `orcel browser grant --session <id> --client-ref <ref> --origin https://<site>`.
@@ -211,6 +264,9 @@ lease. A Hello failure cancels the intent.
    refuses enrollment until fixed.
 2. KeyCredentialManager from an elevated process is untested here; if Windows refuses it, enrollment needs a
    split design (create unelevated, submit elevated).
-3. Gesture requirement and freshness are not provable from the attestation (section 2).
+3. The attested key may be gesture-free, is not bound to this PC's TPM, and the attestation is not fresh
+   (section 2 and the review answers); Hello is not an independent gate.
+6. A standard account elevating with separate administrator credentials cannot enroll its own key (refused).
+7. A process running as the user can delete the Hello keys (denial of service, fail closed).
 4. Confirmation input protection (WP1-10) and the trusted-orceld-by-path residual are unchanged from slice 1.
 5. The branch carries OB-03 (#806) until it merges; OB-08 needs its independent security re-judge on this shape.

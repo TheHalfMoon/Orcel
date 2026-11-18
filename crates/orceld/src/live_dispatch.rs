@@ -924,7 +924,14 @@ mod full {
                         if mode == SessionMode::Visible {
                             approve_visible(workspace, approval, client, id)?;
                         }
-                        start(id, client, task.as_deref(), dirs, mode, profile_name.as_deref())
+                        start(
+                            id,
+                            client,
+                            task.as_deref(),
+                            dirs,
+                            mode,
+                            profile_name.as_deref(),
+                        )
                     },
                 )?;
                 let mut reply = json!({

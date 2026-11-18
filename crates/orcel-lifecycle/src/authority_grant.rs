@@ -386,22 +386,55 @@ pub mod hello {
         }
     }
 
-    /// The enrolled key, opened for signing.
-    pub fn open() -> Result<Hello, String> {
-        key_credential::open().map(Hello)
+    /// Every name a key of ours may have in the Hello container.
+    fn names() -> impl Iterator<Item = &'static str> {
+        key_credential::KEY_SLOTS
+            .into_iter()
+            .chain([key_credential::LEGACY_KEY_NAME])
     }
 
-    /// A new key (Hello prompt); `replace` replaces the container's key of
-    /// the same name.
-    pub fn create(replace: bool) -> Result<Hello, String> {
-        key_credential::create(replace).map(Hello)
+    /// The slot holding the key whose fingerprint the service has enrolled
+    /// (opening needs no prompt).
+    pub fn open_enrolled(fingerprint: &str) -> Result<(Hello, &'static str), String> {
+        for name in names() {
+            if let Ok(key) = key_credential::open(name) {
+                if key
+                    .public_key_spki()
+                    .is_ok_and(|spki| super::fingerprint(&spki) == fingerprint)
+                {
+                    return Ok((Hello(key), name));
+                }
+            }
+        }
+        Err("no Windows Hello key of this account matches the enrolled fingerprint".to_owned())
     }
 
-    /// Removes the key from the Hello container (after a confirmed reset).
-    pub fn delete() -> Result<(), String> {
-        key_credential::delete()
+    /// Review F6: a new key in the slot that does NOT hold the enrolled key
+    /// (Hello prompt), so the enrolled key stays until the service enrolled
+    /// the new one after the box's Yes.
+    pub fn create_beside(enrolled: Option<&str>) -> Result<(Hello, &'static str), String> {
+        let active =
+            enrolled.and_then(|fingerprint| open_enrolled(fingerprint).ok().map(|(_, name)| name));
+        let slot = new_key_slot(active);
+        key_credential::create(slot, true).map(|key| (Hello(key), slot))
     }
 
+    /// The slot a new key goes into: never the one holding the enrolled key.
+    pub fn new_key_slot(active: Option<&str>) -> &'static str {
+        key_credential::KEY_SLOTS
+            .into_iter()
+            .find(|name| Some(*name) != active)
+            .unwrap_or(key_credential::KEY_SLOTS[0])
+    }
+
+    /// Removes every key of ours except `keep` (after a confirmed
+    /// enrollment), or all of them (after a confirmed reset).
+    pub fn delete_others(keep: Option<&str>) -> usize {
+        names()
+            .filter(|name| Some(*name) != keep)
+            .filter(|name| key_credential::delete(name).is_ok())
+            .count()
+    }
     /// Whether this process runs elevated (observed from its own token; the
     /// service checks the same on the pipe).
     pub fn this_process_is_elevated() -> bool {
@@ -410,6 +443,22 @@ pub mod hello {
         orcel_authority::win::identity::open_process_token(process)
             .map(|token| orcel_authority::win::identity::token_elevated(&token))
             .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::new_key_slot;
+        use orcel_approval::key_credential::{KEY_SLOTS, LEGACY_KEY_NAME};
+
+        /// Review F6: re-enrollment never writes the enrolled key's slot.
+        #[test]
+        fn sg132_a_new_key_never_takes_the_enrolled_slot() {
+            assert_eq!(new_key_slot(None), KEY_SLOTS[0]);
+            assert_eq!(new_key_slot(Some(KEY_SLOTS[0])), KEY_SLOTS[1]);
+            assert_eq!(new_key_slot(Some(KEY_SLOTS[1])), KEY_SLOTS[0]);
+            assert_eq!(new_key_slot(Some(LEGACY_KEY_NAME)), KEY_SLOTS[0]);
+            assert_ne!(KEY_SLOTS[0], KEY_SLOTS[1]);
+        }
     }
 }
 

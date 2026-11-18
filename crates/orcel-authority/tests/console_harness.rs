@@ -143,6 +143,7 @@ fn claims() -> AuthorizeClaims {
         principal_id: "mcp-client-1".into(),
         task: "a task".into(),
         action_digest: "0".repeat(64),
+        origin: None,
     }
 }
 
@@ -443,12 +444,15 @@ fn a_scripted_grant_issues_a_signed_browser_lease_over_the_pipe() {
     let log_dir = state_dir(&unique("scripted-log"));
     std::fs::create_dir_all(&log_dir).expect("log dir");
     let log = log_dir.join("authority-consent.jsonl");
+    let me = std::env::current_exe().expect("this test's path");
     let harness = start_with(
         "scripted",
         false,
         &[
             std::ffi::OsStr::new("--e2e-scripted-consent"),
             log.as_os_str(),
+            std::ffi::OsStr::new("--trusted-cli"),
+            me.as_os_str(),
         ],
     );
     let client = client(&harness);
@@ -546,11 +550,16 @@ fn a_scripted_grant_issues_a_signed_browser_lease_over_the_pipe() {
     assert_eq!(confirmations.lines().count(), 2, "{confirmations}");
     assert!(confirmations.contains("origins [https://fixture.test]"));
     // Authorize is orceld's alone; verify works for the owner; a revoke ends it.
+    assert_eq!(
+        client.status().expect("status")["caller_is_owner_cli"],
+        Value::Bool(true)
+    );
     let authorize = client.authorize(
         &lease.body.lease_id,
         ExecutorClass::Browser,
         AuthorizeClaims {
             principal_id: client_ref,
+            origin: Some("https://fixture.test".into()),
             ..claims()
         },
     );

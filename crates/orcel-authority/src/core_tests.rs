@@ -9,8 +9,8 @@ use crate::attestation::AttestationReport;
 use crate::caller::{CallerFacts, ClientPolicy};
 use crate::core::{
     check_signing_key_history, display_image, key_fingerprint, AttestationVerifier, AuthorityCore,
-    ConfirmAnswer, Entropy, EventSink, LeaseSigner, PresenceVerifier, Services,
-    EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS, INTENT_TTL_MS,
+    ConfirmAnswer, Entropy, EventSink, LeaseSigner, PresenceVerifier, Services, UacPolicy,
+    UacSettings, EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS, INTENT_TTL_MS,
 };
 use crate::error::{AuthorityError, ENROLLMENT_UNAVAILABLE};
 use crate::lease::{LeaseScope, SignedLease};
@@ -123,6 +123,28 @@ thread_local! {
     static ATTEST: Cell<Attest> = const { Cell::new(Attest::Verified) };
 }
 
+thread_local! {
+    static UAC_ALWAYS_NOTIFY: Cell<bool> = const { Cell::new(true) };
+}
+
+/// The scripted UAC policy: Always notify on the secure desktop, or the
+/// Windows default (notify only for apps, ConsentPromptBehaviorAdmin 5).
+struct ScriptedUac;
+
+impl UacPolicy for ScriptedUac {
+    fn read(&self) -> UacSettings {
+        UacSettings {
+            enable_lua: Some(1),
+            consent_prompt_behavior_admin: Some(if UAC_ALWAYS_NOTIFY.with(Cell::get) {
+                2
+            } else {
+                5
+            }),
+            prompt_on_secure_desktop: Some(1),
+        }
+    }
+}
+
 struct ScriptedAttestation;
 
 impl AttestationVerifier for ScriptedAttestation {
@@ -166,6 +188,7 @@ impl Entropy for Counter {
 }
 
 const ORCELD: &str = r"C:\Program Files\Orcel\orceld.exe";
+const OWNER_CLI: &str = r"C:\Program Files\Orcel\orcel.exe";
 const SPKI: &[u8] = b"spki:owner-hello-key";
 
 fn temp_dir(name: &str) -> Result<PathBuf, String> {
@@ -188,11 +211,13 @@ fn open_in(mode: RunMode, dir: &Path, events: &Events) -> Result<AuthorityCore, 
         dir,
         ClientPolicy {
             trusted_orceld_images: vec![PathBuf::from(ORCELD)],
+            trusted_owner_cli_images: vec![PathBuf::from(OWNER_CLI)],
         },
         Services {
             signer: Box::new(KeyedHashSigner),
             presence: Box::new(HashPresence),
             attestation: Box::new(ScriptedAttestation),
+            uac: Box::new(ScriptedUac),
             events: Box::new(events.clone()),
             entropy: Box::new(Counter(AtomicU64::new(0))),
             clock,
@@ -333,6 +358,7 @@ fn claims() -> AuthorizeClaims {
         principal_id: "mcp-client-1".to_owned(),
         task: "tidy the downloads folder".to_owned(),
         action_digest: sha256_hex(b"click 10 20"),
+        origin: None,
     }
 }
 
@@ -1291,6 +1317,7 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
         serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
     let browser_claims = AuthorizeClaims {
         principal_id: client.clone(),
+        origin: Some("https://example.com".to_owned()),
         ..claims()
     };
     let as_browser = |executor| Request::Authorize {
@@ -1302,6 +1329,137 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
     assert_eq!(
         code(core.handle(&orceld(), as_browser(ExecutorClass::DesktopInput))),
         Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn review_f1_enroll_and_reset_need_always_notify_and_every_intent_the_owner_cli(
+) -> Result<(), String> {
+    let dir = temp_dir("review-f1")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    UAC_ALWAYS_NOTIFY.with(|v| v.set(false));
+    let refused = core.handle(&elevated_owner(), enroll_request(SPKI, false));
+    let reset = core.handle(
+        &elevated_owner(),
+        Request::ResetEnrollment {
+            origin: ClaimedOrigin::OwnerCli,
+        },
+    );
+    let status = ok(core.handle(&owner(), Request::Status))?;
+    UAC_ALWAYS_NOTIFY.with(|v| v.set(true));
+    let error = refused
+        .err()
+        .ok_or("enrollment under the default UAC was not refused")?;
+    assert_eq!(error.code, FailureCode::CapabilityDenied);
+    assert!(error.message.contains("Always notify"), "{}", error.message);
+    assert_eq!(code(reset), Some(FailureCode::CapabilityDenied));
+    assert_eq!(
+        status["uac_always_notify_on_secure_desktop"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        status["uac"]["consent_prompt_behavior_admin"],
+        Value::from(5)
+    );
+    // Any image but the installed CLI: no grant, enrollment or reset intent.
+    let elsewhere = CallerFacts {
+        image: r"C:\Users\me\Downloads\orcel.exe".to_owned(),
+        ..elevated_owner()
+    };
+    assert_eq!(
+        code(core.handle(&elsewhere, enroll_request(SPKI, false))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    enroll(&mut core, SPKI, false)?;
+    let cli_elsewhere = CallerFacts {
+        image: r"C:\Users\me\Downloads\orcel.exe".to_owned(),
+        ..owner()
+    };
+    let refused = core
+        .handle(&cli_elsewhere, grant_begin(None))
+        .err()
+        .ok_or("a grant from another image was not refused")?;
+    assert!(
+        refused.message.contains("installed Orcel CLI"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        ok(core.handle(&owner(), Request::Status))?["caller_is_owner_cli"],
+        Value::Bool(true)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn review_f4_f7_browser_authorize_checks_family_and_origin_and_the_box_says_browser(
+) -> Result<(), String> {
+    use crate::lease::BrowserFamily;
+    let dir = temp_dir("review-f4")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let client = format!("cl-{}", "cd".repeat(16));
+    let scope = LeaseScope::BrowserFullAccess {
+        client_ref: client.clone(),
+        session_id: "bs-0123456789abcdef-1-0001020304050607".to_owned(),
+        origins: vec!["https://fixture.test".to_owned()],
+        families: vec![BrowserFamily::Navigate, BrowserFamily::Click],
+        task: None,
+    };
+    let begun = ok(core.handle(&owner(), grant_begin_with(Some(scope), &client, "browse")))?;
+    let id = str_of(&begun, "intent_id")?;
+    let (challenge, text) = confirm_yes(&mut core, &owner(), &id)?;
+    assert!(
+        text.starts_with("A program asked for Orcel Browser Full Access"),
+        "{text}"
+    );
+    assert!(text.contains("Approve this browser grant?"), "{text}");
+    assert!(text.contains("PIN or fingerprint"), "{text}");
+    let done = ok(core.handle(
+        &owner(),
+        presence(&id, &str_of(&begun, "code")?, &challenge),
+    ))?;
+    let lease: SignedLease =
+        serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
+    let ask = |operation: &str, origin: Option<&str>| Request::Authorize {
+        lease_id: lease.body.lease_id.clone(),
+        executor: ExecutorClass::Browser,
+        claims: AuthorizeClaims {
+            principal_id: client.clone(),
+            operation: operation.to_owned(),
+            origin: origin.map(str::to_owned),
+            ..claims()
+        },
+    };
+    ok(core.handle(&orceld(), ask("click", Some("https://fixture.test"))))?;
+    ok(core.handle(&orceld(), ask("navigate", Some("https://fixture.test"))))?;
+    assert_eq!(
+        code(core.handle(&orceld(), ask("type", Some("https://fixture.test")))),
+        Some(FailureCode::CapabilityDenied),
+        "a family the lease does not name"
+    );
+    assert_eq!(
+        code(core.handle(&orceld(), ask("click", Some("https://other.test")))),
+        Some(FailureCode::CapabilityDenied),
+        "an origin the lease does not name"
+    );
+    assert_eq!(
+        code(core.handle(&orceld(), ask("click", None))),
+        Some(FailureCode::InvalidRequest),
+        "no origin"
+    );
+    // A desktop grant keeps the Full Control wording.
+    let (_, desktop_text) = {
+        ok(core.handle(&orceld(), Request::Stop))?;
+        grant(&mut core, None)?
+    };
+    assert!(
+        desktop_text.starts_with("A program asked for Orcel Full Control"),
+        "{desktop_text}"
     );
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())

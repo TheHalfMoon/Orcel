@@ -52,6 +52,11 @@ pub struct AuthorizeClaims {
     pub task: String,
     /// SHA-256 of the action's arguments, never the arguments themselves.
     pub action_digest: String,
+    /// Review F4: for a browser lease, the page's committed origin the
+    /// action lands on; the service checks it against the lease's origins
+    /// (and `operation` against its families). Absent for desktop actions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

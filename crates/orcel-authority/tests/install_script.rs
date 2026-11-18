@@ -26,6 +26,7 @@ fn install_takes_only_hash_pinned_binaries_and_verifies_before_and_after_copying
         "[string]$ArtifactDir",
         "[string]$AuthoritySha256",
         "[string]$OrceldSha256",
+        "[string]$OrcelSha256",
     ] {
         assert!(text.contains(parameter), "{parameter}");
     }
@@ -44,6 +45,9 @@ fn install_takes_only_hash_pinned_binaries_and_verifies_before_and_after_copying
     assert!(first_hash < copy && copy < rehash, "hash, copy, hash again");
     assert!(install.contains("Assert-Hash $sourceOrceld $OrceldSha256"));
     assert!(install.contains("Assert-Hash $InstalledOrceld $OrceldSha256"));
+    // Slice 2 review F1 (b): the owner CLI is hash-pinned the same way.
+    assert!(install.contains("Assert-Hash $sourceOrcel $OrcelSha256"));
+    assert!(install.contains("Assert-Hash $InstalledOrcel $OrcelSha256"));
     assert!(
         text.contains("SHA-256 of this script"),
         "the script prints its own hash"
@@ -54,7 +58,10 @@ fn install_takes_only_hash_pinned_binaries_and_verifies_before_and_after_copying
 fn the_trusted_orceld_is_the_program_files_copy_and_directories_are_created_protected() {
     let text = script();
     assert!(text.contains("$InstalledOrceld = Join-Path $ProgramFilesOrcel 'orceld.exe'"));
-    assert!(text.contains("trusted_orceld_images = @($InstalledOrceld)"));
+    assert!(text.contains(
+        "trusted_orceld_images = @($InstalledOrceld); trusted_owner_cli_images = @($InstalledOrcel)"
+    ));
+    assert!(text.contains("$InstalledOrcel = Join-Path $ProgramFilesOrcel 'orcel.exe'"));
     for sddl in [
         "'O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'",
         "\"O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;$serviceSid)\"",
@@ -139,6 +146,8 @@ fn the_whatif_preview_runs_unelevated_in_every_shell_and_checks_hashes() {
     };
     std::fs::write(dir.join("orcel-authority.exe"), b"authority bytes").expect("write");
     std::fs::write(dir.join("orceld.exe"), b"orceld bytes").expect("write");
+    std::fs::write(dir.join("orcel.exe"), b"orcel bytes").expect("write");
+    let good_orcel = hash(b"orcel bytes");
     let good_authority = hash(b"authority bytes");
     let good_orceld = hash(b"orceld bytes");
     println!("shells: {:?}", shells());
@@ -157,6 +166,7 @@ fn the_whatif_preview_runs_unelevated_in_every_shell_and_checks_hashes() {
                 .arg("-ArtifactDir")
                 .arg(&dir)
                 .args(["-AuthoritySha256", authority, "-OrceldSha256", &good_orceld])
+                .args(["-OrcelSha256", &good_orcel])
                 .output()
                 .expect("a PowerShell")
         };

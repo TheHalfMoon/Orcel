@@ -77,6 +77,12 @@ impl CallerRole {
 pub struct ClientPolicy {
     /// Exact paths of trusted orceld images.
     pub trusted_orceld_images: Vec<PathBuf>,
+    /// Slice 2 review F1 (b): exact paths of the trusted owner CLI
+    /// (`%ProgramFiles%\Orcel\orcel.exe`, installed hash-verified with
+    /// orceld). Only a process of one of these images may record a grant,
+    /// enrollment or reset intent; empty means no process may.
+    #[serde(default)]
+    pub trusted_owner_cli_images: Vec<PathBuf>,
 }
 
 fn same_path(left: &str, right: &Path) -> bool {
@@ -88,6 +94,13 @@ fn same_path(left: &str, right: &Path) -> bool {
 }
 
 impl ClientPolicy {
+    /// Whether the observed image is a trusted owner CLI image.
+    pub fn is_owner_cli(&self, facts: &CallerFacts) -> bool {
+        self.trusted_owner_cli_images
+            .iter()
+            .any(|image| same_path(&facts.image, image))
+    }
+
     pub fn classify(&self, facts: &CallerFacts) -> CallerRole {
         if facts.user_sid.is_empty() || facts.logon_session_id == 0 {
             return CallerRole::Other;
@@ -129,7 +142,11 @@ mod tests {
     fn roles_follow_observed_facts() {
         let policy = ClientPolicy {
             trusted_orceld_images: vec![PathBuf::from(r"C:\Orcel\bin\orceld.exe")],
+            trusted_owner_cli_images: vec![PathBuf::from(r"C:\Orcel\bin\orcel.exe")],
         };
+        assert!(policy.is_owner_cli(&facts(r"c:\orcel\bin\ORCEL.exe", true, true)));
+        assert!(!policy.is_owner_cli(&facts(r"C:\Temp\orcel.exe", true, true)));
+        assert!(!policy.is_owner_cli(&facts("", true, true)));
         assert_eq!(
             policy.classify(&facts(r"c:\orcel\BIN\orceld.exe", true, true)),
             CallerRole::Orceld

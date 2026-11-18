@@ -547,7 +547,8 @@ pub fn verify_with_pins(
         .map(|s| (*s).to_owned())
         .collect(),
         not_verified: [
-            "that the key requires a Windows Hello gesture (not stated by the attestation)",
+            "that the key requires a Windows Hello gesture: any TPM key certified by a Microsoft AIK passes",
+            "that the TPM is this PC's: no EK or AIK of this PC is pinned",
             "freshness: GetAttestationAsync takes no service nonce",
             "revocation of the AIK or intermediate certificates (no CRL or OCSP is fetched)",
         ]

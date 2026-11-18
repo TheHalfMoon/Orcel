@@ -93,10 +93,12 @@ Full User desktop control (local only):
 
 Orcel authority service (SG-000132; Windows):
   orcel authority status                  Show the service's mode, epoch and enrollment.
-  orcel authority enroll [--replace]      From an ELEVATED terminal: create the Windows
-      Hello key, send its TPM attestation, confirm its fingerprint in the service's box,
-      and sign once with Windows Hello.
-  orcel authority reset                   From an elevated terminal: remove the enrolled key.
+  orcel authority enroll [--replace] [--pause]
+      Started ELEVATED and directly (Start-Process -Verb RunAs on
+      %ProgramFiles%\\Orcel\\orcel.exe, never an elevated shell): create the Windows Hello
+      key beside any enrolled one, send its TPM attestation, confirm its fingerprint in the
+      service's box, and sign once with Windows Hello. --pause waits for Enter at the end.
+  orcel authority reset [--pause]         Started the same way: remove the enrolled key.
 
 Orcel Browser Full Access (SG-000135; leases come from the authority service only):
   orcel browser grant --session <bs-...> --client-ref <cl-...> --origin <https://host>...

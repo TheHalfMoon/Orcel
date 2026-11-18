@@ -191,6 +191,7 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
         signer: Box::new(signer),
         presence,
         attestation: Box::new(TpmAttestationVerifier::on_this_pc()),
+        uac: Box::new(super::uac::MachineUacPolicy),
         events,
         entropy: Box::new(SystemEntropy),
         clock: crate::now_ms,

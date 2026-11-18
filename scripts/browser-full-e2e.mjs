@@ -218,6 +218,8 @@ async function startAuthority(paths, built) {
     "--console", "--state-dir", join(paths.root, "authority-console"),
     "--pipe-suffix", `ob08-${process.pid}`,
     "--trusted-orceld", paths.orceld,
+    // This script stands in for the owner CLI (`orcel browser grant`).
+    "--trusted-cli", process.execPath,
     "--e2e-scripted-consent", paths.authorityConsentLog
   ], { cwd: repo, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   let stderr = "";

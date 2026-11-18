@@ -21,8 +21,12 @@ use windows::Security::Cryptography::Core::CryptographicPublicKeyBlobType;
 use windows::Security::Cryptography::CryptographicBuffer;
 use windows::Storage::Streams::IBuffer;
 
-/// The key credential's name in the user's Hello container.
-pub const KEY_NAME: &str = "Orcel Authority";
+/// The key credential names in the user's Hello container: two slots, so
+/// re-enrollment creates the new key beside the enrolled one and nothing is
+/// replaced before the service's box is answered Yes (review F6), and the
+/// slice 2 single name, still opened for a key enrolled under it.
+pub const KEY_SLOTS: [&str; 2] = ["Orcel Authority A", "Orcel Authority B"];
+pub const LEGACY_KEY_NAME: &str = "Orcel Authority";
 
 /// A Windows Hello key credential.
 pub struct HelloKey {
@@ -61,15 +65,15 @@ pub fn is_supported() -> Result<bool, String> {
         .map_err(|e| winrt("KeyCredentialManager.IsSupportedAsync", e))
 }
 
-/// Creates the key (Hello prompt). `replace` replaces a key of the same
+/// Creates the key `name` (Hello prompt). `replace` replaces a key of that
 /// name in the Hello container; otherwise an existing one is an error.
-pub fn create(replace: bool) -> Result<HelloKey, String> {
+pub fn create(name: &str, replace: bool) -> Result<HelloKey, String> {
     let option = if replace {
         KeyCredentialCreationOption::ReplaceExisting
     } else {
         KeyCredentialCreationOption::FailIfExists
     };
-    let result = KeyCredentialManager::RequestCreateAsync(&HSTRING::from(KEY_NAME), option)
+    let result = KeyCredentialManager::RequestCreateAsync(&HSTRING::from(name), option)
         .and_then(|operation| operation.get())
         .map_err(|e| winrt("KeyCredentialManager.RequestCreateAsync", e))?;
     let status = result
@@ -85,9 +89,9 @@ pub fn create(replace: bool) -> Result<HelloKey, String> {
     })
 }
 
-/// Opens the existing key (no prompt until it signs).
-pub fn open() -> Result<HelloKey, String> {
-    let result = KeyCredentialManager::OpenAsync(&HSTRING::from(KEY_NAME))
+/// Opens the existing key `name` (no prompt until it signs).
+pub fn open(name: &str) -> Result<HelloKey, String> {
+    let result = KeyCredentialManager::OpenAsync(&HSTRING::from(name))
         .and_then(|operation| operation.get())
         .map_err(|e| winrt("KeyCredentialManager.OpenAsync", e))?;
     let status = result
@@ -103,9 +107,9 @@ pub fn open() -> Result<HelloKey, String> {
     })
 }
 
-/// Deletes the key from the Hello container (after a confirmed reset).
-pub fn delete() -> Result<(), String> {
-    KeyCredentialManager::DeleteAsync(&HSTRING::from(KEY_NAME))
+/// Deletes the key `name` from the Hello container.
+pub fn delete(name: &str) -> Result<(), String> {
+    KeyCredentialManager::DeleteAsync(&HSTRING::from(name))
         .and_then(|operation| operation.get())
         .map_err(|e| winrt("KeyCredentialManager.DeleteAsync", e))
 }

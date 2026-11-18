@@ -218,7 +218,7 @@ fn arm_input(
 /// when it is installed (`authority_link::desktop_input_gate`); the
 /// deprecated user-readable store applies only where it is not.
 fn require_full_user_desktop(request: &RequestEnvelope) -> Result<(), ProviderError> {
-    crate::authority_link::desktop_input_gate(&request.capability, &request.operation)
+    crate::authority_link::desktop_input_gate(request)
 }
 
 pub fn is_full_user_desktop_shape(capability: &str, operation: &str) -> bool {

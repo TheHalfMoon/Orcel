@@ -36,7 +36,7 @@ use orcel_authority::client::{AuthorityClient, VerifiedLease};
 use orcel_authority::lease::{LeaseScope, SignatureVerifier, SignedLease};
 use orcel_authority::protocol::AuthorizeClaims;
 use orcel_authority::AuthorityError;
-use orcel_contracts::{ExecutorClass, FailureCode};
+use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
 use orcel_policy::browser_lease::{BrowserFamily, BrowserLease};
 use orcel_provider_fs::ProviderError;
 use serde_json::Value;
@@ -351,6 +351,8 @@ impl LeaseSource for ServiceLeaseSource {
                     principal_id: action.principal_id.clone(),
                     task: action.task.clone(),
                     action_digest: action_digest(action),
+                    // Review F4: the service checks the family and origin.
+                    origin: Some(action.origin.clone()),
                 },
             )
             .map(|_| ())
@@ -421,7 +423,7 @@ impl LeaseManager for ServiceLeaseManager {
 /// user and logon session counts, admitted by the service's audit-first
 /// `Authorize`; the deprecated user-readable store is consulted only where
 /// no service is installed (its existing behaviour), never as a fallback.
-pub(crate) fn desktop_input_gate(capability: &str, operation: &str) -> Result<(), ProviderError> {
+pub(crate) fn desktop_input_gate(request: &RequestEnvelope) -> Result<(), ProviderError> {
     if !orcel_authority::client::service_installed() {
         // DEPRECATED path (no new issuance happens through it once the
         // service is installed; `orcel full-control grant` uses the service).
@@ -444,27 +446,19 @@ pub(crate) fn desktop_input_gate(capability: &str, operation: &str) -> Result<()
         {
             continue;
         }
-        let digest: String = Sha256::digest(
-            format!(
-                "orcel-desktop-lease-action/1|{capability}|{operation}|{}",
-                orcel_approval::now_ms()
-            )
-            .as_bytes(),
-        )
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+        let now = orcel_approval::now_ms();
         return client
             .authorize(
                 &lease.body.lease_id,
                 ExecutorClass::DesktopInput,
                 AuthorizeClaims {
-                    request_id: format!("desktop-{}", orcel_approval::now_ms()),
-                    capability: capability.to_owned(),
-                    operation: operation.to_owned(),
+                    request_id: format!("desktop-{now}"),
+                    capability: request.capability.clone(),
+                    operation: request.operation.clone(),
                     principal_id: lease.body.principal_id.clone(),
                     task: lease.body.task.clone(),
-                    action_digest: digest,
+                    action_digest: desktop_action_digest(request, now),
+                    origin: None,
                 },
             )
             .map(|_| ())
@@ -474,6 +468,30 @@ pub(crate) fn desktop_input_gate(capability: &str, operation: &str) -> Result<()
         FailureCode::LeaseRequired,
         "no active Full User desktop lease from the Orcel authority service; run `orcel full-control grant`",
     ))
+}
+
+/// Review F5: the SHA-256 the service's audit records for one desktop
+/// action: its workspace, capability, operation, target, arguments and time,
+/// so the record names what was done, not only its kind.
+pub(crate) fn desktop_action_digest(request: &RequestEnvelope, now_ms: u64) -> String {
+    let mut hasher = Sha256::new();
+    for part in [
+        "orcel-desktop-lease-action/2".to_owned(),
+        request.workspace_id.clone(),
+        request.capability.clone(),
+        request.operation.clone(),
+        request.target.clone().unwrap_or_default(),
+        request.arguments.to_string(),
+        now_ms.to_string(),
+    ] {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 fn print_error(error: &AuthorityError) -> i32 {
     eprintln!("orceld authority: {error}");
@@ -697,6 +715,36 @@ mod tests {
         assert!(admit_browser_lease(&forged, &verifier).is_err());
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    /// Review F5: the desktop action digest names the action's target and
+    /// arguments, not only its kind.
+    #[test]
+    fn sg132_the_desktop_action_digest_binds_target_and_arguments() {
+        let request = |target: Option<&str>, arguments: serde_json::Value| RequestEnvelope {
+            version: orcel_contracts::INTERNAL_PROTOCOL_VERSION,
+            request_id: "r".into(),
+            client_session_id: "c".into(),
+            workspace_id: "default".into(),
+            capability: "desktop.input".into(),
+            operation: "click".into(),
+            target: target.map(str::to_owned),
+            arguments,
+        };
+        let base = desktop_action_digest(&request(Some("w1"), serde_json::json!({"x": 1})), 5);
+        assert_eq!(base.len(), 64);
+        assert_eq!(
+            base,
+            desktop_action_digest(&request(Some("w1"), serde_json::json!({"x": 1})), 5)
+        );
+        for other in [
+            desktop_action_digest(&request(Some("w1"), serde_json::json!({"x": 2})), 5),
+            desktop_action_digest(&request(Some("w2"), serde_json::json!({"x": 1})), 5),
+            desktop_action_digest(&request(None, serde_json::json!({"x": 1})), 5),
+            desktop_action_digest(&request(Some("w1"), serde_json::json!({"x": 1})), 6),
+        ] {
+            assert_ne!(base, other);
+        }
     }
 
     #[test]
