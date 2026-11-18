@@ -8,9 +8,10 @@
 use crate::attestation::AttestationReport;
 use crate::caller::{CallerFacts, ClientPolicy};
 use crate::core::{
-    check_signing_key_history, display_image, key_fingerprint, AttestationVerifier, AuthorityCore,
-    ConfirmAnswer, Entropy, EventSink, LeaseSigner, PresenceVerifier, Services, UacPolicy,
-    UacSettings, EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS, INTENT_TTL_MS,
+    check_signing_key_history, display_image, is_builtin_administrator, key_fingerprint,
+    AttestationVerifier, AuthorityCore, ConfirmAnswer, Entropy, EventSink, LeaseSigner,
+    PresenceVerifier, Services, UacPolicy, UacSettings, EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS,
+    INTENT_TTL_MS,
 };
 use crate::error::{AuthorityError, ENROLLMENT_UNAVAILABLE};
 use crate::lease::{LeaseScope, SignedLease};
@@ -125,6 +126,7 @@ thread_local! {
 
 thread_local! {
     static UAC_ALWAYS_NOTIFY: Cell<bool> = const { Cell::new(true) };
+    static FILTER_ADMINISTRATOR_TOKEN: Cell<Option<u32>> = const { Cell::new(None) };
 }
 
 /// The scripted UAC policy: Always notify on the secure desktop, or the
@@ -141,6 +143,7 @@ impl UacPolicy for ScriptedUac {
                 5
             }),
             prompt_on_secure_desktop: Some(1),
+            filter_administrator_token: FILTER_ADMINISTRATOR_TOKEN.with(Cell::get),
         }
     }
 }
@@ -1461,6 +1464,49 @@ fn review_f4_f7_browser_authorize_checks_family_and_origin_and_the_box_says_brow
         desktop_text.starts_with("A program asked for Orcel Full Control"),
         "{desktop_text}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn review_reverify_the_builtin_administrator_needs_admin_approval_mode() -> Result<(), String> {
+    assert!(is_builtin_administrator("S-1-5-21-1-2-3-500"));
+    assert!(!is_builtin_administrator("S-1-5-21-1-2-3-1001"));
+    assert!(!is_builtin_administrator("S-1-5-21-1-2-3-1500"));
+    assert!(!is_builtin_administrator("S-1-5-32-500"));
+    let dir = temp_dir("review-rid500")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let administrator = CallerFacts {
+        user_sid: "S-1-5-21-1-2-3-500".to_owned(),
+        ..elevated_owner()
+    };
+    let refused = core
+        .handle(&administrator, enroll_request(SPKI, false))
+        .err()
+        .ok_or("the built-in Administrator enrolled without Admin Approval Mode")?;
+    assert!(
+        refused.message.contains("FilterAdministratorToken"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        code(core.handle(
+            &administrator,
+            Request::ResetEnrollment {
+                origin: ClaimedOrigin::OwnerCli
+            }
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let status = ok(core.handle(&administrator, Request::Status))?;
+    assert_eq!(status["caller_is_builtin_administrator"], Value::Bool(true));
+    FILTER_ADMINISTRATOR_TOKEN.with(|v| v.set(Some(1)));
+    let begun = core.handle(&administrator, enroll_request(SPKI, false));
+    let status = ok(core.handle(&administrator, Request::Status))?;
+    FILTER_ADMINISTRATOR_TOKEN.with(|v| v.set(None));
+    ok(begun)?;
+    assert_eq!(status["uac"]["filter_administrator_token"], Value::from(1));
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

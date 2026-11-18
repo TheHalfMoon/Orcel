@@ -9,7 +9,9 @@
 //! never writes them. A value it cannot read counts as not set.
 
 use crate::core::{UacPolicy, UacSettings};
-use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD};
+use windows_sys::Win32::System::Registry::{
+    RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_SUBKEY_WOW6464KEY,
+};
 
 const POLICY_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
 
@@ -24,7 +26,8 @@ fn read_dword(name: &str) -> Option<u32> {
             HKEY_LOCAL_MACHINE,
             key.as_ptr(),
             value.as_ptr(),
-            RRF_RT_REG_DWORD,
+            // The 64-bit view, whatever the bitness of this process.
+            RRF_RT_REG_DWORD | RRF_SUBKEY_WOW6464KEY,
             std::ptr::null_mut(),
             (&mut data as *mut u32).cast(),
             &mut size,
@@ -42,6 +45,7 @@ impl UacPolicy for MachineUacPolicy {
             enable_lua: read_dword("EnableLUA"),
             consent_prompt_behavior_admin: read_dword("ConsentPromptBehaviorAdmin"),
             prompt_on_secure_desktop: read_dword("PromptOnSecureDesktop"),
+            filter_administrator_token: read_dword("FilterAdministratorToken"),
         }
     }
 }
@@ -58,6 +62,7 @@ mod tests {
             settings.enable_lua,
             settings.consent_prompt_behavior_admin,
             settings.prompt_on_secure_desktop,
+            settings.filter_administrator_token,
         ]
         .into_iter()
         .flatten()

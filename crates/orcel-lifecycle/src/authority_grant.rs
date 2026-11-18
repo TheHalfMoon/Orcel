@@ -412,11 +412,32 @@ pub mod hello {
     /// Review F6: a new key in the slot that does NOT hold the enrolled key
     /// (Hello prompt), so the enrolled key stays until the service enrolled
     /// the new one after the box's Yes.
-    pub fn create_beside(enrolled: Option<&str>) -> Result<(Hello, &'static str), String> {
+    pub fn create_beside(
+        enrolled: Option<&str>,
+        replace: bool,
+    ) -> Result<(Hello, &'static str), String> {
         let active =
             enrolled.and_then(|fingerprint| open_enrolled(fingerprint).ok().map(|(_, name)| name));
-        let slot = new_key_slot(active);
+        let slot = plan_new_slot(enrolled.is_some(), active, replace)?;
         key_credential::create(slot, true).map(|key| (Hello(key), slot))
+    }
+
+    /// Review re-verify item 4: with a key enrolled at the service but no
+    /// slot holding it, a new key is created only under `--replace` (the
+    /// enrolled key is gone from Windows Hello, or another slot layout holds
+    /// it); otherwise nothing is touched.
+    pub fn plan_new_slot(
+        enrolled: bool,
+        active: Option<&str>,
+        replace: bool,
+    ) -> Result<&'static str, String> {
+        if enrolled && active.is_none() && !replace {
+            return Err(
+                "a key is enrolled but no Orcel Authority key in Windows Hello matches it; nothing was created (use --replace to enroll a new one)"
+                    .to_owned(),
+            );
+        }
+        Ok(new_key_slot(active))
     }
 
     /// The slot a new key goes into: never the one holding the enrolled key.
@@ -458,6 +479,14 @@ pub mod hello {
             assert_eq!(new_key_slot(Some(KEY_SLOTS[1])), KEY_SLOTS[0]);
             assert_eq!(new_key_slot(Some(LEGACY_KEY_NAME)), KEY_SLOTS[0]);
             assert_ne!(KEY_SLOTS[0], KEY_SLOTS[1]);
+            // Enrolled but no slot matches: refused unless --replace.
+            assert!(super::plan_new_slot(true, None, false).is_err());
+            assert_eq!(super::plan_new_slot(true, None, true), Ok(KEY_SLOTS[0]));
+            assert_eq!(
+                super::plan_new_slot(true, Some(KEY_SLOTS[0]), true),
+                Ok(KEY_SLOTS[1])
+            );
+            assert_eq!(super::plan_new_slot(false, None, false), Ok(KEY_SLOTS[0]));
         }
     }
 }

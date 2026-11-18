@@ -148,6 +148,15 @@ pub struct UacSettings {
     pub enable_lua: Option<u32>,
     pub consent_prompt_behavior_admin: Option<u32>,
     pub prompt_on_secure_desktop: Option<u32>,
+    /// Admin Approval Mode for the built-in Administrator (RID 500).
+    #[serde(default)]
+    pub filter_administrator_token: Option<u32>,
+}
+
+/// Whether `sid` is a machine or domain's built-in Administrator (RID 500),
+/// which UAC does not prompt unless `FilterAdministratorToken` is 1.
+pub fn is_builtin_administrator(sid: &str) -> bool {
+    sid.starts_with("S-1-5-21-") && sid.rsplit('-').next() == Some("500")
 }
 
 impl UacSettings {
@@ -775,6 +784,7 @@ impl AuthorityCore {
             "uac": self.services.uac.read(),
             "uac_always_notify_on_secure_desktop": self.services.uac.read().always_notify_on_secure_desktop(),
             "caller_is_owner_cli": self.policy.is_owner_cli(caller),
+            "caller_is_builtin_administrator": is_builtin_administrator(&caller.user_sid),
             "can_issue": self.can_issue(),
             "deferred": DEFERRED,
         })
@@ -1068,6 +1078,13 @@ impl AuthorityCore {
                 "enrollment and reset need UAC set to Always notify on the secure desktop (EnableLUA 1, ConsentPromptBehaviorAdmin 2, PromptOnSecureDesktop 1); this PC has {:?}, {:?}, {:?}",
                 uac.enable_lua, uac.consent_prompt_behavior_admin, uac.prompt_on_secure_desktop
             )));
+        }
+        // Review re-verify item 2: the built-in Administrator is not asked by
+        // UAC at all unless Admin Approval Mode covers it.
+        if is_builtin_administrator(&caller.user_sid) && uac.filter_administrator_token != Some(1) {
+            return Err(AuthorityError::denied(
+                "the built-in Administrator account elevates without a UAC prompt unless FilterAdministratorToken is 1; enroll and reset from your own administrator account",
+            ));
         }
         if !caller.elevated {
             return Err(AuthorityError::denied(

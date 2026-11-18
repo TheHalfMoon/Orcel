@@ -19,24 +19,56 @@ account that elevates with a separate administrator's credentials is NOT support
 process runs as the administrator, so the key would be enrolled for the administrator, not for you, and your
 grants would find no key (refused). Use your administrator account with "Always notify".
 
-## How every elevated step is started
+## How every elevated step is started, and the check on every UAC prompt
 
 Never run an elevated step from an elevated terminal you opened, and never from an elevated shell that loads
-your PowerShell profile: a profile, a module or a terminal extension that a process running as you planted
-would then run elevated. From your NORMAL (not elevated) PowerShell, start the one program directly, so the
-UAC prompt on the secure desktop names that program:
+your PowerShell profile. From your NORMAL (not elevated) PowerShell, start the one program directly with
+`Start-Process -Verb RunAs`, as each step shows.
+
+That normal shell runs as you, so a program running as you could have changed what it starts. The check that
+does not depend on your shell is the UAC prompt itself, drawn on the secure desktop. **On every UAC prompt of
+this runbook:**
+
+1. Select **Show more details**.
+2. Read **Program location**: it must be exactly the program in the table below, and the full command line
+   after it must be exactly the one below (your own hash values and paths in the `<...>` places, nothing added,
+   nothing missing).
+3. If anything differs, or the prompt names another program, choose **No** and stop. Do not retry from the
+   same shell; restart Windows, sign in, and start again.
+
+`orcel.exe` is not code-signed in this slice, so UAC shows it as "Unknown publisher"; the path and command
+line check is what identifies it.
+
+| Step | Program location | Exact command line |
+| --- | --- | --- |
+| Create the build folder | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /c mkdir C:\OrcelBuild` |
+| Install | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File C:\OrcelBuild\install-orcel-authority.ps1 -ArtifactDir C:\OrcelBuild\artifact -AuthoritySha256 <sha256> -OrceldSha256 <sha256> -OrcelSha256 <sha256>` |
+| Uninstall | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File C:\OrcelBuild\install-orcel-authority.ps1 -Uninstall` (with `-KeepState` at the end if you asked for it) |
+| Start the service | `C:\Windows\System32\sc.exe` | `"C:\Windows\System32\sc.exe" start OrcelAuthority` |
+| Enroll | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority enroll --pause` |
+| Replace the key | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority enroll --replace --pause` |
+| Reset | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority reset --pause` |
+
+The `Start-Process` lines that produce exactly these command lines:
 
 ```powershell
-# A verified script (the install, the uninstall):
-Start-Process -Verb RunAs -Wait -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
-  -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\OrcelBuild\install-orcel-authority.ps1', <arguments>
-# The installed owner CLI (enroll, reset):
-Start-Process -Verb RunAs -FilePath "$env:ProgramFiles\Orcel\orcel.exe" -ArgumentList 'authority','enroll','--pause'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /c mkdir C:\OrcelBuild'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File C:\OrcelBuild\install-orcel-authority.ps1 -ArtifactDir C:\OrcelBuild\artifact -AuthoritySha256 <sha256> -OrceldSha256 <sha256> -OrcelSha256 <sha256>'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File C:\OrcelBuild\install-orcel-authority.ps1 -Uninstall'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\sc.exe' -ArgumentList 'start OrcelAuthority'
+Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority enroll --pause'
+Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority reset --pause'
 ```
 
-The UAC prompt must name Windows PowerShell (for the script) or `orcel.exe` from `C:\Program Files\Orcel`
-(for enroll and reset); choose No for anything else. `--pause` keeps the window open until you press Enter.
+Launching from Explorer instead (right-click the verified file, **Run as administrator**) avoids your shell,
+but Explorer passes no arguments, and every step above needs them; only use Explorer for a program whose
+expected command line has none, and apply the same UAC check. `--pause` keeps the `orcel.exe` window open until
+you press Enter.
 
+The built-in Administrator account (the one whose SID ends in `-500`) elevates without any UAC prompt unless
+Admin Approval Mode covers it (`FilterAdministratorToken` 1). The service refuses enrollment and reset from it
+otherwise; use your own administrator account. `orcel authority status` shows `FilterAdministratorToken` and
+whether you are that account.
 
 ## What the install changes on the PC
 
@@ -70,7 +102,8 @@ entries in it. What uninstall leaves: events already written to the Application 
      the `orcel-authority-windows-x64` artifact into an admin-only folder. Do not take the expected hashes from
      the `SHA256SUMS.txt` inside the zip; it only has to agree with the log. Or:
    - **Admin-only build.** Clone the reviewed commit into a folder only administrators can write (for example
-     `C:\OrcelBuild`, created directly with `Start-Process -Verb RunAs -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/d','/c','mkdir','C:\OrcelBuild'`, where `/d` skips cmd AutoRun), build there with
+     `C:\OrcelBuild`, created with the "Create the build folder" line of the table above, checked on the UAC
+     prompt; `/d` skips cmd AutoRun), build there with
      `cargo build --release --locked -p orcel-authority -p orceld -p orcel-lifecycle --bin orcel-authority --bin orceld --bin orcel`, and take the hashes with
      `Get-FileHash -Algorithm SHA256`.
 
@@ -89,12 +122,10 @@ entries in it. What uninstall leaves: events already written to the Application 
      -ArtifactDir C:\OrcelBuild\artifact -AuthoritySha256 <sha256> -OrceldSha256 <sha256> -OrcelSha256 <sha256>
    ```
 
-4. **Install, elevated** (started directly, see above):
+4. **Install, elevated** (started directly; check the UAC prompt against the table above):
 
    ```powershell
-   Start-Process -Verb RunAs -Wait -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
-     -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-File','C:\OrcelBuild\install-orcel-authority.ps1',
-       '-ArtifactDir','C:\OrcelBuild\artifact','-AuthoritySha256','<sha256>','-OrceldSha256','<sha256>','-OrcelSha256','<sha256>'
+   Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File C:\OrcelBuild\install-orcel-authority.ps1 -ArtifactDir C:\OrcelBuild\artifact -AuthoritySha256 <sha256> -OrceldSha256 <sha256> -OrcelSha256 <sha256>'
    ```
 
 5. **Check, as your normal user (not elevated):**
@@ -119,9 +150,8 @@ entries in it. What uninstall leaves: events already written to the Application 
    ComputeHash($cert.RawData)`) must be `870c7a35ceab3d59979f2c6a524042d404cb71518004350925fb2ced79a999da`,
    the Microsoft TPM Root Certificate Authority 2014 Microsoft publishes. `orcel authority status` must say
    `enrollment available true` and `UAC always notify on secure desktop true`.
-7. **Enroll, elevated, started directly:** `Start-Process -Verb RunAs -FilePath "$env:ProgramFiles\Orcel\orcel.exe"
-   -ArgumentList 'authority','enroll','--pause'`. The UAC prompt must name `orcel.exe` in `C:\Program
-   Files\Orcel`. Windows Hello asks you to create the key (a PIN or fingerprint is recommended over face
+7. **Enroll, elevated, started directly:** the Enroll line of the table above. Check **Show more details** on
+   the UAC prompt: `"C:\Program Files\Orcel\orcel.exe" authority enroll --pause` exactly, else No. Windows Hello asks you to create the key (a PIN or fingerprint is recommended over face
    recognition). The window prints a one-time code and the key fingerprint; the Orcel Authority box must show
    both. Choose Yes only if they match; Windows Hello asks once more. If the window says the key cannot be
    attested, enrollment stays refused by design; report the message.
@@ -172,7 +202,7 @@ only helps you spot a box you did not ask for.
 
 The service restarts automatically after a failure, twice within a day; after that it stays stopped and Full
 Control answers `AUTHORITY_UNAVAILABLE` (it fails closed, nothing else in Orcel changes). Read events 4103 and
-the System log, fix the cause, then start it elevated and directly: `Start-Process -Verb RunAs -FilePath "$env:SystemRoot\System32\sc.exe" -ArgumentList 'start','OrcelAuthority'`. A broken audit chain, a missing
+the System log, fix the cause, then start it with the "Start the service" line of the table above, checked on the UAC prompt. A broken audit chain, a missing
 state file or a missing key with audit history are refusals by design: inspect before resetting.
 
 ## Update after a rebuild
@@ -183,7 +213,7 @@ inspected it), or a full `-Uninstall` and install to start over with a new key a
 
 ## Uninstall
 
-Elevated, started directly: `Start-Process -Verb RunAs -Wait -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-File','C:\OrcelBuild\install-orcel-authority.ps1','-Uninstall'`.
+Elevated: the "Uninstall" line of the table above, checked on the UAC prompt.
 Add `-KeepState` to keep `%ProgramData%\Orcel\authority` (audit chain, leases, DPAPI-wrapped key) for inspection.
 The virtual account's profile is removed with its DPAPI keys, so a kept key can no longer be unwrapped by a
 reinstalled service; keep it only as evidence.

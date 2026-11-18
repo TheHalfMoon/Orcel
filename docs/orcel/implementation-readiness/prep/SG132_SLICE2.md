@@ -101,6 +101,24 @@ merging main (OB-03, OB-04), the scripted E2E passed again on this PC (2026-11-1
 `64fc24cc2a52485d`, receipt domain `orcel-ob08-receipt/3` with both `lease_id` and `profile`), the Full Access
 part as before, and OB-04's phases (16 approvals, cookie kept across the restart, profiles isolated).
 
+## Re-verify of `f4f72a93` and the answers
+
+- **Shell tampering.** `Start-Process` runs in the user's own shell, which a process running as the user could
+  have changed. The runbook now makes the UAC prompt the check: on every elevated step, **Show more details**,
+  then the exact program location and full command line from its table (create the build folder, install,
+  uninstall, start the service, enroll, replace, reset), and No on any difference. Explorer avoids the shell but
+  passes no arguments, so it suits only argument-free programs, with the same check.
+- **Built-in Administrator.** The service also reads `FilterAdministratorToken` (Status `uac`) and refuses
+  enrollment and reset from an account whose SID is `S-1-5-21-...-500` unless it is 1 (that account elevates
+  with no UAC prompt otherwise); Status reports `caller_is_builtin_administrator`.
+- **Registry view.** The UAC values are read from the 64-bit view (`RRF_SUBKEY_WOW6464KEY`).
+- **Missing enrolled key.** If a key is enrolled at the service but no Hello slot holds it, `enroll` creates
+  nothing unless `--replace` is given (`plan_new_slot`).
+
+Tests: `review_reverify_the_builtin_administrator_needs_admin_approval_mode`,
+`sg132_a_new_key_never_takes_the_enrolled_slot` (now also the missing-key cases),
+`the_uac_policy_is_read_without_writing` (reads `FilterAdministratorToken` too).
+
 ## 2. What the attestation check verifies, and what it cannot
 
 `crates/orcel-authority/src/attestation.rs`, with a strict DER reader in `der.rs`:
@@ -211,7 +229,7 @@ lease. A Hello failure cancels the intent.
 3. Compare the pinned root: `Get-ChildItem Cert:\LocalMachine\CA | Where-Object Thumbprint -eq
    D4FFDB19BA590FFFAA34DB5F4B568706A2978436`, its SHA-256 must be `870c7a35...a999da` and match Microsoft's
    published Microsoft TPM Root Certificate Authority 2014.
-4. Elevated and directly (runbook step 7): `Start-Process -Verb RunAs -FilePath
+4. Elevated and directly (runbook step 7, checking the UAC prompt's details against the runbook's table): `Start-Process -Verb RunAs -FilePath
    "$env:ProgramFiles\Orcel\orcel.exe" -ArgumentList 'authority','enroll','--pause'`. Create the key in the Hello prompt; compare the code
    and fingerprint printed with the Orcel Authority box; Yes; one more Hello gesture. If attestation fails, send
    the CLI's message: that is the hardware fact this slice could not record.

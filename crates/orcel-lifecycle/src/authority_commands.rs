@@ -245,7 +245,7 @@ fn enroll(replace: bool) -> Result<Output, LifecycleError> {
     // enrolled key, so a refused or unanswered box leaves the enrolled key
     // untouched; only after the service enrolled the new key are the others
     // deleted.
-    let (key, slot) = hello::create_beside(status["caller_key_fingerprint"].as_str())
+    let (key, slot) = hello::create_beside(status["caller_key_fingerprint"].as_str(), replace)
         .map_err(|error| LifecycleError::state(format!("create the key: {error}")))?;
     let enrolled = authority_grant::run_enroll(&client, &key, replace, &mut progress)?;
     let removed = hello::delete_others(Some(slot));
