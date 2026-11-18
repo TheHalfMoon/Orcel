@@ -34,6 +34,14 @@ MAY_HAVE_ACTED: frozenset[str] = frozenset(
     {"POSTCONDITION_FAILED", "PROCESS_TIMEOUT", "PROCESS_TERMINATION_UNVERIFIED", "OUTPUT_LIMIT"}
 )
 
+#: SG-000135 OB-07: codes that refuse a call only while a page waits for a
+#: person (a sign-in, code, passkey or CAPTCHA check). Nothing was done. The
+#: gate does not make such a refusal final: the same call may go again once
+#: the page was observed afresh (a successful read-only call), which is the
+#: only way back to a page the person has finished with. orceld keeps
+#: refusing the call for as long as the page waits.
+AWAIT_PERSON: frozenset[str] = frozenset({"HUMAN_VERIFICATION_REQUIRED"})
+
 #: orceld's FailureCode values -> static guidance. Keep in step with the enum
 #: (OUTCOME_UNKNOWN has its own text, UNKNOWN_OUTCOME_TEXT).
 GUIDANCE: dict[str, str] = {
@@ -66,6 +74,11 @@ GUIDANCE: dict[str, str] = {
     "RATE_LIMITED": _FINAL + "A per-site budget is used up. Do not call this site again now.",
     "AUTHORITY_UNAVAILABLE": _FINAL + "The Orcel authority service is not available, so Full Control is unavailable.",
     "PERMISSION_REQUIRED": _FINAL + "This opt-in feature is not enabled for this client.",
+    "HUMAN_VERIFICATION_REQUIRED": (
+        "Nothing was done: the page waits for a person to complete a sign-in, code, passkey or CAPTCHA "
+        "check, which Orcel never completes or skips. Do not look for a way around it. The run must wait "
+        "for the person: read the session status until it no longer reports needs_you, then observe the "
+        "page again. Only after that new observation may the same action be proposed again, or finish."),
 }
 
 UNKNOWN_OUTCOME_TEXT = (

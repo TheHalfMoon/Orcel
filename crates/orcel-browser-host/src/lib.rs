@@ -6,6 +6,7 @@ mod actuation;
 mod approved_folder;
 mod argv;
 mod capture;
+mod challenge;
 mod change_tracking;
 mod confinement;
 mod coordinates;
@@ -88,6 +89,7 @@ pub use capture::{
     InvalidationEvent, MAX_CAPTURE_BYTES, MAX_CAPTURE_DPI, MAX_CAPTURE_FRAMES, MAX_CAPTURE_HEIGHT,
     MAX_CAPTURE_LEASE_MS, MAX_CAPTURE_RATE_PER_MINUTE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_DPI,
 };
+pub use challenge::{ChallengeFinding, CHALLENGE_KINDS, CHALLENGE_SIGNALS};
 pub use change_tracking::{
     markdown_change_diff, Change, ChangeDiff, ChangeStore, Hunk, LineChange, LineKind,
     MAX_TRACKED_BYTES, MAX_TRACKED_PAGES,

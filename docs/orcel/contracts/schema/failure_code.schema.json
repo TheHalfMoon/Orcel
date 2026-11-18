@@ -86,6 +86,11 @@
       "description": "Contracts v1: an opt-in feature not granted to this client.",
       "type": "string",
       "const": "PERMISSION_REQUIRED"
+    },
+    {
+      "description": "SG-000135 OB-07: the page waits for a person to complete a sign-in,\none-time code, passkey or CAPTCHA check (\"Needs you\"). Nothing was\ndone; Orcel never completes one, and the agent may act on the page\nagain only after the check is gone and it has observed the page anew.",
+      "type": "string",
+      "const": "HUMAN_VERIFICATION_REQUIRED"
     }
   ]
 }

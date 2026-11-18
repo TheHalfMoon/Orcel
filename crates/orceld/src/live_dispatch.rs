@@ -843,6 +843,10 @@ mod full {
                 intents: dirs.intents.clone(),
             },
         )?;
+        // SG-000135 OB-07: every broker session goes through the takeover
+        // gate (browser_structured keeps the build's switch), so a page that
+        // needs the person is refused to the agent.
+        browser.enable_takeover_gate();
         browser.set_task(session_id);
         browser.set_client(client);
         if let Some(name) = profile {
@@ -966,7 +970,24 @@ mod full {
             }),
             FullAction::Status { session } => with_broker(|broker| {
                 broker.check_epoch(probe())?;
-                broker.status(client, session)
+                // SG-000135 OB-07: the active page is checked again here (at
+                // most once a second, held or not), so the status read is
+                // also how the session notices the check is gone.
+                let (needs_you, page_state) = {
+                    let live = broker.session(client, session)?;
+                    live.worker.check_challenge_throttled();
+                    let pages = live.worker.needs_you();
+                    (
+                        crate::browser_broker::needs_you_json(live.mode, &pages),
+                        live.worker.page_state(),
+                    )
+                };
+                let mut status = broker.status(client, session)?;
+                if let Value::Object(map) = &mut status {
+                    map.insert("needs_you".into(), needs_you);
+                    map.insert("page_state".into(), json!(page_state));
+                }
+                Ok(status)
             }),
             other => {
                 let id = other.session_id().ok_or_else(|| {
@@ -1013,7 +1034,35 @@ mod full {
             .worker
             .page()
             .map(|page| (page.page_id.clone(), page.generation));
-        let result = act(workspace, approval, request, session, action);
+        // SG-000135 OB-07: the read-only challenge detector looks at the
+        // active page first: a page that shows a sign-in, code, passkey or
+        // CAPTCHA check is held for the person, and the takeover gate then
+        // refuses this action on it (HUMAN_VERIFICATION_REQUIRED) before any
+        // prompt; a held page whose check is gone starts its way back.
+        session.worker.check_challenge();
+        let mut result = act(workspace, approval, request, session, action);
+        // An action that may have opened another document or tab is
+        // followed by a check of what it opened; every reply says which
+        // pages need the person.
+        if let Ok(done) = &mut result {
+            if matches!(
+                action,
+                FullAction::Open { .. }
+                    | FullAction::Click { .. }
+                    | FullAction::Fill { .. }
+                    | FullAction::Select { .. }
+                    | FullAction::Tabs { .. }
+            ) {
+                session.worker.check_challenge();
+            }
+            let pages = session.worker.needs_you();
+            if let Value::Object(map) = &mut done.reply {
+                map.insert(
+                    "needs_you".into(),
+                    crate::browser_broker::needs_you_json(session.mode, &pages),
+                );
+            }
+        }
         let after = session
             .worker
             .page()
@@ -1030,6 +1079,7 @@ mod full {
             (Err(error), None) => match error.code {
                 FailureCode::ApprovalDenied => "denied",
                 FailureCode::TargetStale
+                | FailureCode::HumanVerificationRequired
                 | FailureCode::CapabilityDenied
                 | FailureCode::InvalidRequest
                 | FailureCode::OutputLimit => "refused",
