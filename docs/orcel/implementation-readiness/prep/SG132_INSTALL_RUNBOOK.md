@@ -87,6 +87,7 @@ have read it: press a key (or Enter) and the elevated window closes; never leave
 | Enroll | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority enroll --pause` |
 | Replace the key | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority enroll --replace --pause` |
 | Reset | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority reset --pause` |
+| Reset the audit anchor | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" audit reset-anchor --pause` |
 
 (In the table, `\|` is a plain `|`: Markdown needs it escaped inside a table cell. The UAC prompt and the lines
 below show it plain.)
@@ -117,6 +118,7 @@ Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\sc.exe' -ArgumentList '
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority enroll --pause'
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority enroll --replace --pause'
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority reset --pause'
+Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'audit reset-anchor --pause'
 ```
 
 Explorer's **Run as administrator** passes no arguments, and every step above needs them, so do not use
@@ -362,6 +364,48 @@ Control answers `AUTHORITY_UNAVAILABLE` (it fails closed, nothing else in Orcel 
 the System log, fix the cause, then start it with the "Start the service" line of the table above, checked on
 the UAC prompt. A broken audit chain, a missing state file or a missing key with audit history are refusals by
 design: inspect before resetting.
+
+### Lost or replaced audit chain (WP1-03 owner anchor reset)
+
+orceld writes its own hash-chained audit log (`audit-chain.jsonl` beside `audit.jsonl` in your Orcel state
+folder) and the service holds an anchor of it every 32 records. If that file is deleted, or replaced by one
+that does not continue it, the service refuses the new file's anchors and orceld refuses every dispatch
+(`audit write failed before dispatch`): by design, a rewritten audit trail must not pass silently.
+
+First try to keep the trail:
+
+1. `orceld audit-verify` (not elevated) says why. If the file is only broken (an edit, a torn tail, a cut),
+   `orceld audit-move-aside` keeps it and opens a new file linked to its last verifiable record; the service
+   accepts that continuation, no reset needed.
+2. If the original file still exists somewhere (a backup, the `.quarantine-*` files beside the chain),
+   restore it instead.
+
+Only when the file the service holds anchors of is gone for good, reset the anchor:
+
+3. Stop every Orcel client (orceld runs per client session).
+4. **Elevated, started directly:** the "Reset the audit anchor" line of the table above. On the UAC prompt
+   select **Show more details**: Program location `C:\Program Files\Orcel\orcel.exe` and the command line
+   `"C:\Program Files\Orcel\orcel.exe" audit reset-anchor --pause` exactly, else **No**. The service refuses
+   the reset unless the caller is that installed `orcel.exe`, elevated, with UAC set to Always notify on the
+   secure desktop, from your own (not the built-in) administrator account: the same checks as enrollment.
+5. The window prints a one-time code and the held head (chain file id, seq, digest). The Orcel Authority box
+   must show the same code, the log `orceld` and the same head. Choose **Yes** only if they match and you lost
+   the chain yourself; anything else, **No**.
+6. On Yes the service records a signed `anchor_reset` in its own audit chain and in the Event Log (event 4100,
+   `orcel-anchor-reset/1|orceld|<file>|<seq>|<digest>|record <digest>`), and the command opens a new first
+   chain file whose opening record names that reset record. Any file still at the chain's path is kept beside
+   it as `audit-chain.jsonl.quarantine-reset-*`.
+   The command then asks the service to hold the new file's opening record at once (orceld does it before
+   its first record if that failed), so no other file naming the same reset can take its place.
+   If the command stopped after your Yes (closed window, error), run it again: the service still reports the
+   reset, so it opens a file without a new box. It never keeps a file it finds at the chain path (even one an
+   earlier run opened): it moves it aside and opens a fresh one, then anchors that file's opening. If the service refused the reset file (it was replaced, or grew too long first), run the command again:
+   a pending reset can be reset again with the same checks and box, and the new reset replaces the old. Only that file is accepted: until its first anchor, the
+   service refuses any other first file (one that does not name the reset record, or a long chain grown
+   before it asked), and `orceld audit-verify` reports such a file as broken.
+7. Start your client again. `orceld audit-verify` now reports `reset_by_owner` (exit code 8), never a silent
+   `intact`, and names the reset record; the next anchors the service holds are of the new file. The abandoned
+   file stays refused by id.
 
 ## Update after a rebuild
 

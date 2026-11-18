@@ -1,6 +1,43 @@
+//! Orcel's audit log.
+//!
+//! [`AuditLogger`] writes every request outcome twice: as the plain JSONL
+//! line it always wrote (`audit.jsonl`, kept so existing readers and logs
+//! stay as they are), and first as a contract `AuditEvent` in the hash chain
+//! beside it (`audit-chain.jsonl`, WP1-03, see [`chain`]). The chain is the
+//! record that verifies ([`verify`]); a chain that does not verify refuses
+//! the append, and the logger reports that as a failed record.
+//!
+//! Write before dispatch (spec 4.8): [`AuditLogger::record_dispatch`] writes
+//! a `dispatch` event to the chain before orceld dispatches a request, and
+//! orceld refuses the dispatch when it fails; the outcome is recorded after.
+//! Availability follows: while the chain cannot be written (a disk error, a
+//! lock held past its wait, or a chain that does not verify), every dispatch
+//! is refused. The operator's way back is `orceld audit-verify` to see why
+//! and `orceld audit-move-aside`, which keeps the file and opens a new one
+//! linked to its last verifiable record ([`chain::move_aside`]).
+
+pub mod anchor;
+pub mod chain;
+#[cfg(test)]
+mod chain_tests;
+mod redact;
+pub mod verify;
+
+pub use anchor::{AnchorOutcome, Anchorer, HeldState, LocalMarker};
+pub use chain::{
+    chain_path_for, move_aside, open_after_reset, Appended, ChainError, ChainLink, ChainWriter,
+    EventDraft, MovedAside, ResetOpened,
+};
+pub use redact::sha256_hex;
+pub use verify::{verify_file, verify_with_anchors, verify_with_holder, Verdict, VerifyReport};
+
+use orcel_contracts::event::AuditEventKind;
 use orcel_contracts::RequestEnvelope;
 use orcel_platform::paths;
 pub use orcel_platform::PlatformError;
+#[cfg(test)]
+use redact::TRUNCATED;
+use redact::{bounded, field_text, image_name, target_detail};
 use serde::Serialize;
 use std::borrow::Cow;
 use std::ffi::OsString;
@@ -11,9 +48,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The log name of orceld's chain in its anchors.
+pub const ORCELD_LOG: &str = "orceld";
+
 #[derive(Debug, Clone)]
 pub struct AuditLogger {
     path: PathBuf,
+    /// The hash chain beside the plain log, shared by every clone.
+    chain: Arc<ChainWriter>,
     /// Whether the next record first checks for a torn last line: set when the log was torn
     /// when this logger was made, and after a failed write. The check reads the log, and a read
     /// that overlaps another writer's append can see it half done, so it runs only when there
@@ -25,7 +67,6 @@ pub struct AuditLogger {
 /// these values, so without a bound one request could make one record, and the log, any size.
 pub const MAX_FIELD_CHARS: usize = 256;
 pub const MAX_TARGET_CHARS: usize = 1024;
-const TRUNCATED: &str = "…[truncated]";
 
 #[derive(Debug, Serialize)]
 struct AuditEvent<'a> {
@@ -86,14 +127,6 @@ impl<'a> CallerEvent<'a> {
     }
 }
 
-/// `value`, or its first `max` characters marked as cut.
-fn bounded(value: &str, max: usize) -> Cow<'_, str> {
-    match value.char_indices().nth(max) {
-        None => Cow::Borrowed(value),
-        Some((end, _)) => Cow::Owned(format!("{}{TRUNCATED}", &value[..end])),
-    }
-}
-
 /// Whether the log ends in the middle of a line, as a crash or a full disk during an earlier
 /// write can leave it. The next record then starts on a line of its own, so it isn't glued onto
 /// the broken one.
@@ -112,7 +145,7 @@ fn ends_mid_line(path: &Path) -> bool {
 /// explicitly, owner read and write only, rather than by the process umask inside the private
 /// directory; the umask can only narrow that. An existing log keeps its mode: this never widens
 /// or rewrites it. Windows is unchanged.
-fn open_options() -> OpenOptions {
+pub(crate) fn open_options() -> OpenOptions {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]
@@ -123,7 +156,7 @@ fn open_options() -> OpenOptions {
 /// Create the log's missing parent directories. MAC-M1-09: on Unix each directory this creates is
 /// 0700, owner only, rather than the umask's default; the umask can only narrow that. A directory
 /// that already exists keeps its mode. Windows is unchanged.
-fn create_parent_dirs(parent: &Path) -> io::Result<()> {
+pub(crate) fn create_parent_dirs(parent: &Path) -> io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -139,14 +172,21 @@ impl AuditLogger {
         }
         // Made once at start, before this process writes anything.
         let torn = ends_mid_line(&path);
+        let chain = ChainWriter::open(chain_path_for(&path), ORCELD_LOG)?;
         Ok(Self {
             path,
+            chain: Arc::new(chain),
             check_tail: Arc::new(AtomicBool::new(torn)),
         })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The hash chain every record is written to first.
+    pub fn chain(&self) -> &Arc<ChainWriter> {
+        &self.chain
     }
 
     pub fn record(
@@ -156,6 +196,32 @@ impl AuditLogger {
         outcome: &str,
     ) -> io::Result<()> {
         self.write(request, policy_revision, outcome, None)
+    }
+
+    /// WP1-03 write before dispatch (spec 4.8): the request's `dispatch`
+    /// event, written to the chain and flushed before this returns. The
+    /// caller refuses the dispatch when it fails. The plain log keeps
+    /// outcomes only, so it gains no line.
+    pub fn record_dispatch(
+        &self,
+        request: &RequestEnvelope,
+        policy_revision: &str,
+    ) -> io::Result<()> {
+        self.record_dispatch_with_caller(request, policy_revision, None)
+    }
+
+    /// [`Self::record_dispatch`], naming the local process that called.
+    pub fn record_dispatch_with_caller(
+        &self,
+        request: &RequestEnvelope,
+        policy_revision: &str,
+        caller: Option<&AuditCaller>,
+    ) -> io::Result<()> {
+        let event = self.event(request, policy_revision, "", caller);
+        self.chain
+            .append(chain_draft(&event, request, caller, true))
+            .map(|_| ())
+            .map_err(io::Error::from)
     }
 
     /// [`Self::record`], naming the local process that called (F4 slice 5).
@@ -176,12 +242,23 @@ impl AuditLogger {
         outcome: &str,
         caller: Option<&AuditCaller>,
     ) -> io::Result<()> {
+        let event = self.event(request, policy_revision, outcome, caller);
+        self.write_event(&event, request, caller)
+    }
+
+    fn event<'a>(
+        &self,
+        request: &'a RequestEnvelope,
+        policy_revision: &'a str,
+        outcome: &'a str,
+        caller: Option<&'a AuditCaller>,
+    ) -> AuditEvent<'a> {
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
 
-        let event = AuditEvent {
+        AuditEvent {
             timestamp_ms,
             request_id: bounded(&request.request_id, MAX_FIELD_CHARS),
             client_session_id: bounded(&request.client_session_id, MAX_FIELD_CHARS),
@@ -195,7 +272,19 @@ impl AuditLogger {
             policy_revision,
             outcome,
             caller: caller.map(CallerEvent::of),
-        };
+        }
+    }
+
+    fn write_event(
+        &self,
+        event: &AuditEvent<'_>,
+        request: &RequestEnvelope,
+        caller: Option<&AuditCaller>,
+    ) -> io::Result<()> {
+        // The chain first: it is the record that verifies.
+        let chained = self
+            .chain
+            .append(chain_draft(event, request, caller, false));
 
         // One whole line in one write. Several orcelds (one per client session) append to the
         // same log, and an append-mode write lands at the end in one piece; written in parts, as
@@ -206,7 +295,7 @@ impl AuditLogger {
         } else {
             Vec::new()
         };
-        serde_json::to_writer(&mut line, &event)?;
+        serde_json::to_writer(&mut line, event)?;
         line.push(b'\n');
         let written = open_options()
             .open(&self.path)
@@ -215,7 +304,60 @@ impl AuditLogger {
             // A failed write may have left part of the line.
             self.check_tail.store(true, Ordering::Release);
         }
+        // A record the chain refused is a failed record, even when the plain
+        // line was written.
+        chained.map_err(io::Error::from)?;
         written
+    }
+}
+
+/// The chain's event for one plain record: the same fields, with the
+/// target and the caller's executable as labels and digests (spec 4.8).
+/// `dispatching` marks the record written before dispatch.
+fn chain_draft(
+    event: &AuditEvent<'_>,
+    request: &RequestEnvelope,
+    caller: Option<&AuditCaller>,
+    dispatching: bool,
+) -> EventDraft {
+    let kind = if dispatching {
+        AuditEventKind::Dispatch
+    } else if event.outcome.ends_with("DENIED") {
+        AuditEventKind::Decision
+    } else {
+        AuditEventKind::Request
+    };
+    let caller_detail = caller.map(|caller| {
+        let executable = caller.executable.as_deref();
+        serde_json::json!({
+            "pid": caller.pid,
+            "start_generation": caller.start_generation,
+            "generation_source": field_text(&caller.generation_source, MAX_FIELD_CHARS),
+            "executable_name": executable.ok().and_then(image_name),
+            "executable_sha256": executable.ok().map(|path| sha256_hex(path.as_bytes())),
+            "executable_unavailable_sha256":
+                executable.err().map(|reason| sha256_hex(reason.as_bytes())),
+        })
+    });
+    let detail = serde_json::json!({
+        "source": ORCELD_LOG,
+        "phase": if dispatching { "before_dispatch" } else { "outcome" },
+        "timestamp_ms": u64::try_from(event.timestamp_ms).unwrap_or(u64::MAX),
+        "client_session_id": field_text(&request.client_session_id, MAX_FIELD_CHARS),
+        "workspace_id": field_text(&request.workspace_id, MAX_FIELD_CHARS),
+        "target": request.target.as_deref().map(target_detail),
+        "policy_revision": field_text(event.policy_revision, MAX_FIELD_CHARS),
+        "outcome": (!dispatching).then(|| field_text(event.outcome, MAX_FIELD_CHARS)),
+        "caller": caller_detail,
+    });
+    EventDraft {
+        request_id: Some(event.request_id.clone().into_owned()),
+        capability: Some(event.capability.clone().into_owned()),
+        operation: Some(event.operation.clone().into_owned()),
+        caller_pid: caller.map(|caller| caller.pid),
+        caller_image: caller
+            .and_then(|caller| caller.executable.as_deref().ok().and_then(image_name)),
+        ..EventDraft::new(kind, detail)
     }
 }
 

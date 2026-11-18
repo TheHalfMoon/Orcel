@@ -1294,6 +1294,17 @@ jobs:
           node scripts/sync-brand.mjs --check
           node scripts/render-brand.mjs
           python3 scripts/export-brand.py
+      # Design handoff packages are text only (docs/orcel/design-handoff/CONTRACT.md 2.8):
+      # render every generated icon and screen with the sharp installed above, decode the
+      # outputs, and keep them out of Git (build/design-handoff/ is gitignored).
+      - name: Design handoff checker tests and generated exports
+        run: |
+          node --test scripts/check-design-handoff.test.mjs
+          for pkg in design/handoff/*/; do
+            [ -d "$pkg" ] || continue
+            node scripts/check-design-handoff.mjs "$pkg" --build
+          done
+          node scripts/check-design-handoff.mjs --repo .
       - name: Typecheck
         run: npm run web:typecheck
       - name: Test

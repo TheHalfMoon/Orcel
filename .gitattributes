@@ -1,3 +1,5 @@
 # Third-party notices are kept byte for byte (their SHA-256 is pinned):
 # no line-ending conversion on any checkout.
 apps/orcel-agent/third_party/** -text
+# Design handoff packages are hashed byte for byte: no line-ending conversion.
+design/handoff/** -text

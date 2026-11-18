@@ -99,6 +99,9 @@ Orcel authority service (SG-000132; Windows):
       key beside any enrolled one, send its TPM attestation, confirm its fingerprint in the
       service's box, and sign once with Windows Hello. --pause waits for Enter at the end.
   orcel authority reset [--pause]         Started the same way: remove the enrolled key.
+  orcel audit reset-anchor [--pause]      Started the same way: the owner's recovery when orceld's
+      audit chain was lost or replaced and every dispatch is refused. The service's box names
+      the held head it abandons; on Yes a new first chain file opens, reported as reset_by_owner.
 
 Orcel Browser Full Access (SG-000135; leases come from the authority service only):
   orcel browser grant --session <bs-...> --client-ref <cl-...> --origin <https://host>...
@@ -373,6 +376,7 @@ fn run(args: &mut Args, json_output: bool) -> Result<Output, LifecycleError> {
         "emergency-revoke" => commands::emergency_revoke(args),
         "full-control" => commands::full_control(args),
         "authority" => authority_commands::authority(args),
+        "audit" => authority_commands::audit(args),
         "browser" => authority_commands::browser(args),
         "exec" => commands::exec(args),
         "remote" => commands::remote(args),

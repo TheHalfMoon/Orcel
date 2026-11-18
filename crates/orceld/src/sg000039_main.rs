@@ -17,6 +17,9 @@ use std::path::Path;
 use std::path::PathBuf;
 
 mod app_api;
+// WP1-03: the audit chain's anchor holder, its sharing with the browser
+// broker's receipts, and `orceld audit-verify`.
+mod audit_chain;
 mod authority_link;
 #[cfg(test)]
 mod bm02_tier_b_tests;
@@ -147,6 +150,10 @@ fn main() {
     if let Some(code) = authority_link::run_cli(&args) {
         std::process::exit(code);
     }
+    // WP1-03: `orceld audit-verify [--chain <path>]`.
+    if let Some(code) = audit_chain::run_cli(&args) {
+        std::process::exit(code);
+    }
     if let Err(error) = run() {
         eprintln!("orceld fatal: {error}");
         std::process::exit(1);
@@ -163,6 +170,8 @@ fn run() -> Result<(), String> {
     let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
     let audit =
         AuditLogger::new(audit_path).map_err(|error| format!("initialize audit log: {error}"))?;
+    // WP1-03: anchors go to the authority service when it is installed.
+    audit_chain::install(audit.chain());
     #[cfg(not(feature = "browser-full-scripted-consent"))]
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;
@@ -560,6 +569,9 @@ fn handle_envelope(
                 "requested workspace is not configured",
             );
         }
+        if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+            return *refused;
+        }
         return match remote_lease::authorize_enrollment(approval, &request) {
             Ok(value) => {
                 let _ = audit.record(&request, POLICY_REVISION, "SUCCESS");
@@ -579,6 +591,9 @@ fn handle_envelope(
                 FailureCode::WorkspaceDenied,
                 "requested workspace is not configured",
             );
+        }
+        if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+            return *refused;
         }
         return match executable_admin::dispatch_registry(
             &match orcel_policy::executable_registry::default_registry_path() {
@@ -616,6 +631,9 @@ fn handle_envelope(
                 FailureCode::WorkspaceDenied,
                 "requested workspace is not configured",
             );
+        }
+        if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+            return *refused;
         }
         let managed = ctx
             .as_ref()
@@ -685,6 +703,9 @@ fn handle_secret(
             "requested workspace is not configured".into(),
         );
     }
+    if let Err(refused) = audit_before_dispatch(audit, &audited, POLICY_REVISION) {
+        return *refused;
+    }
     let lookup = |name: &str| std::env::var_os(name);
     match secret_store::dispatch(
         secret_store::SecretStore::open_default(),
@@ -742,8 +763,24 @@ fn handle_browser_lease(
     // SG-000132 slice 2: orceld issues no lease; list and revoke go to the
     // authority service.
     let _ = approval;
+    // WP1-03: the dispatch record first. A revoke only takes authority away,
+    // so, like `task.stop`, it is never withheld for want of a record: it
+    // runs, its outcome is `DISPATCHED_UNRECORDED` in the plain log, and the
+    // caller gets its real result.
+    let revoke = request.capability == "browser.lease.revoke";
+    let unrecorded = if revoke {
+        audit.record_dispatch(&request, POLICY_REVISION).is_err()
+    } else {
+        if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+            return *refused;
+        }
+        false
+    };
     let manager = authority_link::ServiceLeaseManager::for_this_build();
     let result = browser_lease::dispatch_management(&manager, &request, orcel_approval::now_ms());
+    if unrecorded {
+        return finish_unrecorded(audit, request, result);
+    }
     finish(audit, request, POLICY_REVISION, result)
 }
 
@@ -761,6 +798,9 @@ fn handle_live(
             return ResponseEnvelope::failure(request.request_id, error.code, error.message);
         }
     };
+    if let Err(refused) = audit_before_dispatch(audit, &request, decision.policy_revision) {
+        return *refused;
+    }
     let result = live_dispatch::dispatch(&decision.workspace, approval, &request);
     finish(audit, request, decision.policy_revision, result)
 }
@@ -796,6 +836,9 @@ fn handle_browser_full(
             ),
         );
     };
+    if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+        return *refused;
+    }
     let result = live_dispatch::dispatch_full(&workspace, approval, &request, &action);
     finish(audit, request, POLICY_REVISION, result)
 }
@@ -814,6 +857,9 @@ fn handle_request(
         }
     };
 
+    if let Err(refused) = audit_before_dispatch(audit, &request, decision.policy_revision) {
+        return *refused;
+    }
     let browser_resolver = browser::system_resolver();
     let mut stores = DefaultStores::default();
     let result = dispatch_with(
@@ -825,6 +871,48 @@ fn handle_request(
         &browser_resolver,
     );
     finish(audit, request, decision.policy_revision, result)
+}
+
+/// WP1-03 write before dispatch (spec 4.8): the request's `dispatch` record
+/// is in the audit chain, flushed, before anything runs; when it cannot be
+/// written the request is refused and nothing is dispatched (its outcome is
+/// still recorded as `AUDIT_REFUSED`, in the plain log at least). The cost
+/// is availability, by design: while the chain cannot be written (a disk
+/// error, a lock held past its wait, or a chain that does not verify) every
+/// dispatch is refused, until the operator runs `orceld audit-verify` to
+/// see why and `orceld audit-move-aside`, which keeps the file and opens a
+/// new one linked to its last verifiable record.
+pub(crate) fn audit_before_dispatch(
+    audit: &AuditLogger,
+    request: &RequestEnvelope,
+    policy_revision: &str,
+) -> Result<(), Box<ResponseEnvelope>> {
+    audit
+        .record_dispatch(request, policy_revision)
+        .map_err(|error| {
+            let _ = audit.record(request, policy_revision, "AUDIT_REFUSED");
+            Box::new(ResponseEnvelope::failure(
+                request.request_id.clone(),
+                FailureCode::InternalError,
+                format!("audit write failed before dispatch; nothing was dispatched: {error}"),
+            ))
+        })
+}
+
+/// The response of an authority-reducing request (a revoke) that ran
+/// although its dispatch record could not be written: the plain log says
+/// `DISPATCHED_UNRECORDED` (the chain cannot take it), and the caller gets
+/// the real result, never an internal error for want of a record.
+fn finish_unrecorded(
+    audit: &AuditLogger,
+    request: RequestEnvelope,
+    result: Result<Value, ProviderError>,
+) -> ResponseEnvelope {
+    let _ = audit.record(&request, POLICY_REVISION, "DISPATCHED_UNRECORDED");
+    match result {
+        Ok(value) => ResponseEnvelope::success(&request, value, POLICY_REVISION),
+        Err(error) => ResponseEnvelope::failure(request.request_id, error.code, error.message),
+    }
 }
 
 /// Audit a dispatched request's outcome and build its response.

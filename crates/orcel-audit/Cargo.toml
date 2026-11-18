@@ -11,3 +11,7 @@ orcel-contracts = { path = "../orcel-contracts" }
 orcel-platform = { path = "../orcel-platform" }
 serde.workspace = true
 serde_json.workspace = true
+# WP1-03: the chain's SHA-256 digests and its cross-process append lock. Both
+# are already in the graph (orceld, orcel-journal), same versions.
+sha2.workspace = true
+fs4.workspace = true

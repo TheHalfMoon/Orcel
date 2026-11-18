@@ -1,0 +1,13 @@
+<svg role="img" aria-label="Orcel painted illustration: approve" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400"><defs>
+  <filter id="paint" x="-8%" y="-8%" width="116%" height="116%" color-interpolation-filters="sRGB">
+    <feTurbulence type="turbulence" baseFrequency="0.045" numOctaves="3" seed="3" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="7" xChannelSelector="R" yChannelSelector="G" result="d"/>
+    <feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="4" seed="8" result="m"/>
+    <feColorMatrix in="m" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 -0.75 0.34" result="lit"/>
+    <feComposite in="lit" in2="d" operator="in" result="lit2"/>
+    <feTurbulence type="fractalNoise" baseFrequency="0.03 0.012" numOctaves="3" seed="14" result="m2"/>
+    <feColorMatrix in="m2" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0.15  0 0 0 -1.25 0.62" result="dark"/>
+    <feComposite in="dark" in2="d" operator="in" result="shade"/>
+    <feMerge><feMergeNode in="d"/><feMergeNode in="shade"/><feMergeNode in="lit2"/></feMerge>
+  </filter>
+</defs><g filter="url(#paint)"><rect x="40" y="120" width="240" height="250" fill="#BFD8F7"/><path d="M70 330V110a40 40 0 0 1 40-40h180a40 40 0 0 1 40 40v180a40 40 0 0 1-40 40Z" fill="#2354D4"/><path d="M140 205l45 45 85-100" fill="none" stroke="#F7F3EB" stroke-width="34" stroke-linecap="square"/><circle cx="318" cy="92" r="30" fill="#F5724D"/></g></svg>
