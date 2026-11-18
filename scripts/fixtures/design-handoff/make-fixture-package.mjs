@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Builds the synthetic design handoff package used by scripts/check-design-handoff.test.mjs from the
-// text files in source/ plus generated grey PNG, ICO and ICNS files (binaries are never committed).
+// text files in source/. Like a real package it is text only: raster icons and the screen are
+// generated entries. writeSyntheticOutputs() writes grey PNG, ICO and ICNS stand-ins for them so the
+// build-output checks can be tested without sharp (binaries are never committed).
 // Everything here is a neutral grey test fixture: no Orcel artwork, colours or type.
 //   node scripts/fixtures/design-handoff/make-fixture-package.mjs <output-parent-folder>
 import { createHash } from "node:crypto";
@@ -52,38 +54,26 @@ export function icns(entries) {
   const h = Buffer.alloc(8); h.write("icns", 0, "latin1"); h.writeUInt32BE(8 + body.length, 4);
   return Buffer.concat([h, body]);
 }
-const ICNS_FULL = [["icp4", 16], ["icp5", 32], ["icp6", 64], ["ic07", 128], ["ic08", 256], ["ic09", 512], ["ic10", 1024]];
+
+const ICNS_TYPE = { 16: "icp4", 32: "icp5", 64: "icp6", 128: "ic07", 256: "ic08", 512: "ic09", 1024: "ic10" };
+const ICNS_FULL = [16, 32, 64, 128, 256, 512, 1024];
 const ICO_APP = [16, 24, 32, 48, 64, 256];
 
+// The package itself is text only. Raster icons and the screen are generated entries.
 const source = (name) => readFileSync(join(here, "source", name));
 const files = () => new Map([
   ["assets/fixture-mark.svg", source("fixture-mark.svg")],
   ["icons/web/favicon.svg", source("favicon.svg")],
-  ["icons/web/favicon.ico", ico([16, 32, 48])],
-  ["icons/web/apple-touch-icon.png", png(180, 180)],
-  ["icons/web/icon-192.png", png(192, 192)],
-  ["icons/web/icon-512.png", png(512, 512)],
-  ["icons/web/social-card.png", png(1200, 630)],
-  ["icons/windows/app.ico", ico(ICO_APP)],
-  ["icons/windows/Square44x44Logo.png", png(44, 44)],
-  ["icons/windows/Square44x44Logo.scale-200.png", png(88, 88)],
-  ["icons/windows/Square150x150Logo.png", png(150, 150)],
-  ["icons/windows/Square150x150Logo.scale-200.png", png(300, 300)],
-  ["icons/windows/Wide310x150Logo.png", png(310, 150)],
-  ["icons/windows/StoreLogo.png", png(50, 50)],
-  ["icons/windows/StoreLogo.scale-200.png", png(100, 100)],
-  ["icons/macos/app.icns", icns(ICNS_FULL)],
-  ["icons/tauri/32x32.png", png(32, 32)],
-  ["icons/tauri/128x128.png", png(128, 128)],
-  ["icons/tauri/128x128@2x.png", png(256, 256)],
-  ["icons/tauri/icon.png", png(512, 512)],
-  ["icons/tauri/icon.ico", ico(ICO_APP)],
-  ["icons/tauri/icon.icns", icns(ICNS_FULL)],
   ["tokens/tokens.json", source("tokens.json")],
   ["components/fixture-button.md", source("fixture-button.md")],
-  ["screens/website-home-dark.png", png(320, 200, 0x20)],
   ["notices/NOTICE.txt", source("NOTICE.txt")]
 ]);
+
+const gen = (recipe, extra = {}, src = "assets/fixture-mark.svg") =>
+  ({ sources: [src], generator: "scripts/render-design-handoff.mjs", generatorVersion: "1.0.0", recipe, ...extra });
+const pngIcon = (role, path, w, h = w, g = gen("render")) => ({ role, path, format: "png", width: w, height: h, generated: g });
+const setIcon = (role, path, format, sizes) => ({ role, path, format, generated: gen("render", { sizes }) });
+const bleed = () => gen("full-bleed", { plate: "#C0C0C0" }, "icons/web/favicon.svg");
 
 // Writes the complete synthetic package into <parent>/1.0.0 and returns that folder.
 export function writePackage(parent) {
@@ -95,7 +85,6 @@ export function writePackage(parent) {
     writeFileSync(join(out, path), data);
   }
   const h = (p) => sha(all.get(p));
-  const icon = (role, path, format) => ({ role, path, format, sha256: h(path) });
   const manifest = {
     schemaVersion: "orcel-design-handoff/1",
     version: "1.0.0",
@@ -107,36 +96,53 @@ export function writePackage(parent) {
     assets: [{ path: "assets/fixture-mark.svg", kind: "mark", sha256: h("assets/fixture-mark.svg"), background: "any" }],
     icons: {
       web: [
-        icon("favicon-svg", "icons/web/favicon.svg", "svg"), icon("favicon-ico", "icons/web/favicon.ico", "ico"),
-        icon("apple-touch-icon", "icons/web/apple-touch-icon.png", "png"), icon("icon-192", "icons/web/icon-192.png", "png"),
-        icon("icon-512", "icons/web/icon-512.png", "png"), icon("social-card", "icons/web/social-card.png", "png")
+        { role: "favicon-svg", path: "icons/web/favicon.svg", format: "svg", sha256: h("icons/web/favicon.svg") },
+        setIcon("favicon-ico", "icons/web/favicon.ico", "ico", [16, 32, 48]),
+        pngIcon("apple-touch-icon", "icons/web/apple-touch-icon.png", 180, 180, bleed()),
+        pngIcon("icon-192", "icons/web/icon-192.png", 192),
+        pngIcon("icon-512", "icons/web/icon-512.png", 512),
+        pngIcon("social-card", "icons/web/social-card.png", 1200, 630)
       ],
       windows: [
-        icon("app-ico", "icons/windows/app.ico", "ico"),
-        icon("msix-square44", "icons/windows/Square44x44Logo.png", "png"),
-        icon("msix-square44-scale200", "icons/windows/Square44x44Logo.scale-200.png", "png"),
-        icon("msix-square150", "icons/windows/Square150x150Logo.png", "png"),
-        icon("msix-square150-scale200", "icons/windows/Square150x150Logo.scale-200.png", "png"),
-        icon("msix-wide310", "icons/windows/Wide310x150Logo.png", "png"),
-        icon("msix-store", "icons/windows/StoreLogo.png", "png"),
-        icon("msix-store-scale200", "icons/windows/StoreLogo.scale-200.png", "png")
+        setIcon("app-ico", "icons/windows/app.ico", "ico", ICO_APP),
+        pngIcon("msix-square44", "icons/windows/Square44x44Logo.png", 44, 44, bleed()),
+        pngIcon("msix-square44-scale200", "icons/windows/Square44x44Logo.scale-200.png", 88, 88, bleed()),
+        pngIcon("msix-square150", "icons/windows/Square150x150Logo.png", 150, 150, bleed()),
+        pngIcon("msix-square150-scale200", "icons/windows/Square150x150Logo.scale-200.png", 300, 300, bleed()),
+        pngIcon("msix-wide310", "icons/windows/Wide310x150Logo.png", 310, 150, gen("centered-on-plate", { plate: "#C0C0C0", contentHeight: 90 })),
+        pngIcon("msix-store", "icons/windows/StoreLogo.png", 50, 50, bleed()),
+        pngIcon("msix-store-scale200", "icons/windows/StoreLogo.scale-200.png", 100, 100, bleed())
       ],
-      macos: [icon("app-icns", "icons/macos/app.icns", "icns")],
+      macos: [setIcon("app-icns", "icons/macos/app.icns", "icns", ICNS_FULL)],
       tauri: [
-        icon("tauri-32", "icons/tauri/32x32.png", "png"), icon("tauri-128", "icons/tauri/128x128.png", "png"),
-        icon("tauri-128-2x", "icons/tauri/128x128@2x.png", "png"), icon("tauri-icon", "icons/tauri/icon.png", "png"),
-        icon("tauri-ico", "icons/tauri/icon.ico", "ico"), icon("tauri-icns", "icons/tauri/icon.icns", "icns")
+        pngIcon("tauri-32", "icons/tauri/32x32.png", 32), pngIcon("tauri-128", "icons/tauri/128x128.png", 128),
+        pngIcon("tauri-128-2x", "icons/tauri/128x128@2x.png", 256), pngIcon("tauri-icon", "icons/tauri/icon.png", 512),
+        setIcon("tauri-ico", "icons/tauri/icon.ico", "ico", ICO_APP), setIcon("tauri-icns", "icons/tauri/icon.icns", "icns", ICNS_FULL)
       ]
     },
     tokens: { path: "tokens/tokens.json", format: "dtcg", sha256: h("tokens/tokens.json") },
     contrastPairs: [{ foreground: "color.text-muted", background: "color.surface-raised", minimum: 4.5, use: "secondary text on raised panels" }],
     components: [{ name: "fixture-button", spec: "components/fixture-button.md", sha256: h("components/fixture-button.md"),
       states: ["default", "hover", "focus", "active", "disabled", "loading"], surfaces: ["shared"] }],
-    screens: [{ surface: "website", name: "home", path: "screens/website-home-dark.png", sha256: h("screens/website-home-dark.png"), theme: "dark", width: 320 }],
+    screens: [{ surface: "website", name: "home", theme: "dark", width: 320, height: 200, path: "screens/website-home-dark.png", generated: gen("render") }],
     notices: [{ path: "notices/NOTICE.txt", covers: "the whole synthetic fixture" }]
   };
   writeFileSync(join(out, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
   return out;
+}
+
+// Writes grey stand-ins for every generated output of `manifest` into `outDir`, at the declared
+// sizes, so the build-output checks can be tested without sharp.
+export function writeSyntheticOutputs(manifest, outDir) {
+  const entries = [...Object.values(manifest.icons).flat().filter((i) => i.generated),
+    ...manifest.screens.filter((s) => s.generated).map((s) => ({ ...s, format: "png" }))];
+  for (const e of entries) {
+    const data = e.format === "png" ? png(e.width, e.height)
+      : e.format === "ico" ? ico(e.generated.sizes) : icns(e.generated.sizes.map((s) => [ICNS_TYPE[s], s]));
+    mkdirSync(dirname(join(outDir, e.path)), { recursive: true });
+    writeFileSync(join(outDir, e.path), data);
+  }
+  return outDir;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

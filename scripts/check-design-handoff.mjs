@@ -2,14 +2,19 @@
 // Validates an Orcel design handoff package (docs/orcel/design-handoff/CONTRACT.md) against
 // docs/orcel/design-handoff/manifest.schema.json and the SVG, icon and token rules.
 // Deterministic and offline: reads only the package folder (and, with --repo, Rust sources).
+// A package holds text files only; raster icons and reference screens are `generated` entries that
+// scripts/render-design-handoff.mjs renders at build time into a gitignored folder.
 //
 //   node scripts/check-design-handoff.mjs design/handoff/1.0.0
 //   node scripts/check-design-handoff.mjs design/handoff/1.0.0 --integrate   (approved packages only)
+//   node scripts/check-design-handoff.mjs design/handoff/1.0.0 --build [--out <dir>]
+//        also renders the generated entries (sharp from apps/web) and decodes the outputs
 //   node scripts/check-design-handoff.mjs --repo .                           (presentation isolation only)
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GENERATOR, GENERATOR_VERSION, ICNS_TYPE_BY_SIZE, RECIPES, defaultOutDir, generatedEntries } from "./render-design-handoff.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const SCHEMA_PATH = join(here, "..", "docs", "orcel", "design-handoff", "manifest.schema.json");
@@ -20,6 +25,15 @@ export const SCHEMA_PATH = join(here, "..", "docs", "orcel", "design-handoff", "
 const KNOWN = new Set(["$schema", "$id", "$ref", "$defs", "title", "description", "type", "const", "enum",
   "pattern", "minLength", "maxLength", "minimum", "maximum", "minItems", "uniqueItems", "required",
   "properties", "additionalProperties", "items", "allOf", "if", "then"]);
+
+// A package carries text only. Anything else (PNG, ICO, ICNS, JPG, WOFF, TTF, ...) is refused, even
+// when listed: raster outputs are generated at build, fonts are obtained at build.
+export const TEXT_EXTENSIONS = new Set([".json", ".svg", ".md", ".txt"]);
+export function isTextFile(name, buf) {
+  if (!TEXT_EXTENSIONS.has(extname(name).toLowerCase())) return false;
+  if (buf.includes(0)) return false;
+  try { new TextDecoder("utf-8", { fatal: true }).decode(buf); return true; } catch { return false; }
+}
 
 function typeOf(v) {
   if (v === null) return "null";
@@ -411,33 +425,72 @@ export function checkPackage(dir, { integrate = false, schemaPath = SCHEMA_PATH 
     for (const [code, message] of svgProblems(buf.toString("utf8"), a.kind)) err(code, a.path, message);
   }
 
+  // No binary file may be committed in a package, listed or not.
+  for (const f of files) {
+    if (f.link) continue;
+    if (!isTextFile(f.rel, readFileSync(join(root, ...f.rel.split("/"))))) {
+      err("FILE_BINARY", f.rel, "is not a UTF-8 text file (.json, .svg, .md, .txt); raster icons and screens are generated at build and fonts are obtained at build, never committed");
+    }
+  }
+
+  // Generated entries: build outputs declared with their SVG source, generator and recipe.
+  const fileSet = new Set(files.map((f) => f.rel));
+  const svgSources = new Set([...manifest.assets.map((a) => a.path),
+    ...Object.values(manifest.icons).flat().filter((i) => i.sha256 && !i.generated && i.format === "svg").map((i) => i.path)]);
+  const outputs = new Set();
+  const liveText = [];
+  const checkGenerated = (entry, label, need) => {
+    const g = entry.generated;
+    if (outputs.has(entry.path)) err("GENERATED_DUPLICATE", entry.path, "more than one generated entry writes this path");
+    outputs.add(entry.path);
+    if (fileSet.has(entry.path)) err("GENERATED_COMMITTED", entry.path, label + " is a build output and must not be committed");
+    if (g.generator !== GENERATOR || g.generatorVersion !== GENERATOR_VERSION) {
+      err("GENERATED_GENERATOR", entry.path, label + " names " + g.generator + " " + g.generatorVersion + "; this repository has " + GENERATOR + " " + GENERATOR_VERSION);
+    }
+    const recipe = RECIPES[g.recipe];
+    for (const p of ["plate", "contentHeight"]) {
+      if (recipe.params.includes(p) && g[p] === undefined) err("GENERATED_RECIPE", entry.path, label + ": recipe " + g.recipe + " needs " + p);
+      if (!recipe.params.includes(p) && g[p] !== undefined) err("GENERATED_RECIPE", entry.path, label + ": recipe " + g.recipe + " does not take " + p);
+    }
+    if (g.sources.length !== 1) err("GENERATED_SOURCE", entry.path, label + ": every recipe renders from exactly one SVG source");
+    for (const s of g.sources) {
+      if (!svgSources.has(s)) { err("GENERATED_SOURCE", entry.path, label + ": source " + s + " is not an SVG asset or committed SVG icon of this package"); continue; }
+      let text = "";
+      try { text = readFileSync(join(root, ...s.split("/")), "utf8"); } catch { /* reported as FILE_MISSING */ }
+      if (/<text\b/i.test(text)) liveText.push([entry.path, label, s]);
+    }
+    if (entry.format === "png") {
+      if (g.sizes !== undefined) err("GENERATED_SIZE", entry.path, label + ": sizes apply to ICO and ICNS outputs only");
+      if (entry.width === undefined || entry.height === undefined) err("GENERATED_SIZE", entry.path, label + " needs width and height");
+      else if (need?.size && (entry.width !== need.size[0] || entry.height !== need.size[1])) {
+        err("ICON_SIZE", entry.path, label + " is declared " + entry.width + "x" + entry.height + ", needs " + need.size.join("x"));
+      }
+    } else if (entry.format === "ico" || entry.format === "icns") {
+      if (!g.sizes) { err("GENERATED_SIZE", entry.path, label + " needs generated.sizes"); return; }
+      for (const s of need?.contains ?? []) if (!g.sizes.includes(s)) err("ICON_SIZE", entry.path, label + " lacks the " + s + "x" + s + " image");
+      if (entry.format === "ico" && g.sizes.some((s) => s > 256)) err("GENERATED_SIZE", entry.path, label + ": ICO images are at most 256 px");
+      if (entry.format === "icns" && g.sizes.some((s) => !ICNS_TYPE_BY_SIZE[s])) {
+        err("GENERATED_SIZE", entry.path, label + ": ICNS PNG images are " + Object.keys(ICNS_TYPE_BY_SIZE).join(", ") + " px");
+      }
+    } else err("GENERATED_FORMAT", entry.path, label + ": " + entry.format + " is committed as a file, not generated");
+  };
+
   for (const platform of Object.keys(REQUIRED_ICONS)) {
     const given = manifest.icons[platform];
     const roles = new Set();
     for (const icon of given) {
       if (roles.has(icon.role)) err("ICON_DUPLICATE", icon.path, platform + " role " + icon.role + " listed twice");
       roles.add(icon.role);
-      const buf = ref(icon.path, icon.sha256, platform + " icon");
-      if (!buf) continue;
       const need = REQUIRED_ICONS[platform].find((r) => r.role === icon.role);
       if (need && need.format !== icon.format) err("ICON_FORMAT", icon.path, icon.role + " must be " + need.format);
       if (!icon.path.toLowerCase().endsWith("." + icon.format)) err("ICON_FORMAT", icon.path, "extension does not match format " + icon.format);
-      if (icon.format === "svg") {
+      if (icon.generated && icon.sha256) { err("ICON_SOURCE", icon.path, "has both sha256 and generated; a committed SVG has sha256, a build output has generated"); continue; }
+      if (icon.generated) { checkGenerated(icon, platform + " " + icon.role, need); continue; }
+      if (!icon.sha256) { err("ICON_SOURCE", icon.path, "needs sha256 (a committed SVG) or generated (a build output)"); continue; }
+      if (icon.format !== "svg") err("ICON_BINARY", icon.path, icon.role + ": " + icon.format.toUpperCase() + " icons are generated at build, never committed");
+      const buf = ref(icon.path, icon.sha256, platform + " icon");
+      if (buf && icon.format === "svg") {
         for (const [code, message] of svgProblems(buf.toString("utf8"), "app-tile")) err(code, icon.path, message);
-      } else if (icon.format === "png") {
-        const png = readPng(buf);
-        if (!png || !png.complete || png.bitDepth !== 8) { err("ICON_DECODE", icon.path, "not a complete 8-bit PNG"); continue; }
-        if (icon.width !== undefined && (icon.width !== png.width || icon.height !== png.height)) err("ICON_SIZE", icon.path, "manifest size differs from the file");
-        if (need?.size && (png.width !== need.size[0] || png.height !== need.size[1])) {
-          err("ICON_SIZE", icon.path, icon.role + " is " + png.width + "x" + png.height + ", needs " + need.size.join("x"));
-        }
-        if (need?.rgba && png.colorType !== 6) err("ICON_RGBA", icon.path, icon.role + " must be RGBA (PNG colour type 6)");
-      } else {
-        const parsed = icon.format === "ico" ? readIco(buf) : readIcns(buf);
-        if (!parsed) { err("ICON_DECODE", icon.path, "not a well-formed " + icon.format.toUpperCase()); continue; }
-        for (const s of need?.contains ?? []) {
-          if (!parsed.sizes.includes(s)) err("ICON_SIZE", icon.path, icon.role + " lacks the " + s + "x" + s + " image");
-        }
       }
     }
     for (const r of REQUIRED_ICONS[platform]) if (!roles.has(r.role)) err("ICON_MISSING", "manifest.json", platform + " needs " + r.role);
@@ -465,7 +518,27 @@ export function checkPackage(dir, { integrate = false, schemaPath = SCHEMA_PATH 
       }
     }
   }
-  for (const s of manifest.screens) ref(s.path, s.sha256, "screen");
+  const boardOnly = [];
+  for (const s of manifest.screens) {
+    const label = "screen " + s.name;
+    if (s.generated) {
+      if (!s.path || s.height === undefined) { err("GENERATED_SIZE", s.path ?? "manifest.json", label + " needs path and height"); continue; }
+      checkGenerated({ ...s, format: "png" }, label, null);
+    } else if (s.board) {
+      if (s.path || s.height !== undefined) err("SCREEN_SOURCE", "manifest.json", label + ": a board reference has no path or height; only a generated screen is rendered");
+      boardOnly.push(s.name);
+    } else err("SCREEN_SOURCE", "manifest.json", label + " needs generated (an SVG source rendered at build) or a board reference");
+  }
+  if (boardOnly.length) {
+    const what = boardOnly.length + " screen(s) are board references only (" + boardOnly.join(", ") + ")";
+    if (integrate) err("SCREEN_NOT_RENDERABLE", "manifest.json", what + "; an approved package renders every screen from an SVG source in the package");
+    else notes.push(what + ": provenance, not rendered; refused at integration");
+  }
+  // A generated raster must look the same on every build machine, so its SVG source is outlined.
+  for (const [path, label, src] of liveText) {
+    if (integrate) err("GENERATED_LIVE_TEXT", path, label + ": source " + src + " has live <text>; outline it so the render does not depend on installed fonts");
+    else notes.push(label + ": source " + src + " has live <text>, rendered with whatever fonts the build machine has; outline it before approval");
+  }
   for (const n of manifest.notices) {
     const entry = files.find((f) => f.rel === n.path);
     if (!entry) err("FILE_MISSING", n.path, "notice is listed but not in the package");
@@ -478,6 +551,36 @@ export function checkPackage(dir, { integrate = false, schemaPath = SCHEMA_PATH 
   }
   errors.sort((a, b) => (a.path + a.code + a.message).localeCompare(b.path + b.code + b.message));
   return { errors, notes, contrast };
+}
+
+// Decodes the rendered outputs of every generated entry in `outDir` (the --build check): each file
+// exists, PNGs are complete 8-bit images of the declared size (RGBA where the role needs it), and
+// ICO/ICNS containers are well formed and hold exactly the declared sizes.
+export function checkBuildOutputs(manifest, outDir) {
+  const errors = [];
+  const err = (code, path, message) => errors.push({ code, path, message });
+  const out = resolve(outDir);
+  for (const { kind, platform, label, entry } of generatedEntries(manifest)) {
+    const full = join(out, ...entry.path.split("/"));
+    if (!existsSync(full)) { err("BUILD_MISSING", entry.path, label + " was not rendered"); continue; }
+    const buf = readFileSync(full);
+    const need = kind === "icon" ? REQUIRED_ICONS[platform]?.find((r) => r.role === entry.role) : undefined;
+    if (entry.format === "png") {
+      const png = readPng(buf);
+      if (!png || !png.complete || png.bitDepth !== 8) { err("ICON_DECODE", entry.path, label + ": not a complete 8-bit PNG"); continue; }
+      if (png.width !== entry.width || png.height !== entry.height) {
+        err("ICON_SIZE", entry.path, label + " rendered " + png.width + "x" + png.height + ", declared " + entry.width + "x" + entry.height);
+      }
+      if (need?.rgba && png.colorType !== 6) err("ICON_RGBA", entry.path, label + " must be RGBA (PNG colour type 6)");
+    } else {
+      const parsed = entry.format === "ico" ? readIco(buf) : readIcns(buf);
+      if (!parsed) { err("ICON_DECODE", entry.path, label + ": not a well-formed " + entry.format.toUpperCase()); continue; }
+      const want = [...entry.generated.sizes].sort((a, b) => a - b), got = [...parsed.sizes].sort((a, b) => a - b);
+      if (JSON.stringify(want) !== JSON.stringify(got)) err("ICON_SIZE", entry.path, label + " holds " + got.join(", ") + "; declared " + want.join(", "));
+    }
+  }
+  errors.sort((a, b) => (a.path + a.code + a.message).localeCompare(b.path + b.code + b.message));
+  return errors;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -512,7 +615,7 @@ export function presentationIsolationProblems(repoRoot) {
 }
 
 // ---------------------------------------------------------------------------------------------
-function main(argv) {
+async function main(argv) {
   const repoIdx = argv.indexOf("--repo");
   if (repoIdx !== -1) {
     const problems = presentationIsolationProblems(resolve(argv[repoIdx + 1] ?? "."));
@@ -520,8 +623,13 @@ function main(argv) {
     console.log("Presentation isolation: no Rust source embeds or references presentation files.");
     return 0;
   }
-  const dir = argv.find((a) => !a.startsWith("--"));
-  if (!dir) { console.error("usage: check-design-handoff.mjs <design/handoff/VERSION> [--integrate] | --repo <root>"); return 2; }
+  const outIdx = argv.indexOf("--out");
+  const outArg = outIdx !== -1 ? argv[outIdx + 1] : undefined;
+  const dir = argv.find((a, i) => !a.startsWith("--") && !(outIdx !== -1 && i === outIdx + 1));
+  if (!dir || (outIdx !== -1 && !outArg)) {
+    console.error("usage: check-design-handoff.mjs <design/handoff/VERSION> [--integrate] [--build [--out <dir>]] | --repo <root>");
+    return 2;
+  }
   const { errors, notes, contrast } = checkPackage(dir, { integrate: argv.includes("--integrate") });
   for (const n of notes) console.log("note: " + n);
   for (const c of contrast) console.log("contrast " + c.theme + " " + c.foreground + " on " + c.background + ": " + c.ratio + ":1 (min " + c.minimum + ")");
@@ -530,10 +638,24 @@ function main(argv) {
     console.error(errors.length + " problem(s); the package is not accepted.");
     return 1;
   }
+  if (argv.includes("--build")) {
+    const manifest = JSON.parse(readFileSync(join(resolve(dir), "manifest.json"), "utf8"));
+    const out = outArg ? resolve(outArg) : defaultOutDir(manifest.version);
+    if (!outArg) rmSync(out, { recursive: true, force: true });
+    const { renderPackage } = await import("./render-design-handoff.mjs");
+    const written = await renderPackage(dir, out);
+    const buildErrors = checkBuildOutputs(manifest, out);
+    if (buildErrors.length) {
+      for (const e of buildErrors) console.error(e.code + " " + e.path + ": " + e.message);
+      console.error(buildErrors.length + " problem(s) in the generated outputs in " + out + "; the package is not accepted.");
+      return 1;
+    }
+    console.log("Generated outputs rendered and decoded: " + written.length + " file(s) in " + out + " (not committed).");
+  }
   console.log("Design handoff package accepted by the checks: " + dir);
   return 0;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2));
+  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { console.error(e); process.exitCode = 1; });
 }

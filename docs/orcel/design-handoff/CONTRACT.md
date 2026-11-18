@@ -4,11 +4,20 @@ Status: ADOPTED by engineering as the intake contract, 2026-11-18. It adds no ca
 grants no authority. The Orcel Design session owns identity, assets, tokens and visual design; engineering owns this
 contract, the checker and the wiring into the applications.
 
+Amended 2026-11-18 (PR #814): packages are text only. Raster icons and reference screens are `generated` entries
+rendered at build (sections 2.7 and 2.8), and fonts are obtained at build (section 2.9), because the required review
+gate cannot review binary files.
+
 Machine-readable parts:
 
 - `docs/orcel/design-handoff/manifest.schema.json`: the manifest schema (JSON Schema 2020-12).
 - `scripts/check-design-handoff.mjs`: validates a package against the schema and the rules below. Offline and
-  deterministic: it reads only the package folder and, with `--repo`, the repository's Rust sources.
+  deterministic: it reads only the package folder and, with `--repo`, the repository's Rust sources. With `--build`
+  it also runs the generator and decodes what it wrote.
+- `scripts/render-design-handoff.mjs`: the generator. It renders the package's `generated` entries (raster icons,
+  reference screens) from the package's SVG sources into `build/design-handoff/<version>/`, which is gitignored.
+  It uses the exact-locked `sharp` that `apps/web` already installs (as `scripts/render-brand.mjs` does), assembles
+  ICO and ICNS itself, needs no browser and no network, and adds no dependency.
 - `scripts/check-design-handoff.test.mjs`: node:test tests over a synthetic package built from
   `scripts/fixtures/design-handoff/source/` (grey squares and neutral greys, clearly marked as not Orcel material).
 
@@ -52,16 +61,20 @@ one folder:
 design/handoff/<version>/          version = semantic version, equal to manifest.version
   manifest.json                    validated by manifest.schema.json
   assets/                          SVG only
-  icons/web/  icons/windows/  icons/macos/  icons/tauri/
+  icons/web/                       the favicon SVG (raster icons are generated, section 2.2)
   tokens/tokens.json               the single DTCG token source
   components/<name>.md             one spec per shared component
-  screens/                         reference screens (PNG), never shipped
+  screens/                         SVG sources of reference screens (the PNGs are generated, section 2.7)
   notices/                         licences and provenance for fonts, outlines, any third-party material
 ```
 
 Rules for the folder:
 
-- Every file is listed in the manifest with its SHA-256, and nothing unlisted may be present.
+- **Text only.** Every file is UTF-8 text with the extension `.json`, `.svg`, `.md` or `.txt`. No binary file is
+  ever committed in a package, listed or not: no PNG, ICO, ICNS, JPG, WebP, GIF, PDF, WOFF, WOFF2, TTF, OTF or
+  archive (`FILE_BINARY`). Raster outputs are `generated` entries (section 2.8); fonts are obtained at build
+  (section 2.9). This keeps every byte of a package reviewable as text, which the required review gate needs.
+- Every committed file is listed in the manifest with its SHA-256, and nothing unlisted may be present.
 - Paths are relative, forward-slash, inside the folder; no links, URLs, parent segments or absolute paths.
 - Packages are immutable once merged. A fix is a new version that `supersedes` the old one.
 - Git must not rewrite line endings inside `design/handoff/` (`.gitattributes` marks it `-text`), so hashes hold.
@@ -82,7 +95,10 @@ Every SVG must be static, self-contained vector art:
 
 ### 2.2 Icons
 
-Required roles per platform; `check-design-handoff.mjs` decodes every file and checks its real pixel sizes.
+Required roles per platform. Only `favicon-svg` is a committed file (`sha256`); every PNG, ICO and ICNS role is a
+`generated` entry (section 2.8) that names its SVG source, and is rendered at build. `check-design-handoff.mjs`
+checks that every role is declared with the right format, declared size and ICO/ICNS sizes; with `--build` it
+renders them and decodes the real files.
 
 | Platform | Role | Format and size |
 |---|---|---|
@@ -100,17 +116,17 @@ Required roles per platform; `check-design-handoff.mjs` decodes every file and c
 | tauri | `tauri-32`, `tauri-128`, `tauri-128-2x`, `tauri-icon` | RGBA PNG 32, 128, 256, 512 (Tauri rejects non-RGBA icons) |
 | tauri | `tauri-ico`, `tauri-icns` | ICO and ICNS as for Windows and macOS |
 
-Further roles may be added; they are hash-checked and decoded but have no size rule. PNGs are 8-bit. Each icon must
-stay legible at 16 px (the identity's minimum size) and be exported from the approved vector, never redrawn per size
-unless the spec says so (small-size variants are listed as their own roles).
+Further roles may be added; they are declared and decoded like the others but have no size rule. Generated PNGs are
+8-bit RGBA. Each icon must stay legible at 16 px (the identity's minimum size) and be rendered from the approved
+vector, never redrawn per size unless the spec says so (a small-size variant is its own SVG asset and its own role).
 
 ### 2.3 Design tokens
 
 One file, `tokens/tokens.json`, in the Design Tokens Community Group format: groups of tokens with `$value` and
 `$type` (inherited from the group), aliases written as `{group.token}`. Supported types: `color` (`#RRGGBB`,
 `#RRGGBBAA` or a DTCG `srgb` object), `dimension` (px or rem), `fontFamily`, `fontWeight`, `duration` (ms or s),
-`cubicBezier`, `number`. Names are lowercase kebab-case. Font tokens name families only; font files travel as
-assets with their licence in `notices/`.
+`cubicBezier`, `number`. Names are lowercase kebab-case. Font tokens name families only; font files are never in a
+package (section 2.9), their licences are in `notices/`.
 
 Required tokens (the checker refuses a package without them):
 
@@ -190,9 +206,84 @@ wide (website) and from the Control Room's minimum window (480×320) without hor
 
 ### 2.7 Screens
 
-Reference PNGs per surface (`website`, `control-room`, `desktop`, `browser`) and theme, at the widths they were drawn
-for. They show intent; engineering never ships them and never uses them directly as visual-regression baselines.
-Baselines are always rendered from code (section 3).
+Reference screens per surface (`website`, `control-room`, `desktop`, `browser`) and theme, at the widths they were
+drawn for. They show intent; engineering never ships them and never uses them directly as visual-regression
+baselines. Baselines are always rendered from code (section 3).
+
+A screen is never committed as PNG. Each `screens` entry is one of:
+
+- **generated** (required for an approved package): `path` (the PNG in the build folder), `width`, `height` and a
+  `generated` block whose source is a static SVG in the package, usually `screens/<name>.svg`, listed in `assets`
+  with `kind: "illustration"` and following every SVG rule of section 2.1. Text in a screen SVG is outlined
+  (section 2.8).
+- **board reference**: `board` names the canvas board the screen was drawn on, with no `path`. It is provenance
+  only, like `source.reference`: engineering cannot render it. The checker notes it for a draft or review package
+  and refuses it with `--integrate` (`SCREEN_NOT_RENDERABLE`).
+
+Canvas boards (`*.dc.html`) are not package sources: they load a runtime script and remote fonts, which the
+package rules forbid. The Design session exports each reference screen as a static SVG instead.
+
+### 2.8 Generated entries
+
+Every raster file a package describes is a build output, declared in the manifest and never committed:
+
+```json
+{
+  "role": "msix-wide310",
+  "path": "icons/windows/Wide310x150Logo.png",
+  "format": "png",
+  "width": 310,
+  "height": 150,
+  "generated": {
+    "sources": ["assets/brand/orcel-lockup-black.svg"],
+    "generator": "scripts/render-design-handoff.mjs",
+    "generatorVersion": "1.0.0",
+    "recipe": "centered-on-plate",
+    "plate": "#F7F3EB",
+    "contentHeight": 54
+  }
+}
+```
+
+- `path` is relative to the build folder `build/design-handoff/<version>/` (gitignored). A file at that path inside
+  the package is refused (`GENERATED_COMMITTED`); two entries may not write the same path.
+- `sources`: exactly one SVG that is listed in `assets` or is a committed SVG icon, so its hash is checked
+  (`GENERATED_SOURCE`).
+- `generator` is always `scripts/render-design-handoff.mjs`; `generatorVersion` must equal the version that script
+  declares (`GENERATED_GENERATOR`). A recipe change in the generator bumps its version, and packages follow.
+- `recipe`, with its parameters (`GENERATED_RECIPE`):
+  - `render`: the source scaled to fit, transparent outside the artwork.
+  - `full-bleed` (`plate`): the source's rounded tile plate (its first `<rect>` with `rx`) replaced by a square
+    plate of `plate`, artwork unchanged; for platforms that apply their own mask (Apple touch icon, MSIX tiles).
+  - `centered-on-plate` (`plate`, `contentHeight`): the source scaled to `contentHeight` pixels high, centred on a
+    `plate`-coloured canvas of the entry's size (the MSIX wide tile).
+- Size: a PNG entry has `width` and `height`; an ICO or ICNS entry has `generated.sizes` (ICO at most 256 px; ICNS
+  16, 32, 64, 128, 256, 512, 1024), and the role's required sizes must be among them (`GENERATED_SIZE`,
+  `ICON_SIZE`).
+- **Outlined text.** A generated raster must render the same on every build machine, so its SVG source has no live
+  `<text>`: fonts differ between Windows, macOS and the Linux CI runner. A draft or review package with live text in
+  a source (today: the social card) gets a note and is rendered with whatever fonts the machine has; `--integrate`
+  refuses it (`GENERATED_LIVE_TEXT`). The social banner SVG therefore carries its tagline as outlined paths, as the
+  wordmark already is.
+
+The generator's recipes are those of the Design session's own exporter, so the package author and engineering
+produce the same pixels from the same SVG (verified for 1.0.0: every icon PNG is pixel-identical to the Design
+session's export; only the social card differs, because of its live text).
+
+### 2.9 Fonts
+
+Font files (WOFF, WOFF2, TTF, OTF) are binary and are never committed in a package. The package names families in
+`font.family.*` tokens and carries each font's licence in `notices/`; the applications obtain the files at build:
+
+- **Website:** `next/font` in `apps/web/app/layout.tsx`, as today: Google Fonts are downloaded at build and
+  self-hosted in the static export, with the OFL notices in `public/fonts/`. Nothing is fetched by the browser from
+  a third party.
+- **Control Room:** its CSP is `font-src 'self'`, so it needs local files. When a package's tokens name a non-system
+  family for it, the integration adds a build step that fetches the font files from a pinned source (exact version
+  and SHA-256 recorded in the step), checks that the family's licence is present in the package's `notices/`, and
+  writes them to a gitignored `src-tauri/ui/fonts/` that the bundle picks up. Without that step the Control Room
+  keeps system fonts. The app-size budget is rechecked when fonts are added.
+- **Orcel Browser UI (later):** the same build-time fetch, with its own gitignored output.
 
 ## 3. Acceptance checks engineering runs
 
@@ -201,9 +292,10 @@ A package is accepted only when all of these pass on the integration pull reques
 | Check | Tool | State |
 |---|---|---|
 | Manifest schema, version equals folder, approval present when approved | `node scripts/check-design-handoff.mjs design/handoff/<v> --integrate` | in repository |
-| Every file listed and hash-matched, no links, nothing unlisted | same | in repository |
+| Every file listed and hash-matched, no links, nothing unlisted, text files only (no binary) | same | in repository |
 | SVG lint: no scripts, handlers, external refs, raster, DOCTYPE; outlined brand art; accessible name | same | in repository |
-| Icon completeness: every role, real decoded sizes, ICO/ICNS contents, RGBA for Tauri | same | in repository |
+| Icon and screen completeness: every role declared, generated entries name a package SVG, this generator and version, a complete recipe and the required sizes | same | in repository |
+| Generated outputs: rendered, then decoded: real sizes, 8-bit, RGBA for Tauri, ICO/ICNS contents; never committed | `node scripts/check-design-handoff.mjs design/handoff/<v> --build` | in repository (CI `web` job) |
 | Tokens: required names, both themes alike, aliases resolve without cycles, valid values, motion limits | same | in repository |
 | Token contrast, WCAG 2.2 AA, both themes | same | in repository |
 | Component specs have States, Keyboard, Accessibility and Motion | same | in repository |
@@ -281,19 +373,20 @@ the integration replaces the literal values in the media queries.
   changed to copy approved package files; either way `sync-brand.mjs --check` stays the gate.
 - Icons: `app/icon.svg` (`favicon-svg`), `app/favicon.ico`, `app/apple-icon.png`, and the social card as
   `public/brand/orcel-social-dark.png`, which `layout.tsx` metadata and `.github/workflows/pages.yml` already
-  reference. Today these PNG and ICO files are built at Pages time; the integration decides whether to keep rendering
-  them (`render-brand.mjs`) or to take the approved exports.
+  reference. The raster files are build outputs: the Pages build runs `render-design-handoff.mjs` and copies them
+  from `build/design-handoff/<version>/` into these gitignored locations, as `render-brand.mjs` does today.
 
 **Control Room (`apps/orcel-control-room`).**
 
 - Tokens: generated `src-tauri/ui/tokens.css` (both themes, `prefers-color-scheme`), linked from `ui/index.html` and
   `ui/start.html` before `style.css`; `style.css` keeps its variable names as aliases. `src/view/a11y.test.ts` reads
   the generated values so its contrast assertions follow the package.
-- Fonts: system fonts stay unless the package ships font files; then they are copied into `src-tauri/ui/fonts/`
-  (CSP `font-src 'self'`) with their notices, and the app-size budget is rechecked.
-- Icons: the `tauri` roles go to `src-tauri/icons/` (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png`,
-  `icon.ico`, `icon.icns`) with a `bundle.icon` list in `tauri.conf.json` when packaging is turned on; the Windows
-  MSIX roles go with the Windows packaging work.
+- Fonts: system fonts stay unless the tokens name a non-system family for the Control Room; then a build step
+  fetches pinned, hash-checked font files into a gitignored `src-tauri/ui/fonts/` (CSP `font-src 'self'`) after
+  checking their licence in `notices/` (section 2.9), and the app-size budget is rechecked.
+- Icons: the `tauri` roles are rendered at build into a gitignored `src-tauri/icons/` (`32x32.png`, `128x128.png`,
+  `128x128@2x.png`, `icon.png`, `icon.ico`, `icon.icns`) before `tauri build`, with a `bundle.icon` list in
+  `tauri.conf.json` when packaging is turned on; the Windows MSIX roles go with the Windows packaging work.
 
 **Desktop preview (`apps/orcel-desktop-preview`).** WPF does not read CSS. If it is kept, the generator also writes a
 XAML `ResourceDictionary` (or a C# constants file) from the same tokens, and `Program.cs` uses it instead of literal
