@@ -3,8 +3,10 @@
 //! Every `AuditLogger` record is written first to the chain beside the
 //! plain log (`orcel_audit::chain`), with no flag: it is an append-only log
 //! and the plain log keeps its lines. This module gives the chain its
-//! anchor holder, shares it with the browser broker's receipts (OB-05 step
-//! 1), and serves `orceld audit-verify`.
+//! anchor holder, shares it with the browser broker's intents and receipts
+//! (SG-000135 OB-05), and serves `orceld audit-verify`, which with
+//! `--receipts` also verifies every browser receipt, its intent and its
+//! evidence files (`browser_receipts.rs`).
 //!
 //! Anchors: every 32 events the chain asks [`ServiceAnchorer`], which asks
 //! the installed authority service (SG-000132) to hold `(log, file id, seq,
@@ -130,30 +132,100 @@ pub(crate) const EXIT_RECOVERED: i32 = 6;
 pub(crate) const EXIT_TRUNCATED: i32 = 7;
 pub(crate) const EXIT_RESET_BY_OWNER: i32 = 8;
 
-/// `orceld audit-verify [--chain <path>]` verifies the chain and prints the
-/// report as JSON; `orceld audit-move-aside [--chain <path>]` keeps a chain
-/// that does not verify and opens a new file linked to its last verifiable
-/// record (the operator's recovery when every dispatch is refused). `None`
-/// when `args` is neither command.
+/// What `orceld audit-verify` was asked to check besides the chain.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct ReceiptOptions {
+    /// `--receipts`: every browser intent, receipt and evidence file.
+    pub receipts: bool,
+    /// `--receipt <sha256>`: also whether this receipt is in the chain.
+    pub receipt: Option<String>,
+    /// `--evidence <dir>`: the evidence folder (default: orceld's own).
+    pub evidence: Option<PathBuf>,
+}
+
+/// The arguments after the command: `--chain <path>`, and for
+/// `audit-verify` the receipt options. `None` for anything else.
+fn parse_args(command: &str, rest: &[String]) -> Option<(Option<PathBuf>, ReceiptOptions)> {
+    let mut chain = None;
+    let mut options = ReceiptOptions::default();
+    let mut rest = rest.iter();
+    while let Some(flag) = rest.next() {
+        match flag.as_str() {
+            "--chain" if chain.is_none() => chain = Some(PathBuf::from(rest.next()?)),
+            "--receipts" if command == "audit-verify" && !options.receipts => {
+                options.receipts = true;
+            }
+            "--receipt" if command == "audit-verify" && options.receipt.is_none() => {
+                let digest = rest.next()?;
+                if !crate::browser_receipts::is_sha256(digest) {
+                    return None;
+                }
+                options.receipts = true;
+                options.receipt = Some(digest.clone());
+            }
+            "--evidence" if command == "audit-verify" && options.evidence.is_none() => {
+                options.evidence = Some(PathBuf::from(rest.next()?));
+                options.receipts = true;
+            }
+            _ => return None,
+        }
+    }
+    Some((chain, options))
+}
+
+/// orceld's own evidence folder, beside the browser broker's sessions, if
+/// it exists (read only: the verifier never creates it).
+fn default_evidence() -> Option<PathBuf> {
+    let dir = orcel_provider_browser::default_profile_root()
+        .ok()?
+        .join("live")
+        .join("broker")
+        .join("evidence");
+    dir.is_dir().then_some(dir)
+}
+
+/// `orceld audit-verify [--chain <path>] [--receipts] [--receipt <sha256>]
+/// [--evidence <dir>]` verifies the chain (and, asked, every browser
+/// receipt, its intent and its evidence files) and prints the report as
+/// JSON; `orceld audit-move-aside [--chain <path>]` keeps a chain that does
+/// not verify and opens a new file linked to its last verifiable record
+/// (the operator's recovery when every dispatch is refused). `None` when
+/// `args` is neither command.
 pub(crate) fn run_cli(args: &[String]) -> Option<i32> {
     let command = args.first().map(String::as_str)?;
     if command != "audit-verify" && command != "audit-move-aside" {
         return None;
     }
-    let path = match args.get(1..).unwrap_or_default() {
-        [] => default_chain(),
-        [flag, path] if flag == "--chain" => Ok(PathBuf::from(path)),
-        _ => Err(format!("usage: orceld {command} [--chain <path>]")),
+    let usage = if command == "audit-verify" {
+        "usage: orceld audit-verify [--chain <path>] [--receipts] [--receipt <sha256>] [--evidence <dir>]"
+    } else {
+        "usage: orceld audit-move-aside [--chain <path>]"
     };
-    let path = match path {
-        Ok(path) => path,
+    let parsed = parse_args(command, args.get(1..).unwrap_or_default())
+        .ok_or_else(|| usage.to_owned())
+        .and_then(|(chain, options)| {
+            chain
+                .map(Ok)
+                .unwrap_or_else(default_chain)
+                .map(|path| (path, options))
+        });
+    let (path, options) = match parsed {
+        Ok(parsed) => parsed,
         Err(message) => {
             eprintln!("orceld {command}: {message}");
             return Some(EXIT_USAGE);
         }
     };
     let result = if command == "audit-verify" {
-        verify_with_held(&path, ServiceAnchorer.held(orcel_audit::ORCELD_LOG))
+        verify_with_held(&path, ServiceAnchorer.held(orcel_audit::ORCELD_LOG)).and_then(
+            |(text, code)| {
+                if !options.receipts {
+                    return Ok((text, code));
+                }
+                let evidence = options.evidence.clone().or_else(default_evidence);
+                with_receipts(&path, text, code, evidence, options.receipt.as_deref())
+            },
+        )
     } else {
         move_aside(&path)
     };
@@ -167,6 +239,37 @@ pub(crate) fn run_cli(args: &[String]) -> Option<i32> {
             EXIT_USAGE
         }
     })
+}
+
+/// The chain report `text` with the receipt report under `receipts`, and
+/// the exit code: the chain's own when it does not verify, else
+/// [`crate::browser_receipts::EXIT_RECEIPTS_BROKEN`] when a receipt, intent
+/// or evidence file does not, else
+/// [`crate::browser_receipts::EXIT_RECEIPTS_UNRECORDED`] when an intent has
+/// no receipt.
+pub(crate) fn with_receipts(
+    path: &std::path::Path,
+    text: String,
+    code: i32,
+    evidence: Option<PathBuf>,
+    only: Option<&str>,
+) -> Result<(String, i32), String> {
+    let store = evidence.map(crate::browser_receipts::EvidenceStore::at);
+    let report = crate::browser_receipts::verify_receipts(path, store.as_ref(), only)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|error| format!("decode the report: {error}"))?;
+    if let serde_json::Value::Object(map) = &mut value {
+        map.insert("receipts".into(), report.value);
+    }
+    let code = match code {
+        EXIT_INTACT if report.broken => crate::browser_receipts::EXIT_RECEIPTS_BROKEN,
+        EXIT_INTACT if report.unrecorded => crate::browser_receipts::EXIT_RECEIPTS_UNRECORDED,
+        other => other,
+    };
+    let text = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("encode the report: {error}"))?;
+    Ok((text, code))
 }
 
 /// Moves the chain at `path` aside and opens the linked file.

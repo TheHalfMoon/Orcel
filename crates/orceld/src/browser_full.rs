@@ -404,6 +404,51 @@ impl FullAction {
         }
     }
 
+    /// SG-000135 OB-05: what a receipt names as the action's target: the
+    /// node of a click, fill or select, or the tab a switch or close names.
+    /// Never a value or an option label.
+    #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+    pub(crate) fn receipt_target(&self) -> (Option<&str>, Option<&str>) {
+        match self {
+            Self::Click { node_id, .. }
+            | Self::Fill { node_id, .. }
+            | Self::Select { node_id, .. } => (None, Some(node_id)),
+            Self::Tabs {
+                op: TabOp::Switch { page_id } | TabOp::Close { page_id },
+                ..
+            } => (Some(page_id), None),
+            _ => (None, None),
+        }
+    }
+
+    /// SG-000135 OB-05: the URL an open or a new tab asks for (the receipt
+    /// keeps its digest only).
+    #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+    pub(crate) fn requested_url(&self) -> Option<&str> {
+        match self {
+            Self::Open { url, .. } => Some(url),
+            Self::Tabs {
+                op: TabOp::New { url },
+                ..
+            } => url.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// SG-000135 OB-05: whether the action can change the page (a person's
+    /// input during it supersedes it).
+    #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+    pub(crate) fn changes_the_page(&self) -> bool {
+        matches!(
+            self,
+            Self::Open { .. }
+                | Self::Click { .. }
+                | Self::Fill { .. }
+                | Self::Select { .. }
+                | Self::Tabs { .. }
+        )
+    }
+
     /// The live shape the action maps onto, as the request the live policy
     /// validates, on the session's page `page_id` at `generation` (the
     /// caller's own generation where the action carries one). `None` for

@@ -637,6 +637,7 @@ mod full {
     };
     use crate::browser_full::{FullAction, TabOp};
     use crate::browser_profiles::ProfileStore;
+    use crate::browser_receipts::{EvidenceKind, EvidenceStore, IntentDraft};
     use crate::live_browser::{form_outcome, LiveBrowser, LiveState, TabView};
     use orcel_browser_host::worker_host::{BindAction, FormNavigation};
     use orcel_browser_host::WorkerHostLaunch;
@@ -681,10 +682,15 @@ mod full {
                     .map_err(|error| crate::state_unavailable("browser profile", &error))?
                     .join("live")
                     .join("broker");
-                // OB-05 step 1: receipts are chained into orceld's audit log.
+                // SG-000135 OB-05: intents and receipts are chained into
+                // orceld's audit log; evidence files are kept in a private
+                // folder beside the sessions (digests only in the receipts
+                // when it cannot be made).
+                let evidence = EvidenceStore::open_private(root.join("evidence"));
                 *slot = Some(
                     Broker::start(root, instance_id(random8()?), Budgets::DEFAULT)?
-                        .with_audit_chain(crate::audit_chain::shared()),
+                        .with_audit_chain(crate::audit_chain::shared())
+                        .with_evidence(evidence),
                 );
             }
             match slot.as_mut() {
@@ -880,6 +886,9 @@ mod full {
         reply: Value,
         evidence_kind: &'static str,
         evidence_sha256: Option<String>,
+        /// SG-000135 OB-05: the bytes `evidence_sha256` is the digest of,
+        /// kept as an evidence file (the snapshot frame, the masked image).
+        evidence_bytes: Option<(EvidenceKind, Vec<u8>)>,
     }
 
     pub(super) fn dispatch(
@@ -1005,7 +1014,7 @@ mod full {
                 // SG-000135 OB-07: the active page is checked again here (at
                 // most once a second, held or not), so the status read is
                 // also how the session notices the check is gone.
-                let (needs_you, page_state, takeover_input) = {
+                let (needs_you, page_state, takeover_input, peak_memory) = {
                     let live = broker.session(client, session)?;
                     live.worker.check_challenge_throttled();
                     let pages = live.worker.needs_you();
@@ -1013,6 +1022,7 @@ mod full {
                         crate::browser_broker::needs_you_json(live.mode, &pages),
                         live.worker.page_state(),
                         live.worker.takeover_input_source(),
+                        live.worker.peak_memory_bytes(),
                     )
                 };
                 // SG-000135 OB-08: the session's lease, read-only (scope
@@ -1030,6 +1040,11 @@ mod full {
                     // the agent comes from (`visible_window` or `none`).
                     map.insert("takeover_input".into(), json!(takeover_input));
                     map.insert("full_access".into(), lease);
+                    // SG-000135 OB-05 (FA-J): the browser family's peak
+                    // memory, from its job (read-only).
+                    if let Some(Value::Object(measured)) = map.get_mut("measured") {
+                        measured.insert("worker_peak_memory_bytes".into(), json!(peak_memory));
+                    }
                 }
                 Ok(status)
             }),
@@ -1045,8 +1060,9 @@ mod full {
                     // Checked once more right before the action runs; an
                     // approval minted before a revoke also fails at consume.
                     let current = || probe() == Some(baseline);
-                    let result =
-                        run_recorded(workspace, approval, request, session, other, &current);
+                    let result = run_recorded(
+                        workspace, approval, request, session, other, baseline, &current,
+                    );
                     if !current() {
                         // Ends every session now, not at the next action.
                         let _ = broker.check_epoch(probe());
@@ -1057,14 +1073,16 @@ mod full {
         }
     }
 
-    /// Run one mapped action on its session and record its receipt, done
-    /// or not.
+    /// Run one mapped action on its session and record its evidence
+    /// receipt, done or not (SG-000135 OB-05): the intent is written to the
+    /// audit chain before anything runs, the receipt after.
     fn run_recorded(
         workspace: &Workspace,
         approval: &impl ApprovalBroker,
         request: &RequestEnvelope,
         session: &mut BrokerSession<LiveBrowser>,
         action: &FullAction,
+        approval_epoch: u64,
         epoch_current: &dyn Fn() -> bool,
     ) -> Result<Value, ProviderError> {
         if !epoch_current() {
@@ -1078,6 +1096,32 @@ mod full {
             .worker
             .page()
             .map(|page| (page.page_id.clone(), page.generation));
+        let origin_before = session
+            .worker
+            .page()
+            .map(|page| page.current_origin.clone());
+        // SG-000135 OB-05: write before dispatch. The intent names the
+        // session, the action and its target, the page and generation it
+        // was planned on, the page's origin, the requested URL as a digest
+        // and the approval epoch; a chain that refuses it refuses the
+        // action, with nothing sent.
+        let (target_page, target_node) = action.receipt_target();
+        let page_now = before.as_ref().map(|(page, _)| page.as_str());
+        let target = session.target_of(target_page.or(page_now), target_node);
+        let intent = session.begin_intent(
+            IntentDraft {
+                action: action.tool().to_owned(),
+                page_id: before.as_ref().map(|(page, _)| page.clone()),
+                generation_before: before.as_ref().map(|(_, generation)| *generation),
+                origin_before: origin_before.clone(),
+                url_sha256: action
+                    .requested_url()
+                    .map(crate::browser_receipts::url_digest),
+                target: Some(target.clone()),
+                approval_epoch: Some(approval_epoch),
+            },
+            orcel_approval::now_ms(),
+        )?;
         // SG-000135 OB-07: the read-only challenge detector looks at the
         // active page first: a page that shows a sign-in, code, passkey or
         // CAPTCHA check is held for the person, and the takeover gate then
@@ -1111,6 +1155,10 @@ mod full {
             .worker
             .page()
             .map(|page| (page.page_id.clone(), page.generation));
+        let origin_after = session
+            .worker
+            .page()
+            .map(|page| page.current_origin.clone());
         let dispatched = session
             .worker
             .outcomes()
@@ -1131,27 +1179,72 @@ mod full {
                 _ => "not_dispatched",
             },
         };
+        // SG-000135 OB-06/OB-05: a person's input while a sent action was in
+        // flight settles it as superseded (the gate then holds the page).
+        let superseded = outcome == "done"
+            && action.changes_the_page()
+            && matches!(
+                session.worker.page_state(),
+                Some("HUMAN_OVERRIDE" | "QUIET")
+            );
         let (evidence_kind, evidence_sha256) = match &result {
             Ok(done) => (done.evidence_kind, done.evidence_sha256.clone()),
             Err(_) => ("none", None),
         };
+        // SG-000135 OB-05: the snapshot frame and the masked screenshot are
+        // kept as content-addressed evidence files (digests in the receipt);
+        // a snapshot also becomes the pre-action evidence of the next action
+        // on its page.
+        let mut evidence_files = Vec::new();
+        if let Ok(done) = &result {
+            if let Some((kind, bytes)) = &done.evidence_bytes {
+                evidence_files.push(session.keep_evidence(*kind, bytes));
+            }
+            if let (FullAction::Snapshot { .. }, Some((page, generation)), Some(sha256)) =
+                (action, &after, &done.evidence_sha256)
+            {
+                let nodes = done.reply.get("nodes").cloned().unwrap_or(Value::Null);
+                session.note_observation(page, *generation, sha256, &nodes);
+            }
+        }
+        let url_sha256 = result
+            .as_ref()
+            .ok()
+            .and_then(|done| crate::browser_receipts::reply_url_digest(&done.reply));
+        let pre_evidence = target
+            .page_id
+            .as_deref()
+            .and_then(|page| session.pre_evidence(page))
+            .filter(|_| !matches!(action, FullAction::Snapshot { .. }));
+        let lease_epoch = dispatched
+            .as_ref()
+            .filter(|last| last.lease_id.is_some())
+            .and_then(|last| last.lease_epoch);
         let receipt = session.record(
             ActionRecord {
                 action: action.tool().to_owned(),
+                intent: Some(intent),
                 page_id: after
                     .as_ref()
                     .or(before.as_ref())
                     .map(|(page, _)| page.clone()),
                 generation_before: before.as_ref().map(|(_, generation)| *generation),
                 generation_after: after.as_ref().map(|(_, generation)| *generation),
+                origin_before,
+                origin_after,
+                url_sha256,
+                target: Some(target),
                 outcome: outcome.to_owned(),
                 failure_code: result
                     .as_ref()
                     .err()
                     .and_then(|error| serde_json::to_value(&error.code).ok())
                     .and_then(|code| code.as_str().map(str::to_owned)),
+                superseded,
                 evidence_kind: evidence_kind.to_owned(),
                 evidence_sha256,
+                pre_evidence,
+                evidence_files,
                 // SG-000135 OB-08: an approval's record, or the lease that
                 // authorized the action instead (never both).
                 record_id: dispatched
@@ -1159,19 +1252,23 @@ mod full {
                     .filter(|last| last.lease_id.is_none())
                     .map(|last| last.record_id.clone()),
                 lease_id: dispatched.and_then(|last| last.lease_id),
+                lease_epoch,
+                approval_epoch: Some(approval_epoch),
             },
             orcel_approval::now_ms(),
         );
         session.page_id = after.map(|(page, _)| page);
-        // WP1-03 / OB-05: the request's dispatch record was written before
-        // the action ran (orceld refuses the request otherwise); a receipt
-        // the chain refused withholds the action's result.
+        // WP1-03 / OB-05: the request's dispatch record and the action's
+        // intent were written before the action ran (orceld refuses it
+        // otherwise); a receipt the chain refused leaves the intent open
+        // (DISPATCHED_UNRECORDED for `orceld audit-verify --receipts`) and
+        // withholds the action's result.
         if let crate::browser_broker::ReceiptAudit::Failed(error) = &receipt.audit {
             return Err(ProviderError::new(
                 FailureCode::InternalError,
                 format!(
-                    "the audit chain refused browser session receipt {}; its result is withheld: {error}",
-                    receipt.seq
+                    "the audit chain refused browser session receipt {} after the action ran ({}); its outcome is unrecorded (DISPATCHED_UNRECORDED) and its result is withheld: {error}",
+                    receipt.seq, receipt.disposition.result
                 ),
             ));
         }
@@ -1187,7 +1284,7 @@ mod full {
                 error.code,
                 format!(
                     "{} (browser session receipt {}: {})",
-                    error.message, receipt.seq, receipt.outcome
+                    error.message, receipt.seq, receipt.disposition.result
                 ),
             )),
         }
@@ -1235,6 +1332,7 @@ mod full {
                     "status": status,
                 });
                 Ok(Done {
+                    evidence_bytes: None,
                     evidence_sha256: Some(digest(&reply.to_string())),
                     reply,
                     evidence_kind: "reply",
@@ -1245,8 +1343,10 @@ mod full {
                 let browser = &mut session.worker;
                 let (page, nodes, latest) =
                     browser.observe_live(workspace, &page.page_id, page.generation)?;
-                let evidence = serde_json::to_string(&nodes).map(|text| digest(&text)).ok();
+                let frame = serde_json::to_string(&nodes).ok();
+                let evidence = frame.as_deref().map(digest);
                 Ok(Done {
+                    evidence_bytes: frame.map(|text| (EvidenceKind::Snapshot, text.into_bytes())),
                     reply: json!({
                         "page_id": page.page_id,
                         "generation": page.generation,
@@ -1282,6 +1382,7 @@ mod full {
                     "status": status,
                 });
                 Ok(Done {
+                    evidence_bytes: None,
                     evidence_sha256: Some(digest(&reply.to_string())),
                     reply,
                     evidence_kind: "reply",
@@ -1367,6 +1468,7 @@ mod full {
                     "lease_id": lease_id,
                 });
                 Ok(Done {
+                    evidence_bytes: None,
                     evidence_sha256: Some(digest(&reply.to_string())),
                     reply,
                     evidence_kind: "reply",
@@ -1401,6 +1503,7 @@ mod full {
                     })
                     .collect();
                 Ok(Done {
+                    evidence_bytes: None,
                     reply: json!({
                         "page_id": page.page_id,
                         "generation": expected_generation,
@@ -1422,6 +1525,7 @@ mod full {
                 let browser = &mut session.worker;
                 let extraction = browser.extract(workspace, &page.page_id, *expected_generation)?;
                 Ok(Done {
+                    evidence_bytes: None,
                     evidence_sha256: Some(digest(&extraction.text)),
                     reply: json!({
                         "page_id": page.page_id,
@@ -1463,8 +1567,10 @@ mod full {
                         "png_base64": orcel_browser_host::page_capture::encode_base64(&shot.png),
                     }),
                     evidence_kind: "screenshot",
-                    // The receipt keeps the digest only, never the image.
+                    // The receipt keeps the digest only, never the image; the
+                    // masked image is an evidence file.
                     evidence_sha256: Some(shot.sha256),
+                    evidence_bytes: Some((EvidenceKind::Screenshot, shot.png)),
                 })
             }
             FullAction::Tabs { op, .. } => {
@@ -1521,6 +1627,7 @@ mod full {
                     "navigation": navigated.map(|(url, status)| json!({"url": url, "status": status})),
                 });
                 Ok(Done {
+                    evidence_bytes: None,
                     evidence_sha256: Some(digest(&reply.to_string())),
                     reply,
                     evidence_kind: "reply",

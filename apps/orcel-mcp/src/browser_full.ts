@@ -45,7 +45,15 @@ import {
  *   `browser_open`. A popup the page opens becomes a tab only when Orcel's
  *   navigation rules admitted its page.
  * - `browser_close` ends the session and removes its profile;
- *   `browser_task_status` returns its provisional receipts.
+ *   `browser_task_status` returns its evidence receipts.
+ * - SG-000135 OB-05: every page action's intent is written to orceld's
+ *   hash-chained audit log before anything is sent, and its evidence
+ *   receipt after: the authority (approval record or Full Access lease and
+ *   epoch), mode, profile, origin, the URL as a digest only, the target
+ *   (node id, role, keyed name digest), pre- and post-action evidence
+ *   digests, the result (sent, refused, failed, superseded or unknown),
+ *   whether a person is needed, times, and both chain places.
+ *   `orceld audit-verify --receipts` verifies them and the evidence files.
  * - SG-000135 OB-07: a page that shows a sign-in, one-time code, passkey or
  *   CAPTCHA check waits for the person ("Needs you"). Orcel never solves,
  *   skips or fills one. Every action on that page is refused with
@@ -246,7 +254,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_open",
     {
-      description: `Open one public HTTPS URL in the session's page, after fresh local Orcel approval bound to the page and the address Orcel pinned for the site. A new site starts a fresh isolated lifetime and earlier node ids go stale. Returns the page id, committed URL, status, the new generation and a provisional receipt. ${LEASE_NOTE} ${DEV_ONLY}`,
+      description: `Open one public HTTPS URL in the session's page, after fresh local Orcel approval bound to the page and the address Orcel pinned for the site. A new site starts a fresh isolated lifetime and earlier node ids go stale. Returns the page id, committed URL, status, the new generation and an evidence receipt. ${LEASE_NOTE} ${DEV_ONLY}`,
       inputSchema: browserOpenSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id, url }) => forward("browser_open", workspace_id, { session_id, url }, APPROVAL_TIMEOUT_MS)
@@ -355,7 +363,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_task_status",
     {
-      description: `Read the session's state, budgets and its provisional receipts: one per action, with the page, generation before and after, outcome, evidence digest and a digest chain. Receipts are Orcel's own records, never a model summary. Also lists under needs_you each page that waits for a person to complete a sign-in, code, passkey or CAPTCHA check (Orcel never completes one; actions on it are refused with HUMAN_VERIFICATION_REQUIRED), and the active page's state; read it again until the page no longer needs you, then take a new snapshot before acting. While a person uses a Visible session's window, actions are refused with HUMAN_TAKEOVER and page_state is HUMAN_OVERRIDE or QUIET; three seconds after their last input it moves on, and a new snapshot comes before acting. full_access is the session's Full Access lease, read-only: its origins, action families, expiry and whether it is active; no tool can issue, widen or renew one. ${DEV_ONLY}`,
+      description: `Read the session's state, budgets, measured latency and its evidence receipts: one per action, written to Orcel's audit chain (its intent before anything is sent, the receipt after), with the authority used, page, origin, URL digest, target, generation before and after, result (sent, refused, failed, superseded or unknown), whether a person is needed, evidence digests and a digest chain. Receipts are Orcel's own records, never a model summary. Also lists under needs_you each page that waits for a person to complete a sign-in, code, passkey or CAPTCHA check (Orcel never completes one; actions on it are refused with HUMAN_VERIFICATION_REQUIRED), and the active page's state; read it again until the page no longer needs you, then take a new snapshot before acting. While a person uses a Visible session's window, actions are refused with HUMAN_TAKEOVER and page_state is HUMAN_OVERRIDE or QUIET; three seconds after their last input it moves on, and a new snapshot comes before acting. full_access is the session's Full Access lease, read-only: its origins, action families, expiry and whether it is active; no tool can issue, widen or renew one. ${DEV_ONLY}`,
       inputSchema: browserSessionSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id }) => forward("browser_task_status", workspace_id, { session_id }, OBSERVE_TIMEOUT_MS)

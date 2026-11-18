@@ -157,6 +157,9 @@ pub struct ApprovalOutcome {
     /// instead of an approval (its record id is then the lease's one-shot
     /// use id, never an approval record).
     pub lease_id: Option<String>,
+    /// SG-000135 OB-05: the authority service's epoch that lease was
+    /// checked at.
+    pub lease_epoch: Option<u64>,
 }
 
 /// SG-000135 OB-08: what authorizes one consequential frame.
@@ -1154,6 +1157,7 @@ impl LiveBrowser {
                 record_id: record_id.to_owned(),
                 outcome: DispatchOutcome::Refused(GATE_REFUSED.to_owned()),
                 lease_id: None,
+                lease_epoch: None,
             });
             return Err(error);
         }
@@ -1198,6 +1202,7 @@ impl LiveBrowser {
             record_id: record_id.to_owned(),
             outcome,
             lease_id: None,
+            lease_epoch: None,
         });
         result
     }
@@ -1212,6 +1217,7 @@ impl LiveBrowser {
                 .filter(|last| last.record_id == record_id)
             {
                 last.lease_id = Some(used.lease_id.clone());
+                last.lease_epoch = Some(used.authority_epoch);
             }
         }
     }
@@ -2947,6 +2953,33 @@ impl LiveBrowser {
         self.takeover.watch_visible_window(probe)
     }
 
+    /// SG-000135 OB-05 (FA-J): the peak memory the session's browser family
+    /// (host, worker runtime and engine, all in one job) has committed, as
+    /// the job reports it; `None` when it cannot be asked. Read-only.
+    pub fn peak_memory_bytes(&mut self) -> Option<u64> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectExtendedLimitInformation, QueryInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        };
+        let job = self.supervisor.worker_host()?.job_handle()?;
+        // SAFETY: a plain-data structure, valid when zeroed.
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        let mut returned = 0u32;
+        // SAFETY: a valid job handle, an out-buffer of exactly the class's
+        // size, and an out-pointer to a local.
+        let ok = unsafe {
+            QueryInformationJobObject(
+                job.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE,
+                JobObjectExtendedLimitInformation,
+                (&mut info as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                &mut returned,
+            )
+        };
+        (ok != 0).then_some(info.PeakJobMemoryUsed as u64)
+    }
+
     /// SG-000135 OB-06: refuse to close the session while a person holds
     /// its window (`HUMAN_TAKEOVER`); an emergency stop, the end of the MCP
     /// session and orceld's own shutdown still end it.
@@ -3914,6 +3947,7 @@ mod tests {
                 record_id: "r9".into(),
                 outcome: DispatchOutcome::Lost,
                 lease_id: None,
+                lease_epoch: None,
             }]
         );
         // No host existed, so its end is (trivially) confirmed.

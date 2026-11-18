@@ -41,22 +41,27 @@
 //!   whose lock is free (a crashed or exited orceld), never following a
 //!   junction or symbolic link, and refuses state directories that are one.
 //!
-//! Every action yields a provisional receipt (session, page, generation
-//! before and after, action, outcome, evidence digest), chained by digest
-//! within the session and returned by `browser_task_status`. Receipts are
-//! orceld's own records of what it dispatched. OB-05 step 1 (WP1-03): each
-//! receipt is also written to orceld's hash-chained audit log as a
-//! `dispatch` event (the receipt and its digest, unchanged), so receipts
-//! are anchored with the chain; the receipt names its place there.
+//! Every action yields an evidence receipt (SG-000135 OB-05,
+//! `browser_receipts.rs`): its intent is written to orceld's hash-chained
+//! audit log before anything is sent, and its receipt (authority, session,
+//! profile and mode, origin, URL digest, target, pre- and post-action
+//! evidence digests, outcome and times) after. Receipts chain by digest
+//! within the session and are returned by `browser_task_status`; each names
+//! its intent's and its own place in the chain. The session's start and end
+//! are chained too.
 //!
 //! The broker grants nothing: profile gate, policy, the takeover gate and
 //! the approval broker still decide every action. It is generic over the
 //! worker so its rules are tested without a browser.
 
+pub(crate) use crate::browser_receipts::ReceiptAudit;
+use crate::browser_receipts::{
+    disposition, receipt_digest_of, Disposition, EvidenceFile, EvidenceKind, EvidenceStore, Intent,
+    IntentDraft, PreEvidence, ReceiptTarget, RECEIPT_CONTRACT, SOURCE_RECEIPT, SOURCE_SESSION,
+};
 use orcel_contracts::FailureCode;
 use orcel_provider_fs::ProviderError;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -77,11 +82,6 @@ const REMOVAL_ATTEMPTS: u32 = 5;
 pub(crate) const MAX_TASK_CHARS: usize = 64;
 /// Ended sessions remembered so a late request learns why its session ended.
 const ENDED_MEMORY: usize = 64;
-/// Domain separation for receipt digests.
-/// Version 3: SG-000135 OB-08 adds the lease id and OB-04 the session's
-/// persistent profile.
-const RECEIPT_DOMAIN: &str = "orcel-ob08-receipt/3";
-
 /// The broker's budgets. Configured by orceld only; never a caller's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Budgets {
@@ -380,92 +380,122 @@ impl EndReport {
     }
 }
 
-/// One provisional receipt: what orceld dispatched and what became of it.
+/// SG-000135 OB-05: one evidence receipt: what orceld dispatched, under
+/// which authority, on what, and what became of it. Written to orceld's
+/// audit chain after the action's intent (`browser_receipts.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Receipt {
     pub seq: u64,
     pub session_id: String,
     pub action: String,
+    /// SG-000135 OB-04: `shadow` or `visible`.
+    pub mode: String,
     pub page_id: Option<String>,
     pub generation_before: Option<u64>,
     pub generation_after: Option<u64>,
-    /// `done`, `denied`, `refused`, `not_dispatched`, `failed` or `unknown`.
+    /// The page's origin before and after (scheme, host and port only).
+    pub origin_before: Option<String>,
+    pub origin_after: Option<String>,
+    /// The committed URL, as its SHA-256 only (never the URL, its query or
+    /// fragment).
+    pub url_sha256: Option<String>,
+    /// The page and node acted on (role and keyed name digest only).
+    pub target: Option<ReceiptTarget>,
+    /// `done`, `denied`, `refused`, `not_dispatched`, `failed` or `unknown`
+    /// (the OB-01 word, kept).
     pub outcome: String,
+    /// OB-05: `sent`, `refused`, `failed`, `superseded` or `unknown`; whether
+    /// the effect happened; whether a person is needed.
+    pub disposition: Disposition,
     pub failure_code: Option<String>,
-    /// `observe`, `verify`, `reply` or `none`: where the evidence digest
-    /// comes from.
+    /// `observe`, `verify`, `reply`, `screenshot` or `none`: where the
+    /// post-action evidence digest comes from.
     pub evidence_kind: String,
     pub evidence_sha256: Option<String>,
+    /// OB-05: the snapshot the action was planned on, if the session took one
+    /// of that page.
+    pub pre_evidence: Option<PreEvidence>,
+    /// OB-05: the evidence files kept (content-addressed, digests only here).
+    pub evidence_files: Vec<EvidenceFile>,
     /// The approval broker's record id, for an approved action.
     pub record_id: Option<String>,
     /// SG-000135 OB-08: the Full Access lease that authorized the action
     /// instead of an approval (then `record_id` is `None`).
     pub lease_id: Option<String>,
+    /// OB-05: the authority service's epoch the lease was checked at.
+    pub lease_epoch: Option<u64>,
+    /// OB-05: the approval epoch the action was checked against.
+    pub approval_epoch: Option<u64>,
     /// SG-000135 OB-04: the persistent Orcel-managed profile the session
     /// acted in, or `None` for an ephemeral profile.
     pub profile: Option<String>,
+    /// OB-05: the intent written before the action (digest and chain place).
+    pub intent_sha256: Option<String>,
+    pub intent_audit: ReceiptAudit,
+    pub intent_at_ms: Option<u64>,
     pub at_ms: u64,
     /// The previous receipt's digest in this session (empty for the first).
     pub previous_sha256: String,
     pub receipt_sha256: String,
-    /// OB-05 step 1: where the receipt sits in orceld's audit chain. Not
-    /// covered by `receipt_sha256` (the receipt digest is unchanged).
+    /// Where the receipt sits in orceld's audit chain. Not covered by
+    /// `receipt_sha256` (known only once written).
     pub audit: ReceiptAudit,
-}
-
-/// OB-05 step 1: a receipt's audit chain event.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ReceiptAudit {
-    /// No audit chain was given to the broker (tests and validation builds).
-    NotConfigured,
-    /// Written: `(log, file id, seq, digest)` of the event.
-    Chained(orcel_contracts::event::AnchorRef),
-    /// The chain refused or failed the write.
-    Failed(String),
-}
-
-impl ReceiptAudit {
-    fn to_json(&self) -> Value {
-        match self {
-            Self::NotConfigured => Value::Null,
-            Self::Chained(at) => json!({
-                "log": at.log,
-                "file_id": at.file_id,
-                "seq": at.seq,
-                "digest": at.digest,
-            }),
-            Self::Failed(error) => json!({"error": error}),
-        }
-    }
 }
 
 impl Receipt {
     pub(crate) fn to_json(&self) -> Value {
+        let authority = match (&self.record_id, &self.lease_id) {
+            (_, Some(_)) => "lease",
+            (Some(_), None) => "approval",
+            (None, None) => "none",
+        };
         json!({
+            "contract": RECEIPT_CONTRACT,
             "seq": self.seq,
             "session_id": self.session_id,
             "action": self.action,
+            "mode": self.mode,
+            "profile": self.profile,
             "page_id": self.page_id,
             "generation_before": self.generation_before,
             "generation_after": self.generation_after,
-            "outcome": self.outcome,
-            "failure_code": self.failure_code,
-            "evidence_kind": self.evidence_kind,
-            "evidence_sha256": self.evidence_sha256,
+            "origin_before": self.origin_before,
+            "origin_after": self.origin_after,
+            "url_sha256": self.url_sha256,
+            "target": self.target.as_ref().map(ReceiptTarget::to_json),
+            "authority": {
+                "kind": authority,
+                "record_id": self.record_id,
+                "lease_id": self.lease_id,
+                "lease_epoch": self.lease_epoch,
+                "approval_epoch": self.approval_epoch,
+            },
             "record_id": self.record_id,
             "lease_id": self.lease_id,
-            "profile": self.profile,
+            "outcome": self.outcome,
+            "result": self.disposition.result,
+            "effect": self.disposition.effect,
+            "needs_person": self.disposition.needs_person,
+            "failure_code": self.failure_code,
+            "pre_evidence": self.pre_evidence.as_ref().map(PreEvidence::to_json),
+            "evidence_kind": self.evidence_kind,
+            "evidence_sha256": self.evidence_sha256,
+            "evidence_files": self.evidence_files.iter().map(EvidenceFile::to_json).collect::<Vec<_>>(),
+            "intent_sha256": self.intent_sha256,
+            "intent_audit": self.intent_audit.to_json(),
+            "intent_at_ms": self.intent_at_ms,
             "at_ms": self.at_ms,
+            "duration_ms": self.intent_at_ms.map(|start| self.at_ms.saturating_sub(start)),
             "previous_sha256": self.previous_sha256,
             "receipt_sha256": self.receipt_sha256,
-            "provisional": true,
+            "provisional": false,
             "audit": self.audit.to_json(),
         })
     }
 
-    /// OB-05 step 1: the receipt's `dispatch` event in orceld's chain:
-    /// the receipt's own fields and digest (ids, outcome and evidence
-    /// digests only; never a URL or page content).
+    /// The receipt's `dispatch` event in orceld's chain: the receipt's own
+    /// fields and digest (ids, outcome, origins and digests only; never a
+    /// URL, a value or page content).
     fn audit_draft(&self, client: &str) -> orcel_audit::EventDraft {
         let mut receipt = self.to_json();
         if let Value::Object(map) = &mut receipt {
@@ -477,7 +507,7 @@ impl Receipt {
             operation: Some(self.action.clone()),
             ..orcel_audit::EventDraft::new(
                 orcel_contracts::event::AuditEventKind::Dispatch,
-                json!({"source": "browser_receipt", "receipt": receipt}),
+                json!({"source": SOURCE_RECEIPT, "receipt": receipt}),
             )
         }
     }
@@ -487,16 +517,29 @@ impl Receipt {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ActionRecord {
     pub action: String,
+    /// OB-05: the intent written before the action ran (`begin_intent`);
+    /// `None` only in tests of the receipt list itself.
+    pub intent: Option<Intent>,
     pub page_id: Option<String>,
     pub generation_before: Option<u64>,
     pub generation_after: Option<u64>,
+    pub origin_before: Option<String>,
+    pub origin_after: Option<String>,
+    pub url_sha256: Option<String>,
+    pub target: Option<ReceiptTarget>,
     pub outcome: String,
     pub failure_code: Option<String>,
+    /// A person's input arrived while the sent action was in flight.
+    pub superseded: bool,
     pub evidence_kind: String,
     pub evidence_sha256: Option<String>,
+    pub pre_evidence: Option<PreEvidence>,
+    pub evidence_files: Vec<EvidenceFile>,
     pub record_id: Option<String>,
     /// SG-000135 OB-08: the lease that authorized the action, if one did.
     pub lease_id: Option<String>,
+    pub lease_epoch: Option<u64>,
+    pub approval_epoch: Option<u64>,
 }
 
 /// A device-wide session slot: an exclusive lock on one slot file, held
@@ -540,8 +583,21 @@ pub(crate) struct BrokerSession<W> {
     receipts_dropped: u64,
     last_receipt_sha256: String,
     next_seq: u64,
-    /// OB-05 step 1: orceld's audit chain, when the broker was given one.
+    /// orceld's audit chain, when the broker was given one.
     audit: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
+    /// SG-000135 OB-05: where evidence files are kept, when the broker was
+    /// given a store.
+    evidence: Option<EvidenceStore>,
+    /// SG-000135 OB-05: the latest snapshot of each page (generation and
+    /// frame digest), the pre-action evidence of the next action on it.
+    observations: BTreeMap<String, (u64, String)>,
+    /// SG-000135 OB-05: the node targets (role, keyed name digest) of the
+    /// latest snapshot, and the page it was of.
+    targets: BTreeMap<String, (String, String)>,
+    targets_page: Option<String>,
+    /// SG-000135 OB-05 (FA-J): measured intent-to-receipt latency.
+    latency_total_ms: u64,
+    latency_max_ms: u64,
     _slot: DeviceSlot,
 }
 
@@ -558,25 +614,100 @@ impl<W> BrokerSession<W> {
         Ok(())
     }
 
-    /// Append the receipt of one action, chained to the previous one.
-    pub(crate) fn record(&mut self, record: ActionRecord, at_ms: u64) -> Receipt {
+    /// SG-000135 OB-05: write the intent of the next action to the audit
+    /// chain before anything is sent. A chain that refuses it refuses the
+    /// action: nothing may be sent without its intent on record.
+    pub(crate) fn begin_intent(
+        &mut self,
+        draft: IntentDraft,
+        at_ms: u64,
+    ) -> Result<Intent, ProviderError> {
         let seq = self.next_seq;
+        let mut intent = Intent {
+            seq,
+            session_id: self.id.clone(),
+            mode: self.mode.as_str().to_owned(),
+            profile: self.profile_name().map(str::to_owned),
+            draft,
+            at_ms,
+            previous_receipt_sha256: self.last_receipt_sha256.clone(),
+            intent_sha256: String::new(),
+            audit: ReceiptAudit::NotConfigured,
+        };
+        intent.intent_sha256 = intent.digest();
+        if let Some(chain) = &self.audit {
+            match chain.append(intent.audit_draft(&self.client)) {
+                Ok(appended) => intent.audit = ReceiptAudit::Chained(appended.at),
+                Err(error) => {
+                    return Err(ProviderError::new(
+                        FailureCode::InternalError,
+                        format!(
+                            "the audit chain refused the intent of browser session action {seq}, so nothing was sent: {error}"
+                        ),
+                    ))
+                }
+            }
+        }
+        // The seq is the intent's: its receipt carries the same one, and an
+        // intent with no receipt leaves a gap the verifier reports.
         self.next_seq += 1;
+        Ok(intent)
+    }
+
+    /// Append the receipt of one action, chained to the previous one and
+    /// bound to its intent.
+    pub(crate) fn record(&mut self, record: ActionRecord, at_ms: u64) -> Receipt {
+        let seq = match &record.intent {
+            Some(intent) => intent.seq,
+            None => {
+                let seq = self.next_seq;
+                self.next_seq += 1;
+                seq
+            }
+        };
         let previous = self.last_receipt_sha256.clone();
+        let disposition = disposition(
+            &record.outcome,
+            record.failure_code.as_deref(),
+            record.superseded,
+        );
         let mut receipt = Receipt {
             seq,
             session_id: self.id.clone(),
             action: record.action,
+            mode: self.mode.as_str().to_owned(),
             page_id: record.page_id,
             generation_before: record.generation_before,
             generation_after: record.generation_after,
+            // What the intent saw before the action, unless the caller says.
+            origin_before: record.origin_before.or_else(|| {
+                record
+                    .intent
+                    .as_ref()
+                    .and_then(|intent| intent.draft.origin_before.clone())
+            }),
+            origin_after: record.origin_after,
+            url_sha256: record.url_sha256,
+            target: record.target,
             outcome: record.outcome,
+            disposition,
             failure_code: record.failure_code,
             evidence_kind: record.evidence_kind,
             evidence_sha256: record.evidence_sha256,
+            pre_evidence: record.pre_evidence,
+            evidence_files: record.evidence_files,
             record_id: record.record_id,
             lease_id: record.lease_id,
+            lease_epoch: record.lease_epoch,
+            approval_epoch: record.approval_epoch,
             profile: self.profile_name().map(str::to_owned),
+            intent_sha256: record.intent.as_ref().map(|i| i.intent_sha256.clone()),
+            intent_audit: record
+                .intent
+                .as_ref()
+                .map(|i| i.audit.clone())
+                .unwrap_or(ReceiptAudit::NotConfigured),
+            intent_at_ms: record.intent.as_ref().map(|i| i.at_ms),
             at_ms,
             previous_sha256: previous,
             receipt_sha256: String::new(),
@@ -589,6 +720,11 @@ impl<W> BrokerSession<W> {
                 Err(error) => ReceiptAudit::Failed(error.to_string()),
             };
         }
+        if let Some(start) = receipt.intent_at_ms {
+            let latency = at_ms.saturating_sub(start);
+            self.latency_total_ms = self.latency_total_ms.saturating_add(latency);
+            self.latency_max_ms = self.latency_max_ms.max(latency);
+        }
         self.last_receipt_sha256 = receipt.receipt_sha256.clone();
         if self.receipts.len() >= self.receipts_budget {
             self.receipts.pop_front();
@@ -596,6 +732,63 @@ impl<W> BrokerSession<W> {
         }
         self.receipts.push_back(receipt.clone());
         receipt
+    }
+
+    /// SG-000135 OB-05: keep `bytes` as evidence of `kind` (content-addressed,
+    /// in the private evidence store). Without a store the receipt names the
+    /// digest with `stored: false`.
+    pub(crate) fn keep_evidence(&self, kind: EvidenceKind, bytes: &[u8]) -> EvidenceFile {
+        match &self.evidence {
+            Some(store) => store.put(kind, bytes),
+            None => EvidenceFile {
+                kind,
+                sha256: crate::browser_receipts::sha256_hex(bytes),
+                bytes: bytes.len() as u64,
+                stored: false,
+            },
+        }
+    }
+
+    /// SG-000135 OB-05: a snapshot of `page_id` at `generation` was taken:
+    /// its frame digest is the pre-action evidence of the next action on the
+    /// page, and its nodes the targets that action names.
+    pub(crate) fn note_observation(
+        &mut self,
+        page_id: &str,
+        generation: u64,
+        sha256: &str,
+        nodes: &Value,
+    ) {
+        self.observations
+            .insert(page_id.to_owned(), (generation, sha256.to_owned()));
+        self.targets = crate::browser_receipts::targets_from_nodes(nodes);
+        self.targets_page = Some(page_id.to_owned());
+    }
+
+    /// SG-000135 OB-05: the latest snapshot of `page_id`, if any.
+    pub(crate) fn pre_evidence(&self, page_id: &str) -> Option<PreEvidence> {
+        self.observations
+            .get(page_id)
+            .map(|(generation, sha256)| PreEvidence {
+                page_id: page_id.to_owned(),
+                generation: *generation,
+                sha256: sha256.clone(),
+            })
+    }
+
+    /// SG-000135 OB-05: what an action names: the page, and for a node its
+    /// id, with the role and keyed name digest the latest snapshot of that
+    /// page gave it.
+    pub(crate) fn target_of(&self, page_id: Option<&str>, node_id: Option<&str>) -> ReceiptTarget {
+        let known = node_id
+            .filter(|_| page_id.is_some() && self.targets_page.as_deref() == page_id)
+            .and_then(|node| self.targets.get(node));
+        ReceiptTarget {
+            page_id: page_id.map(str::to_owned),
+            node_id: node_id.map(str::to_owned),
+            role: known.map(|(role, _)| role.clone()),
+            name_digest: known.map(|(_, name)| name.clone()),
+        }
     }
 
     pub(crate) fn receipts(&self) -> impl Iterator<Item = &Receipt> {
@@ -621,44 +814,40 @@ impl<W> BrokerSession<W> {
             "profile": self.profile_name(),
         })
     }
+
+    /// SG-000135 OB-05 (FA-J): what was measured of the session's actions.
+    pub(crate) fn measured_json(&self) -> Value {
+        let recorded = self.next_seq.saturating_sub(1);
+        json!({
+            "actions_recorded": recorded,
+            "latency_ms_total": self.latency_total_ms,
+            "latency_ms_max": self.latency_max_ms,
+            "latency": "from each action's intent on the audit chain to its receipt, orceld's clock",
+        })
+    }
+
+    /// SG-000135 OB-05: the session's start or end, chained (best effort:
+    /// a chain that refuses it refuses the next action's intent anyway).
+    fn chain_session_event(&self, detail: Value) {
+        if let Some(chain) = &self.audit {
+            let _ = chain.append(orcel_audit::EventDraft {
+                principal_id: Some(self.client.clone()),
+                capability: Some("browser.session".to_owned()),
+                operation: detail["event"].as_str().map(str::to_owned),
+                ..orcel_audit::EventDraft::new(
+                    orcel_contracts::event::AuditEventKind::Dispatch,
+                    detail,
+                )
+            });
+        }
+    }
 }
 
-/// The digest of a receipt's fields (length-prefixed, so no two receipts
-/// share one).
+/// The digest of a receipt's fields: canonical JSON of every field but the
+/// digest and its chain place, under [`crate::browser_receipts::RECEIPT_DOMAIN`]
+/// (an absent field is `null`, never equal to any present value).
 fn receipt_digest(receipt: &Receipt) -> String {
-    // A presence tag first, so an absent field never equals any present
-    // value (None is "\0", Some(v) is "\x01" then v).
-    let optional = |value: &Option<String>| match value {
-        Some(text) => format!("\u{1}{text}"),
-        None => "\u{0}".to_owned(),
-    };
-    let number = |value: Option<u64>| match value {
-        Some(n) => format!("\u{1}{n}"),
-        None => "\u{0}".to_owned(),
-    };
-    let mut hasher = Sha256::new();
-    for part in [
-        RECEIPT_DOMAIN.to_owned(),
-        receipt.seq.to_string(),
-        receipt.session_id.clone(),
-        receipt.action.clone(),
-        optional(&receipt.page_id),
-        number(receipt.generation_before),
-        number(receipt.generation_after),
-        receipt.outcome.clone(),
-        optional(&receipt.failure_code),
-        receipt.evidence_kind.clone(),
-        optional(&receipt.evidence_sha256),
-        optional(&receipt.record_id),
-        optional(&receipt.lease_id),
-        optional(&receipt.profile),
-        receipt.at_ms.to_string(),
-        receipt.previous_sha256.clone(),
-    ] {
-        hasher.update((part.len() as u64).to_be_bytes());
-        hasher.update(part.as_bytes());
-    }
-    hex(&hasher.finalize())
+    receipt_digest_of(&receipt.to_json()).unwrap_or_default()
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
@@ -688,19 +877,28 @@ pub(crate) struct Broker<W> {
     /// not be verified, orceld's input closing), so a revoke always asks
     /// again before a signed-in profile is reused.
     profile_approvals: std::collections::BTreeSet<(String, String, String)>,
-    /// OB-05 step 1: orceld's audit chain every receipt is also written to.
+    /// orceld's audit chain every intent and receipt is written to.
     audit: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
+    /// SG-000135 OB-05: the private store of evidence files.
+    evidence: Option<EvidenceStore>,
     /// This instance's lock, held for the broker's (orceld's) lifetime.
     _instance_lock: File,
 }
 
 impl<W: SessionWorker> Broker<W> {
-    /// OB-05 step 1: write every session's receipts to `chain` too.
+    /// SG-000135 OB-05: write every session's intents and receipts to
+    /// `chain`.
     pub(crate) fn with_audit_chain(
         mut self,
         chain: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
     ) -> Self {
         self.audit = chain;
+        self
+    }
+
+    /// SG-000135 OB-05: keep evidence files in `store`.
+    pub(crate) fn with_evidence(mut self, store: Option<EvidenceStore>) -> Self {
+        self.evidence = store;
         self
     }
 
@@ -741,6 +939,7 @@ impl<W: SessionWorker> Broker<W> {
             quarantined: Vec::new(),
             profile_approvals: std::collections::BTreeSet::new(),
             audit: None,
+            evidence: None,
             _instance_lock: lock,
         };
         broker.sweep_leftovers();
@@ -936,8 +1135,28 @@ impl<W: SessionWorker> Broker<W> {
             last_receipt_sha256: String::new(),
             next_seq: 1,
             audit: self.audit.clone(),
+            evidence: self.evidence.clone(),
+            observations: BTreeMap::new(),
+            targets: BTreeMap::new(),
+            targets_page: None,
+            latency_total_ms: 0,
+            latency_max_ms: 0,
             _slot: slot,
         };
+        // SG-000135 OB-05: the session's start, chained (the task label as a
+        // digest only: it is the caller's text).
+        session.chain_session_event(json!({
+            "source": SOURCE_SESSION,
+            "event": "session_start",
+            "session_id": session.id,
+            "mode": session.mode.as_str(),
+            "profile": session.profile_name(),
+            "task_sha256": session
+                .task
+                .as_deref()
+                .map(|task| crate::browser_receipts::sha256_hex(task.as_bytes())),
+            "at_ms": now_ms,
+        }));
         Ok(self.sessions.entry(id).or_insert(session))
     }
 
@@ -1037,6 +1256,14 @@ impl<W: SessionWorker> Broker<W> {
     fn end(&mut self, id: &str, reason: EndReason) -> Option<EndReport> {
         let mut session = self.sessions.remove(id)?;
         let root = session.dirs.root.clone();
+        let (last_receipt, recorded) = (
+            session.last_receipt_sha256.clone(),
+            session.next_seq.saturating_sub(1),
+        );
+        let ended_session = SessionEnd {
+            client: session.client.clone(),
+            audit: session.audit.clone(),
+        };
         let persistent_profile = session.profile_name().map(str::to_owned);
         let profile = session.profile.take();
         // The worker first; the persistent profile's lock is released only
@@ -1073,6 +1300,18 @@ impl<W: SessionWorker> Broker<W> {
             self.ended.pop_front();
         }
         self.ended.push_back((id.to_owned(), reason));
+        // SG-000135 OB-05: the session's end and its last receipt, chained.
+        ended_session.chain(json!({
+            "source": SOURCE_SESSION,
+            "event": "session_end",
+            "session_id": id,
+            "reason": reason.as_str(),
+            "actions_recorded": recorded,
+            "last_receipt_sha256": last_receipt,
+            "worker_ended": worker_ended,
+            "profile_removed": profile_removed,
+            "profile_quarantined": profile_quarantined,
+        }));
         Some(EndReport {
             session_id: id.to_owned(),
             reason,
@@ -1125,12 +1364,36 @@ impl<W: SessionWorker> Broker<W> {
             "actions_budget": session.actions_budget,
             "receipts": session.receipts().map(Receipt::to_json).collect::<Vec<_>>(),
             "receipts_dropped": session.receipts_dropped,
+            "receipt_contract": RECEIPT_CONTRACT,
             "last_receipt_sha256": session.last_receipt_sha256,
+            "measured": session.measured_json(),
             "mode": session.mode.as_str(),
             "no_interference": session.mode.no_interference(),
             "profile_mode": if session.profile.is_some() { "persistent" } else { "ephemeral" },
             "profile": session.profile_name(),
         }))
+    }
+}
+
+/// SG-000135 OB-05: what a session's end event needs once the session is gone.
+struct SessionEnd {
+    client: String,
+    audit: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
+}
+
+impl SessionEnd {
+    fn chain(&self, detail: Value) {
+        if let Some(chain) = &self.audit {
+            let _ = chain.append(orcel_audit::EventDraft {
+                principal_id: Some(self.client.clone()),
+                capability: Some("browser.session".to_owned()),
+                operation: Some("session_end".to_owned()),
+                ..orcel_audit::EventDraft::new(
+                    orcel_contracts::event::AuditEventKind::Dispatch,
+                    detail,
+                )
+            });
+        }
     }
 }
 
@@ -1589,91 +1852,559 @@ mod tests {
         }
     }
 
-    /// OB-05 step 1 (WP1-03): with orceld's audit chain given, every receipt
-    /// is also a chained `dispatch` event holding the receipt and its
-    /// unchanged digest, and the receipt names its place in the chain.
-    #[test]
-    fn ob05_receipts_produce_chained_audit_events() -> Result<(), String> {
-        use orcel_contracts::event::{AuditEvent, AuditEventKind};
-        let mut scene = Scene::new("ob05-audit");
-        let chain_path = scene.root.join("audit-chain.jsonl");
+    /// SG-000135 OB-05: a broker writing to a fresh chain at `name` in the
+    /// scene, with an evidence store beside it.
+    fn chained(
+        scene: &Scene,
+        instance: &str,
+        name: &str,
+    ) -> Result<(Broker<TestWorker>, PathBuf, EvidenceStore), String> {
+        let chain_path = scene.root.join(format!("{name}-chain.jsonl"));
         let chain = std::sync::Arc::new(
             orcel_audit::ChainWriter::open(&chain_path, orcel_audit::ORCELD_LOG)
                 .map_err(|e| e.to_string())?,
         );
-        let mut broker = scene
-            .broker(INSTANCE, Budgets::DEFAULT)
-            .with_audit_chain(Some(chain));
+        let dir = scene.root.join(format!("{name}-evidence"));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let store = EvidenceStore::at(dir);
+        let broker = scene
+            .broker(instance, Budgets::DEFAULT)
+            .with_audit_chain(Some(chain))
+            .with_evidence(Some(store.clone()));
+        Ok((broker, chain_path, store))
+    }
+
+    fn events(chain_path: &Path) -> Result<Vec<orcel_contracts::event::AuditEvent>, String> {
+        std::fs::read_to_string(chain_path)
+            .map_err(|e| e.to_string())?
+            .lines()
+            .map(|line| serde_json::from_str(line).map_err(|e| e.to_string()))
+            .collect()
+    }
+
+    fn draft(action: &str, node: Option<&str>) -> IntentDraft {
+        IntentDraft {
+            action: action.to_owned(),
+            page_id: Some("pg-1".into()),
+            generation_before: Some(3),
+            origin_before: Some("https://fixture.test".into()),
+            url_sha256: None,
+            target: Some(ReceiptTarget {
+                page_id: Some("pg-1".into()),
+                node_id: node.map(str::to_owned),
+                ..ReceiptTarget::default()
+            }),
+            approval_epoch: Some(7),
+        }
+    }
+
+    /// One action as live dispatch runs it: intent, then receipt.
+    fn act_once(
+        session: &mut BrokerSession<TestWorker>,
+        intent: IntentDraft,
+        record: ActionRecord,
+        at: u64,
+    ) -> Result<Receipt, String> {
+        session.begin_action().map_err(|e| e.message)?;
+        let intent = session.begin_intent(intent, at).map_err(|e| e.message)?;
+        Ok(session.record(
+            ActionRecord {
+                intent: Some(intent),
+                ..record
+            },
+            at + 5,
+        ))
+    }
+
+    /// SG-000135 OB-05 (FA-J): every action family is written to the chain
+    /// as an intent before it runs and a receipt after; each receipt names
+    /// its authority, mode, origin, target, evidence, outcome, times and both
+    /// chain places, recomputes from its fields, and `audit-verify
+    /// --receipts` verifies every one of them and their evidence files.
+    #[test]
+    fn ob05_every_action_family_is_receipted_on_the_chain_and_verifies() -> Result<(), String> {
+        use orcel_contracts::event::AuditEventKind;
+        let mut scene = Scene::new("ob05-families");
+        let (mut broker, chain_path, store) = chained(&scene, INSTANCE, "families")?;
         let id = scene
             .create(&mut broker, "client-a", "1")
             .map_err(|e| e.message)?;
         let session = broker.session("client-a", &id).map_err(|e| e.message)?;
-        let mut receipts = Vec::new();
-        for n in 0..2u64 {
-            session.begin_action().map_err(|e| e.message)?;
-            receipts.push(session.record(record("browser_click", "done"), 10 + n));
+        // A snapshot keeps its frame as an evidence file, and its nodes name
+        // the targets of the next actions.
+        let nodes = json!([{"node_id": "n7", "role": "textbox", "name_digest": "k".repeat(64),
+            "value_digest": "v", "redacted": false, "children": []}]);
+        let frame = serde_json::to_string(&nodes).map_err(|e| e.to_string())?;
+        let frame_file = session.keep_evidence(EvidenceKind::Snapshot, frame.as_bytes());
+        let snapshot = act_once(
+            session,
+            draft("browser_snapshot", None),
+            ActionRecord {
+                action: "browser_snapshot".into(),
+                outcome: "done".into(),
+                evidence_kind: "observe".into(),
+                evidence_sha256: Some(frame_file.sha256.clone()),
+                evidence_files: vec![frame_file.clone()],
+                approval_epoch: Some(7),
+                ..record("browser_snapshot", "done")
+            },
+            100,
+        )?;
+        session.note_observation("pg-1", 3, &frame_file.sha256, &nodes);
+        let target = session.target_of(Some("pg-1"), Some("n7"));
+        assert_eq!(target.role.as_deref(), Some("textbox"));
+        assert_eq!(target.name_digest, Some("k".repeat(64)));
+        let shot = session.keep_evidence(EvidenceKind::Screenshot, b"\x89PNG masked");
+        let families: Vec<(&str, Option<&str>, ActionRecord)> = vec![
+            (
+                "browser_open",
+                None,
+                ActionRecord {
+                    url_sha256: Some(crate::browser_receipts::url_digest(
+                        "https://fixture.test/a",
+                    )),
+                    record_id: Some("apr-1".into()),
+                    ..record("browser_open", "done")
+                },
+            ),
+            (
+                "browser_click",
+                Some("n7"),
+                ActionRecord {
+                    lease_id: Some("al-1".into()),
+                    lease_epoch: Some(4),
+                    ..record("browser_click", "done")
+                },
+            ),
+            (
+                "browser_fill",
+                Some("n7"),
+                ActionRecord {
+                    record_id: Some("apr-2".into()),
+                    ..record("browser_fill", "done")
+                },
+            ),
+            (
+                "browser_select",
+                Some("n7"),
+                record("browser_select", "done"),
+            ),
+            ("browser_tabs", None, record("browser_tabs", "done")),
+            ("browser_verify", None, record("browser_verify", "done")),
+            ("browser_extract", None, record("browser_extract", "done")),
+            (
+                "browser_screenshot",
+                None,
+                ActionRecord {
+                    evidence_kind: "screenshot".into(),
+                    evidence_sha256: Some(shot.sha256.clone()),
+                    evidence_files: vec![shot.clone()],
+                    ..record("browser_screenshot", "done")
+                },
+            ),
+            (
+                "browser_click",
+                Some("n7"),
+                ActionRecord {
+                    failure_code: Some("HUMAN_VERIFICATION_REQUIRED".into()),
+                    evidence_kind: "none".into(),
+                    evidence_sha256: None,
+                    ..record("browser_click", "refused")
+                },
+            ),
+        ];
+        let mut receipts = vec![snapshot];
+        for (n, (action, node, record)) in families.into_iter().enumerate() {
+            let target = session.target_of(Some("pg-1"), node);
+            let pre_evidence = session.pre_evidence("pg-1");
+            receipts.push(act_once(
+                session,
+                IntentDraft {
+                    target: Some(target.clone()),
+                    ..draft(action, node)
+                },
+                ActionRecord {
+                    target: Some(target),
+                    pre_evidence,
+                    approval_epoch: Some(7),
+                    ..record
+                },
+                200 + 10 * n as u64,
+            )?);
         }
-        let text = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
-        let events: Vec<AuditEvent> = text
-            .lines()
-            .map(|line| serde_json::from_str(line).map_err(|e| e.to_string()))
-            .collect::<Result<_, _>>()?;
-        assert_eq!(events.len(), 3, "the opening event and one per receipt");
-        for (receipt, event) in receipts.iter().zip(&events[1..]) {
-            assert_eq!(event.kind, AuditEventKind::Dispatch);
-            assert_eq!(event.operation.as_deref(), Some("browser_click"));
-            assert_eq!(event.principal_id.as_deref(), Some("client-a"));
-            assert_eq!(event.detail["source"], "browser_receipt");
+        let events = events(&chain_path)?;
+        // The opening event, the session's start, and two per action.
+        assert_eq!(events.len(), 2 + 2 * receipts.len(), "{events:?}");
+        assert_eq!(events[1].detail["event"], "session_start");
+        for (n, receipt) in receipts.iter().enumerate() {
+            let (intent_event, receipt_event) = (&events[2 + 2 * n], &events[3 + 2 * n]);
+            assert_eq!(intent_event.kind, AuditEventKind::Dispatch);
+            assert_eq!(intent_event.detail["source"], "browser_intent");
+            assert_eq!(receipt_event.detail["source"], "browser_receipt");
+            assert_eq!(receipt_event.principal_id.as_deref(), Some("client-a"));
             assert_eq!(
-                event.detail["receipt"]["receipt_sha256"],
+                receipt_event.operation.as_deref(),
+                Some(receipt.action.as_str())
+            );
+            let json = receipt.to_json();
+            assert_eq!(json["contract"], RECEIPT_CONTRACT);
+            assert_eq!(json["provisional"], false);
+            assert_eq!(json["mode"], "shadow");
+            assert_eq!(json["origin_before"], "https://fixture.test");
+            assert_eq!(json["authority"]["approval_epoch"], 7);
+            assert_eq!(json["duration_ms"], 5);
+            assert_eq!(
+                json["intent_sha256"],
+                intent_event.detail["intent"]["intent_sha256"]
+            );
+            assert_eq!(json["intent_audit"]["seq"], intent_event.seq);
+            assert_eq!(json["intent_audit"]["digest"], intent_event.digest.as_str());
+            assert_eq!(json["audit"]["seq"], receipt_event.seq);
+            assert_eq!(receipt.receipt_sha256, receipt_digest(receipt));
+            assert_eq!(
+                receipt_event.detail["receipt"]["receipt_sha256"],
                 receipt.receipt_sha256.as_str()
             );
-            // The shipped receipt digest is unchanged by the audit link.
-            assert_eq!(receipt.receipt_sha256, receipt_digest(receipt));
-            let ReceiptAudit::Chained(at) = &receipt.audit else {
-                return Err(format!("not chained: {:?}", receipt.audit));
-            };
-            assert_eq!(
-                (at.seq, at.digest.as_str()),
-                (event.seq, event.digest.as_str())
-            );
-            assert_eq!(receipt.to_json()["audit"]["seq"], event.seq);
         }
+        let by_action = |action: &str| {
+            receipts
+                .iter()
+                .find(|receipt| receipt.action == action)
+                .map(Receipt::to_json)
+                .unwrap_or_default()
+        };
+        assert_eq!(by_action("browser_open")["authority"]["kind"], "approval");
+        assert_eq!(by_action("browser_click")["authority"]["kind"], "lease");
+        assert_eq!(by_action("browser_click")["authority"]["lease_epoch"], 4);
+        assert_eq!(by_action("browser_click")["target"]["role"], "textbox");
+        assert_eq!(
+            by_action("browser_fill")["pre_evidence"]["sha256"],
+            frame_file.sha256.as_str()
+        );
+        assert_eq!(by_action("browser_select")["authority"]["kind"], "none");
+        assert_eq!(
+            by_action("browser_screenshot")["evidence_files"][0]["stored"],
+            true
+        );
+        let refused = receipts.last().map(Receipt::to_json).unwrap_or_default();
+        assert_eq!(refused["result"], "refused");
+        assert_eq!(refused["effect"], "none");
+        assert_eq!(refused["needs_person"], true);
+        // The session's end is chained with its last receipt.
+        let last = receipts.last().map(|r| r.receipt_sha256.clone());
+        broker.close("client-a", &id).map_err(|e| e.message)?;
+        let events = self::events(&chain_path)?;
+        let end = events.last().ok_or("no end event")?;
+        assert_eq!(end.detail["event"], "session_end");
+        assert_eq!(end.detail["last_receipt_sha256"], json!(last));
+        // The chain and every receipt verify, evidence files included.
         let report = orcel_audit::verify_file(&chain_path).map_err(|e| e.to_string())?;
         assert_eq!(report.verdict, orcel_audit::Verdict::Intact, "{report:?}");
-        // A chain that refuses the write marks the receipt failed, which
-        // live dispatch turns into a refusal of the action's result.
-        let edited = text.replacen("browser_click", "browser_type", 1);
-        std::fs::write(&chain_path, edited).map_err(|e| e.to_string())?;
-        let fresh = std::sync::Arc::new(
+        let verified = crate::browser_receipts::verify_receipts(&chain_path, Some(&store), None)?;
+        assert!(
+            !verified.broken && !verified.unrecorded,
+            "{}",
+            verified.value
+        );
+        assert_eq!(verified.value["receipts"], receipts.len());
+        assert_eq!(verified.value["evidence"]["checked"], 2);
+        // One receipt's inclusion, by its digest.
+        let one = &receipts[3].receipt_sha256;
+        let found = crate::browser_receipts::verify_receipts(&chain_path, Some(&store), Some(one))?;
+        assert_eq!(found.value["receipt"]["found"], true, "{}", found.value);
+        assert_eq!(found.value["receipt"]["digest_recomputes"], true);
+        let absent = "0".repeat(64);
+        let missing =
+            crate::browser_receipts::verify_receipts(&chain_path, Some(&store), Some(&absent))?;
+        assert!(missing.broken);
+        assert_eq!(missing.value["receipt"]["found"], false);
+        Ok(())
+    }
+
+    /// SG-000135 OB-05: nothing secret reaches the chain or a receipt: a URL
+    /// with a token, a typed value and the page's cookies never appear, only
+    /// the URL's digest and the page's origin.
+    #[test]
+    fn ob05_no_secret_reaches_the_chain_or_the_receipt() -> Result<(), String> {
+        let mut scene = Scene::new("ob05-redaction");
+        let (mut broker, chain_path, _store) = chained(&scene, INSTANCE, "redaction")?;
+        let id = scene
+            .create(&mut broker, "client-a", "COOKIE-VALUE-123")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &id).map_err(|e| e.message)?;
+        let secret_url = "https://fixture.test/reset?token=TOKEN-SECRET-456#frag-789";
+        // A fill reply as live dispatch builds it never holds the value; even
+        // a reply that did, only its URL's digest is kept.
+        let reply =
+            json!({"url": secret_url, "value": "TYPED-SECRET-hunter2", "record_id": "apr-9"});
+        let receipt = act_once(
+            session,
+            IntentDraft {
+                url_sha256: Some(crate::browser_receipts::url_digest(secret_url)),
+                ..draft("browser_fill", Some("n2"))
+            },
+            ActionRecord {
+                url_sha256: crate::browser_receipts::reply_url_digest(&reply),
+                origin_after: Some("https://fixture.test".into()),
+                ..record("browser_fill", "done")
+            },
+            10,
+        )?;
+        let text = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
+        let receipt_text = receipt.to_json().to_string();
+        for secret in [
+            "TOKEN-SECRET-456",
+            "token=",
+            "frag-789",
+            "/reset",
+            "TYPED-SECRET-hunter2",
+            "COOKIE-VALUE-123",
+        ] {
+            assert!(!text.contains(secret), "the chain holds {secret}");
+            assert!(!receipt_text.contains(secret), "the receipt holds {secret}");
+        }
+        assert_eq!(
+            receipt.url_sha256.as_deref(),
+            Some(crate::browser_receipts::url_digest(secret_url).as_str())
+        );
+        Ok(())
+    }
+
+    /// SG-000135 OB-05: a tampered receipt, a tampered or removed evidence
+    /// file and a receipt with no intent are each found by the verifier.
+    #[test]
+    fn ob05_tampered_receipts_and_evidence_files_are_detected() -> Result<(), String> {
+        let mut scene = Scene::new("ob05-tamper");
+        let (mut broker, chain_path, store) = chained(&scene, INSTANCE, "tamper")?;
+        let id = scene
+            .create(&mut broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &id).map_err(|e| e.message)?;
+        let shot = session.keep_evidence(EvidenceKind::Screenshot, b"\x89PNG masked image");
+        act_once(
+            session,
+            draft("browser_screenshot", None),
+            ActionRecord {
+                evidence_kind: "screenshot".into(),
+                evidence_sha256: Some(shot.sha256.clone()),
+                evidence_files: vec![shot.clone()],
+                ..record("browser_screenshot", "done")
+            },
+            10,
+        )?;
+        let original = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
+        let verify = |store: Option<&EvidenceStore>| {
+            crate::browser_receipts::verify_receipts(&chain_path, store, None)
+        };
+        assert!(!verify(Some(&store))?.broken);
+        // The evidence file edited, then removed.
+        let file = store.dir().join(format!("{}.png", shot.sha256));
+        std::fs::write(&file, b"another image").map_err(|e| e.to_string())?;
+        let report = verify(Some(&store))?;
+        assert!(report.broken, "{}", report.value);
+        assert_eq!(report.value["evidence"]["errors"][0]["check"], "mismatch");
+        std::fs::remove_file(&file).map_err(|e| e.to_string())?;
+        let report = verify(Some(&store))?;
+        assert_eq!(report.value["evidence"]["errors"][0]["check"], "missing");
+        // Without the folder the files are listed as not checked, never as
+        // verified.
+        let report = verify(None)?;
+        assert!(!report.broken);
+        assert_eq!(report.value["evidence"]["checked"], 0);
+        // A receipt field edited in the chain: its digest no longer
+        // recomputes (and the chain itself is broken).
+        std::fs::write(
+            &chain_path,
+            original.replacen("\"result\":\"sent\"", "\"result\":\"refused\"", 1),
+        )
+        .map_err(|e| e.to_string())?;
+        let report = verify(None)?;
+        assert!(report.broken);
+        assert_eq!(report.value["digest_errors"][0]["kind"], "receipt");
+        assert_ne!(
+            orcel_audit::verify_file(&chain_path)
+                .map_err(|e| e.to_string())?
+                .verdict,
+            orcel_audit::Verdict::Intact
+        );
+        // An intent removed: its receipt names an intent that is not there.
+        let without_intent: String = original
+            .lines()
+            .filter(|line| !line.contains("\"browser_intent\""))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        std::fs::write(&chain_path, without_intent).map_err(|e| e.to_string())?;
+        let report = verify(None)?;
+        assert!(report.broken);
+        assert!(report.value["link_errors"]
+            .to_string()
+            .contains("no intent"));
+        Ok(())
+    }
+
+    /// SG-000135 OB-05: write before dispatch. A chain that refuses the
+    /// intent refuses the action with nothing sent; an intent whose receipt
+    /// never came (orceld stopped between them) is reported
+    /// DISPATCHED_UNRECORDED, and a receipt the chain refused is marked so.
+    #[test]
+    fn ob05_intent_before_dispatch_and_a_crash_between_is_detected() -> Result<(), String> {
+        let mut scene = Scene::new("ob05-crash");
+        let (mut broker, chain_path, _store) = chained(&scene, INSTANCE, "crash")?;
+        let id = scene
+            .create(&mut broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &id).map_err(|e| e.message)?;
+        act_once(
+            session,
+            draft("browser_open", None),
+            record("browser_open", "done"),
+            10,
+        )?;
+        // The intent of a click is written; orceld stops before its receipt.
+        let lost = session
+            .begin_intent(draft("browser_click", Some("n1")), 20)
+            .map_err(|e| e.message)?;
+        drop(lost);
+        let report = crate::browser_receipts::verify_receipts(&chain_path, None, None)?;
+        assert!(!report.broken && report.unrecorded, "{}", report.value);
+        let open = &report.value["dispatched_unrecorded"][0];
+        assert_eq!(open["action"], "browser_click");
+        assert_eq!(open["seq"], 2);
+        assert_eq!(open["state"], "DISPATCHED_UNRECORDED");
+        // The CLI's exit code for it, with the chain intact.
+        let (text, code) = crate::audit_chain::verify_with_held(&chain_path, None)?;
+        let (_, code) = crate::audit_chain::with_receipts(&chain_path, text, code, None, None)?;
+        assert_eq!(code, crate::browser_receipts::EXIT_RECEIPTS_UNRECORDED);
+        // A chain that refuses writes: the next intent is refused, so the
+        // action never runs.
+        let text = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
+        std::fs::write(
+            &chain_path,
+            text.replacen("browser_open", "browser_tabs", 1),
+        )
+        .map_err(|e| e.to_string())?;
+        let chain = std::sync::Arc::new(
             orcel_audit::ChainWriter::open(&chain_path, orcel_audit::ORCELD_LOG)
                 .map_err(|e| e.to_string())?,
         );
         let mut broken = scene
             .broker("0123456789abcded", Budgets::DEFAULT)
-            .with_audit_chain(Some(fresh));
-        let third = scene
-            .create(&mut broken, "client-c", "3")
+            .with_audit_chain(Some(chain));
+        let other = scene
+            .create(&mut broken, "client-b", "2")
             .map_err(|e| e.message)?;
-        let session = broken.session("client-c", &third).map_err(|e| e.message)?;
-        let receipt = session.record(record("browser_click", "done"), 10);
+        let session = broken.session("client-b", &other).map_err(|e| e.message)?;
+        let refused = session
+            .begin_intent(draft("browser_click", Some("n1")), 30)
+            .err()
+            .ok_or("the intent should be refused")?;
+        assert_eq!(refused.code, FailureCode::InternalError);
+        assert!(
+            refused.message.contains("nothing was sent"),
+            "{}",
+            refused.message
+        );
+        // A receipt the chain refuses is marked failed (live dispatch then
+        // withholds the result and names it DISPATCHED_UNRECORDED).
+        let receipt = session.record(record("browser_click", "done"), 31);
         assert!(
             matches!(&receipt.audit, ReceiptAudit::Failed(error) if error.contains("broken")),
             "{:?}",
             receipt.audit
         );
         assert!(receipt.to_json()["audit"]["error"].is_string());
-        // Without a chain the receipt says so, and its digest is the same
-        // function of the same fields.
+        // Without a chain, receipts say so and are otherwise the same.
         let mut plain = scene.broker("0123456789abcdee", Budgets::DEFAULT);
-        let other = scene
-            .create(&mut plain, "client-b", "2")
+        let third = scene
+            .create(&mut plain, "client-c", "3")
             .map_err(|e| e.message)?;
-        let session = plain.session("client-b", &other).map_err(|e| e.message)?;
-        let receipt = session.record(record("browser_click", "done"), 10);
+        let session = plain.session("client-c", &third).map_err(|e| e.message)?;
+        let receipt = act_once(
+            session,
+            draft("browser_open", None),
+            record("browser_open", "done"),
+            1,
+        )?;
         assert_eq!(receipt.audit, ReceiptAudit::NotConfigured);
         assert!(receipt.to_json()["audit"].is_null());
+        assert!(receipt.to_json()["intent_audit"].is_null());
+        assert!(receipt.intent_sha256.is_some());
         Ok(())
+    }
+
+    /// SG-000135 OB-05: how each end of an action reads in its receipt,
+    /// including a person taking over before the send (refused, nothing
+    /// done) and during it (superseded).
+    #[test]
+    fn ob05_outcomes_map_to_what_completed_what_is_uncertain_and_who_is_needed() {
+        let mut scene = Scene::new("ob05-outcomes");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let id = scene.create(&mut broker, "client-a", "1").unwrap();
+        let session = broker.session("client-a", &id).unwrap();
+        let cases = [
+            ("done", None, false, "sent", "applied", false),
+            ("done", None, true, "superseded", "applied", true),
+            (
+                "refused",
+                Some("HUMAN_TAKEOVER"),
+                false,
+                "refused",
+                "none",
+                true,
+            ),
+            (
+                "failed",
+                Some("HUMAN_TAKEOVER"),
+                false,
+                "refused",
+                "none",
+                true,
+            ),
+            (
+                "denied",
+                Some("APPROVAL_DENIED"),
+                false,
+                "refused",
+                "none",
+                false,
+            ),
+            (
+                "failed",
+                Some("TARGET_STALE"),
+                false,
+                "failed",
+                "none",
+                false,
+            ),
+            (
+                "unknown",
+                Some("TARGET_STALE"),
+                false,
+                "unknown",
+                "unknown",
+                true,
+            ),
+        ];
+        for (outcome, code, superseded, result, effect, person) in cases {
+            let receipt = session.record(
+                ActionRecord {
+                    failure_code: code.map(str::to_owned),
+                    superseded,
+                    ..record("browser_click", outcome)
+                },
+                1,
+            );
+            let json = receipt.to_json();
+            assert_eq!(json["outcome"], outcome);
+            assert_eq!(
+                (&json["result"], &json["effect"], &json["needs_person"]),
+                (&json!(result), &json!(effect), &json!(person)),
+                "{outcome} {code:?}"
+            );
+        }
+        let status = broker.status("client-a", &id).unwrap();
+        assert_eq!(status["receipt_contract"], RECEIPT_CONTRACT);
+        assert_eq!(status["measured"]["actions_recorded"], 7);
     }
     #[test]
     fn receipts_chain_by_digest_and_stay_bounded() {
@@ -1706,7 +2437,7 @@ mod tests {
         assert_eq!(status["receipts"].as_array().map(Vec::len), Some(3));
         assert_eq!(status["receipts_dropped"], 1);
         assert_eq!(status["receipts"][0]["seq"], 2);
-        assert_eq!(status["receipts"][0]["provisional"], true);
+        assert_eq!(status["receipts"][0]["provisional"], false);
         assert_eq!(status["last_receipt_sha256"], previous);
         // A change to any field changes the digest.
         let mut receipt = broker

@@ -29,7 +29,7 @@
 // the lease; a click on a link named "Submit order" still asks; the owner
 // revokes the lease (through orceld's local path, which asks the service),
 // the very next action is refused lease_invalid with nothing sent, and the
-// one after asks again. Then browser_task_status and browser_close. Then: the provisional
+// one after asks again. Then browser_task_status and browser_close. Then: the evidence
 // receipts chain is recomputed here,
 // the session's folder (its profile) must be gone, no Edge of this run may
 // be left, and orceld must end when the MCP session ends.
@@ -142,7 +142,7 @@ const SESSION_TASK = "OB-01 E2E fixture mission";
 // Longer than the MCP edge's own 10-minute approval timeout, so a dialog that
 // waits for a person ends as orceld's answer, not as this client giving up.
 const CALL_TIMEOUT_MS = 11 * 60_000;
-const RECEIPT_DOMAIN = "orcel-ob08-receipt/3";
+const RECEIPT_DOMAIN = "orcel-ob05-receipt/4";
 /// SG-000135 OB-04: the harness's own profile names (the scripted consent
 /// approves profile writes for `ob04-e2e-*` only).
 const KEEP_PROFILE = "ob04-e2e-keep";
@@ -447,25 +447,26 @@ function flatten(nodes, out = []) {
   return out;
 }
 
-/// Recompute a receipt's digest exactly as orceld's broker does
-/// (crates/orceld/src/browser_broker.rs receipt_digest).
-function receiptDigest(receipt) {
-  const optional = (value) => (value === null || value === undefined ? "\u0000" : `\u0001${value}`);
-  const parts = [
-    RECEIPT_DOMAIN, String(receipt.seq), receipt.session_id, receipt.action, optional(receipt.page_id),
-    optional(receipt.generation_before), optional(receipt.generation_after), receipt.outcome,
-    optional(receipt.failure_code), receipt.evidence_kind, optional(receipt.evidence_sha256),
-    optional(receipt.record_id), optional(receipt.lease_id), optional(receipt.profile), String(receipt.at_ms), receipt.previous_sha256
-  ];
-  const hash = createHash("sha256");
-  for (const part of parts) {
-    const bytes = Buffer.from(part, "utf8");
-    const length = Buffer.alloc(8);
-    length.writeBigUInt64BE(BigInt(bytes.length));
-    hash.update(length);
-    hash.update(bytes);
+/// RFC 8785 canonical JSON for the integer-only values receipts hold
+/// (sorted keys, no whitespace), as crates/orcel-contracts/src/canonical.rs.
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
   }
-  return hash.digest("hex");
+  return JSON.stringify(value);
+}
+
+/// Recompute a receipt's digest exactly as orceld's broker does
+/// (SG-000135 OB-05, crates/orceld/src/browser_receipts.rs covered_digest):
+/// SHA-256 of the domain, a newline and the canonical JSON of every field
+/// but receipt_sha256, audit and provisional.
+function receiptDigest(receipt) {
+  const core = { ...receipt };
+  delete core.receipt_sha256;
+  delete core.audit;
+  delete core.provisional;
+  return createHash("sha256").update(`${RECEIPT_DOMAIN}\n${canonicalJson(core)}`, "utf8").digest("hex");
 }
 
 /// OB-03: decode an 8-bit, non-interlaced RGB or RGBA PNG; returns its
@@ -1005,7 +1006,7 @@ async function runMission(options, paths, fixture, env, steps, record, expectOk,
   const receipts = state.receipts ?? [];
   let previous = "";
   for (const receipt of receipts) {
-    require_(receipt.provisional === true && receipt.previous_sha256 === previous, `receipt ${receipt.seq} chains to the one before`);
+    require_(receipt.provisional === false && receipt.contract === "orcel.browser-receipt/1" && receipt.previous_sha256 === previous, `receipt ${receipt.seq} chains to the one before`);
     require_(receiptDigest(receipt) === receipt.receipt_sha256, `receipt ${receipt.seq}'s digest recomputes`);
     // OB-08: the one action after the revoke is refused, nothing sent.
     const refusedAfterRevoke = receipt.outcome === "refused" && receipt.failure_code === "CAPABILITY_DENIED" && receipt.action === "browser_open";
