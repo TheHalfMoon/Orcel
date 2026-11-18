@@ -352,6 +352,23 @@ fn reset_anchor() -> Result<Output, LifecycleError> {
         authority_grant::run_anchor_reset(&client, orcel_audit::ORCELD_LOG, &mut progress)?
     };
     let opened = authority_grant::open_reset_chain(&chain, &status)?;
+    // Anchor the new file's opening record now (the service accepts this
+    // from the owner CLI in the reset state only), so no other file naming
+    // the same reset can be adopted; orceld anchors it first otherwise.
+    let anchored = authority_grant::opening_anchor(&chain).and_then(|opening| {
+        client
+            .anchor(
+                &opening,
+                None,
+                status["reset"]["event_digest"].as_str().map(str::to_owned),
+            )
+            .map_err(|error| LifecycleError::state(error.to_string()))
+    });
+    if let Err(error) = &anchored {
+        progress(&format!(
+            "The new file's opening record could not be anchored now ({error}); orceld anchors it before its first record."
+        ));
+    }
     Ok(Output {
         exit_code: 0,
         human: format!(
@@ -359,7 +376,11 @@ fn reset_anchor() -> Result<Output, LifecycleError> {
             status["reset"]["event_digest"].as_str().unwrap_or("?"),
             chain.display()
         ),
-        json: json!({ "ok": true, "anchor_reset": opened }),
+        json: json!({
+            "ok": true,
+            "anchor_reset": opened,
+            "opening_anchored": anchored.is_ok(),
+        }),
     })
 }
 

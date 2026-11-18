@@ -52,7 +52,7 @@ pub const ANCHORS_PER_MINUTE: usize = 120;
 const ORCELD_LOG: &str = "orceld";
 /// `file_id` of a log whose anchor the owner reset: the next new first file
 /// is accepted. `seq` and `digest` then hold the reset record's.
-const RESET_MARK: &str = "reset-by-owner";
+pub(super) const RESET_MARK: &str = "reset-by-owner";
 /// After a reset, the first anchor must name a record below this seq: the
 /// new file's first anchors, not a long chain grown before it asked.
 const MAX_FIRST_SEQ_AFTER_RESET: u64 = 2 * orcel_contracts::event::ANCHOR_INTERVAL_EVENTS;
@@ -232,7 +232,8 @@ impl AuthorityCore {
         let held = anchors
             .logs
             .get(&format!("{}|{log}", caller.user_sid))
-            .filter(|held| held.file_id != RESET_MARK)
+            // A pending reset may be reset again (its file was lost or
+            // refused): the new reset record supersedes it.
             .ok_or_else(|| {
                 AuthorityError::invalid("the service holds no anchor of this log; nothing to reset")
             })?;
@@ -293,7 +294,9 @@ impl AuthorityCore {
             }),
         )?;
         let mut left_files = current.left_files;
-        left_files.push(current.file_id);
+        if current.file_id != RESET_MARK {
+            left_files.push(current.file_id);
+        }
         if left_files.len() > MAX_LEFT_FILES {
             left_files.remove(0);
         }
@@ -334,7 +337,12 @@ impl AuthorityCore {
         link: Option<&ChainLink>,
         reset: Option<&str>,
     ) -> Result<Value, AuthorityError> {
-        if role != CallerRole::Orceld {
+        // The owner CLI anchors the opening record of the file a reset just
+        // opened (seq 0, reset state only), so no later file naming the same
+        // public reset digest can be adopted in its place.
+        let owner_cli_opening =
+            role == CallerRole::Interactive && self.policy.is_owner_cli(caller) && anchor.seq == 0;
+        if role != CallerRole::Orceld && !owner_cli_opening {
             return Err(AuthorityError::denied(
                 "only orceld (a configured trusted image) may anchor its audit chain",
             ));
@@ -359,6 +367,11 @@ impl AuthorityCore {
         let key = format!("{}|{}", caller.user_sid, anchor.log);
         let mut anchors = self.load_chain_anchors()?;
         let held = anchors.logs.get(&key).cloned();
+        if owner_cli_opening && !held.as_ref().is_some_and(|held| held.file_id == RESET_MARK) {
+            return Err(AuthorityError::denied(
+                "the Orcel CLI anchors only the opening record of a file an owner reset opened",
+            ));
+        }
         let new_file = match decide(held.as_ref(), anchor, link, reset)? {
             Decision::Duplicate => {
                 return Ok(json!({

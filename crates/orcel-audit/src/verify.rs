@@ -254,7 +254,7 @@ pub fn verify_with_holder(
                 break;
             }
         };
-        if anchor_due(&event) || wanted.contains(&event.seq) {
+        if anchor_due(&event) || event.seq == 0 || wanted.contains(&event.seq) {
             digests.insert(event.seq, event.digest.clone());
         }
         if event.seq == 0 {

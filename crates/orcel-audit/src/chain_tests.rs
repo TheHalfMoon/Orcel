@@ -1060,6 +1060,11 @@ fn chain_after_a_reset_only_the_reset_file_is_accepted() -> TestResult {
         matches!(outcome, Some(Ok(AnchorOutcome::Anchored { .. }))),
         "{outcome:?}"
     );
+    // The opening record was anchored before anything else was appended.
+    let written = events(&path)?;
+    assert_eq!(written[1].kind, AuditEventKind::Anchor);
+    assert_eq!(written[1].detail["anchor"]["seq"], 0);
+    assert_eq!(written[1].detail["status"], "anchored");
     let report = crate::verify_with_holder(&path, &[], Some(&digest)).map_err(|e| e.to_string())?;
     assert_eq!(report.verdict, Verdict::ResetByOwner, "{report:?}");
     // A dropped-in unlinked file.
@@ -1082,6 +1087,51 @@ fn chain_after_a_reset_only_the_reset_file_is_accepted() -> TestResult {
     let report =
         crate::verify_with_holder(&other, &[], Some(&digest)).map_err(|e| e.to_string())?;
     assert_eq!(report.verdict, Verdict::Broken);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A holder in its reset state that cannot be reached right now.
+struct UnreachableResetHolder(String);
+
+impl Anchorer for UnreachableResetHolder {
+    fn anchor(
+        &self,
+        _anchor: &AnchorRef,
+        _link: Option<&ChainLink>,
+        _reset: Option<&str>,
+    ) -> AnchorOutcome {
+        AnchorOutcome::Unanchored {
+            reason: "unreachable".to_owned(),
+        }
+    }
+
+    fn held(&self, _log: &str) -> Option<crate::HeldState> {
+        Some(crate::HeldState {
+            anchor: None,
+            reset: Some(self.0.clone()),
+        })
+    }
+}
+
+/// Re-review: the file a reset opened gets its opening anchored before any
+/// other record; while the holder cannot hold it, nothing is appended.
+#[test]
+fn chain_the_reset_files_opening_is_anchored_before_anything_else() -> TestResult {
+    let dir = sandbox("reset-opening")?;
+    let digest = "e".repeat(64);
+    let path = dir.join("audit-chain.jsonl");
+    crate::open_after_reset(&path, ORCELD_LOG, json!({"event_digest": digest}))
+        .map_err(|e| e.to_string())?;
+    let writer = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    writer.set_anchorer(Arc::new(UnreachableResetHolder(digest.clone())));
+    assert!(matches!(writer.append(draft(1)), Err(ChainError::Io(_))));
+    assert_eq!(events(&path)?.len(), 1, "only the opening record");
+    writer.set_anchorer(Arc::new(ResetHolder(digest)));
+    writer.append(draft(2)).map_err(|e| e.to_string())?;
+    let written = events(&path)?;
+    assert_eq!(written[1].detail["anchor"]["seq"], 0);
+    assert_eq!(written[2].kind, AuditEventKind::Request);
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }

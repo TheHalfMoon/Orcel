@@ -2239,6 +2239,13 @@ fn confirmation_text(intent: &Intent) -> String {
             intent.code,
             key_fingerprint(key_digest),
         ),
+        Purpose::AnchorReset { held } if held.file_id == chain_anchor::RESET_MARK => format!(
+            "An elevated program asked to RESET the Orcel audit chain anchor of the log {} AGAIN. An earlier reset is still pending (no first file of it was anchored); this one supersedes it, and the service accepts only the new file this command opens.\n\nCode: {}\nLog: {}\nPending reset record: {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel audit reset-anchor command printed this code.\n\nReset this anchor again?",
+            held.log,
+            intent.code,
+            held.log,
+            held.digest,
+        ),
         Purpose::AnchorReset { held } => format!(
             "An elevated program asked to RESET the Orcel audit chain anchor of the log {}. The service stops holding the head below and accepts a NEW, unlinked first chain file for this log: nothing recorded before it is continued, and the new file says so. Do this only if you lost or replaced the audit chain yourself and cannot restore it.\n\nCode: {}\nLog: {}\nHeld chain file: {}\nHeld head: seq {}, digest {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel audit reset-anchor command printed this code.\n\nReset this anchor?",
             held.log,

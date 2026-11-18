@@ -1886,3 +1886,96 @@ fn wp103_a_failed_event_log_write_commits_no_anchor_state() -> Result<(), String
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+/// WP1-03 re-review: a pending reset can be reset again by the owner (same
+/// gate and box; the new record supersedes the old), and the owner CLI
+/// anchors the opening record of the file the reset opened, after which no
+/// other file naming the same reset digest is adopted.
+#[test]
+fn wp103_a_pending_reset_can_be_reset_again_and_its_opening_is_anchored_by_the_cli(
+) -> Result<(), String> {
+    let dir = temp_dir("anchor-rereset")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let reset = || Request::AnchorReset {
+        origin: ClaimedOrigin::OwnerCli,
+        log: "orceld".to_owned(),
+    };
+    let status = |core: &mut AuthorityCore| {
+        core.handle(
+            &orceld(),
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    let confirm = |core: &mut AuthorityCore| -> Result<String, String> {
+        let begun = ok(core.handle(&elevated_owner(), reset()))?;
+        let id = str_of(&begun, "intent_id")?;
+        let tasks = core.take_pending_confirmations();
+        let text = tasks
+            .first()
+            .map(|task| task.text.clone())
+            .unwrap_or_default();
+        core.confirmation_answer(&id, ConfirmAnswer::Yes)
+            .map_err(|e| e.to_string())?;
+        // Reported once, which frees the session's intent slot.
+        ok(core.handle(&elevated_owner(), Request::IntentStatus { intent_id: id }))?;
+        Ok(text)
+    };
+    confirm(&mut core)?;
+    let first = ok(status(&mut core))?["reset"]["event_digest"]
+        .as_str()
+        .ok_or("a pending reset")?
+        .to_owned();
+    // The file of that reset was lost or refused: reset again.
+    let text = confirm(&mut core)?;
+    assert!(text.contains("AGAIN") && text.contains(&first), "{text}");
+    let second = ok(status(&mut core))?["reset"]["event_digest"]
+        .as_str()
+        .ok_or("a pending reset")?
+        .to_owned();
+    assert_ne!(first, second);
+    // The superseded reset no longer opens anything.
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            anchor_after_reset('d', 0, 'd', None, Some(&first))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // The owner CLI may anchor only seq 0, only in the reset state.
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            anchor_after_reset('d', 5, 'e', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let opened = ok(core.handle(
+        &owner(),
+        anchor_after_reset('d', 0, 'd', None, Some(&second)),
+    ))?;
+    assert_eq!(opened["new_file"], Value::Bool(true));
+    assert_eq!(ok(status(&mut core))?["held"]["file_id"], "d".repeat(64));
+    // A forged replacement naming the same public digest is not adopted.
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            anchor_after_reset('f', 0, 'f', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            anchor_after_reset('f', 0, 'f', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // orceld continues the anchored file.
+    ok(core.handle(&orceld(), anchor_request('d', 31, 'c', None)))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
