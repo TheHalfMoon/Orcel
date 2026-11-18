@@ -118,6 +118,19 @@ pub struct LiveVerification {
     pub evidence_sha256: String,
 }
 
+/// SG-000135 OB-06: whether a person answered an approval prompt: it was
+/// approved, or denied by the person. A prompt that timed out unanswered
+/// (`UNANSWERED_DENIAL`), or failed for any other reason, was not.
+fn prompt_answered<T>(result: &Result<T, orcel_approval::ApprovalError>) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            error.code == FailureCode::ApprovalDenied
+                && !error.message.starts_with(orcel_approval::UNANSWERED_DENIAL)
+        }
+    }
+}
+
 /// SG-000135 OB-06: the refusal code of a frame the takeover gate stopped
 /// right before it was sent (nothing reached the host).
 pub(crate) const GATE_REFUSED: &str = "orceld:human_takeover";
@@ -1840,11 +1853,8 @@ impl LiveBrowser {
         self.takeover.prompt_started();
         let token = approval.request_token(prompt);
         // Only a prompt a person answered (approved or denied) excuses the
-        // input around its end.
-        let answered = match &token {
-            Ok(_) => true,
-            Err(error) => error.code == FailureCode::ApprovalDenied,
-        };
+        // input around its end; one that timed out unanswered does not.
+        let answered = prompt_answered(&token);
         self.takeover.prompt_ended(answered);
         token
     }
@@ -3304,6 +3314,37 @@ impl LiveBrowser {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ob06_only_a_prompt_a_person_answered_counts_as_answered() {
+        use orcel_approval::ApprovalError;
+        let error = |code, message: &str| -> Result<(), ApprovalError> {
+            Err(ApprovalError {
+                code,
+                message: message.to_owned(),
+            })
+        };
+        assert!(prompt_answered(&Ok::<(), ApprovalError>(())));
+        assert!(prompt_answered(&error(
+            FailureCode::ApprovalDenied,
+            "local user denied the operation"
+        )));
+        assert!(!prompt_answered(&error(
+            FailureCode::ApprovalDenied,
+            orcel_approval::UNANSWERED_DENIAL
+        )));
+        assert!(!prompt_answered(&error(
+            FailureCode::ApprovalDenied,
+            &format!(
+                "{}; the decision was not recorded: x",
+                orcel_approval::UNANSWERED_DENIAL
+            )
+        )));
+        assert!(!prompt_answered(&error(
+            FailureCode::ApprovalUnavailable,
+            "approval ledger is unavailable"
+        )));
+    }
+
     use super::*;
 
     /// B1: a form action's stable material names the field by its position,

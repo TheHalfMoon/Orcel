@@ -88,6 +88,10 @@ pub(crate) struct Sample {
     pub idle_ms: u64,
     /// Whether the window in front belongs to the session's engine.
     pub session_in_front: bool,
+    /// Whether the window in front could not be checked (its process could
+    /// not be opened or asked). New input then counts as a person's on the
+    /// session (fail closed: the agent waits).
+    pub front_unknown: bool,
 }
 
 /// A source of [`Sample`]s.
@@ -119,7 +123,7 @@ impl InputFeed {
         let Some(previous) = self.last_input.replace(sample.last_input) else {
             return;
         };
-        if previous == sample.last_input || !sample.session_in_front {
+        if previous == sample.last_input || !(sample.session_in_front || sample.front_unknown) {
             return;
         }
         let at = now
@@ -298,36 +302,36 @@ impl Drop for HumanInputMonitor {
 
 /// Whether the window in front belongs to the session, remembered per
 /// window and process. Only a definite answer is remembered: a check that
-/// could not be made answers "not the session's" this time and is made
-/// again at the next reading, so a passing failure never blinds the source
-/// for the rest of the session.
+/// could not be made answers "unknown" this time (the caller then counts
+/// new input as a person's) and is made again at the next reading, so a
+/// passing failure never blinds the source for the rest of the session.
 #[derive(Debug, Default)]
 pub(crate) struct Membership {
     known: Option<(isize, u32, bool)>,
 }
 
 impl Membership {
-    /// The verdict for `window` of process `pid`; `judge` answers `None`
-    /// when it could not tell.
+    /// The verdict for `window` of process `pid`; `None` when `judge`
+    /// could not tell.
     pub(crate) fn verdict(
         &mut self,
         window: isize,
         pid: u32,
         judge: impl FnOnce(u32) -> Option<bool>,
-    ) -> bool {
+    ) -> Option<bool> {
         if let Some((known_window, known_pid, verdict)) = self.known {
             if known_window == window && known_pid == pid {
-                return verdict;
+                return Some(verdict);
             }
         }
         match judge(pid) {
             Some(verdict) => {
                 self.known = Some((window, pid, verdict));
-                verdict
+                Some(verdict)
             }
             None => {
                 self.known = None;
-                false
+                None
             }
         }
     }
@@ -367,17 +371,19 @@ mod windows {
             }
         }
 
-        fn in_front(&mut self) -> bool {
+        /// Whether the session's window is in front; `None` when the
+        /// window's process could not be checked.
+        fn in_front(&mut self) -> Option<bool> {
             // SAFETY: no arguments; returns a window handle or 0.
             let window = unsafe { GetForegroundWindow() };
             if window == 0 {
-                return false;
+                return Some(false);
             }
             let mut pid: u32 = 0;
             // SAFETY: a window handle and an out-pointer to a local.
             unsafe { GetWindowThreadProcessId(window, &mut pid) };
             if pid == 0 {
-                return false;
+                return None;
             }
             let job = self.job.as_raw_handle() as HANDLE;
             self.membership.verdict(window, pid, |pid| in_job(pid, job))
@@ -396,10 +402,12 @@ mod windows {
             }
             // SAFETY: no arguments.
             let tick = unsafe { GetTickCount() };
+            let front = self.in_front();
             Some(Sample {
                 last_input: info.dwTime,
                 idle_ms: u64::from(tick.wrapping_sub(info.dwTime)),
-                session_in_front: self.in_front(),
+                session_in_front: front == Some(true),
+                front_unknown: front.is_none(),
             })
         }
     }
@@ -466,6 +474,7 @@ mod windows {
                 !first.session_in_front && !second.session_in_front,
                 "an empty job owns no window"
             );
+            assert_eq!(first.front_unknown, second.front_unknown);
         }
     }
 }
@@ -482,7 +491,27 @@ mod tests {
             last_input,
             idle_ms,
             session_in_front,
+            front_unknown: false,
         })
+    }
+
+    #[test]
+    fn ob06_new_input_with_an_unchecked_window_in_front_counts() {
+        let mut feed = InputFeed::default();
+        let unknown = |last_input| {
+            Some(Sample {
+                last_input,
+                idle_ms: 0,
+                session_in_front: false,
+                front_unknown: true,
+            })
+        };
+        feed.sample(Millis(0), unknown(1));
+        assert_eq!(feed.take(), None, "the baseline");
+        feed.sample(Millis(100), unknown(1));
+        assert_eq!(feed.take(), None, "no new input, nothing to count");
+        feed.sample(Millis(200), unknown(2));
+        assert_eq!(feed.take(), Some(Millis(200)), "fail closed");
     }
 
     #[test]
@@ -570,19 +599,21 @@ mod tests {
             asked.set(asked.get() + 1);
             None
         };
-        assert!(!membership.verdict(10, 20, failing));
+        assert_eq!(membership.verdict(10, 20, failing), None, "unknown");
         // A passing failure is asked again, and then a yes is remembered.
-        assert!(membership.verdict(10, 20, |_| {
+        let yes = membership.verdict(10, 20, |_| {
             asked.set(asked.get() + 1);
             Some(true)
-        }));
-        assert!(membership.verdict(10, 20, |_| {
+        });
+        assert_eq!(yes, Some(true));
+        let cached = membership.verdict(10, 20, |_| {
             asked.set(asked.get() + 1);
             Some(false)
-        }));
+        });
+        assert_eq!(cached, Some(true));
         assert_eq!(asked.get(), 2, "the yes was remembered");
         // Another window is asked afresh.
-        assert!(!membership.verdict(11, 20, |_| Some(false)));
+        assert_eq!(membership.verdict(11, 20, |_| Some(false)), Some(false));
     }
 
     struct Scripted(Arc<Mutex<VecDeque<Option<Sample>>>>);

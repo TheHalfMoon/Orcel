@@ -50,7 +50,7 @@ The chosen source (`crates/orceld/src/human_input.rs`), Windows only:
   - The window in front comes from `GetForegroundWindow`, and its process from `GetWindowThreadProcessId`.
   - The window counts as the session's when that process is in the session's browser job: `IsProcessInJob` against an owned duplicate of the kill-on-close job orceld put the browser host in.
   - The host, its worker runtime, the engine and the engine's children all stay in that job, because it allows no breakaway.
-  - Only a definite answer is cached, per window and process. If the process cannot be opened or the query fails, this reading answers "not the session's" and the next reading asks again, so a passing failure never blinds the source.
+  - Only a definite answer is cached, per window and process. If the process cannot be opened or the query fails, the reading is marked unknown, and new input then counts as a person's on the session (fail closed: the agent waits). The next reading asks again, so a passing failure never blinds the source.
 - **The rule.** A reading counts as a person's input when the last-input tick changed since the previous reading and the session's window is in front. The first reading is a baseline, so input from before the session watched never counts.
 - **When it is read.** A thread reads it every 25 ms (`POLL_MS`). The gate reads it again before every decision: a read, a write, the check before the frame is sent, the end of a write, a page opening, a session-level operation and a status read.
 - **Fail closed.**
@@ -60,7 +60,7 @@ The chosen source (`crates/orceld/src/human_input.rs`), Windows only:
   - The click or key that answers an Orcel prompt can reach the browser window once the prompt closes. `LiveBrowser::request_token` tells the gate when a prompt opens and closes, and whether a person answered it (approved or denied).
   - Only for an answered prompt is input from 500 ms before to 250 ms after it closed not counted.
   - Why 250 ms after: a dialog acts on the key's press or the button's release. What can follow is the key's release, 50 to 150 ms after the press for ordinary typing, which lands within tens of milliseconds after the prompt closed.
-  - A prompt that failed without an answer excuses nothing. It may have been refused before any dialog, been unavailable or timed out. So an agent that repeats a fast-failing prompt cannot mask a person's input.
+  - A prompt that failed without an answer excuses nothing. It may have been refused before any dialog or been unavailable. A Windows prompt that timed out is still denied and recorded as a denial, but `orcel-approval` now reports it distinctly: `ApprovalDecision::Unanswered`, with the denial message `UNANSWERED_DENIAL`. orceld therefore does not count it as answered (`prompt_answered`). So an agent that repeats a fast-failing prompt cannot mask a person's input.
   - Input during the prompt with the browser in front still counts, so a person who takes the page over while the prompt is up stops the send.
 - **Orcel's own input is not a person's.**
   - The agent's page input is CDP `Input.dispatch*Event` over the engine's debugging pipe. Chromium delivers it to the renderer directly, never through the OS input queue, so it does not move the last-input tick.
@@ -145,7 +145,7 @@ Emergency stop is unchanged and does not go through the gate. A moved approval e
   - Windows scrolls an inactive window under the pointer by default ("scroll inactive windows"). Such wheel input moves the last-input tick, but with another window in front, so it is not counted.
 - **The prompt edge.** For an answered prompt, input from 500 ms before to 250 ms after it closed is not counted, whatever window it reached. Input that goes on past that edge is counted.
 - **A press held still.** A mouse button held down without moving produces no new input, so the quiet period can end during such a press. The B1 begin and end brackets for ongoing input have no source here. A key held down auto-repeats and does count.
-- **The job.** A window counts when its process is in the session's browser job. Any process in that job is the session's family, by construction of the kill-on-close job. A process that could not be opened (for example an elevated window) is never the session's.
+- **The job.** A window counts when its process is in the session's browser job. Any process in that job is the session's family, by construction of the kill-on-close job. A window whose process cannot be opened (for example a protected process) is unknown. New input while it is in front holds the session, so typing in such a window pauses the agent (the safe side).
 - **Other software.** Input another program injects while the session's window is in front counts as a person's (the safe side).
 - **A locked or disconnected desktop** has no window in front, so nothing counts.
 - **A refused new tab stays open.** If a new tab's navigation is refused because a person took over, the blank tab is not closed until the hold ends.
@@ -163,3 +163,8 @@ Emergency stop is unchanged and does not go through the gate. A moved approval e
 6. **Low, undocumented gap.** Wheel input to an inactive window is now listed in section 7.
 7. **Low, the agent could close a held window.** Decided in section 4: `browser_close` is refused during a hold.
 8. **Info, features enabled crate-wide.** The scan now covers all of orceld's sources (section 2).
+
+After the re-review of 2632a662 (pass, two lows):
+
+1. **A timed-out prompt counted as answered.** The Windows prompt reported a timeout as a plain denial. `orcel-approval` now returns `Unanswered` for it. The prompt is still denied and recorded as a denial, but its message (`UNANSWERED_DENIAL`) marks it, and orceld treats it as unanswered. Tests cover the approval crate and `prompt_answered`.
+2. **A failed membership lookup failed open.** It now fails closed: new input with an unchecked window in front holds the session. Tests cover the feed and the gate.

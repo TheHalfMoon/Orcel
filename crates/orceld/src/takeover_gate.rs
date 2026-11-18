@@ -1440,6 +1440,7 @@ mod ob06_tests {
         last_input: u32,
         input_at: u64,
         session_in_front: bool,
+        front_unknown: bool,
         unreadable: bool,
     }
 
@@ -1458,6 +1459,7 @@ mod ob06_tests {
                 last_input: os.last_input,
                 idle_ms: self.clock.now().0.saturating_sub(os.input_at),
                 session_in_front: os.session_in_front,
+                front_unknown: os.front_unknown,
             })
         }
     }
@@ -1712,6 +1714,19 @@ mod ob06_tests {
         // An emergency stop ends the session: its pages close.
         session.gate.page_closed("page-1");
         assert_eq!(session.gate.page_state("page-1"), None);
+    }
+
+    #[test]
+    fn ob06_input_with_a_window_in_front_that_could_not_be_checked_holds_the_agent() {
+        let clock = ManualClock::at(0);
+        let mut session = Session::visible(&clock);
+        clock.advance(10);
+        session.input(false);
+        session.os().front_unknown = true;
+        assert!(takeover(&session.read()), "fail closed");
+        // With nothing new, an unchecked window holds nothing more.
+        clock.advance(QUIET_MS);
+        assert!(session.read().is_ok());
     }
 
     #[test]
