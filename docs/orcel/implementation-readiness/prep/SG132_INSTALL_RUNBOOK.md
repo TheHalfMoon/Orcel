@@ -4,9 +4,10 @@ This runbook is for the founder. The founder runs every step here on the PC that
 PowerShell where it says so. Agents do not run the install, do not trigger UAC and make no registry, ACL or
 service changes. The design and its limits are in [SG132_SLICE1.md](SG132_SLICE1.md).
 
-What slice 1 gives you after install: the service holds the key, epoch, revocation counter and audit out of
-your session's reach, and orceld can check its status. It cannot grant a lease yet: Windows Hello enrollment is
-refused until slice 2 (attested keys and an elevated enrollment caller), so no grant completes.
+What the install gives you: the service holds the key, epoch, revocation counter and audit out of your
+session's reach, and orceld can check its status. With slice 2 ([SG132_SLICE2.md](SG132_SLICE2.md)) you then
+enroll a TPM-attested Windows Hello key from an elevated terminal and grant leases through the service; see
+"After install" below.
 
 ## Before you start: how you work daily
 
@@ -82,14 +83,35 @@ entries in it. What uninstall leaves: events already written to the Application 
    anchors (`orcel-anchor/1|authority|audit.jsonl|1|...|sig=...`) carry the service account as their user and a
    signature by the lease key; the public key in `authority-public` verifies them.
 
+## After install: enroll, then a first grant (slice 2)
+
+6. **Check the pinned TPM root** (not elevated): `Get-ChildItem Cert:\LocalMachine\CA | Where-Object Thumbprint
+   -eq D4FFDB19BA590FFFAA34DB5F4B568706A2978436`; its SHA-256 (`[Security.Cryptography.SHA256]::Create().
+   ComputeHash($cert.RawData)`) must be `870c7a35ceab3d59979f2c6a524042d404cb71518004350925fb2ced79a999da`,
+   the Microsoft TPM Root Certificate Authority 2014 Microsoft publishes. `orcel authority status` must say
+   `enrollment available true`.
+7. **Enroll, elevated:** `orcel authority enroll`. Windows Hello asks you to create the key. The command prints
+   a one-time code and the key fingerprint; the Orcel Authority box must show both. Choose Yes only if they
+   match; Windows Hello asks once more. If the command says the key cannot be attested, enrollment stays
+   refused by design; report the message.
+8. **First grant, not elevated:** `orcel full-control grant` (desktop input only, 30 minutes). Lock (Win+L)
+   and unlock within 5 minutes; the box shows the code, the process and the scope; Yes; Windows Hello. Then
+   `orcel full-control status` and `orceld authority-status`.
+9. **Browser Full Access:** `orcel browser grant --session <bs-...> --client-ref <cl-...> --origin
+   https://<site>` with the values `browser_session_create` returned.
+10. **Event Viewer** (Application, source Orcel): 4102 (intents), 4104 (enrollment), 4101 (granted scope).
+
+Replacing the key: `orcel authority enroll --replace`; removing it: `orcel authority reset` (both elevated,
+both confirmed in the service's box, both end your leases).
+
 ## The one-time code is a link, not a secret
 
-`orcel full-control grant` (slice 2) will print a one-time code, and the Orcel Authority box shows the code of
+`orcel full-control grant` prints a one-time code, and the Orcel Authority box shows the code of
 the intent it is confirming. The code links the box to the command you just ran; it is not a secret. A process
 running as you can read your console or the screen through UI Automation, and it can take the session's single
 pending-intent slot first, in which case your command is refused and a box for its request appears instead.
 Refuse (choose No on) any confirmation whose code you did not just start yourself in that terminal, or whose
-requesting process is not your command. Windows Hello (slice 2, attested and enrolled from an elevated caller)
+requesting process is not your command. Windows Hello (attested and enrolled from an elevated caller)
 is the real gate; the code only helps you spot a box you did not ask for.
 
 ## What to verify by hand

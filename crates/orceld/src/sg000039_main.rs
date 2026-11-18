@@ -30,18 +30,12 @@ mod browser;
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_broker;
 mod browser_full;
-// SG-000135 OB-08: Full Access browser leases (the owner's local management
-// path, and the per-session lease cache the live browser consults). Only the
-// Windows live-browser-dev build drives a session that uses the cache.
+// SG-000135 OB-08: Full Access browser leases, issued by the SG-000132
+// authority service only (the owner's local list and revoke, and the
+// per-session lease cache the live browser consults). Only the Windows
+// live-browser-dev build drives a session that uses the cache.
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_lease;
-#[cfg(all(
-    feature = "browser-lease-dev-issuance",
-    not(all(windows, feature = "live-browser-dev"))
-))]
-compile_error!(
-    "browser-lease-dev-issuance is the OB-08 stand-in owner channel for test and development builds: build it only on Windows with live-browser-dev"
-);
 // SG-000135 OB-01 end-to-end harness, test builds only: the scripted SOFT
 // consent. Compiled only with both live browser features and the harness
 // feature, never in a development or release build.
@@ -715,9 +709,10 @@ fn load_trust_store() -> Result<trust::TrustStore, ProviderError> {
         .map_err(|error| state_unavailable("trust store", &error))
 }
 
-/// SG-000135 OB-08: the owner's browser lease management (issue, list,
-/// revoke). A remote caller or a request naming a tool surface profile (an
-/// MCP edge) is refused before anything is read or asked.
+/// SG-000135 OB-08: the owner's browser lease management (list and revoke
+/// through the authority service; issue is refused: leases come from the
+/// service's grant flow only). A remote caller or a request naming a tool
+/// surface profile (an MCP edge) is refused before anything is read or asked.
 fn handle_browser_lease(
     policy: &PolicyEngine,
     audit: &AuditLogger,
@@ -739,9 +734,11 @@ fn handle_browser_lease(
             "requested workspace is not configured",
         );
     }
-    let issuing = request.capability == "browser.lease.issue";
-    let result = browser_lease::ManagementEnv::default(issuing)
-        .and_then(|env| browser_lease::dispatch_management(&env, approval, &request));
+    // SG-000132 slice 2: orceld issues no lease; list and revoke go to the
+    // authority service.
+    let _ = approval;
+    let manager = authority_link::ServiceLeaseManager::for_this_build();
+    let result = browser_lease::dispatch_management(&manager, &request, orcel_approval::now_ms());
     finish(audit, request, POLICY_REVISION, result)
 }
 

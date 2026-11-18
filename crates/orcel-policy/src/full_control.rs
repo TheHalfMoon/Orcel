@@ -37,13 +37,6 @@ impl LocalGrantProof {
         validate_local_grant_proof(&proof)?;
         Ok(proof)
     }
-
-    /// SG-000135 OB-08: the keying material for another lease kind's
-    /// domain-separated identifier (`browser_lease`). Crate-private, like
-    /// the proof itself.
-    pub(crate) fn id_key(&self) -> &[u8; 32] {
-        &self.secret
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

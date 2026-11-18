@@ -21,6 +21,9 @@ test = true
 
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }
+# SG-000132 slice 2: the authority service client (enrollment and grants).
+orcel-authority = { path = "../orcel-authority" }
+orcel-contracts = { path = "../orcel-contracts" }
 fs4.workspace = true
 orcel-platform = { path = "../orcel-platform" }
 orcel-policy = { path = "../orcel-policy" }
@@ -53,6 +56,3 @@ windows-sys = { version = "0.52", features = [
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
 ] }
-
-[dev-dependencies]
-orcel-contracts = { path = "../orcel-contracts" }

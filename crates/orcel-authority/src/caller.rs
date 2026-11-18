@@ -47,6 +47,10 @@ pub struct CallerFacts {
     pub interactive: bool,
     /// The terminal-services session is the active console session.
     pub console_session: bool,
+    /// Slice 2: the token is elevated (`TokenElevation`) and at high
+    /// integrity or above, so it came through UAC (the secure desktop).
+    #[serde(default)]
+    pub elevated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +121,7 @@ mod tests {
             ts_session_id: 1,
             interactive,
             console_session: console,
+            elevated: false,
         }
     }
 

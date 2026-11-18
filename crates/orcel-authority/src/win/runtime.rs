@@ -4,12 +4,16 @@
 //! calls.
 
 use super::confirm;
-use super::crypto::{EcdsaP256Signer, HelloKeyVerifier, SystemEntropy};
+use super::crypto::{CngRsaVerifier, EcdsaP256Signer, HelloKeyVerifier, SystemEntropy};
 use super::eventlog::{EventLogSink, FileEventSink};
 use super::identity;
 use super::pipe::{create_instance, CreateError, Pipe};
+use crate::attestation::AttestationReport;
 use crate::caller::{CallerFacts, ClientPolicy};
-use crate::core::{AuthorityCore, EventSink, Services};
+use crate::core::{
+    AttestationVerifier, AuthorityCore, ConfirmAnswer, ConfirmationTask, EventSink,
+    PresenceVerifier, Services,
+};
 use crate::error::AuthorityError;
 use crate::lease::key_id_of;
 use crate::protocol::{read_frame, write_frame, Request, Response};
@@ -46,6 +50,90 @@ pub struct RunConfig {
     /// The pipe owner: the service SID, or the console user's SID.
     pub owner_sid: String,
     pub policy: ClientPolicy,
+    /// TEST BUILDS ONLY (`authority-scripted-consent`): console mode stands in for the
+    /// unlock, the confirmation (answered Yes, its text appended to this
+    /// log) and Windows Hello. Refused at start in every other build and
+    /// in service mode.
+    pub scripted_consent_log: Option<PathBuf>,
+}
+
+/// Slice 2: TPM key attestation with the pinned roots found on this PC.
+pub struct TpmAttestationVerifier {
+    roots: Vec<Vec<u8>>,
+}
+
+impl TpmAttestationVerifier {
+    pub fn on_this_pc() -> Self {
+        Self {
+            roots: super::roots::pinned_roots_on_this_pc(),
+        }
+    }
+}
+
+impl AttestationVerifier for TpmAttestationVerifier {
+    fn available(&self) -> bool {
+        !self.roots.is_empty()
+    }
+
+    fn verify(
+        &self,
+        spki_der: &[u8],
+        attestation: &[u8],
+        chain: &[u8],
+        now_ms: u64,
+    ) -> Result<AttestationReport, AuthorityError> {
+        crate::attestation::verify(
+            spki_der,
+            attestation,
+            chain,
+            &self.roots,
+            now_ms,
+            &CngRsaVerifier,
+        )
+    }
+}
+
+/// The domain of the scripted presence signature (test builds only).
+pub const SCRIPTED_PRESENCE_DOMAIN: &[u8] = b"orcel-e2e-scripted-presence/1\n";
+
+/// TEST BUILDS ONLY: accepts `SHA-256(SCRIPTED_PRESENCE_DOMAIN || challenge)`
+/// in place of a Windows Hello signature.
+#[cfg(feature = "authority-scripted-consent")]
+struct ScriptedPresence;
+
+#[cfg(feature = "authority-scripted-consent")]
+impl PresenceVerifier for ScriptedPresence {
+    fn check_public_key(&self, _spki_der: &[u8]) -> Result<(), AuthorityError> {
+        Err(AuthorityError::denied("scripted consent enrolls no key"))
+    }
+
+    fn verify(
+        &self,
+        _spki_der: &[u8],
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<(), AuthorityError> {
+        let mut input = SCRIPTED_PRESENCE_DOMAIN.to_vec();
+        input.extend_from_slice(challenge);
+        if hex(signature) == crate::sha256_hex(&input) {
+            Ok(())
+        } else {
+            Err(AuthorityError::denied(
+                "the scripted presence does not match",
+            ))
+        }
+    }
+}
+
+fn presence_verifier(config: &RunConfig) -> Result<Box<dyn PresenceVerifier>, AuthorityError> {
+    match &config.scripted_consent_log {
+        None => Ok(Box::new(HelloKeyVerifier)),
+        #[cfg(feature = "authority-scripted-consent")]
+        Some(_) if config.mode == RunMode::Console => Ok(Box::new(ScriptedPresence)),
+        Some(_) => Err(AuthorityError::denied(
+            "scripted consent exists only in console mode of an authority-scripted-consent test build",
+        )),
+    }
 }
 
 /// What the service control handler (or the console's stdin watcher)
@@ -97,10 +185,12 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
         }
     };
     crate::core::check_signing_key_history(&config.state_dir, SIGNING_KEY_FILE)?;
+    let presence = presence_verifier(&config)?;
     let signer = EcdsaP256Signer::load_or_create(&config.state_dir.join(SIGNING_KEY_FILE))?;
     let services = Services {
         signer: Box::new(signer),
-        presence: Box::new(HelloKeyVerifier),
+        presence,
+        attestation: Box::new(TpmAttestationVerifier::on_this_pc()),
         events,
         entropy: Box::new(SystemEntropy),
         clock: crate::now_ms,
@@ -116,9 +206,13 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
     let accept_core = Arc::clone(&core);
     let name = config.pipe_name.clone();
     let owner = config.owner_sid.clone();
+    let serving = Serving {
+        mode: config.mode,
+        scripted_log: config.scripted_consent_log.clone(),
+    };
     std::thread::Builder::new()
         .name("orcel-authority-accept".to_owned())
-        .spawn(move || accept_loop(first, &name, &owner, &accept_core))
+        .spawn(move || accept_loop(first, &name, &owner, &accept_core, &serving))
         .map_err(|error| AuthorityError::internal(format!("start the accept thread: {error}")))?;
     Ok(Runtime { core, config })
 }
@@ -142,7 +236,66 @@ fn publish_public_key(config: &RunConfig, public: &[u8]) -> Result<(), Authority
     crate::core::write_atomically(&config.public_dir.join(PUBLIC_KEY_FILE), &text)
 }
 
-fn accept_loop(first: Pipe, name: &str, owner: &str, core: &Arc<Mutex<AuthorityCore>>) {
+/// How connections are served.
+#[derive(Clone)]
+struct Serving {
+    mode: RunMode,
+    #[cfg_attr(not(feature = "authority-scripted-consent"), allow(dead_code))]
+    scripted_log: Option<PathBuf>,
+}
+
+/// Renders a confirmation on its own thread and reports the answer.
+fn spawn_confirmation(core: &Arc<Mutex<AuthorityCore>>, task: ConfirmationTask) {
+    let intent_id = task.intent_id.clone();
+    let shared = Arc::clone(core);
+    let spawned = std::thread::Builder::new()
+        .name("orcel-authority-confirm".to_owned())
+        .spawn(move || {
+            let answer = confirm::render(&task);
+            if let Ok(mut core) = shared.lock() {
+                let _ = core.confirmation_answer(&task.intent_id, answer);
+            }
+        });
+    if spawned.is_err() {
+        if let Ok(mut core) = core.lock() {
+            let _ = core.confirmation_answer(
+                &intent_id,
+                ConfirmAnswer::Failed("the confirmation could not start".to_owned()),
+            );
+        }
+    }
+}
+
+/// TEST BUILDS ONLY: stand in for the unlock and a Yes, logging the text.
+#[cfg(feature = "authority-scripted-consent")]
+fn scripted_consent(core: &mut AuthorityCore, log: &std::path::Path) {
+    use std::io::Write;
+    for session in core.sessions_awaiting_unlock() {
+        if let Some(task) = core.observe_unlock(session) {
+            let line = serde_json::json!({
+                "intent_id": task.intent_id,
+                "title": task.title,
+                "text": task.text,
+            });
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log)
+            {
+                let _ = writeln!(file, "{line}");
+            }
+            let _ = core.confirmation_answer(&task.intent_id, ConfirmAnswer::Yes);
+        }
+    }
+}
+
+fn accept_loop(
+    first: Pipe,
+    name: &str,
+    owner: &str,
+    core: &Arc<Mutex<AuthorityCore>>,
+    serving: &Serving,
+) {
     let active = Arc::new(AtomicUsize::new(0));
     let mut listener = first;
     loop {
@@ -164,10 +317,11 @@ fn accept_loop(first: Pipe, name: &str, owner: &str, core: &Arc<Mutex<AuthorityC
         active.fetch_add(1, Ordering::AcqRel);
         let core = Arc::clone(core);
         let counter = Arc::clone(&active);
+        let serving = serving.clone();
         let spawned = std::thread::Builder::new()
             .name("orcel-authority-conn".to_owned())
             .spawn(move || {
-                serve_connection(conn, &core);
+                serve_connection(conn, &core, &serving);
                 counter.fetch_sub(1, Ordering::AcqRel);
             });
         if spawned.is_err() {
@@ -176,7 +330,7 @@ fn accept_loop(first: Pipe, name: &str, owner: &str, core: &Arc<Mutex<AuthorityC
     }
 }
 
-fn serve_connection(mut conn: Pipe, core: &Arc<Mutex<AuthorityCore>>) {
+fn serve_connection(mut conn: Pipe, core: &Arc<Mutex<AuthorityCore>>, serving: &Serving) {
     conn.set_timeouts(Some(IO_TIMEOUT), Some(IO_TIMEOUT));
     // Read once the first frame is in: ImpersonateNamedPipeClient takes
     // the security context of the last message read from the pipe.
@@ -196,10 +350,33 @@ fn serve_connection(mut conn: Pipe, core: &Arc<Mutex<AuthorityCore>>) {
                 "not an authority request: {error}"
             ))),
             (Ok(facts), Ok(request)) => match lock(core) {
-                Ok(mut core) => match core.handle(facts, request) {
-                    Ok(result) => Response::success(result),
-                    Err(error) => Response::failure(&error),
-                },
+                Ok(mut guard) => {
+                    #[cfg(feature = "authority-scripted-consent")]
+                    if serving.scripted_log.is_some()
+                        && matches!(request, Request::GrantBegin { .. })
+                    {
+                        let _ = guard.enroll_scripted(&facts.user_sid);
+                    }
+                    let response = match guard.handle(facts, request) {
+                        Ok(result) => Response::success(result),
+                        Err(error) => Response::failure(&error),
+                    };
+                    #[cfg(feature = "authority-scripted-consent")]
+                    if let Some(log) = &serving.scripted_log {
+                        scripted_consent(&mut guard, log);
+                    }
+                    // Enrollment confirmations: rendered by the installed
+                    // service only (console mode never shows a box and never
+                    // enrolls).
+                    let tasks = guard.take_pending_confirmations();
+                    drop(guard);
+                    if serving.mode == RunMode::Service {
+                        for task in tasks {
+                            spawn_confirmation(core, task);
+                        }
+                    }
+                    response
+                }
                 Err(error) => Response::failure(&error),
             },
         };
@@ -238,18 +415,7 @@ fn handle_session_change(
         WTS_SESSION_UNLOCK => {
             if let Some(task) = core.observe_unlock(session) {
                 drop(core);
-                let core = Arc::clone(&runtime.core);
-                std::thread::Builder::new()
-                    .name("orcel-authority-confirm".to_owned())
-                    .spawn(move || {
-                        let answer = confirm::render(&task);
-                        if let Ok(mut core) = core.lock() {
-                            let _ = core.confirmation_answer(&task.intent_id, answer);
-                        }
-                    })
-                    .map_err(|error| {
-                        AuthorityError::internal(format!("start the confirmation: {error}"))
-                    })?;
+                spawn_confirmation(&runtime.core, task);
             }
             Ok(())
         }

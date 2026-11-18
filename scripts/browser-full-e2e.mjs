@@ -18,14 +18,18 @@
 // browser_screenshot of the second tab (its secret fields must be painted
 // over, checked on the decoded pixels), browser_tabs switch back,
 // browser_verify, browser_tabs close (the second tab), then (SG-000135
-// OB-08) Full Access: the owner's local path (a second orceld, no tool
-// surface profile, like the lifecycle CLI) issues a browser lease for this
-// session on https://fixture.test with STRONG presence; 25 routine actions
-// (open, fill, select, click on an ordinary link) then finish with zero
-// Orcel prompts, each receipted with the lease; a click on a link named
-// "Submit order" still asks; the owner revokes the lease, the very next
-// action is refused lease_invalid with nothing sent, and the one after asks
-// again. Then browser_task_status and browser_close. Then: the provisional
+// OB-08, SG-000132 slice 2) Full Access: the Orcel authority service (here
+// its console harness, `orcel-authority --console`, trusting this run's
+// orceld) issues a browser lease for this session on https://fixture.test
+// after the owner's grant (this script speaks the authority pipe as
+// `orcel browser grant` does); orceld checks the lease's ECDSA signature
+// with the service's public key and asks the service's Authorize before each
+// covered action. 25 routine actions (open, fill, select, click on an
+// ordinary link) then finish with zero Orcel prompts, each receipted with
+// the lease; a click on a link named "Submit order" still asks; the owner
+// revokes the lease (through orceld's local path, which asks the service),
+// the very next action is refused lease_invalid with nothing sent, and the
+// one after asks again. Then browser_task_status and browser_close. Then: the provisional
 // receipts chain is recomputed here,
 // the session's folder (its profile) must be gone, no Edge of this run may
 // be left, and orceld must end when the MCP session ends.
@@ -37,15 +41,21 @@
 //                       decided by the approval crate's existing test-support
 //                       soft decider (approve only the mission's four action
 //                       titles whose whole target is https://fixture.test;
-//                       OB-08: STRONG presence for exactly the Full
-//                       Access lease issuance on https://fixture.test;
 //                       deny everything else) and every
-//                       prompt's dialog text recorded. No dialog is shown.
-//                       This is scripted consent, not human acceptance.
+//                       prompt's dialog text recorded. The authority's
+//                       console harness is built with the test-only
+//                       `authority-scripted-consent` feature, which stands
+//                       in for the unlock, the service-rendered confirmation
+//                       (answered Yes, its text logged) and Windows Hello.
+//                       No dialog is shown. This is scripted consent, not
+//                       human acceptance.
 //   --consent founder   FOUNDER RUN. Builds orceld WITHOUT that feature: every
 //                       approval is a real Orcel dialog that the person at the
 //                       PC answers. This script never answers, clicks or
-//                       scripts a dialog; it only waits and records.
+//                       scripts a dialog; it only waits and records. The
+//                       OB-08 Full Access part needs the installed authority
+//                       service trusting this orceld, so a founder run skips
+//                       it and records why.
 //
 // Both builds also enable the test-only `live-browser-test` feature, so
 // browser_open of https://fixture.test/ reaches the loopback fixture (a
@@ -61,6 +71,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -159,12 +170,96 @@ function build(consent, pin) {
   const env = { ...process.env, ...pin, CARGO_TARGET_DIR: targetDir(consent) };
   const live = "live-browser-test,live-browser-dev";
   run("cargo", ["build", "--locked", "-p", "orcel-browser-host", "--features", live, "--bin", "orcel-browser-host"], env);
-  // OB-08 review: a lease covers nothing without the takeover gate, and
-  // issuance needs an owner channel, which only the test-and-development
-  // browser-lease-dev-issuance stand-in provides.
-  const ob08 = "browser-takeover-gate,browser-lease-dev-issuance";
+  // OB-08 review: a lease covers nothing without the takeover gate. Leases
+  // come from the authority service only (SG-000132 slice 2).
+  const ob08 = "browser-takeover-gate";
   const features = consent === "scripted" ? `${live},${ob08},browser-full-scripted-consent` : `${live},${ob08}`;
   run("cargo", ["build", "--locked", "-p", "orceld", "--features", features, "--bin", "orceld"], env);
+  if (consent === "scripted") {
+    run("cargo", ["build", "--locked", "-p", "orcel-authority", "--features", "authority-scripted-consent", "--bin", "orcel-authority"], env);
+  }
+}
+
+/// SG-000132 slice 2, scripted runs only: the authority service's console
+/// harness, trusting this run's orceld, with the test-only scripted consent
+/// standing in for the unlock, the confirmation and Windows Hello.
+async function startAuthority(paths, built) {
+  const binary = join(built, "orcel-authority.exe");
+  require_(existsSync(binary), `the scripted authority harness is built: ${binary}`);
+  const child = spawn(binary, [
+    "--console", "--state-dir", join(paths.root, "authority-console"),
+    "--pipe-suffix", `ob08-${process.pid}`,
+    "--trusted-orceld", paths.orceld,
+    "--e2e-scripted-consent", paths.authorityConsentLog
+  ], { cwd: repo, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => (stderr += chunk.toString("utf8")));
+  const ready = await new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => reject(new Error(`the authority harness did not start: ${stderr}`)), 30_000);
+    createInterface({ input: child.stdout }).once("line", (text) => {
+      clearTimeout(timer);
+      resolvePromise(JSON.parse(text));
+    });
+  });
+  require_(ready.ready === true && ready.mode === "console", `the authority harness is ready: ${JSON.stringify(ready)}`);
+  return { child, expectation: { pipe: ready.pipe, pid: ready.pid, owner_sid: ready.owner_sid } };
+}
+
+/// One request on the authority pipe (a u32 little-endian length, then
+/// JSON), as `orcel browser grant` sends it.
+function authorityCall(pipe, request) {
+  return new Promise((resolvePromise, reject) => {
+    const socket = connect(pipe);
+    const body = Buffer.from(JSON.stringify(request), "utf8");
+    const header = Buffer.alloc(4);
+    header.writeUInt32LE(body.length, 0);
+    let received = Buffer.alloc(0);
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`the authority did not answer ${request.op}`));
+    }, 15_000);
+    socket.on("connect", () => socket.write(Buffer.concat([header, body])));
+    socket.on("data", (chunk) => {
+      received = Buffer.concat([received, chunk]);
+      if (received.length >= 4 && received.length >= 4 + received.readUInt32LE(0)) {
+        clearTimeout(timer);
+        socket.end();
+        resolvePromise(JSON.parse(received.subarray(4, 4 + received.readUInt32LE(0)).toString("utf8")));
+      }
+    });
+    socket.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+/// The owner's grant, as `orcel browser grant` runs it: record the intent,
+/// wait for the confirmed window, then sign the challenge. Here the
+/// scripted consent stands in for the unlock and the Yes, and the scripted
+/// presence `SHA-256("orcel-e2e-scripted-presence/1\n" || challenge)` for
+/// Windows Hello; nothing else changes.
+async function ownerGrant(pipe, scope, task) {
+  const begun = await authorityCall(pipe, {
+    op: "grant_begin", origin: "owner_cli", scope, minutes: 30, principal_id: scope.client_ref, task
+  });
+  require_(begun.ok === true, `the authority recorded the grant intent: ${JSON.stringify(begun)}`);
+  const intentId = begun.result.intent_id;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const status = await authorityCall(pipe, { op: "intent_status", intent_id: intentId });
+    require_(status.ok === true, `the grant intent is pending: ${JSON.stringify(status)}`);
+    if (status.result.state === "awaiting_presence") {
+      const text = status.result.confirmation_text;
+      require_(createHash("sha256").update(text, "utf8").digest("hex") === status.result.confirmation_text_digest, "the confirmation text matches its digest");
+      const challenge = Buffer.from(status.result.challenge_hex, "hex");
+      const signature = createHash("sha256").update(Buffer.concat([Buffer.from("orcel-e2e-scripted-presence/1\n", "utf8"), challenge])).digest("hex");
+      const done = await authorityCall(pipe, { op: "presence_complete", intent_id: intentId, code: begun.result.code, signature_hex: signature });
+      require_(done.ok === true, `the authority issued the lease: ${JSON.stringify(done)}`);
+      return { lease: done.result.lease, confirmation: text };
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+  }
+  return fail("the scripted grant never reached the presence step");
 }
 
 /// The test-only loopback fixture; resolves with its certificate's SPKI hash.
@@ -439,7 +534,12 @@ async function mission(options, paths, fixtureSpki, fixture) {
     ORCEL_WORKSPACE_ID: "default",
     ORCEL_E2E_FIXTURE_SPKI: fixtureSpki
   };
-  if (options.consent === "scripted") env.ORCEL_E2E_CONSENT_LOG = paths.consentLog;
+  if (options.consent === "scripted") {
+    env.ORCEL_E2E_CONSENT_LOG = paths.consentLog;
+    // SG-000132 slice 2: orceld's lease source talks to this run's
+    // authority console harness (test builds only).
+    env.ORCEL_E2E_AUTHORITY = JSON.stringify(paths.authority.expectation);
+  }
 
   const started = Date.now();
   const client = new McpClient(process.execPath, [join(repo, "apps", "orcel-mcp", "dist", "entrypoints", "stdio.js")], env);
@@ -602,28 +702,34 @@ async function mission(options, paths, fixtureSpki, fixture) {
     tabs_after_close: afterClose.tabs.length
   };
 
-  // SG-000135 OB-08: Full Access. The owner issues a lease for this session
-  // through the local path (STRONG presence); the agent can only read it.
+  // SG-000135 OB-08: Full Access. The authority service issues a lease for
+  // this session after the owner's grant; the agent can only read it. A
+  // founder run skips it: the installed service trusts only the installed
+  // orceld, never this test build.
   const softPrompts = () =>
     options.consent === "scripted" && existsSync(paths.consentLog)
       ? readFileSync(paths.consentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((line) => line.event === "soft_prompt")
       : [];
   const clientRef = expectOk(create, "browser_session_create").client_ref;
   require_(/^cl-[0-9a-f]{32}$/.test(clientRef ?? ""), `the session names its client reference: ${clientRef}`);
-  if (options.consent === "founder") {
-    process.stdout.write("OB08-E2E founder run: one Windows Hello prompt follows (grant Full Access to this Orcel browser session on https://fixture.test). Read it and answer it yourself.\n");
-  }
-  const issued = await ownerRequest(paths, env, "browser.lease.issue", "issue", {
-    session_id: session,
+  let ob08;
+  if (options.consent === "scripted") {
+  // orceld issues nothing, whoever asks.
+  const refusedIssue = await ownerRequest(paths, env, "browser.lease.issue", "issue", {
+    session_id: session, client_ref: clientRef, origins: [FIXTURE], families: LEASE_FAMILIES, minutes: 30, task: SESSION_TASK
+  });
+  require_(refusedIssue.ok === false && /authority service/.test(refusedIssue.error?.message ?? ""), `orceld refuses to issue a lease: ${JSON.stringify(refusedIssue)}`);
+  const granted = await ownerGrant(paths.authority.expectation.pipe, {
+    kind: "browser_full_access",
     client_ref: clientRef,
+    session_id: session,
     origins: [FIXTURE],
     families: LEASE_FAMILIES,
-    minutes: 30,
     task: SESSION_TASK
-  });
-  require_(issued.ok === true, `the owner issued the lease: ${JSON.stringify(issued.error)}`);
-  const leaseId = issued.result.lease_id;
-  require_(/^bl-[0-9a-f]{64}$/.test(leaseId) && JSON.stringify(issued.result.origins) === JSON.stringify([FIXTURE]), `the lease names the fixture origin: ${JSON.stringify(issued.result)}`);
+  }, SESSION_TASK);
+  const leaseId = granted.lease.body.lease_id;
+  require_(/^al-[0-9a-f]{32}$/.test(leaseId) && JSON.stringify(granted.lease.body.scope.origins) === JSON.stringify([FIXTURE]), `the service's lease names the fixture origin: ${JSON.stringify(granted.lease.body.scope)}`);
+  require_(/^[0-9a-f]{128}$/.test(granted.lease.signature), "the lease carries the service's ECDSA P-256 signature");
   const leased = await client.call("browser_task_status", { session_id: session });
   record(leased);
   const leaseStatus = expectOk(leased, "browser_task_status (lease)").full_access;
@@ -722,7 +828,10 @@ async function mission(options, paths, fixtureSpki, fixture) {
   if (options.consent === "scripted") {
     require_(softPrompts().length - promptsBefore === 2, "the submit and the open after the revoke are the only prompts since the lease");
   }
-  const ob08 = {
+  ob08 = {
+    issued_by: "orcel_authority_service (console harness, scripted consent)",
+    lease_signature: granted.lease.signature,
+    confirmation_text: granted.confirmation,
     lease_id: leaseId,
     lease_session: session,
     routine_actions: routine,
@@ -732,6 +841,9 @@ async function mission(options, paths, fixtureSpki, fixture) {
     revoke_refused: afterRevoke.body?.error?.message,
     asked_after_revoke: true
   };
+  } else {
+    ob08 = { skipped: "a founder run uses real dialogs; Full Access needs the installed authority service, which trusts only the installed orceld, never this test build" };
+  }
 
   const status = await client.call("browser_task_status", { session_id: session });
   record(status);
@@ -749,19 +861,26 @@ async function mission(options, paths, fixtureSpki, fixture) {
   }
   const actions = receipts.map((receipt) => receipt.action);
   const ob08Round = ["browser_open", "browser_snapshot", "browser_fill", "browser_select", "browser_click"];
+  const fullAccessRun = options.consent === "scripted";
   const expectedActions = [
     "browser_open", "browser_snapshot", "browser_fill", "browser_select", "browser_verify", "browser_click", "browser_verify", "browser_extract",
     "browser_screenshot", "browser_tabs", "browser_tabs", "browser_screenshot", "browser_tabs", "browser_verify", "browser_tabs",
-    ...Array.from({ length: 6 }, () => ob08Round).flat(),
-    "browser_open", "browser_snapshot", "browser_fill", "browser_click",
-    "browser_open", "browser_snapshot", "browser_click", "browser_open", "browser_open"
+    ...(fullAccessRun
+      ? [
+          ...Array.from({ length: 6 }, () => ob08Round).flat(),
+          "browser_open", "browser_snapshot", "browser_fill", "browser_click",
+          "browser_open", "browser_snapshot", "browser_click", "browser_open", "browser_open"
+        ]
+      : [])
   ];
   require_(JSON.stringify(actions) === JSON.stringify(expectedActions), `the receipts are the mission's actions: ${actions.join(", ")}`);
   require_(state.last_receipt_sha256 === previous, "the chain head is the last receipt");
   const approved = receipts.filter((receipt) => receipt.record_id);
-  require_(approved.length === APPROVED_ACTIONS, `seven actions carry an approval record (open, fill, select, click, the new tab, the submit, the open after the revoke): ${approved.length}`);
+  const approvedExpected = fullAccessRun ? APPROVED_ACTIONS : APPROVED_ACTIONS - 2;
+  require_(approved.length === approvedExpected, `${approvedExpected} actions carry an approval record (open, fill, select, click, the new tab, and with Full Access the submit and the open after the revoke): ${approved.length}`);
   const leasedReceipts = receipts.filter((receipt) => receipt.lease_id);
-  require_(leasedReceipts.length === OB08_ROUTINE_ACTIONS + 3 && leasedReceipts.every((receipt) => receipt.lease_id === ob08.lease_id && receipt.outcome === "done"), `every routine action is receipted with the lease: ${leasedReceipts.length}`);
+  const leasedExpected = fullAccessRun ? OB08_ROUTINE_ACTIONS + 3 : 0;
+  require_(leasedReceipts.length === leasedExpected && leasedReceipts.every((receipt) => receipt.lease_id === ob08.lease_id && receipt.outcome === "done"), `every routine action is receipted with the lease: ${leasedReceipts.length}`);
   // OB-03: a screenshot's receipt keeps its digest only.
   const shotReceipts = receipts.filter((receipt) => receipt.action === "browser_screenshot");
   require_(
@@ -824,13 +943,16 @@ async function main() {
     orceld,
     workspace: join(root, "workspace"),
     brokerRoot: join(root, ".orcel", "browser-profile", "live", "broker"),
-    consentLog: join(evidenceDir, "consent.jsonl")
+    consentLog: join(evidenceDir, "consent.jsonl"),
+    authorityConsentLog: join(evidenceDir, "authority-consent.jsonl"),
+    authority: null
   };
   mkdirSync(paths.workspace, { recursive: true });
   mkdirSync(evidenceDir, { recursive: true });
   const fixture = startFixture();
   let summary;
   try {
+    if (options.consent === "scripted") paths.authority = await startAuthority(paths, built);
     const spki = await fixture.ready;
     summary = await mission(options, paths, spki, fixture);
     const ledger = join(root, ".orcel");
@@ -840,10 +962,20 @@ async function main() {
       const prompts = lines.filter((line) => line.event === "soft_prompt");
       require_(prompts.length === APPROVED_ACTIONS && prompts.every((prompt) => prompt.decision === "approved"), `seven scripted SOFT prompts, each approved: ${prompts.length}`);
       summary.scripted_prompts = prompts.map((prompt) => ({ action: prompt.action, target: prompt.target }));
-      // OB-08: one STRONG prompt, the lease issuance, scripted only here.
+      // OB-08: orceld asks no STRONG prompt at all (the service issues).
       const strong = lines.filter((line) => line.event === "strong_presence");
-      require_(strong.length === 1 && strong[0].decision === "approved" && strong[0].target === summary.ob08.lease_session, `one scripted STRONG prompt, the lease issuance: ${JSON.stringify(strong)}`);
-      summary.scripted_strong = strong.map((line) => ({ action: line.action, target: line.target, summary: line.summary }));
+      require_(strong.length === 0, `orceld asked no STRONG prompt: ${JSON.stringify(strong)}`);
+      // SG-000132 slice 2: the authority's one scripted confirmation, for
+      // exactly this session's browser grant on the fixture origin.
+      const confirmations = readFileSync(paths.authorityConsentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      require_(
+        confirmations.length === 1 &&
+          confirmations[0].title === "Orcel Authority" &&
+          confirmations[0].text.includes(`session ${summary.ob08.lease_session}`) &&
+          confirmations[0].text.includes(`origins [${FIXTURE}]`),
+        `one scripted authority confirmation, for this browser grant: ${JSON.stringify(confirmations)}`
+      );
+      summary.scripted_authority_confirmations = confirmations;
     }
     writeFileSync(join(evidenceDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
     const steps = summary.steps.map((step) => `${step.tool}=${step.ok ? "ok" : "refused"}/${step.ms}ms`).join(" ");
@@ -861,6 +993,10 @@ async function main() {
     }
     fixture.child.stdin.end();
     fixture.child.kill();
+    if (paths.authority !== null) {
+      paths.authority.child.stdin.end();
+      paths.authority.child.kill();
+    }
     if (!options.keepState) {
       try {
         rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });

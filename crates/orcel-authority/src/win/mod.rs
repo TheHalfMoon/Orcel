@@ -6,6 +6,7 @@ pub mod crypto;
 pub mod eventlog;
 pub mod identity;
 pub mod pipe;
+pub mod roots;
 pub mod runtime;
 pub mod service;
 

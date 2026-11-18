@@ -1,67 +1,52 @@
-//! SG-000135 OB-08: Full Access browser leases in orceld.
+//! SG-000135 OB-08: Full Access browser leases in orceld, issued by the
+//! SG-000132 authority service only (SG-000132 slice 2).
 //!
 //! Two halves:
 //!
-//! - The owner's local management path (`browser.lease.issue`, `.list`,
-//!   `.revoke`): local only, never under a tool surface profile, never for
-//!   a remote caller (`full_control::reject_untrusted_grant`). Issuance
-//!   needs a STRONG (Windows Hello) approval of the exact scope and writes
-//!   the lease to the protected full-control store (interim, SG-000135
-//!   decision 8). There is no MCP tool for any of them; agents read their
+//! - The owner's local management path (`browser.lease.list`, `.revoke`,
+//!   and `.issue`, which is refused): local only, never under a tool surface
+//!   profile, never for a remote caller (`full_control::reject_untrusted_grant`).
+//!   orceld issues nothing: a lease comes from `orcel browser grant`, which
+//!   runs the service's grant flow (recorded intent, service-observed unlock,
+//!   service-rendered confirmation, Windows Hello). List and revoke go to the
+//!   service. There is no MCP tool for any of them; agents read their
 //!   session's lease status through `browser_task_status` only.
 //! - [`FullAccess`]: the per-session lease cache the live browser consults
-//!   before it would prompt. A valid cached lease covering the session, the
+//!   before it would prompt. A lease reaches it only through a
+//!   [`LeaseSource`]: in orceld, the authority service, whose ECDSA signature
+//!   on every lease is checked with the public key the verified service
+//!   reported (`authority_link::ServiceLeaseSource`); no key orceld or the
+//!   user can read signs one. A valid cached lease covering the session, the
 //!   committed origin and the action's family, for an action positively
 //!   classified routine, dispatches without the SOFT prompt; anything else
 //!   asks as before. Right before dispatch the lease is checked once more
-//!   against one fresh read of the store, the verified approval epoch, the
-//!   clock and the takeover gate. A revoke, an epoch move (authority or
-//!   approval), a policy revision change, expiry, a session end or a human
-//!   interruption ends the lease's use at once: that action is refused
-//!   `lease_invalid` with nothing sent, and later actions ask as before.
+//!   against one fresh read of the service, the verified approval epoch, the
+//!   clock and the takeover gate, and the service's audit-first `Authorize`
+//!   admits that one action. A revoke, an epoch move (authority or approval),
+//!   expiry, a session end or a human interruption ends the lease's use at
+//!   once: that action is refused `lease_invalid` with nothing sent, and later
+//!   actions ask as before.
 //!
 //! The lease grants nothing the action would not get with a SOFT approval:
 //! policy, the profile gate, the takeover gate, the secret-field refusal
-//! and the host's binding all still apply, and the receipt names the lease.
-//!
-//! OB-08 review (findings 1 and 2 stay open until the SG-000132 authority
-//! service): issuance needs an [`OwnerChannel`] that identifies who asked.
-//! No build has a real one yet (the Control Room pipe or the authority
-//! service plugs in here), so issuance is OFF in default, development and
-//! release builds; only the test-and-development
-//! `browser-lease-dev-issuance` feature names orceld's parent process as
-//! the requester. The requester, the client reference and the session's
-//! task label are shown on the STRONG prompt and bound into its digest and
-//! the lease. Every revoke advances a revocation counter that the lease and
-//! a mark beside the store bind, the store keeps a last-seen time (a clock
-//! behind it refuses), only implemented families can be leased, nothing is
-//! covered without the takeover gate, and a value that looks secret or
-//! holds a stored secret is never typed under a lease.
+//! and the host's binding (GET-only covered clicks, non-GET requests blocked
+//! while covered actions run) all still apply, and the receipt names the
+//! lease. Nothing is covered without the takeover gate, only implemented
+//! families can be leased, and a value that looks secret or holds a stored
+//! secret is never typed under a lease.
 
-use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
 use orcel_contracts::browser_impact::Impact;
 use orcel_contracts::{FailureCode, RequestEnvelope};
 use orcel_policy::browser_lease::{
-    canonical_origin, check_browser_lease, check_scope, is_client_ref, is_session_id,
-    BrowserFamily, BrowserLease, BrowserLeaseContext, MAX_BROWSER_LEASE_ORIGINS,
+    canonical_origin, check_browser_lease, BrowserFamily, BrowserLease, BrowserLeaseContext,
 };
 use orcel_policy::full_control::{reject_untrusted_grant, UntrustedGrantOrigin};
-use orcel_policy::full_control_store::{self, BrowserLeaseGrant, AUTHORITY_KEY_BYTES};
-use orcel_policy::{PolicyError, POLICY_REVISION};
 use orcel_provider_fs::ProviderError;
 use serde_json::{json, Map, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
 /// The capability prefix of the owner's lease management shapes.
 pub(crate) const MANAGEMENT_PREFIX: &str = "browser.lease.";
-
-/// The STRONG prompt's action title for an issuance.
-pub(crate) const LEASE_ISSUE_ACTION: &str = "grant Full Access to an Orcel browser session";
-
-/// The longest lease an owner may issue, in minutes (12 hours).
-pub(crate) const MAX_LEASE_MINUTES: u64 = 12 * 60;
 
 /// The message prefix of every lease invalidation refusal.
 pub(crate) const LEASE_INVALID: &str = "lease_invalid";
@@ -70,10 +55,6 @@ pub(crate) const LEASE_INVALID: &str = "lease_invalid";
 /// shapes.
 pub(crate) fn is_management(capability: &str) -> bool {
     capability.starts_with(MANAGEMENT_PREFIX)
-}
-
-fn provider(error: PolicyError) -> ProviderError {
-    ProviderError::new(error.code, error.message)
 }
 
 fn invalid(message: impl Into<String>) -> ProviderError {
@@ -105,189 +86,49 @@ pub(crate) fn refuse_untrusted(remote: bool, profile: Option<&str>) -> Result<()
     }
 }
 
-/// OB-08 review: who asked for an issuance, as the owner channel saw it.
+/// What the authority service says now, for one check: its epoch and
+/// revocation counter, and the browser leases of this Windows user and
+/// logon session it reported active, each admitted after its signature
+/// verified with the service's public key.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Requester {
-    pub pid: u32,
-    /// The requester's executable image, bounded for the prompt.
-    pub image: String,
-    /// Which owner channel identified it.
-    pub channel: &'static str,
+pub(crate) struct AuthorityView {
+    pub epoch: u64,
+    pub revocations: u64,
+    pub leases: Vec<BrowserLease>,
 }
 
-/// The longest requester image the prompt shows.
-const MAX_REQUESTER_IMAGE_CHARS: usize = 160;
-
-impl Requester {
-    /// One line for the prompt, the digest and the lease.
-    pub(crate) fn describe(&self) -> String {
-        let image: String = self
-            .image
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(MAX_REQUESTER_IMAGE_CHARS)
-            .collect();
-        format!("pid {} {} (via {})", self.pid, image, self.channel)
-    }
+/// One covered action as the service's `Authorize` records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CoveredAction {
+    pub lease_id: String,
+    pub principal_id: String,
+    pub task: String,
+    pub record_id: String,
+    pub family: BrowserFamily,
+    pub origin: String,
+    pub page_id: String,
 }
 
-/// OB-08 review: the seam through which an issuance request reaches orceld
-/// from the owner, and which says who sent it. The Control Room pipe or
-/// the SG-000132 authority service (a separate principal) implements it;
-/// until one exists no build issues a lease outside tests and the
-/// development-only feature.
-pub(crate) trait OwnerChannel {
-    /// The requester of the issuance in progress, or why this channel
-    /// cannot vouch for one (issuance is then refused before any prompt).
-    fn requester(&self) -> Result<Requester, ProviderError>;
+/// Where a session's lease comes from: the authority service in orceld, a
+/// scripted one in tests.
+pub(crate) trait LeaseSource {
+    /// One read of the service. `Ok(None)`: no service lease can apply here
+    /// (the service is not installed, or this orceld is not its trusted
+    /// image). An error fails closed.
+    fn read(&self) -> Result<Option<AuthorityView>, ProviderError>;
+    /// The service's audit-first `Authorize` of one covered action.
+    fn authorize(&self, action: &CoveredAction) -> Result<(), ProviderError>;
+    /// The session ended: revoke its leases at the service (authority
+    /// reducing, best effort).
+    fn end_session(&self, session_id: &str);
 }
 
-/// The default: no owner channel, no issuance.
-#[cfg_attr(feature = "browser-lease-dev-issuance", allow(dead_code))]
-pub(crate) struct NoOwnerChannel;
-
-impl OwnerChannel for NoOwnerChannel {
-    fn requester(&self) -> Result<Requester, ProviderError> {
-        Err(ProviderError::new(
-            FailureCode::CapabilityDenied,
-            "issuing a Full Access browser lease needs the owner channel (the Control Room pipe or the SG-000132 authority service), which this build does not have; no lease was issued",
-        ))
-    }
-}
-
-/// TEST AND DEVELOPMENT ONLY (`browser-lease-dev-issuance`): the process
-/// that started this orceld is the requester. It identifies the requester
-/// for the prompt; it does not authenticate the owner (finding 1 stays
-/// open until a real owner channel exists).
-#[cfg(all(windows, feature = "browser-lease-dev-issuance"))]
-pub(crate) struct DevParentChannel;
-
-#[cfg(all(windows, feature = "browser-lease-dev-issuance"))]
-impl OwnerChannel for DevParentChannel {
-    fn requester(&self) -> Result<Requester, ProviderError> {
-        let unknown = || {
-            ProviderError::new(
-                FailureCode::ProviderUnavailable,
-                "the process that asked for the lease could not be identified; no lease was issued",
-            )
-        };
-        let pid = parent_pid().ok_or_else(unknown)?;
-        let (image, _) =
-            orcel_platform::process::image_path_and_generation(pid).map_err(|_| unknown())?;
-        Ok(Requester {
-            pid,
-            image,
-            channel: "development parent-process channel",
-        })
-    }
-}
-
-/// The parent process id of this orceld (Windows tool help snapshot).
-#[cfg(all(windows, feature = "browser-lease-dev-issuance"))]
-fn parent_pid() -> Option<u32> {
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-        TH32CS_SNAPPROCESS,
-    };
-    let me = std::process::id();
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return None;
-    }
-    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
-    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-    let mut found = None;
-    if unsafe { Process32FirstW(snapshot, &mut entry) } != 0 {
-        loop {
-            if entry.th32ProcessID == me {
-                found = Some(entry.th32ParentProcessID).filter(|pid| *pid != 0);
-                break;
-            }
-            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
-                break;
-            }
-        }
-    }
-    unsafe { CloseHandle(snapshot) };
-    found
-}
-
-/// This build's owner channel: none, except in the development-only
-/// feature build.
-pub(crate) fn owner_channel() -> Box<dyn OwnerChannel> {
-    #[cfg(all(windows, feature = "browser-lease-dev-issuance"))]
-    {
-        Box::new(DevParentChannel)
-    }
-    #[cfg(not(all(windows, feature = "browser-lease-dev-issuance")))]
-    {
-        Box::new(NoOwnerChannel)
-    }
-}
-
-/// Where the protected store is and what this process is: injectable so
-/// the management path is tested without the user's real state.
-pub(crate) struct ManagementEnv {
-    pub store_path: PathBuf,
-    /// The store key, or why it is unavailable.
-    pub key: Result<[u8; AUTHORITY_KEY_BYTES], ProviderError>,
-    /// The Windows user SID and logon session of this process.
-    pub identity: Result<(String, u64), ProviderError>,
-    pub now_ms: fn() -> u64,
-    /// OB-08 review: how an issuance reached orceld from the owner.
-    pub owner: Box<dyn OwnerChannel>,
-}
-
-impl ManagementEnv {
-    /// The default protected store. `create_key` makes the store key if it
-    /// is missing (issuance only; reads and revokes never create it).
-    pub(crate) fn default(create_key: bool) -> Result<Self, ProviderError> {
-        let dir = full_control_store::default_authority_dir().map_err(provider)?;
-        let key_path = dir.join("authority.key");
-        let key = if create_key {
-            full_control_store::ensure_key(&key_path).map_err(provider)
-        } else {
-            full_control_store::read_key(&key_path).map_err(provider)
-        };
-        Ok(Self {
-            store_path: dir.join("full_control.json"),
-            key,
-            identity: orcel_policy::full_control::current_windows_identity()
-                .map(|identity| (identity.windows_user_sid, identity.logon_session_id))
-                .map_err(provider),
-            now_ms: orcel_approval::now_ms,
-            owner: owner_channel(),
-        })
-    }
-}
-
-fn string_field(arguments: &Map<String, Value>, name: &str) -> Result<String, ProviderError> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| invalid(format!("browser lease argument {name} must be a string")))
-}
-
-fn string_list(arguments: &Map<String, Value>, name: &str) -> Result<Vec<String>, ProviderError> {
-    let items = arguments
-        .get(name)
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid(format!("browser lease argument {name} must be a list")))?;
-    if items.len() > MAX_BROWSER_LEASE_ORIGINS {
-        return Err(invalid(format!(
-            "browser lease argument {name} is too long"
-        )));
-    }
-    items
-        .iter()
-        .map(|item| {
-            item.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| invalid(format!("browser lease argument {name} holds strings")))
-        })
-        .collect()
+/// The owner's management path: list and revoke through the service.
+pub(crate) trait LeaseManager {
+    fn list(&self) -> Result<Vec<BrowserLease>, ProviderError>;
+    /// Revokes `lease_id`, or every browser lease when `None`; returns how
+    /// many were revoked.
+    fn revoke(&self, lease_id: Option<&str>) -> Result<usize, ProviderError>;
 }
 
 fn exact_fields(
@@ -314,130 +155,12 @@ fn exact_fields(
     Ok(arguments.clone())
 }
 
-/// What an issuance names, checked.
-struct IssueRequest {
-    session_id: String,
-    client_ref: String,
-    origins: Vec<String>,
-    families: Vec<BrowserFamily>,
-    minutes: u64,
-    /// The session's task label, as the owner names it (it must match the
-    /// session's own for the lease to cover anything).
-    task: Option<String>,
-}
-
-fn parse_issue(request: &RequestEnvelope) -> Result<IssueRequest, ProviderError> {
-    let arguments = exact_fields(
-        request,
-        &[
-            "session_id",
-            "client_ref",
-            "origins",
-            "families",
-            "minutes",
-            "task",
-        ],
-    )?;
-    let task = match arguments.get("task") {
-        Some(Value::Null) => None,
-        Some(Value::String(task)) => Some(task.clone()),
-        _ => return Err(invalid("task must be the session's task label or null")),
-    };
-    orcel_policy::browser_lease::check_task(task.as_deref()).map_err(provider)?;
-    let session_id = string_field(&arguments, "session_id")?;
-    if !is_session_id(&session_id) {
-        return Err(invalid("session_id is not an Orcel browser session id"));
-    }
-    let client_ref = string_field(&arguments, "client_ref")?;
-    if !is_client_ref(&client_ref) {
-        return Err(invalid("client_ref is not a client reference (cl-...)"));
-    }
-    let families = string_list(&arguments, "families")?
-        .iter()
-        .map(|name| {
-            BrowserFamily::parse(name)
-                .ok_or_else(|| invalid("families are navigate, click, type, select or tabs"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let (origins, families) =
-        check_scope(&string_list(&arguments, "origins")?, &families).map_err(provider)?;
-    let minutes = arguments
-        .get("minutes")
-        .and_then(Value::as_u64)
-        .filter(|minutes| (1..=MAX_LEASE_MINUTES).contains(minutes))
-        .ok_or_else(|| invalid(format!("minutes must be 1 to {MAX_LEASE_MINUTES}")))?;
-    Ok(IssueRequest {
-        session_id,
-        client_ref,
-        origins,
-        families,
-        minutes,
-        task,
-    })
-}
-
-/// The digest the STRONG approval binds: every part of the scope and every
-/// binding the lease will carry.
-#[allow(clippy::too_many_arguments)]
-fn issue_digest(
-    workspace_id: &str,
-    issue: &IssueRequest,
-    sid: &str,
-    logon: u64,
-    device_id: &str,
-    authority_epoch: u64,
-    approval_epoch: u64,
-    requester: &str,
-) -> String {
-    let mut hasher = Sha256::new();
-    let mut part = |bytes: &[u8]| {
-        hasher.update((bytes.len() as u64).to_be_bytes());
-        hasher.update(bytes);
-    };
-    part(b"orcel/sg000135/browser-lease-issue/v2");
-    part(workspace_id.as_bytes());
-    part(POLICY_REVISION.as_bytes());
-    part(issue.session_id.as_bytes());
-    part(issue.client_ref.as_bytes());
-    part(issue.origins.join("\n").as_bytes());
-    let families: Vec<&str> = issue.families.iter().map(|f| f.as_str()).collect();
-    part(families.join("\n").as_bytes());
-    part(issue.minutes.to_string().as_bytes());
-    part(sid.as_bytes());
-    part(logon.to_string().as_bytes());
-    part(device_id.as_bytes());
-    part(authority_epoch.to_string().as_bytes());
-    part(approval_epoch.to_string().as_bytes());
-    part(requester.as_bytes());
-    match &issue.task {
-        Some(task) => part(format!("task:{task}").as_bytes()),
-        None => part(b"no task"),
-    }
-    crate::browser_broker::hex(&hasher.finalize())
-}
-
-/// The STRONG prompt's summary: everything the digest binds that a person
-/// can judge (the duration, the families, every origin, what still asks,
-/// the client, who asked, the bindings, and the session's task label, last
-/// and marked as agent-supplied so it cannot pose as the scope).
-fn issue_summary(issue: &IssueRequest, requester: &str) -> String {
-    format!(
-        "Full Access for {} minutes, routine actions only ({}) on {}; submit, send, buy, publish, delete, uploads, secrets and other sites still ask. Client {}. Asked by {}. Bound to this Windows session, this device and the current authority and approval epochs. Session task label (agent-supplied): {}",
-        issue.minutes,
-        family_names(&issue.families).join(", "),
-        issue.origins.join(" "),
-        issue.client_ref,
-        requester,
-        issue.task.as_deref().unwrap_or("none"),
-    )
-}
-
 fn family_names(families: &[BrowserFamily]) -> Vec<&'static str> {
     families.iter().map(|family| family.as_str()).collect()
 }
 
 /// A lease as the owner's list and an agent's status show it: no Windows
-/// user, logon session or device.
+/// user or logon session.
 pub(crate) fn lease_summary(lease: &BrowserLease, now_ms: u64) -> Value {
     json!({
         "lease_id": lease.lease_id,
@@ -450,6 +173,7 @@ pub(crate) fn lease_summary(lease: &BrowserLease, now_ms: u64) -> Value {
         "active": now_ms >= lease.issued_at_ms && now_ms < lease.expires_at_ms,
         "routine_only": true,
         "task": lease.task,
+        "issued_by": "orcel_authority_service",
     })
 }
 
@@ -457,26 +181,20 @@ pub(crate) fn lease_summary(lease: &BrowserLease, now_ms: u64) -> Value {
 /// remote and profiled requests (`refuse_untrusted`) and checked the
 /// workspace.
 pub(crate) fn dispatch_management(
-    env: &ManagementEnv,
-    approval: &impl ApprovalBroker,
+    manager: &dyn LeaseManager,
     request: &RequestEnvelope,
+    now_ms: u64,
 ) -> Result<Value, ProviderError> {
     match (request.capability.as_str(), request.operation.as_str()) {
-        ("browser.lease.issue", "issue") => issue(env, approval, request),
+        ("browser.lease.issue", "issue") => Err(ProviderError::new(
+            FailureCode::CapabilityDenied,
+            "orceld issues no browser lease: Full Access leases come from the Orcel authority service only (run `orcel browser grant` in your own terminal)",
+        )),
         ("browser.lease.list", "list") => {
             exact_fields(request, &[])?;
-            let leases = match &env.key {
-                Ok(key) => {
-                    full_control_store::load_store(&env.store_path, key)
-                        .map_err(provider)?
-                        .browser_leases
-                }
-                // No key: nothing was ever issued.
-                Err(_) => Vec::new(),
-            };
-            let now = (env.now_ms)();
+            let leases = manager.list()?;
             Ok(json!({
-                "leases": leases.iter().map(|lease| lease_summary(lease, now)).collect::<Vec<_>>(),
+                "leases": leases.iter().map(|lease| lease_summary(lease, now_ms)).collect::<Vec<_>>(),
             }))
         }
         ("browser.lease.revoke", "revoke") => {
@@ -486,15 +204,7 @@ pub(crate) fn dispatch_management(
                 Some(Value::String(id)) => Some(id.clone()),
                 _ => return Err(invalid("lease_id must be a string or null")),
             };
-            let revoked = match &env.key {
-                Ok(key) => full_control_store::revoke_browser_leases(
-                    &env.store_path,
-                    key,
-                    lease_id.as_deref(),
-                )
-                .map_err(provider)?,
-                Err(_) => 0,
-            };
+            let revoked = manager.revoke(lease_id.as_deref())?;
             Ok(json!({ "revoked": revoked }))
         }
         _ => Err(ProviderError::new(
@@ -504,170 +214,9 @@ pub(crate) fn dispatch_management(
     }
 }
 
-fn issue(
-    env: &ManagementEnv,
-    approval: &impl ApprovalBroker,
-    request: &RequestEnvelope,
-) -> Result<Value, ProviderError> {
-    let issue = parse_issue(request)?;
-    // Who asked, from the owner channel; without one, nothing is asked.
-    let requester = env.owner.requester()?.describe();
-    let key = env
-        .key
-        .as_ref()
-        .map_err(|error| ProviderError::new(error.code.clone(), error.message.clone()))?;
-    let (sid, logon) = env
-        .identity
-        .as_ref()
-        .map_err(|error| ProviderError::new(error.code.clone(), error.message.clone()))?;
-    let device_id = full_control_store::derive_device_id(key);
-    // The epochs this grant is approved at: a revoke, emergency stop or
-    // desktop grant while the prompt is open refuses it afterwards.
-    let authority_epoch = full_control_store::load_store(&env.store_path, key)
-        .map_err(provider)?
-        .authority_epoch;
-    let approval_epoch = approval.verified_revoke_epoch().ok_or_else(|| {
-        ProviderError::new(
-            FailureCode::ApprovalUnavailable,
-            "the approval ledger could not be verified just now; no browser lease was issued",
-        )
-    })?;
-    let digest = issue_digest(
-        &request.workspace_id,
-        &issue,
-        sid,
-        *logon,
-        &device_id,
-        authority_epoch,
-        approval_epoch,
-        &requester,
-    );
-    let summary = issue_summary(&issue, &requester);
-    // The owner sees the whole scope, or no prompt at all: a summary the
-    // prompt would cut is refused (issue fewer origins per lease).
-    if orcel_contracts::prompt_display::shown_exactly(
-        &summary,
-        orcel_contracts::prompt_display::MAX_SUMMARY_CHARS,
-    )
-    .is_err()
-    {
-        return Err(invalid(
-            "the lease scope is too long for its prompt to show in full; issue fewer origins",
-        ));
-    }
-    let prompt = ApprovalPrompt::new_strong(
-        request.workspace_id.clone(),
-        POLICY_REVISION,
-        LEASE_ISSUE_ACTION,
-        issue.session_id.clone(),
-        summary,
-        digest.clone(),
-    );
-    let token = approval
-        .request_token(&prompt)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::strong(digest, request.workspace_id.clone(), POLICY_REVISION),
-            (env.now_ms)(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    if approval.verified_revoke_epoch() != Some(approval_epoch) {
-        return Err(ProviderError::new(
-            FailureCode::TargetStale,
-            "an emergency revoke happened while the browser lease was being approved; nothing was granted",
-        ));
-    }
-    let duration_ms = issue.minutes.saturating_mul(60_000);
-    let lease = full_control_store::grant_browser_lease_at_epoch(
-        &env.store_path,
-        key,
-        authority_epoch,
-        BrowserLeaseGrant {
-            client_ref: issue.client_ref,
-            session_id: issue.session_id,
-            windows_user_sid: sid.clone(),
-            logon_session_id: *logon,
-            approval_epoch,
-            origins: issue.origins,
-            families: issue.families,
-            duration_ms,
-            task: issue.task,
-            requester,
-        },
-        // The lease starts when presence is confirmed: the wait never
-        // shortens or extends the approved duration.
-        (env.now_ms)(),
-    )
-    .map_err(provider)?;
-    Ok(lease_summary(&lease, (env.now_ms)()))
-}
-
 // ---------------------------------------------------------------------
 // The per-session lease cache.
 // ---------------------------------------------------------------------
-
-/// What the store says now, for one check.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct StoreView {
-    pub authority_epoch: u64,
-    pub device_id: String,
-    pub leases: Vec<BrowserLease>,
-    /// The store's browser revocation counter (only grows).
-    pub revocations: u64,
-    /// The store's last-seen time for browser leases.
-    pub clock_ms: u64,
-}
-
-/// Where a session's lease is read from (the protected store in orceld;
-/// a scripted one in tests).
-pub(crate) trait LeaseSource {
-    /// One read of the store: `None` when it holds no key (nothing was
-    /// ever issued). An error fails closed.
-    fn read(&self) -> Result<Option<StoreView>, ProviderError>;
-    /// The session ended: remove its lease (authority reducing, best
-    /// effort).
-    fn end_session(&self, session_id: &str);
-}
-
-/// The default protected store (its revocation mark is checked by
-/// `load_store`: a store restored from an older copy is refused).
-pub(crate) struct ProtectedStore;
-
-impl LeaseSource for ProtectedStore {
-    fn read(&self) -> Result<Option<StoreView>, ProviderError> {
-        let dir = full_control_store::default_authority_dir().map_err(provider)?;
-        let key_path = dir.join("authority.key");
-        if !key_path.exists() {
-            return Ok(None);
-        }
-        let key = full_control_store::read_key(&key_path).map_err(provider)?;
-        let status = full_control_store::load_store(&dir.join("full_control.json"), &key)
-            .map_err(provider)?;
-        Ok(Some(StoreView {
-            authority_epoch: status.authority_epoch,
-            device_id: full_control_store::derive_device_id(&key),
-            leases: status.browser_leases,
-            revocations: status.browser_revocations,
-            clock_ms: status.browser_clock_ms,
-        }))
-    }
-
-    fn end_session(&self, session_id: &str) {
-        let Ok(dir) = full_control_store::default_authority_dir() else {
-            return;
-        };
-        let Ok(key) = full_control_store::read_key(&dir.join("authority.key")) else {
-            return;
-        };
-        let _ = full_control_store::revoke_session_browser_leases(
-            &dir.join("full_control.json"),
-            &key,
-            session_id,
-        );
-    }
-}
 
 /// OB-08 review: whether a value matches a secret the secret store holds.
 pub(crate) trait SecretMatcher {
@@ -736,7 +285,7 @@ pub(crate) struct LeaseQuery<'a> {
 #[derive(Debug, Clone)]
 pub(crate) struct LeaseMoment {
     /// The approval ledger's revoke epoch, verified now (`None`: not
-    /// verifiable, which fails closed).
+    /// verifiable, which fails closed). An emergency revoke moves it.
     pub approval_epoch: Option<u64>,
     pub now_ms: u64,
     /// The takeover gate's intervention epoch of every page it tracks;
@@ -753,6 +302,8 @@ pub(crate) struct LeaseUse {
     /// The one-shot record id the host frame carries (unique per session).
     pub record_id: String,
     page_id: String,
+    family: BrowserFamily,
+    origin: String,
 }
 
 impl LeaseUse {
@@ -771,6 +322,8 @@ impl LeaseUse {
             lease_id: format!("missing: {decision}"),
             record_id: String::new(),
             page_id: String::new(),
+            family: BrowserFamily::Read,
+            origin: String::new(),
         }
     }
 }
@@ -801,8 +354,10 @@ impl LeaseDecision {
 /// The cached lease of one session, as last validated.
 struct Cached {
     lease: BrowserLease,
-    authority_epoch: u64,
-    device_id: String,
+    epoch: u64,
+    /// The approval ledger's revoke epoch when the lease was cached: an
+    /// emergency revoke since moves it and ends the lease's use.
+    approval_epoch: u64,
     /// The takeover gate's intervention epoch of every page, taken when the
     /// lease was cached and when a page opens afterwards: any move since is
     /// a person's input, and ends the lease's use.
@@ -828,8 +383,8 @@ pub(crate) struct FullAccess {
     /// the next action to report.
     pending: Option<String>,
     uses: u64,
-    /// The highest store revocation counter seen: a store behind it was
-    /// restored from an older copy.
+    /// The highest service revocation counter seen: a service behind it
+    /// was restored from an older state.
     revocation_floor: u64,
     /// The latest time seen: a clock behind it went backwards.
     clock_floor: u64,
@@ -869,9 +424,13 @@ impl FullAccess {
         }
     }
 
-    /// The protected store and the secret store, with this process's
+    /// The authority service and the secret store, with this process's
     /// native identity.
-    pub(crate) fn protected(session_id: &str, client_session_id: &str, task: Option<&str>) -> Self {
+    pub(crate) fn service_backed(
+        session_id: &str,
+        client_session_id: &str,
+        task: Option<&str>,
+    ) -> Self {
         let identity = orcel_policy::full_control::current_windows_identity()
             .ok()
             .map(|identity| (identity.windows_user_sid, identity.logon_session_id));
@@ -879,7 +438,7 @@ impl FullAccess {
             session_id,
             &orcel_policy::browser_lease::client_ref(client_session_id),
             task,
-            Box::new(ProtectedStore),
+            Box::new(crate::authority_link::ServiceLeaseSource::for_this_build()),
             Box::new(StoredSecrets),
             identity,
         )
@@ -907,20 +466,23 @@ impl FullAccess {
         }
     }
 
-    /// Check `lease` against the store facts and the moment, and move the
-    /// clock and revocation floors.
+    /// Check `lease` against the service's epoch and counter and the moment,
+    /// and move the clock and revocation floors.
     fn check(
         &mut self,
         lease: &BrowserLease,
-        view: (u64, &str, u64, u64),
+        epoch: u64,
+        revocations: u64,
         moment: &LeaseMoment,
     ) -> Result<(), String> {
-        let (authority_epoch, device_id, revocations, store_clock) = view;
         if moment.now_ms < self.clock_floor {
             return Err("the clock went backwards".into());
         }
         if revocations < self.revocation_floor {
-            return Err("the authority store went back behind a revoke it had shown".into());
+            return Err("the authority service went back behind a revoke it had shown".into());
+        }
+        if moment.approval_epoch.is_none() {
+            return Err("the approval epoch could not be verified".into());
         }
         let Some((sid, logon)) = &self.identity else {
             return Err("this process's Windows session could not be read".into());
@@ -930,16 +492,12 @@ impl FullAccess {
             &BrowserLeaseContext {
                 windows_user_sid: sid,
                 logon_session_id: *logon,
-                device_id,
-                policy_revision: POLICY_REVISION,
-                authority_epoch,
-                approval_epoch: moment.approval_epoch,
+                authority_epoch: epoch,
+                revocations,
                 session_id: &self.session_id,
                 client_ref: &self.client_ref,
                 task: self.task.as_deref(),
                 now_ms: moment.now_ms,
-                store_revocations: revocations,
-                store_clock_ms: store_clock,
             },
         )
         .map_err(|error| error.message)?;
@@ -966,8 +524,8 @@ impl FullAccess {
     }
 
     /// Before the prompt: whether this session's lease covers `query` now.
-    /// Uses the cached lease when there is one (the store is read again in
-    /// [`Self::confirm`]); otherwise reads the store once.
+    /// Uses the cached lease when there is one (the service is read again
+    /// in [`Self::confirm`]); otherwise reads the service once.
     pub(crate) fn decide(&mut self, query: &LeaseQuery<'_>, moment: &LeaseMoment) -> LeaseDecision {
         if let Some(reason) = self.pending.take() {
             return LeaseDecision::Refuse(lease_invalid(&reason));
@@ -983,8 +541,9 @@ impl FullAccess {
         if self.cached.is_none() {
             let view = match self.source.read() {
                 Ok(Some(view)) => view,
-                // No store, or an unreadable one: no lease is in force, so
-                // the action asks (nothing was cached, nothing is lost).
+                // No service lease can apply, or the service could not be
+                // read: no lease is in force, so the action asks (nothing was
+                // cached, nothing is lost).
                 Ok(None) | Err(_) => return LeaseDecision::Ask,
             };
             let Some(lease) = view
@@ -997,13 +556,7 @@ impl FullAccess {
             else {
                 return LeaseDecision::Ask;
             };
-            let facts = (
-                view.authority_epoch,
-                view.device_id.as_str(),
-                view.revocations,
-                view.clock_ms,
-            );
-            if let Err(reason) = self.check(&lease, facts, moment) {
+            if let Err(reason) = self.check(&lease, view.epoch, view.revocations, moment) {
                 // A lease for this session that does not hold now is never
                 // used; it is reported once.
                 self.kill(&lease.lease_id);
@@ -1011,8 +564,8 @@ impl FullAccess {
             }
             self.cached = Some(Cached {
                 lease,
-                authority_epoch: view.authority_epoch,
-                device_id: view.device_id,
+                epoch: view.epoch,
+                approval_epoch: moment.approval_epoch.unwrap_or(u64::MAX),
                 // Every tracked page's epoch, now: the lease is cached.
                 baseline: interventions.clone(),
             });
@@ -1021,13 +574,15 @@ impl FullAccess {
             return LeaseDecision::Ask;
         };
         let lease = cached.lease.clone();
-        let facts = (
-            cached.authority_epoch,
-            cached.device_id.clone(),
-            self.revocation_floor,
-            0,
-        );
-        if let Err(reason) = self.check(&lease, (facts.0, &facts.1, facts.2, facts.3), moment) {
+        let (epoch, approval_epoch) = (cached.epoch, cached.approval_epoch);
+        if moment.approval_epoch != Some(approval_epoch) {
+            self.kill(&lease.lease_id);
+            return LeaseDecision::Refuse(lease_invalid(
+                "an emergency revoke moved the approval epoch",
+            ));
+        }
+        let floor = self.revocation_floor;
+        if let Err(reason) = self.check(&lease, epoch, floor, moment) {
             self.kill(&lease.lease_id);
             return LeaseDecision::Refuse(lease_invalid(&reason));
         }
@@ -1041,9 +596,9 @@ impl FullAccess {
                 "a person interrupted this browser session",
             ));
         }
-        if !covers(&lease, query) {
+        let Some(origin) = covers(&lease, query) else {
             return LeaseDecision::Ask;
-        }
+        };
         self.uses += 1;
         LeaseDecision::Covered(LeaseUse {
             record_id: format!(
@@ -1053,12 +608,15 @@ impl FullAccess {
             ),
             lease_id: lease.lease_id,
             page_id: query.page_id.to_owned(),
+            family: query.family,
+            origin,
         })
     }
 
-    /// Right before dispatch: one fresh read of the store, the verified
-    /// approval epoch, the clock and the takeover gate. The lease must be
-    /// the cached one, unchanged and still valid. Anything else ends it and
+    /// Right before dispatch: one fresh read of the service, the verified
+    /// approval epoch, the clock and the takeover gate, then the service's
+    /// audit-first `Authorize` of this one action. The lease must be the
+    /// cached one, unchanged and still valid. Anything else ends it and
     /// refuses the action (nothing sent).
     pub(crate) fn confirm(
         &mut self,
@@ -1079,10 +637,13 @@ impl FullAccess {
         if cached.lease.lease_id != used.lease_id {
             return refuse(self, "the browser lease changed");
         }
+        if moment.approval_epoch != Some(cached.approval_epoch) {
+            return refuse(self, "an emergency revoke moved the approval epoch");
+        }
         let view = match read {
             Ok(Some(view)) => view,
-            Ok(None) => return refuse(self, "the authority store holds no key any more"),
-            Err(_) => return refuse(self, "the authority store could not be read"),
+            Ok(None) => return refuse(self, "the authority service no longer applies"),
+            Err(_) => return refuse(self, "the authority service could not be read"),
         };
         let Some(current) = view
             .leases
@@ -1092,19 +653,10 @@ impl FullAccess {
         else {
             return refuse(self, "the browser lease was revoked");
         };
-        if current != cached.lease
-            || view.authority_epoch != cached.authority_epoch
-            || view.device_id != cached.device_id
-        {
+        if current != cached.lease || view.epoch != cached.epoch {
             return refuse(self, "the browser lease or the authority epoch changed");
         }
-        let facts = (
-            view.authority_epoch,
-            view.device_id.as_str(),
-            view.revocations,
-            view.clock_ms,
-        );
-        if let Err(reason) = self.check(&current, facts, moment) {
+        if let Err(reason) = self.check(&current, view.epoch, view.revocations, moment) {
             return refuse(self, &reason);
         }
         let interrupted = match self.cached.as_mut() {
@@ -1113,6 +665,27 @@ impl FullAccess {
         };
         if interrupted {
             return refuse(self, "a person interrupted this browser session");
+        }
+        let action = CoveredAction {
+            lease_id: current.lease_id.clone(),
+            principal_id: current.principal_id.clone(),
+            task: current
+                .task
+                .clone()
+                .unwrap_or_else(|| "browser Full Access".to_owned()),
+            record_id: used.record_id.clone(),
+            family: used.family,
+            origin: used.origin.clone(),
+            page_id: used.page_id.clone(),
+        };
+        if let Err(error) = self.source.authorize(&action) {
+            return refuse(
+                self,
+                &format!(
+                    "the authority service refused Authorize ({})",
+                    error.message
+                ),
+            );
         }
         Ok(())
     }
@@ -1155,27 +728,27 @@ impl FullAccess {
         }
     }
 
-    /// The session ended: the cache goes, and the store forgets its lease.
+    /// The session ended: the cache goes, and the service revokes its lease.
     pub(crate) fn session_ended(&mut self) {
         self.cached = None;
         self.source.end_session(&self.session_id);
     }
 }
 
-/// Whether `lease` covers `query`: the action's family (and the second one
-/// it needs), its effect's origin, no cross-origin effect, and a target
-/// positively classified routine.
-fn covers(lease: &BrowserLease, query: &LeaseQuery<'_>) -> bool {
+/// The canonical effect origin when `lease` covers `query`: the action's
+/// family (and the second one it needs), its effect's origin, no
+/// cross-origin effect, and a target positively classified routine.
+fn covers(lease: &BrowserLease, query: &LeaseQuery<'_>) -> Option<String> {
     if query.impact != Impact::Routine {
-        return false;
+        return None;
     }
-    let Some(effect) = canonical_origin(query.effect_origin) else {
-        return false;
-    };
+    let effect = canonical_origin(query.effect_origin)?;
     if let Some(committed) = query.committed_origin {
         if canonical_origin(committed).as_deref() != Some(effect.as_str()) {
-            return false;
+            return None;
         }
     }
-    lease.covers(&effect, query.family) && query.also.is_none_or(|also| lease.covers(&effect, also))
+    let covered = lease.covers(&effect, query.family)
+        && query.also.is_none_or(|also| lease.covers(&effect, also));
+    covered.then_some(effect)
 }

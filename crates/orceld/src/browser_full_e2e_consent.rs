@@ -6,15 +6,8 @@
 //! ledger format (nonce, digest, expiry, single use, records); only the SOFT
 //! consent a person would give in the system dialog is decided here, through
 //! the approval crate's existing test-support soft decider, the same
-//! mechanism orceld's native live-browser tests use.
-//!
-//! SG-000135 OB-08: STRONG presence stands in for exactly one prompt, the
-//! owner's Full Access lease issuance (`browser_lease::LEASE_ISSUE_ACTION`)
-//! for a broker session id, whose scope names the fixture origin and
-//! nothing else. Every other STRONG prompt (an emergency revoke, a trust
-//! grant, a desktop grant, a lease for any other origin) is denied, as the
-//! missing presence verifier denied every STRONG prompt before. Each STRONG
-//! decision is logged like the SOFT ones.
+//! mechanism orceld's native live-browser tests use. STRONG approvals have no
+//! presence verifier and fail closed.
 //!
 //! The decider approves only the mission's four exact action titles (open,
 //! fill, select, click) whose whole target is the loopback fixture origin
@@ -27,8 +20,7 @@
 
 use orcel_approval::{
     default_approval_history_path, now_ms, soft_dialog_text, ApprovalDecision, ApprovalPrompt,
-    InputLeaseGuard, LocalApprovalBroker, PresenceAttestation, PresenceContext, PresenceError,
-    PresenceVerifier,
+    LocalApprovalBroker, NoPresenceVerifier,
 };
 use serde_json::json;
 use std::io::Write;
@@ -72,75 +64,6 @@ fn names_fixture(target: &str) -> bool {
     rest.is_empty() || rest.starts_with('/')
 }
 
-/// The scripted presence method's name (recorded in the ledger).
-const SCRIPTED_PRESENCE: &str = "scripted-ob08-test";
-
-/// SG-000135 OB-08: whether the scripted STRONG presence approves `ctx`:
-/// the lease issuance title, a broker session id as the whole target, and a
-/// summary whose origin list is exactly the fixture origin. Nothing else.
-pub(crate) fn approves_strong(ctx: &PresenceContext) -> bool {
-    if ctx.action != crate::browser_lease::LEASE_ISSUE_ACTION
-        || !orcel_policy::browser_lease::is_session_id(&ctx.target)
-    {
-        return false;
-    }
-    let origins = ctx
-        .summary
-        .split_once(") on ")
-        .and_then(|(_, rest)| rest.split_once("; submit, send"))
-        .map(|(origins, _)| origins);
-    origins == Some(FIXTURE_ORIGIN)
-}
-
-/// SG-000135 OB-08: the scripted STRONG presence, for the lease issuance
-/// only (`approves_strong`); every decision is logged.
-#[derive(Debug)]
-struct ScriptedPresence {
-    log: PathBuf,
-}
-
-impl PresenceVerifier for ScriptedPresence {
-    fn method(&self) -> &'static str {
-        SCRIPTED_PRESENCE
-    }
-
-    fn is_available(&self) -> bool {
-        true
-    }
-
-    fn verify(
-        &self,
-        ctx: &PresenceContext,
-        _lease: &InputLeaseGuard,
-    ) -> Result<PresenceAttestation, PresenceError> {
-        let approved = approves_strong(ctx);
-        let _ = append(
-            &self.log,
-            &json!({
-                "event": "strong_presence",
-                "at_ms": now_ms(),
-                "decision": if approved { "approved" } else { "denied" },
-                "action": ctx.action,
-                "target": ctx.target,
-                "summary": ctx.summary,
-                "digest": ctx.digest,
-            }),
-        );
-        if approved {
-            Ok(PresenceAttestation {
-                method: SCRIPTED_PRESENCE.to_owned(),
-                verified_at_ms: now_ms(),
-                nonce: ctx.nonce.clone(),
-                digest: ctx.digest.clone(),
-            })
-        } else {
-            Err(PresenceError::denied(
-                "the scripted test consent approves no other STRONG prompt",
-            ))
-        }
-    }
-}
-
 fn append(log: &Path, line: &serde_json::Value) -> std::io::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -168,11 +91,10 @@ pub(crate) fn broker() -> Result<LocalApprovalBroker, String> {
             "event": "scripted_consent_started",
             "at_ms": now_ms(),
             "pid": std::process::id(),
-            "rule": "approve only the four mission actions (navigate, type, choose, open a link) whose whole target is https://fixture.test, and (STRONG) only the Full Access lease issuance for a browser session on exactly https://fixture.test; deny every other prompt",
+            "rule": "approve only the four mission actions (navigate, type, choose, open a link) whose whole target is https://fixture.test; deny every other prompt",
         }),
     )
     .map_err(|error| format!("write {CONSENT_LOG_ENV}: {error}"))?;
-    let presence = ScriptedPresence { log: log.clone() };
     let decider = move |prompt: &ApprovalPrompt| {
         let approved = approves(prompt);
         let _ = append(
@@ -195,7 +117,7 @@ pub(crate) fn broker() -> Result<LocalApprovalBroker, String> {
     };
     Ok(LocalApprovalBroker::with_path_and_soft_decider(
         ledger,
-        Arc::new(presence),
+        Arc::new(NoPresenceVerifier),
         Arc::new(decider),
     ))
 }
@@ -271,62 +193,6 @@ mod tests {
         let live = include_str!("live_browser.rs");
         for action in MISSION_ACTIONS {
             assert!(live.contains(&format!("\"{action}\"")), "{action}");
-        }
-    }
-
-    fn strong(action: &str, target: &str, summary: &str) -> PresenceContext {
-        PresenceContext::new("nonce", "digest", "default", action).with_details(target, summary)
-    }
-
-    /// SG-000135 OB-08: STRONG presence stands in for the fixture lease
-    /// issuance only.
-    #[test]
-    fn only_the_fixture_lease_issuance_gets_scripted_presence() {
-        let session = "bs-0123456789abcdef-1-0001020304050607";
-        let summary = |origins: &str| {
-            format!("Full Access for 30 minutes, routine actions only (navigate, click) on {origins}; submit, send, buy, publish, delete, uploads, secrets and other sites still ask")
-        };
-        assert!(approves_strong(&strong(
-            crate::browser_lease::LEASE_ISSUE_ACTION,
-            session,
-            &summary("https://fixture.test")
-        )));
-        for (action, target, text) in [
-            (
-                crate::browser_lease::LEASE_ISSUE_ACTION,
-                session,
-                summary("https://example.com"),
-            ),
-            (
-                crate::browser_lease::LEASE_ISSUE_ACTION,
-                session,
-                summary("https://fixture.test https://example.com"),
-            ),
-            (
-                crate::browser_lease::LEASE_ISSUE_ACTION,
-                "bs-nope",
-                summary("https://fixture.test"),
-            ),
-            (
-                "emergency revoke all pending approvals",
-                session,
-                summary("https://fixture.test"),
-            ),
-            (
-                "grant Full User desktop control",
-                session,
-                summary("https://fixture.test"),
-            ),
-            (
-                "allow a remote session",
-                session,
-                summary("https://fixture.test"),
-            ),
-        ] {
-            assert!(
-                !approves_strong(&strong(action, target, &text)),
-                "{action} {target} {text}"
-            );
         }
     }
 }

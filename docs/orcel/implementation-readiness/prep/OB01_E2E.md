@@ -212,3 +212,24 @@ The scripted E2E builds with `browser-takeover-gate` and `browser-lease-dev-issu
 - Emergency stop during a session, a crashed orceld, the per-client and device session caps, and a second MCP client naming this session: these are covered by orceld's unit tests, not by this mission.
 - Public HTTPS sites: this mission uses the loopback fixture only.
 - macOS and Linux.
+
+## SG-000132 slice 2: leases from the authority service
+
+Supersedes the OB-08 issuance above (steps 2 and the STRONG prompt, findings 1 and 2): orceld no longer
+issues or stores browser leases, `browser-lease-dev-issuance` is gone, and the user-readable store holds no
+browser lease. Design: [SG132_SLICE2.md](SG132_SLICE2.md).
+
+- The scripted run builds `orcel-authority` with the test-only `authority-scripted-consent` feature and starts
+  its console harness (`--console --trusted-orceld <this run's orceld> --e2e-scripted-consent <log>`), which
+  stands in for the unlock, the service-rendered confirmation (answered Yes, its text logged to
+  `authority-consent.jsonl`) and Windows Hello. orceld (built with `browser-full-scripted-consent`) finds it
+  through `ORCEL_E2E_AUTHORITY`; no other build reads that variable.
+- Step 2 becomes: orceld's `browser.lease.issue` is refused; the script then grants as `orcel browser grant`
+  does, over the authority pipe (`GrantBegin`, `IntentStatus`, `PresenceComplete` with the scripted presence).
+  The lease id is `al-` and 32 hex digits and carries the service's ECDSA P-256 signature.
+- orceld admits the lease only after checking that signature with the public key the verified authority
+  reported, and asks the authority's `Authorize` before each covered action.
+- The end checks: no STRONG prompt in orceld's consent log, and exactly one authority confirmation, naming this
+  session and only `https://fixture.test`.
+- A founder run skips the Full Access part: the installed service trusts only the installed orceld, never this
+  test build; the summary records why.

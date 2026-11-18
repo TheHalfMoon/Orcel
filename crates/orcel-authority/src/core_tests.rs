@@ -1,13 +1,16 @@
 //! Rules of the authority core, on every OS, with test doubles for the
 //! platform pieces: a keyed-hash signer, a presence verifier that accepts
 //! `sha256(spki || challenge)`, a recording event sink, counter entropy and
-//! a per-thread clock. Enrollment is refused in slice 1, so the grant flow
-//! tests seed an enrolled key through `enroll_for_test`.
+//! a per-thread clock, and a scripted attestation verifier. Most grant flow
+//! tests seed an enrolled key through `enroll_for_test`; the slice 2
+//! enrollment tests run the whole elevated, attested, confirmed flow.
 
+use crate::attestation::AttestationReport;
 use crate::caller::{CallerFacts, ClientPolicy};
 use crate::core::{
-    check_signing_key_history, display_image, AuthorityCore, ConfirmAnswer, Entropy, EventSink,
-    LeaseSigner, PresenceVerifier, Services, EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS, INTENT_TTL_MS,
+    check_signing_key_history, display_image, key_fingerprint, AttestationVerifier, AuthorityCore,
+    ConfirmAnswer, Entropy, EventSink, LeaseSigner, PresenceVerifier, Services,
+    EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS, INTENT_TTL_MS,
 };
 use crate::error::{AuthorityError, ENROLLMENT_UNAVAILABLE};
 use crate::lease::{LeaseScope, SignedLease};
@@ -109,6 +112,47 @@ impl Events {
     }
 }
 
+/// What the scripted attestation verifier answers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Attest {
+    Verified,
+    NoRoot,
+}
+
+thread_local! {
+    static ATTEST: Cell<Attest> = const { Cell::new(Attest::Verified) };
+}
+
+struct ScriptedAttestation;
+
+impl AttestationVerifier for ScriptedAttestation {
+    fn available(&self) -> bool {
+        ATTEST.with(Cell::get) != Attest::NoRoot
+    }
+
+    fn verify(
+        &self,
+        spki_der: &[u8],
+        attestation: &[u8],
+        _chain: &[u8],
+        _now_ms: u64,
+    ) -> Result<AttestationReport, AuthorityError> {
+        if ATTEST.with(Cell::get) != Attest::Verified || attestation != b"attested:".as_slice() {
+            return Err(AuthorityError::denied("key attestation refused: scripted"));
+        }
+        Ok(AttestationReport {
+            format: "scripted".to_owned(),
+            root_sha256: crate::attestation::MICROSOFT_TPM_ROOT_2014_SHA256.to_owned(),
+            aik_certificate_sha256: sha256_hex(spki_der),
+            chain_length: 2,
+            name_alg: "sha256".to_owned(),
+            object_attributes: 0x0004_0072,
+            verified: vec!["scripted".to_owned()],
+            not_verified: Vec::new(),
+        })
+    }
+}
+
 struct Counter(AtomicU64);
 
 impl Entropy for Counter {
@@ -135,8 +179,12 @@ fn temp_dir(name: &str) -> Result<PathBuf, String> {
 }
 
 fn open(dir: &Path, events: &Events) -> Result<AuthorityCore, String> {
+    open_in(RunMode::Service, dir, events)
+}
+
+fn open_in(mode: RunMode, dir: &Path, events: &Events) -> Result<AuthorityCore, String> {
     AuthorityCore::open(
-        RunMode::Service,
+        mode,
         dir,
         ClientPolicy {
             trusted_orceld_images: vec![PathBuf::from(ORCELD)],
@@ -144,6 +192,7 @@ fn open(dir: &Path, events: &Events) -> Result<AuthorityCore, String> {
         Services {
             signer: Box::new(KeyedHashSigner),
             presence: Box::new(HashPresence),
+            attestation: Box::new(ScriptedAttestation),
             events: Box::new(events.clone()),
             entropy: Box::new(Counter(AtomicU64::new(0))),
             clock,
@@ -169,6 +218,17 @@ fn owner() -> CallerFacts {
         ts_session_id: 1,
         interactive: true,
         console_session: true,
+        elevated: false,
+    }
+}
+
+/// The owner's elevated `orcel authority enroll` process.
+fn elevated_owner() -> CallerFacts {
+    CallerFacts {
+        pid: 4300,
+        logon_session_id: 0x6666,
+        elevated: true,
+        ..owner()
     }
 }
 
@@ -292,39 +352,400 @@ fn authorize(
     )
 }
 
+const NEW_SPKI: &[u8] = b"spki:replacement-hello-key";
+
+fn enroll_request(spki: &[u8], replace: bool) -> Request {
+    Request::EnrollBegin {
+        origin: ClaimedOrigin::OwnerCli,
+        public_key_spki_hex: hex(spki),
+        attestation_hex: hex(b"attested:"),
+        certificate_chain_hex: hex(b"chain"),
+        replace,
+    }
+}
+
+/// Runs an enrollment to its end: begin, the rendered confirmation, Yes,
+/// and the new key's signature. Returns the confirmation text.
+fn enroll(core: &mut AuthorityCore, spki: &[u8], replace: bool) -> Result<String, String> {
+    let caller = elevated_owner();
+    let begun = ok(core.handle(&caller, enroll_request(spki, replace)))?;
+    let id = str_of(&begun, "intent_id")?;
+    let one_time = str_of(&begun, "code")?;
+    let fingerprint = str_of(&begun, "key_fingerprint")?;
+    assert_eq!(fingerprint, key_fingerprint(&sha256_hex(spki)));
+    let tasks = core.take_pending_confirmations();
+    assert_eq!(tasks.len(), 1);
+    let text = tasks[0].text.clone();
+    assert!(
+        text.contains(&one_time) && text.contains(&fingerprint),
+        "{text}"
+    );
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let status = ok(core.handle(
+        &caller,
+        Request::IntentStatus {
+            intent_id: id.clone(),
+        },
+    ))?;
+    assert_eq!(str_of(&status, "purpose")?, "enroll");
+    let challenge = unhex(&str_of(&status, "challenge_hex")?).ok_or("challenge")?;
+    ok(core.handle(
+        &caller,
+        Request::PresenceComplete {
+            intent_id: id,
+            code: one_time,
+            signature_hex: presence_signature(spki, &challenge),
+        },
+    ))?;
+    Ok(text)
+}
+
 #[test]
-fn enrollment_is_refused_in_this_slice_whoever_asks() -> Result<(), String> {
-    let dir = temp_dir("enroll")?;
+fn enrollment_needs_an_elevated_owner_and_a_verified_attestation() -> Result<(), String> {
+    let dir = temp_dir("enroll-refused")?;
     let events = Events::default();
     let mut core = open(&dir, &events)?;
+    // Not elevated, orceld, another session's process: refused, whatever
+    // they claim.
     for caller in [owner(), orceld(), other_process()] {
-        let result = core.handle(
-            &caller,
-            Request::EnrollBegin {
-                origin: ClaimedOrigin::OwnerCli,
-                public_key_spki_hex: hex(SPKI),
-            },
-        );
-        let error = result.err().ok_or("enrollment was not refused")?;
-        assert_eq!(error.code, FailureCode::Unsupported);
-        assert!(
-            error.message.starts_with(ENROLLMENT_UNAVAILABLE),
-            "{}",
-            error.message
+        assert_eq!(
+            code(core.handle(&caller, enroll_request(SPKI, false))),
+            Some(FailureCode::CapabilityDenied)
         );
     }
+    let mut elevated_orceld = orceld();
+    elevated_orceld.elevated = true;
+    assert_eq!(
+        code(core.handle(&elevated_orceld, enroll_request(SPKI, false))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let agent_claim = Request::EnrollBegin {
+        origin: ClaimedOrigin::Agent,
+        public_key_spki_hex: hex(SPKI),
+        attestation_hex: hex(b"attested:"),
+        certificate_chain_hex: hex(b"chain"),
+        replace: false,
+    };
+    assert_eq!(
+        code(core.handle(&elevated_owner(), agent_claim)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // An attestation that does not verify refuses enrollment (fail closed).
+    let unattested = Request::EnrollBegin {
+        origin: ClaimedOrigin::OwnerCli,
+        public_key_spki_hex: hex(SPKI),
+        attestation_hex: hex(b"software key"),
+        certificate_chain_hex: hex(b"chain"),
+        replace: false,
+    };
+    assert_eq!(
+        code(core.handle(&elevated_owner(), unattested)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // No pinned root on this PC: enrollment is unavailable.
+    ATTEST.with(|a| a.set(Attest::NoRoot));
+    let error = core
+        .handle(&elevated_owner(), enroll_request(SPKI, false))
+        .err()
+        .ok_or("enrollment without a root was not refused")?;
+    ATTEST.with(|a| a.set(Attest::Verified));
+    assert_eq!(error.code, FailureCode::Unsupported);
+    assert!(
+        error.message.starts_with(ENROLLMENT_UNAVAILABLE),
+        "{}",
+        error.message
+    );
+    // Not an RSA key the presence verifier accepts.
+    assert_eq!(
+        code(core.handle(&elevated_owner(), enroll_request(b"not a key", false))),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert!(core.take_pending_confirmations().is_empty());
     let status = ok(core.handle(&owner(), Request::Status))?;
-    assert_eq!(status["enrollment_available"], Value::Bool(false));
+    assert_eq!(status["caller_enrolled"], Value::Bool(false));
     assert_eq!(status["can_issue"], Value::Bool(false));
+    assert_eq!(status["enrollment_available"], Value::Bool(true));
     // Without an enrolled key, a grant cannot even begin.
     assert_eq!(
         code(core.handle(&owner(), grant_begin(None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Console mode never enrolls, elevated or not.
+    let console_dir = temp_dir("enroll-console")?;
+    let mut console = open_in(RunMode::Console, &console_dir, &Events::default())?;
+    assert_eq!(
+        code(console.handle(&elevated_owner(), enroll_request(SPKI, false))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&console_dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn enrollment_shows_the_fingerprint_and_enrolls_only_after_the_new_key_signs() -> Result<(), String>
+{
+    let dir = temp_dir("enroll-flow")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let caller = elevated_owner();
+    let begun = ok(core.handle(&caller, enroll_request(SPKI, false)))?;
+    let id = str_of(&begun, "intent_id")?;
+    let one_time = str_of(&begun, "code")?;
+    assert_eq!(str_of(&begun, "state")?, "awaiting_confirmation");
+    let tasks = core.take_pending_confirmations();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(
+        sha256_hex(tasks[0].text.as_bytes()),
+        str_of(&begun, "confirmation_text_digest")?
+    );
+    assert!(tasks[0].text.is_ascii());
+    // Another process cannot see or complete it.
+    assert_eq!(
+        code(core.handle(
+            &other_process(),
+            Request::IntentStatus {
+                intent_id: id.clone()
+            }
+        )),
+        Some(FailureCode::InvalidRequest)
+    );
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let status = ok(core.handle(
+        &caller,
+        Request::IntentStatus {
+            intent_id: id.clone(),
+        },
+    ))?;
+    let challenge = unhex(&str_of(&status, "challenge_hex")?).ok_or("challenge")?;
+    // Signed by another key (the enrolled one does not exist yet; a
+    // stranger's key): refused, the intent is consumed, nothing enrolled.
+    assert_eq!(
+        code(core.handle(
+            &caller,
+            Request::PresenceComplete {
+                intent_id: id.clone(),
+                code: one_time.clone(),
+                signature_hex: presence_signature(NEW_SPKI, &challenge),
+            }
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        ok(core.handle(&owner(), Request::Status))?["caller_enrolled"],
+        Value::Bool(false)
+    );
+    // The whole flow.
+    let text = enroll(&mut core, SPKI, false)?;
+    assert!(text.contains("TPM attestation: verified"), "{text}");
+    let status = ok(core.handle(&owner(), Request::Status))?;
+    assert_eq!(status["caller_enrolled"], Value::Bool(true));
+    assert_eq!(
+        status["caller_key_fingerprint"],
+        Value::String(key_fingerprint(&sha256_hex(SPKI)))
+    );
+    assert!(events
+        .with_id(crate::EVENT_ENROLLED)
+        .iter()
+        .any(|e| e.contains("|enrolled|")));
+    // The enrolled key now completes a grant.
+    let (lease, _) = grant(&mut core, None)?;
+    assert_eq!(lease.body.grant.presence_key_digest, sha256_hex(SPKI));
+    // A No leaves nothing enrolled or replaced.
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn re_enrollment_needs_replace_and_ends_every_lease_of_the_user() -> Result<(), String> {
+    let dir = temp_dir("enroll-replace")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    enroll(&mut core, SPKI, false)?;
+    let (lease, _) = grant(&mut core, None)?;
+    let epoch = core.epoch();
+    // Already enrolled: replacing needs --replace; the same key is refused.
+    assert_eq!(
+        code(core.handle(&elevated_owner(), enroll_request(NEW_SPKI, false))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(&elevated_owner(), enroll_request(SPKI, true))),
+        Some(FailureCode::InvalidRequest)
+    );
+    let text = enroll(&mut core, NEW_SPKI, true)?;
+    assert!(
+        text.contains(&format!(
+            "REPLACES the enrolled key {}",
+            key_fingerprint(&sha256_hex(SPKI))
+        )),
+        "{text}"
+    );
+    assert!(core.epoch() > epoch);
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            Request::Verify {
+                lease_id: lease.body.lease_id.clone()
+            }
+        )),
+        Some(FailureCode::LeaseInvalid)
+    );
+    // A grant signed with the old key fails now.
+    let begun = ok(core.handle(&owner(), grant_begin(None)))?;
+    let id = str_of(&begun, "intent_id")?;
+    let (challenge, _) = confirm_yes(&mut core, &owner(), &id)?;
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            presence(&id, &str_of(&begun, "code")?, &challenge)
+        )),
         Some(FailureCode::CapabilityDenied)
     );
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
+#[test]
+fn a_reset_needs_elevation_and_a_confirmed_yes() -> Result<(), String> {
+    let dir = temp_dir("enroll-reset")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    enroll(&mut core, SPKI, false)?;
+    let reset = || Request::ResetEnrollment {
+        origin: ClaimedOrigin::OwnerCli,
+    };
+    assert_eq!(
+        code(core.handle(&owner(), reset())),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // No: nothing changes.
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    let id = str_of(&begun, "intent_id")?;
+    let tasks = core.take_pending_confirmations();
+    assert!(tasks[0].text.contains("REMOVE"), "{}", tasks[0].text);
+    core.confirmation_answer(&id, ConfirmAnswer::No)
+        .map_err(|e| e.to_string())?;
+    assert_eq!(
+        ok(core.handle(&owner(), Request::Status))?["caller_enrolled"],
+        Value::Bool(true)
+    );
+    // Yes: the key goes, the epoch moves, the status reports it once.
+    let epoch = core.epoch();
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.take_pending_confirmations();
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let status = ok(core.handle(
+        &elevated_owner(),
+        Request::IntentStatus {
+            intent_id: id.clone(),
+        },
+    ))?;
+    assert_eq!(str_of(&status, "state")?, "completed");
+    assert_eq!(
+        code(core.handle(&elevated_owner(), Request::IntentStatus { intent_id: id })),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert!(core.epoch() > epoch);
+    assert_eq!(
+        ok(core.handle(&owner(), Request::Status))?["caller_enrolled"],
+        Value::Bool(false)
+    );
+    assert!(events
+        .with_id(crate::EVENT_ENROLLED)
+        .iter()
+        .any(|e| e.contains("|reset|")));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn browser_grants_name_their_client_and_only_the_routine_families() -> Result<(), String> {
+    use crate::lease::BrowserFamily;
+    let dir = temp_dir("browser-scope")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let client = format!("cl-{}", "a".repeat(32));
+    let scope =
+        |families: Vec<BrowserFamily>, origins: Vec<String>| LeaseScope::BrowserFullAccess {
+            client_ref: client.clone(),
+            session_id: "bs-0123456789abcdef-1-0001020304050607".to_owned(),
+            origins,
+            families,
+            task: Some("Book a table".to_owned()),
+        };
+    let one = vec!["https://fixture.test".to_owned()];
+    for family in [
+        BrowserFamily::Scroll,
+        BrowserFamily::Read,
+        BrowserFamily::Download,
+    ] {
+        assert_eq!(
+            code(core.handle(
+                &owner(),
+                grant_begin_with(
+                    Some(scope(vec![BrowserFamily::Navigate, family], one.clone())),
+                    &client,
+                    "browse"
+                )
+            )),
+            Some(FailureCode::InvalidRequest),
+            "{family:?}"
+        );
+    }
+    let seventeen: Vec<String> = (0..17).map(|n| format!("https://h{n}.test")).collect();
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            grant_begin_with(
+                Some(scope(vec![BrowserFamily::Click], seventeen)),
+                &client,
+                "browse"
+            )
+        )),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            grant_begin_with(
+                Some(scope(vec![BrowserFamily::Click], one.clone())),
+                "mcp-client-1",
+                "browse"
+            )
+        )),
+        Some(FailureCode::InvalidRequest),
+        "the principal is the client_ref"
+    );
+    let routine = vec![
+        BrowserFamily::Navigate,
+        BrowserFamily::Click,
+        BrowserFamily::Type,
+        BrowserFamily::Select,
+        BrowserFamily::Tabs,
+    ];
+    let begun = ok(core.handle(
+        &owner(),
+        grant_begin_with(Some(scope(routine, one)), &client, "browse"),
+    ))?;
+    let id = str_of(&begun, "intent_id")?;
+    let (challenge, text) = confirm_yes(&mut core, &owner(), &id)?;
+    assert!(text.contains("browser Full Access"), "{text}");
+    let done = ok(core.handle(
+        &owner(),
+        presence(&id, &str_of(&begun, "code")?, &challenge),
+    ))?;
+    let lease: SignedLease =
+        serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
+    assert!(lease.body.scope.admits(ExecutorClass::Browser));
+    assert!(!lease.body.scope.admits(ExecutorClass::DesktopInput));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
 #[test]
 fn issuance_is_refused_for_every_non_owner_caller() -> Result<(), String> {
     let dir = temp_dir("non-owner")?;
@@ -845,9 +1266,10 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
     let dir = temp_dir("browser")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
+    let client = format!("cl-{}", "0123456789abcdef".repeat(2));
     let scope = LeaseScope::BrowserFullAccess {
-        client_ref: "cl-abc123".to_owned(),
-        session_id: "bs-1".to_owned(),
+        client_ref: client.clone(),
+        session_id: "bs-0123456789abcdef-1-0001020304050607".to_owned(),
         origins: vec!["https://example.com".to_owned()],
         families: vec![
             crate::lease::BrowserFamily::Click,
@@ -855,20 +1277,30 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
         ],
         task: Some("fill the form".to_owned()),
     };
-    let (lease, _) = grant(&mut core, Some(scope))?;
-    ok(authorize(
-        &mut core,
-        &orceld(),
-        &lease.body.lease_id,
-        ExecutorClass::Browser,
+    let begun = ok(core.handle(
+        &owner(),
+        grant_begin_with(Some(scope), &client, "fill the form"),
     ))?;
+    let id = str_of(&begun, "intent_id")?;
+    let (challenge, _) = confirm_yes(&mut core, &owner(), &id)?;
+    let done = ok(core.handle(
+        &owner(),
+        presence(&id, &str_of(&begun, "code")?, &challenge),
+    ))?;
+    let lease: SignedLease =
+        serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
+    let browser_claims = AuthorizeClaims {
+        principal_id: client.clone(),
+        ..claims()
+    };
+    let as_browser = |executor| Request::Authorize {
+        lease_id: lease.body.lease_id.clone(),
+        executor,
+        claims: browser_claims.clone(),
+    };
+    ok(core.handle(&orceld(), as_browser(ExecutorClass::Browser)))?;
     assert_eq!(
-        code(authorize(
-            &mut core,
-            &orceld(),
-            &lease.body.lease_id,
-            ExecutorClass::DesktopInput
-        )),
+        code(core.handle(&orceld(), as_browser(ExecutorClass::DesktopInput))),
         Some(FailureCode::CapabilityDenied)
     );
     let _ = std::fs::remove_dir_all(&dir);

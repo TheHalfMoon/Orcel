@@ -26,6 +26,9 @@ mod soft_macos;
 /// The Windows Yes/No dialog, closed as a timeout when nobody answers.
 #[cfg(any(windows, test))]
 mod windows_dialog;
+// SG-000132 slice 2: the Windows Hello key credential of the authority service.
+#[cfg(windows)]
+pub mod key_credential;
 
 /// The Linux helper's own protocol module, so tests on every OS check that
 /// orceld and the helper agree.

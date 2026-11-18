@@ -185,6 +185,7 @@ pub fn service_config() -> Result<RunConfig, AuthorityError> {
         pipe_name: crate::SERVICE_PIPE_NAME.to_owned(),
         owner_sid: service_sid,
         policy,
+        scripted_consent_log: None,
     })
 }
 
