@@ -3,7 +3,7 @@ const releases = `${github}/releases`;
 const security = `${github}/blob/main/docs/security/THREAT_MODEL.md`;
 const docs = `${github}/tree/main/docs`;
 const brandUrl = (process.env.ORCEL_WEB_BASE_PATH ?? "") + "/brand.html";
-const brandWordmarkUrl = (process.env.ORCEL_WEB_BASE_PATH ?? "") + "/brand/orcel-lockup-white.svg";
+const brandWordmarkUrl = (process.env.ORCEL_WEB_BASE_PATH ?? "") + "/brand/orcel-lockup-black.svg";
 
 const Arrow = () => (
   <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">

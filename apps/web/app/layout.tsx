@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { Geist_Mono, Inter, Instrument_Serif } from "next/font/google";
 import type { CSSProperties, ReactNode } from "react";
 import "./globals.css";
 
-// Halfmoon type system. next/font downloads these at build time and serves them from this
+// Orcel type system (identity v5). next/font downloads these at build time and serves them from this
 // site (Latin subsets, SIL Open Font License; licences are published in /fonts), so a visitor's
 // browser never requests a font from a third party.
-const display = Bricolage_Grotesque({ subsets: ["latin"], weight: "600", variable: "--font-display", display: "swap" });
-const text = Geist({ subsets: ["latin"], variable: "--font-text", display: "swap" });
+const display = Inter({ subsets: ["latin"], weight: "600", variable: "--font-display", display: "swap" });
+const text = Inter({ subsets: ["latin"], variable: "--font-text", display: "swap" });
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
 const serif = Instrument_Serif({ subsets: ["latin"], weight: "400", variable: "--font-serif", display: "swap" });
 
@@ -45,7 +45,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   const basePath = process.env.ORCEL_WEB_BASE_PATH ?? "";
   const style = {
-    "--orcel-mark-mask": `url("${basePath}/brand/orcel-o-white.svg")`
+    "--orcel-mark-mask": `url("${basePath}/brand/orcel-mark-red.svg")`
   } as CSSProperties;
 
   return (

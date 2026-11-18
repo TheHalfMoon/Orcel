@@ -1,45 +1,42 @@
-.orcel-brand-system{background:#090C12;color:#fff;min-height:100vh;font-family:Geist,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.orcel-brand-system{background:#F7F3EB;color:#141414;min-height:100vh;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
 .orcel-brand-system *{box-sizing:border-box}
 .orcel-brand-system a{color:inherit;text-decoration:none}
-.orcel-brand-system a:focus-visible{outline:2px solid #fff;outline-offset:6px;border-radius:3px}
+.orcel-brand-system a:focus-visible{outline:2px solid #DB2532;outline-offset:6px;border-radius:3px}
 .orcel-brand-system .brand-shell{max-width:1440px;padding:0 56px;margin:0 auto}
-.orcel-brand-system .brand-nav{min-height:95px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #292b2d;gap:20px}
+.orcel-brand-system .brand-nav{min-height:95px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #E6DFD3;gap:20px}
 .orcel-brand-system .brand-nav>a:first-child{font-size:28px;font-weight:660;letter-spacing:-.06em}
-.orcel-brand-system .brand-nav>span{font-size:11px;letter-spacing:.24em;color:#aeb4ba}
-.orcel-brand-system .brand-nav>a:last-child{font-size:13px;color:#d9dde1}
+.orcel-brand-system .brand-nav>span{font-size:11px;letter-spacing:.24em;color:#5B6070}
+.orcel-brand-system .brand-nav>a:last-child{font-size:13px;color:#141414}
 .orcel-brand-system .brand-intro{padding:105px 0 70px;max-width:940px}
-.orcel-brand-system .brand-eyebrow{font-size:12px;letter-spacing:.28em;color:#bbc0c7;margin-bottom:30px}
-.orcel-brand-system .brand-intro h1{font-family:"Bricolage Grotesque",Geist,sans-serif;font-size:clamp(60px,10vw,138px);letter-spacing:-.045em;font-weight:600;line-height:.99;margin:0}
-.orcel-brand-system .brand-intro p{font-size:20px;line-height:1.65;color:#b8bcc1;max-width:660px;margin-top:34px}
-.orcel-brand-system .brand-hero{border:1px solid #252729;min-height:650px;display:grid;place-items:center;background:#10141C;border-radius:16px;position:relative;overflow:hidden}
+.orcel-brand-system .brand-eyebrow{font-size:12px;letter-spacing:.28em;color:#DB2532;margin-bottom:30px}
+.orcel-brand-system .brand-intro h1{font-family:"Instrument Serif",Georgia,serif;font-size:clamp(60px,10vw,138px);letter-spacing:-.01em;font-weight:400;line-height:.95;margin:0}
+.orcel-brand-system .brand-intro p{font-size:20px;line-height:1.65;color:#5B6070;max-width:660px;margin-top:34px}
+.orcel-brand-system .brand-hero{border:1px solid #E6DFD3;min-height:650px;display:grid;place-items:center;background:#FFFFFF;border-radius:16px;position:relative;overflow:hidden}
 .orcel-brand-system .brand-hero>img{width:min(38vw,380px);height:auto;filter:none}
 .orcel-brand-system .brand-main-lockup{width:min(86%,980px);max-width:100%;display:grid;place-items:center}
 .orcel-brand-system .brand-main-lockup img{width:100%;height:auto;display:block}
-.orcel-brand-system .brand-hero-caption{position:absolute;bottom:28px;left:35px;right:35px;display:flex;justify-content:space-between;align-items:center;color:#b8bcc1;font-size:12px;letter-spacing:.16em}
-.orcel-brand-system .brand-hero-caption strong{color:#fff;letter-spacing:.28em}
+.orcel-brand-system .brand-hero-caption{position:absolute;bottom:28px;left:35px;right:35px;display:flex;justify-content:space-between;align-items:center;color:#5B6070;font-size:12px;letter-spacing:.16em}
+.orcel-brand-system .brand-hero-caption strong{color:#141414;letter-spacing:.28em}
 .orcel-brand-system .brand-heading{padding:88px 0 26px;display:flex;justify-content:space-between;gap:40px;align-items:baseline}
 .orcel-brand-system .brand-heading h2{margin:0;font-size:clamp(28px,4vw,52px);font-weight:560;letter-spacing:-.055em}
-.orcel-brand-system .brand-heading p{margin:0;font-size:15px;color:#b8bcc1;max-width:350px}
-.orcel-brand-system .brand-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
-.orcel-brand-system .brand-tile{min-height:365px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden}
-.orcel-brand-system .brand-tile.dark{background:#10141C}
-.orcel-brand-system .brand-tile.light{background:#F5F4F0;color:#090C12}
+.orcel-brand-system .brand-heading p{margin:0;font-size:15px;color:#5B6070;max-width:350px}
+.orcel-brand-system .brand-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px}
+.orcel-brand-system .brand-tile{min-height:300px;border-radius:14px;background:#FFFFFF;border:1px solid #E6DFD3;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden}
 .orcel-brand-system .brand-tile p{position:absolute;top:22px;left:26px;font-size:11px;letter-spacing:.16em;margin:0}
 .orcel-brand-system .brand-tile span{position:absolute;bottom:25px;left:26px;font-size:13px;opacity:.7}
 .orcel-brand-system .brand-tile img{max-width:72%;height:auto}
-.orcel-brand-system .brand-tile img.brand-wide{max-width:78%;width:425px}
 .orcel-brand-system .brand-palette{padding-bottom:100px}
-.orcel-brand-system .brand-swatches{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+.orcel-brand-system .brand-swatches{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px}
 .orcel-brand-system .brand-swatch{display:flex;flex-direction:column;gap:9px}
-.orcel-brand-system .brand-swatch-color{height:130px;width:100%;border:1px solid #45494e;border-radius:10px}
+.orcel-brand-system .brand-swatch-color{height:130px;width:100%;border:1px solid #E6DFD3;border-radius:10px}
 .orcel-brand-system .brand-swatch strong{font-size:13px;font-weight:580}
-.orcel-brand-system .brand-swatch code{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#b8bcc1}
-.orcel-brand-system .brand-principle{border-top:1px solid #303236;padding:100px 0 115px}
-.orcel-brand-system .brand-principle>span{font-size:12px;letter-spacing:.2em;color:#b8bcc1}
+.orcel-brand-system .brand-swatch code{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#5B6070}
+.orcel-brand-system .brand-principle{border-top:1px solid #E6DFD3;padding:100px 0 115px}
+.orcel-brand-system .brand-principle>span{font-size:12px;letter-spacing:.2em;color:#5B6070}
 .orcel-brand-system .brand-principle h2{font-size:clamp(36px,5vw,68px);line-height:1.1;letter-spacing:-.06em;font-weight:540;margin:27px 0}
-.orcel-brand-system .brand-principle p{color:#b8bcc1;font-size:17px;line-height:1.7;max-width:660px}
-.orcel-brand-system .brand-download{display:inline-block;margin-top:28px;border-radius:9px;background:#fff;color:#090C12!important;padding:16px 24px;font-size:14px;font-weight:650}
-.orcel-brand-system .brand-bottom{display:flex;justify-content:space-between;gap:15px;border-top:1px solid #303236;padding:40px 0 60px;color:#b8bcc1;font-size:14px}
-@media(max-width:850px){.orcel-brand-system .brand-shell{padding:0 24px}.orcel-brand-system .brand-nav>span{display:none}.orcel-brand-system .brand-intro{padding:75px 0 50px}.orcel-brand-system .brand-hero{min-height:440px}.orcel-brand-system .brand-hero>img{width:220px}.orcel-brand-system .brand-heading{display:block;padding-top:65px}.orcel-brand-system .brand-heading p{margin-top:12px}.orcel-brand-system .brand-tiles{grid-template-columns:1fr}.orcel-brand-system .brand-swatches{grid-template-columns:repeat(3,1fr)}.orcel-brand-system .brand-bottom{flex-wrap:wrap}}
+.orcel-brand-system .brand-principle p{color:#5B6070;font-size:17px;line-height:1.7;max-width:660px}
+.orcel-brand-system .brand-download{display:inline-block;margin-top:28px;border-radius:9px;background:#DB2532;color:#FFFFFF!important;padding:16px 24px;font-size:14px;font-weight:650}
+.orcel-brand-system .brand-bottom{display:flex;justify-content:space-between;gap:15px;border-top:1px solid #E6DFD3;padding:40px 0 60px;color:#5B6070;font-size:14px}
+@media(max-width:850px){.orcel-brand-system .brand-shell{padding:0 24px}.orcel-brand-system .brand-nav>span{display:none}.orcel-brand-system .brand-intro{padding:75px 0 50px}.orcel-brand-system .brand-hero{min-height:440px}.orcel-brand-system .brand-hero>img{width:220px}.orcel-brand-system .brand-heading{display:block;padding-top:65px}.orcel-brand-system .brand-heading p{margin-top:12px}.orcel-brand-system .brand-tiles{grid-template-columns:repeat(2,1fr)}.orcel-brand-system .brand-swatches{grid-template-columns:repeat(3,1fr)}.orcel-brand-system .brand-bottom{flex-wrap:wrap}}
 @media(max-width:480px){.orcel-brand-system .brand-intro p{font-size:17px}.orcel-brand-system .brand-hero{min-height:340px}.orcel-brand-system .brand-hero>img{width:175px}.orcel-brand-system .brand-hero-caption{left:16px;right:16px;font-size:8px}.orcel-brand-system .brand-tile{min-height:320px}.orcel-brand-system .brand-swatches{grid-template-columns:repeat(2,1fr)}.orcel-brand-system .brand-swatch-color{height:95px}}
 @media(prefers-reduced-motion:reduce){.orcel-brand-system *{scroll-behavior:auto!important;transition:none!important}}

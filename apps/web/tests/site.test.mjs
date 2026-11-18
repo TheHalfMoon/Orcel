@@ -80,15 +80,15 @@ test("Next output is a static export with a bounded explicit project base path",
   const layout = await read(join(root, "app", "layout.tsx"));
   const css = await read(join(root, "app", "globals.css"));
   assert.match(layout, /--orcel-mark-mask/);
-  assert.match(layout, /brand\/orcel-o-white\.svg/);
-  assert.equal(css.includes('url("/brand/orcel-o-white.svg")'), false);
+  assert.match(layout, /brand\/orcel-mark-red\.svg/);
+  assert.equal(css.includes('url("/brand/orcel-mark-red.svg")'), false);
   assert.equal((css.match(/var\(--orcel-mark-mask\)/g) ?? []).length, 1);
 });
 
-test("approved Night Window symbol is byte-pinned", async () => {
+test("approved People First figure is byte-pinned", async () => {
   assert.equal(
-    await sha256(join(root, "public", "brand", "orcel-o-white.svg")),
-    "fcf1532b4e48035d4e88b716e2b35f6293c002f36845f1ed49c9a2de20ec960c"
+    await sha256(join(root, "public", "brand", "orcel-mark-red.svg")),
+    "7fcca5218779ec91302f988e7e80d01d7bcd82619a747418c3ce6b009be9490c"
   );
   const css = await read(join(root, "app", "globals.css"));
   assert.equal((css.match(/var\(--orcel-mark-mask\)/g) ?? []).length, 1, "all site instances share one full-color SVG");
@@ -159,10 +159,10 @@ test("Pages workflow builds the canonical project path and verifies the deployed
   assert.match(workflow, /base_path/);
   assert.match(workflow, /test "\$\{\{ steps\.pages\.outputs\.base_path \}\}" = "\/Orcel"/);
   assert.match(workflow, /\/Orcel\/_next\//);
-  assert.match(workflow, /\/Orcel\/brand\/orcel-o-white\.svg/);
-  assert.match(workflow, /The Night Window\./);
+  assert.match(workflow, /\/Orcel\/brand\/orcel-mark-red\.svg/);
+  assert.match(workflow, /People first\./);
   assert.match(workflow, /orcel-wordmark-white\.svg/);
-  assert.match(workflow, /Orcel Identity v4 2026/);
+  assert.match(workflow, /Orcel Identity v5 2026/);
   assert.match(workflow, /https:\/\/thehalfmoon\.github\.io\/Orcel/);
   assert.match(workflow, /curl --fail --location/);
   assert.match(workflow, /https:\/\/github\.com\/TheHalfMoon\/Orcel\/releases/);
