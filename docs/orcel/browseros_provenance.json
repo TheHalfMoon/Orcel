@@ -85,6 +85,17 @@
       "donor_blob": [
         "cf9e8d3da9ba7d03fc0317db056380b79e3a4d3d"
       ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/challenge.ts",
+      "donor": "browseros",
+      "method": "PORT",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-captcha/src/detect.rs"
+      ],
+      "donor_blob": [
+        "c6883f3fdd54580d2fa18616b9b4696b48e38978"
+      ]
     }
   ],
   "references": [

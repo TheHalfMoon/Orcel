@@ -966,6 +966,13 @@
       ]
     },
     {
+      "path": "apps/orcel-browser-worker/src/challenge.ts",
+      "donor": "browseros",
+      "source": [
+        "packages/browseros-agent/crates/neo-sdk/neo-captcha/src/detect.rs"
+      ]
+    },
+    {
       "path": "crates/orceld/src/live_dispatch.rs",
       "donor": "agent-browser",
       "source": [

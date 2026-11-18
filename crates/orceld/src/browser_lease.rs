@@ -30,6 +30,9 @@
 //! The lease grants nothing the action would not get with a SOFT approval:
 //! policy, the profile gate, the takeover gate, the secret-field refusal
 //! and the host's binding (GET-only covered clicks, non-GET requests blocked
+//! while covered actions run) all still apply; OB-07's human verification
+//! wait refuses (HUMAN_VERIFICATION_REQUIRED) before any lease is consulted
+//! or used; and the host's binding (GET-only covered clicks, non-GET requests blocked
 //! while covered actions run) all still apply, and the receipt names the
 //! lease. Nothing is covered without the takeover gate, only implemented
 //! families can be leased, and a value that looks secret or holds a stored
@@ -531,7 +534,11 @@ impl FullAccess {
             return LeaseDecision::Refuse(lease_invalid(&reason));
         }
         // Without the takeover gate no person's input can be seen: nothing
-        // is covered, and a page the gate does not track asks too.
+        // is covered, and a page the gate does not track asks too. Since
+        // OB-07 every browser_full session runs with the gate on, so this
+        // is a defense that should never fire there; browser_structured has
+        // no lease at all. HUMAN_VERIFICATION_REQUIRED is decided by the
+        // gate before this is consulted and again before a lease is used.
         let Some(interventions) = moment.interventions.as_ref() else {
             return LeaseDecision::Ask;
         };

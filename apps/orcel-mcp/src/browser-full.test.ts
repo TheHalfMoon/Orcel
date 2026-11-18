@@ -20,7 +20,7 @@ import {
   registerSessionBrokerTools
 } from "./browser_full.js";
 import type { KernelClient, KernelResponse } from "./kernel.js";
-import { projectScreenshotResult } from "./result.js";
+import { projectKernelResult, projectScreenshotResult } from "./result.js";
 import { OAUTH_PROFILE_TOOL_CEILINGS, OAUTH_SCOPE_TOOL_MATRIX, UNMAPPED_REMOTE_PROFILES, authorizeToolByScopes } from "./oauth_authorization.js";
 import { allowedToolsFor, buildOrcelServer, localTransportContext, tunnelTransportContext, type TransportContext } from "./server.js";
 import {
@@ -419,6 +419,44 @@ test("OB-03: the screenshot and tabs schemas are strict and name nothing outside
   ]) {
     assert.equal(tabs.safeParse(value).success, false, JSON.stringify(value));
   }
+});
+
+test("OB-07: a Needs-you refusal keeps its typed code, and the status lists the waiting page as orceld sent it", async () => {
+  const refused = projectKernelResult({
+    version: 1,
+    request_id: "r",
+    ok: false,
+    error: { code: "HUMAN_VERIFICATION_REQUIRED", message: "needs_you: await_human_verification (pg-1): the page needs a person to complete a verification; nothing was done" }
+  });
+  assert.equal(refused.isError, true);
+  const error = (JSON.parse(refused.content[0]?.text ?? "{}") as { error: { code: string } }).error;
+  assert.equal(error.code, "HUMAN_VERIFICATION_REQUIRED");
+  // browser_task_status forwards its shape and returns orceld's needs_you
+  // list unchanged (the edge adds and drops nothing).
+  const needsYou = [{ page_id: PAGE, kind: "captcha", signals: ["captcha_widget"], reason: "a CAPTCHA or bot check is on the page; Orcel never solves or skips one", clearing: false, handoff: "rerun_in_visible", guidance: "close this session" }];
+  const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+  const server = {
+    registerTool(name: string, config: { description?: string }, handler: (args: Record<string, unknown>) => Promise<unknown>) {
+      if (name === "browser_task_status") {
+        assert.match(config.description ?? "", /needs_you/);
+        assert.match(config.description ?? "", /HUMAN_VERIFICATION_REQUIRED/);
+      }
+      handlers.set(name, handler);
+    }
+  } as unknown as McpServer;
+  const kernel = {
+    call: async (input: { capability: string; operation: string }) => {
+      assert.equal(`${input.capability}/${input.operation}`, "browser.session/status");
+      return { ok: true, result: { session_id: SESSION, page_state: "AWAIT_HUMAN_VERIFICATION", needs_you: needsYou } };
+    }
+  } as unknown as KernelClient;
+  registerSessionBrokerTools(server, kernel, "default");
+  const projected = (await handlers.get("browser_task_status")?.({ workspace_id: "default", session_id: SESSION })) as { content: Array<{ text: string }> };
+  const body = JSON.parse(projected.content[0]?.text ?? "{}") as { result: { needs_you: unknown; page_state: string } };
+  assert.deepEqual(body.result.needs_you, needsYou);
+  assert.equal(body.result.page_state, "AWAIT_HUMAN_VERIFICATION");
+  // No tool of the profile can clear, solve or take over a challenge.
+  assert.ok(!BROWSER_FULL_TOOLS.some((tool) => /captcha|solve|challenge|verification|takeover/.test(tool)));
 });
 
 test("OB-03: a screenshot crosses as image content, and a malformed one never does", () => {

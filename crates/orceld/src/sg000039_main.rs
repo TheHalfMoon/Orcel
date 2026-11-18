@@ -850,6 +850,7 @@ fn finish(
                 FailureCode::ApprovalDenied => "APPROVAL_DENIED",
                 FailureCode::ApprovalUnavailable => "APPROVAL_UNAVAILABLE",
                 FailureCode::TargetStale => "TARGET_STALE",
+                FailureCode::HumanVerificationRequired => "HUMAN_VERIFICATION_REQUIRED",
                 FailureCode::ProcessTimeout => "PROCESS_TIMEOUT",
                 FailureCode::ProcessTerminationUnverified => "PROCESS_TERMINATION_UNVERIFIED",
                 FailureCode::OutputLimit => "OUTPUT_LIMIT",
