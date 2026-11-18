@@ -164,6 +164,18 @@ pub(crate) enum FullAction {
     },
 }
 
+/// The longest node id a request may name (the MCP schema's bound).
+pub(crate) const MAX_NODE_ID_CHARS: usize = 64;
+
+/// Whether `id` is a node id as the MCP schema admits it.
+pub(crate) fn is_node_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_NODE_ID_CHARS
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 fn invalid(message: impl Into<String>) -> ProviderError {
     ProviderError::new(FailureCode::InvalidRequest, message)
 }
@@ -224,6 +236,17 @@ pub(crate) fn parse(request: &RequestEnvelope) -> Result<FullAction, ProviderErr
             .and_then(Value::as_u64)
             .ok_or_else(|| invalid(format!("{name} must be an unsigned integer")))
     };
+    // SG-000135 OB-05 review: a node id is what the MCP schema admits (1 to
+    // 64 of A-Z, a-z, 0-9, `_` and `-`), so a receipt's target stays bounded.
+    let node = || -> Result<String, ProviderError> {
+        let id = text("node_id")?;
+        if !is_node_id(&id) {
+            return Err(invalid(format!(
+                "node_id is 1 to {MAX_NODE_ID_CHARS} letters, digits, '_' or '-'"
+            )));
+        }
+        Ok(id)
+    };
     let session = || -> Result<String, ProviderError> {
         let id = text("session_id")?;
         browser_broker::parse_session_id(&id)?;
@@ -276,18 +299,18 @@ pub(crate) fn parse(request: &RequestEnvelope) -> Result<FullAction, ProviderErr
         },
         "click" => FullAction::Click {
             session: session()?,
-            node_id: text("node_id")?,
+            node_id: node()?,
             expected_generation: number("expected_generation")?,
         },
         "fill" => FullAction::Fill {
             session: session()?,
-            node_id: text("node_id")?,
+            node_id: node()?,
             value: text("value")?,
             expected_generation: number("expected_generation")?,
         },
         "select" => FullAction::Select {
             session: session()?,
-            node_id: text("node_id")?,
+            node_id: node()?,
             option: text("option")?,
             expected_generation: number("expected_generation")?,
         },
@@ -699,6 +722,30 @@ mod tests {
         Ok(())
     }
 
+    /// SG-000135 OB-05 review: a node id is bounded as the MCP schema bounds
+    /// it, at parse, before the live policy sees it (`bad node` included).
+    #[test]
+    fn ob05_node_ids_are_bounded_like_the_schema() {
+        for (id, ok) in [
+            ("n1", true),
+            ("a_b-C9", true),
+            (&*"n".repeat(64), true),
+            (&*"n".repeat(65), false),
+            ("", false),
+            ("n 1", false),
+            ("n/1", false),
+            ("bad node", false),
+            ("n\u{e9}", false),
+        ] {
+            assert_eq!(is_node_id(id), ok, "{id:?}");
+            let parsed = parse(&request(
+                "click",
+                json!({"session_id": SESSION, "node_id": id, "expected_generation": 1}),
+            ));
+            assert_eq!(parsed.is_ok(), ok, "{id:?}");
+        }
+    }
+
     #[test]
     fn unknown_fields_authority_fields_and_bad_types_are_refused() {
         for (operation, arguments) in [
@@ -859,10 +906,6 @@ mod tests {
             (
                 "fill",
                 json!({"session_id": SESSION, "node_id": "n1", "value": "a\u{202e}b", "expected_generation": 2}),
-            ),
-            (
-                "fill",
-                json!({"session_id": SESSION, "node_id": "bad node", "value": "a", "expected_generation": 2}),
             ),
             (
                 "select",

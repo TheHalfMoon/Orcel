@@ -997,7 +997,10 @@ mod full {
                 store.check_delete(name)?;
                 approve_profile_write(workspace, approval, false, name)?;
                 store.delete(name)?;
-                Ok(json!({"profile": name, "deleted": true}))
+                // SG-000135 OB-05 review: the profile's evidence files go
+                // with it (the receipts keep their digests on the chain).
+                let evidence_removed = broker.remove_profile_evidence(name);
+                Ok(json!({"profile": name, "deleted": true, "evidence_removed": evidence_removed}))
             }),
             FullAction::Close { session } => with_broker(|broker| {
                 broker.check_epoch(probe())?;
@@ -1267,8 +1270,8 @@ mod full {
             return Err(ProviderError::new(
                 FailureCode::InternalError,
                 format!(
-                    "the audit chain refused browser session receipt {} after the action ran ({}); its outcome is unrecorded (DISPATCHED_UNRECORDED) and its result is withheld: {error}",
-                    receipt.seq, receipt.disposition.result
+                    "the audit chain refused browser session receipt {} (result {}, effect {}): its intent is on the chain but its receipt is not, so its outcome is unrecorded (DISPATCHED_UNRECORDED) and the result is withheld: {error}",
+                    receipt.seq, receipt.disposition.result, receipt.disposition.effect
                 ),
             ));
         }

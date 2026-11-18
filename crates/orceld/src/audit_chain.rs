@@ -242,11 +242,19 @@ pub(crate) fn run_cli(args: &[String]) -> Option<i32> {
 }
 
 /// The chain report `text` with the receipt report under `receipts`, and
-/// the exit code: the chain's own when it does not verify, else
-/// [`crate::browser_receipts::EXIT_RECEIPTS_BROKEN`] when a receipt, intent
-/// or evidence file does not, else
-/// [`crate::browser_receipts::EXIT_RECEIPTS_UNRECORDED`] when an intent has
-/// no receipt.
+/// the exit code:
+///
+/// - the chain's own when it is broken or missing (4 or 5: nothing in it can
+///   be trusted);
+/// - else [`crate::browser_receipts::EXIT_RECEIPTS_BROKEN`] (9) when a
+///   receipt, intent or evidence file does not verify, also over a chain
+///   whose verdict is a torn tail, recovered, truncated or reset (3, 6, 7, 8);
+/// - else the chain's own when it is not intact;
+/// - else [`crate::browser_receipts::EXIT_RECEIPTS_UNRECORDED`] (10) when an
+///   intent has no receipt.
+///
+/// `--receipt` reports whether the receipt lies at or below the last event
+/// the authority service's held anchor covers (`last_verified_anchor_seq`).
 pub(crate) fn with_receipts(
     path: &std::path::Path,
     text: String,
@@ -255,15 +263,18 @@ pub(crate) fn with_receipts(
     only: Option<&str>,
 ) -> Result<(String, i32), String> {
     let store = evidence.map(crate::browser_receipts::EvidenceStore::at);
-    let report = crate::browser_receipts::verify_receipts(path, store.as_ref(), only)
-        .map_err(|error| format!("read {}: {error}", path.display()))?;
     let mut value: serde_json::Value =
         serde_json::from_str(&text).map_err(|error| format!("decode the report: {error}"))?;
+    let anchored_through = value["last_verified_anchor_seq"].as_u64();
+    let report =
+        crate::browser_receipts::verify_receipts(path, store.as_ref(), only, anchored_through)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
     if let serde_json::Value::Object(map) = &mut value {
         map.insert("receipts".into(), report.value);
     }
     let code = match code {
-        EXIT_INTACT if report.broken => crate::browser_receipts::EXIT_RECEIPTS_BROKEN,
+        EXIT_BROKEN | EXIT_MISSING => code,
+        _ if report.broken => crate::browser_receipts::EXIT_RECEIPTS_BROKEN,
         EXIT_INTACT if report.unrecorded => crate::browser_receipts::EXIT_RECEIPTS_UNRECORDED,
         other => other,
     };

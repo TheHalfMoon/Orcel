@@ -53,15 +53,17 @@ pub(crate) const SOURCE_RECEIPT: &str = "browser_receipt";
 /// `detail.source` of a session's start and end events.
 pub(crate) const SOURCE_SESSION: &str = "browser_session";
 /// Receipt fields its digest does not cover: the digest itself, where the
-/// receipt landed in the chain (known only after it is written) and the
-/// legacy flag.
-const RECEIPT_UNCOVERED: [&str; 3] = ["receipt_sha256", "audit", "provisional"];
+/// receipt landed in the chain and whether it did (known only after it is
+/// written), and the legacy flag.
+const RECEIPT_UNCOVERED: [&str; 4] = ["receipt_sha256", "audit", "recorded", "provisional"];
 /// Intent fields its digest does not cover.
 const INTENT_UNCOVERED: [&str; 2] = ["intent_sha256", "audit"];
 /// The largest evidence file kept (a masked screenshot is at most 2 MiB).
 pub(crate) const MAX_EVIDENCE_FILE_BYTES: usize = 4 * 1024 * 1024;
-/// The most evidence files kept; past it, receipts keep digests only.
+/// The most evidence files kept; past it, the oldest are pruned.
 pub(crate) const MAX_EVIDENCE_FILES: usize = 4096;
+/// The most evidence bytes kept; past it, the oldest files are pruned.
+pub(crate) const MAX_EVIDENCE_BYTES: u64 = 512 * 1024 * 1024;
 /// The most node targets remembered from one snapshot.
 const MAX_TARGETS: usize = 4096;
 
@@ -221,83 +223,195 @@ impl EvidenceKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EvidenceFile {
     pub kind: EvidenceKind,
+    /// Whose evidence it is: the ephemeral session's id (removed when the
+    /// session ends) or `p-<profile>` (removed with the persistent profile).
+    pub scope: String,
     pub sha256: String,
     pub bytes: u64,
-    /// Whether the file is in the evidence store (false past the store's
-    /// bounds or when it could not be written: the digest still binds it).
+    /// Whether the file is in the evidence store; the digest binds it either
+    /// way.
     pub stored: bool,
+    /// Why it was not stored: `too_large`, `no_store`, `quota`, `conflict`
+    /// or `write_failed`.
+    pub reason: Option<&'static str>,
 }
 
 impl EvidenceFile {
     pub(crate) fn to_json(&self) -> Value {
         json!({
             "kind": self.kind.as_str(),
+            "scope": self.scope,
             "sha256": self.sha256,
             "bytes": self.bytes,
             "stored": self.stored,
+            "reason": self.reason,
         })
+    }
+
+    /// A file named by digest only, never stored, and why.
+    pub(crate) fn digest_only(
+        kind: EvidenceKind,
+        scope: &str,
+        bytes: &[u8],
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            kind,
+            scope: scope.to_owned(),
+            sha256: sha256_hex(bytes),
+            bytes: bytes.len() as u64,
+            stored: false,
+            reason: Some(reason),
+        }
     }
 }
 
-/// orceld's content-addressed evidence files: `<sha256>.<json|png>` in one
-/// private directory (owner-only on Windows: created by
+/// One evidence file the store removed to stay within its bounds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PrunedFile {
+    pub scope: String,
+    pub kind: EvidenceKind,
+    pub sha256: String,
+}
+
+impl PrunedFile {
+    pub(crate) fn to_json(&self) -> Value {
+        json!({"scope": self.scope, "kind": self.kind.as_str(), "sha256": self.sha256})
+    }
+}
+
+/// Whether `scope` names an evidence owner: a broker session id (`bs-`) or
+/// a persistent profile (`p-`), lowercase letters, digits and hyphens only.
+pub(crate) fn is_scope(scope: &str) -> bool {
+    (scope.starts_with("bs-") || scope.starts_with("p-"))
+        && scope.len() <= 96
+        && scope
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// The evidence scope of a persistent profile.
+pub(crate) fn profile_scope(name: &str) -> String {
+    format!("p-{name}")
+}
+
+/// orceld's content-addressed evidence files, `<scope>/<sha256>.<json|png>`
+/// under one private directory (owner-only on Windows: created by
 /// `orcel_platform::paths::ensure_private_dir` in production), never
-/// following a link.
+/// following a link. An ephemeral session's folder is removed when the
+/// session ends and a persistent profile's with the profile. The store
+/// keeps at most [`MAX_EVIDENCE_BYTES`] and [`MAX_EVIDENCE_FILES`], pruning
+/// the oldest files first; each prune is reported so the chain records it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EvidenceStore {
     dir: PathBuf,
+    max_bytes: u64,
+    max_files: usize,
+}
+
+/// One file in the store, as a prune considers it.
+struct Kept {
+    path: PathBuf,
+    scope: String,
+    kind: EvidenceKind,
+    sha256: String,
+    bytes: u64,
+    modified: std::time::SystemTime,
 }
 
 impl EvidenceStore {
     /// The store at `dir`, created as a private directory (owner-only).
     pub(crate) fn open_private(dir: PathBuf) -> Option<Self> {
         orcel_platform::paths::ensure_private_dir(&dir).ok()?;
-        Some(Self { dir })
+        Some(Self::at(dir))
     }
 
     /// The store at `dir`, which must already be a real directory (tests
     /// and the verifier).
     pub(crate) fn at(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            max_bytes: MAX_EVIDENCE_BYTES,
+            max_files: MAX_EVIDENCE_FILES,
+        }
+    }
+
+    /// The same store with other bounds (tests).
+    #[cfg(test)]
+    pub(crate) fn bounded(mut self, max_bytes: u64, max_files: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self.max_files = max_files;
+        self
     }
 
     pub(crate) fn dir(&self) -> &Path {
         &self.dir
     }
 
-    fn path_of(&self, kind: EvidenceKind, sha256: &str) -> PathBuf {
-        self.dir.join(format!("{sha256}.{}", kind.extension()))
+    fn path_of(&self, scope: &str, kind: EvidenceKind, sha256: &str) -> PathBuf {
+        self.dir
+            .join(scope)
+            .join(format!("{sha256}.{}", kind.extension()))
     }
 
-    /// Keep `bytes` as evidence of `kind`. Never fails: a file that cannot
-    /// be kept is named by its digest with `stored: false`.
-    pub(crate) fn put(&self, kind: EvidenceKind, bytes: &[u8]) -> EvidenceFile {
-        let sha256 = sha256_hex(bytes);
-        let mut file = EvidenceFile {
-            kind,
-            sha256: sha256.clone(),
-            bytes: bytes.len() as u64,
-            stored: false,
-        };
-        if bytes.len() > MAX_EVIDENCE_FILE_BYTES || !self.real_dir() {
-            return file;
+    /// Keep `bytes` as evidence of `kind` for `scope`, and the files pruned
+    /// to make room. Never fails: a file that cannot be kept is named by its
+    /// digest with `stored: false` and the reason.
+    pub(crate) fn put(
+        &self,
+        scope: &str,
+        kind: EvidenceKind,
+        bytes: &[u8],
+    ) -> (EvidenceFile, Vec<PrunedFile>) {
+        let digest_only = |reason| EvidenceFile::digest_only(kind, scope, bytes, reason);
+        if !is_scope(scope) {
+            return (digest_only("no_store"), Vec::new());
         }
-        let path = self.path_of(kind, &sha256);
+        if bytes.len() > MAX_EVIDENCE_FILE_BYTES || bytes.len() as u64 > self.max_bytes {
+            return (digest_only("too_large"), Vec::new());
+        }
+        if !real_dir(&self.dir) {
+            return (digest_only("no_store"), Vec::new());
+        }
+        let mut file = digest_only("write_failed");
+        file.reason = None;
+        let path = self.path_of(scope, kind, &file.sha256);
         match read_regular(&path) {
             // The same content is already kept (content-addressed).
-            Some(Ok(existing)) => {
-                file.stored = sha256_hex(&existing) == sha256;
-                return file;
+            Some(Ok(existing)) if sha256_hex(&existing) == file.sha256 => {
+                file.stored = true;
+                return (file, Vec::new());
             }
-            // Something that is not a readable regular file is at the name.
-            Some(Err(())) => return file,
+            // Something else is at the name: it is never adopted.
+            Some(_) => {
+                file.reason = Some("conflict");
+                return (file, Vec::new());
+            }
             None => {}
         }
-        if self.count() >= MAX_EVIDENCE_FILES {
-            return file;
+        let pruned = self.make_room(bytes.len() as u64);
+        let folder = self.dir.join(scope);
+        let folder_ok = match std::fs::symlink_metadata(&folder) {
+            Ok(metadata) => metadata.is_dir() && !crate::browser_broker::is_reparse(&metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&folder).is_ok() && real_dir(&folder)
+            }
+            Err(_) => false,
+        };
+        let fits = self.usage().is_some_and(|(total, count)| {
+            total + bytes.len() as u64 <= self.max_bytes && count < self.max_files
+        });
+        if !folder_ok {
+            file.reason = Some("no_store");
+            return (file, pruned);
         }
-        let temp = self.dir.join(format!(
-            ".{sha256}.{}.{}.tmp",
+        if !fits {
+            file.reason = Some("quota");
+            return (file, pruned);
+        }
+        let temp = folder.join(format!(
+            ".{}.{}.{}.tmp",
+            file.sha256,
             std::process::id(),
             now_nanos()
         ));
@@ -312,39 +426,115 @@ impl EvidenceStore {
             .and_then(|()| std::fs::rename(&temp, &path));
         if written.is_err() {
             let _ = std::fs::remove_file(&temp);
+            file.reason = Some("write_failed");
         }
         file.stored = written.is_ok();
-        file
+        (file, pruned)
     }
 
-    fn real_dir(&self) -> bool {
-        matches!(
-            std::fs::symlink_metadata(&self.dir),
-            Ok(metadata) if metadata.is_dir() && !crate::browser_broker::is_reparse(&metadata)
-        )
+    /// Every evidence file kept, by scope folder (links and odd names are
+    /// skipped, never followed).
+    fn kept(&self) -> Option<Vec<Kept>> {
+        let mut kept = Vec::new();
+        for scope in std::fs::read_dir(&self.dir).ok()?.flatten() {
+            let name = scope.file_name().to_string_lossy().into_owned();
+            if !is_scope(&name) || !real_dir(&scope.path()) {
+                continue;
+            }
+            for entry in std::fs::read_dir(scope.path()).ok()?.flatten() {
+                let file_name = entry.file_name().to_string_lossy().into_owned();
+                let Some((sha256, extension)) = file_name.split_once('.') else {
+                    continue;
+                };
+                let kind = match extension {
+                    "json" => EvidenceKind::Snapshot,
+                    "png" => EvidenceKind::Screenshot,
+                    _ => continue,
+                };
+                let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
+                    continue;
+                };
+                if !is_sha256(sha256)
+                    || !metadata.is_file()
+                    || crate::browser_broker::is_reparse(&metadata)
+                {
+                    continue;
+                }
+                kept.push(Kept {
+                    path: entry.path(),
+                    scope: name.clone(),
+                    kind,
+                    sha256: sha256.to_owned(),
+                    bytes: metadata.len(),
+                    modified: metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
+                });
+            }
+        }
+        Some(kept)
     }
 
-    fn count(&self) -> usize {
-        std::fs::read_dir(&self.dir)
-            .map(|entries| entries.count())
-            .unwrap_or(usize::MAX)
+    /// Total bytes and count of the files kept.
+    fn usage(&self) -> Option<(u64, usize)> {
+        let kept = self.kept()?;
+        Some((kept.iter().map(|file| file.bytes).sum(), kept.len()))
     }
 
-    /// What is at the evidence file `kind`/`sha256` now.
-    pub(crate) fn check(&self, kind: &str, sha256: &str) -> EvidenceCheck {
+    /// Remove the oldest files until `incoming` more bytes and one more file
+    /// fit; the files removed.
+    fn make_room(&self, incoming: u64) -> Vec<PrunedFile> {
+        let Some(mut kept) = self.kept() else {
+            return Vec::new();
+        };
+        kept.sort_by_key(|file| (file.modified, file.path.clone()));
+        let mut total: u64 = kept.iter().map(|file| file.bytes).sum();
+        let mut count = kept.len();
+        let mut pruned = Vec::new();
+        for file in kept {
+            if total + incoming <= self.max_bytes && count < self.max_files {
+                break;
+            }
+            if std::fs::remove_file(&file.path).is_ok() {
+                total = total.saturating_sub(file.bytes);
+                count -= 1;
+                pruned.push(PrunedFile {
+                    scope: file.scope,
+                    kind: file.kind,
+                    sha256: file.sha256,
+                });
+            }
+        }
+        pruned
+    }
+
+    /// Remove every evidence file of `scope` (an ephemeral session that
+    /// ended, a deleted profile). True when nothing of it is left.
+    pub(crate) fn remove_scope(&self, scope: &str) -> bool {
+        is_scope(scope) && crate::browser_broker::remove_tree(&self.dir.join(scope))
+    }
+
+    /// What is at the evidence file `scope`/`kind`/`sha256` now.
+    pub(crate) fn check(&self, scope: &str, kind: &str, sha256: &str) -> EvidenceCheck {
         let Some(kind) = EvidenceKind::parse(kind) else {
             return EvidenceCheck::Malformed;
         };
-        if !is_sha256(sha256) {
+        if !is_sha256(sha256) || !is_scope(scope) {
             return EvidenceCheck::Malformed;
         }
-        match read_regular(&self.path_of(kind, sha256)) {
+        match read_regular(&self.path_of(scope, kind, sha256)) {
             None => EvidenceCheck::Missing,
             Some(Err(())) => EvidenceCheck::Unreadable,
             Some(Ok(bytes)) if sha256_hex(&bytes) == sha256 => EvidenceCheck::Intact,
             Some(Ok(_)) => EvidenceCheck::Mismatch,
         }
     }
+}
+
+/// Whether `dir` is a real directory (not a link or junction).
+fn real_dir(dir: &Path) -> bool {
+    matches!(
+        std::fs::symlink_metadata(dir),
+        Ok(metadata) if metadata.is_dir() && !crate::browser_broker::is_reparse(&metadata)
+    )
 }
 
 /// The bytes of the regular file at `path`: `None` when nothing is there,
@@ -554,10 +744,12 @@ impl Intent {
     }
 }
 
-/// Exit codes `orceld audit-verify --receipts` adds when the chain itself
-/// verifies: a receipt, intent or evidence file does not verify.
+/// Exit code `orceld audit-verify --receipts` gives when a receipt, intent
+/// or evidence file does not verify (unless the chain itself is broken or
+/// missing, whose code wins).
 pub(crate) const EXIT_RECEIPTS_BROKEN: i32 = 9;
-/// ...or every receipt verifies but some intent has no receipt.
+/// ...or, with the chain intact, every receipt verifies but some intent has
+/// no receipt.
 pub(crate) const EXIT_RECEIPTS_UNRECORDED: i32 = 10;
 
 /// What the receipt verifier found.
@@ -577,13 +769,51 @@ struct OpenIntent {
     at_ms: u64,
 }
 
+/// What the verifier knows of one session while it reads the chain.
+#[derive(Default)]
+struct SessionSeen {
+    /// Its `session_start` is in this file.
+    started: bool,
+    /// Its `session_end` is in this file (the event's seq).
+    ended: Option<u64>,
+    /// The highest intent seq seen.
+    last_intent: u64,
+    /// The receipt chain head.
+    head: String,
+    /// An OB-05 intent or receipt of the session was seen.
+    ob05: bool,
+}
+
+/// One evidence file a receipt names, checked once the whole file is read
+/// (a later event may say it was pruned or its scope removed).
+struct NamedFile {
+    event_seq: u64,
+    session: String,
+    seq: u64,
+    scope: String,
+    kind: String,
+    sha256: String,
+    stored: bool,
+    reason: Option<String>,
+}
+
 /// Verify every browser intent and receipt in the chain file at `chain`:
-/// each digest recomputes from its fields, each receipt names the intent
-/// written before it (same session, seq and action, the intent's digest and
-/// its place in the chain), each session's receipts chain by digest, and
-/// every stored evidence file in `evidence` hashes to its name. Intents
-/// with no receipt are listed as `dispatched_unrecorded`. With `only`, the
-/// report also says whether the receipt with that digest is in the file.
+///
+/// - each digest recomputes from its fields, and each receipt's result,
+///   effect and needs-person words follow from its outcome and code;
+/// - each receipt names the intent written before it (same session, seq and
+///   action, the intent's digest and its place in the chain);
+/// - each session's intents are numbered in order with no repeat (and no gap
+///   once its start is in the file), and its receipts chain by digest;
+/// - a session's end names its last receipt and its count of actions, and
+///   nothing of the session follows its end;
+/// - every stored evidence file in `evidence` hashes to its name, unless the
+///   chain records it pruned or its scope removed.
+///
+/// Intents with no receipt are listed as `dispatched_unrecorded`. With
+/// `only`, the report also says whether the receipt with that digest is in
+/// the file and whether it lies at or below `anchored_through`, the last
+/// event the authority service's held anchor covers.
 ///
 /// This checks receipts, not the chain: the chain's own digests and anchors
 /// are `orcel_audit::verify_with_holder`'s.
@@ -591,19 +821,26 @@ pub(crate) fn verify_receipts(
     chain: &Path,
     evidence: Option<&EvidenceStore>,
     only: Option<&str>,
+    anchored_through: Option<u64>,
 ) -> Result<ReceiptReport, String> {
     let text = std::fs::read_to_string(chain).map_err(|error| error.to_string())?;
     let mut intents = 0u64;
     let mut receipts = 0u64;
     let mut legacy = 0u64;
     let mut digest_errors = Vec::new();
-    let mut link_errors = Vec::new();
+    let mut link_errors: Vec<Value> = Vec::new();
     let mut open: BTreeMap<(String, u64), OpenIntent> = BTreeMap::new();
-    let mut heads: BTreeMap<String, String> = BTreeMap::new();
-    let mut evidence_checked = 0u64;
-    let mut evidence_not_stored = 0u64;
-    let mut evidence_errors = Vec::new();
+    let mut seen_intents: std::collections::BTreeSet<(String, u64)> = Default::default();
+    let mut sessions: BTreeMap<String, SessionSeen> = BTreeMap::new();
+    let mut named: Vec<NamedFile> = Vec::new();
+    let mut pruned: std::collections::BTreeSet<(String, String)> = Default::default();
+    let mut removed: std::collections::BTreeSet<String> = Default::default();
     let mut found: Option<Value> = None;
+    let mut link = |event_seq: u64, session: &str, seq: u64, reason: &str| {
+        link_errors.push(json!({
+            "event_seq": event_seq, "session_id": session, "seq": seq, "reason": reason,
+        }));
+    };
     for line in text.lines() {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -612,6 +849,58 @@ pub(crate) fn verify_receipts(
         let event_digest = event["digest"].as_str().unwrap_or_default().to_owned();
         let detail = &event["detail"];
         match detail["source"].as_str() {
+            Some(SOURCE_SESSION) => {
+                let session = detail["session_id"].as_str().unwrap_or_default().to_owned();
+                match detail["event"].as_str() {
+                    Some("session_start") => {
+                        let state = sessions.entry(session.clone()).or_default();
+                        if state.started || state.ob05 {
+                            link(
+                                event_seq,
+                                &session,
+                                0,
+                                "the session starts twice or after its actions",
+                            );
+                        }
+                        state.started = true;
+                    }
+                    Some("session_end") => {
+                        let state = sessions.entry(session.clone()).or_default();
+                        if state.ended.is_some() {
+                            link(event_seq, &session, 0, "the session ends twice");
+                        }
+                        if detail["actions_recorded"].as_u64() != Some(state.last_intent) {
+                            link(event_seq, &session, state.last_intent, "the session's end counts another number of actions than its intents");
+                        }
+                        if detail["last_receipt_sha256"].as_str() != Some(state.head.as_str()) {
+                            link(
+                                event_seq,
+                                &session,
+                                state.last_intent,
+                                "the session's end names another last receipt",
+                            );
+                        }
+                        state.ended = Some(event_seq);
+                        if detail["evidence_removed"] == Value::Bool(true) {
+                            removed.insert(session.clone());
+                        }
+                    }
+                    Some("profile_evidence_removed") => {
+                        if let Some(profile) = detail["profile"].as_str() {
+                            removed.insert(profile_scope(profile));
+                        }
+                    }
+                    Some("evidence_pruned") => {
+                        for file in detail["files"].as_array().into_iter().flatten() {
+                            pruned.insert((
+                                file["scope"].as_str().unwrap_or_default().to_owned(),
+                                file["sha256"].as_str().unwrap_or_default().to_owned(),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
             Some(SOURCE_INTENT) => {
                 intents += 1;
                 let intent = &detail["intent"];
@@ -623,12 +912,41 @@ pub(crate) fn verify_receipts(
                         "event_seq": event_seq, "kind": "intent", "session_id": session, "seq": seq,
                     }));
                 }
-                let head = heads.get(&session).cloned().unwrap_or_default();
-                if intent["previous_receipt_sha256"].as_str() != Some(head.as_str()) {
-                    link_errors.push(json!({
-                        "event_seq": event_seq, "session_id": session, "seq": seq,
-                        "reason": "the intent does not follow the session's last receipt",
-                    }));
+                let state = sessions.entry(session.clone()).or_default();
+                state.ob05 = true;
+                if state.ended.is_some() {
+                    link(
+                        event_seq,
+                        &session,
+                        seq,
+                        "an intent follows the session's end",
+                    );
+                }
+                if !seen_intents.insert((session.clone(), seq)) {
+                    link(
+                        event_seq,
+                        &session,
+                        seq,
+                        "a second intent with the same seq",
+                    );
+                } else if (state.started && seq != state.last_intent + 1)
+                    || seq <= state.last_intent
+                {
+                    link(
+                        event_seq,
+                        &session,
+                        seq,
+                        "the intent is out of order or leaves a gap",
+                    );
+                }
+                state.last_intent = state.last_intent.max(seq);
+                if intent["previous_receipt_sha256"].as_str() != Some(state.head.as_str()) {
+                    link(
+                        event_seq,
+                        &session,
+                        seq,
+                        "the intent does not follow the session's last receipt",
+                    );
                 }
                 open.insert(
                     (session, seq),
@@ -643,18 +961,30 @@ pub(crate) fn verify_receipts(
             }
             Some(SOURCE_RECEIPT) => {
                 let receipt = &detail["receipt"];
-                if receipt["contract"].as_str() != Some(RECEIPT_CONTRACT) {
-                    // Written before OB-05 (provisional, another digest
-                    // scheme): covered by the chain's digests only.
-                    legacy += 1;
-                    continue;
-                }
-                receipts += 1;
                 let session = receipt["session_id"]
                     .as_str()
                     .unwrap_or_default()
                     .to_owned();
                 let seq = receipt["seq"].as_u64().unwrap_or(0);
+                let state = sessions.entry(session.clone()).or_default();
+                if receipt["contract"].as_str() != Some(RECEIPT_CONTRACT) {
+                    // Written before OB-05 (provisional, another digest
+                    // scheme): covered by the chain's digests only, and
+                    // never inside a session that has OB-05 records.
+                    if state.ob05 || state.started {
+                        link(
+                            event_seq,
+                            &session,
+                            seq,
+                            "a receipt without the OB-05 contract in an OB-05 session",
+                        );
+                    } else {
+                        legacy += 1;
+                    }
+                    continue;
+                }
+                receipts += 1;
+                state.ob05 = true;
                 let claimed = receipt["receipt_sha256"].as_str().unwrap_or_default();
                 let digest_ok = receipt_digest_of(receipt).as_deref() == Some(claimed);
                 if !digest_ok {
@@ -662,59 +992,75 @@ pub(crate) fn verify_receipts(
                         "event_seq": event_seq, "kind": "receipt", "session_id": session, "seq": seq,
                     }));
                 }
-                let mut link = Vec::new();
-                let head = heads.get(&session).cloned().unwrap_or_default();
-                if receipt["previous_sha256"].as_str() != Some(head.as_str()) {
-                    link.push("the receipt does not follow the session's last receipt");
+                let mut problems: Vec<&str> = Vec::new();
+                if state.ended.is_some() {
+                    problems.push("a receipt follows the session's end");
+                }
+                if receipt["previous_sha256"].as_str() != Some(state.head.as_str()) {
+                    problems.push("the receipt does not follow the session's last receipt");
+                }
+                let words = disposition(
+                    receipt["outcome"].as_str().unwrap_or_default(),
+                    receipt["failure_code"].as_str(),
+                    receipt["result"].as_str() == Some("superseded"),
+                );
+                if receipt["result"].as_str() != Some(words.result)
+                    || receipt["effect"].as_str() != Some(words.effect)
+                    || receipt["needs_person"].as_bool() != Some(words.needs_person)
+                {
+                    problems.push("the receipt's result, effect or needs_person does not follow from its outcome");
                 }
                 match open.remove(&(session.clone(), seq)) {
                     Some(intent) => {
                         if receipt["intent_sha256"].as_str() != Some(intent.intent_sha256.as_str())
                         {
-                            link.push("the receipt names another intent digest");
+                            problems.push("the receipt names another intent digest");
                         }
                         if receipt["action"].as_str() != Some(intent.action.as_str()) {
-                            link.push("the receipt's action is not its intent's");
+                            problems.push("the receipt's action is not its intent's");
                         }
                         let place = &receipt["intent_audit"];
-                        if !place.is_null()
-                            && (place["seq"].as_u64() != Some(intent.event_seq)
-                                || place["digest"].as_str() != Some(intent.event_digest.as_str()))
+                        if place["seq"].as_u64() != Some(intent.event_seq)
+                            || place["digest"].as_str() != Some(intent.event_digest.as_str())
                         {
-                            link.push("the receipt names another place for its intent");
+                            problems.push(
+                                "the receipt names no place, or another place, for its intent",
+                            );
                         }
                     }
-                    None => link.push("no intent was written before the receipt"),
+                    None => problems.push("no intent was written before the receipt"),
                 }
-                for reason in &link {
-                    link_errors.push(json!({
-                        "event_seq": event_seq, "session_id": session, "seq": seq, "reason": reason,
-                    }));
+                for reason in &problems {
+                    link(event_seq, &session, seq, reason);
                 }
-                let mut files = Vec::new();
                 for file in receipt["evidence_files"].as_array().into_iter().flatten() {
-                    let kind = file["kind"].as_str().unwrap_or_default();
-                    let sha256 = file["sha256"].as_str().unwrap_or_default();
-                    if file["stored"] != Value::Bool(true) {
-                        evidence_not_stored += 1;
-                        files.push(json!({"kind": kind, "sha256": sha256, "check": "not_stored"}));
-                        continue;
-                    }
-                    let Some(store) = evidence else {
-                        files.push(json!({"kind": kind, "sha256": sha256, "check": "not_checked"}));
-                        continue;
-                    };
-                    evidence_checked += 1;
-                    let check = store.check(kind, sha256);
-                    if check != EvidenceCheck::Intact {
-                        evidence_errors.push(json!({
-                            "event_seq": event_seq, "session_id": session, "seq": seq,
-                            "kind": kind, "sha256": sha256, "check": check.as_str(),
-                        }));
-                    }
-                    files.push(json!({"kind": kind, "sha256": sha256, "check": check.as_str()}));
+                    named.push(NamedFile {
+                        event_seq,
+                        session: session.clone(),
+                        seq,
+                        scope: file["scope"].as_str().unwrap_or_default().to_owned(),
+                        kind: file["kind"].as_str().unwrap_or_default().to_owned(),
+                        sha256: file["sha256"].as_str().unwrap_or_default().to_owned(),
+                        stored: file["stored"] == Value::Bool(true),
+                        reason: file["reason"].as_str().map(str::to_owned),
+                    });
                 }
                 if only == Some(claimed) {
+                    let anchoring = match anchored_through {
+                        Some(through) if event_seq <= through => json!({
+                            "state": "anchored",
+                            "note": "at or below the last event the authority service's held anchor covers",
+                        }),
+                        Some(through) => json!({
+                            "state": "unanchored_tail",
+                            "anchored_through": through,
+                            "note": "after the last held anchor (anchors come every 32 events): up to 31 events here are protected by the chain's digests only, which anyone who can write orceld's state folder could recompute",
+                        }),
+                        None => json!({
+                            "state": "unanchored",
+                            "note": "the authority service holds no anchor of this chain (without the installed service there are no anchors at all): the receipt is protected by the chain's digests only, which anyone who can write orceld's state folder could recompute",
+                        }),
+                    };
                     found = Some(json!({
                         "found": true,
                         "event_seq": event_seq,
@@ -724,14 +1070,69 @@ pub(crate) fn verify_receipts(
                         "action": receipt["action"],
                         "result": receipt["result"],
                         "digest_recomputes": digest_ok,
-                        "link_errors": link,
-                        "evidence": files,
+                        "link_errors": problems,
+                        "anchoring": anchoring,
                     }));
                 }
-                heads.insert(session, claimed.to_owned());
+                if let Some(state) = sessions.get_mut(&session) {
+                    state.head = claimed.to_owned();
+                }
             }
             _ => {}
         }
+    }
+    // Evidence files, now that every prune and removal is known.
+    let mut evidence_checked = 0u64;
+    let mut not_stored = 0u64;
+    let mut pruned_count = 0u64;
+    let mut removed_count = 0u64;
+    let mut evidence_errors = Vec::new();
+    let mut found_files = Vec::new();
+    for file in &named {
+        let check = if !file.stored {
+            not_stored += 1;
+            "not_stored"
+        } else {
+            match evidence {
+                None => "not_checked",
+                Some(store) => {
+                    evidence_checked += 1;
+                    match store.check(&file.scope, &file.kind, &file.sha256) {
+                        EvidenceCheck::Intact => "intact",
+                        EvidenceCheck::Missing
+                            if pruned.contains(&(file.scope.clone(), file.sha256.clone())) =>
+                        {
+                            pruned_count += 1;
+                            "pruned"
+                        }
+                        EvidenceCheck::Missing if removed.contains(&file.scope) => {
+                            removed_count += 1;
+                            "removed"
+                        }
+                        other => {
+                            evidence_errors.push(json!({
+                                "event_seq": file.event_seq, "session_id": file.session, "seq": file.seq,
+                                "scope": file.scope, "kind": file.kind, "sha256": file.sha256,
+                                "check": other.as_str(),
+                            }));
+                            other.as_str()
+                        }
+                    }
+                }
+            }
+        };
+        if found
+            .as_ref()
+            .is_some_and(|found| found["event_seq"].as_u64() == Some(file.event_seq))
+        {
+            found_files.push(json!({
+                "scope": file.scope, "kind": file.kind, "sha256": file.sha256,
+                "check": check, "reason": file.reason,
+            }));
+        }
+    }
+    if let Some(Value::Object(map)) = found.as_mut() {
+        map.insert("evidence".into(), Value::Array(found_files));
     }
     let unrecorded: Vec<Value> = open
         .iter()
@@ -770,7 +1171,7 @@ pub(crate) fn verify_receipts(
     value.insert("intents".into(), json!(intents));
     value.insert("receipts".into(), json!(receipts));
     value.insert("legacy_receipts".into(), json!(legacy));
-    value.insert("sessions".into(), json!(heads.len()));
+    value.insert("sessions".into(), json!(sessions.len()));
     value.insert("digest_errors".into(), Value::Array(digest_errors));
     value.insert("link_errors".into(), Value::Array(link_errors));
     value.insert("dispatched_unrecorded".into(), Value::Array(unrecorded));
@@ -779,7 +1180,9 @@ pub(crate) fn verify_receipts(
         json!({
             "dir": evidence.map(|store| store.dir().display().to_string()),
             "checked": evidence_checked,
-            "not_stored": evidence_not_stored,
+            "not_stored": not_stored,
+            "pruned": pruned_count,
+            "removed": removed_count,
             "errors": evidence_errors,
         }),
     );
@@ -791,7 +1194,7 @@ pub(crate) fn verify_receipts(
     }
     value.insert(
         "note".into(),
-        json!("receipts and intents are checked here; the chain's own digests, links and anchors are in the report above. dispatched_unrecorded lists actions whose intent was written but whose outcome was not (orceld stopped, or the chain refused the receipt): the action may have run."),
+        json!("receipts and intents are checked here; the chain's own digests, links and anchors are in the report above. dispatched_unrecorded lists actions whose intent was written but whose outcome was not (orceld stopped, or the chain refused the receipt): the action may have run. Events after the last anchor the authority service holds (and every event, without the installed service) are protected by digests only: a writer of orceld's state folder could append or rewrite them consistently. A forged receipt appended after a session's end is found; one inside an unanchored tail is not."),
     );
     Ok(ReceiptReport {
         value: Value::Object(value),
@@ -919,59 +1322,130 @@ mod tests {
         assert_eq!(receipt_digest_of(&json!([])), None);
     }
 
-    #[test]
-    fn ob05_the_evidence_store_is_content_addressed_and_detects_tampering() -> Result<(), String> {
+    fn sandbox(label: &str) -> Result<PathBuf, String> {
         let dir = std::env::temp_dir().join(format!(
-            "orceld-ob05-evidence-{}-{}",
+            "orceld-ob05-{label}-{}-{}",
             std::process::id(),
             now_nanos()
         ));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        Ok(dir)
+    }
+
+    const SCOPE: &str = "bs-0123456789abcdef-1-0001020304050607";
+
+    #[test]
+    fn ob05_the_evidence_store_is_content_addressed_and_detects_tampering() -> Result<(), String> {
+        let dir = sandbox("evidence")?;
         let store = EvidenceStore::at(dir.clone());
-        let shot = store.put(EvidenceKind::Screenshot, b"\x89PNG fake image bytes");
-        assert!(shot.stored);
+        let (shot, pruned) =
+            store.put(SCOPE, EvidenceKind::Screenshot, b"\x89PNG fake image bytes");
+        assert!(shot.stored && shot.reason.is_none() && pruned.is_empty());
         assert_eq!(shot.sha256, sha256_hex(b"\x89PNG fake image bytes"));
+        assert_eq!(shot.to_json()["scope"], SCOPE);
         assert_eq!(
-            store.check("screenshot", &shot.sha256),
+            store.check(SCOPE, "screenshot", &shot.sha256),
             EvidenceCheck::Intact
         );
         // The same bytes again: one file.
         assert!(
             store
-                .put(EvidenceKind::Screenshot, b"\x89PNG fake image bytes")
+                .put(SCOPE, EvidenceKind::Screenshot, b"\x89PNG fake image bytes")
+                .0
                 .stored
         );
-        let files = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.count();
+        let files = std::fs::read_dir(dir.join(SCOPE))
+            .map_err(|e| e.to_string())?
+            .count();
         assert_eq!(files, 1);
-        let path = dir.join(format!("{}.png", shot.sha256));
+        let path = dir.join(SCOPE).join(format!("{}.png", shot.sha256));
         std::fs::write(&path, b"edited").map_err(|e| e.to_string())?;
         assert_eq!(
-            store.check("screenshot", &shot.sha256),
+            store.check(SCOPE, "screenshot", &shot.sha256),
             EvidenceCheck::Mismatch
         );
         // A tampered file is never adopted as the evidence it claims.
-        assert!(
-            !store
-                .put(EvidenceKind::Screenshot, b"\x89PNG fake image bytes")
-                .stored
-        );
+        let (again, _) = store.put(SCOPE, EvidenceKind::Screenshot, b"\x89PNG fake image bytes");
+        assert!(!again.stored);
+        assert_eq!(again.reason, Some("conflict"));
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         assert_eq!(
-            store.check("screenshot", &shot.sha256),
+            store.check(SCOPE, "screenshot", &shot.sha256),
             EvidenceCheck::Missing
         );
-        assert_eq!(store.check("screenshot", "../x"), EvidenceCheck::Malformed);
         assert_eq!(
-            store.check("cookies", &shot.sha256),
+            store.check(SCOPE, "screenshot", "../x"),
+            EvidenceCheck::Malformed
+        );
+        assert_eq!(
+            store.check("..", "screenshot", &shot.sha256),
+            EvidenceCheck::Malformed
+        );
+        assert_eq!(
+            store.check(SCOPE, "cookies", &shot.sha256),
             EvidenceCheck::Malformed
         );
         let large = vec![0u8; MAX_EVIDENCE_FILE_BYTES + 1];
-        let kept = store.put(EvidenceKind::Snapshot, &large);
-        assert!(!kept.stored, "past the bound, the digest only");
+        let (kept, _) = store.put(SCOPE, EvidenceKind::Snapshot, &large);
+        assert_eq!((kept.stored, kept.reason), (false, Some("too_large")));
         assert_eq!(kept.sha256, sha256_hex(&large));
-        // A store whose directory is gone keeps nothing and never fails.
+        // A bad scope or a store whose folder is gone keeps nothing and says so.
+        assert_eq!(
+            store.put("../up", EvidenceKind::Snapshot, b"{}").0.reason,
+            Some("no_store")
+        );
         let gone = EvidenceStore::at(dir.join("absent"));
-        assert!(!gone.put(EvidenceKind::Snapshot, b"{}").stored);
+        assert_eq!(
+            gone.put(SCOPE, EvidenceKind::Snapshot, b"{}").0.reason,
+            Some("no_store")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    /// SG-000135 OB-05 review: the store keeps a byte quota and a file cap,
+    /// pruning the oldest files first and naming each; a scope is removed as
+    /// a whole.
+    #[test]
+    fn ob05_the_evidence_store_prunes_the_oldest_and_removes_a_scope() -> Result<(), String> {
+        let dir = sandbox("quota")?;
+        let store = EvidenceStore::at(dir.clone()).bounded(10, 2);
+        let other = "p-work";
+        let (a, _) = store.put(SCOPE, EvidenceKind::Snapshot, b"aaaa");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let (b, _) = store.put(other, EvidenceKind::Snapshot, b"bbbb");
+        assert!(a.stored && b.stored);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        // A third file passes the cap of 2: the oldest goes, and is named.
+        let (c, pruned) = store.put(SCOPE, EvidenceKind::Snapshot, b"cccc");
+        assert!(c.stored);
+        assert_eq!(
+            pruned,
+            vec![PrunedFile {
+                scope: SCOPE.to_owned(),
+                kind: EvidenceKind::Snapshot,
+                sha256: a.sha256.clone()
+            }]
+        );
+        assert_eq!(
+            store.check(SCOPE, "snapshot", &a.sha256),
+            EvidenceCheck::Missing
+        );
+        // Larger than the quota itself: never stored.
+        let (big, _) = store.put(SCOPE, EvidenceKind::Snapshot, b"0123456789a");
+        assert_eq!(big.reason, Some("too_large"));
+        // A whole scope goes at once; the other stays.
+        assert!(store.remove_scope(SCOPE));
+        assert_eq!(
+            store.check(SCOPE, "snapshot", &c.sha256),
+            EvidenceCheck::Missing
+        );
+        assert_eq!(
+            store.check(other, "snapshot", &b.sha256),
+            EvidenceCheck::Intact
+        );
+        assert!(!store.remove_scope(".."));
+        assert!(is_scope(&profile_scope("work")));
         let _ = std::fs::remove_dir_all(dir);
         Ok(())
     }

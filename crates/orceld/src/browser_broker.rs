@@ -57,7 +57,8 @@
 pub(crate) use crate::browser_receipts::ReceiptAudit;
 use crate::browser_receipts::{
     disposition, receipt_digest_of, Disposition, EvidenceFile, EvidenceKind, EvidenceStore, Intent,
-    IntentDraft, PreEvidence, ReceiptTarget, RECEIPT_CONTRACT, SOURCE_RECEIPT, SOURCE_SESSION,
+    IntentDraft, PreEvidence, PrunedFile, ReceiptTarget, RECEIPT_CONTRACT, SOURCE_RECEIPT,
+    SOURCE_SESSION,
 };
 use orcel_contracts::FailureCode;
 use orcel_provider_fs::ProviderError;
@@ -489,6 +490,9 @@ impl Receipt {
             "previous_sha256": self.previous_sha256,
             "receipt_sha256": self.receipt_sha256,
             "provisional": false,
+            // SG-000135 OB-05 review: a receipt the chain refused is not on
+            // record; its intent stays open (DISPATCHED_UNRECORDED).
+            "recorded": !matches!(self.audit, ReceiptAudit::Failed(_)),
             "audit": self.audit.to_json(),
         })
     }
@@ -500,6 +504,7 @@ impl Receipt {
         let mut receipt = self.to_json();
         if let Value::Object(map) = &mut receipt {
             map.remove("audit");
+            map.remove("recorded");
         }
         orcel_audit::EventDraft {
             principal_id: Some(client.to_owned()),
@@ -725,7 +730,11 @@ impl<W> BrokerSession<W> {
             self.latency_total_ms = self.latency_total_ms.saturating_add(latency);
             self.latency_max_ms = self.latency_max_ms.max(latency);
         }
-        self.last_receipt_sha256 = receipt.receipt_sha256.clone();
+        // SG-000135 OB-05 review: only a receipt on record moves the session's
+        // head, so the next intent follows the chain as written.
+        if !matches!(receipt.audit, ReceiptAudit::Failed(_)) {
+            self.last_receipt_sha256 = receipt.receipt_sha256.clone();
+        }
         if self.receipts.len() >= self.receipts_budget {
             self.receipts.pop_front();
             self.receipts_dropped += 1;
@@ -738,14 +747,31 @@ impl<W> BrokerSession<W> {
     /// in the private evidence store). Without a store the receipt names the
     /// digest with `stored: false`.
     pub(crate) fn keep_evidence(&self, kind: EvidenceKind, bytes: &[u8]) -> EvidenceFile {
-        match &self.evidence {
-            Some(store) => store.put(kind, bytes),
-            None => EvidenceFile {
-                kind,
-                sha256: crate::browser_receipts::sha256_hex(bytes),
-                bytes: bytes.len() as u64,
-                stored: false,
-            },
+        let scope = self.evidence_scope();
+        let Some(store) = &self.evidence else {
+            return EvidenceFile::digest_only(kind, &scope, bytes, "no_store");
+        };
+        let (file, pruned) = store.put(&scope, kind, bytes);
+        // Files pruned to stay within the store's bounds are named on the
+        // chain, so the verifier reports them pruned, not missing.
+        if !pruned.is_empty() {
+            self.chain_session_event(json!({
+                "source": SOURCE_SESSION,
+                "event": "evidence_pruned",
+                "session_id": self.id,
+                "files": pruned.iter().map(PrunedFile::to_json).collect::<Vec<_>>(),
+            }));
+        }
+        file
+    }
+
+    /// SG-000135 OB-05 review: whose evidence this session keeps: its own
+    /// (removed when it ends) or its persistent profile's (removed with the
+    /// profile).
+    pub(crate) fn evidence_scope(&self) -> String {
+        match self.profile_name() {
+            Some(name) => crate::browser_receipts::profile_scope(name),
+            None => self.id.clone(),
         }
     }
 
@@ -894,6 +920,32 @@ impl<W: SessionWorker> Broker<W> {
     ) -> Self {
         self.audit = chain;
         self
+    }
+
+    /// SG-000135 OB-05 review: the persistent profile `name` was deleted:
+    /// its evidence files go too, and the chain records it. True when
+    /// nothing of it is left.
+    pub(crate) fn remove_profile_evidence(&self, name: &str) -> bool {
+        let Some(store) = &self.evidence else {
+            return true;
+        };
+        let removed = store.remove_scope(&crate::browser_receipts::profile_scope(name));
+        if let Some(chain) = &self.audit {
+            let _ = chain.append(orcel_audit::EventDraft {
+                capability: Some("browser.session".to_owned()),
+                operation: Some("profile_evidence_removed".to_owned()),
+                ..orcel_audit::EventDraft::new(
+                    orcel_contracts::event::AuditEventKind::Dispatch,
+                    json!({
+                        "source": SOURCE_SESSION,
+                        "event": "profile_evidence_removed",
+                        "profile": name,
+                        "removed": removed,
+                    }),
+                )
+            });
+        }
+        removed
     }
 
     /// SG-000135 OB-05: keep evidence files in `store`.
@@ -1264,6 +1316,13 @@ impl<W: SessionWorker> Broker<W> {
             client: session.client.clone(),
             audit: session.audit.clone(),
         };
+        // SG-000135 OB-05 review: an ephemeral session's evidence files go
+        // with it (its receipts keep their digests on the chain); a
+        // persistent profile's stay until the profile is deleted.
+        let evidence_removed = match (&session.evidence, session.profile.is_some()) {
+            (Some(store), false) => store.remove_scope(&session.id),
+            _ => false,
+        };
         let persistent_profile = session.profile_name().map(str::to_owned);
         let profile = session.profile.take();
         // The worker first; the persistent profile's lock is released only
@@ -1311,6 +1370,7 @@ impl<W: SessionWorker> Broker<W> {
             "worker_ended": worker_ended,
             "profile_removed": profile_removed,
             "profile_quarantined": profile_quarantined,
+            "evidence_removed": evidence_removed,
         }));
         Some(EndReport {
             session_id: id.to_owned(),
@@ -2090,17 +2150,14 @@ mod tests {
         assert_eq!(refused["result"], "refused");
         assert_eq!(refused["effect"], "none");
         assert_eq!(refused["needs_person"], true);
-        // The session's end is chained with its last receipt.
-        let last = receipts.last().map(|r| r.receipt_sha256.clone());
-        broker.close("client-a", &id).map_err(|e| e.message)?;
-        let events = self::events(&chain_path)?;
-        let end = events.last().ok_or("no end event")?;
-        assert_eq!(end.detail["event"], "session_end");
-        assert_eq!(end.detail["last_receipt_sha256"], json!(last));
-        // The chain and every receipt verify, evidence files included.
+        // While the session lives, the chain, every receipt and both
+        // evidence files verify.
         let report = orcel_audit::verify_file(&chain_path).map_err(|e| e.to_string())?;
         assert_eq!(report.verdict, orcel_audit::Verdict::Intact, "{report:?}");
-        let verified = crate::browser_receipts::verify_receipts(&chain_path, Some(&store), None)?;
+        let verify = |only: Option<&str>, anchored: Option<u64>| {
+            crate::browser_receipts::verify_receipts(&chain_path, Some(&store), only, anchored)
+        };
+        let verified = verify(None, None)?;
         assert!(
             !verified.broken && !verified.unrecorded,
             "{}",
@@ -2108,16 +2165,44 @@ mod tests {
         );
         assert_eq!(verified.value["receipts"], receipts.len());
         assert_eq!(verified.value["evidence"]["checked"], 2);
-        // One receipt's inclusion, by its digest.
+        assert_eq!(verified.value["evidence"]["errors"], json!([]));
+        // One receipt's inclusion, by its digest, and how far an anchor the
+        // authority service holds covers it.
         let one = &receipts[3].receipt_sha256;
-        let found = crate::browser_receipts::verify_receipts(&chain_path, Some(&store), Some(one))?;
+        let found = verify(Some(one), None)?;
         assert_eq!(found.value["receipt"]["found"], true, "{}", found.value);
         assert_eq!(found.value["receipt"]["digest_recomputes"], true);
+        assert_eq!(found.value["receipt"]["anchoring"]["state"], "unanchored");
+        let at = found.value["receipt"]["event_seq"].as_u64().unwrap_or(0);
+        assert_eq!(
+            verify(Some(one), Some(at))?.value["receipt"]["anchoring"]["state"],
+            "anchored"
+        );
+        let tail = verify(Some(one), Some(at - 1))?;
+        assert_eq!(
+            tail.value["receipt"]["anchoring"]["state"],
+            "unanchored_tail"
+        );
+        assert!(!tail.broken, "an unanchored tail is reported, not broken");
         let absent = "0".repeat(64);
-        let missing =
-            crate::browser_receipts::verify_receipts(&chain_path, Some(&store), Some(&absent))?;
+        let missing = verify(Some(&absent), None)?;
         assert!(missing.broken);
         assert_eq!(missing.value["receipt"]["found"], false);
+        // The session's end is chained with its last receipt and count, and
+        // its ephemeral evidence files go with it: reported removed, not
+        // missing.
+        let last = receipts.last().map(|r| r.receipt_sha256.clone());
+        broker.close("client-a", &id).map_err(|e| e.message)?;
+        let events = self::events(&chain_path)?;
+        let end = events.last().ok_or("no end event")?;
+        assert_eq!(end.detail["event"], "session_end");
+        assert_eq!(end.detail["last_receipt_sha256"], json!(last));
+        assert_eq!(end.detail["actions_recorded"], receipts.len());
+        assert_eq!(end.detail["evidence_removed"], true);
+        assert!(!store.dir().join(&id).exists());
+        let ended = verify(None, None)?;
+        assert!(!ended.broken && !ended.unrecorded, "{}", ended.value);
+        assert_eq!(ended.value["evidence"]["removed"], 2);
         Ok(())
     }
 
@@ -2194,11 +2279,11 @@ mod tests {
         )?;
         let original = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
         let verify = |store: Option<&EvidenceStore>| {
-            crate::browser_receipts::verify_receipts(&chain_path, store, None)
+            crate::browser_receipts::verify_receipts(&chain_path, store, None, None)
         };
         assert!(!verify(Some(&store))?.broken);
         // The evidence file edited, then removed.
-        let file = store.dir().join(format!("{}.png", shot.sha256));
+        let file = store.dir().join(&id).join(format!("{}.png", shot.sha256));
         std::fs::write(&file, b"another image").map_err(|e| e.to_string())?;
         let report = verify(Some(&store))?;
         assert!(report.broken, "{}", report.value);
@@ -2265,7 +2350,7 @@ mod tests {
             .begin_intent(draft("browser_click", Some("n1")), 20)
             .map_err(|e| e.message)?;
         drop(lost);
-        let report = crate::browser_receipts::verify_receipts(&chain_path, None, None)?;
+        let report = crate::browser_receipts::verify_receipts(&chain_path, None, None, None)?;
         assert!(!report.broken && report.unrecorded, "{}", report.value);
         let open = &report.value["dispatched_unrecorded"][0];
         assert_eq!(open["action"], "browser_click");
@@ -2406,6 +2491,299 @@ mod tests {
         assert_eq!(status["receipt_contract"], RECEIPT_CONTRACT);
         assert_eq!(status["measured"]["actions_recorded"], 7);
     }
+    /// Append `detail` to the chain at `path` as another writer would (a
+    /// writer of orceld's state folder forging records).
+    fn append_forged(path: &Path, detail: Value) -> Result<(), String> {
+        let chain = orcel_audit::ChainWriter::open(path, orcel_audit::ORCELD_LOG)
+            .map_err(|e| e.to_string())?;
+        chain
+            .append(orcel_audit::EventDraft::new(
+                orcel_contracts::event::AuditEventKind::Dispatch,
+                detail,
+            ))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// A receipt that closes `intent` as sent, with a digest that
+    /// recomputes, as a forger would write it.
+    fn forged_receipt(intent: &Intent, previous: &str) -> Value {
+        let mut receipt = json!({
+            "contract": RECEIPT_CONTRACT,
+            "seq": intent.seq,
+            "session_id": intent.session_id,
+            "action": intent.draft.action,
+            "outcome": "done",
+            "result": "sent",
+            "effect": "applied",
+            "needs_person": false,
+            "failure_code": null,
+            "evidence_files": [],
+            "previous_sha256": previous,
+            "intent_sha256": intent.intent_sha256,
+            "intent_audit": intent.audit.to_json(),
+        });
+        receipt["receipt_sha256"] = json!(receipt_digest_of(&receipt));
+        receipt
+    }
+
+    fn reasons(report: &crate::browser_receipts::ReceiptReport) -> String {
+        report.value["link_errors"].to_string()
+    }
+
+    /// SG-000135 OB-05 review (M1 b, L3): records a writer of the state
+    /// folder appends with recomputed digests are still found when they
+    /// break the session's own structure: a receipt closing an unrecorded
+    /// intent after the session's end, a second intent with the same seq,
+    /// an intent out of order, result words that do not follow from the
+    /// outcome, a receipt that names no place for its intent, and a
+    /// contract-less receipt inside an OB-05 session.
+    #[test]
+    fn ob05_forged_appends_that_break_a_sessions_structure_are_found() -> Result<(), String> {
+        let mut scene = Scene::new("ob05-forged");
+        let (mut broker, chain_path, _store) = chained(&scene, INSTANCE, "forged")?;
+        let id = scene
+            .create(&mut broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &id).map_err(|e| e.message)?;
+        let first = act_once(
+            session,
+            draft("browser_open", None),
+            record("browser_open", "done"),
+            1,
+        )?;
+        let lost = session
+            .begin_intent(draft("browser_click", Some("n1")), 2)
+            .map_err(|e| e.message)?;
+        broker.close("client-a", &id).map_err(|e| e.message)?;
+        let verify = || crate::browser_receipts::verify_receipts(&chain_path, None, None, None);
+        let before = verify()?;
+        assert!(!before.broken && before.unrecorded, "{}", before.value);
+        let clean = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
+        let restore = || std::fs::write(&chain_path, &clean).map_err(|e| e.to_string());
+
+        // A forged receipt closing the unrecorded intent, after the end.
+        append_forged(
+            &chain_path,
+            json!({"source": "browser_receipt", "receipt": forged_receipt(&lost, &first.receipt_sha256)}),
+        )?;
+        let report = verify()?;
+        assert!(report.broken, "{}", report.value);
+        assert!(
+            reasons(&report).contains("follows the session's end"),
+            "{}",
+            reasons(&report)
+        );
+
+        // The same intent twice, and an intent out of order.
+        restore()?;
+        let mut intent = lost.to_json();
+        if let Value::Object(map) = &mut intent {
+            map.remove("audit");
+        }
+        append_forged(
+            &chain_path,
+            json!({"source": "browser_intent", "intent": intent.clone()}),
+        )?;
+        assert!(reasons(&verify()?).contains("a second intent with the same seq"));
+        restore()?;
+        intent["seq"] = json!(9);
+        intent["intent_sha256"] = json!(crate::browser_receipts::intent_digest_of(&intent));
+        append_forged(
+            &chain_path,
+            json!({"source": "browser_intent", "intent": intent}),
+        )?;
+        assert!(reasons(&verify()?).contains("out of order"));
+
+        // Words that do not follow from the outcome, and no place for the
+        // intent, in a session that has not ended.
+        let mut scene2 = Scene::new("ob05-forged-open");
+        let (mut open_broker, open_path, _) = chained(&scene2, INSTANCE, "forged-open")?;
+        let open_id = scene2
+            .create(&mut open_broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = open_broker
+            .session("client-a", &open_id)
+            .map_err(|e| e.message)?;
+        let pending = session
+            .begin_intent(draft("browser_click", Some("n1")), 2)
+            .map_err(|e| e.message)?;
+        let open_clean = std::fs::read_to_string(&open_path).map_err(|e| e.to_string())?;
+        let verify_open = || crate::browser_receipts::verify_receipts(&open_path, None, None, None);
+        let mut words = forged_receipt(&pending, "");
+        words["outcome"] = json!("refused");
+        words["receipt_sha256"] = json!(receipt_digest_of(&words));
+        append_forged(
+            &open_path,
+            json!({"source": "browser_receipt", "receipt": words}),
+        )?;
+        assert!(reasons(&verify_open()?).contains("does not follow from its outcome"));
+        std::fs::write(&open_path, &open_clean).map_err(|e| e.to_string())?;
+        let mut placeless = forged_receipt(&pending, "");
+        placeless["intent_audit"] = Value::Null;
+        placeless["receipt_sha256"] = json!(receipt_digest_of(&placeless));
+        append_forged(
+            &open_path,
+            json!({"source": "browser_receipt", "receipt": placeless}),
+        )?;
+        assert!(reasons(&verify_open()?).contains("names no place"));
+        std::fs::write(&open_path, &open_clean).map_err(|e| e.to_string())?;
+        append_forged(
+            &open_path,
+            json!({"source": "browser_receipt", "receipt": {"session_id": open_id, "seq": 1, "provisional": true}}),
+        )?;
+        let legacy = verify_open()?;
+        assert!(reasons(&legacy).contains("without the OB-05 contract"));
+        assert_eq!(legacy.value["legacy_receipts"], 0);
+        Ok(())
+    }
+
+    /// SG-000135 OB-05 review (L1, L2): a receipt the chain refused does not
+    /// move the session's head and is listed as not recorded; its intent
+    /// stays open, so the verifier says unrecorded (10), not broken (9). A
+    /// broken receipt raises 9 over a chain whose verdict is not intact.
+    #[test]
+    fn ob05_a_refused_receipt_leaves_the_head_and_reads_unrecorded() -> Result<(), String> {
+        let mut scene = Scene::new("ob05-refused-receipt");
+        let (mut broker, chain_path, _store) = chained(&scene, INSTANCE, "refused")?;
+        let id = scene
+            .create(&mut broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &id).map_err(|e| e.message)?;
+        let first = act_once(
+            session,
+            draft("browser_open", None),
+            record("browser_open", "done"),
+            1,
+        )?;
+        let intent = session
+            .begin_intent(draft("browser_click", Some("n1")), 2)
+            .map_err(|e| e.message)?;
+        // The chain stops taking writes (its holder refused this file).
+        let text = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
+        let broken_session = session.audit.clone();
+        std::fs::write(scene.root.join("elsewhere.jsonl"), "not a chain\n")
+            .map_err(|e| e.to_string())?;
+        session.audit = Some(std::sync::Arc::new(
+            orcel_audit::ChainWriter::open(
+                scene.root.join("elsewhere.jsonl"),
+                orcel_audit::ORCELD_LOG,
+            )
+            .map_err(|e| e.to_string())?,
+        ));
+        let receipt = session.record(
+            ActionRecord {
+                intent: Some(intent),
+                ..record("browser_click", "done")
+            },
+            3,
+        );
+        assert!(
+            matches!(receipt.audit, ReceiptAudit::Failed(_)),
+            "{:?}",
+            receipt.audit
+        );
+        assert_eq!(receipt.to_json()["recorded"], false);
+        assert_eq!(
+            session.last_receipt_sha256, first.receipt_sha256,
+            "the head stays"
+        );
+        session.audit = broken_session;
+        assert_eq!(
+            std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?,
+            text
+        );
+        let status = broker.status("client-a", &id).map_err(|e| e.message)?;
+        assert_eq!(status["receipts"][1]["recorded"], false);
+        assert_eq!(status["last_receipt_sha256"], first.receipt_sha256.as_str());
+        let (report, code) = crate::audit_chain::verify_with_held(&chain_path, None)?;
+        let (report, code) =
+            crate::audit_chain::with_receipts(&chain_path, report, code, None, None)?;
+        assert_eq!(
+            code,
+            crate::browser_receipts::EXIT_RECEIPTS_UNRECORDED,
+            "{report}"
+        );
+        // A torn tail (3) with a broken receipt answers 9.
+        let edited = text.replacen("\"result\":\"sent\"", "\"result\":\"refused\"", 1);
+        std::fs::write(&chain_path, format!("{edited}{{\"torn")).map_err(|e| e.to_string())?;
+        let (_, code) = crate::audit_chain::with_receipts(
+            &chain_path,
+            json!({"verdict": "torn_tail"}).to_string(),
+            crate::audit_chain::EXIT_TORN_TAIL,
+            None,
+            None,
+        )?;
+        assert_eq!(code, crate::browser_receipts::EXIT_RECEIPTS_BROKEN);
+        // A broken chain keeps its own code.
+        let (_, code) = crate::audit_chain::with_receipts(
+            &chain_path,
+            json!({"verdict": "broken"}).to_string(),
+            crate::audit_chain::EXIT_BROKEN,
+            None,
+            None,
+        )?;
+        assert_eq!(code, crate::audit_chain::EXIT_BROKEN);
+        Ok(())
+    }
+
+    /// SG-000135 OB-05 review (M2): evidence follows its owner. A pruned
+    /// file is named on the chain and reported pruned; a persistent
+    /// profile's evidence goes when the profile is deleted, and is reported
+    /// removed.
+    #[test]
+    fn ob05_pruned_and_profile_evidence_is_reported_not_missing() -> Result<(), String> {
+        let mut scene = Scene::new("ob05-retention");
+        let (broker, chain_path, store) = chained(&scene, INSTANCE, "retention")?;
+        let small = store.clone().bounded(1024, 1);
+        let mut broker = broker.with_evidence(Some(small.clone()));
+        let id = scene
+            .create(&mut broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &id).map_err(|e| e.message)?;
+        let mut files = Vec::new();
+        for (n, shot) in [b"first image".as_slice(), b"second image"]
+            .into_iter()
+            .enumerate()
+        {
+            let file = session.keep_evidence(EvidenceKind::Screenshot, shot);
+            assert!(file.stored);
+            files.push(file.clone());
+            act_once(
+                session,
+                draft("browser_screenshot", None),
+                ActionRecord {
+                    evidence_kind: "screenshot".into(),
+                    evidence_sha256: Some(file.sha256.clone()),
+                    evidence_files: vec![file],
+                    ..record("browser_screenshot", "done")
+                },
+                10 + n as u64,
+            )?;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let report =
+            crate::browser_receipts::verify_receipts(&chain_path, Some(&small), None, None)?;
+        assert!(!report.broken, "{}", report.value);
+        assert_eq!(report.value["evidence"]["pruned"], 1);
+        assert!(std::fs::read_to_string(&chain_path)
+            .map_err(|e| e.to_string())?
+            .contains("evidence_pruned"));
+        // A profile's evidence goes with the profile, and the chain says so.
+        let (kept, _) = store.put("p-work", EvidenceKind::Snapshot, b"{}");
+        assert!(kept.stored);
+        assert!(broker.remove_profile_evidence("work"));
+        assert_eq!(
+            store.check("p-work", "snapshot", &kept.sha256),
+            crate::browser_receipts::EvidenceCheck::Missing
+        );
+        let events = events(&chain_path)?;
+        let removed = events.last().ok_or("no event")?;
+        assert_eq!(removed.detail["event"], "profile_evidence_removed");
+        assert_eq!(removed.detail["profile"], "work");
+        Ok(())
+    }
+
     #[test]
     fn receipts_chain_by_digest_and_stay_bounded() {
         let mut scene = Scene::new("receipts");
