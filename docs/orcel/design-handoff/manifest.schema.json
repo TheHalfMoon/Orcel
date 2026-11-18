@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TheHalfMoon/Orcel/docs/orcel/design-handoff/manifest.schema.json",
+  "title": "Orcel design handoff manifest",
+  "description": "One versioned package delivered by the Orcel Design session to engineering. See docs/orcel/design-handoff/CONTRACT.md. scripts/check-design-handoff.mjs validates a package against this schema and against the SVG, icon and token rules the schema cannot express.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "version", "status", "identity", "source", "assets", "icons", "tokens", "components", "screens", "notices"],
+  "properties": {
+    "schemaVersion": { "const": "orcel-design-handoff/1" },
+    "version": {
+      "description": "Semantic version of this package. Must equal the folder name under design/handoff/.",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "status": {
+      "description": "Only an approved package is integrated. draft and review packages may be checked but never wired into an app.",
+      "enum": ["draft", "review", "approved", "withdrawn"]
+    },
+    "approval": { "$ref": "#/$defs/approval" },
+    "supersedes": {
+      "description": "The approved package version this one replaces, or null for the first package.",
+      "type": ["string", "null"],
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "edition"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "edition": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "notes": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "source": {
+      "description": "Where the package came from. A board or file reference is provenance only; engineering never pulls from it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session", "createdOn"],
+      "properties": {
+        "session": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "createdOn": { "$ref": "#/$defs/date" },
+        "reference": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "assets": {
+      "description": "Vector brand and interface assets. SVG only.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/asset" }
+    },
+    "icons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["web", "windows", "macos", "tauri"],
+      "properties": {
+        "web": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/icon" } },
+        "windows": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/icon" } },
+        "macos": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/icon" } },
+        "tauri": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/icon" } }
+      }
+    },
+    "tokens": {
+      "description": "The single design-token source, in Design Tokens Community Group (DTCG) JSON.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "format", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relPath" },
+        "format": { "const": "dtcg" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "contrastPairs": {
+      "description": "Extra contrast pairs beyond the built-in required set. Token paths are relative to each theme (for example color.text).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["foreground", "background", "minimum"],
+        "properties": {
+          "foreground": { "$ref": "#/$defs/tokenPath" },
+          "background": { "$ref": "#/$defs/tokenPath" },
+          "minimum": { "type": "number", "minimum": 3, "maximum": 21 },
+          "use": { "type": "string", "maxLength": 200 }
+        }
+      }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "spec", "sha256", "states", "surfaces"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+          "spec": { "$ref": "#/$defs/relPath" },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "states": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["default", "hover", "focus", "active", "disabled", "loading", "error", "selected", "empty"] }
+          },
+          "surfaces": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/surface" }
+          }
+        }
+      }
+    },
+    "screens": {
+      "description": "Reference screens. Engineering reads them; they are never shipped or used as visual-regression baselines without being rendered from code.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["surface", "name", "path", "sha256", "theme", "width"],
+        "properties": {
+          "surface": { "$ref": "#/$defs/surface" },
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+          "path": { "$ref": "#/$defs/relPath" },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "theme": { "enum": ["dark", "light"] },
+          "width": { "type": "integer", "minimum": 320, "maximum": 3840 }
+        }
+      }
+    },
+    "notices": {
+      "description": "Licence and provenance notices for fonts, outlines or any third-party material in the package.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "covers"],
+        "properties": {
+          "path": { "$ref": "#/$defs/relPath" },
+          "covers": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "approved" } }, "required": ["status"] },
+      "then": { "required": ["approval"] }
+    }
+  ],
+  "$defs": {
+    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "relPath": {
+      "description": "A forward-slash path inside the package folder: no absolute paths, no drive letters, no parent segments, no URLs.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))(?!.*//)[A-Za-z0-9._@/-]+$"
+    },
+    "tokenPath": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z0-9][a-z0-9-]*)+$" },
+    "surface": { "enum": ["website", "control-room", "desktop", "browser", "shared"] },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvedBy", "approvedOn", "record"],
+      "properties": {
+        "approvedBy": { "enum": ["founder", "design-session"] },
+        "approvedOn": { "$ref": "#/$defs/date" },
+        "record": {
+          "description": "Where the approval is written down (an issue, PR or decision log entry). Not a draft board.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "sha256", "background"],
+      "properties": {
+        "path": { "allOf": [{ "$ref": "#/$defs/relPath" }, { "pattern": "\\.svg$" }] },
+        "kind": { "enum": ["mark", "wordmark", "lockup", "app-tile", "pattern", "social", "illustration", "ui-icon"] },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "background": { "enum": ["dark", "light", "any"] },
+        "destination": {
+          "description": "Optional existing repository file this asset is meant to replace, for example assets/brand/orcel-o-white.svg.",
+          "type": "string",
+          "maxLength": 200
+        }
+      }
+    },
+    "icon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "format", "sha256"],
+      "properties": {
+        "role": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+        "path": { "$ref": "#/$defs/relPath" },
+        "format": { "enum": ["svg", "png", "ico", "icns"] },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "width": { "type": "integer", "minimum": 16, "maximum": 2048 },
+        "height": { "type": "integer", "minimum": 16, "maximum": 2048 }
+      }
+    }
+  }
+}
