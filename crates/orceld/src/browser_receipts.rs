@@ -885,6 +885,13 @@ pub(crate) fn verify_receipts(
                             removed.insert(session.clone());
                         }
                     }
+                    Some("evidence_swept") => {
+                        for scope in detail["scopes"].as_array().into_iter().flatten() {
+                            if let Some(scope) = scope.as_str() {
+                                removed.insert(scope.to_owned());
+                            }
+                        }
+                    }
                     Some("profile_evidence_removed") => {
                         if let Some(profile) = detail["profile"].as_str() {
                             removed.insert(profile_scope(profile));
@@ -1333,6 +1340,29 @@ mod tests {
     }
 
     const SCOPE: &str = "bs-0123456789abcdef-1-0001020304050607";
+
+    /// SG-000135 OB-05 re-review: the e2e harness recomputes receipt digests
+    /// leaving out exactly the fields the Rust digest leaves out.
+    #[test]
+    fn ob05_the_e2e_harness_leaves_out_the_same_receipt_fields() {
+        let script = include_str!("../../../scripts/browser-full-e2e.mjs");
+        let body = script
+            .split("function receiptDigest(receipt) {")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap_or_default();
+        let deleted: Vec<&str> = body
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("delete core."))
+            .map(|rest| rest.trim_end_matches(';'))
+            .collect();
+        let mut expected = RECEIPT_UNCOVERED.to_vec();
+        let mut got = deleted.clone();
+        expected.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got, expected, "{body}");
+        assert!(script.contains(&format!("const RECEIPT_DOMAIN = \"{RECEIPT_DOMAIN}\";")));
+    }
 
     #[test]
     fn ob05_the_evidence_store_is_content_addressed_and_detects_tampering() -> Result<(), String> {

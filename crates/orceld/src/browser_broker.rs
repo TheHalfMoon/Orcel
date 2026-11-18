@@ -951,7 +951,69 @@ impl<W: SessionWorker> Broker<W> {
     /// SG-000135 OB-05: keep evidence files in `store`.
     pub(crate) fn with_evidence(mut self, store: Option<EvidenceStore>) -> Self {
         self.evidence = store;
+        self.sweep_evidence();
         self
+    }
+
+    /// SG-000135 OB-05 review: remove the evidence of every ephemeral session
+    /// of another instance whose lock is free (an orceld that exited or
+    /// crashed before its sessions ended), and record each removal on the
+    /// chain. Only `bs-<instance>-...` scopes with a well-formed session id
+    /// are touched, never a link and never a profile's scope. The number of
+    /// scopes removed.
+    pub(crate) fn sweep_evidence(&self) -> usize {
+        let Some(store) = &self.evidence else {
+            return 0;
+        };
+        let Ok(entries) = std::fs::read_dir(store.dir()) else {
+            return 0;
+        };
+        let instances = self.root.join("instances");
+        let mut dead: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for entry in entries.flatten() {
+            let scope = entry.file_name().to_string_lossy().into_owned();
+            let Ok(instance) = parse_session_id(&scope) else {
+                continue;
+            };
+            if instance == self.instance || !crate::browser_receipts::is_scope(&scope) {
+                continue;
+            }
+            dead.entry(instance.to_owned()).or_default().push(scope);
+        }
+        let mut removed = 0;
+        for (instance, scopes) in dead {
+            let lock_path = instances.join(format!("{instance}.lock"));
+            // Held: that orceld still runs, and its sessions end it there.
+            let Ok(Some(lock)) = try_lock_file(&lock_path) else {
+                continue;
+            };
+            let gone: Vec<&String> = scopes
+                .iter()
+                .filter(|scope| store.remove_scope(scope))
+                .collect();
+            removed += gone.len();
+            drop(lock);
+            // The lock was only taken to learn that the instance is gone.
+            if !self.root.join("sessions").join(&instance).exists() {
+                let _ = std::fs::remove_file(&lock_path);
+            }
+            if let (Some(chain), false) = (&self.audit, gone.is_empty()) {
+                let _ = chain.append(orcel_audit::EventDraft {
+                    capability: Some("browser.session".to_owned()),
+                    operation: Some("evidence_swept".to_owned()),
+                    ..orcel_audit::EventDraft::new(
+                        orcel_contracts::event::AuditEventKind::Dispatch,
+                        json!({
+                            "source": SOURCE_SESSION,
+                            "event": "evidence_swept",
+                            "instance": instance,
+                            "scopes": gone,
+                        }),
+                    )
+                });
+            }
+        }
+        removed
     }
 
     /// Start a broker rooted at `root` (orceld's own state, never a
@@ -2781,6 +2843,53 @@ mod tests {
         let removed = events.last().ok_or("no event")?;
         assert_eq!(removed.detail["event"], "profile_evidence_removed");
         assert_eq!(removed.detail["profile"], "work");
+        Ok(())
+    }
+
+    /// SG-000135 OB-05 re-review (B2): the evidence of an orceld that
+    /// exited or crashed before its sessions ended is removed when the next
+    /// broker opens its store, and recorded; a running instance's evidence,
+    /// this instance's own and a profile's stay, and odd names are skipped.
+    #[test]
+    fn ob05_a_dead_instances_session_evidence_is_swept() -> Result<(), String> {
+        let scene = Scene::new("ob05-sweep");
+        let dir = scene.root.join("sweep-evidence");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let store = EvidenceStore::at(dir.clone());
+        // A running orceld (its instance lock held).
+        let _running = scene.broker(OTHER_INSTANCE, Budgets::DEFAULT);
+        let dead = "bs-00000000000000aa-1-0001020304050607";
+        let live = format!("{SESSION_ID_PREFIX}{OTHER_INSTANCE}-1-0001020304050607");
+        let own = format!("{SESSION_ID_PREFIX}{INSTANCE}-1-0001020304050607");
+        for scope in [dead, live.as_str(), own.as_str(), "p-work"] {
+            assert!(
+                store.put(scope, EvidenceKind::Snapshot, b"{}").0.stored,
+                "{scope}"
+            );
+        }
+        std::fs::create_dir_all(dir.join("bs-not-a-session")).map_err(|e| e.to_string())?;
+        let chain_path = scene.root.join("sweep-chain.jsonl");
+        let chain = std::sync::Arc::new(
+            orcel_audit::ChainWriter::open(&chain_path, orcel_audit::ORCELD_LOG)
+                .map_err(|e| e.to_string())?,
+        );
+        let broker = scene
+            .broker(INSTANCE, Budgets::DEFAULT)
+            .with_audit_chain(Some(chain))
+            .with_evidence(Some(store.clone()));
+        assert!(
+            !dir.join(dead).exists(),
+            "the dead instance's evidence is gone"
+        );
+        for kept in [live.as_str(), own.as_str(), "p-work", "bs-not-a-session"] {
+            assert!(dir.join(kept).exists(), "{kept} stays");
+        }
+        let events = events(&chain_path)?;
+        let swept = events.last().ok_or("no event")?;
+        assert_eq!(swept.detail["event"], "evidence_swept");
+        assert_eq!(swept.detail["instance"], "00000000000000aa");
+        assert_eq!(swept.detail["scopes"], json!([dead]));
+        assert_eq!(broker.sweep_evidence(), 0, "nothing left to sweep");
         Ok(())
     }
 

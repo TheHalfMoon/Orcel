@@ -83,10 +83,12 @@ The intent (`orcel.browser-intent/1`, domain `orcel-ob05-intent/1`) holds the se
 - **Where:** `<browser state>/browser-profile/live/broker/evidence/<scope>/<sha256>.json|png`. The scope is the session id for an ephemeral session and `p-<profile>` for a persistent profile. The folder is created by `orcel_platform::paths::ensure_private_dir`: a protected owner-only DACL on Windows, 0700 on Unix. A file is written to a temporary name and renamed, and it is never followed through a link. Writing the same content again stores it once; a different file at the name is never adopted (`conflict`).
 - **Lifetime (privacy).** A masked screenshot still shows the page's other content, and a snapshot frame holds the untrusted names of form controls. So evidence lives no longer than its owner:
   - an ephemeral session's folder (every Shadow or Visible session without a persistent profile) is removed when the session ends, by any path: close, the end of the MCP session, an emergency stop, a lost host;
+  - if orceld exits or crashes before its sessions end, the next broker removes that instance's session folders when it opens the store. It does this only for `bs-<instance>-...` scopes with a well-formed session id whose instance lock is free, never through a link and never a profile's scope, and it records the removal on the chain (`evidence_swept`);
   - a persistent profile's folder is removed when the profile is deleted (`browser_profile_delete`), and the chain records it (`profile_evidence_removed`).
 
   The receipts keep their digests on the chain either way. The verifier reports a file whose scope was removed as `removed`, not `missing`.
 - **Bounds:** at most 512 MiB and 4096 files in the store, and 4 MiB per file. Past the store's bounds, the oldest files are pruned first, and each prune is named on the chain (`evidence_pruned`), so the verifier reports the file `pruned`, not `missing`. A file larger than a bound is never stored (`too_large`); a file that could not be written says why.
+- **The quota is shared.** There is no per-scope share. A busy session can therefore prune older evidence of other sessions and profiles. Each such prune is on the chain and reported `pruned`, and the receipts keep their digests.
 - **Not kept:** reply bodies, extracted page text, verify reports, URLs and typed values. For those, the receipt keeps a digest at most, and never a digest of a typed value.
 - **Post-action evidence for writes** is the digest of the reply (committed URL, status and generation). No snapshot is taken after a write on the agent's behalf. An automatic snapshot would count as the fresh observation that ends OB-06's re-observe hold.
 
@@ -176,7 +178,7 @@ The test `ob05_no_secret_reaches_the_chain_or_the_receipt` writes an action on a
 - **Digests can be guessed for guessable values.** A URL digest confirms a guess of the exact URL, such as a public page. Spec 4.8 accepts that for the chain, which is local and in protected state. Origins are in clear.
 - **Post-action evidence for writes** is the reply digest, not a page capture (section 5).
 - **Unanchored tail.** Receipts after the last held anchor, and every receipt without the installed authority service, rest on digests a writer of the state folder could recompute (section 7).
-- **Evidence retention.** Evidence is removed with its ephemeral session or its profile, and pruned oldest first past 512 MiB or 4096 files. A file removed by hand from the folder is `missing` to the verifier. While a persistent profile lives, its evidence stays (bounded by the store).
+- **Evidence retention.** Evidence is removed with its ephemeral session (or, after a crash, by the next broker's sweep) or with its profile, and pruned oldest first past 512 MiB or 4096 files. The quota is shared, so one busy session can prune other scopes' older files (each prune chained). A file removed by hand from the folder is `missing` to the verifier. While a persistent profile lives, its evidence stays (bounded by the store).
 - **Memory** is the job's peak committed memory on Windows only, read when `browser_task_status` runs. There is no per-action memory figure and no figure on other systems.
 - **The session start and end events are best effort** (section 1).
 - **Legacy receipts** in a chain from before this packet are counted, not recomputed.
@@ -206,3 +208,9 @@ The independent review passed, with these findings, each fixed:
 7. **L5, the refused-receipt message.** It now states the result and effect without claiming the action ran.
 
 The tests for these are `ob05_forged_appends_that_break_a_sessions_structure_are_found`, `ob05_a_refused_receipt_leaves_the_head_and_reads_unrecorded`, `ob05_pruned_and_profile_evidence_is_reported_not_missing`, `ob05_the_evidence_store_prunes_the_oldest_and_removes_a_scope`, `ob05_node_ids_are_bounded_like_the_schema`, and the anchoring and removal checks added to `ob05_every_action_family_is_receipted_on_the_chain_and_verifies`.
+
+After the re-review of eb1cda90 (fixes confirmed, two blockers):
+
+1. **B1, the harness digest.** `scripts/browser-full-e2e.mjs` now leaves `recorded` out of the receipt digest, like the Rust digest. It also requires every mission receipt to be on the chain, so a receipt with `recorded: false` never moves its head. The test `ob05_the_e2e_harness_leaves_out_the_same_receipt_fields` keeps the two lists and the digest domain equal.
+2. **B2, a crashed orceld's evidence.** The next broker sweeps the evidence of a dead instance's ephemeral sessions and chains `evidence_swept`. The verifier reads those scopes as `removed`. The test is `ob05_a_dead_instances_session_evidence_is_swept`.
+3. **Recommended, the shared quota.** Documented in section 5, not changed.

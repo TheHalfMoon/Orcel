@@ -460,11 +460,13 @@ function canonicalJson(value) {
 /// Recompute a receipt's digest exactly as orceld's broker does
 /// (SG-000135 OB-05, crates/orceld/src/browser_receipts.rs covered_digest):
 /// SHA-256 of the domain, a newline and the canonical JSON of every field
-/// but receipt_sha256, audit and provisional.
+/// but RECEIPT_UNCOVERED there (receipt_sha256, audit, recorded and
+/// provisional; a Rust test keeps the two lists equal).
 function receiptDigest(receipt) {
   const core = { ...receipt };
   delete core.receipt_sha256;
   delete core.audit;
+  delete core.recorded;
   delete core.provisional;
   return createHash("sha256").update(`${RECEIPT_DOMAIN}\n${canonicalJson(core)}`, "utf8").digest("hex");
 }
@@ -1006,6 +1008,9 @@ async function runMission(options, paths, fixture, env, steps, record, expectOk,
   const receipts = state.receipts ?? [];
   let previous = "";
   for (const receipt of receipts) {
+    // OB-05: a receipt the audit chain refused is not on record and never
+    // moves the session's head; this mission expects none.
+    require_(receipt.recorded !== false, `receipt ${receipt.seq} is on the audit chain: ${JSON.stringify(receipt.audit)}`);
     require_(receipt.provisional === false && receipt.contract === "orcel.browser-receipt/1" && receipt.previous_sha256 === previous, `receipt ${receipt.seq} chains to the one before`);
     require_(receiptDigest(receipt) === receipt.receipt_sha256, `receipt ${receipt.seq}'s digest recomputes`);
     // OB-08: the one action after the revoke is refused, nothing sent.
