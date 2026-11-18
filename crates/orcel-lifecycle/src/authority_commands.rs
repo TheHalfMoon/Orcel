@@ -3,7 +3,9 @@
 
 use crate::{Args, Output};
 use orcel_authority::client::{service_installed, AuthorityClient};
-use orcel_authority::lease::{LeaseScope, SignedLease, DEFAULT_LEASE_MINUTES, MAX_LEASE_MINUTES};
+#[cfg(windows)]
+use orcel_authority::lease::SignedLease;
+use orcel_authority::lease::{LeaseScope, DEFAULT_LEASE_MINUTES, MAX_LEASE_MINUTES};
 use orcel_lifecycle::authority_grant::{self, GrantRequest};
 use orcel_lifecycle::LifecycleError;
 use serde_json::{json, Value};
@@ -35,10 +37,12 @@ fn values(args: &mut Args, name: &str) -> Result<Vec<String>, LifecycleError> {
     Ok(out)
 }
 
+#[cfg(windows)]
 fn progress(line: &str) {
     eprintln!("{line}");
 }
 
+#[cfg(windows)]
 fn lease_output(lease: &SignedLease) -> Output {
     Output {
         exit_code: 0,
