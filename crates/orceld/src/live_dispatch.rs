@@ -191,6 +191,9 @@ mod live {
             profile_root: root.join("profiles"),
             temp_dir: root.join("staging"),
             state_root: root.join("host"),
+            // browser_structured keeps SG-000108 exactly: headless, ephemeral.
+            mode: orcel_browser_host::EngineMode::Shadow,
+            persistent_profile: None,
         };
         for dir in [&launch.profile_root, &launch.temp_dir, &launch.state_root] {
             std::fs::create_dir_all(dir).map_err(|_| {
@@ -630,9 +633,10 @@ mod full {
     use super::*;
     use crate::browser_broker::{
         hex, instance_id, ActionRecord, Broker, BrokerSession, Budgets, EndReason, SessionDirs,
-        SessionWorker,
+        SessionMode, SessionOptions, SessionWorker,
     };
     use crate::browser_full::{FullAction, TabOp};
+    use crate::browser_profiles::ProfileStore;
     use crate::live_browser::{form_outcome, LiveBrowser, LiveState, TabView};
     use orcel_browser_host::worker_host::{BindAction, FormNavigation};
     use orcel_browser_host::WorkerHostLaunch;
@@ -699,11 +703,125 @@ mod full {
         })
     }
 
-    /// Launch a session's worker on its own directories.
+    /// SG-000135 OB-04: the persistent profiles, under orceld's protected
+    /// browser state beside the broker's root (never a caller's path).
+    fn profile_store() -> Result<ProfileStore, ProviderError> {
+        let root = orcel_provider_browser::default_profile_root()
+            .map_err(|error| crate::state_unavailable("browser profile", &error))?
+            .join("live")
+            .join("named-profiles");
+        ProfileStore::open(root)
+    }
+
+    /// SG-000135 OB-04: the owner's fresh SOFT approval for creating or
+    /// deleting the persistent profile `name`, bound to the operation, the
+    /// workspace and the name.
+    fn approve_profile_write(
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        create: bool,
+        name: &str,
+    ) -> Result<(), ProviderError> {
+        let operation = if create { "create" } else { "delete" };
+        let digest = digest(&format!(
+            "orcel-ob04-profile-write/1\n{operation}\n{}\n{name}",
+            workspace.id
+        ));
+        let (title, summary) = if create {
+            (
+                "create an Orcel-managed browser profile",
+                format!(
+                    "A new persistent Orcel browser profile named {name}, kept in Orcel's own protected state (never your own browser or its profile). Sites you sign in to in sessions that use it stay signed in until the profile is deleted."
+                ),
+            )
+        } else {
+            (
+                "delete an Orcel-managed browser profile",
+                format!(
+                    "Permanently delete the Orcel browser profile named {name} and everything it holds (cookies, site storage, saved sign-ins). Your own browsers are not touched. This cannot be undone."
+                ),
+            )
+        };
+        let prompt = orcel_approval::ApprovalPrompt::new(
+            workspace.id.clone(),
+            orcel_policy::POLICY_REVISION,
+            title,
+            format!("orcel-browser-profile:{name}"),
+            summary,
+            digest,
+        );
+        approval
+            .request(&prompt)
+            .map(|_| ())
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    }
+
+    /// SG-000135 OB-04: the owner's fresh SOFT approval, the first time this
+    /// MCP session (`client`) uses the persistent profile `name`: the
+    /// profile may be signed in to sites, and every later action in it acts
+    /// as that account. Bound to the client, the workspace and the name.
+    fn approve_profile_use(
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        client: &str,
+        name: &str,
+    ) -> Result<(), ProviderError> {
+        let digest = digest(&format!(
+            "orcel-ob04-profile-use/1\n{}\n{client}\n{name}",
+            workspace.id
+        ));
+        let prompt = orcel_approval::ApprovalPrompt::new(
+            workspace.id.clone(),
+            orcel_policy::POLICY_REVISION,
+            "use an Orcel-managed browser profile in a session",
+            format!("orcel-browser-profile:{name}"),
+            format!(
+                "Let this MCP client (session {client}) use the Orcel browser profile named {name}. The profile may be signed in to sites; pages it opens act as those accounts. Each action in it still asks you. Asked once per MCP session and profile."
+            ),
+            digest,
+        );
+        approval
+            .request(&prompt)
+            .map(|_| ())
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    }
+
+    /// SG-000135 OB-04: the owner's fresh SOFT approval for a Visible
+    /// session's window, bound to the client and the session id.
+    fn approve_visible(
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        client: &str,
+        session_id: &str,
+    ) -> Result<(), ProviderError> {
+        let digest = digest(&format!(
+            "orcel-ob04-visible/1\n{}\n{client}\n{session_id}",
+            workspace.id
+        ));
+        let prompt = orcel_approval::ApprovalPrompt::new(
+            workspace.id.clone(),
+            orcel_policy::POLICY_REVISION,
+            "open a visible Orcel browser window",
+            format!("orcel-browser-session:{session_id}"),
+            format!(
+                "Open a browser window on your desktop for this agent session (MCP session {client}), titled Orcel agent session. The browser may bring it to the front, taking keyboard focus, when it opens and when it opens a page; you can minimise it. You will see it and may use it. Pages in it get no clipboard permission and cannot open file dialogs, but a page can still copy text to your clipboard after an approved click (the legacy copy command)."
+            ),
+            digest,
+        );
+        approval
+            .request(&prompt)
+            .map(|_| ())
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    }
+
+    /// Launch a session's worker on its own directories, in `mode`, and in
+    /// the persistent profile `dirs` names, if any.
     fn start(
         session_id: &str,
         client: &str,
         dirs: &SessionDirs,
+        mode: SessionMode,
+        profile: Option<&str>,
     ) -> Result<LiveBrowser, ProviderError> {
         let launch = WorkerHostLaunch {
             node: None,
@@ -711,6 +829,11 @@ mod full {
             profile_root: dirs.profiles.clone(),
             temp_dir: dirs.staging.clone(),
             state_root: dirs.host.clone(),
+            mode: match mode {
+                SessionMode::Shadow => orcel_browser_host::EngineMode::Shadow,
+                SessionMode::Visible => orcel_browser_host::EngineMode::Visible,
+            },
+            persistent_profile: dirs.persistent_profile.clone(),
         };
         let mut browser = LiveBrowser::start(
             &super::live::host_binary()?,
@@ -722,6 +845,9 @@ mod full {
         )?;
         browser.set_task(session_id);
         browser.set_client(client);
+        if let Some(name) = profile {
+            browser.set_profile(name);
+        }
         Ok(browser)
     }
 
@@ -749,24 +875,90 @@ mod full {
         // or a ledger that cannot be verified now, ends every session and
         // refuses the action.
         match action {
-            FullAction::Create { task } => with_broker(|broker| {
+            FullAction::Create {
+                task,
+                mode,
+                profile,
+            } => with_broker(|broker| {
                 broker.check_epoch(probe())?;
                 let random = random8()?;
                 let instance = broker.instance().to_owned();
-                let session = broker.create(
+                // SG-000135 OB-04: the named profile is held (one live
+                // session per profile, device-wide) before the worker starts,
+                // and released if the session is refused.
+                // The first use of a profile in this MCP session asks the
+                // owner (after the checks that need no prompt).
+                let lease = match profile {
+                    Some(name) => {
+                        let store = profile_store()?;
+                        store.check_acquire(name)?;
+                        if !broker.profile_approved(&workspace.id, client, name) {
+                            approve_profile_use(workspace, approval, client, name)?;
+                            broker.note_profile_approved(&workspace.id, client, name);
+                        }
+                        Some(store.acquire(name)?)
+                    }
+                    None => None,
+                };
+                let mode = *mode;
+                let profile_name = profile.clone();
+                let session = broker.create_with(
                     client,
                     task.as_deref(),
+                    SessionOptions {
+                        mode,
+                        profile: lease,
+                    },
                     random,
                     orcel_approval::now_ms(),
-                    |id, dirs| start(id, client, dirs),
+                    |id, dirs| {
+                        // A Visible window asks the owner, bound to this
+                        // session id, before anything is launched.
+                        if mode == SessionMode::Visible {
+                            approve_visible(workspace, approval, client, id)?;
+                        }
+                        start(id, client, dirs, mode, profile_name.as_deref())
+                    },
                 )?;
-                Ok(json!({
+                let mut reply = json!({
                     "session_id": session.id,
                     "task": session.task,
                     "orcel_session_id": instance,
-                    "profile_mode": "ephemeral",
                     "page_id": Value::Null,
+                });
+                if let (Value::Object(map), Value::Object(facts)) =
+                    (&mut reply, session.mode_json())
+                {
+                    map.extend(facts);
+                }
+                Ok(reply)
+            }),
+            FullAction::Profiles => with_broker(|broker| {
+                broker.check_epoch(probe())?;
+                let store = profile_store()?;
+                Ok(json!({
+                    "profiles": store.list().iter().map(|profile| profile.to_json()).collect::<Vec<_>>(),
+                    "max_profiles": crate::browser_profiles::MAX_PROFILES,
                 }))
+            }),
+            FullAction::ProfileCreate { name } => with_broker(|broker| {
+                broker.check_epoch(probe())?;
+                let store = profile_store()?;
+                // Refused before any prompt when it could not be created.
+                store.check_create(name)?;
+                approve_profile_write(workspace, approval, true, name)?;
+                let created = store.create(name, client, orcel_approval::now_ms())?;
+                Ok(json!({"profile": created.to_json(), "created": true}))
+            }),
+            FullAction::ProfileDelete { name } => with_broker(|broker| {
+                broker.check_epoch(probe())?;
+                let store = profile_store()?;
+                // Refused before any prompt when it does not exist or a
+                // session holds it; checked again under the lock after.
+                store.check_delete(name)?;
+                approve_profile_write(workspace, approval, false, name)?;
+                store.delete(name)?;
+                Ok(json!({"profile": name, "deleted": true}))
             }),
             FullAction::Close { session } => with_broker(|broker| {
                 broker.check_epoch(probe())?;
@@ -1215,12 +1407,15 @@ mod full {
                     evidence_kind: "reply",
                 })
             }
-            FullAction::Create { .. } | FullAction::Close { .. } | FullAction::Status { .. } => {
-                Err(ProviderError::new(
-                    FailureCode::InternalError,
-                    "a broker action reached the page dispatcher",
-                ))
-            }
+            FullAction::Create { .. }
+            | FullAction::Close { .. }
+            | FullAction::Status { .. }
+            | FullAction::Profiles
+            | FullAction::ProfileCreate { .. }
+            | FullAction::ProfileDelete { .. } => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "a broker action reached the page dispatcher",
+            )),
         }
     }
 

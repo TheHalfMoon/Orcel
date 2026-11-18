@@ -99,8 +99,10 @@ fn run_worker_mode() -> Result<(), String> {
         let value = args
             .next()
             .ok_or_else(|| format!("missing value for {arg}"))?;
-        if matches!(arg.as_str(), "--host-id" | "--profile-root" | "--temp-dir")
-            || RUNTIME_ARGUMENTS.contains(&arg.as_str())
+        if matches!(
+            arg.as_str(),
+            "--host-id" | "--profile-root" | "--temp-dir" | "--mode" | "--profile-dir"
+        ) || RUNTIME_ARGUMENTS.contains(&arg.as_str())
         {
             if values.insert(arg.clone(), value).is_some() {
                 return Err(format!("repeated argument: {arg}"));
@@ -109,6 +111,15 @@ fn run_worker_mode() -> Result<(), String> {
             return Err(format!("unknown argument: {arg}"));
         }
     }
+    // SG-000135 OB-04: Shadow unless supervision says Visible; a persistent
+    // Orcel-managed profile only when supervision names one (checked again
+    // by the host before every lifetime).
+    let mode = match values.remove("--mode") {
+        None => orcel_browser_host::EngineMode::Shadow,
+        Some(value) => orcel_browser_host::EngineMode::parse(&value)
+            .ok_or_else(|| "invalid --mode".to_string())?,
+    };
+    let persistent_profile = values.remove("--profile-dir").map(PathBuf::from);
     let mut take = |name: &str| {
         values
             .remove(name)
@@ -139,6 +150,9 @@ fn run_worker_mode() -> Result<(), String> {
         pin: None,
     });
     let mut paths = vec![&profile_root, &temp_dir];
+    if let Some(dir) = &persistent_profile {
+        paths.push(dir);
+    }
     if let Some(runtime) = &runtime {
         paths.extend([&runtime.node, &runtime.worker_main]);
     }
@@ -150,6 +164,8 @@ fn run_worker_mode() -> Result<(), String> {
         runtime,
         profile_root,
         temp_dir,
+        mode,
+        persistent_profile,
     };
     let stdin = std::io::stdin();
     let mut input = BufReader::new(stdin.lock());

@@ -23,6 +23,15 @@ mod navigation;
 mod observation;
 /// SG-000135 OB-03: page screenshots and tabs.
 pub mod page_capture;
+/// SG-000135 OB-04: persistent Orcel-managed profiles, checked by the host.
+#[cfg_attr(
+    not(all(
+        windows,
+        any(feature = "live-browser-test", feature = "live-browser-dev")
+    )),
+    allow(dead_code)
+)]
+mod persistent_profile;
 mod profile;
 mod proposal;
 mod proto;
@@ -84,9 +93,10 @@ pub use change_tracking::{
     MAX_TRACKED_BYTES, MAX_TRACKED_PAGES,
 };
 pub use confinement::{
-    assert_no_managed_policy, assert_worker_argv_exact, build_worker_argv, policy_keys,
-    proxy_bypass_list, resolver_rules, validate_admitted_host, AdmittedDestination, PolicyHive,
-    PolicyKeyState, PolicySource, RegistryPolicySource, MAX_ADMITTED_DESTINATIONS,
+    assert_no_managed_policy, assert_worker_argv_exact, assert_worker_argv_exact_in,
+    build_worker_argv, build_worker_argv_in, policy_keys, proxy_bypass_list, resolver_rules,
+    validate_admitted_host, AdmittedDestination, EngineMode, PolicyHive, PolicyKeyState,
+    PolicySource, RegistryPolicySource, MAX_ADMITTED_DESTINATIONS, VISIBLE_WINDOW_NAME_FLAG,
 };
 pub use coordinates::{
     arbitrary_drag, clipboard_typing, execute_one, hotkey_press, input_stream, proposal_digest,

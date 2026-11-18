@@ -530,6 +530,14 @@ pub struct WorkerHostArgs {
     pub runtime: Option<WorkerRuntime>,
     pub profile_root: PathBuf,
     pub temp_dir: PathBuf,
+    /// SG-000135 OB-04: Shadow (headless, the default) or Visible (a headed
+    /// window named as an Orcel agent session), for every lifetime.
+    pub mode: crate::confinement::EngineMode,
+    /// SG-000135 OB-04: an Orcel-managed persistent profile directory that
+    /// every lifetime of this host uses (and never removes), in place of a
+    /// fresh ephemeral profile under `profile_root`. Orceld chooses it under
+    /// its own protected browser state; it is never a caller's.
+    pub persistent_profile: Option<PathBuf>,
 }
 
 /// Node and the worker entry point a lifetime launches. In a test build
@@ -1376,13 +1384,23 @@ fn open(
     };
     let pin = destination.pin();
     let engine = discover_engine(&SearchConfig::production())?;
-    let profile_dir = crate::worker_launch::ephemeral_profile_dir(&args.profile_root)?;
-    // From here until the worker owns the profile, any failure removes it:
-    // the #298 sweep never collects this host's own profiles while it runs.
+    // SG-000135 OB-04: a persistent Orcel-managed profile is used in place
+    // (checked, never removed); otherwise a fresh ephemeral one.
+    let (profile_dir, persistent) = match &args.persistent_profile {
+        Some(dir) => (crate::persistent_profile::checked_dir(dir)?, true),
+        None => (
+            crate::worker_launch::ephemeral_profile_dir(&args.profile_root)?,
+            false,
+        ),
+    };
+    // From here until the worker owns the profile, any failure removes an
+    // ephemeral profile (the #298 sweep never collects this host's own
+    // profiles while it runs); a persistent one is kept.
     let launched = launch_in(
         args,
         runtime,
         &profile_dir,
+        persistent,
         engine,
         destination,
         fixture_spki,
@@ -1390,7 +1408,9 @@ fn open(
     let (worker, profile_identity) = match launched {
         Ok(launched) => launched,
         Err(err) => {
-            let _ = std::fs::remove_dir_all(&profile_dir);
+            if !persistent {
+                let _ = std::fs::remove_dir_all(&profile_dir);
+            }
             return Err(err);
         }
     };
@@ -1431,6 +1451,7 @@ fn launch_in(
     args: &WorkerHostArgs,
     runtime: &WorkerRuntime,
     profile_dir: &Path,
+    persistent: bool,
     engine: crate::discovery::Engine,
     destination: AdmittedDestination,
     fixture_spki: Option<&str>,
@@ -1441,16 +1462,23 @@ fn launch_in(
             "fixture trust exists only in test builds".into(),
         ));
     }
-    let profile = crate::profile::mark_profile(profile_dir, &engine.fingerprint())?;
-    let profile = crate::profile::adopt_profile(profile.dir(), &engine.fingerprint())?;
+    let profile = if persistent {
+        // SG-000135 OB-04: marked on first use, adopted (marker re-checked)
+        // on every later one; a foreign directory is refused.
+        crate::persistent_profile::mark_or_adopt(profile_dir, &engine.profile_family())?
+    } else {
+        let profile = crate::profile::mark_profile(profile_dir, &engine.fingerprint())?;
+        crate::profile::adopt_profile(profile.dir(), &engine.fingerprint())?
+    };
     let spec = WorkerLaunch {
         node: runtime.node.clone(),
         worker_main: runtime.worker_main.clone(),
         engine,
         profile_dir: profile.dir().to_path_buf(),
-        ephemeral_profile: true,
+        ephemeral_profile: !persistent,
         temp_dir: args.temp_dir.clone(),
         destinations: vec![destination],
+        mode: args.mode,
         #[cfg(any(test, feature = "live-browser-test"))]
         test_trusted_spki: fixture_spki.map(str::to_owned),
         runtime_pin: runtime.pin.clone(),
@@ -1935,6 +1963,8 @@ mod tests {
             runtime: None,
             profile_root: std::env::temp_dir(),
             temp_dir: std::env::temp_dir(),
+            mode: crate::confinement::EngineMode::Shadow,
+            persistent_profile: None,
         };
         let fill = |value: &str| BindAction::Fill {
             node_id: "d1-e2".into(),
@@ -2116,6 +2146,8 @@ mod tests {
             }),
             profile_root: std::env::temp_dir(),
             temp_dir: std::env::temp_dir(),
+            mode: crate::confinement::EngineMode::Shadow,
+            persistent_profile: None,
         };
         let frames = |requests: &[WorkerHostRequest]| {
             let mut bytes = Vec::new();
@@ -2333,6 +2365,8 @@ mod tests {
             }),
             profile_root: root.clone(),
             temp_dir: root.clone(),
+            mode: crate::confinement::EngineMode::Shadow,
+            persistent_profile: None,
         };
         let pinned = crate::runtime_pin::RuntimePin {
             node_sha256: "0".repeat(64),

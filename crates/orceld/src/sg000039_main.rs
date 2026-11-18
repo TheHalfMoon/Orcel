@@ -30,6 +30,11 @@ mod browser;
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_broker;
 mod browser_full;
+// SG-000135 OB-04: persistent Orcel-managed browser profiles under orceld's
+// protected browser state (named, one live session each, owner-approved
+// create and delete).
+#[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+mod browser_profiles;
 // SG-000135 OB-01 end-to-end harness, test builds only: the scripted SOFT
 // consent. Compiled only with both live browser features and the harness
 // feature, never in a development or release build.
@@ -3120,6 +3125,9 @@ mod sg000055_envelope_tests {
             ),
             ("close", json!({"session_id": session})),
             ("status", json!({"session_id": session})),
+            ("profiles", json!({})),
+            ("profile_create", json!({"name": "work"})),
+            ("profile_delete", json!({"name": "work"})),
         ];
         assert_eq!(shapes.len(), profile_gate::BROWSER_FULL_SHAPES.len());
         let full_profile = Some(profile_gate::BROWSER_FULL_PROFILE);
