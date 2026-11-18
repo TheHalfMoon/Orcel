@@ -14,7 +14,7 @@
 use crate::argv::FORBIDDEN_FLAGS;
 use crate::confinement::{assert_no_managed_policy, AdmittedDestination, PolicySource};
 #[cfg(windows)]
-use crate::confinement::{build_worker_argv_in, EngineMode};
+use crate::confinement::build_worker_argv_in;
 use crate::discovery::Engine;
 use crate::error::{HostError, UnavailableReason};
 use crate::supervise::{CleanEnv, JOB_ACTIVE_PROCESS_LIMIT};
