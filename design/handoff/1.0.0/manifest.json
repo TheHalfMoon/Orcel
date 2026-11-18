@@ -136,14 +136,14 @@
     {
       "path": "assets/brand/orcel-social-dark.svg",
       "kind": "social",
-      "sha256": "fbdb1b0709a4db56263ce5ea87390cc238053cc19be6b8d198fd2922e85bafde",
+      "sha256": "bc9474edec39b881db3b05bf8e16b3079b89caf0a68aff2eb83fed464c0bd620",
       "background": "dark",
       "destination": "assets/brand/orcel-social-dark.svg"
     },
     {
       "path": "assets/brand/orcel-social-light.svg",
       "kind": "social",
-      "sha256": "6fe9e0a0d7b730ddaa13a5796922cd3b1bc024a7b699b750b30f7e8a1c98286d",
+      "sha256": "2cb2a9eb8b3d987469b831193b09c44c07966f80787045acfdf3c0aeec23ef15",
       "background": "light",
       "destination": "assets/brand/orcel-social-light.svg"
     },
@@ -1656,92 +1656,7 @@
       ]
     }
   ],
-  "screens": [
-    {
-      "surface": "website",
-      "name": "website-home",
-      "theme": "light",
-      "width": 1440,
-      "board": "WebHome.dc.html"
-    },
-    {
-      "surface": "website",
-      "name": "website-shadow-mode",
-      "theme": "light",
-      "width": 1440,
-      "board": "WebShadowMode.dc.html"
-    },
-    {
-      "surface": "website",
-      "name": "website-docs",
-      "theme": "light",
-      "width": 1440,
-      "board": "WebDocs.dc.html"
-    },
-    {
-      "surface": "website",
-      "name": "website-home-phone",
-      "theme": "light",
-      "width": 390,
-      "board": "WebHomePhone.dc.html"
-    },
-    {
-      "surface": "website",
-      "name": "website-home-320",
-      "theme": "light",
-      "width": 320,
-      "board": "WebHome320.dc.html"
-    },
-    {
-      "surface": "control-room",
-      "name": "control-room-workspace",
-      "theme": "light",
-      "width": 1600,
-      "board": "AppWorkspace.dc.html"
-    },
-    {
-      "surface": "control-room",
-      "name": "control-room-needs-you",
-      "theme": "light",
-      "width": 1600,
-      "board": "AppApprovals.dc.html"
-    },
-    {
-      "surface": "control-room",
-      "name": "control-room-compact",
-      "theme": "light",
-      "width": 1680,
-      "board": "AppCompact.dc.html"
-    },
-    {
-      "surface": "control-room",
-      "name": "control-room-dark",
-      "theme": "dark",
-      "width": 1600,
-      "board": "AppDark.dc.html"
-    },
-    {
-      "surface": "browser",
-      "name": "browser-agent-panel",
-      "theme": "light",
-      "width": 1600,
-      "board": "BrowserAgent.dc.html"
-    },
-    {
-      "surface": "browser",
-      "name": "browser-takeover",
-      "theme": "light",
-      "width": 1600,
-      "board": "BrowserTakeover.dc.html"
-    },
-    {
-      "surface": "browser",
-      "name": "browser-dark",
-      "theme": "dark",
-      "width": 1600,
-      "board": "BrowserDark.dc.html"
-    }
-  ],
+  "screens": [],
   "notices": [
     {
       "path": "notices/OFL-Inter.txt",

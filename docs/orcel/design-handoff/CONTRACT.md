@@ -220,6 +220,10 @@ A screen is never committed as PNG. Each `screens` entry is one of:
   only, like `source.reference`: engineering cannot render it. The checker notes it for a draft or review package
   and refuses it with `--integrate` (`SCREEN_NOT_RENDERABLE`).
 
+Reference screens are optional: `"screens": []` is valid at every status, including `--integrate`. A package with
+no screens keeps its boards and reference renders outside Git as provenance (the canvas and the Design session's
+own files); engineering builds visual-regression baselines from screenshots of the real applications instead.
+
 Canvas boards (`*.dc.html`) are not package sources: they load a runtime script and remote fonts, which the
 package rules forbid. The Design session exports each reference screen as a static SVG instead.
 
