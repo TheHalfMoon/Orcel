@@ -12,20 +12,28 @@ with the elevated, installed `orcel.exe` and grant leases through the service ("
 
 ## The rules this procedure enforces
 
-1. **Nothing an elevated step consumes can be changed by a standard user.** The install script and the three
-   binaries are staged in `C:\Program Files\OrcelStaging`, a folder the Stage step creates in one call with an
-   explicit, protected DACL (owner Administrators; SYSTEM and Administrators full control; Users read and
-   execute only; nothing inherited). The installer refuses to run, with nothing changed, unless
-   its own file, its folder, the artifact folder, every binary and every parent folder up to `C:\` are owned by
-   SYSTEM, Administrators or TrustedInstaller, contain no junction, symbolic link or mount point, and grant no
-   other account a right to change them. A folder made with a plain `mkdir C:\...` is refused: `C:\` gives
-   Authenticated Users modify rights on everything created under it, so every user could replace the files.
-2. **Only the reviewed commit's bytes are installed.** You check each file's build provenance with
-   `gh attestation verify` (built by this repository's `ci.yml` on `main`, from the commit you reviewed) and
-   its SHA-256 against the job log. The Stage step refuses an install script whose SHA-256 differs from the
-   value on its command line; the installer refuses any binary whose SHA-256 differs from the values on its
-   command line, and it hashes and copies each binary through one handle that blocks writes and deletes.
-3. **Every elevated program and command line is checked on the UAC prompt**, not in your shell (below).
+1. **No elevated step runs PowerShell or any .NET program.** An elevated PowerShell loads modules from your
+   Documents folder and any .NET program loads a profiler named in your user environment
+   (`HKCU\Environment`), both writable by anything running as you, before a single line of the step runs. The
+   Stage and Uninstall steps are `C:\Windows\System32\cmd.exe` running only System32 tools by full path (they
+   first reset `PATH`, `SystemRoot` and `windir`, which your user environment could redirect); the Install step
+   is the staged, hash-checked native `orcel-authority.exe`, which takes no folder from the environment and,
+   after start, loads DLLs from System32 only.
+2. **Nothing an elevated step consumes can be changed by a standard user.** The three binaries are staged in
+   `C:\Program Files\OrcelStaging`: owner Administrators; SYSTEM and Administrators full control; Users read and
+   execute; nothing inherited from `C:\Program Files`. `orcel-authority install` refuses to run, with nothing
+   changed, unless it is itself `C:\Program Files\OrcelStaging\orcel-authority.exe`, and the staging folder,
+   its three binaries and every parent up to `C:\` are owned by SYSTEM, Administrators or TrustedInstaller,
+   contain no junction, symbolic link or mount point, give no other account a right to change them, and the
+   folder holds nothing else (a DLL there would load into the elevated program) and no binary has a second
+   hard link. A folder made with a plain `mkdir C:\...` is refused: `C:\` gives Authenticated Users modify
+   rights on everything created under it.
+3. **Only the reviewed commit's bytes are installed.** You prove the artifact's commit is the reviewed head,
+   check each file's build provenance with `gh attestation verify`, and take the SHA-256 values from the job
+   log. The Stage step checks the SHA-256 of each copy inside the admin-only folder against the values on its
+   UAC-checked command line and deletes the folder on any mismatch; the Install step checks them again, through
+   handles that block writes and deletes, and copies from those same handles.
+4. **Every elevated program and command line is checked on the UAC prompt**, not in your shell (below).
 
 ## Before you start
 
@@ -38,16 +46,16 @@ with the elevated, installed `orcel.exe` and grant leases through the service ("
   for the administrator, not for you, and your grants would find no key (refused). Use your administrator
   account with "Always notify". The built-in Administrator account (SID ending in `-500`) elevates without a
   prompt unless `FilterAdministratorToken` is 1; the service refuses enrollment and reset from it otherwise.
-- **GitHub CLI** (`gh`) signed in, for downloading the artifact and verifying its attestation.
-- **A second device** (phone or another PC) for reading the job log and the commit on github.com. A process
-  running as you could change what your own browser or shell shows; the values you type into the UAC-checked
-  command lines are only as good as where you read them.
+- **GitHub CLI** (`gh`) signed in, for the commit check, the download and the attestation check.
+- **A second device** (phone or another PC) for reading the commit, the job log and Microsoft's TPM root on
+  github.com and microsoft.com. A process running as you could change what your own browser or shell shows;
+  the values you type into the UAC-checked command lines are only as good as where you read them.
 
 ## How every elevated step is started, and the check on every UAC prompt
 
-Never run an elevated step from an elevated terminal, and never from an elevated shell that loads your
-PowerShell profile. From your NORMAL (not elevated) PowerShell, start the one program directly with
-`Start-Process -Verb RunAs`, using the lines below with your values in the `<...>` places.
+Never run an elevated step from an elevated terminal. From your NORMAL (not elevated) PowerShell, start the one
+program directly with `Start-Process -Verb RunAs`, using the lines below with your values in the `<...>`
+places. `<download-folder>` must be a plain path without quotes, `%`, `!`, `^` or `&` in it.
 
 Your normal shell runs as you, so a program running as you could change what it starts. The check that does
 not depend on your shell is the UAC prompt itself, drawn on the secure desktop. **On every UAC prompt:**
@@ -59,74 +67,93 @@ not depend on your shell is the UAC prompt itself, drawn on the secure desktop. 
 3. If anything differs, or the prompt names another program, choose **No** and stop. Do not retry from the
    same shell; restart Windows, sign in, and start again.
 
-`orcel.exe` is not code-signed in this slice, so UAC shows it as "Unknown publisher"; the path and command
-line check is what identifies it. `-NoExit` and `--pause` only keep the window open so you can read it.
+`orcel-authority.exe` and `orcel.exe` are not code-signed in this slice, so UAC shows them as "Unknown
+publisher"; the path and command line check is what identifies them, and the Stage step's hash check is what
+makes the staged `orcel-authority.exe` the reviewed bytes. `/k` and `--pause` only keep the window open so you
+can read it.
 
 | Step | Program location | Exact command line |
 | --- | --- | --- |
-| Stage | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -Command "$ErrorActionPreference = 'Stop'; $env:PSModulePath = Join-Path $PSHOME 'Modules'; $from = '<download-folder>'; $d = Join-Path $env:ProgramFiles 'OrcelStaging'; if (Test-Path -LiteralPath $d) { throw ($d + ' already exists; nothing was changed') }; $s = New-Object Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'); [void][IO.Directory]::CreateDirectory($d, $s); foreach ($n in 'install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe', 'orcel.exe') { $t = Join-Path $d $n; Copy-Item -LiteralPath (Join-Path $from $n) -Destination $t; $f = Get-Item -LiteralPath $t; $a = $f.GetAccessControl('Owner'); $a.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-32-544'); $f.SetAccessControl($a) }; if ((Get-FileHash -LiteralPath (Join-Path $d 'install-orcel-authority.ps1')).Hash -ne '<script-sha256>') { Remove-Item -LiteralPath $d -Recurse -Force; throw 'the staged install script does not match the expected SHA-256; the staging folder was removed' }; icacls $d; icacls (Join-Path $d '*')"` |
-| Install | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -ArtifactDir "C:\Program Files\OrcelStaging" -AuthoritySha256 <authority-sha256> -OrceldSha256 <orceld-sha256> -OrcelSha256 <orcel-sha256>` |
-| Uninstall | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -Uninstall -RemoveStaging` |
-| Uninstall, keeping the state | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -Uninstall -KeepState -RemoveStaging` |
+| Stage | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && mkdir "C:\Program Files\OrcelStaging" && (C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /setowner *S-1-5-32-544 && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" && copy /b /y "<download-folder>\orcel-authority.exe" "C:\Program Files\OrcelStaging" && copy /b /y "<download-folder>\orceld.exe" "C:\Program Files\OrcelStaging" && copy /b /y "<download-folder>\orcel.exe" "C:\Program Files\OrcelStaging" && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /setowner *S-1-5-32-544 /L && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /reset /L && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel-authority.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<authority-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orceld.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<orceld-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel.exe" SHA256 \| C:\Windows\System32\findstr.exe /l /x /i /c:"<orcel-sha256>" && echo STAGED: the three files match their SHA-256 values \|\| (rmdir /s /q "C:\Program Files\OrcelStaging" & echo STAGING REFUSED: a step failed or a SHA-256 did not match; the folder was removed & C:\Windows\System32\cmd.exe /d /c exit 1))"` |
+| Install | `C:\Program Files\OrcelStaging\orcel-authority.exe` | `"C:\Program Files\OrcelStaging\orcel-authority.exe" install --authority-sha256 <authority-sha256> --orceld-sha256 <orceld-sha256> --orcel-sha256 <orcel-sha256> --pause` |
+| Uninstall | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed"` |
+| Uninstall, keeping the state | `C:\Windows\System32\cmd.exe` | `"C:\Windows\System32\cmd.exe" /d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall --keep-state && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed"` |
 | Start the service | `C:\Windows\System32\sc.exe` | `"C:\Windows\System32\sc.exe" start OrcelAuthority` |
 | Enroll | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority enroll --pause` |
 | Replace the key | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority enroll --replace --pause` |
 | Reset | `C:\Program Files\Orcel\orcel.exe` | `"C:\Program Files\Orcel\orcel.exe" authority reset --pause` |
 
-What the Stage line does, so you can read it on the prompt: it loads PowerShell modules only from Windows'
-own folder ($PSHOME\Modules; your Documents module folder is writable by anything running as you); stops if `C:\Program Files\OrcelStaging`
-exists; creates it in one call with owner Administrators and the protected DACL
-`O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)` (`FA` full control,
-`0x1200a9` read and execute, nothing for anyone else); copies the four files from `<download-folder>` into it (they inherit that DACL); makes
-Administrators their owner; deletes the folder again and stops if the install script's SHA-256 is not
-`<script-sha256>`; and prints the folder's and the files' ACLs.
+(In the table, `\|` is a plain `|`: Markdown needs it escaped inside a table cell. The UAC prompt and the lines
+below show it plain.)
+
+What the Stage line does, so you can read it on the prompt: `/d` skips cmd's AutoRun, `/e:on` and `/v:off` fix
+the command extensions and turn off delayed expansion whatever your registry says; it resets `PATH`,
+`SystemRoot` and `windir`; it creates `C:\Program Files\OrcelStaging` and stops if it already exists; it makes
+Administrators the folder's owner and replaces its permissions with exactly SYSTEM and Administrators full
+control and Users read and execute, nothing inherited; it copies the three files from `<download-folder>`; it
+makes Administrators their owner and gives them exactly the folder's permissions (`/reset`); it checks each
+copy's SHA-256 with `certutil` against your three values; and if any step fails it deletes the folder and says
+`STAGING REFUSED`. The Uninstall lines run the staged `orcel-authority.exe uninstall` and then delete the
+staging folder (`rmdir` does not follow junctions).
 
 The `Start-Process` lines that produce exactly these command lines (CI runs these lines' command lines):
 
 ```powershell
-Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command "$ErrorActionPreference = ''Stop''; $env:PSModulePath = Join-Path $PSHOME ''Modules''; $from = ''<download-folder>''; $d = Join-Path $env:ProgramFiles ''OrcelStaging''; if (Test-Path -LiteralPath $d) { throw ($d + '' already exists; nothing was changed'') }; $s = New-Object Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm(''O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)''); [void][IO.Directory]::CreateDirectory($d, $s); foreach ($n in ''install-orcel-authority.ps1'', ''orcel-authority.exe'', ''orceld.exe'', ''orcel.exe'') { $t = Join-Path $d $n; Copy-Item -LiteralPath (Join-Path $from $n) -Destination $t; $f = Get-Item -LiteralPath $t; $a = $f.GetAccessControl(''Owner''); $a.SetOwner([Security.Principal.SecurityIdentifier]''S-1-5-32-544''); $f.SetAccessControl($a) }; if ((Get-FileHash -LiteralPath (Join-Path $d ''install-orcel-authority.ps1'')).Hash -ne ''<script-sha256>'') { Remove-Item -LiteralPath $d -Recurse -Force; throw ''the staged install script does not match the expected SHA-256; the staging folder was removed'' }; icacls $d; icacls (Join-Path $d ''*'')"'
-Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -ArtifactDir "C:\Program Files\OrcelStaging" -AuthoritySha256 <authority-sha256> -OrceldSha256 <orceld-sha256> -OrcelSha256 <orcel-sha256>'
-Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -Uninstall -RemoveStaging'
-Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -Uninstall -KeepState -RemoveStaging'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && mkdir "C:\Program Files\OrcelStaging" && (C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /setowner *S-1-5-32-544 && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" && copy /b /y "<download-folder>\orcel-authority.exe" "C:\Program Files\OrcelStaging" && copy /b /y "<download-folder>\orceld.exe" "C:\Program Files\OrcelStaging" && copy /b /y "<download-folder>\orcel.exe" "C:\Program Files\OrcelStaging" && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /setowner *S-1-5-32-544 /L && C:\Windows\System32\icacls.exe "C:\Program Files\OrcelStaging\*" /reset /L && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel-authority.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<authority-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orceld.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<orceld-sha256>" && C:\Windows\System32\certutil.exe -hashfile "C:\Program Files\OrcelStaging\orcel.exe" SHA256 | C:\Windows\System32\findstr.exe /l /x /i /c:"<orcel-sha256>" && echo STAGED: the three files match their SHA-256 values || (rmdir /s /q "C:\Program Files\OrcelStaging" & echo STAGING REFUSED: a step failed or a SHA-256 did not match; the folder was removed & C:\Windows\System32\cmd.exe /d /c exit 1))"'
+Start-Process -Verb RunAs -FilePath 'C:\Program Files\OrcelStaging\orcel-authority.exe' -ArgumentList 'install --authority-sha256 <authority-sha256> --orceld-sha256 <orceld-sha256> --orcel-sha256 <orcel-sha256> --pause'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed"'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\cmd.exe' -ArgumentList '/d /e:on /v:off /s /k "set "PATH=C:\Windows\System32" && set "SystemRoot=C:\Windows" && set "windir=C:\Windows" && "C:\Program Files\OrcelStaging\orcel-authority.exe" uninstall --keep-state && rmdir /s /q "C:\Program Files\OrcelStaging" && echo UNINSTALLED: the staging folder was removed"'
 Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\sc.exe' -ArgumentList 'start OrcelAuthority'
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority enroll --pause'
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority enroll --replace --pause'
 Start-Process -Verb RunAs -FilePath 'C:\Program Files\Orcel\orcel.exe' -ArgumentList 'authority reset --pause'
 ```
 
-In the Stage line, `<download-folder>` must not contain a single quote. Explorer's **Run as administrator**
-passes no arguments, and every step above needs them, so do not use Explorer for these steps.
+Explorer's **Run as administrator** passes no arguments, and every step above needs them, so do not use
+Explorer for these steps.
 
 ## What the install changes on the PC
 
-`install-orcel-authority.ps1` makes exactly these system changes, and `-Uninstall` reverses them:
+`orcel-authority install` makes exactly these system changes, and `orcel-authority uninstall` reverses them:
 
-| # | Change | Where | Reversed by `-Uninstall` |
+| # | Change | Where | Reversed by `uninstall` |
 | --- | --- | --- | --- |
-| 1 | Copies the hash-verified `orcel-authority.exe`, `orceld.exe` and `orcel.exe` (each hashed and copied through one handle that blocks writes and deletes, and the copy hashed again) | `%ProgramFiles%\Orcel\Authority\orcel-authority.exe`, `%ProgramFiles%\Orcel\orceld.exe`, `%ProgramFiles%\Orcel\orcel.exe` | Deleted |
-| 2 | SCM registration: service `OrcelAuthority`, "Orcel Authority", own process, automatic start, account `NT SERVICE\OrcelAuthority` (virtual account, no password), SID type unrestricted, privileges `SeChangeNotifyPrivilege`, `SeImpersonatePrivilege`, `SeCreateGlobalPrivilege` only, restart on failure | Service Control Manager | Stopped (waited for), deleted |
-| 3 | Only if missing: `%ProgramData%\Orcel`, created with its security in one call: owner Administrators, protected DACL (SYSTEM and Administrators full control, Users read and execute) | `%ProgramData%\Orcel` | Deleted if this script created it and it is empty |
-| 4 | State directory created with its security in one call: owner Administrators, protected DACL with SYSTEM, Administrators and the service full control, no access for users; `config.json` trusting only `%ProgramFiles%\Orcel\orceld.exe` (Authorize) and `%ProgramFiles%\Orcel\orcel.exe` (grant, enrollment and reset intents) | `%ProgramData%\Orcel\authority` | Deleted (kept with `-KeepState`) |
+| 1 | Copies the hash-verified `orcel-authority.exe`, `orceld.exe` and `orcel.exe` (each hashed and copied through one handle that blocks writes and deletes, and the copy hashed again); `Orcel` and `Authority` are created, if missing, with owner Administrators and a protected DACL (SYSTEM and Administrators full control, Users read and execute) | `%ProgramFiles%\Orcel\Authority\orcel-authority.exe`, `%ProgramFiles%\Orcel\orceld.exe`, `%ProgramFiles%\Orcel\orcel.exe` | Deleted |
+| 2 | SCM registration: service `OrcelAuthority`, "Orcel Authority", own process, automatic start, account `NT SERVICE\OrcelAuthority` (virtual account, no password), SID type unrestricted, privileges `SeChangeNotifyPrivilege`, `SeImpersonatePrivilege`, `SeCreateGlobalPrivilege` only, restart twice on failure within a day | Service Control Manager | Stopped (waited for), deleted |
+| 3 | Only if missing: `%ProgramData%\Orcel`, created with its security in one call: owner Administrators, protected DACL (SYSTEM and Administrators full control, Users read and execute) | `%ProgramData%\Orcel` | Deleted if this install created it and it is empty |
+| 4 | State directory created with its security in one call: owner Administrators, protected DACL with SYSTEM, Administrators and the service full control, no access for users; `config.json` trusting only `%ProgramFiles%\Orcel\orceld.exe` (Authorize) and `%ProgramFiles%\Orcel\orcel.exe` (grant, enrollment and reset intents) | `%ProgramData%\Orcel\authority` | Deleted (kept with `--keep-state`) |
 | 5 | Public key directory created the same way: SYSTEM and Administrators full control, the service modify, Users read and execute | `%ProgramData%\Orcel\authority-public` | Deleted |
-| 6 | Event Log source `Orcel` in the Application log, unless it exists (marked `OrcelInstalledBy`) | `HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\Orcel` | Removed only if this script created it |
-| 7 | Starts the service and waits until it runs and has published its public key; Windows may create a profile for the virtual account (it holds the account's DPAPI keys) | SCM, user profiles | Profile removed (`Win32_UserProfile`); if Windows still holds it loaded, the script prints `PROFILE LEFT` with the command to remove it after a restart |
+| 6 | Event Log source `Orcel` in the Application log, created only if it does not exist (marked `OrcelInstalledBy`; its message file is an absolute path under the Windows folder; nobody but administrators may change the key) | `HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\Orcel` | Removed only if this install created it |
+| 7 | Starts the service and waits until it runs and has published its public key; Windows may create a profile for the virtual account (it holds the account's DPAPI keys) | SCM, user profiles | Profile removed; if Windows still holds it loaded, the window prints `PROFILE LEFT` and how to remove it after a restart |
 
-The script reads back the owner and DACL of every directory it creates and stops on any difference. **If any
-step fails, it undoes every change it already made, newest first, and says "every change it made was rolled
-back"** (or lists what it could not undo). It refuses to run, with nothing changed, if the location check
-fails, a hash does not match, the service already exists, any installed binary already exists,
+The folders come from Windows' known folders, never from environment variables. Every directory created is
+read back (owner, protection, exact entries) and any difference stops the install. **If any step fails, the
+install undoes every change it already made, newest first, and says "every change it made was rolled back"**
+(or lists what it could not undo). It refuses to run, with nothing changed, if the location check fails, a
+hash does not match, the service already exists, any installed binary already exists,
 `%ProgramData%\Orcel\authority` or `authority-public` already exist (someone may have pre-created them), or an
-existing `%ProgramFiles%\Orcel` or `%ProgramData%\Orcel` is not admin-owned or lets other users add, delete or
-rename entries. `-RemoveStaging` then deletes the four staged files by name and the empty staging folder. What
-uninstall leaves: events already written to the Application log.
+existing `%ProgramFiles%\Orcel`, `%ProgramData%\Orcel` or Event Log source key could be changed by a
+non-administrator. Uninstall deletes folder trees only after checking that nothing in them is a junction or
+link. What uninstall leaves: events already written to the Application log.
 
 ## The procedure
 
-### 1. Pick the commit and its two CI jobs (second device)
+### 1. Prove the commit, and find its two CI jobs (second device)
 
-On github.com, open the reviewed pull request's merge commit on `main` of `TheHalfMoon/Orcel`; that commit's
-full SHA is `<commit>`. Open the workflow run "CI" for that commit with event `push` (Actions, filter by branch
-`main`), or from your shell:
+`<reviewed-head>` is the head commit of the pull request you reviewed. On `main` of `TheHalfMoon/Orcel` find
+the merge commit of that pull request; its full SHA is `<commit>`. Prove that `<commit>` is exactly what you
+reviewed:
+
+```powershell
+gh api repos/TheHalfMoon/Orcel/commits/<commit> --jq '.parents[].sha'
+gh api repos/TheHalfMoon/Orcel/compare/<reviewed-head>...<commit> --jq '.files | length'
+gh api repos/TheHalfMoon/Orcel/branches/main --jq '.commit.sha'
+```
+
+The first must list `<reviewed-head>` among the parents; the second must print `0` (no file differs between
+what you reviewed and the commit; `main` only merges up-to-date branches); the third shows whether `<commit>`
+is still the head of `main` (if not, review what came after, or use the newer head's own reviewed pull request).
+Then find the workflow run "CI" for `<commit>` with event `push`:
 
 ```powershell
 gh run list --repo TheHalfMoon/Orcel --workflow ci.yml --branch main --event push --commit <commit>
@@ -134,18 +161,18 @@ gh run list --repo TheHalfMoon/Orcel --workflow ci.yml --branch main --event pus
 
 Use only that run (or a manual `workflow_dispatch` run on `main` at that commit). The artifact jobs do not run
 for pull requests; an artifact from any other run, branch or fork is untrusted, whatever it contains. In that
-run, both of these jobs must have passed:
+run both of these jobs must have passed:
 
 - **Authority service artifact / windows-latest.** Open its log, step "Record the SHA-256 of each file", and
-  write down the four `AUTHORITY-ARTIFACT <sha256>  <file>` lines and the `commit` line (it must be
-  `<commit>`). These are `<authority-sha256>` (`orcel-authority.exe`), `<orceld-sha256>` (`orceld.exe`),
-  `<orcel-sha256>` (`orcel.exe`) and `<script-sha256>` (`install-orcel-authority.ps1`). Do not take them from
-  the `SHA256SUMS.txt` inside the download; it only has to agree with the log. Step "Verify the attestation
-  as the runbook does" must show four successful verifications.
+  write down the three `AUTHORITY-ARTIFACT <sha256>  <file>` lines and the `commit` line (it must be
+  `<commit>`). These are `<authority-sha256>` (`orcel-authority.exe`), `<orceld-sha256>` (`orceld.exe`) and
+  `<orcel-sha256>` (`orcel.exe`). Do not take them from the `SHA256SUMS.txt` inside the download; it only has
+  to agree with the log. Step "Verify the attestation as the runbook does" must show three successful
+  verifications.
 - **Authority install E2E / windows-latest.** It ran this procedure on a disposable runner with these same
   bytes (see "What CI proves" below). Its artifact `authority-install-e2e-report` holds
-  `authority-install-e2e.json`; its `result` must be `pass`, its `commit` `<commit>`, and its
-  `artifact_sha256` the four values you wrote down.
+  `authority-install-e2e.json`; its `result` must be `pass`, its `commit` `<commit>`, its `artifact_sha256`
+  the three values you wrote down, and its `not_verified` list tells you what the runner could not show.
 
 ### 2. Download the artifact (normal shell)
 
@@ -159,7 +186,7 @@ gh run download <run-id> --repo TheHalfMoon/Orcel --name orcel-authority-windows
 ### 3. Verify provenance and hashes (normal shell)
 
 ```powershell
-foreach ($n in 'install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe', 'orcel.exe') {
+foreach ($n in 'orcel-authority.exe', 'orceld.exe', 'orcel.exe') {
   gh attestation verify (Join-Path '<download-folder>' $n) --repo TheHalfMoon/Orcel --signer-workflow TheHalfMoon/Orcel/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest <commit> --deny-self-hosted-runners
   Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path '<download-folder>' $n)
 }
@@ -168,13 +195,15 @@ foreach ($n in 'install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe
 Each file must report a successful verification (a GitHub-hosted run of `ci.yml` on `refs/heads/main` of
 `TheHalfMoon/Orcel` at `<commit>` built it), and each hash must equal the value from the job log. Any failure:
 stop. These checks run in your shell, so they guard against a wrong or tampered download, not against a
-process running as you; the binding checks are the hashes on the UAC-checked command lines in steps 4 and 6.
+process running as you; the binding checks are the hashes on the UAC-checked command lines in steps 4 and 7.
 
 ### 4. Stage, elevated
 
-Start the **Stage** line of the table above (your `<download-folder>` and `<script-sha256>`), and check the UAC
-prompt against the table. The window must end with the ACLs below and no error. If it says the folder already
-exists, an earlier staging is still there: uninstall first (it removes the staging), or inspect the folder.
+Start the **Stage** line of the table above (your `<download-folder>` and three hashes), and check the UAC
+prompt against the table. The window must end with `STAGED: the three files match their SHA-256 values`, the
+three hashes printed above it, and no error. `STAGING REFUSED` means the folder was removed again: check the
+download and the hashes. "A subdirectory or file ... already exists" means an earlier staging is still there:
+uninstall first (it removes the staging), or inspect the folder.
 
 ### 5. Check the staging folder's ACL (normal shell)
 
@@ -186,7 +215,8 @@ Get-Acl -LiteralPath 'C:\Program Files\OrcelStaging' | ForEach-Object { '{0} pro
 ```
 
 Expected output, line by line (column spacing may differ; on a Windows display language other than English the
-account names are translated). The files carry the folder's three entries; `(OI)(CI)` on the folder makes new files get them too:
+account names are translated). `(I)` marks an entry the files inherit from the folder; the folder's own
+entries have none:
 
 <!-- expected-staging-acl -->
 ```text
@@ -194,43 +224,40 @@ C:\Program Files\OrcelStaging NT AUTHORITY\SYSTEM:(OI)(CI)(F)
 BUILTIN\Administrators:(OI)(CI)(F)
 BUILTIN\Users:(OI)(CI)(RX)
 Successfully processed 1 files; Failed processing 0 files
-C:\Program Files\OrcelStaging\install-orcel-authority.ps1 NT AUTHORITY\SYSTEM:(F)
-BUILTIN\Administrators:(F)
-BUILTIN\Users:(RX)
-C:\Program Files\OrcelStaging\orcel-authority.exe NT AUTHORITY\SYSTEM:(F)
-BUILTIN\Administrators:(F)
-BUILTIN\Users:(RX)
-C:\Program Files\OrcelStaging\orcel.exe NT AUTHORITY\SYSTEM:(F)
-BUILTIN\Administrators:(F)
-BUILTIN\Users:(RX)
-C:\Program Files\OrcelStaging\orceld.exe NT AUTHORITY\SYSTEM:(F)
-BUILTIN\Administrators:(F)
-BUILTIN\Users:(RX)
-Successfully processed 4 files; Failed processing 0 files
-install-orcel-authority.ps1 BUILTIN\Administrators
+C:\Program Files\OrcelStaging\orcel-authority.exe NT AUTHORITY\SYSTEM:(I)(F)
+BUILTIN\Administrators:(I)(F)
+BUILTIN\Users:(I)(RX)
+C:\Program Files\OrcelStaging\orcel.exe NT AUTHORITY\SYSTEM:(I)(F)
+BUILTIN\Administrators:(I)(F)
+BUILTIN\Users:(I)(RX)
+C:\Program Files\OrcelStaging\orceld.exe NT AUTHORITY\SYSTEM:(I)(F)
+BUILTIN\Administrators:(I)(F)
+BUILTIN\Users:(I)(RX)
+Successfully processed 3 files; Failed processing 0 files
 orcel-authority.exe BUILTIN\Administrators
 orcel.exe BUILTIN\Administrators
 orceld.exe BUILTIN\Administrators
 BUILTIN\Administrators protected=True
 ```
 
-Any other entry (Authenticated Users, Everyone, INTERACTIVE, your own account, CREATOR OWNER, OWNER RIGHTS), a missing
-`protected=True`, or another owner: stop, and uninstall or delete the folder elevated. The installer makes the
-same check itself before it changes anything.
+Any other entry (Authenticated Users, Everyone, INTERACTIVE, your own account, CREATOR OWNER, OWNER RIGHTS),
+any other file, a missing `protected=True`, or another owner: stop, and run the Uninstall line (which deletes
+the staging folder). The installer makes the same checks itself before it changes anything.
 
 ### 6. Preview (changes nothing; not elevated)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -WhatIf -ArtifactDir "C:\Program Files\OrcelStaging" -AuthoritySha256 <authority-sha256> -OrceldSha256 <orceld-sha256> -OrcelSha256 <orcel-sha256>
+& 'C:\Program Files\OrcelStaging\orcel-authority.exe' install --dry-run --authority-sha256 <authority-sha256> --orceld-sha256 <orceld-sha256> --orcel-sha256 <orcel-sha256>
 ```
 
-It prints the location check, the three hashes and every planned change.
+It prints the location check, the three hashes and every planned change, and ends with `Dry run: nothing was
+changed.`
 
 ### 7. Install, elevated
 
 Start the **Install** line of the table above with your three hashes, and check the UAC prompt against the
-table. The window must end with the service `Running`. On a failure it says what failed and that every change
-was rolled back.
+table. The window must end with `The service OrcelAuthority is running.` and `Installed.`; press Enter to
+close it. On a failure it says what failed and that every change was rolled back.
 
 ### 8. Check, as your normal user (not elevated)
 
@@ -251,20 +278,21 @@ signature by the lease key; the public key in `authority-public` verifies them.
 
 9. **Check the pinned TPM root** (not elevated):
 
-   ```powershell
-   $cert = Get-ChildItem Cert:\LocalMachine\CA, Cert:\LocalMachine\Root | Where-Object Subject -eq 'CN=Microsoft TPM Root Certificate Authority 2014, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' | Select-Object -First 1
-   $cert.Thumbprint
-   -join ([Security.Cryptography.SHA256]::Create().ComputeHash($cert.RawData) | ForEach-Object { $_.ToString('x2') })
-   ```
+    ```powershell
+    $cert = Get-ChildItem Cert:\LocalMachine\CA, Cert:\LocalMachine\Root | Where-Object Subject -eq 'CN=Microsoft TPM Root Certificate Authority 2014, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' | Select-Object -First 1
+    $cert.Thumbprint
+    -join ([Security.Cryptography.SHA256]::Create().ComputeHash($cert.RawData) | ForEach-Object { $_.ToString('x2') })
+    ```
 
-   The thumbprint must be `D4FFDB19BA590FFFAA34DB5F4B568706A2978436` and the SHA-256
-   `870c7a35ceab3d59979f2c6a524042d404cb71518004350925fb2ced79a999da`, the value pinned in
-   `crates/orcel-authority/src/attestation.rs`. Compare both with the certificate Microsoft publishes for the
-   Microsoft TPM Root Certificate Authority 2014 (on your second device). The service trusts an attestation
-   chain only if it ends at a certificate with exactly that SHA-256: a certificate someone adds to a store
-   under the same name is not trusted (test `tpm_root_lookalike_named_like_microsofts_is_refused`), and CI checks
-   that the root found by name on the runner, when present, has the pinned hash. `orcel authority status`
-   must say `enrollment available true` and `UAC always notify on secure desktop true`.
+    The thumbprint must be `D4FFDB19BA590FFFAA34DB5F4B568706A2978436` and the SHA-256
+    `870c7a35ceab3d59979f2c6a524042d404cb71518004350925fb2ced79a999da`, the value pinned in
+    `crates/orcel-authority/src/attestation.rs`. Compare both with the certificate Microsoft publishes for the
+    Microsoft TPM Root Certificate Authority 2014 (on your second device). The service trusts an attestation
+    chain only if it ends at a certificate with exactly that SHA-256: a certificate someone adds to a store
+    under the same name is not trusted (test `tpm_root_lookalike_named_like_microsofts_is_refused`), and a
+    test checks that the root found by name on the machine, when present, has the pinned hash (the hosted CI
+    runner has no such certificate, so the report lists this as not verified). `orcel authority status` must
+    say `enrollment available true` and `UAC always notify on secure desktop true`.
 10. **Enroll, elevated, started directly:** the Enroll line of the table above. Check **Show more details** on
     the UAC prompt: `"C:\Program Files\Orcel\orcel.exe" authority enroll --pause` exactly, else No. Windows
     Hello asks you to create the key (a PIN or fingerprint is recommended over face recognition). The window
@@ -325,40 +353,54 @@ design: inspect before resetting.
 
 ## Update after a rebuild
 
-Elevated and checked on the UAC prompt: "Uninstall, keeping the state" (it also removes the staging). Then
-steps 1 to 7 for the new commit. The install refuses an existing state directory, so move the kept one back
-only after you have inspected it; or use the plain "Uninstall" and install to start over with a new key and
-epoch 1.
+Elevated and checked on the UAC prompt: "Uninstall, keeping the state" (it also removes the staging; if the
+staging is already gone, stage any reviewed commit first, steps 1 to 5). Then steps 1 to 8 for the new commit.
+The install refuses an existing state directory, so move the kept one back only after you have inspected it;
+or use the plain "Uninstall" and install to start over with a new key and epoch 1.
 
 ## Uninstall
 
-Elevated: the "Uninstall" line of the table above, checked on the UAC prompt. It also deletes the staged files
-and `C:\Program Files\OrcelStaging`. "Uninstall, keeping the state" keeps `%ProgramData%\Orcel\authority`
-(audit chain, leases, DPAPI-wrapped key) for inspection. The virtual account's profile is removed with its
-DPAPI keys, so a kept key can no longer be unwrapped by a reinstalled service; keep it only as evidence.
+Elevated: the "Uninstall" line of the table above, checked on the UAC prompt. It runs the staged
+`orcel-authority.exe uninstall` and then deletes `C:\Program Files\OrcelStaging`. "Uninstall, keeping the
+state" keeps `%ProgramData%\Orcel\authority` (audit chain, leases, DPAPI-wrapped key) for inspection. The
+virtual account's profile is removed with its DPAPI keys, so a kept key can no longer be unwrapped by a
+reinstalled service; keep it only as evidence. If the staging folder is gone, stage any reviewed commit first
+(steps 1 to 5).
 
 ## What CI proves, and what stays the founder's
 
 Job **Authority install E2E / windows-latest** in `.github/workflows/ci.yml` runs `scripts/authority-install-e2e.ps1`
 for every pull request, every push to `main` and every manual dispatch, on a disposable GitHub-hosted runner
 where it is an administrator. On `main` it installs the very files the "Authority service artifact" job built
-and attested in the same run; on a pull request it builds them the same way. It extracts the Stage, Install
-and Uninstall command lines from this file's `Start-Process` lines (only `-NoExit` removed, the `<...>`
-values filled in) and fails on any mismatch. Its report, `authority-install-e2e.json` in the artifact
-`authority-install-e2e-report` of the run for your commit (Actions, the run, Artifacts; or
-`gh run download <run-id> --repo TheHalfMoon/Orcel --name authority-install-e2e-report`), records every check:
+and attested in the same run; elsewhere it builds them the same way (so the attestation, its `gh attestation
+verify` step and the attested download first run on the push to `main`; the report says which source it used).
+It takes the Stage, Install and Uninstall command lines from this file's `Start-Process` lines (only `/k` made
+`/c` and `--pause` removed, the `<...>` values filled in) and launches them with a hostile environment: a
+PowerShell module planted in the runner account's Documents folder that shadows the cmdlets an elevated
+PowerShell would load, a .NET profiler (`COR_PROFILER`, also written to `HKCU\Environment`) pointing at a
+canary DLL, and `PATH`, `SystemRoot`, `ProgramFiles` and `ProgramData` pointing at a decoy folder. A positive
+control first shows that a PowerShell started with that environment runs both canaries. It fails on any
+mismatch. Its report, `authority-install-e2e.json` in the artifact `authority-install-e2e-report` of the run
+for your commit (Actions, the run, Artifacts; or
+`gh run download <run-id> --repo TheHalfMoon/Orcel --name authority-install-e2e-report`), records every check
+and lists separately (`not_verified`) what the runner could not show:
 
-- **Staging:** the Stage line with a wrong `<script-sha256>` removes the folder and fails; the real one gives
-  exactly the ACL output in step 5; a temporary local standard user (created for the run) can read but cannot
-  write, append or create anything in the staging folder; the Stage line refuses an existing folder.
+- **Runbook:** all eight `Start-Process` lines parse and each matches its UAC table row; no elevated step
+  starts PowerShell or a .NET program.
+- **Staging:** the Stage line with a wrong hash removes the folder and fails; the real one gives exactly the
+  ACL output in step 5; a temporary local standard user (created for the run) can read but cannot write,
+  append, create or re-permission anything in the staging folder; the Stage line refuses an existing folder.
 - **The old flaw:** a folder made like `mkdir C:\OrcelBuild` is writable by that standard user, and the
-  installer refuses it (as its own location and as `-ArtifactDir`) with nothing changed.
-- **Failed installs, nothing changed:** a wrong hash, a pre-existing `%ProgramData%\Orcel\authority`.
+  installer refuses to run from it, with nothing changed.
+- **Failed installs, nothing changed:** a wrong hash, an extra file (a fake `version.dll`) in the staging
+  folder, a pre-existing `%ProgramData%\Orcel\authority`.
 - **Rollback:** a pre-created `\\.\pipe\orcel-authority` makes the service start fail after every other change;
   the system is then exactly as before the install.
-- **Clean install:** the Install line; service running, automatic, as `NT SERVICE\OrcelAuthority`; the state
-  directory and its files unreadable for the standard user, the public key readable, `%ProgramFiles%\Orcel`
-  not writable for that user; `orceld authority-status` in service mode.
+- **Clean install:** the Install line; nothing lands in the decoy folders; service running, automatic, as
+  `NT SERVICE\OrcelAuthority`, with its SID type, privileges and failure actions; the Event Log message file
+  under the real Windows folder; the state directory and its files unreadable for the standard user, the
+  public key readable, `%ProgramFiles%\Orcel` not writable for that user; `orceld authority-status` in service
+  mode.
 - **Fail closed without Windows Hello**, for two callers: the runner's job process (the elevated administrator
   of the runner's active console session, the closest a runner comes to you starting the owner CLI elevated)
   and the temporary standard user (an interactive logon, not elevated). For both, `orcel authority status`
@@ -370,12 +412,13 @@ values filled in) and fails on any mismatch. Its report, `authority-install-e2e.
 - **Recovery:** a restart keeps `key_id`; with `lease-signing.key` missing and audit history present the
   service refuses to start (event 4103); with the key back it starts with the same `key_id`.
 - **Uninstall:** the Uninstall line; every row of the table above reversed and the staging gone.
+- **Hostile environment:** neither canary ran in any elevated step.
 - **Grant and revoke in console mode:** the scripted-consent console tests (test feature only, never in the
-  installed binaries); the report says whether the full grant and revoke test ran or the runner had no
-  interactive console session.
-- **Trust chain:** whether the Microsoft TPM Root Certificate Authority 2014 is present on the runner and, if
-  so, that its SHA-256 equals the pinned value.
+  installed binaries); the report says whether the full grant and revoke test ran.
+- **Trust chain:** a lookalike root with the Microsoft root's name is refused; whether the Microsoft TPM Root
+  Certificate Authority 2014 is present on the runner (if absent, `not_verified`).
 
-What CI cannot do, and stays the founder's step on the real PC: Windows Hello enrollment against a real TPM
-attestation, the service-observed unlock and the confirmation box, and an installed-service grant and revoke
-with real Windows Hello (steps 9 to 14). Those cannot be produced without a person at a real console.
+What CI cannot do, and stays the founder's step on the real PC: the commit proof and the provenance check
+(steps 1 to 3), the TPM root check (step 9), Windows Hello enrollment against a real TPM attestation, the
+service-observed unlock and the confirmation box, and an installed-service grant and revoke with real Windows
+Hello (steps 10 to 13). Those cannot be produced without a person at a real console.

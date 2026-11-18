@@ -90,7 +90,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_client_ace_is_exactly_read_write_synchronize_read_control() {
+    fn the_client_ace_is_exactly_0x120083_read_write_read_attributes_synchronize_read_control() {
         assert_eq!(CLIENT_ACCESS, 0x0012_0083);
         assert!(client_mask_is_safe(CLIENT_ACCESS));
         assert_eq!(CLIENT_ACCESS & FILE_CREATE_PIPE_INSTANCE, 0);

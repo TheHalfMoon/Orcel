@@ -8,7 +8,7 @@
 //!
 //! Start refuses (and the SCM reports a service-specific error) unless the
 //! process runs as the virtual service account, the state directory exists
-//! with the protected DACL the install script set, and the pipe name is
+//! with the protected DACL the installer set, and the pipe name is
 //! free.
 
 use super::runtime::{run_loop, start, Control, RunConfig};
@@ -33,7 +33,7 @@ use windows_sys::Win32::System::Services::{
     SERVICE_STOP_PENDING, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS,
 };
 
-/// The configuration file the install script writes in the state directory.
+/// The configuration file the installer writes in the state directory.
 pub const CONFIG_FILE: &str = "config.json";
 
 static CONTROL: OnceLock<Mutex<Option<Sender<Control>>>> = OnceLock::new();
@@ -171,7 +171,7 @@ pub fn service_config() -> Result<RunConfig, AuthorityError> {
     let state_dir = program_data.join("Orcel").join("authority");
     if !state_dir.is_dir() {
         return Err(AuthorityError::unavailable(format!(
-            "the state directory {} does not exist; run scripts/install-orcel-authority.ps1",
+            "the state directory {} does not exist; install with orcel-authority install (runbook SG132_INSTALL_RUNBOOK.md)",
             state_dir.display()
         )));
     }

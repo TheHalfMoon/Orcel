@@ -33,6 +33,9 @@ sha2.workspace = true
 # packet; UI_WindowsAndMessaging carries the WTSSendMessageW message box
 # styles and the WTS_SESSION_* codes; Cryptography carries CNG (ECDSA P-256
 # lease signatures, RSA PKCS#1 Windows Hello signature checks) and DPAPI.
+# The native installer (install hardening) adds LibraryLoader (System32-only
+# DLL search), SystemInformation (the Windows folder) and UI_Shell (known
+# folder IDs; shell32, ole32 and userenv are loaded from System32 at run time).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
   "Win32_Foundation",
@@ -42,10 +45,13 @@ windows-sys = { version = "0.52", features = [
   "Win32_Storage_FileSystem",
   "Win32_System_EventLog",
   "Win32_System_IO",
+  "Win32_System_LibraryLoader",
   "Win32_System_Pipes",
   "Win32_System_Registry",
   "Win32_System_RemoteDesktop",
   "Win32_System_Services",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }

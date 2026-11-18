@@ -1825,11 +1825,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # SG-000132: the hash-pinned artifact the founder installs the authority
-  # service from (scripts/install-orcel-authority.ps1 refuses any other
-  # bytes). It runs only for a push to main or a manual dispatch on main of
-  # TheHalfMoon/Orcel, never for a pull request (a fork's PR could build
-  # anything), builds and hashes the binaries of that exact commit, adds the
-  # install script, prints the SHA-256 values in the job log (the founder
+  # service from (the runbook's Stage step and orcel-authority install refuse
+  # any other bytes). It runs only for a push to main or a manual dispatch on
+  # main of TheHalfMoon/Orcel, never for a pull request (a fork's PR could
+  # build anything), builds and hashes the three binaries of that exact
+  # commit, prints the SHA-256 values in the job log (the founder
   # takes them from the log on github.com, not from the zip), attests the
   # build provenance of every file (and checks it with `gh attestation
   # verify` exactly as the runbook does) and keeps the files as a workflow
@@ -1857,12 +1857,11 @@ jobs:
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'authority-artifact'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item -LiteralPath 'scripts/install-orcel-authority.ps1' -Destination $out
           foreach ($name in @('orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
             Copy-Item -LiteralPath (Join-Path 'target/release' $name) -Destination $out
           }
           $lines = @()
-          foreach ($name in @('install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
+          foreach ($name in @('orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $out $name)).Hash.ToLowerInvariant()
             $lines += "$hash  $name"
           }
@@ -1879,7 +1878,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           COMMIT: ${{ github.sha }}
         run: |
-          foreach ($name in @('install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
+          foreach ($name in @('orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
             gh attestation verify (Join-Path $env:RUNNER_TEMP "authority-artifact/$name") --repo TheHalfMoon/Orcel --signer-workflow TheHalfMoon/Orcel/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest $env:COMMIT --deny-self-hosted-runners
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
@@ -1894,8 +1893,10 @@ jobs:
   # discarded afterwards; never on anyone's PC). On main it installs the very
   # files the authority-artifact job attested in this run; otherwise it
   # builds them the same way. scripts/authority-install-e2e.ps1 takes the
-  # Stage, Install and Uninstall command lines from SG132_INSTALL_RUNBOOK.md
-  # and checks the staging ACL (as a temporary standard user), refusals with
+  # Stage, Install and Uninstall command lines from SG132_INSTALL_RUNBOOK.md,
+  # launches them with a hostile environment (a planted PowerShell module, a
+  # .NET profiler canary, redirected PATH, SystemRoot, ProgramFiles and
+  # ProgramData) and checks the staging ACL (as a temporary standard user), refusals with
   # nothing changed, rollback, a clean install, fail-closed grant and reset
   # without Windows Hello, recovery, uninstall, the console scripted grant
   # and revoke tests and the pinned TPM root. Any mismatch fails the job; the
@@ -1925,7 +1926,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $out = Join-Path $env:RUNNER_TEMP 'authority-artifact'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item -LiteralPath 'scripts/install-orcel-authority.ps1' -Destination $out
           foreach ($name in @('orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
             Copy-Item -LiteralPath (Join-Path 'target/release' $name) -Destination $out
           }
