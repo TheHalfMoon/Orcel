@@ -5,486 +5,1049 @@
   "supersedes": null,
   "identity": {
     "name": "Orcel People First",
-    "edition": "v5 (proposed)",
-    "notes": "Proposed, not approved. The identity is the People First v5 of PR #811, which is open and unmerged; the live identity on main is still v4 (Night Window). Packaged by engineering from ORCEL_Design_System_v1 without editing any design content; approval can only come from the founder."
+    "edition": "v5",
+    "notes": "Identity of PR #811 (People First v5; founder approved the identity on 18 November 2026 in the design session, rollout PR open). Brand SVGs are byte-identical to PR #811's sync-brand.mjs output. This package is for review: it must not be approved before PR #811 is decided. Approval surfaces follow the repository rule: the app shows what waits and starts the OS prompt; it never approves."
   },
   "source": {
-    "session": "Orcel Design session (ORCEL Design System v1), packaged by the engineering session",
+    "session": "Orcel Design session (Orcel desktop and website design)",
     "createdOn": "2026-11-18",
-    "reference": "ORCEL_Design_System_v1 folder on the founder's PC (assets/, tokens/orcel.tokens.json, handoff/components.md). Provenance only."
+    "reference": "ORCEL_Design_System_v1 on the founder's PC and the design canvas boards (provenance only)."
   },
   "assets": [
     {
-      "path": "assets/logo/orcel-lockup-ink.svg",
+      "path": "assets/brand/orcel-accent-icon.svg",
+      "kind": "app-tile",
+      "sha256": "584b8abcd3befc71d749af67dd749a50fe7d3da99e2e036c0895b0469cab98c3",
+      "background": "any",
+      "destination": "assets/brand/orcel-accent-icon.svg"
+    },
+    {
+      "path": "assets/brand/orcel-app-icon-light.svg",
+      "kind": "app-tile",
+      "sha256": "753e9becadf103bfc99b2d89ef3ab95c789af0e846faf6775412413742904d9d",
+      "background": "any",
+      "destination": "assets/brand/orcel-app-icon-light.svg"
+    },
+    {
+      "path": "assets/brand/orcel-app-icon.svg",
+      "kind": "app-tile",
+      "sha256": "91c6509f2d6897685fe3ad37d183a9eb37fa77a6112905310fe22fd52132bc12",
+      "background": "any",
+      "destination": "assets/brand/orcel-app-icon.svg"
+    },
+    {
+      "path": "assets/brand/orcel-icon-agent.svg",
+      "kind": "app-tile",
+      "sha256": "598787b957493fb31a0e155a00411a3878c2514da1b8379118a89dbfb8776db2",
+      "background": "any",
+      "destination": "assets/brand/orcel-icon-agent.svg"
+    },
+    {
+      "path": "assets/brand/orcel-icon-browser.svg",
+      "kind": "app-tile",
+      "sha256": "cf0a53786d6ebcc4c4aa3c64dcaaa601639467819ffe3880f15258aeb68f0540",
+      "background": "any",
+      "destination": "assets/brand/orcel-icon-browser.svg"
+    },
+    {
+      "path": "assets/brand/orcel-icon-cluster.svg",
+      "kind": "app-tile",
+      "sha256": "7ec5584cbfe60eabce5c9df4a6354072018731db2d8ec975fa0c993c3d586a37",
+      "background": "any",
+      "destination": "assets/brand/orcel-icon-cluster.svg"
+    },
+    {
+      "path": "assets/brand/orcel-icon-mcp.svg",
+      "kind": "app-tile",
+      "sha256": "3c7206d10cddafb7044cab5897595190c1e3af63efc2d1fed0dccb9078b6db7e",
+      "background": "any",
+      "destination": "assets/brand/orcel-icon-mcp.svg"
+    },
+    {
+      "path": "assets/brand/orcel-lockup-black.svg",
       "kind": "lockup",
-      "sha256": "dbbad2bd70e03bac627b91af6ab9c653f70fac773920c9562439f9d5d391464e",
-      "background": "light"
+      "sha256": "793fc1b94b60437fa6b7244fac75c82583f1f80886c4e0ff35c99f5ade6572fc",
+      "background": "light",
+      "destination": "assets/brand/orcel-lockup-black.svg"
     },
     {
-      "path": "assets/logo/orcel-lockup-mono-ink.svg",
+      "path": "assets/brand/orcel-lockup-stacked-black.svg",
       "kind": "lockup",
-      "sha256": "da5c437c72f035ff0e75c86549fe470fad91a9f5f4d0d31f11c3c4b56adff779",
-      "background": "light"
+      "sha256": "1c0fcc8e2c2ff81daa56ee2f8bbce21173f070dcadeaaa7926fdb9cea28452d0",
+      "background": "light",
+      "destination": "assets/brand/orcel-lockup-stacked-black.svg"
     },
     {
-      "path": "assets/logo/orcel-lockup-mono-white.svg",
+      "path": "assets/brand/orcel-lockup-stacked-white.svg",
       "kind": "lockup",
-      "sha256": "d3b968048e5a115e5c1d2ebf7b8f6b6ddba65e655bd5245178fe397a1b171d1a",
-      "background": "dark"
+      "sha256": "368f306892286764a00294e952f7dad8b0146a7bd871be68bfe8d90424604ace",
+      "background": "dark",
+      "destination": "assets/brand/orcel-lockup-stacked-white.svg"
     },
     {
-      "path": "assets/logo/orcel-lockup-white.svg",
+      "path": "assets/brand/orcel-lockup-white.svg",
       "kind": "lockup",
-      "sha256": "efb5dcec5a8efe5ee106e2f943b7793cc2df9f45e9c0201592351aac1870cf65",
-      "background": "dark"
+      "sha256": "15b04c607a6ef21457f19ea33d018f6a665ab48bfd12d3454a5a1b99d87ff9f2",
+      "background": "dark",
+      "destination": "assets/brand/orcel-lockup-white.svg"
     },
     {
-      "path": "assets/logo/orcel-mark-ink.svg",
+      "path": "assets/brand/orcel-mark-red.svg",
       "kind": "mark",
-      "sha256": "4fd75f0db824e207c68436313b46091ca3160708f5a0d8c5554cd6ae4000cc5d",
-      "background": "light"
+      "sha256": "7fcca5218779ec91302f988e7e80d01d7bcd82619a747418c3ce6b009be9490c",
+      "background": "any",
+      "destination": "assets/brand/orcel-mark-red.svg"
     },
     {
-      "path": "assets/logo/orcel-mark-red.svg",
+      "path": "assets/brand/orcel-monogram-pattern.svg",
+      "kind": "pattern",
+      "sha256": "42d98b3a2b10ffb00f8091565a02744c2721a21f01e4f9ca1c911f185e58dc1c",
+      "background": "any",
+      "destination": "assets/brand/orcel-monogram-pattern.svg"
+    },
+    {
+      "path": "assets/brand/orcel-o-black.svg",
       "kind": "mark",
-      "sha256": "a7ed37db677642ad8a23b5d40f023c070a57be972597522f6e33aaa57b02acab",
-      "background": "light"
+      "sha256": "c80cf86b26b52d781013b9247222916aabd34afcf3dc79efe5f26c91a7a95cb9",
+      "background": "light",
+      "destination": "assets/brand/orcel-o-black.svg"
     },
     {
-      "path": "assets/logo/orcel-mark-small-red.svg",
+      "path": "assets/brand/orcel-o-white.svg",
       "kind": "mark",
-      "sha256": "85d82a22d542b88fd29edfc750b7e13afcff09b17372beef0a72d06bfcd24454",
-      "background": "light"
+      "sha256": "26ae57211c149855154928ce39bd373cd2badbf3d5f3d4792e91e53f33612e1f",
+      "background": "dark",
+      "destination": "assets/brand/orcel-o-white.svg"
     },
     {
-      "path": "assets/logo/orcel-mark-white.svg",
-      "kind": "mark",
-      "sha256": "7345ae1c7c13250ecb1427f6a10141e6d340096854e5cb20bb8f77a548c1c679",
-      "background": "dark"
+      "path": "assets/brand/orcel-orbit-pattern.svg",
+      "kind": "pattern",
+      "sha256": "42d98b3a2b10ffb00f8091565a02744c2721a21f01e4f9ca1c911f185e58dc1c",
+      "background": "any",
+      "destination": "assets/brand/orcel-orbit-pattern.svg"
     },
     {
-      "path": "assets/logo/orcel-wordmark-ink.svg",
+      "path": "assets/brand/orcel-readme-lockup.svg",
+      "kind": "lockup",
+      "sha256": "e13978b3731f34dbf1eef4e0f8e3f1d2933b02ca6b5bd14dcd32d0a12321f45c",
+      "background": "light",
+      "destination": "assets/brand/orcel-readme-lockup.svg"
+    },
+    {
+      "path": "assets/brand/orcel-social-dark.svg",
+      "kind": "social",
+      "sha256": "fbdb1b0709a4db56263ce5ea87390cc238053cc19be6b8d198fd2922e85bafde",
+      "background": "dark",
+      "destination": "assets/brand/orcel-social-dark.svg"
+    },
+    {
+      "path": "assets/brand/orcel-social-light.svg",
+      "kind": "social",
+      "sha256": "6fe9e0a0d7b730ddaa13a5796922cd3b1bc024a7b699b750b30f7e8a1c98286d",
+      "background": "light",
+      "destination": "assets/brand/orcel-social-light.svg"
+    },
+    {
+      "path": "assets/brand/orcel-wordmark-black.svg",
       "kind": "wordmark",
-      "sha256": "508344eec3f921ac2158f35c3932c1f0f298fd4d66ceaf848d2b34e9eb69d622",
-      "background": "light"
+      "sha256": "4677fed284e62d23f2f378d361d53f23eaaf40d5fb0f360338ad88401f9c32bc",
+      "background": "light",
+      "destination": "assets/brand/orcel-wordmark-black.svg"
     },
     {
-      "path": "assets/logo/orcel-wordmark-white.svg",
+      "path": "assets/brand/orcel-wordmark-white.svg",
       "kind": "wordmark",
-      "sha256": "250d65a004590ef3882bd7e5ed6053b53b585713c9b3f0afd3018d56ea3e5c3b",
-      "background": "dark"
-    },
-    {
-      "path": "assets/logo/product-icon-agent.svg",
-      "kind": "app-tile",
-      "sha256": "412561d4327431f550b0d4f52a346d4cfccc30e7fa4d48cee25c00e32ccf1f26",
-      "background": "any"
-    },
-    {
-      "path": "assets/logo/product-icon-browser.svg",
-      "kind": "app-tile",
-      "sha256": "853c5cf2498c63787b53c226ef683cfe360ae6b0cceb3a2da5069f69b221befd",
-      "background": "any"
-    },
-    {
-      "path": "assets/logo/product-icon-cluster.svg",
-      "kind": "app-tile",
-      "sha256": "e6060b31011ebacf10ad843509483522ae4e96bf9d2a64d205744d9995a96d86",
-      "background": "any"
-    },
-    {
-      "path": "assets/logo/product-icon-mcp.svg",
-      "kind": "app-tile",
-      "sha256": "c6d9160fc170fe99fa3bcd3355d4abce92a0304c3f9507158c38d1442d12e713",
-      "background": "any"
-    },
-    {
-      "path": "assets/logo/product-icon-orcel.svg",
-      "kind": "app-tile",
-      "sha256": "1096a47fceabb9119f100fcd498336bb187fc77b6723cadb37af761c7fa8be8d",
-      "background": "any"
+      "sha256": "37c51b6f0034679bd63efb9875d5f57c30631d51f923cd43720a8e344ca1807a",
+      "background": "dark",
+      "destination": "assets/brand/orcel-wordmark-white.svg"
     },
     {
       "path": "assets/ui-icons/agents.svg",
       "kind": "ui-icon",
-      "sha256": "4ab761cba474d3ddbe742e66b3c0d7ea627b3f10c1b8424526b797990a38b38f",
+      "sha256": "218860a80afb53ea9e6ea7f45aca92ae5eed589618c59eb7bfd7bd995d6064d6",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/alert.svg",
       "kind": "ui-icon",
-      "sha256": "b57e07ed5fee6b01fcfe9ee0682ffdcf46448fe12f5bf7ade7e88c0fbf43fcda",
+      "sha256": "55912a9c1420a052fb0ec7f5e6637b22ec892e1a15ec06d4798502ce8a53579e",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/arrow-left.svg",
       "kind": "ui-icon",
-      "sha256": "72382784574227c358d17a5cd1578c5ca13cca6e5f5630c860657a1e61a9097f",
+      "sha256": "3d5b043c812a2adea40b1ac54848c95527cda41ff0a596061cdad80f789ab4ef",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/arrow-right.svg",
       "kind": "ui-icon",
-      "sha256": "82510f37f511428570276f6bd0cd0d3cbebe1a08e8a5dd6883288b1e77afc901",
+      "sha256": "0d3b4c6cebe54b3cd476b52bfc618d748fbbe41ab6361bc05a280777e8c03112",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/arrow-up.svg",
       "kind": "ui-icon",
-      "sha256": "a1108055ef58e4a7b560492510624ceccb8bee95fe2b4dfd3a57bbabc591a259",
+      "sha256": "acb85989e0c9493a97b84c066568225e8294fe15134eaae97f54c39438828664",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/bell.svg",
       "kind": "ui-icon",
-      "sha256": "ae2aad0ea30bb4540aaac69596babe7865b358db372645f33656e04e5263be4f",
+      "sha256": "a0496ec8d03a1faa4f121398ba09ae2ce593a28e2e07949ccf5e883edf5d0f54",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/bell-off.svg",
+      "kind": "ui-icon",
+      "sha256": "16fc760faa246501be45ce25bcef8b8681083bd1c61b76de75d8b34b7d58bf0d",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/bookmark.svg",
       "kind": "ui-icon",
-      "sha256": "6f5f533d1b3eb01c06faea5b5762e6b45e8ca7f94d9fe6175e0c691cd583ed7b",
+      "sha256": "29b72fb8ec093fa29f5f1c867667c734676fd709f7a6af9d6509162542d1891d",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/camera.svg",
+      "kind": "ui-icon",
+      "sha256": "85027f27614ac53d1e826189194a296fff19e1e7edcb0f222fd8e89c2fc1419d",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/card.svg",
+      "kind": "ui-icon",
+      "sha256": "e76450cd2e8d78d960267a8757c31e17ec0286ba2e26b59ec781cd89bb402260",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/check.svg",
       "kind": "ui-icon",
-      "sha256": "3ef662858534c23dfedfa5616ffe14e4dc7116cb50b599eef360dc2e589f207f",
+      "sha256": "4465668e87a6faa4a5ea0e1db846bf1bf8e5167b5e60ae212392959121d62033",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/chevron-down.svg",
       "kind": "ui-icon",
-      "sha256": "053996a6bfb1eb080fe373493ed317b8b69e57be3ff39a0fc9a11b3cda8515fa",
+      "sha256": "52327d9134da3ce49cdf3ca74cca1390f5e86217b95af253e1cc5f7f571503b9",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/chevron-left.svg",
       "kind": "ui-icon",
-      "sha256": "98147bbc195828f316a0c169c145449118aa118943faa3c3bff2a05d0cf23db6",
+      "sha256": "f9b74dbf83041cb4bfa4500688c475d3ad187d7102038ba07d485b6218a36ca4",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/chevron-right.svg",
       "kind": "ui-icon",
-      "sha256": "028a4633797b36323d110648483579757c0ff635a2582faf33abd22f8263ef70",
+      "sha256": "cda6a996e25942baf33d013aa9501a625fe9c1b96b5b715c0ce44e0905ef4a96",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/chevron-up.svg",
       "kind": "ui-icon",
-      "sha256": "ba29fef5662e6fa19b1edb68c9124f1b29122c54b16b3335d585585fac430498",
+      "sha256": "ed0575dddf0095950e339acad66c18b3c1fbe472dbcc11a786eca37cc00057b2",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/clock.svg",
       "kind": "ui-icon",
-      "sha256": "17132005193e604f655551cdda2fe17ca0fa46ee35081f437870d2d394a6ec3b",
+      "sha256": "9598cd5221086bbe0e126f0906163b2e1e10763aa4730be33146398b9c760ba5",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/command.svg",
       "kind": "ui-icon",
-      "sha256": "17f726d4021c395641526f5cd829c2e91cb3fd262c93ef6bdf532248a02d69c5",
+      "sha256": "1394444949cbb26caa4001c8fb7ed2ea9d0b181e03de9f566ea944d9e6b0321f",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/cookie.svg",
+      "kind": "ui-icon",
+      "sha256": "335d150c2701afe784cfe4a5c4c267a7191d3d6319aad993ecf848e73636f746",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/copy.svg",
       "kind": "ui-icon",
-      "sha256": "e5be3a3e6b23ac6a01bbc4a3f1c0b7766c429c9628df6b3ba161c0d7ce09003e",
+      "sha256": "d5a4443347a28ea4f8ffb47d97dc35e07dc2bd886996aaa718b4e2409e814426",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/cpu.svg",
       "kind": "ui-icon",
-      "sha256": "a2dd1a7e4625f87d0017f0eacc10575acf5b1c00801147b9006918544e34cc8e",
+      "sha256": "11b1e715f9f5f91cf7c3f9034b6ef786c86f378f1c29936e4b11525af9ee8ecc",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/download.svg",
       "kind": "ui-icon",
-      "sha256": "b3fc3bcdf074551cb1124adf3a2b78aabec2c952d0b1865bd8d7fcc1734314a8",
+      "sha256": "89dbe196084d902ac44114350e24128e11042a5b88b55cfa5acef74ee6002acd",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/external.svg",
       "kind": "ui-icon",
-      "sha256": "fff7cc9b652ccca0fa6c3c34234725dfbebdcfa430ab3437f95848d75a6182ea",
+      "sha256": "66a5250f9af57fa0e0c6de055ed71fcc96837d0eedb72c6608e5705ac305eadf",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/eye.svg",
       "kind": "ui-icon",
-      "sha256": "1704afd5c60320c7f6504ef85afdfaa2c798a5c54e9bee5529068d5ce1ff1717",
+      "sha256": "a628f79567ac10bded506388c3044c301afeb40bdf89c9fe1d02a3ae40321128",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/file.svg",
       "kind": "ui-icon",
-      "sha256": "96817bb6e63852aa6c53ad5ac6e09e6a1a7483225314180587c3172031795922",
+      "sha256": "453db23115e0c5b480a1cc3441d872e443b431e8ab676537a87888d4e45a74dd",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/filter.svg",
       "kind": "ui-icon",
-      "sha256": "2c6a340308130166535a14248357f6f6bd8971815589ecafae307862cf639466",
+      "sha256": "4afd5eb63f084ac79d34e73b81c0986801bcab7f8392ad61d73e36e2c706361e",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/fingerprint.svg",
+      "kind": "ui-icon",
+      "sha256": "37577cd2097b736ffb978542a7d8c17072bc38dc6c4b93c9154b597f27ce376b",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/folder.svg",
       "kind": "ui-icon",
-      "sha256": "259dc1392d7238ec18a6df67d1a2626d9293aa39c6ce35ef5934ab7794350268",
+      "sha256": "9ca3750e8084129fca5d2f17e9c8f27ec4cf29a1c2fe303f3f3e46da8a63e520",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/globe.svg",
       "kind": "ui-icon",
-      "sha256": "fc6827151c5233b31e4738055cad105414b737238cc3413295f6ae2f370504f8",
+      "sha256": "6728cfaf50e34d8bb295a2acbaf173818fcfaaa4e16087f2f801e7b9a8bbf4f9",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/grid.svg",
       "kind": "ui-icon",
-      "sha256": "5f8966dc9512deeda8712134624e2bce339da721a10e4e8480b0cc80efab92b0",
+      "sha256": "06a8938ab8b66f3c2fa6e2a332dcc2b9c94ed43989fdc22a2948cda90f8eb72e",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/hand.svg",
       "kind": "ui-icon",
-      "sha256": "72270d6d18bf5a7be444ad01b9637e20d94d233fda80758e777ed00a571e81a1",
+      "sha256": "ec0bba038d8dd8eec5812362d268b0bfb6bc9f945da95b2fdcbb09fcf1ffd2f4",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/history.svg",
       "kind": "ui-icon",
-      "sha256": "c4f6af1d59ddee3a3ae81156418b1c789b44210b9f9d37e0becec1575d3911fa",
+      "sha256": "6369cec981642e0d8d8c8996135b6705fa4ba06b3cf6ef323827c966c6f240ca",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/home.svg",
       "kind": "ui-icon",
-      "sha256": "e6d1e74d599f9084f0d150d3912fbd0580e43448d7058e05ffe988437e2d63a7",
+      "sha256": "2b7c9d87a36d7072e846d8e6d945036a5196d813392eb4f4ba68b139bcdad25e",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/info.svg",
       "kind": "ui-icon",
-      "sha256": "c7e604497747555669a45e2218d2b0f741a9b5202fbbc1defd8d28442e881c08",
+      "sha256": "e48757340ddc020830ba4e164914036297e45f182c8b9f48dc341d77cb3e5ba6",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/key.svg",
       "kind": "ui-icon",
-      "sha256": "9e42143ba4e2073fa24d365855b07362827225c036fb7b1a8376a43a689cb681",
+      "sha256": "4b93cf92b759f44b8ccfa56fc5f80b435efa5f2c0505587d1632c0c8c9c9446b",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/keyboard.svg",
+      "kind": "ui-icon",
+      "sha256": "835ca7c02880dd60e813d464aff0cee6e6148dee47ec6f59e0d119103342778b",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/layers.svg",
       "kind": "ui-icon",
-      "sha256": "09f1504ea29f4dc5dfe887811a2ffb4a847f960de42a54cfde01ee5c8f58e32e",
+      "sha256": "4d473548d72c0bf93cd571697fc969a5f238f043a78d370f0cb359d80e548f45",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/link.svg",
       "kind": "ui-icon",
-      "sha256": "45777cff98f44ded2c38f8cb96a4839d3e18be061e0b3e09cacdb4fea3800c09",
+      "sha256": "dd8ef2810026bec7828c7c3783f5a077a1f5a40fe29fd20bac202aca5827dfcb",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/lock.svg",
       "kind": "ui-icon",
-      "sha256": "2c64a2d35520fbca5fb479811ead71588868d6b5c2782788906fae1cb2d04220",
+      "sha256": "32dd7bdf0b3ba974bfd249fbf50450374a260708d6206508851b84ca56231fc3",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/map-pin.svg",
+      "kind": "ui-icon",
+      "sha256": "326e96f0b7ae6b4910a6706d04712eaa9099e65ab19dab6b1407e9f0b6e62032",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/message.svg",
       "kind": "ui-icon",
-      "sha256": "6ee76674b0370ac0d35fa329baea65947790c3f69c02d67c112efce88c695ee0",
+      "sha256": "9e438ee1fb88e275f7da07460928eb63407a21fccd092e5df638bc1566f33cb4",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/mic.svg",
       "kind": "ui-icon",
-      "sha256": "9a508a9b6d54e90bd403715b4f9029afb49a9821149dfa29cd2c061d2902550f",
+      "sha256": "5fe0ac16614227d6ea8346f246031683892d676ea6f5cb200a5c6e48d56e4916",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/moon.svg",
       "kind": "ui-icon",
-      "sha256": "92e2ba504143b61a7a4c36f1e38dc10b7de1c12dd094969cb4b69bd26ce6a3e2",
+      "sha256": "fc3220a2b6d57cdadf381acf01a3e3d1b47e7591124f1368cbf97ae8e2a6dab2",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/more.svg",
       "kind": "ui-icon",
-      "sha256": "98fc411989e994d8c6f86c3af1d5efcc1eb71e8784a09d7fa71d90e1c1f02cdb",
+      "sha256": "02ad75e610ec0ba8c0c8e4dd7920a7297d1f3e1e6570295829ad961149dbd94c",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/more-v.svg",
+      "kind": "ui-icon",
+      "sha256": "72a9c7c78ffb3993c036e1a47c36c7c999b5aae26554a250ce003381558f0a0d",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/note.svg",
+      "kind": "ui-icon",
+      "sha256": "02c6b136b84c06fc681a1617edaedfd626c02865bd226d4f558870c64ccad9d1",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/paperclip.svg",
       "kind": "ui-icon",
-      "sha256": "f4be1817b76027a624ea4a805c1fe077ea30f75783ea71d8d1a8ef326ffcb233",
+      "sha256": "48deb7cbe4a68856c16bdc1a2ad55ef459d1879585bb09528f7771736b6d5a0e",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/pause.svg",
       "kind": "ui-icon",
-      "sha256": "0adaf70ec74b2535bde74369bf39e6c8a0ffd975c27769b102c54b8821420e4e",
+      "sha256": "6337b52c0f74b677ab4f45caaf0e8c0fe8c7e514337d6a2ba1773bdf27471929",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/pen.svg",
       "kind": "ui-icon",
-      "sha256": "c33b52adfad9a049dee433494d74436e5cbe9f775b01da940d9101357e8f7f9f",
+      "sha256": "051134d2127f48572cc3392d8b0ed1555f1d8c0792fafb1d53afc583418a0d1c",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/pin.svg",
+      "kind": "ui-icon",
+      "sha256": "6904c1cf3a2457126645f4374d011f7633ffd890df86b204325f476ff5aac0ed",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/play.svg",
       "kind": "ui-icon",
-      "sha256": "46a8daa100675c9385ea55e410ca17fcc5a35d486b9ad869368a2d9d6c093cd6",
+      "sha256": "a68ec243361dc2fb9af07568b3850b271da055e9f34228cec2c0ef4cebe632b2",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/plug.svg",
       "kind": "ui-icon",
-      "sha256": "f783bc3cd2846926c282c769e427b4e8251a289f42f9ceae5b3f3b44f78196e7",
+      "sha256": "7a144d7b6c239c997afce670d154e2c5e46936e6dca353256f5ca3b546a0154e",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/plus.svg",
       "kind": "ui-icon",
-      "sha256": "edbcfd117e8a9c1cb791162651ef59611d17e469110df99f5f8a10e7a22f8a32",
+      "sha256": "f359ae2c01049f51d0ac73e6ab203b519f8c1a0d0650df351d0023d19436b2a8",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/pointer.svg",
+      "kind": "ui-icon",
+      "sha256": "26ff4562272e4c9d55124640a392caa82d6b4c7333fe3e133c41c83bc6ab54c2",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/popup.svg",
+      "kind": "ui-icon",
+      "sha256": "f64df0aef3a4242ccfc072196bbf3321d6aab455751169d9aa5379e3cb48cdb2",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/puzzle.svg",
+      "kind": "ui-icon",
+      "sha256": "573525d4c278bd66fc0f4489ff6b77e0c5c68d86805f54cc99e412a159fb4a28",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/refresh.svg",
       "kind": "ui-icon",
-      "sha256": "e078d466bc631be113b4cfcf0c8123c0ad0fee3ab6e0df84ffdd6b5821b09e6b",
+      "sha256": "12d8b40279a505ae133e87358c55dd56fac889225cdb6ec40a4bcda936296c28",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/return.svg",
       "kind": "ui-icon",
-      "sha256": "51d18fc7c15b41308a674aed3d0ba4e8965ad8eaafb57b23a0fc5853ead38b06",
+      "sha256": "b7561ccfc48a4e43260588551d384a5bc5dc60f3907bb11fd8246c6d5a5ce066",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/search.svg",
       "kind": "ui-icon",
-      "sha256": "9802d15c2db2c5e3510d5a0cf412662209e35df78d0120397d83c77937fd0e46",
+      "sha256": "7610551c225a80593f1087bc4ca4821972aff3a898647234c4e98a31a7e12f06",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/send.svg",
+      "kind": "ui-icon",
+      "sha256": "333b7e1528d6feb9cd7ba8afa1bf4a1f5e36f9bb7a0274d20c97778ebef65c39",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/server.svg",
       "kind": "ui-icon",
-      "sha256": "58bac2dd5ad132e414ea27c201b67eea3ad8515963ff0cc11bbf44d195c75b59",
+      "sha256": "c4e771e4692b2862c09c76e6e27a011bc6bc413e406bd5c3edbddeb86cc39a14",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/shadow.svg",
       "kind": "ui-icon",
-      "sha256": "417e3239d71ba161792566ad052a7de81096c203fa208521755199de34cb9532",
-      "background": "any"
-    },
-    {
-      "path": "assets/ui-icons/shield-check.svg",
-      "kind": "ui-icon",
-      "sha256": "3ea534fdc75b38943e47645ae1e82ca9430a0948a31eae584f64bc83cac1ae98",
+      "sha256": "d33aaa6c411deef2a9eb878114b4d15fbdd5f5da814e702d33587bf61531c3e3",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/shield.svg",
       "kind": "ui-icon",
-      "sha256": "511554780b7be350d2518f917967be07394e6582b4108496be502fe936c66fad",
+      "sha256": "0f0a8781b4a298b3177fdb3555296c1cc7c4f8c2d30c51e6b852e6b2e6f1cd33",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/shield-check.svg",
+      "kind": "ui-icon",
+      "sha256": "97f26251043d07f9ff727e088a5ccbc8e8d484c47d72b750faf17a39849176d7",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/sidebar.svg",
       "kind": "ui-icon",
-      "sha256": "af35d237a92f2b0387e0c9deed84afe887f97d4c2d4e65b16db98c209426dc88",
+      "sha256": "f58318e88b63a515b45cfd2a2c07758477040a7704d06387e9f9e558a8689a51",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/sliders.svg",
       "kind": "ui-icon",
-      "sha256": "de28e0b9b003f8abae62fa62cf246363ea5685960ad94ce4e84586d37d43a26a",
+      "sha256": "f3033b863822a19521c5a4fdf87c643fbcfceb72e265cff055ed606a794e1f2a",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/split.svg",
       "kind": "ui-icon",
-      "sha256": "2697e78e74faa2986ed142699b2b4a27c20c6995b820b67d13183fb34ea3d125",
+      "sha256": "7d7d209702beb4505a7c8465d10414d5375a3df74bcecc73d3f4ae5936881446",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/star.svg",
       "kind": "ui-icon",
-      "sha256": "9fe6c725c3835caf8d8b60b65dae30ce13afeb22606e36556e599ce21d8eadd1",
+      "sha256": "80bfd3d848a4ce1cbd74e3ffe9947e9ded11bd9cb51a409665af4a451456aab5",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/stop.svg",
       "kind": "ui-icon",
-      "sha256": "886e0a8f59f2dd14a762b295b5afd738d08040b3f7826d7d2437e74c34b0b546",
+      "sha256": "229db884c65709cf4b3f37895781cd62106554ffeb97690e57eeee959776b2d9",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/sun.svg",
       "kind": "ui-icon",
-      "sha256": "ab74cc02cba45b859311818a47e292f9fd6eb95e276dd140e61316d46019b577",
+      "sha256": "b8a46bf6cfcb687a28274b8433832640453d678d01b94f7ac2ec4796c4fb89b7",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/tabs.svg",
+      "kind": "ui-icon",
+      "sha256": "dc9c0a85685a263e087129bcd8649b012cd25d031813b5f630f9b1caf1bd9406",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/terminal.svg",
       "kind": "ui-icon",
-      "sha256": "55a81e2765d43f4a727651462b6a7375b53e0a29412eeeece6e2a78cb4811dcb",
+      "sha256": "6a040b506549d8a04eacbbbdcc40dccf49221b2b3f4b33b184964d576cb34eed",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/trash.svg",
       "kind": "ui-icon",
-      "sha256": "881c8e6b59b13dc2efe1fcc174c757c910ef815d428a08c83524dfffd6ab8f34",
+      "sha256": "cf5c2db949da5722a0c513868cbbc2b8505da041501418f5d9063fa003049b2e",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/tune.svg",
+      "kind": "ui-icon",
+      "sha256": "5baafcbf0bfc5ca26c299048759d3ad411e6200871caebfab6ed64220ba683a2",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/user.svg",
       "kind": "ui-icon",
-      "sha256": "f1b7c45ed482b67d77816bc76812b89cc56209a0d8cc5a532cc3ecc873e998a5",
+      "sha256": "3ff5008550eba76f6b9f11f20119c74571b84187fd20dd0695f876daeef512e2",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/users.svg",
       "kind": "ui-icon",
-      "sha256": "2b5fc95c60ddae1bc19703cec3db269cae480ca313be7ee40d327c5b4f408557",
+      "sha256": "1b0036c8584be11c80a25fb2c37ed84b78daddeeb5d22edb2f2d085c812df855",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/volume.svg",
+      "kind": "ui-icon",
+      "sha256": "334142f51400a8fd65a4cb899db58854cdcb72ac20e028002fc42108f0eec5fd",
+      "background": "any"
+    },
+    {
+      "path": "assets/ui-icons/volume-x.svg",
+      "kind": "ui-icon",
+      "sha256": "4559409b712dd14e84e7c36b6fd1a1f9dfc65b1d0fea5bd5c8f8c97a1e8f2b5a",
       "background": "any"
     },
     {
       "path": "assets/ui-icons/x.svg",
       "kind": "ui-icon",
-      "sha256": "c3eb64a0a758383c82e54eb3d2303b4bac1e3d2d10883f895e9c73b8c46e5064",
+      "sha256": "5e1ff93fdff8151bf7018250863bba8e0cf6e718f37a001ab392667beefc030b",
       "background": "any"
+    },
+    {
+      "path": "assets/illustrations/character-approving.svg",
+      "kind": "illustration",
+      "sha256": "f03643b4661d91af28c457e4afd9d64654263688c82b7d23d343f92094c17ef1",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/character-delegating.svg",
+      "kind": "illustration",
+      "sha256": "45d626ad85404f017826afdcec0842eb3ed9e7ae06f18c185fb5c4158834a875",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/character-directing.svg",
+      "kind": "illustration",
+      "sha256": "5ab06ee3168b573d15cd9d3aff08f972e3b99dba0bbdff48f88ada4482746c55",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/character-reviewing.svg",
+      "kind": "illustration",
+      "sha256": "99f7d85f19f72a5b20a00cf04e60e58877ace361a0bc190f81ea509e3cee82c1",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-agent.svg",
+      "kind": "illustration",
+      "sha256": "6f1579602e81b051439206cdc9dbd91b2052b5213b1dbdcbe13bcd9fbbf66020",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-approve.svg",
+      "kind": "illustration",
+      "sha256": "637f9c2fe1a86e77437d54d06ceb2dc2f49794cbc0006fea161f4577a8f3f48b",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-boundary.svg",
+      "kind": "illustration",
+      "sha256": "dbcf896a4935acd24e30d6760a5e5b56117ab77bd8f9c947b82f51a1eec9f4a4",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-browser.svg",
+      "kind": "illustration",
+      "sha256": "e4db726dd3acd3ab2de89bc49a252f85df99ed60c1d6b21ee33055fbc90974eb",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-cluster.svg",
+      "kind": "illustration",
+      "sha256": "bacd280b873e59adaab02df615a68764006c354ab18c893dc000758a00be9af9",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-computer.svg",
+      "kind": "illustration",
+      "sha256": "4d40057041f9e2ee9bd8ffc5b5ad4fa534d6e14b447df7c268625c074648ecec",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-docs.svg",
+      "kind": "illustration",
+      "sha256": "e3932c61ad9106d4ea98548541a4e67b5a2f68bd2f4847c3c996c08b12fd59fd",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-folder.svg",
+      "kind": "illustration",
+      "sha256": "087e725f7b20fed2c4e017736fc06ed86eb7e231e08c5fb8d9ed9394355d58a2",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-lease.svg",
+      "kind": "illustration",
+      "sha256": "aa3b34acfd2a9db85ba738ce9f810e028fcf4cd5749dbdf8b8d30253933b7710",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-local.svg",
+      "kind": "illustration",
+      "sha256": "5ce7b9cc1e90020a9b5e110f9db57730c59c0f750cf994614f7c5d98aefc7e80",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-plug.svg",
+      "kind": "illustration",
+      "sha256": "644d34181fecd1de1e3f58cd864fe48a8451a125a34acc8987607bb2bb56ce46",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-review.svg",
+      "kind": "illustration",
+      "sha256": "751a4cdff094271ae33d264df1028824b5f5c4b0cf8491dec53cec9a1dfa9ac8",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-send.svg",
+      "kind": "illustration",
+      "sha256": "ed1c0c628bda08ad08ce20c4615d259d0fae58f99a2555996b8e4b7d686a8d7c",
+      "background": "light"
+    },
+    {
+      "path": "assets/illustrations/illus-shadow.svg",
+      "kind": "illustration",
+      "sha256": "ae8a27e273054fc54aa0a0ce5d1ee54e6afb9e6f464ccace343ab4c85a82f74e",
+      "background": "light"
     }
   ],
   "icons": {
-    "web": [],
-    "windows": [],
-    "macos": [],
-    "tauri": []
+    "web": [
+      {
+        "role": "favicon-svg",
+        "path": "icons/web/icon.svg",
+        "format": "svg",
+        "sha256": "91c6509f2d6897685fe3ad37d183a9eb37fa77a6112905310fe22fd52132bc12"
+      },
+      {
+        "role": "favicon-ico",
+        "path": "icons/web/favicon.ico",
+        "format": "ico",
+        "sha256": "0b92dc0112e599924782b202f78ae4827fbf40e842ee6015c6f48e7058d4aee0"
+      },
+      {
+        "role": "apple-touch-icon",
+        "path": "icons/web/apple-touch-icon.png",
+        "format": "png",
+        "sha256": "eb961b6009785a6d77d4a30733567b8bc5bfcf0220cdf2e2f684f12053e52b88",
+        "width": 180,
+        "height": 180
+      },
+      {
+        "role": "icon-192",
+        "path": "icons/web/icon-192.png",
+        "format": "png",
+        "sha256": "21ef28ebc78d437dc48822a1158165d73f2f7c17da1f2e6b4336cd0cbf6a634c",
+        "width": 192,
+        "height": 192
+      },
+      {
+        "role": "icon-512",
+        "path": "icons/web/icon-512.png",
+        "format": "png",
+        "sha256": "9e40991938803087ef7aa72dda2aa95ac452e7a54bcc1e1627dbc99735746b4c",
+        "width": 512,
+        "height": 512
+      },
+      {
+        "role": "social-card",
+        "path": "icons/web/social-card.png",
+        "format": "png",
+        "sha256": "bf8fe09b0df34cbc0d913e39ddb3e5ff1764060ff2010476fec959f3d53b281c",
+        "width": 1200,
+        "height": 630
+      }
+    ],
+    "windows": [
+      {
+        "role": "app-ico",
+        "path": "icons/windows/orcel.ico",
+        "format": "ico",
+        "sha256": "e60f4c3f01bd6c10a15260c7c529d2d6b0f29316f02b78a60b9c5739b12e43f5"
+      },
+      {
+        "role": "msix-square44",
+        "path": "icons/windows/Square44x44Logo.png",
+        "format": "png",
+        "sha256": "edea0f2a2207ae09780a0b6faf1bf59478e52b9a87d951b3195e865959360c04",
+        "width": 44,
+        "height": 44
+      },
+      {
+        "role": "msix-square44-scale200",
+        "path": "icons/windows/Square44x44Logo.scale-200.png",
+        "format": "png",
+        "sha256": "8471a5afa45d71d2e14680acc22824bb1bb6a7aaff8dbe228ab4cf7293d38bb8",
+        "width": 88,
+        "height": 88
+      },
+      {
+        "role": "msix-square150",
+        "path": "icons/windows/Square150x150Logo.png",
+        "format": "png",
+        "sha256": "1a2d30d1b87b501f4b2d651a730f8ea1c6165ad5a86ee28e4e296d5b588bad2c",
+        "width": 150,
+        "height": 150
+      },
+      {
+        "role": "msix-square150-scale200",
+        "path": "icons/windows/Square150x150Logo.scale-200.png",
+        "format": "png",
+        "sha256": "edecb74038a79f1de1bc1e7996a84a22e76a0a861b8f7c44b1341fb6df4558aa",
+        "width": 300,
+        "height": 300
+      },
+      {
+        "role": "msix-store",
+        "path": "icons/windows/StoreLogo.png",
+        "format": "png",
+        "sha256": "5205d7f26b7df6bfca37105f95aa92e0a19c29088ad491aff6efd663e885b768",
+        "width": 50,
+        "height": 50
+      },
+      {
+        "role": "msix-store-scale200",
+        "path": "icons/windows/StoreLogo.scale-200.png",
+        "format": "png",
+        "sha256": "5c74964e5d0b7457f05aacc6e0cf4ed6370c208128821cc9bd3eb75db6e0f96a",
+        "width": 100,
+        "height": 100
+      },
+      {
+        "role": "msix-wide310",
+        "path": "icons/windows/Wide310x150Logo.png",
+        "format": "png",
+        "sha256": "b36aa429a51386c350715c8a367583f6827abaf6c0e408a0fd8ad49988889d72",
+        "width": 310,
+        "height": 150
+      }
+    ],
+    "macos": [
+      {
+        "role": "app-icns",
+        "path": "icons/macos/orcel.icns",
+        "format": "icns",
+        "sha256": "981f61483f9113463242833ed6c80cabc3c0e5f8c5576b261e874a00d33ca9a6"
+      }
+    ],
+    "tauri": [
+      {
+        "role": "tauri-32",
+        "path": "icons/tauri/32x32.png",
+        "format": "png",
+        "sha256": "6b27c5e58407a6753794ee7c2386dd0f9f46672e9af9fd432e6552a579b51e0d",
+        "width": 32,
+        "height": 32
+      },
+      {
+        "role": "tauri-128",
+        "path": "icons/tauri/128x128.png",
+        "format": "png",
+        "sha256": "f97a990b55f33a4ab689b96551c98db392efde6e7524413755744d74309244d0",
+        "width": 128,
+        "height": 128
+      },
+      {
+        "role": "tauri-128-2x",
+        "path": "icons/tauri/128x128@2x.png",
+        "format": "png",
+        "sha256": "4388803370baae19a5fe74c65c532b27cb0643395b9203c62fd1766e559989ff",
+        "width": 256,
+        "height": 256
+      },
+      {
+        "role": "tauri-icon",
+        "path": "icons/tauri/icon.png",
+        "format": "png",
+        "sha256": "9e40991938803087ef7aa72dda2aa95ac452e7a54bcc1e1627dbc99735746b4c",
+        "width": 512,
+        "height": 512
+      },
+      {
+        "role": "tauri-ico",
+        "path": "icons/tauri/icon.ico",
+        "format": "ico",
+        "sha256": "e60f4c3f01bd6c10a15260c7c529d2d6b0f29316f02b78a60b9c5739b12e43f5"
+      },
+      {
+        "role": "tauri-icns",
+        "path": "icons/tauri/icon.icns",
+        "format": "icns",
+        "sha256": "981f61483f9113463242833ed6c80cabc3c0e5f8c5576b261e874a00d33ca9a6"
+      }
+    ]
   },
   "tokens": {
     "path": "tokens/tokens.json",
     "format": "dtcg",
-    "sha256": "6947c51b4b511c1eea476926ce83bbeb9348205c8a210c10133790e90d16359d"
+    "sha256": "c7789765704a0f1645bab3acd0ffc8efb17b8768df6dc07099cc7e6782f12993"
   },
+  "contrastPairs": [
+    {
+      "foreground": "color.accent-text",
+      "background": "color.background",
+      "minimum": 4.5,
+      "use": "red text labels (Needs you eyebrow)"
+    },
+    {
+      "foreground": "color.agent-text",
+      "background": "color.agent-soft",
+      "minimum": 4.5,
+      "use": "agent status chip label"
+    },
+    {
+      "foreground": "color.agent-text",
+      "background": "color.background",
+      "minimum": 4.5,
+      "use": "agent text on the canvas"
+    },
+    {
+      "foreground": "color.text-subtle",
+      "background": "color.surface",
+      "minimum": 4.5,
+      "use": "tertiary text"
+    },
+    {
+      "foreground": "color.shadow-text",
+      "background": "color.shadow-bg",
+      "minimum": 4.5,
+      "use": "Shadow Mode text"
+    },
+    {
+      "foreground": "color.shadow-accent",
+      "background": "color.shadow-bg",
+      "minimum": 4.5,
+      "use": "Shadow Mode accent text"
+    },
+    {
+      "foreground": "color.highlight-text",
+      "background": "color.background",
+      "minimum": 4.5,
+      "use": "orange text labels"
+    }
+  ],
   "components": [
     {
-      "name": "button",
-      "spec": "components/button.md",
-      "sha256": "93ddeaa467507768c52d178f4b8242a023202f56dee273fe9db1a8fd614ccfd9",
+      "name": "agent-status-chip",
+      "spec": "components/agent-status-chip.md",
+      "sha256": "f3881f9987b28275b9a577bd66829b72f1eec3e04f636f0023535c0e6d586356",
       "states": [
         "default",
         "hover",
         "focus",
+        "active",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "needs-you-notice",
+      "spec": "components/needs-you-notice.md",
+      "sha256": "1f7753b10e8ca342804b337eb64e1cbc389c481b764ca6b6f922e085deb78813",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error",
+        "selected",
+        "empty"
+      ],
+      "surfaces": [
+        "control-room",
+        "desktop",
+        "browser"
+      ]
+    },
+    {
+      "name": "avatar",
+      "spec": "components/avatar.md",
+      "sha256": "48fcd52189160ce4d74fa47d0605d30b93708cee22afff2a2ec45013faba5536",
+      "states": [
+        "default",
+        "focus",
+        "disabled",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "badge",
+      "spec": "components/badge.md",
+      "sha256": "9a25aebfb513b3a74e1885506d39f63ef905f0c7218a14f99b2d45744f8f8f28",
+      "states": [
+        "default",
+        "focus",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "banner",
+      "spec": "components/banner.md",
+      "sha256": "bffff5c146813e4ed8dd7ef105d7af635fe6fd3e6ada2b1714a7be531f5e2bb6",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "button",
+      "spec": "components/button.md",
+      "sha256": "3a6152524f8faf863af7aebf84a7257cbf4577254e78458c4896ff80f21fc3f3",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
         "disabled",
         "loading"
       ],
@@ -493,25 +1056,344 @@
       ]
     },
     {
-      "name": "keycap",
-      "spec": "components/keycap.md",
-      "sha256": "ba507ea52934bbea68704a0ca3e63d049f0ba6291e02ed0717454bad8343306c",
+      "name": "card",
+      "spec": "components/card.md",
+      "sha256": "85ca4dd52e7cf314cf17027f5a9dcde0547416ea8868842917f6da61172da42e",
       "states": [
-        "default"
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "loading",
+        "error",
+        "selected"
       ],
       "surfaces": [
         "shared"
       ]
     },
     {
-      "name": "text-input",
-      "spec": "components/text-input.md",
-      "sha256": "a9103570e8c5ec6bffdb60430da635adc279e073434805e8e8c29f4f7cd42202",
+      "name": "checkbox-radio-switch",
+      "spec": "components/checkbox-radio-switch.md",
+      "sha256": "49484f2ad3b919c7b0c78e58764f32f3d39be434d936b69b1c53ad6cadbc702f",
       "states": [
         "default",
         "hover",
         "focus",
+        "active",
         "disabled",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "combobox-and-command-palette",
+      "spec": "components/combobox-and-command-palette.md",
+      "sha256": "22a7fbc743b3076ea1646dc69cefcd027e3a5355c4d91517dffc1df3368137c6",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error",
+        "empty"
+      ],
+      "surfaces": [
+        "control-room",
+        "desktop",
+        "browser"
+      ]
+    },
+    {
+      "name": "dialog",
+      "spec": "components/dialog.md",
+      "sha256": "54c2b15fc3644c61668097420b751cca033cceffc08713f42f8c60e44c334feb",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "empty-state",
+      "spec": "components/empty-state.md",
+      "sha256": "8b6fa06da04b7d2ba5d4e9d6f4894da95bff5bd703fd8cdd336d13691c4d665e",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "empty"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "keycap",
+      "spec": "components/keycap.md",
+      "sha256": "a39cc2fce4bd04a97fab541176c53cba7bed263a8a4a1c9555f412da8713789f",
+      "states": [
+        "default",
+        "focus",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "list-row",
+      "spec": "components/list-row.md",
+      "sha256": "d09c930d14a0b6ed60f05214319160745781ad9cf5c5b72c807770134a398ae7",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error",
+        "selected",
+        "empty"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "menu-and-context-menu",
+      "spec": "components/menu-and-context-menu.md",
+      "sha256": "708a69094f7a4b080426cd7de2a40f34984dc7c6381c86a6f1784d19a122f475",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "navigation-app-sidebar",
+      "spec": "components/navigation-app-sidebar.md",
+      "sha256": "a20184e1f6f4d100e2071f28344c216d55df3c59004e2b89866b805c72148eba",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "control-room",
+        "desktop"
+      ]
+    },
+    {
+      "name": "navigation-web-header",
+      "spec": "components/navigation-web-header.md",
+      "sha256": "1d2dbd9b7537a69db7ddf6bf5307bd160659fd9bc35e4d80b4f56b0a69074826",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "selected"
+      ],
+      "surfaces": [
+        "website"
+      ]
+    },
+    {
+      "name": "popover",
+      "spec": "components/popover.md",
+      "sha256": "5b84226f0abbc2e34f0647e905d6ef7cf9f623396056c4780b78c131aba975d9",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "loading",
+        "error"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "progress-bar-and-step-list",
+      "spec": "components/progress-bar-and-step-list.md",
+      "sha256": "4a2ab98cee2270e1e1557b437410945b799fbab9f799ee63b2e6075967b40ae8",
+      "states": [
+        "default",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "segmented-control",
+      "spec": "components/segmented-control.md",
+      "sha256": "eec8432384b02f9b922bd85ebe8664b63f60e58534aba5a15b28f046215e875b",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "selected"
+      ],
+      "surfaces": [
+        "control-room",
+        "desktop",
+        "browser"
+      ]
+    },
+    {
+      "name": "select",
+      "spec": "components/select.md",
+      "sha256": "78ab6006b889de2605a87f404cb21c4e6b0eb73d321872817eaa7d520f9abd09",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "shadow-mode-surface",
+      "spec": "components/shadow-mode-surface.md",
+      "sha256": "308d0b0e5198d855ec941e2f34c268cdf412e65fc2f4be08cd1f1bab8e3ee8fa",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "control-room",
+        "desktop",
+        "browser"
+      ]
+    },
+    {
+      "name": "skeleton",
+      "spec": "components/skeleton.md",
+      "sha256": "987a0c2339e7e6adec7ff05243b64968db247500aee7fbf3fd0b0359168274ac",
+      "states": [
+        "default",
+        "focus",
+        "loading"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "table",
+      "spec": "components/table.md",
+      "sha256": "29ed3570f02bf5f1b9c8c2a015a134bbf667a86daf1c32420844303c2a5c244a",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error",
+        "selected",
+        "empty"
+      ],
+      "surfaces": [
+        "control-room",
+        "desktop",
+        "website"
+      ]
+    },
+    {
+      "name": "tabs",
+      "spec": "components/tabs.md",
+      "sha256": "0ce37d36be918c61995ae74f9fa4117e56c9b35b3c0f8bb8d78af56b8d288137",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "shared"
+      ]
+    },
+    {
+      "name": "takeover",
+      "spec": "components/takeover.md",
+      "sha256": "41ff636266dce934288982e7821badcf91098a01deec24fb680169b767429583",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error",
+        "selected"
+      ],
+      "surfaces": [
+        "control-room",
+        "desktop",
+        "browser"
+      ]
+    },
+    {
+      "name": "text-input",
+      "spec": "components/text-input.md",
+      "sha256": "a2e3cf650e2651544a3d574912efeb909c9e6ec135493a33e26687e206563929",
+      "states": [
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
         "error"
       ],
       "surfaces": [
@@ -521,303 +1403,185 @@
     {
       "name": "textarea-and-composer",
       "spec": "components/textarea-and-composer.md",
-      "sha256": "0d5f3add5f69aba3c1a4b4f5a5ef72b83c6a05cd1b1cbf0918fea938228c7157",
+      "sha256": "a6e7b2e0011c2c2c906312ae626616369d752526cfac894b343dd794ef6185a0",
       "states": [
-        "default"
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "loading",
+        "error"
       ],
       "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "select",
-      "spec": "components/select.md",
-      "sha256": "1fc9b8a2ef281c476a4865a02202e1d19d2e75a3778c53e04be8e61b263fbd52",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "combobox-and-command-palette",
-      "spec": "components/combobox-and-command-palette.md",
-      "sha256": "ae0505372c979165350591fc143beaa29a2ac371d1551b4d1ab8725d0b93508a",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "checkbox-radio-switch",
-      "spec": "components/checkbox-radio-switch.md",
-      "sha256": "9e572e64e69bcc22c6ac070b12cb095b057cb181f58522a7534a64f2558aa08f",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "segmented-control",
-      "spec": "components/segmented-control.md",
-      "sha256": "4d0b57db8ef6c1fa51b6ef8e7e33d710f3e98d7fc31dd4a82ab46f06d9e55208",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "tabs",
-      "spec": "components/tabs.md",
-      "sha256": "bc5115b28ee495f0ec2015d2a80bde0071453db409c3dcc1f0629745c7d1d0d4",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "menu-and-context-menu",
-      "spec": "components/menu-and-context-menu.md",
-      "sha256": "61cbb9f0c29e925d54f41d07b8a5c50f8f0f89d798a49d21d9b4eb5fb2121a76",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "dialog",
-      "spec": "components/dialog.md",
-      "sha256": "9f77949b69dee576e46bdb6828552b17b65237d0a7f7143137c8fd336bb7f98b",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "approval-dialog",
-      "spec": "components/approval-dialog.md",
-      "sha256": "1e7005ace0cf56efb8c88a40c53cb50c347e37274a735fb1877c036d39638034",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "popover",
-      "spec": "components/popover.md",
-      "sha256": "432ef2380ed55ed5cde5412d9268a1e8cd7aef8b6f67c9248f60702db603df5f",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "tooltip",
-      "spec": "components/tooltip.md",
-      "sha256": "85d9d1a19676a75d299575188f443555bfdcf33edc6fbd99ee58ad183aebf2f0",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
+        "control-room",
+        "desktop"
       ]
     },
     {
       "name": "toast",
       "spec": "components/toast.md",
-      "sha256": "ee852598e43d01f01f8a28be40a0f1d504d27ace84c64bbe7b27fce2113aae33",
+      "sha256": "b1cc4243ac0b3cd36b7dafdec487858baff2f890ff2ebe29c8e46c84bffe9c11",
       "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "banner",
-      "spec": "components/banner.md",
-      "sha256": "bb098c563cd11f9c48d9dfe74ea26e1ba789a57d430c790cb19e379b69890762",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "badge",
-      "spec": "components/badge.md",
-      "sha256": "93ecdb18e8af74967c28032af66d08a2e33c6855bd2d9a997784fd5423143ead",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "agent-status-chip",
-      "spec": "components/agent-status-chip.md",
-      "sha256": "91d2462de917f17cbdcb90f3da4b4ce1e7c58ba7356ec597e19b635009393e9f",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "progress-bar-and-step-list",
-      "spec": "components/progress-bar-and-step-list.md",
-      "sha256": "54bfaed343ed6190a68acc5c27df86e2dddf00e0ab3a64a0d0b2e565fb8f7cfd",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "skeleton",
-      "spec": "components/skeleton.md",
-      "sha256": "af284995b2c48577573a92ede08c6865e0d4fa556891e3aa5bbc6fc1ddea47f4",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "table",
-      "spec": "components/table.md",
-      "sha256": "a3325b7298071c0ea500b725bd324d04f48168f91ada13631078985e66811389",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "list-row",
-      "spec": "components/list-row.md",
-      "sha256": "2a5a6d95b5c7cdee48bad8ec9414e43bb14e3931229a3c4a297df64bfd07c3a0",
-      "states": [
+        "default",
         "hover",
         "focus",
+        "active",
+        "error",
         "selected"
       ],
       "surfaces": [
-        "shared"
+        "control-room",
+        "desktop",
+        "browser"
       ]
     },
     {
-      "name": "card",
-      "spec": "components/card.md",
-      "sha256": "85e619c8999aa9fffe3254ef0504917c25575b273a8df91aa661f059b20d4a15",
+      "name": "tooltip",
+      "spec": "components/tooltip.md",
+      "sha256": "73502bc2e22170e4e5a79360a6656ff6fa66c002220f4acd582e53a59b1e22df",
       "states": [
-        "default"
+        "default",
+        "hover",
+        "focus",
+        "disabled"
       ],
       "surfaces": [
         "shared"
-      ]
-    },
-    {
-      "name": "avatar",
-      "spec": "components/avatar.md",
-      "sha256": "af4784603068bcc137c98b5ee8ce757557ee4f44edacb37a0fe5d95684049922",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "navigation-web-header",
-      "spec": "components/navigation-web-header.md",
-      "sha256": "bc7226a45f1f6fd30c44504ea614caf6babc5154750e32813cd69cce85879a81",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "website"
-      ]
-    },
-    {
-      "name": "navigation-app-sidebar",
-      "spec": "components/navigation-app-sidebar.md",
-      "sha256": "4e76141a2394ceaa8533516fb60a9c486372f0469bc477a12d7b410edf13640b",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "control-room"
       ]
     },
     {
       "name": "window-chrome",
       "spec": "components/window-chrome.md",
-      "sha256": "5893952978e7f2677129ce9665cd30c9b1e22d2e7f05529d4ed2cd0a62b8ce1a",
+      "sha256": "678b9fefbf577b17dfede64339b66749315257e046165cf975f003a624d1a65a",
       "states": [
-        "default"
+        "default",
+        "hover",
+        "focus",
+        "active",
+        "disabled",
+        "selected"
       ],
       "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "takeover",
-      "spec": "components/takeover.md",
-      "sha256": "0b0a56e75124e2bc0f46d7a6a3e973c45f731207685711cb8c649899eda12ca0",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "shadow-mode-surface",
-      "spec": "components/shadow-mode-surface.md",
-      "sha256": "d5771af86f660f8211dbce5c8245bb0275917f4daec6d814ccdee1fd8f30bd02",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
-      ]
-    },
-    {
-      "name": "empty-state",
-      "spec": "components/empty-state.md",
-      "sha256": "15a0f119bee806770b5b59fdf52bd215b856985d2b8269842eeb598d61ce50d4",
-      "states": [
-        "default"
-      ],
-      "surfaces": [
-        "shared"
+        "control-room",
+        "desktop"
       ]
     }
   ],
-  "screens": [],
-  "notices": []
+  "screens": [
+    {
+      "surface": "website",
+      "name": "website-home",
+      "path": "screens/website-home.png",
+      "theme": "light",
+      "width": 1440,
+      "sha256": "c14784107b5342a5f6fcc039367f121bf04cb794c19a070de0bd9e9411cf6ae1"
+    },
+    {
+      "surface": "website",
+      "name": "website-shadow-mode",
+      "path": "screens/website-shadow-mode.png",
+      "theme": "light",
+      "width": 1440,
+      "sha256": "ec101af8edff972e191d4a8d69be4a07cb67fb8cb506e9271985523423c53f6a"
+    },
+    {
+      "surface": "website",
+      "name": "website-docs",
+      "path": "screens/website-docs.png",
+      "theme": "light",
+      "width": 1440,
+      "sha256": "932c99ccad7842ea7a62d0f11d89049fb0cec863d177dd2b6c266fbfbd2283bb"
+    },
+    {
+      "surface": "website",
+      "name": "website-home-phone",
+      "path": "screens/website-home-phone.png",
+      "theme": "light",
+      "width": 390,
+      "sha256": "e2123d61f96e3bd644e0f827bbd01e8c828b3400e203ebd0707b4eda08e5f6ee"
+    },
+    {
+      "surface": "website",
+      "name": "website-home-320",
+      "path": "screens/website-home-320.png",
+      "theme": "light",
+      "width": 320,
+      "sha256": "f1f0537673b68f2480177fd94d07d4d205b3b10a85f0dd7cb327d874e5487aa0"
+    },
+    {
+      "surface": "control-room",
+      "name": "control-room-workspace",
+      "path": "screens/control-room-workspace.png",
+      "theme": "light",
+      "width": 1600,
+      "sha256": "9bf0db1abb62756e4cc8e168f083e32a4d3ee551220297d3fadb46e370be0c94"
+    },
+    {
+      "surface": "control-room",
+      "name": "control-room-needs-you",
+      "path": "screens/control-room-needs-you.png",
+      "theme": "light",
+      "width": 1600,
+      "sha256": "28863e1a99fb34dc598e83293d6b160ea54f09f8860374c070bdce368b7edcd0"
+    },
+    {
+      "surface": "control-room",
+      "name": "control-room-compact",
+      "path": "screens/control-room-compact.png",
+      "theme": "light",
+      "width": 1680,
+      "sha256": "d9fa11bcef26f3630b1a61d9595563d94b2e05b1e2b608c2aaa96516b7f4b518"
+    },
+    {
+      "surface": "control-room",
+      "name": "control-room-dark",
+      "path": "screens/control-room-dark.png",
+      "theme": "dark",
+      "width": 1600,
+      "sha256": "a9da9e1134c70c029d7a6dcf900578399ce382b8971bb19e9553e6b4b1b3be9a"
+    },
+    {
+      "surface": "browser",
+      "name": "browser-agent-panel",
+      "path": "screens/browser-agent-panel.png",
+      "theme": "light",
+      "width": 1600,
+      "sha256": "2f5e16877c4b4ef194c811ebcb8941be1297b0c30eb7190ad0356c2c172c16ee"
+    },
+    {
+      "surface": "browser",
+      "name": "browser-takeover",
+      "path": "screens/browser-takeover.png",
+      "theme": "light",
+      "width": 1600,
+      "sha256": "599b40318465b197fa9f61173cb73beddb3c1e4b2a210429c3906d6501868e7b"
+    },
+    {
+      "surface": "browser",
+      "name": "browser-dark",
+      "path": "screens/browser-dark.png",
+      "theme": "dark",
+      "width": 1600,
+      "sha256": "ee2c5b466d06b088e6e5ed88fb8d9fe87a909efa986641e1f9009b6ac4813f6b"
+    }
+  ],
+  "notices": [
+    {
+      "path": "notices/OFL-Inter.txt",
+      "covers": "Inter (rsms/inter), SIL OFL 1.1: the interface typeface and the source of the outlined lowercase orcel wordmark (Inter Display 600)."
+    },
+    {
+      "path": "notices/OFL-InstrumentSerif.txt",
+      "covers": "Instrument Serif, SIL OFL 1.1: editorial display headlines."
+    },
+    {
+      "path": "notices/OFL-Geist.txt",
+      "covers": "Geist and Geist Mono (vercel/geist-font), SIL OFL 1.1: code, paths and hashes."
+    },
+    {
+      "path": "notices/PROVENANCE.md",
+      "covers": "Provenance of every asset in this package: the figure, wordmark outline, product icons, UI icons, brush character and gouache illustrations; no trademark clearance."
+    }
+  ]
 }

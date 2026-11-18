@@ -1,5 +1,8 @@
 # ORCEL Design System v1: engineering intake assessment
 
+> **Update 2026-11-18:** the Design session delivered a corrected package (118 SVG, 21 icon exports, 30 component specs, 12 screens, 4 notices; 2.1 MB), now in `design/handoff/1.0.0/`. The validator accepts it with 0 problems at status `review`. The approval card is now a read-only Needs-you notice (the OS prompt confirms), notifications only open Orcel, leases are requested in-app and confirmed in the authority service box plus Hello, Extend/rollback were removed, Fill from vault is person-triggered and non-secret only, and the brand SVGs are byte-identical to PR #811. The findings below describe the first package and are kept for the record; the founder questions in section 5 of IMPLEMENTATION.md remain open, and the package must not be approved before PR #811 is decided.
+
+
 Status: engineering assessment, 2026-11-18. It implements no UI, changes no production asset and grants no
 authority. The package it describes, `design/handoff/1.0.0/`, is **proposed** (manifest `status: "review"`), not
 approved. Only the founder can approve it (`CONTRACT.md` section 5).

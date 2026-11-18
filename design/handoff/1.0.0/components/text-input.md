@@ -1,7 +1,48 @@
-## Text input
+# Text input
 
-**Anatomy**: label (12.5/500, above), field (32 app, 40 web; radius 8; `border-strong`; `shadow-xs`), optional leading icon 16 `fg-subtle`, placeholder `fg-subtle`, help text 12px `fg-muted` below, error text `danger-default` with alert icon.
-**States**: default; hover (`border-fg-subtle`); focus (`border-border-focus` plus a 3px halo `color-mix(border-focus 22%)`; this replaces the outline ring); filled; error (`border-danger-default`, message says how to fix: "That name is taken"); disabled (`bg-bg-sunken text-fg-subtle`, `border-default`, no shadow, help explains why: "Managed by Cluster").
-**Primitive**: Base UI `Field` + `Input` (Field.Label, Field.Description, Field.Error wire the ARIA).
-**Keyboard**: native. **ARIA**: `aria-invalid` on error, `aria-describedby` to help and error (Field does this).
-Tailwind: `h-8 rounded-md border border-border-strong bg-bg-surface px-2.5 text-[13px] shadow-xs placeholder:text-fg-subtle hover:border-fg-subtle focus:border-border-focus focus:outline-none focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--o-border-focus)_22%,transparent)] aria-invalid:border-danger-default`.
+Single-line text entry with label and help.
+
+Surfaces: shared
+
+## Anatomy
+
+- Label above (type.caption).
+- Field 32 (app) or 40 (web), radius size.radius.base.
+- Optional leading icon.
+- Help or error text below.
+
+## States
+
+- **default**: color.surface, border color.border-strong, placeholder color.text-subtle.
+- **hover**: Border color.text-subtle.
+- **focus**: Border color.focus with a halo; the halo counts as the indicator.
+- **active**: As focus while typing.
+- **disabled**: color.sunken, color.text-subtle, border color.border, with a reason in help.
+- **loading**: Trailing spinner while validating.
+- **error**: Border color.danger; message in color.danger says how to fix it.
+
+## Keyboard
+
+Tab focuses; native editing keys; Enter submits the form when it is the only field.
+
+## Accessibility
+
+- Role: textbox.
+- Accessible name: The visible label via Field.Label.
+- Focus indicator: 2px outline in color.focus with a 2px offset on :focus-visible (offset -2px inside lists and scroll areas); on color.shadow-bg the ring uses color.shadow-accent.
+- Hit area: At least 24×24 CSS px; 32 by default in the Control Room, 40 on the website.
+- 200% zoom: Reflows; labels wrap rather than truncate; no horizontal scrolling.
+- Forced colours: Keeps a visible border or outline in CanvasText/ButtonText; state is also carried by words or icons, never colour alone.
+- Right-to-left: Built with logical properties (padding-inline, margin-inline-start, inset-inline); icons that imply direction mirror.
+
+## Motion
+
+Border colour over motion.duration.instant. Under prefers-reduced-motion every transition and animation uses motion.duration.reduced (0 ms); no meaning depends on motion.
+
+## Responsive
+
+Full width below breakpoint.compact.
+
+## Implementation
+
+Base UI Field and Input.

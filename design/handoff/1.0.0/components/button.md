@@ -1,35 +1,48 @@
-## Button
+# Button
 
-**Anatomy**: container, optional leading icon, label (verb first), optional keycap hint.
-**Primitive**: native `<button>` (shadcn `Button` composition with `cva` variants is fine). Use Base UI `Toggle` only for pressed/unpressed buttons.
-**Variants and tokens**
+Performs an action. Filled red always means the person acts; destructive actions are outlined.
 
-| Variant | Rest | Hover | Pressed | Use |
-|---|---|---|---|---|
-| primary | `bg-you-default text-fg-on-accent` | `bg-you-hover` | `bg-you-pressed` | The person's yes. One per view. |
-| secondary | `bg-bg-surface border-border-strong shadow-xs` | `bg-bg-control-hover` | `bg-bg-control-pressed shadow-none` | Neutral actions (Edit). |
-| ghost | transparent | `bg-bg-hover` | `bg-bg-selected` | Toolbars, Deny, low emphasis. |
-| outline-danger | `border-danger-default text-danger-default` | `bg-danger-soft` | `bg-danger-soft` + 1.5px border | Revoke, Delete, Cancel task. Never filled. |
-| agent | `bg-agent-soft text-agent-fg` | `bg-agent-soft-hover` | `bg-agent-track` | Hands work to an agent (Run in Shadow Mode). |
+Surfaces: shared
 
-**States**: default, hover, pressed, focus-visible (ring), disabled (`bg-bg-sunken text-fg-subtle`, no border or shadow; ghost and danger keep a transparent fill), loading (spinner 14px replaces the leading icon, label becomes the present participle: "Sending", width does not change, `aria-busy="true"`, click ignored).
-**Sizes**: 28 (px 10, 12px, radius 6, icon 14) dense toolbars; 32 (px 12, 13px, icon 16) app default; 40 (px 16, 14px, icon 18) dialogs and web forms; 48 (px 22, 15px/600, radius 10, icon 18) web hero only.
-**Icon button**: square at the same heights, ghost by default; requires `aria-label` and a Tooltip that shows the shortcut.
-**Keyboard**: Enter and Space activate. A keycap inside the button is a hint only; the shortcut is bound at the surface (e.g. the approval card), never globally.
-**ARIA**: `aria-busy` while loading; `aria-disabled="true"` instead of `disabled` when the button must stay focusable to explain why (with a Tooltip).
+## Anatomy
 
-```tsx
-const button = cva(
-  "focus-ring inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent font-medium transition-colors duration-[var(--o-duration-fast)] ease-standard disabled:bg-bg-sunken disabled:text-fg-subtle disabled:shadow-none",
-  { variants: {
-      variant: {
-        primary: "bg-you-default text-fg-on-accent hover:bg-you-hover active:bg-you-pressed",
-        secondary: "bg-bg-surface border-border-strong shadow-xs hover:bg-bg-control-hover active:bg-bg-control-pressed active:shadow-none",
-        ghost: "hover:bg-bg-hover active:bg-bg-selected",
-        danger: "border-danger-default text-danger-default hover:bg-danger-soft",
-        agent: "bg-agent-soft text-agent-fg hover:bg-agent-soft-hover active:bg-agent-track",
-      },
-      size: { 28: "h-7 px-2.5 text-[12px] rounded-sm [&_svg]:size-3.5", 32: "h-8 px-3 text-[13px] [&_svg]:size-4",
-              40: "h-10 px-4 text-[14px] gap-2 [&_svg]:size-[18px]", 48: "h-12 px-[22px] text-[15px] font-semibold rounded-[10px] gap-2 [&_svg]:size-[18px]" },
-  }, defaultVariants: { variant: "secondary", size: 32 } });
-```
+- Container 28, 32, 40 or 48 high; radius size.radius.base (28 uses size.radius.sm).
+- Optional leading icon 14 to 18.
+- Label, verb first.
+- Optional keycap hint, never on Review or any authority action.
+
+## States
+
+- **default**: Primary color.accent with color.on-accent. Secondary color.surface with color.border-strong. Ghost transparent with color.text. Outline danger color.danger border and label. Agent color.agent-soft with color.agent-text.
+- **hover**: Primary color.accent-hover; secondary and ghost color.hover; danger color.danger-soft; agent color.agent-soft with color.hover layered.
+- **focus**: color.focus outline with an offset (see Accessibility), never red.
+- **active**: Primary color.accent-pressed; secondary and ghost color.selected; agent color.agent-track.
+- **disabled**: color.sunken with color.text-subtle, no border; ghost and danger keep a transparent fill. Use aria-disabled with a tooltip reason when the person needs to know why.
+- **loading**: Spinner replaces the icon, label becomes the participle ("Opening", "Stopping"), width unchanged, aria-busy.
+- **error**: Does not apply; errors are reported next to the control, not by the button.
+
+## Keyboard
+
+Tab focuses; Enter and Space activate. Shortcuts shown in keycaps are bound by the surface, never globally, and never approve.
+
+## Accessibility
+
+- Role: button.
+- Accessible name: The visible label; icon-only buttons need aria-label and a tooltip.
+- Focus indicator: 2px outline in color.focus with a 2px offset on :focus-visible (offset -2px inside lists and scroll areas); on color.shadow-bg the ring uses color.shadow-accent.
+- Hit area: At least 24×24 CSS px; 32 by default in the Control Room, 40 on the website.
+- 200% zoom: Reflows; labels wrap rather than truncate; no horizontal scrolling.
+- Forced colours: Keeps a visible border or outline in CanvasText/ButtonText; state is also carried by words or icons, never colour alone.
+- Right-to-left: Built with logical properties (padding-inline, margin-inline-start, inset-inline); icons that imply direction mirror.
+
+## Motion
+
+Colour changes over motion.duration.instant, motion.easing.standard. Under prefers-reduced-motion every transition and animation uses motion.duration.reduced (0 ms); no meaning depends on motion.
+
+## Responsive
+
+48 is website-only; below breakpoint.compact primary web buttons go full width. Control Room uses 28 and 32 down to 480×320.
+
+## Implementation
+
+Native button with cva variants (shadcn Button composition); Base UI Toggle for pressed buttons.
