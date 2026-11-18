@@ -63,6 +63,58 @@ pub struct Proc {
     pub pid: u32,
     pub parent: u32,
     pub exe: String,
+    /// Creation time (FILETIME ticks), or `None` when the process could not
+    /// be opened to read it.
+    pub created: Option<u64>,
+}
+
+/// A process's creation time in FILETIME ticks (100 ns since 1601), read
+/// through a query-only handle; `None` when it cannot be opened.
+pub fn creation_time(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    if pid == 0 {
+        return None;
+    }
+    // SAFETY: a query-only handle, read once and closed.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process == 0 {
+            return None;
+        }
+        let zero = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+        let read = GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user);
+        CloseHandle(process);
+        (read != 0)
+            .then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+    }
+}
+
+/// Whether `child` is really a child of `parent`, not merely a process whose
+/// recorded parent PID is `parent.pid`.
+///
+/// Windows keeps a process's parent PID after the parent exits, and the PID
+/// is then free for reuse: an orphan (the MSVC linker's `vctip.exe`, left
+/// behind by the build that ran just before) names as its parent a PID that
+/// now belongs to the shell or one of its WebView2 processes. A real child is
+/// never created before its parent, so a child older than the process now
+/// holding its parent PID is such an orphan. When either creation time is
+/// unknown the link is kept, so a process that cannot be dated is still
+/// reported rather than hidden.
+pub fn is_child_of(child: &Proc, parent: &Proc) -> bool {
+    if child.pid == 0 || child.pid == parent.pid || child.parent != parent.pid {
+        return false;
+    }
+    match (parent.created, child.created) {
+        (Some(parent_created), Some(child_created)) => child_created >= parent_created,
+        _ => true,
+    }
 }
 
 pub fn processes() -> Vec<Proc> {
@@ -88,23 +140,40 @@ pub fn processes() -> Vec<Proc> {
                 pid: entry.th32ProcessID,
                 parent: entry.th32ParentProcessID,
                 exe: String::from_utf16_lossy(&entry.szExeFile[..length]),
+                created: None,
             });
             more = Process32NextW(snapshot, &mut entry) != 0;
         }
         CloseHandle(snapshot);
+    }
+    for proc in &mut all {
+        proc.created = creation_time(proc.pid);
     }
     all
 }
 
 /// `root` and every process descended from it.
 pub fn tree(root: u32) -> Vec<Proc> {
-    let all = processes();
+    descendants(root, processes())
+}
+
+/// `root` and every process in `all` descended from it, following only real
+/// parent links ([`is_child_of`]), so an orphan whose dead parent's PID was
+/// reused inside the tree is not taken for a descendant.
+pub fn descendants(root: u32, all: Vec<Proc>) -> Vec<Proc> {
     let mut pids = vec![root];
     let mut grew = true;
     while grew {
         grew = false;
         for proc in &all {
-            if pids.contains(&proc.parent) && !pids.contains(&proc.pid) && proc.pid != 0 {
+            if pids.contains(&proc.pid) {
+                continue;
+            }
+            let child = all
+                .iter()
+                .filter(|parent| pids.contains(&parent.pid))
+                .any(|parent| is_child_of(proc, parent));
+            if child {
                 pids.push(proc.pid);
                 grew = true;
             }
