@@ -61,6 +61,9 @@ impl EngineKind {
 /// - Chrome 156: windows-latest image 20261021 (Chromium 156.0.8078.48):
 ///   four full native-suite passes with the endpoint probes on #431's head
 ///   (runs recorded in the engine-attachment decision, A10).
+/// - Chrome 157: windows-latest image 20261116 (Chromium 157.0.8103.79):
+///   a full native-suite pass with the endpoint probes on #819's head
+///   (run recorded in the engine-attachment decision, A10).
 ///
 /// A new major is added only by a PR whose own native-suite run passes on
 /// it. Any other kind or major is refused at launch with a typed error.
@@ -71,6 +74,7 @@ pub const QUALIFIED_WORKER_ENGINES: &[(EngineKind, u32)] = &[
     (EngineKind::Chromium, 154),
     (EngineKind::Chromium, 155),
     (EngineKind::Chromium, 156),
+    (EngineKind::Chromium, 157),
 ];
 
 /// A verified engine executable.
@@ -1409,6 +1413,7 @@ mod tests {
         assert!(engine(EngineKind::Chromium, "154.0.8037.58").worker_qualified());
         assert!(engine(EngineKind::Chromium, "155.0.8059.40").worker_qualified());
         assert!(engine(EngineKind::Chromium, "156.0.8078.48").worker_qualified());
+        assert!(engine(EngineKind::Chromium, "157.0.8103.79").worker_qualified());
         assert!(engine(EngineKind::Edge, "156.0.4314.42").worker_qualified());
         assert!(engine(EngineKind::Edge, "157.0.4341.60").worker_qualified());
         for (kind, version) in [
@@ -1421,7 +1426,7 @@ mod tests {
             (EngineKind::Edge, ""),
             (EngineKind::Edge, "x155.0"),
             // The next Chromium major is not qualified.
-            (EngineKind::Chromium, "157.0.4283.45"),
+            (EngineKind::Chromium, "158.0.4283.45"),
             (EngineKind::Chromium, "153.0.1.2"),
             (EngineKind::Edge, "154.0.8037.58"),
         ] {
