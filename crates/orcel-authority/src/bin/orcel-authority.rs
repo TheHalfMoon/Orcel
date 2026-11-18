@@ -11,6 +11,10 @@
 //!   that hold only when installed (state unreadable by the user, a pipe
 //!   owner no user process runs as, session changes observed, so grants
 //!   possible) do not hold here; see SG132_SLICE1.md.
+//! - `--e2e-scripted-consent <log>` (only in a `authority-scripted-consent` TEST build,
+//!   console mode only): the scripted E2E harness's stand-in for the unlock,
+//!   the confirmation and Windows Hello. No development or release build
+//!   has it (the release-blocker sweep confines the feature).
 //! - `--version`.
 
 #[cfg(windows)]
@@ -24,15 +28,28 @@ fn console(args: &[String]) -> Result<(), String> {
     let mut state_dir: Option<PathBuf> = None;
     let mut suffix: Option<String> = None;
     let mut trusted = Vec::new();
+    let mut trusted_cli = Vec::new();
+    #[allow(unused_mut)]
+    let mut scripted_consent_log: Option<PathBuf> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--console" => {}
+            // TEST BUILDS ONLY: the scripted E2E harness's consent.
+            #[cfg(feature = "authority-scripted-consent")]
+            "--e2e-scripted-consent" => scripted_consent_log = iter.next().map(PathBuf::from),
             "--state-dir" => state_dir = iter.next().map(PathBuf::from),
             "--pipe-suffix" => suffix = iter.next().cloned(),
             "--trusted-orceld" => {
                 if let Some(path) = iter.next() {
                     trusted.push(PathBuf::from(path));
+                }
+            }
+            // Slice 2 review F1 (b): the owner CLI image(s) the console
+            // harness trusts (tests name their own executable).
+            "--trusted-cli" => {
+                if let Some(path) = iter.next() {
+                    trusted_cli.push(PathBuf::from(path));
                 }
             }
             other => return Err(format!("unknown argument {other:?}")),
@@ -68,7 +85,9 @@ fn console(args: &[String]) -> Result<(), String> {
         owner_sid: owner_sid.clone(),
         policy: ClientPolicy {
             trusted_orceld_images: trusted,
+            trusted_owner_cli_images: trusted_cli,
         },
+        scripted_consent_log,
     };
     let runtime = start(config).map_err(|error| error.to_string())?;
     let ready = serde_json::json!({

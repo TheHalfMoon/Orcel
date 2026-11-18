@@ -18,8 +18,10 @@ use std::ffi::c_void;
 use windows_sys::Win32::Foundation::{LocalFree, HANDLE};
 use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
 use windows_sys::Win32::Security::{
-    EqualSid, GetTokenInformation, RevertToSelf, TokenGroups, TokenSessionId, TokenStatistics,
-    TokenUser, TOKEN_GROUPS, TOKEN_QUERY, TOKEN_STATISTICS, TOKEN_USER,
+    EqualSid, GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, RevertToSelf,
+    TokenElevation, TokenGroups, TokenIntegrityLevel, TokenSessionId, TokenStatistics, TokenUser,
+    TOKEN_ELEVATION, TOKEN_GROUPS, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_STATISTICS,
+    TOKEN_USER,
 };
 use windows_sys::Win32::System::Pipes::{GetNamedPipeClientProcessId, ImpersonateNamedPipeClient};
 use windows_sys::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
@@ -121,6 +123,42 @@ pub fn token_facts(token: &Owned) -> Result<(String, u64, u32, bool), AuthorityE
     Ok((sid, logon, ts_session, is_interactive))
 }
 
+/// `SECURITY_MANDATORY_HIGH_RID`.
+const HIGH_INTEGRITY_RID: u32 = 0x3000;
+
+/// Slice 2: whether `token` is elevated (`TokenElevation`) and at high
+/// integrity or above. Both come from the token, never from the caller; a
+/// token that cannot be read is not elevated.
+pub fn token_elevated(token: &Owned) -> bool {
+    let Ok(elevation) = token_info(token, TokenElevation) else {
+        return false;
+    };
+    // SAFETY: the buffer holds a TOKEN_ELEVATION.
+    let elevated = unsafe { (*(elevation.as_ptr() as *const TOKEN_ELEVATION)).TokenIsElevated };
+    if elevated == 0 {
+        return false;
+    }
+    let Ok(label) = token_info(token, TokenIntegrityLevel) else {
+        return false;
+    };
+    // SAFETY: the buffer holds a TOKEN_MANDATORY_LABEL whose SID lives in
+    // the same buffer; its last sub-authority is the integrity RID.
+    unsafe {
+        let sid = (*(label.as_ptr() as *const TOKEN_MANDATORY_LABEL))
+            .Label
+            .Sid;
+        if sid.is_null() {
+            return false;
+        }
+        let count = GetSidSubAuthorityCount(sid);
+        if count.is_null() || *count == 0 {
+            return false;
+        }
+        let rid = GetSidSubAuthority(sid, u32::from(*count) - 1);
+        !rid.is_null() && *rid >= HIGH_INTEGRITY_RID
+    }
+}
+
 /// Everything the service observes about the client of `pipe`.
 pub fn client_facts(pipe: HANDLE) -> Result<CallerFacts, AuthorityError> {
     let mut pid = 0u32;
@@ -141,6 +179,7 @@ pub fn client_facts(pipe: HANDLE) -> Result<CallerFacts, AuthorityError> {
     }
     let token = Owned(token);
     let (user_sid, logon_session_id, ts_session_id, interactive) = token_facts(&token)?;
+    let elevated = token_elevated(&token);
     // Read the image as the client: the service account cannot open user
     // processes itself. Empty when it cannot be read; the role then falls
     // back to interactive or other, never orceld.
@@ -160,5 +199,6 @@ pub fn client_facts(pipe: HANDLE) -> Result<CallerFacts, AuthorityError> {
         ts_session_id,
         interactive,
         console_session: console != u32::MAX && console == ts_session_id,
+        elevated,
     })
 }

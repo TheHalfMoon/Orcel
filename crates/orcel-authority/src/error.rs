@@ -52,14 +52,14 @@ impl AuthorityError {
         Self::new(FailureCode::InternalError, message)
     }
 
-    /// Hello key enrollment is not available in this slice: it waits for
-    /// attested KeyCredentialManager keys and an elevated enrollment caller
-    /// (slice 2). The message starts with [`ENROLLMENT_UNAVAILABLE`].
+    /// Hello key enrollment cannot run on this PC: no pinned TPM
+    /// attestation root is present, so no attestation could be verified
+    /// (fail closed). The message starts with [`ENROLLMENT_UNAVAILABLE`].
     pub fn enrollment_unavailable() -> Self {
         Self::new(
             FailureCode::Unsupported,
             format!(
-                "{ENROLLMENT_UNAVAILABLE}: Windows Hello enrollment is not available in this slice; it needs attested KeyCredentialManager keys and an elevated (UAC secure desktop) enrollment caller (slice 2)"
+                "{ENROLLMENT_UNAVAILABLE}: no pinned TPM attestation root (Microsoft TPM Root Certificate Authority 2014) is present on this PC, so no key attestation can be verified; enrollment is refused"
             ),
         )
     }

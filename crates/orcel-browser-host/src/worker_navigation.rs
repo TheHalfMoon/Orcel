@@ -78,6 +78,13 @@ pub struct NavigationPolicy {
     /// observation or approved navigation, so a submission the page starts
     /// late is refused, never admitted under the ordinary rules.
     held: bool,
+    /// SG-000135 OB-08 review: once a Full Access lease has been used in
+    /// this lifetime, every page request but a GET (or HEAD) is refused for
+    /// the rest of the lifetime: page scripts, `fetch`, XHR, form posts and
+    /// `navigator.sendBeacon` cannot send what a routine action made them
+    /// send. Only an approved form submission's own document is exempt (the
+    /// person approved exactly what it sends). Sticky: nothing clears it.
+    get_only: bool,
 }
 
 /// SG-000122 slice A6: what happened to the page's top-level documents
@@ -131,7 +138,19 @@ impl NavigationPolicy {
             submission: None,
             enter: None,
             held: false,
+            get_only: false,
         }
+    }
+
+    /// SG-000135 OB-08 review: from now on in this lifetime, refuse every
+    /// page request but a GET or HEAD (see `get_only`).
+    pub fn guard_get_only(&mut self) {
+        self.get_only = true;
+    }
+
+    /// Whether the GET-only guard is in force.
+    pub fn is_get_only(&self) -> bool {
+        self.get_only
     }
 
     /// Parse with the SG-000075 parser and require an admitted host.
@@ -359,6 +378,23 @@ impl NavigationPolicy {
         origin: &str,
         detail: &RequestDetail,
     ) -> Result<(), HostError> {
+        if self.get_only {
+            let method = if detail.method.is_empty() {
+                "GET"
+            } else {
+                detail.method.as_str()
+            };
+            let safe = method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD");
+            // Only an approved submission's own document (an approved
+            // Enter, or an approved activation that submits) may send more.
+            let approved_submission = matches!(kind, RouteKind::Document)
+                && (self.enter.is_some() || self.submission.is_some());
+            if !safe && !approved_submission {
+                return Err(refused(
+                    "a page request other than GET while Full Access is in use",
+                ));
+            }
+        }
         if self.enter.is_none() {
             return self.decide_ordinary(kind, url, origin, detail);
         }
@@ -839,6 +875,82 @@ mod tests {
             p.finish_enter().document.as_deref(),
             Some("https://fixture.test/order")
         );
+    }
+
+    /// SG-000135 OB-08 review: once a lease is used in a lifetime, every
+    /// page request but a GET or HEAD is refused for the rest of it (fetch,
+    /// XHR, a beacon, a form post, a page-initiated document), while GETs
+    /// keep their ordinary rules; only an approved submission's own
+    /// document may still post.
+    #[test]
+    fn ob08_the_lease_guard_refuses_every_page_request_but_get() {
+        let mut p = committed();
+        assert!(!p.is_get_only());
+        assert!(p
+            .decide_request(
+                RouteKind::Fetch,
+                "https://fixture.test/api",
+                HOME,
+                &method("POST")
+            )
+            .is_ok());
+        p.guard_get_only();
+        assert!(p.is_get_only());
+        for (kind, name) in [
+            (RouteKind::Fetch, "POST"),
+            (RouteKind::Subresource, "POST"),
+            (RouteKind::Fetch, "PUT"),
+            (RouteKind::Fetch, "DELETE"),
+            (RouteKind::Fetch, "PATCH"),
+            (RouteKind::Document, "POST"),
+            (RouteKind::Frame, "POST"),
+        ] {
+            assert!(
+                p.decide_request(kind, "https://fixture.test/api", HOME, &method(name))
+                    .is_err(),
+                "{kind:?} {name}"
+            );
+        }
+        for name in ["GET", "HEAD", "get", ""] {
+            assert!(
+                p.decide_request(
+                    RouteKind::Fetch,
+                    "https://fixture.test/api",
+                    HOME,
+                    &method(name)
+                )
+                .is_ok(),
+                "{name:?}"
+            );
+        }
+        // Still sticky after an observation releases a hold.
+        p.release_hold();
+        assert!(p
+            .decide_request(
+                RouteKind::Fetch,
+                "https://fixture.test/api",
+                HOME,
+                &method("POST")
+            )
+            .is_err());
+        // An approved Enter's own document may post; its subresources not.
+        p.expect_enter().expect("expect an Enter");
+        assert!(p
+            .decide_request(
+                RouteKind::Fetch,
+                "https://fixture.test/api",
+                HOME,
+                &method("POST")
+            )
+            .is_err());
+        assert!(p
+            .decide_request(
+                RouteKind::Document,
+                "https://fixture.test/order",
+                "",
+                &post("full_name=Ada")
+            )
+            .is_ok());
     }
 
     /// SG-000122 slice A6, the Enter route rule: one top-level document on

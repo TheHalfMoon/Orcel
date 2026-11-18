@@ -14,6 +14,8 @@ pub mod identity;
 pub mod indicator;
 pub mod job;
 pub mod lease;
+// SG-000135 OB-08: positive routine classification for browser leases.
+pub mod browser_impact;
 pub mod prompt_display;
 pub mod session;
 pub mod sidecar;

@@ -76,8 +76,9 @@ pub(crate) const MAX_TASK_CHARS: usize = 64;
 /// Ended sessions remembered so a late request learns why its session ended.
 const ENDED_MEMORY: usize = 64;
 /// Domain separation for receipt digests.
-/// SG-000135 OB-04: version 2 adds the session's persistent profile.
-const RECEIPT_DOMAIN: &str = "orcel-ob04-receipt/2";
+/// Version 3: SG-000135 OB-08 adds the lease id and OB-04 the session's
+/// persistent profile.
+const RECEIPT_DOMAIN: &str = "orcel-ob08-receipt/3";
 
 /// The broker's budgets. Configured by orceld only; never a caller's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,6 +396,9 @@ pub(crate) struct Receipt {
     pub evidence_sha256: Option<String>,
     /// The approval broker's record id, for an approved action.
     pub record_id: Option<String>,
+    /// SG-000135 OB-08: the Full Access lease that authorized the action
+    /// instead of an approval (then `record_id` is `None`).
+    pub lease_id: Option<String>,
     /// SG-000135 OB-04: the persistent Orcel-managed profile the session
     /// acted in, or `None` for an ephemeral profile.
     pub profile: Option<String>,
@@ -418,6 +422,7 @@ impl Receipt {
             "evidence_kind": self.evidence_kind,
             "evidence_sha256": self.evidence_sha256,
             "record_id": self.record_id,
+            "lease_id": self.lease_id,
             "profile": self.profile,
             "at_ms": self.at_ms,
             "previous_sha256": self.previous_sha256,
@@ -439,6 +444,8 @@ pub(crate) struct ActionRecord {
     pub evidence_kind: String,
     pub evidence_sha256: Option<String>,
     pub record_id: Option<String>,
+    /// SG-000135 OB-08: the lease that authorized the action, if one did.
+    pub lease_id: Option<String>,
 }
 
 /// A device-wide session slot: an exclusive lock on one slot file, held
@@ -515,6 +522,7 @@ impl<W> BrokerSession<W> {
             evidence_kind: record.evidence_kind,
             evidence_sha256: record.evidence_sha256,
             record_id: record.record_id,
+            lease_id: record.lease_id,
             profile: self.profile_name().map(str::to_owned),
             at_ms,
             previous_sha256: previous,
@@ -582,6 +590,7 @@ fn receipt_digest(receipt: &Receipt) -> String {
         receipt.evidence_kind.clone(),
         optional(&receipt.evidence_sha256),
         optional(&receipt.record_id),
+        optional(&receipt.lease_id),
         optional(&receipt.profile),
         receipt.at_ms.to_string(),
         receipt.previous_sha256.clone(),

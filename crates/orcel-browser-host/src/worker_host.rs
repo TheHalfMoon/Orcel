@@ -265,6 +265,10 @@ pub enum WorkerHostRequest {
     TabSwitch {
         tab: u32,
     },
+    /// SG-000135 OB-08 review: orceld uses a Full Access lease in this
+    /// lifetime: from now on the host refuses every page request but a GET
+    /// (sticky for the lifetime). Sent before each lease-covered dispatch.
+    LeaseGuard {},
     TabClose {
         tab: u32,
     },
@@ -427,8 +431,16 @@ pub enum WorkerHostReply {
         target: String,
         /// SG-000122 slice A2: for a form action only, what the approval
         /// prompt names about the field (all of it bound into `binding`).
+        /// Boxed (SG-000135 OB-08) so the reply stays small beside the
+        /// link classification.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        form: Option<BoundForm>,
+        form: Option<Box<BoundForm>>,
+        /// SG-000135 OB-08: for a link activation only, the host's routine
+        /// classification of the link (`browser_impact::Impact`), from its
+        /// accessible name and destination; the name itself never crosses.
+        /// orceld reads anything but `routine` as not routine.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        impact: Option<orcel_contracts::browser_impact::Impact>,
     },
     /// The committed URL: on the lifetime's single origin (the policy
     /// refuses anything else), which Orcel's page store records.
@@ -521,6 +533,8 @@ pub enum WorkerHostReply {
         profile_removed: bool,
     },
     Bye {},
+    /// SG-000135 OB-08 review: the lifetime's GET-only guard is in force.
+    Guarded {},
     /// A typed refusal: a bounded, closed code, never page text.
     Error {
         code: String,
@@ -825,11 +839,16 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
         WorkerHostRequest::TabSwitch { tab } => tabs_reply(live, |worker| worker.tab_switch(tab)),
         WorkerHostRequest::TabClose { tab } => tabs_reply(live, |worker| worker.tab_close(tab)),
         WorkerHostRequest::Tabs {} => tabs_reply(live, |worker| worker.tabs()),
+        WorkerHostRequest::LeaseGuard {} => {
+            live.worker.guard_get_only();
+            WorkerHostReply::Guarded {}
+        }
         WorkerHostRequest::Bind { action } => match host_binding(live, &action) {
             Ok(derived) => WorkerHostReply::Bound {
                 binding: derived.binding,
                 target: derived.target,
-                form: derived.form,
+                form: derived.form.map(Box::new),
+                impact: derived.impact,
             },
             Err(err) => refusal(&err),
         },
@@ -1154,11 +1173,14 @@ struct Derived {
     state: String,
     /// SG-000122: a form action's prompt facts.
     form: Option<BoundForm>,
+    /// SG-000135 OB-08: a link activation's routine classification.
+    impact: Option<orcel_contracts::browser_impact::Impact>,
 }
 
 /// The host's half of an approval, from its own state now.
 fn host_binding(live: &Lifetime, action: &BindAction) -> Result<Derived, HostError> {
     let mut form_facts = None;
+    let mut impact = None;
     let (material, target, state) = match action {
         BindAction::Navigate { url } => {
             crate::navigation::parse_navigation_url(url)?;
@@ -1171,6 +1193,12 @@ fn host_binding(live: &Lifetime, action: &BindAction) -> Result<Derived, HostErr
         BindAction::Click { node_id, role } => {
             let (page, document) = observed(live)?;
             let destination = live.worker.link_destination(node_id)?;
+            // SG-000135 OB-08: classified from the host's own record of the
+            // observation, the one this binding is derived from.
+            impact = Some(orcel_contracts::browser_impact::classify_link(
+                &live.worker.link_name(node_id)?,
+                &destination,
+            ));
             (
                 format!(
                     "click\n{}\n{}\n{}\n{node_id}\n{role}\n{destination}",
@@ -1238,6 +1266,7 @@ fn host_binding(live: &Lifetime, action: &BindAction) -> Result<Derived, HostErr
         target,
         state,
         form: form_facts,
+        impact,
     })
 }
 
@@ -2142,11 +2171,34 @@ mod tests {
             binding: "b".into(),
             target: "https://fixture.test/".into(),
             form: None,
+            impact: None,
         };
         assert_eq!(
             serde_json::to_string(&plain).unwrap(),
             r#"{"frame":"bound","binding":"b","target":"https://fixture.test/"}"#
         );
+        // SG-000135 OB-08: a link bind names its classification, nothing
+        // of the link's name.
+        let link = WorkerHostReply::Bound {
+            binding: "b".into(),
+            target: "https://fixture.test/".into(),
+            form: None,
+            impact: Some(orcel_contracts::browser_impact::Impact::HighImpact),
+        };
+        let text = serde_json::to_string(&link).expect("serialize");
+        assert_eq!(
+            text,
+            r#"{"frame":"bound","binding":"b","target":"https://fixture.test/","impact":"high_impact"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<WorkerHostReply>(&text).expect("parse"),
+            link
+        );
+        // Only the three words cross: anything else refuses the reply.
+        assert!(serde_json::from_str::<WorkerHostReply>(
+            r#"{"frame":"bound","binding":"b","target":"https://fixture.test/","impact":"low"}"#
+        )
+        .is_err());
         let long = "n".repeat(300);
         let facts = BoundForm::new("textbox", &long, Some((2, 3)));
         assert_eq!(facts.name.len(), 256);
@@ -2154,7 +2206,8 @@ mod tests {
         let reply = WorkerHostReply::Bound {
             binding: "b".into(),
             target: "https://fixture.test/".into(),
-            form: Some(facts.clone()),
+            form: Some(Box::new(facts.clone())),
+            impact: None,
         };
         let text = serde_json::to_string(&reply).unwrap();
         assert_eq!(

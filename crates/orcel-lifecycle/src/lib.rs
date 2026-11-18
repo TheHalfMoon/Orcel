@@ -3,6 +3,7 @@
 //! This crate backs the human-invoked `orcel` CLI. It is never reachable from
 //! the MCP surface and adds no agent capability.
 
+pub mod authority_grant;
 pub mod config;
 pub mod console;
 pub mod doctor;
