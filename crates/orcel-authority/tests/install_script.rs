@@ -39,8 +39,7 @@ fn position(text: &str, needle: &str) -> usize {
 }
 
 /// The staging folder's DACL, as the runbook's Stage line creates it.
-const STAGING_SDDL: &str =
-    "O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;OW)";
+const STAGING_SDDL: &str = "O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)";
 
 #[test]
 fn install_takes_only_hash_pinned_binaries_through_one_held_handle() {
@@ -413,13 +412,21 @@ fn the_runbook_documents_provenance_and_the_expected_staging_acl() {
     for line in [
         r"C:\Program Files\OrcelStaging NT AUTHORITY\SYSTEM:(OI)(CI)(F)",
         r"BUILTIN\Users:(OI)(CI)(RX)",
-        r"OWNER RIGHTS:(OI)(CI)(RX)",
-        r"C:\Program Files\OrcelStaging\orcel-authority.exe NT AUTHORITY\SYSTEM:(I)(F)",
+        r"BUILTIN\Administrators:(OI)(CI)(F)",
+        r"C:\Program Files\OrcelStaging\orcel-authority.exe NT AUTHORITY\SYSTEM:(F)",
         r"BUILTIN\Administrators protected=True",
     ] {
         assert!(block.contains(line), "{line}");
     }
-    assert!(!block.contains("Authenticated Users") && !block.contains("Everyone"));
+    for other in [
+        "Authenticated Users",
+        "Everyone",
+        "INTERACTIVE",
+        "CREATOR OWNER",
+        "OWNER RIGHTS",
+    ] {
+        assert!(!block.contains(other), "{other}");
+    }
     assert!(text.contains("authority-install-e2e-report"));
 }
 

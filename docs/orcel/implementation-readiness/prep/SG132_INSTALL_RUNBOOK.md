@@ -14,8 +14,8 @@ with the elevated, installed `orcel.exe` and grant leases through the service ("
 
 1. **Nothing an elevated step consumes can be changed by a standard user.** The install script and the three
    binaries are staged in `C:\Program Files\OrcelStaging`, a folder the Stage step creates in one call with an
-   explicit, protected DACL (owner Administrators; SYSTEM and Administrators full control; Users and OWNER
-   RIGHTS read and execute only; nothing inherited). The installer refuses to run, with nothing changed, unless
+   explicit, protected DACL (owner Administrators; SYSTEM and Administrators full control; Users read and
+   execute only; nothing inherited). The installer refuses to run, with nothing changed, unless
    its own file, its folder, the artifact folder, every binary and every parent folder up to `C:\` are owned by
    SYSTEM, Administrators or TrustedInstaller, contain no junction, symbolic link or mount point, and grant no
    other account a right to change them. A folder made with a plain `mkdir C:\...` is refused: `C:\` gives
@@ -64,7 +64,7 @@ line check is what identifies it. `-NoExit` and `--pause` only keep the window o
 
 | Step | Program location | Exact command line |
 | --- | --- | --- |
-| Stage | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -Command "$ErrorActionPreference = 'Stop'; $from = '<download-folder>'; $d = Join-Path $env:ProgramFiles 'OrcelStaging'; if (Test-Path -LiteralPath $d) { throw ($d + ' already exists; nothing was changed') }; $s = New-Object Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;OW)'); [void][IO.Directory]::CreateDirectory($d, $s); foreach ($n in 'install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe', 'orcel.exe') { $t = Join-Path $d $n; Copy-Item -LiteralPath (Join-Path $from $n) -Destination $t; $f = Get-Item -LiteralPath $t; $a = $f.GetAccessControl('Owner'); $a.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-32-544'); $f.SetAccessControl($a) }; if ((Get-FileHash -LiteralPath (Join-Path $d 'install-orcel-authority.ps1')).Hash -ne '<script-sha256>') { Remove-Item -LiteralPath $d -Recurse -Force; throw 'the staged install script does not match the expected SHA-256; the staging folder was removed' }; icacls $d; icacls (Join-Path $d '*')"` |
+| Stage | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -Command "$ErrorActionPreference = 'Stop'; $from = '<download-folder>'; $d = Join-Path $env:ProgramFiles 'OrcelStaging'; if (Test-Path -LiteralPath $d) { throw ($d + ' already exists; nothing was changed') }; $s = New-Object Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'); [void][IO.Directory]::CreateDirectory($d, $s); foreach ($n in 'install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe', 'orcel.exe') { $t = Join-Path $d $n; Copy-Item -LiteralPath (Join-Path $from $n) -Destination $t; $f = Get-Item -LiteralPath $t; $a = $f.GetAccessControl('Owner'); $a.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-32-544'); $f.SetAccessControl($a) }; if ((Get-FileHash -LiteralPath (Join-Path $d 'install-orcel-authority.ps1')).Hash -ne '<script-sha256>') { Remove-Item -LiteralPath $d -Recurse -Force; throw 'the staged install script does not match the expected SHA-256; the staging folder was removed' }; icacls $d; icacls (Join-Path $d '*')"` |
 | Install | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -ArtifactDir "C:\Program Files\OrcelStaging" -AuthoritySha256 <authority-sha256> -OrceldSha256 <orceld-sha256> -OrcelSha256 <orcel-sha256>` |
 | Uninstall | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -Uninstall -RemoveStaging` |
 | Uninstall, keeping the state | `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` | `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -Uninstall -KeepState -RemoveStaging` |
@@ -75,16 +75,15 @@ line check is what identifies it. `-NoExit` and `--pause` only keep the window o
 
 What the Stage line does, so you can read it on the prompt: it stops if `C:\Program Files\OrcelStaging`
 exists; creates it in one call with owner Administrators and the protected DACL
-`O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;OW)` (`FA` full control,
-`0x1200a9` read and execute; `OW` is OWNER RIGHTS, so whoever owns a file gets no implicit right to change
-its permissions); copies the four files from `<download-folder>` into it (they inherit that DACL); makes
+`O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)` (`FA` full control,
+`0x1200a9` read and execute, nothing for anyone else); copies the four files from `<download-folder>` into it (they inherit that DACL); makes
 Administrators their owner; deletes the folder again and stops if the install script's SHA-256 is not
 `<script-sha256>`; and prints the folder's and the files' ACLs.
 
 The `Start-Process` lines that produce exactly these command lines (CI runs these lines' command lines):
 
 ```powershell
-Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command "$ErrorActionPreference = ''Stop''; $from = ''<download-folder>''; $d = Join-Path $env:ProgramFiles ''OrcelStaging''; if (Test-Path -LiteralPath $d) { throw ($d + '' already exists; nothing was changed'') }; $s = New-Object Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm(''O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;OW)''); [void][IO.Directory]::CreateDirectory($d, $s); foreach ($n in ''install-orcel-authority.ps1'', ''orcel-authority.exe'', ''orceld.exe'', ''orcel.exe'') { $t = Join-Path $d $n; Copy-Item -LiteralPath (Join-Path $from $n) -Destination $t; $f = Get-Item -LiteralPath $t; $a = $f.GetAccessControl(''Owner''); $a.SetOwner([Security.Principal.SecurityIdentifier]''S-1-5-32-544''); $f.SetAccessControl($a) }; if ((Get-FileHash -LiteralPath (Join-Path $d ''install-orcel-authority.ps1'')).Hash -ne ''<script-sha256>'') { Remove-Item -LiteralPath $d -Recurse -Force; throw ''the staged install script does not match the expected SHA-256; the staging folder was removed'' }; icacls $d; icacls (Join-Path $d ''*'')"'
+Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command "$ErrorActionPreference = ''Stop''; $from = ''<download-folder>''; $d = Join-Path $env:ProgramFiles ''OrcelStaging''; if (Test-Path -LiteralPath $d) { throw ($d + '' already exists; nothing was changed'') }; $s = New-Object Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm(''O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)''); [void][IO.Directory]::CreateDirectory($d, $s); foreach ($n in ''install-orcel-authority.ps1'', ''orcel-authority.exe'', ''orceld.exe'', ''orcel.exe'') { $t = Join-Path $d $n; Copy-Item -LiteralPath (Join-Path $from $n) -Destination $t; $f = Get-Item -LiteralPath $t; $a = $f.GetAccessControl(''Owner''); $a.SetOwner([Security.Principal.SecurityIdentifier]''S-1-5-32-544''); $f.SetAccessControl($a) }; if ((Get-FileHash -LiteralPath (Join-Path $d ''install-orcel-authority.ps1'')).Hash -ne ''<script-sha256>'') { Remove-Item -LiteralPath $d -Recurse -Force; throw ''the staged install script does not match the expected SHA-256; the staging folder was removed'' }; icacls $d; icacls (Join-Path $d ''*'')"'
 Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -ArtifactDir "C:\Program Files\OrcelStaging" -AuthoritySha256 <authority-sha256> -OrceldSha256 <orceld-sha256> -OrcelSha256 <orcel-sha256>'
 Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -Uninstall -RemoveStaging'
 Start-Process -Verb RunAs -FilePath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\Program Files\OrcelStaging\install-orcel-authority.ps1" -Uninstall -KeepState -RemoveStaging'
@@ -186,31 +185,26 @@ Get-Acl -LiteralPath 'C:\Program Files\OrcelStaging' | ForEach-Object { '{0} pro
 ```
 
 Expected output, line by line (column spacing may differ; on a Windows display language other than English the
-account names are translated). `(I)` marks an inherited entry; the folder's own entries have none:
+account names are translated). The files carry the folder's three entries; `(OI)(CI)` on the folder makes new files get them too:
 
 <!-- expected-staging-acl -->
 ```text
 C:\Program Files\OrcelStaging NT AUTHORITY\SYSTEM:(OI)(CI)(F)
 BUILTIN\Administrators:(OI)(CI)(F)
 BUILTIN\Users:(OI)(CI)(RX)
-OWNER RIGHTS:(OI)(CI)(RX)
 Successfully processed 1 files; Failed processing 0 files
-C:\Program Files\OrcelStaging\install-orcel-authority.ps1 NT AUTHORITY\SYSTEM:(I)(F)
-BUILTIN\Administrators:(I)(F)
-BUILTIN\Users:(I)(RX)
-OWNER RIGHTS:(I)(RX)
-C:\Program Files\OrcelStaging\orcel-authority.exe NT AUTHORITY\SYSTEM:(I)(F)
-BUILTIN\Administrators:(I)(F)
-BUILTIN\Users:(I)(RX)
-OWNER RIGHTS:(I)(RX)
-C:\Program Files\OrcelStaging\orcel.exe NT AUTHORITY\SYSTEM:(I)(F)
-BUILTIN\Administrators:(I)(F)
-BUILTIN\Users:(I)(RX)
-OWNER RIGHTS:(I)(RX)
-C:\Program Files\OrcelStaging\orceld.exe NT AUTHORITY\SYSTEM:(I)(F)
-BUILTIN\Administrators:(I)(F)
-BUILTIN\Users:(I)(RX)
-OWNER RIGHTS:(I)(RX)
+C:\Program Files\OrcelStaging\install-orcel-authority.ps1 NT AUTHORITY\SYSTEM:(F)
+BUILTIN\Administrators:(F)
+BUILTIN\Users:(RX)
+C:\Program Files\OrcelStaging\orcel-authority.exe NT AUTHORITY\SYSTEM:(F)
+BUILTIN\Administrators:(F)
+BUILTIN\Users:(RX)
+C:\Program Files\OrcelStaging\orcel.exe NT AUTHORITY\SYSTEM:(F)
+BUILTIN\Administrators:(F)
+BUILTIN\Users:(RX)
+C:\Program Files\OrcelStaging\orceld.exe NT AUTHORITY\SYSTEM:(F)
+BUILTIN\Administrators:(F)
+BUILTIN\Users:(RX)
 Successfully processed 4 files; Failed processing 0 files
 install-orcel-authority.ps1 BUILTIN\Administrators
 orcel-authority.exe BUILTIN\Administrators
@@ -219,7 +213,7 @@ orceld.exe BUILTIN\Administrators
 BUILTIN\Administrators protected=True
 ```
 
-Any other entry (Authenticated Users, Everyone, INTERACTIVE, your own account, CREATOR OWNER), a missing
+Any other entry (Authenticated Users, Everyone, INTERACTIVE, your own account, CREATOR OWNER, OWNER RIGHTS), a missing
 `protected=True`, or another owner: stop, and uninstall or delete the folder elevated. The installer makes the
 same check itself before it changes anything.
 
@@ -364,9 +358,15 @@ values filled in) and fails on any mismatch. Its report, `authority-install-e2e.
 - **Clean install:** the Install line; service running, automatic, as `NT SERVICE\OrcelAuthority`; the state
   directory and its files unreadable for the standard user, the public key readable, `%ProgramFiles%\Orcel`
   not writable for that user; `orceld authority-status` in service mode.
-- **Fail closed without Windows Hello:** `orcel full-control grant` is refused (no enrolled key), `orcel
-  authority reset` is refused, and the service reports no enrolled key and an unchanged epoch; the runner's
-  UAC values are recorded (a hosted runner is not "Always notify").
+- **Fail closed without Windows Hello:** the runner's own job process (a service logon, not INTERACTIVE) cannot
+  open the authority pipe at all. Run as the temporary standard user (an interactive logon, but not the active
+  console session and not elevated), `orcel authority status` shows no enrolled key, `orcel full-control
+  grant` is refused (no enrolled Windows Hello key), `orcel authority reset` and `enroll` are refused, and the
+  epoch is unchanged. The report names the gate that refused (`reset_refused_by`) and records the runner's
+  UAC values. A hosted runner cannot show the service's own "UAC is not Always notify" refusal (no
+  elevated owner CLI in an active console session can reach it there); the core test
+  `review_f1_enroll_and_reset_need_always_notify_and_every_intent_the_owner_cli` covers that gate, and on your
+  PC `orcel authority status` shows the values the service reads.
 - **Recovery:** a restart keeps `key_id`; with `lease-signing.key` missing and audit history present the
   service refuses to start (event 4103); with the key back it starts with the same `key_id`.
 - **Uninstall:** the Uninstall line; every row of the table above reversed and the staging gone.

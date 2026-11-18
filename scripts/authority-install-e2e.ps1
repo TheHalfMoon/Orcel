@@ -222,7 +222,7 @@ function Wait-Stopped([int]$Seconds = 60) {
 }
 
 function Get-AuthorityStatus {
-  $run = Invoke-Process $InstalledOrceld 'authority-status' 60
+  $run = Invoke-AsStandardUserProcess $InstalledOrceld 'authority-status' 60
   if ($run.ExitCode -ne 0) { return $null }
   $line = @($run.Stdout -split "`r?`n" | Where-Object { $_.TrimStart().StartsWith('{') }) | Select-Object -Last 1
   return ($line | ConvertFrom-Json)
@@ -263,9 +263,34 @@ function New-StandardUser {
     }
   }
   $script:UserIdentity = New-Object System.Security.Principal.WindowsIdentity -ArgumentList $token
+  $script:UserCredential = New-Object System.Management.Automation.PSCredential -ArgumentList $UserName, $secure
+  # A folder the standard user's processes start in and write their output to.
+  $script:UserIo = Join-Path $env:SystemDrive 'OrcelE2EUserIo'
+  New-Item -ItemType Directory -Path $script:UserIo -Force | Out-Null
+  & icacls.exe $script:UserIo /grant "${UserName}:(OI)(CI)M" | Out-Null
   $admins = @(Get-LocalGroupMember -SID 'S-1-5-32-544' | Where-Object { $_.Name -like "*\$UserName" })
   $userPrincipal = New-Object Security.Principal.WindowsPrincipal($script:UserIdentity)
   Check 'standard user created' ((-not $admins.Count) -and -not $userPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) "$UserName, member of Users only, logon type $logonType"
+}
+
+function Invoke-AsStandardUserProcess([string]$File, [string]$Arguments, [int]$TimeoutSeconds = 120) {
+  # A separate process with the standard user's interactive logon (CreateProcessWithLogonW): its token carries
+  # INTERACTIVE, which the authority pipe requires. The hosted runner's own job process is a service logon,
+  # which the pipe refuses. The process runs in the runner's session, not an active console session.
+  $id = [guid]::NewGuid().ToString('N')
+  $out = Join-Path $script:UserIo "$id.out"
+  $err = Join-Path $script:UserIo "$id.err"
+  $process = Start-Process -FilePath $File -ArgumentList $Arguments -Credential $script:UserCredential -WorkingDirectory $script:UserIo -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden
+  if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    throw "$File $Arguments (as $UserName) did not finish within $TimeoutSeconds seconds"
+  }
+  $process.WaitForExit()
+  $stdout = if (Test-Path -LiteralPath $out) { [IO.File]::ReadAllText($out) } else { '' }
+  $stderr = if (Test-Path -LiteralPath $err) { [IO.File]::ReadAllText($err) } else { '' }
+  Write-Host "---- $File $Arguments as $UserName (exit $($process.ExitCode))"
+  Write-Host ($stdout + $stderr)
+  return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $stdout + $stderr; Stdout = $stdout }
 }
 
 function Invoke-AsStandardUser([scriptblock]$Block) {
@@ -457,21 +482,24 @@ function Invoke-E2E {
 
   $status = Get-AuthorityStatus
   Check 'orceld authority-status: service mode with a key id' ($status -and $status.mode -eq 'service' -and $status.key_id) $(if ($status) { "key_id $($status.key_id), epoch $($status.epoch)" } else { 'no status' })
-  $anchors = Get-OrcelEvents 4100 $installedAt
+  $anchors = @(Get-OrcelEvents 4100 $installedAt)
   Check 'Event Log: anchor event 4100 written by the service' ($anchors.Count -gt 0) "$($anchors.Count) event(s)"
 
-  # ---- Fail closed without Windows Hello.
-  $statusRun = Invoke-Process $InstalledOrcel 'authority status --json' 60
+  $serviceLogon = Invoke-Process $InstalledOrceld 'authority-status' 60
+  Check 'the runner''s own service-logon process (not INTERACTIVE) cannot open the authority pipe' (($serviceLogon.ExitCode -ne 0) -and ($serviceLogon.Output -match 'AuthorityUnavailable')) "exit $($serviceLogon.ExitCode)"
+
+  # ---- Fail closed without Windows Hello (as the standard user, an interactive logon).
+  $statusRun = Invoke-AsStandardUserProcess $InstalledOrcel 'authority status --json' 60
   $cli = $null
   try { $cli = ($statusRun.Stdout | ConvertFrom-Json).authority } catch { $cli = $null }
   $Report.installed_service_status = $cli
   Check 'orcel authority status: no key enrolled for this caller' ($cli -and $cli.caller_enrolled -eq $false -and $cli.can_issue -eq $false) $(if ($cli) { "role $($cli.caller_role), elevated $($cli.caller_elevated), enrollment_available $($cli.enrollment_available), uac_always_notify $($cli.uac_always_notify_on_secure_desktop)" } else { 'no status' })
   $epochBefore = if ($cli) { $cli.epoch } else { $null }
 
-  $grant = Invoke-Process $InstalledOrcel 'full-control grant' 60
+  $grant = Invoke-AsStandardUserProcess $InstalledOrcel 'full-control grant' 60
   Check 'installed service: grant refused without an enrolled Windows Hello key (fail closed)' (($grant.ExitCode -ne 0) -and ($grant.Output -match 'no Windows Hello key')) "exit $($grant.ExitCode)"
 
-  $reset = Invoke-Process $InstalledOrcel 'authority reset' 60
+  $reset = Invoke-AsStandardUserProcess $InstalledOrcel 'authority reset' 60
   $by = switch -Regex ($reset.Output) {
     'UAC set to Always notify' { 'the UAC policy gate (not Always notify on the secure desktop)'; break }
     'interactive logon' { 'the caller role gate (no interactive console logon)'; break }
@@ -486,13 +514,13 @@ function Invoke-E2E {
   }
 
   if ($cli -and $cli.enrollment_available -ne $true) {
-    $enroll = Invoke-Process $InstalledOrcel 'authority enroll' 60
+    $enroll = Invoke-AsStandardUserProcess $InstalledOrcel 'authority enroll' 60
     Check 'installed service: enroll refused (no TPM attestation roots or not elevated)' (($enroll.ExitCode -ne 0) -and ($enroll.Output -match 'enrollment is refused|elevated')) "exit $($enroll.ExitCode)"
   } else {
     Write-Host 'enroll not attempted: enrollment is available on this runner, and enroll would open Windows Hello.'
   }
 
-  $after = Invoke-Process $InstalledOrcel 'authority status --json' 60
+  $after = Invoke-AsStandardUserProcess $InstalledOrcel 'authority status --json' 60
   $cliAfter = $null
   try { $cliAfter = ($after.Stdout | ConvertFrom-Json).authority } catch { $cliAfter = $null }
   Check 'after the refusals: still no enrolled key, epoch unchanged' ($cliAfter -and $cliAfter.caller_enrolled -eq $false -and $cliAfter.epoch -eq $epochBefore) $(if ($cliAfter) { "epoch $($cliAfter.epoch)" } else { 'no status' })

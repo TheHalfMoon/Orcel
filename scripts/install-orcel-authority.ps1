@@ -332,7 +332,16 @@ function Remove-ServiceProfile([string]$ServiceSid) {
   if (-not $ServiceSid) { return }
   $profile = Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$ServiceSid'" -ErrorAction SilentlyContinue
   if ($profile -and $PSCmdlet.ShouldProcess($profile.LocalPath, 'Remove the virtual account profile (its DPAPI keys included)')) {
-    $profile | Remove-CimInstance
+    # Windows unloads the profile shortly after the service process ends; retry while it is still in use.
+    $deadline = (Get-Date).AddSeconds(60)
+    while ($true) {
+      try { $profile | Remove-CimInstance -ErrorAction Stop; return } catch {
+        if ((Get-Date) -ge $deadline) { throw }
+        Start-Sleep -Seconds 2
+        $profile = Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$ServiceSid'" -ErrorAction SilentlyContinue
+        if (-not $profile) { return }
+      }
+    }
   }
 }
 
