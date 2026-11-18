@@ -30,11 +30,11 @@
 //! The lease grants nothing the action would not get with a SOFT approval:
 //! policy, the profile gate, the takeover gate, the secret-field refusal
 //! and the host's binding (GET-only covered clicks, non-GET requests blocked
-//! while covered actions run) all still apply; OB-07's human verification
-//! wait refuses (HUMAN_VERIFICATION_REQUIRED) before any lease is consulted
-//! or used; and the host's binding (GET-only covered clicks, non-GET requests blocked
 //! while covered actions run) all still apply, and the receipt names the
-//! lease. Nothing is covered without the takeover gate, only implemented
+//! lease. OB-07's human verification wait refuses
+//! (HUMAN_VERIFICATION_REQUIRED) before any lease is consulted or used.
+//! Nothing is covered without the takeover gate (on for every browser_full
+//! session since OB-07), only implemented
 //! families can be leased, and a value that looks secret or holds a stored
 //! secret is never typed under a lease.
 

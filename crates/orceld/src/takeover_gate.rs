@@ -1205,7 +1205,10 @@ mod tests {
                 None
             }
         };
-        assert!(used.is_some(), "covered before the challenge: {decisions:?}");
+        assert!(
+            used.is_some(),
+            "covered before the challenge: {decisions:?}"
+        );
         // The detector sees a CAPTCHA while the action is pending: the check
         // right before the lease would be used refuses it.
         if let Some(session) = gate.session_gate() {
