@@ -1,0 +1,47 @@
+{
+  "schema": "orcel-donor-provenance/1",
+  "packet": "Orcel Browser OB-03",
+  "note": "Provenance of the vercel-labs/agent-browser logic ported into Orcel Browser's page screenshots and tabs (SG-000135 OB-03). Same shape as docs/orcel/browseros_provenance.json: the donor records the source repository, the 40-hex pin, the original licence as recorded upstream, the notice and the authorization; each file entry names its donor, its source path(s) and blob(s) at that pin, and the method (PORT: behaviour carried over in Orcel's own code). To be folded into donor-provenance.json once that manifest is on main.",
+  "donors": {
+    "agent-browser": {
+      "repo": "vercel-labs/agent-browser",
+      "commit": "b06e2533ba9b3823b8a96c859d455cb55f4d7893",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/agent-browser-Apache-2.0.txt",
+      "records": [
+        "docs/orcel/agent_browser_provenance.json"
+      ],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    }
+  },
+  "files": [
+    {
+      "path": "apps/orcel-browser-worker/src/screenshot.ts",
+      "donor": "agent-browser",
+      "method": "PORT",
+      "source": [
+        "cli/src/native/screenshot.rs"
+      ],
+      "donor_blob": [
+        "22bce7de24c3104bac86e162611128b6cd6d654a"
+      ]
+    },
+    {
+      "path": "crates/orceld/src/live_dispatch.rs",
+      "donor": "agent-browser",
+      "method": "PORT",
+      "source": [
+        "cli/src/native/tab_binding.rs"
+      ],
+      "donor_blob": [
+        "8df1ce14cdd60bac1c33cda861b6f4f6ac68b8ed"
+      ]
+    }
+  ],
+  "references": [
+    {
+      "path": "docs/orcel/notices/agent-browser-Apache-2.0.txt",
+      "reason": "The agent-browser notice: the ported-function list and the upstream LICENSE verbatim."
+    }
+  ]
+}

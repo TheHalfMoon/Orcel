@@ -14,6 +14,8 @@ import { MAX_VERIFY_PROBES, MAX_VERIFY_TEXT_BYTES, type VerifyProbe, type Verify
 import { PRESS_KEYS, type FormAction, type PressKey } from "./actions/form.js";
 import { MAX_WAIT_MS } from "./actions/wait.js";
 import type { DismissedDialog } from "./actions/dialogs.js";
+import { MAX_SCREENSHOT_PIECES, type ScreenshotFailure } from "./screenshot.js";
+import type { TabInfo } from "./tabs.js";
 import type { OutlineNode } from "./outline/capture.js";
 import { MAX_SCHEMA_FIELDS, SCHEMA_TAKES, type SchemaField, type SchemaTake, type SchemaValue } from "./outline/schema-extract.js";
 
@@ -41,9 +43,15 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// confirm answers, generation 16 SG-000122 slice A1 (the `enter` form action,
 /// one select option, single-line fills, form-control kinds in observations),
 /// generation 17 SG-000122 slice A5 (form-control nodes marked `named`),
-/// generation 18 W2-03 (the Stagehand-derived accessibility outline and the
-/// schema-driven extraction; the host denies both by default).
-export const WORKER_PROTOCOL_GENERATION = 18;
+/// generation 18 W2-03's outline and extract_schema frames (PR #797, on main),
+/// generation 19 SG-000135 OB-03: bounded page screenshots with secret fields
+/// masked (`screenshot`, `screenshot_more`) and tabs (`tab_new`,
+/// `tab_switch`, `tab_close`, `tabs`); the replies of navigate, observe,
+/// activate, form_action, verify, extract, screenshot, fetch_text, discover,
+/// execute, download, upload, wait_for, outline and extract_schema name the
+/// tab they acted on
+/// (`tab`), which the host checks against its own.
+export const WORKER_PROTOCOL_GENERATION = 19;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host; SG-000122: one option of a native select).
 export const MAX_FORM_VALUE_BYTES = 1024;
@@ -123,9 +131,20 @@ export type HostFrame =
   | { frame: "wait_for"; wait_id: number; text: string; appear: boolean; timeout_ms: number }
   | { frame: "upload"; up_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "dialogs"; dlg_id: number }
+  | { frame: "screenshot"; shot_id: number; full_page: boolean }
+  | { frame: "screenshot_more"; shot_id: number; piece: number }
+  | { frame: "tab_new"; tab_req: number }
+  | { frame: "tab_switch"; tab_req: number; tab: number }
+  | { frame: "tab_close"; tab_req: number; tab: number }
+  | { frame: "tabs"; tab_req: number }
   | { frame: "outline"; out_id: number }
   | { frame: "extract_schema"; xs_id: number; fields: SchemaField[] }
   | { frame: "shutdown" };
+
+/// SG-000135 OB-03: why a tab request failed. `last`: the only tab cannot
+/// be closed (the host ends the lifetime instead); `cap`: MAX_TABS tabs are
+/// open; `unknown_tab`: no such tab in this lifetime.
+export type TabFailure = "busy" | "unknown_tab" | "last" | "cap" | "failed";
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
 
@@ -238,34 +257,53 @@ export type WorkerFrame =
       /// page's main-frame document.
       main_document?: true;
     }
-  | { frame: "navigated"; nav_id: number; url: string; status: number }
+  | { frame: "navigated"; nav_id: number; tab: number; url: string; status: number }
   | { frame: "navigation_failed"; nav_id: number; reason: NavigationFailure }
-  | { frame: "fetched_text"; fetch_id: number; url: string; status: number; media: string; text: string; truncated: boolean }
+  | { frame: "fetched_text"; fetch_id: number; tab: number; url: string; status: number; media: string; text: string; truncated: boolean }
   | { frame: "fetch_failed"; fetch_id: number; reason: NavigationFailure }
-  | { frame: "observed"; obs_id: number; url: string; truncated: boolean; nodes: SnapshotNode[] }
+  | { frame: "observed"; obs_id: number; tab: number; url: string; truncated: boolean; nodes: SnapshotNode[] }
   | { frame: "observation_failed"; obs_id: number }
-  | { frame: "discovered"; disc_id: number; url: string; truncated: boolean; tools: DeclaredTool[] }
+  | { frame: "discovered"; disc_id: number; tab: number; url: string; truncated: boolean; tools: DeclaredTool[] }
   | { frame: "discovery_failed"; disc_id: number }
-  | { frame: "extracted"; ext_id: number; url: string; truncated: boolean; piece: number; total: number; chunk: number; content: string }
+  | { frame: "extracted"; ext_id: number; tab: number; url: string; truncated: boolean; piece: number; total: number; chunk: number; content: string }
   | { frame: "extraction_failed"; ext_id: number }
-  | { frame: "executed"; exec_id: number; url: string; status: number; structured: string[]; structured_complete: boolean }
+  | { frame: "executed"; exec_id: number; tab: number; url: string; status: number; structured: string[]; structured_complete: boolean }
   | { frame: "execution_failed"; exec_id: number; reason: NavigationFailure }
-  | { frame: "activated"; act_id: number; url: string; status: number }
+  | { frame: "activated"; act_id: number; tab: number; url: string; status: number }
   | { frame: "activation_failed"; act_id: number; reason: NavigationFailure }
-  | { frame: "downloaded"; dl_id: number; url: string; name: string; media: string; bytes: number }
+  | { frame: "downloaded"; dl_id: number; tab: number; url: string; name: string; media: string; bytes: number }
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
-  | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
-  | { frame: "form_done"; form_id: number; url: string; navigated?: boolean }
-  | { frame: "waited"; wait_id: number; url: string; met: boolean }
-  | { frame: "uploaded"; up_id: number; url: string }
+  | { frame: "verified"; ver_id: number; tab: number; url: string; results: VerifyResult[] }
+  | { frame: "form_done"; form_id: number; tab: number; url: string; navigated?: boolean }
+  | { frame: "waited"; wait_id: number; tab: number; url: string; met: boolean }
+  | { frame: "uploaded"; up_id: number; tab: number; url: string }
   | { frame: "dialogs_seen"; dlg_id: number; dialogs: DismissedDialog[]; truncated: boolean }
   | { frame: "upload_failed"; up_id: number; reason: NavigationFailure }
   | { frame: "wait_failed"; wait_id: number }
   | { frame: "form_failed"; form_id: number; reason: NavigationFailure }
   | { frame: "verification_failed"; ver_id: number }
-  | { frame: "outlined"; out_id: number; url: string; truncated: boolean; nodes: OutlineNode[] }
+  | {
+      frame: "screenshot_piece";
+      shot_id: number;
+      /// The tab captured and its page's URL (the host checks both).
+      tab: number;
+      url: string;
+      piece: number;
+      total: number;
+      width: number;
+      height: number;
+      bytes: number;
+      truncated: boolean;
+      /// The base64 encoding of this piece's own bytes.
+      data: string;
+    }
+  | { frame: "screenshot_failed"; shot_id: number; reason: ScreenshotFailure }
+  /// `active` is 0 when no tab is active.
+  | { frame: "tabs_state"; tab_req: number; active: number; tabs: TabInfo[] }
+  | { frame: "tab_failed"; tab_req: number; reason: TabFailure }
+  | { frame: "outlined"; out_id: number; tab: number; url: string; truncated: boolean; nodes: OutlineNode[] }
   | { frame: "outline_failed"; out_id: number }
-  | { frame: "schema_extracted"; xs_id: number; url: string; truncated: boolean; values: SchemaValue[] }
+  | { frame: "schema_extracted"; xs_id: number; tab: number; url: string; truncated: boolean; values: SchemaValue[] }
   | { frame: "schema_extraction_failed"; xs_id: number }
   | { frame: "error"; code: ErrorCode };
 
@@ -450,6 +488,31 @@ export function parseHostFrame(raw: unknown): HostFrame {
         frame.accept_confirm = message;
       }
       return frame;
+    }
+    case "screenshot": {
+      exactKeys(raw, ["frame", "shot_id", "full_page"]);
+      if (typeof raw.full_page !== "boolean") throw new ProtocolViolation("screenshot full_page is not a boolean");
+      return { frame: "screenshot", shot_id: positiveId(raw.shot_id, "shot_id"), full_page: raw.full_page };
+    }
+    case "screenshot_more": {
+      exactKeys(raw, ["frame", "shot_id", "piece"]);
+      const piece = positiveId(raw.piece, "piece");
+      if (piece >= MAX_SCREENSHOT_PIECES) throw new ProtocolViolation("screenshot piece is out of range");
+      return { frame: "screenshot_more", shot_id: positiveId(raw.shot_id, "shot_id"), piece };
+    }
+    case "tab_new":
+    case "tabs": {
+      exactKeys(raw, ["frame", "tab_req"]);
+      return { frame: raw.frame, tab_req: positiveId(raw.tab_req, "tab_req") };
+    }
+    case "tab_switch":
+    case "tab_close": {
+      exactKeys(raw, ["frame", "tab_req", "tab"]);
+      const tab = positiveId(raw.tab, "tab");
+      // Tab ids are issued per lifetime and never reused; MAX_TABS bounds
+      // how many are open, not how many were issued.
+      if (tab > 1_000_000) throw new ProtocolViolation("tab id is out of range");
+      return { frame: raw.frame, tab_req: positiveId(raw.tab_req, "tab_req"), tab };
     }
     case "dialogs": {
       exactKeys(raw, ["frame", "dlg_id"]);

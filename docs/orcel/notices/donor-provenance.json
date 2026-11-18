@@ -269,6 +269,17 @@
       ],
       "earlier_records": [],
       "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
+    },
+    "agent-browser": {
+      "repo": "vercel-labs/agent-browser",
+      "commit": "b06e2533ba9b3823b8a96c859d455cb55f4d7893",
+      "licence": "Apache-2.0",
+      "notice": "docs/orcel/notices/agent-browser-Apache-2.0.txt",
+      "records": [
+        "docs/orcel/agent_browser_provenance.json"
+      ],
+      "earlier_records": [],
+      "authorization": "OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17"
     }
   },
   "files": [
@@ -938,6 +949,27 @@
       "donor": "browseros",
       "source": [
         "packages/browseros-agent/crates/neo-sdk/neo-takeover/tests/locks.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/screenshot.ts",
+      "donor": "agent-browser",
+      "source": [
+        "cli/src/native/screenshot.rs"
+      ]
+    },
+    {
+      "path": "apps/orcel-browser-worker/src/screenshot.ts",
+      "donor": "browseros",
+      "source": [
+        "packages/browseros-agent/packages/browser-core/src/core/screenshot-queue.ts"
+      ]
+    },
+    {
+      "path": "crates/orceld/src/live_dispatch.rs",
+      "donor": "agent-browser",
+      "source": [
+        "cli/src/native/tab_binding.rs"
       ]
     }
   ],

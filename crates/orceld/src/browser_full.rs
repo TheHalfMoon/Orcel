@@ -48,9 +48,40 @@ const FORMS: &[(&str, &[&str], &[&str])] = &[
         &[],
     ),
     ("extract", &["session_id", "expected_generation"], &[]),
+    // SG-000135 OB-03.
+    (
+        "screenshot",
+        &["session_id", "expected_generation"],
+        &["full_page"],
+    ),
+    ("tabs", &["session_id", "action"], &["url", "page_id"]),
     ("close", &["session_id"], &[]),
     ("status", &["session_id"], &[]),
 ];
+
+/// SG-000135 OB-03: what `browser_tabs` asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TabOp {
+    /// Every tab, read-only.
+    List,
+    /// A new active tab; with a URL, navigated there (a navigation: SOFT).
+    New { url: Option<String> },
+    /// Make the tab with this page id active.
+    Switch { page_id: String },
+    /// Close the tab with this page id.
+    Close { page_id: String },
+}
+
+/// Whether `id` is a page id the page store mints (`pg-` and 32
+/// lowercase hex).
+pub(crate) fn is_page_id(id: &str) -> bool {
+    id.strip_prefix("pg-").is_some_and(|hex| {
+        hex.len() == 32
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
 
 /// One parsed broker request.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +121,15 @@ pub(crate) enum FullAction {
     Extract {
         session: String,
         expected_generation: u64,
+    },
+    Screenshot {
+        session: String,
+        expected_generation: u64,
+        full_page: bool,
+    },
+    Tabs {
+        session: String,
+        op: TabOp,
     },
     Close {
         session: String,
@@ -209,6 +249,50 @@ pub(crate) fn parse(request: &RequestEnvelope) -> Result<FullAction, ProviderErr
             session: session()?,
             expected_generation: number("expected_generation")?,
         },
+        "screenshot" => FullAction::Screenshot {
+            session: session()?,
+            expected_generation: number("expected_generation")?,
+            full_page: match arguments.get("full_page") {
+                None => false,
+                Some(value) => value
+                    .as_bool()
+                    .ok_or_else(|| invalid("full_page must be a boolean"))?,
+            },
+        },
+        "tabs" => {
+            let session = session()?;
+            let action = text("action")?;
+            let has = |name: &str| arguments.contains_key(name);
+            let op = match action.as_str() {
+                "list" if !has("url") && !has("page_id") => TabOp::List,
+                "new" if !has("page_id") => TabOp::New {
+                    url: if has("url") { Some(text("url")?) } else { None },
+                },
+                "switch" | "close" if !has("url") => {
+                    if !has("page_id") {
+                        return Err(invalid(format!(
+                            "browser_tabs {action} requires arguments.page_id"
+                        )));
+                    }
+                    let page_id = text("page_id")?;
+                    if !is_page_id(&page_id) {
+                        return Err(invalid("page_id is not a browser page id"));
+                    }
+                    if action == "switch" {
+                        TabOp::Switch { page_id }
+                    } else {
+                        TabOp::Close { page_id }
+                    }
+                }
+                "list" | "new" | "switch" | "close" => {
+                    return Err(invalid(format!(
+                        "browser_tabs {action} does not accept that argument field"
+                    )));
+                }
+                _ => return Err(invalid("action must be list, new, switch or close")),
+            };
+            FullAction::Tabs { session, op }
+        }
         "close" => FullAction::Close {
             session: session()?,
         },
@@ -237,6 +321,8 @@ impl FullAction {
             | Self::Select { session, .. }
             | Self::Verify { session, .. }
             | Self::Extract { session, .. }
+            | Self::Screenshot { session, .. }
+            | Self::Tabs { session, .. }
             | Self::Close { session }
             | Self::Status { session } => Some(session),
         }
@@ -254,6 +340,8 @@ impl FullAction {
             Self::Select { .. } => "browser_select",
             Self::Verify { .. } => "browser_verify",
             Self::Extract { .. } => "browser_extract",
+            Self::Screenshot { .. } => "browser_screenshot",
+            Self::Tabs { .. } => "browser_tabs",
             Self::Close { .. } => "browser_close",
             Self::Status { .. } => "browser_task_status",
         }
@@ -262,8 +350,10 @@ impl FullAction {
     /// The live shape the action maps onto, as the request the live policy
     /// validates, on the session's page `page_id` at `generation` (the
     /// caller's own generation where the action carries one). `None` for
-    /// the actions that are the broker's own (create, close, status) and
-    /// for extract, which has no live shape of its own.
+    /// the actions that are the broker's own (create, close, status), for
+    /// extract and screenshot, which have no live shape of their own, and
+    /// for a tab request other than a new tab to a URL (which is a
+    /// navigation, checked as one).
     pub(crate) fn live_request(
         &self,
         base: &RequestEnvelope,
@@ -271,7 +361,11 @@ impl FullAction {
         generation: u64,
     ) -> Option<RequestEnvelope> {
         let (capability, operation, arguments) = match self {
-            Self::Open { url, .. } => (
+            Self::Open { url, .. }
+            | Self::Tabs {
+                op: TabOp::New { url: Some(url) },
+                ..
+            } => (
                 "browser.navigation",
                 "navigate",
                 json!({"page_id": page_id, "url": url, "expected_generation": generation}),
@@ -321,6 +415,8 @@ impl FullAction {
             ),
             Self::Create { .. }
             | Self::Extract { .. }
+            | Self::Screenshot { .. }
+            | Self::Tabs { .. }
             | Self::Close { .. }
             | Self::Status { .. } => return None,
         };
@@ -344,6 +440,7 @@ mod tests {
     use orcel_policy::{PolicyEngine, Workspace};
 
     const SESSION: &str = "bs-0123456789abcdef-1-0001020304050607";
+    const PAGE: &str = "pg-0123456789abcdef0123456789abcdef";
 
     fn request(operation: &str, arguments: Value) -> RequestEnvelope {
         RequestEnvelope {
@@ -407,6 +504,28 @@ mod tests {
                 "extract",
                 json!({"session_id": SESSION, "expected_generation": 1}),
             ),
+            (
+                "screenshot",
+                json!({"session_id": SESSION, "expected_generation": 1}),
+            ),
+            (
+                "screenshot",
+                json!({"session_id": SESSION, "expected_generation": 1, "full_page": true}),
+            ),
+            ("tabs", json!({"session_id": SESSION, "action": "list"})),
+            ("tabs", json!({"session_id": SESSION, "action": "new"})),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "new", "url": "https://example.com/b"}),
+            ),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "switch", "page_id": PAGE}),
+            ),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "close", "page_id": PAGE}),
+            ),
             ("close", json!({"session_id": SESSION})),
             ("status", json!({"session_id": SESSION})),
         ];
@@ -448,6 +567,44 @@ mod tests {
             ("close", json!({"session_id": "bs-nope"})),
             ("status", json!({"session_id": 5})),
             ("status", json!("not an object")),
+            // SG-000135 OB-03: a screenshot names no window, target, clip
+            // or page; a tab request only its own fields, each in its place.
+            (
+                "screenshot",
+                json!({"session_id": SESSION, "expected_generation": 1, "hwnd": 7}),
+            ),
+            (
+                "screenshot",
+                json!({"session_id": SESSION, "expected_generation": 1, "page_id": PAGE}),
+            ),
+            (
+                "screenshot",
+                json!({"session_id": SESSION, "expected_generation": 1, "full_page": "yes"}),
+            ),
+            ("screenshot", json!({"session_id": SESSION})),
+            ("tabs", json!({"session_id": SESSION})),
+            ("tabs", json!({"session_id": SESSION, "action": "group"})),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "list", "page_id": PAGE}),
+            ),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "new", "page_id": PAGE}),
+            ),
+            ("tabs", json!({"session_id": SESSION, "action": "switch"})),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "close", "page_id": "pg-1"}),
+            ),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "switch", "page_id": PAGE, "url": "https://example.com/"}),
+            ),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "new", "url": 5}),
+            ),
         ] {
             let refused = parse(&request(operation, arguments.clone())).unwrap_err();
             assert_eq!(
@@ -505,6 +662,10 @@ mod tests {
                 "verify",
                 json!({"session_id": SESSION, "checks": [{"kind": "url_is", "url": "https://example.com/"}], "expected_generation": 2}),
             ),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "new", "url": "https://example.com/b"}),
+            ),
         ];
         let shapes = [
             ("browser.navigation", "navigate"),
@@ -513,6 +674,7 @@ mod tests {
             ("browser.dom", "fill"),
             ("browser.form", "select"),
             ("browser.verify", "check"),
+            ("browser.navigation", "navigate"),
         ];
         for ((operation, arguments), (capability, live_operation)) in ok.into_iter().zip(shapes) {
             let base = request(operation, arguments);
@@ -554,6 +716,10 @@ mod tests {
                 "verify",
                 json!({"session_id": SESSION, "checks": [{"kind": "evaluate"}], "expected_generation": 2}),
             ),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "new", "url": "http://example.com/"}),
+            ),
         ] {
             let base = request(operation, arguments.clone());
             let action = parse(&base).unwrap();
@@ -568,6 +734,16 @@ mod tests {
             (
                 "extract",
                 json!({"session_id": SESSION, "expected_generation": 1}),
+            ),
+            (
+                "screenshot",
+                json!({"session_id": SESSION, "expected_generation": 1}),
+            ),
+            ("tabs", json!({"session_id": SESSION, "action": "list"})),
+            ("tabs", json!({"session_id": SESSION, "action": "new"})),
+            (
+                "tabs",
+                json!({"session_id": SESSION, "action": "close", "page_id": PAGE}),
             ),
             ("close", json!({"session_id": SESSION})),
             ("status", json!({"session_id": SESSION})),

@@ -12,8 +12,13 @@
 // Mission: browser_session_create, browser_open (the fixture form),
 // browser_snapshot, browser_fill (a text field), browser_select (an option),
 // browser_verify (the form), browser_click (a link to a second page),
-// browser_verify (the second page), browser_extract, browser_task_status,
-// browser_close. Then: the provisional receipts chain is recomputed here,
+// browser_verify (the second page), browser_extract, then (SG-000135 OB-03)
+// browser_screenshot, browser_tabs new (a second tab on the secret-field
+// page, a navigation with its own approval), browser_tabs list,
+// browser_screenshot of the second tab (its secret fields must be painted
+// over, checked on the decoded pixels), browser_tabs switch back,
+// browser_verify, browser_tabs close (the second tab), then
+// browser_task_status and browser_close. Then: the provisional receipts chain is recomputed here,
 // the session's folder (its profile) must be gone, no Edge of this run may
 // be left, and orceld must end when the MCP session ends.
 //
@@ -50,6 +55,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 import { runtimePin } from "../apps/orcel-browser-worker/scripts/dev-pin.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -60,10 +66,15 @@ const DONE_URL = `${FIXTURE}/ob01-done`;
 const NAME_VALUE = "Ada Lovelace";
 const CITY_OPTION = "Porto";
 const DONE_TEXT = "OB-01 mission second page reached";
+const SECRET_URL = `${FIXTURE}/ob03-secret`;
 const EXPECTED_TOOLS = [
   "browser_session_create", "browser_open", "browser_snapshot", "browser_click", "browser_fill",
-  "browser_select", "browser_verify", "browser_extract", "browser_close", "browser_task_status"
+  "browser_select", "browser_verify", "browser_extract", "browser_screenshot", "browser_tabs",
+  "browser_close", "browser_task_status"
 ];
+/// The mission's approved actions: open, fill, select, click, and the new
+/// tab's navigation (OB-03).
+const APPROVED_ACTIONS = 5;
 // Longer than the MCP edge's own 10-minute approval timeout, so a dialog that
 // waits for a person ends as orceld's answer, not as this client giving up.
 const CALL_TIMEOUT_MS = 11 * 60_000;
@@ -218,7 +229,9 @@ class McpClient {
     } catch {
       body = { raw: result.content?.[0]?.text };
     }
-    return { tool, ok: result.isError !== true, ms, body };
+    // OB-03: a screenshot's PNG is MCP image content beside the JSON.
+    const images = (result.content ?? []).filter((item) => item.type === "image");
+    return { tool, ok: result.isError !== true, ms, body, images };
   }
 
   async close() {
@@ -258,6 +271,61 @@ function receiptDigest(receipt) {
     hash.update(bytes);
   }
   return hash.digest("hex");
+}
+
+/// OB-03: decode an 8-bit, non-interlaced RGB or RGBA PNG; returns its
+/// size and a pixel reader.
+function decodePng(png) {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  require_(png.length > 33 && png.subarray(0, 8).equals(signature) && png.toString("latin1", 12, 16) === "IHDR", "the screenshot is a PNG");
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  require_(png[24] === 8 && png[28] === 0 && (png[25] === 2 || png[25] === 6), "the PNG is 8-bit RGB(A), not interlaced");
+  const channels = png[25] === 6 ? 4 : 3;
+  const data = [];
+  for (let offset = 8; offset < png.length; ) {
+    const length = png.readUInt32BE(offset);
+    if (png.toString("latin1", offset + 4, offset + 8) === "IDAT") data.push(png.subarray(offset + 8, offset + 8 + length));
+    offset += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(data));
+  const stride = width * channels;
+  const out = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    for (let x = 0; x < stride; x++) {
+      const value = raw[y * (stride + 1) + 1 + x];
+      const left = x >= channels ? out[y * stride + x - channels] : 0;
+      const up = y > 0 ? out[(y - 1) * stride + x] : 0;
+      const upLeft = y > 0 && x >= channels ? out[(y - 1) * stride + x - channels] : 0;
+      let predicted = 0;
+      if (filter === 1) predicted = left;
+      else if (filter === 2) predicted = up;
+      else if (filter === 3) predicted = (left + up) >> 1;
+      else if (filter === 4) {
+        const p = left + up - upLeft;
+        const pa = Math.abs(p - left);
+        const pb = Math.abs(p - up);
+        const pc = Math.abs(p - upLeft);
+        predicted = pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+      }
+      out[y * stride + x] = (value + predicted) & 0xff;
+    }
+  }
+  return { width, height, pixel: (x, y) => [...out.subarray(y * stride + x * channels, y * stride + x * channels + 3)] };
+}
+
+/// OB-03: a screenshot step's checked PNG: one image, its digest the
+/// reply's, its size the reply's.
+function screenshotOf(step) {
+  require_(step.ok && step.images.length === 1 && step.images[0].mimeType === "image/png", `browser_screenshot returns one PNG image: ${JSON.stringify(step.body)}`);
+  const png = Buffer.from(step.images[0].data, "base64");
+  const result = step.body.result;
+  require_(result.png_base64 === undefined, "the image is never inside the JSON");
+  require_(createHash("sha256").update(png).digest("hex") === result.sha256 && png.length === result.bytes, "the image is the one whose digest the reply names");
+  const decoded = decodePng(png);
+  require_(decoded.width === result.width && decoded.height === result.height, "the PNG's size is the reply's");
+  return { png, decoded, result };
 }
 
 /// Edge processes whose command line names `root` (this run's isolated state).
@@ -339,7 +407,7 @@ async function mission(options, paths, fixtureSpki, fixture) {
     const log = existsSync(paths.consentLog) ? readFileSync(paths.consentLog, "utf8") : "";
     require_(log.includes("\"scripted_consent_started\""), "orceld is not the scripted-consent build (no consent log header); stopping before any approval");
   } else {
-    process.stdout.write("OB01-E2E founder run: 4 Orcel approval dialogs follow (open, fill, select, click). Read each and answer it yourself.\n");
+    process.stdout.write("OB01-E2E founder run: 5 Orcel approval dialogs follow (open, fill, select, click, open the second tab). Read each and answer it yourself.\n");
   }
 
   const open = await client.call("browser_open", { session_id: session, url: FORM_URL });
@@ -423,6 +491,60 @@ async function mission(options, paths, fixtureSpki, fixture) {
   const extracted = expectOk(extract, "browser_extract");
   require_(typeof extracted.text === "string" && extracted.text.includes(DONE_TEXT) && extracted.truncated === false, `the extract holds the second page's text: ${JSON.stringify(extracted)}`);
 
+  // SG-000135 OB-03: a screenshot of the page, a second tab, a masked
+  // screenshot of it, switch back, close it.
+  const shot = await client.call("browser_screenshot", { session_id: session, expected_generation: generation });
+  record(shot);
+  const firstShot = screenshotOf(shot);
+  require_(firstShot.decoded.width === 1280 && firstShot.decoded.height === 720 && firstShot.result.truncated === false, `the viewport screenshot is 1280 x 720: ${JSON.stringify(firstShot.result)}`);
+  const firstPage = opened.page_id;
+
+  const tabNew = await client.call("browser_tabs", { session_id: session, action: "new", url: SECRET_URL });
+  record(tabNew);
+  const newTabs = expectOk(tabNew, "browser_tabs new");
+  require_(newTabs.tabs.length === 2 && newTabs.navigation?.url === SECRET_URL && newTabs.navigation?.status === 200, `the second tab opened the secret-field page: ${JSON.stringify(newTabs)}`);
+  const secondTab = newTabs.tabs.find((tab) => tab.active);
+  require_(secondTab && secondTab.page_id !== firstPage && newTabs.active_page_id === secondTab.page_id, "the new tab is active, with its own page id");
+
+  const tabList = await client.call("browser_tabs", { session_id: session, action: "list" });
+  record(tabList);
+  const tabsListed = expectOk(tabList, "browser_tabs list");
+  require_(tabsListed.tabs.length === 2 && tabsListed.tabs.some((tab) => tab.page_id === firstPage && !tab.active && tab.url === DONE_URL), `both tabs are listed, the first inactive: ${JSON.stringify(tabsListed.tabs)}`);
+
+  const secretShot = await client.call("browser_screenshot", { session_id: session, expected_generation: secondTab.generation });
+  record(secretShot);
+  const masked = screenshotOf(secretShot);
+  const at = (top) => masked.decoded.pixel(200, top + 24);
+  const maskFacts = { ordinary: at(20), password: at(100), one_time_code: at(180), card_number: at(260), secret_name: at(340) };
+  process.stdout.write(`OB03-E2E mask pixels: ${JSON.stringify(maskFacts)}\n`);
+  require_(JSON.stringify(maskFacts.ordinary) === "[0,255,0]", "the ordinary field keeps its colour (positive control)");
+  for (const name of ["password", "one_time_code", "card_number", "secret_name"]) {
+    require_(JSON.stringify(maskFacts[name]) === "[0,0,0]", `the ${name} field is painted over`);
+  }
+
+  const tabSwitch = await client.call("browser_tabs", { session_id: session, action: "switch", page_id: firstPage });
+  record(tabSwitch);
+  const switched = expectOk(tabSwitch, "browser_tabs switch");
+  require_(switched.active_page_id === firstPage, `the first tab is active again: ${JSON.stringify(switched)}`);
+
+  const verifyBack = await client.call("browser_verify", { session_id: session, expected_generation: generation, checks: [{ kind: "url_is", url: DONE_URL }, { kind: "text_visible", text: DONE_TEXT }] });
+  record(verifyBack);
+  require_(expectOk(verifyBack, "browser_verify (first tab again)").verified === true, "the first tab still holds the second page");
+
+  const tabClose = await client.call("browser_tabs", { session_id: session, action: "close", page_id: secondTab.page_id });
+  record(tabClose);
+  const afterClose = expectOk(tabClose, "browser_tabs close");
+  require_(afterClose.tabs.length === 1 && afterClose.tabs[0].page_id === firstPage && afterClose.tabs[0].active, `one tab is left, the first: ${JSON.stringify(afterClose)}`);
+  const ob03 = {
+    viewport_png_bytes: firstShot.png.length,
+    viewport_sha256: firstShot.result.sha256,
+    masked_png_bytes: masked.png.length,
+    masked_sha256: masked.result.sha256,
+    mask_pixels: maskFacts,
+    tabs_after_new: newTabs.tabs.length,
+    tabs_after_close: afterClose.tabs.length
+  };
+
   const status = await client.call("browser_task_status", { session_id: session });
   record(status);
   const state = expectOk(status, "browser_task_status");
@@ -435,11 +557,24 @@ async function mission(options, paths, fixtureSpki, fixture) {
     previous = receipt.receipt_sha256;
   }
   const actions = receipts.map((receipt) => receipt.action);
-  const expectedActions = ["browser_open", "browser_snapshot", "browser_fill", "browser_select", "browser_verify", "browser_click", "browser_verify", "browser_extract"];
+  const expectedActions = [
+    "browser_open", "browser_snapshot", "browser_fill", "browser_select", "browser_verify", "browser_click", "browser_verify", "browser_extract",
+    "browser_screenshot", "browser_tabs", "browser_tabs", "browser_screenshot", "browser_tabs", "browser_verify", "browser_tabs"
+  ];
   require_(JSON.stringify(actions) === JSON.stringify(expectedActions), `the receipts are the mission's actions: ${actions.join(", ")}`);
   require_(state.last_receipt_sha256 === previous, "the chain head is the last receipt");
   const approved = receipts.filter((receipt) => receipt.record_id);
-  require_(approved.length === 4, `four actions carry an approval record (open, fill, select, click): ${approved.length}`);
+  require_(approved.length === APPROVED_ACTIONS, `five actions carry an approval record (open, fill, select, click, the new tab): ${approved.length}`);
+  // OB-03: a screenshot's receipt keeps its digest only.
+  const shotReceipts = receipts.filter((receipt) => receipt.action === "browser_screenshot");
+  require_(
+    shotReceipts.length === 2 &&
+      shotReceipts[0].evidence_kind === "screenshot" &&
+      shotReceipts[0].evidence_sha256 === ob03.viewport_sha256 &&
+      shotReceipts[1].evidence_sha256 === ob03.masked_sha256 &&
+      !JSON.stringify(receipts).includes("png_base64"),
+    "each screenshot receipt holds the image's digest and nothing of the image"
+  );
 
   const close = await client.call("browser_close", { session_id: session });
   record(close);
@@ -470,6 +605,7 @@ async function mission(options, paths, fixtureSpki, fixture) {
     mcp_exit_code: exitCode,
     edge_left: leftEdge.length,
     session_folders_left: leftSessions.length,
+    ob03,
     fixture_hits: fixture.hits.filter((hit) => hit.includes("/ob01-"))
   };
 }
@@ -503,7 +639,7 @@ async function main() {
     summary.approval_ledger_files = existsSync(ledger) ? readdirSync(ledger) : [];
     if (options.consent === "scripted") {
       const prompts = readFileSync(paths.consentLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((line) => line.event === "soft_prompt");
-      require_(prompts.length === 4 && prompts.every((prompt) => prompt.decision === "approved"), `four scripted SOFT prompts, each approved: ${prompts.length}`);
+      require_(prompts.length === APPROVED_ACTIONS && prompts.every((prompt) => prompt.decision === "approved"), `five scripted SOFT prompts, each approved: ${prompts.length}`);
       summary.scripted_prompts = prompts.map((prompt) => ({ action: prompt.action, target: prompt.target }));
     }
     writeFileSync(join(evidenceDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);

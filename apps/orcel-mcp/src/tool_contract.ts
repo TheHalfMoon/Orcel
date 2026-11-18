@@ -442,6 +442,18 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
     outputBound: "the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one provisional receipt",
     annotations: read("Extract isolated browser session page")
   },
+  // SG-000135 OB-03: a bounded, masked screenshot of the session's own
+  // active tab (never another session, app or the desktop), and its tabs.
+  browser_screenshot: {
+    capability: "browser.session", operation: "screenshot", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "one PNG image of the session's active tab, at most 2 MiB and 2048 x 4096 CSS pixels, secret fields masked, its size and SHA-256, and one provisional receipt that keeps the digest only",
+    annotations: read("Screenshot isolated browser session page")
+  },
+  browser_tabs: {
+    capability: "browser.session", operation: "tabs", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the session's tabs (at most 8: page id, generation, URL without credentials, query or fragment, and which is active), a new tab's navigation result, and one provisional receipt",
+    annotations: change("Manage tabs of isolated browser session", { destructive: false, idempotent: false, openWorld: true })
+  },
   browser_close: {
     capability: "browser.session", operation: "close", effect: "read", approval: "none", remote: "local_only",
     outputBound: "whether the session's worker ended and its profile was removed",

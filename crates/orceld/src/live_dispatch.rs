@@ -632,8 +632,8 @@ mod full {
         hex, instance_id, ActionRecord, Broker, BrokerSession, Budgets, EndReason, SessionDirs,
         SessionWorker,
     };
-    use crate::browser_full::FullAction;
-    use crate::live_browser::{form_outcome, LiveBrowser, LiveState};
+    use crate::browser_full::{FullAction, TabOp};
+    use crate::live_browser::{form_outcome, LiveBrowser, LiveState, TabView};
     use orcel_browser_host::worker_host::{BindAction, FormNavigation};
     use orcel_browser_host::WorkerHostLaunch;
     use serde_json::json;
@@ -1124,11 +1124,153 @@ mod full {
                     evidence_kind: "reply",
                 })
             }
+            FullAction::Screenshot {
+                expected_generation,
+                full_page,
+                ..
+            } => {
+                let page = current_page(session)?;
+                let browser = &mut session.worker;
+                let shot = browser.screenshot(
+                    workspace,
+                    &page.page_id,
+                    *expected_generation,
+                    *full_page,
+                )?;
+                Ok(Done {
+                    reply: json!({
+                        "page_id": page.page_id,
+                        "generation": expected_generation,
+                        "full_page": full_page,
+                        "width": shot.width,
+                        "height": shot.height,
+                        "bytes": shot.png.len(),
+                        "truncated": shot.truncated,
+                        "sha256": shot.sha256,
+                        "mime_type": "image/png",
+                        "masked": SCREENSHOT_MASKED,
+                        "png_base64": orcel_browser_host::page_capture::encode_base64(&shot.png),
+                    }),
+                    evidence_kind: "screenshot",
+                    // The receipt keeps the digest only, never the image.
+                    evidence_sha256: Some(shot.sha256),
+                })
+            }
+            FullAction::Tabs { op, .. } => {
+                let browser = &mut session.worker;
+                let (action, navigated) = match op {
+                    TabOp::List => {
+                        browser.tabs(workspace)?;
+                        ("list", None)
+                    }
+                    TabOp::New { url } => {
+                        if browser.has_lifetime() {
+                            let (_, navigated) =
+                                browser.tab_new(workspace, approval, url.as_deref())?;
+                            ("new", navigated)
+                        } else {
+                            // No document yet: the first tab is the
+                            // session's page (as browser_open makes it).
+                            let page = match browser.page().cloned() {
+                                Some(page) => page,
+                                None => browser.open_page(workspace)?,
+                            };
+                            let navigated = match url {
+                                Some(url) => Some(browser.navigate_live(
+                                    workspace,
+                                    approval,
+                                    &page.page_id,
+                                    page.generation,
+                                    url,
+                                )?),
+                                None => None,
+                            };
+                            ("new", navigated)
+                        }
+                    }
+                    TabOp::Switch { page_id } => {
+                        browser.tab_switch(workspace, page_id)?;
+                        ("switch", None)
+                    }
+                    TabOp::Close { page_id } => {
+                        browser.tab_close(workspace, page_id)?;
+                        ("close", None)
+                    }
+                };
+                let views = browser.tab_views();
+                let active = views
+                    .iter()
+                    .find(|view| view.active)
+                    .map(|view| view.page_id.clone());
+                let reply = json!({
+                    "action": action,
+                    "active_page_id": active,
+                    "tabs": views.iter().map(tab_json).collect::<Vec<_>>(),
+                    "max_tabs": crate::live_browser::MAX_TABS,
+                    "navigation": navigated.map(|(url, status)| json!({"url": url, "status": status})),
+                });
+                Ok(Done {
+                    evidence_sha256: Some(digest(&reply.to_string())),
+                    reply,
+                    evidence_kind: "reply",
+                })
+            }
             FullAction::Create { .. } | FullAction::Close { .. } | FullAction::Status { .. } => {
                 Err(ProviderError::new(
                     FailureCode::InternalError,
                     "a broker action reached the page dispatcher",
                 ))
+            }
+        }
+    }
+
+    /// What a screenshot reply says about secret fields.
+    const SCREENSHOT_MASKED: &str = "password, one-time-code, card and other secret-looking fields are painted over before capture";
+
+    fn tab_json(view: &TabView) -> Value {
+        json!({
+            "page_id": view.page_id,
+            "generation": view.generation,
+            "url": view.url.as_deref().map(sanitized_url),
+            "active": view.active,
+        })
+    }
+
+    /// A tab's URL as a tab report shows it: scheme, host and path, without
+    /// credentials, query or fragment (a query can carry a token).
+    /// Ported from `sanitize_url` in vercel-labs/agent-browser
+    /// cli/src/native/tab_binding.rs (see
+    /// docs/orcel/agent_browser_provenance.json): https only here, and no
+    /// URL parser dependency.
+    pub(super) fn sanitized_url(url: &str) -> String {
+        let Some(rest) = url.strip_prefix("https://") else {
+            return String::new();
+        };
+        let end = rest.find(['?', '#']).unwrap_or(rest.len());
+        let rest = &rest[..end];
+        let (authority, path) = match rest.find('/') {
+            Some(slash) => rest.split_at(slash),
+            None => (rest, "/"),
+        };
+        let host = authority.rsplit('@').next().unwrap_or(authority);
+        format!("https://{host}{path}")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        /// SG-000135 OB-03: a tab report never shows credentials, a query or
+        /// a fragment, and nothing but https.
+        #[test]
+        fn ob03_tab_urls_are_shown_without_query_fragment_or_credentials() {
+            for (url, shown) in [
+                ("https://fixture.test/a?token=x#f", "https://fixture.test/a"),
+                ("https://user:pw@fixture.test/p", "https://fixture.test/p"),
+                ("https://fixture.test", "https://fixture.test/"),
+                ("https://fixture.test?x=1", "https://fixture.test/"),
+                ("about:blank", ""),
+                ("http://fixture.test/", ""),
+            ] {
+                assert_eq!(super::sanitized_url(url), shown, "{url}");
             }
         }
     }

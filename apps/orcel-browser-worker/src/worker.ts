@@ -29,8 +29,11 @@ import {
   type ExecField,
   type HostFrame,
   type NavigationFailure,
+  type TabFailure,
   type WorkerFrame
 } from "./protocol.js";
+import { ScreenshotError, toBase64Pieces } from "./screenshot.js";
+import type { TabInfo } from "./tabs.js";
 import type { RouteQuery } from "./routing.js";
 import type { BoundedSnapshot } from "./snapshot.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
@@ -55,39 +58,55 @@ export class NavigationError extends Error {
   }
 }
 
+/// SG-000135 OB-03: a tab request the engine could not do.
+export class TabError extends Error {
+  constructor(readonly reason: TabFailure) {
+    super(reason);
+  }
+}
+
+/// SG-000135 OB-03: the lifetime's tabs after a tab request (`active` is 0
+/// when none is).
+export interface TabsState {
+  active: number;
+  tabs: TabInfo[];
+}
+
 export interface EngineSession {
   close(): Promise<void>;
   /// Navigate the primary page; rejects with NavigationError.
-  navigate(url: string): Promise<{ url: string; status: number }>;
+  /// SG-000135 OB-03: `tab` is the tab acted on, here and in observe,
+  /// activate, formAction, verify, extract and screenshot.
+  navigate(url: string): Promise<{ tab: number; url: string; status: number }>;
   /// Navigate the primary page like `navigate` (the same routes and host
   /// decisions) and return the document's text when it is plain text or
   /// XML, bounded to one frame; rejects with NavigationError.
-  fetchText(url: string): Promise<{ url: string; status: number; media: string; text: string; truncated: boolean }>;
+  fetchText(url: string): Promise<{ tab: number; url: string; status: number; media: string; text: string; truncated: boolean }>;
   /// A bounded, value-free accessibility snapshot of the primary page.
-  observe(): Promise<{ url: string; snapshot: BoundedSnapshot }>;
+  observe(): Promise<{ tab: number; url: string; snapshot: BoundedSnapshot }>;
   /// W2-03: the bounded accessibility outline of the primary page's main
   /// document, read through a read-only CDP session (no page script).
-  outline(): Promise<{ url: string; outline: BoundedOutline }>;
+  outline(): Promise<{ tab: number; url: string; outline: BoundedOutline }>;
   /// W2-03: one value per schema field, matched in that outline (no model).
-  extractSchema(fields: SchemaField[]): Promise<{ url: string; truncated: boolean; values: SchemaValue[] }>;
+  extractSchema(fields: SchemaField[]): Promise<{ tab: number; url: string; truncated: boolean; values: SchemaValue[] }>;
   /// The primary page's declarative WebMCP tools, read without running
   /// page script; bounded so the reply frame fits.
-  discover(discId: number): Promise<{ url: string; truncated: boolean; tools: DeclaredTool[] }>;
+  discover(discId: number): Promise<{ tab: number; url: string; truncated: boolean; tools: DeclaredTool[] }>;
   /// The primary page's rendered content as Markdown, read from an engine
   /// snapshot without running page script, in frame-sized pieces.
-  extract(options: { links: boolean; images: boolean }): Promise<{ url: string; truncated: boolean; pieces: Piece[] }>;
+  extract(options: { links: boolean; images: boolean }): Promise<{ tab: number; url: string; truncated: boolean; pieces: Piece[] }>;
   /// Fill the declared tool form with host-validated fields, click its
   /// default submit button and wait for the resulting document; returns it
   /// with its structured data. Rejects with NavigationError.
-  execute(tool: string, fields: ExecField[]): Promise<{ url: string; status: number; structured: string[]; structuredComplete: boolean }>;
+  execute(tool: string, fields: ExecField[]): Promise<{ tab: number; url: string; status: number; structured: string[]; structuredComplete: boolean }>;
   /// Click the element with this snapshot ref (or, when the ref went
   /// stale, the one element matching the approved target) and wait for the
   /// resulting navigation to load; rejects with NavigationError.
-  activate(ref: string, target?: ApprovedTarget): Promise<{ url: string; status: number }>;
+  activate(ref: string, target?: ApprovedTarget): Promise<{ tab: number; url: string; status: number }>;
   /// Click the element with this snapshot ref (or the one matching the
   /// approved target), expect a download, and save it to `path` (which must
   /// not exist); rejects with NavigationError.
-  download(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string; name: string; media: string; bytes: number }>;
+  download(ref: string, path: string, target?: ApprovedTarget): Promise<{ tab: number; url: string; name: string; media: string; bytes: number }>;
   /// BR-02: one approved form action on the element with this snapshot ref
   /// (or the one matching the approved target); resolves with the page's
   /// URL afterwards; rejects with NavigationError.
@@ -95,17 +114,31 @@ export interface EngineSession {
   /// (once) while the action runs; every other dialog is dismissed.
   /// SG-000122 slice A6: an Enter also says whether the main frame committed
   /// a new document after the key (`navigated`).
-  formAction(ref: string, act: FormAction, target?: ApprovedTarget, acceptConfirm?: string): Promise<{ url: string; navigated?: boolean }>;
+  formAction(ref: string, act: FormAction, target?: ApprovedTarget, acceptConfirm?: string): Promise<{ tab: number; url: string; navigated?: boolean }>;
   /// BR-05: the dialogs dismissed since the last call (clears the log).
   takeDialogs(): { dialogs: DismissedDialog[]; truncated: boolean };
   /// BR-03: set the approved file input to the host-staged file at `path`;
   /// resolves with the page's URL; rejects with NavigationError.
-  upload(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string }>;
+  upload(ref: string, path: string, target?: ApprovedTarget): Promise<{ tab: number; url: string }>;
   /// BR-02: whether text became visible (or stopped being visible) on the
   /// primary page within the bound; read-only.
-  waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ url: string; met: boolean }>;
+  waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ tab: number; url: string; met: boolean }>;
   /// BR-07: read-only probes of the primary page, one result per probe.
-  verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }>;
+  verify(probes: VerifyProbe[]): Promise<{ tab: number; url: string; results: VerifyResult[] }>;
+  /// SG-000135 OB-03: a bounded PNG of the active tab's page (the
+  /// viewport, or from the top of the page within the bounds when
+  /// `fullPage`), every secret field masked; rejects with ScreenshotError
+  /// ("busy" while a navigation of the page is in flight).
+  screenshot(fullPage: boolean): Promise<{ tab: number; url: string; png: Buffer; width: number; height: number; truncated: boolean }>;
+  /// SG-000135 OB-03: open a blank tab and make it active; rejects with
+  /// TabError ("cap" at MAX_TABS).
+  tabNew(): Promise<TabsState>;
+  /// Make tab `tab` active; rejects with TabError.
+  tabSwitch(tab: number): Promise<TabsState>;
+  /// Close tab `tab` (never the only one: "last"); rejects with TabError.
+  tabClose(tab: number): Promise<TabsState>;
+  /// The lifetime's tabs.
+  tabs(): TabsState;
   /// Called once if the engine goes away without `close`.
   onUnexpectedExit(listener: () => void): void;
 }
@@ -114,12 +147,27 @@ export interface Launcher {
   launch(spec: LaunchSpec, policy: RoutePolicy): Promise<EngineSession>;
 }
 
+/// SG-000135 OB-03: a screenshot whose pieces the host has not all read.
+interface HeldShot {
+  shotId: number;
+  tab: number;
+  url: string;
+  width: number;
+  height: number;
+  bytes: number;
+  truncated: boolean;
+  pieces: string[];
+}
+
 export type WorkerState = "awaiting_hello" | "ready" | "launched" | "closed";
 
 export class Worker {
   private state: WorkerState = "awaiting_hello";
   /// The last extraction's remaining pieces, until the host has read them.
-  private extraction: { extId: number; url: string; truncated: boolean; pieces: Piece[] } | null = null;
+  private extraction: { extId: number; tab: number; url: string; truncated: boolean; pieces: Piece[] } | null = null;
+  /// SG-000135 OB-03: the last screenshot's remaining pieces, until the
+  /// host has read them.
+  private shot: HeldShot | null = null;
   private session: EngineSession | null = null;
   private launchedOnce = false;
   private queue: Promise<void> = Promise.resolve();
@@ -263,8 +311,8 @@ export class Worker {
       case "discover": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         try {
-          const { url, truncated, tools } = await this.session.discover(frame.disc_id);
-          this.send({ frame: "discovered", disc_id: frame.disc_id, url, truncated, tools });
+          const { tab, url, truncated, tools } = await this.session.discover(frame.disc_id);
+          this.send({ frame: "discovered", disc_id: frame.disc_id, tab, url, truncated, tools });
         } catch {
           this.send({ frame: "discovery_failed", disc_id: frame.disc_id });
         }
@@ -274,15 +322,15 @@ export class Worker {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         this.extraction = null;
         try {
-          const { url, truncated, pieces } = await this.session.extract({ links: frame.links, images: frame.images });
+          const { tab, url, truncated, pieces } = await this.session.extract({ links: frame.links, images: frame.images });
           if (pieces.length === 0 || pieces.length > MAX_EXTRACT_PIECES) throw new Error("piece count out of range");
           // A page can give itself a long URL (pushState); the pieces are
           // sized for one of at most MAX_URL_BYTES.
           if (Buffer.byteLength(url) > MAX_URL_BYTES) throw new Error("the page URL is too long");
           const first = pieces[0] ?? { chunk: 0, content: "" };
-          this.send({ frame: "extracted", ext_id: frame.ext_id, url, truncated, piece: 0, total: pieces.length, chunk: first.chunk, content: first.content });
+          this.send({ frame: "extracted", ext_id: frame.ext_id, tab, url, truncated, piece: 0, total: pieces.length, chunk: first.chunk, content: first.content });
           // Kept only until the host has read every piece.
-          if (pieces.length > 1) this.extraction = { extId: frame.ext_id, url, truncated, pieces };
+          if (pieces.length > 1) this.extraction = { extId: frame.ext_id, tab, url, truncated, pieces };
         } catch {
           this.send({ frame: "extraction_failed", ext_id: frame.ext_id });
         }
@@ -300,6 +348,7 @@ export class Worker {
         this.send({
           frame: "extracted",
           ext_id: frame.ext_id,
+          tab: kept.tab,
           url: kept.url,
           truncated: kept.truncated,
           piece: frame.piece,
@@ -318,6 +367,61 @@ export class Worker {
         // Outside the queue: the action's requests need host decisions.
         this.navigating = true;
         void this.runFormAction(this.session, frame.form_id, frame.ref, frame.act, frame.target, frame.accept_confirm);
+        return;
+      }
+      case "screenshot": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        this.shot = null;
+        // A document being replaced is never captured.
+        if (this.navigating) {
+          this.send({ frame: "screenshot_failed", shot_id: frame.shot_id, reason: "busy" });
+          return;
+        }
+        try {
+          const { tab, url, png, width, height, truncated } = await this.session.screenshot(frame.full_page);
+          const pieces = toBase64Pieces(png);
+          const shot: HeldShot = { shotId: frame.shot_id, tab, url, width, height, bytes: png.length, truncated, pieces };
+          this.sendShotPiece(shot, 0);
+          // Kept only until the host has read every piece.
+          if (pieces.length > 1) this.shot = shot;
+        } catch (error) {
+          const reason = error instanceof ScreenshotError ? error.reason : "failed";
+          this.send({ frame: "screenshot_failed", shot_id: frame.shot_id, reason });
+        }
+        return;
+      }
+      case "screenshot_more": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        const kept = this.shot;
+        if (!kept || kept.shotId !== frame.shot_id || frame.piece >= kept.pieces.length) {
+          this.send({ frame: "screenshot_failed", shot_id: frame.shot_id, reason: "failed" });
+          return;
+        }
+        if (frame.piece === kept.pieces.length - 1) this.shot = null;
+        this.sendShotPiece(kept, frame.piece);
+        return;
+      }
+      case "tab_new":
+      case "tab_switch":
+      case "tab_close":
+      case "tabs": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        // Tabs never change while a document is being replaced.
+        if (this.navigating && frame.frame !== "tabs") {
+          this.send({ frame: "tab_failed", tab_req: frame.tab_req, reason: "busy" });
+          return;
+        }
+        try {
+          let state: TabsState;
+          if (frame.frame === "tab_new") state = await this.session.tabNew();
+          else if (frame.frame === "tab_switch") state = await this.session.tabSwitch(frame.tab);
+          else if (frame.frame === "tab_close") state = await this.session.tabClose(frame.tab);
+          else state = this.session.tabs();
+          this.send({ frame: "tabs_state", tab_req: frame.tab_req, active: state.active, tabs: state.tabs });
+        } catch (error) {
+          const reason = error instanceof TabError ? error.reason : "failed";
+          this.send({ frame: "tab_failed", tab_req: frame.tab_req, reason });
+        }
         return;
       }
       case "dialogs": {
@@ -356,9 +460,9 @@ export class Worker {
           return;
         }
         try {
-          const { url, results } = await this.session.verify(frame.probes);
+          const { tab, url, results } = await this.session.verify(frame.probes);
           if (results.length !== frame.probes.length) throw new Error("one result per probe");
-          this.send({ frame: "verified", ver_id: frame.ver_id, url, results });
+          this.send({ frame: "verified", ver_id: frame.ver_id, tab, url, results });
         } catch {
           this.send({ frame: "verification_failed", ver_id: frame.ver_id });
         }
@@ -367,8 +471,8 @@ export class Worker {
       case "observe": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         try {
-          const { url, snapshot } = await this.session.observe();
-          this.send({ frame: "observed", obs_id: frame.obs_id, url, truncated: snapshot.truncated, nodes: snapshot.nodes });
+          const { tab, url, snapshot } = await this.session.observe();
+          this.send({ frame: "observed", obs_id: frame.obs_id, tab, url, truncated: snapshot.truncated, nodes: snapshot.nodes });
         } catch {
           this.send({ frame: "observation_failed", obs_id: frame.obs_id });
         }
@@ -382,9 +486,9 @@ export class Worker {
           return;
         }
         try {
-          const { url, outline } = await this.session.outline();
+          const { tab, url, outline } = await this.session.outline();
           if (Buffer.byteLength(url) > MAX_URL_BYTES) throw new Error("the page URL is too long");
-          this.send({ frame: "outlined", out_id: frame.out_id, url, truncated: outline.truncated, nodes: outline.nodes });
+          this.send({ frame: "outlined", out_id: frame.out_id, tab, url, truncated: outline.truncated, nodes: outline.nodes });
         } catch {
           this.send({ frame: "outline_failed", out_id: frame.out_id });
         }
@@ -397,10 +501,10 @@ export class Worker {
           return;
         }
         try {
-          const { url, truncated, values } = await this.session.extractSchema(frame.fields);
+          const { tab, url, truncated, values } = await this.session.extractSchema(frame.fields);
           if (Buffer.byteLength(url) > MAX_URL_BYTES) throw new Error("the page URL is too long");
           if (values.length !== frame.fields.length) throw new Error("one value per field");
-          this.send({ frame: "schema_extracted", xs_id: frame.xs_id, url, truncated, values });
+          this.send({ frame: "schema_extracted", xs_id: frame.xs_id, tab, url, truncated, values });
         } catch {
           this.send({ frame: "schema_extraction_failed", xs_id: frame.xs_id });
         }
@@ -462,7 +566,7 @@ export class Worker {
     let outcome: WorkerFrame;
     try {
       const result = await session.navigate(url);
-      outcome = { frame: "navigated", nav_id: navId, url: result.url, status: result.status };
+      outcome = { frame: "navigated", nav_id: navId, tab: result.tab, url: result.url, status: result.status };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "navigation_failed", nav_id: navId, reason };
@@ -501,7 +605,7 @@ export class Worker {
     let outcome: WorkerFrame;
     try {
       const result = await session.activate(ref, target);
-      outcome = { frame: "activated", act_id: actId, url: result.url, status: result.status };
+      outcome = { frame: "activated", act_id: actId, tab: result.tab, url: result.url, status: result.status };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "activation_failed", act_id: actId, reason };
@@ -513,8 +617,8 @@ export class Worker {
   private async runUpload(session: EngineSession, upId: number, ref: string, path: string, target?: ApprovedTarget): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const { url } = await session.upload(ref, path, target);
-      outcome = { frame: "uploaded", up_id: upId, url };
+      const { tab, url } = await session.upload(ref, path, target);
+      outcome = { frame: "uploaded", up_id: upId, tab, url };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "upload_failed", up_id: upId, reason };
@@ -526,8 +630,8 @@ export class Worker {
   private async runWait(session: EngineSession, waitId: number, text: string, appear: boolean, timeoutMs: number): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const { url, met } = await session.waitForText(text, appear, timeoutMs);
-      outcome = { frame: "waited", wait_id: waitId, url, met };
+      const { tab, url, met } = await session.waitForText(text, appear, timeoutMs);
+      outcome = { frame: "waited", wait_id: waitId, tab, url, met };
     } catch {
       outcome = { frame: "wait_failed", wait_id: waitId };
     }
@@ -545,9 +649,9 @@ export class Worker {
   ): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const { url, navigated } = await session.formAction(ref, act, target, acceptConfirm);
+      const { tab, url, navigated } = await session.formAction(ref, act, target, acceptConfirm);
       // SG-000122 slice A6: only an Enter reports a committed document.
-      outcome = act.action === "enter" ? { frame: "form_done", form_id: formId, url, navigated: navigated === true } : { frame: "form_done", form_id: formId, url };
+      outcome = act.action === "enter" ? { frame: "form_done", form_id: formId, tab, url, navigated: navigated === true } : { frame: "form_done", form_id: formId, tab, url };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "form_failed", form_id: formId, reason };
@@ -563,6 +667,7 @@ export class Worker {
       outcome = {
         frame: "executed",
         exec_id: execId,
+        tab: result.tab,
         url: result.url,
         status: result.status,
         structured: result.structured,
@@ -574,6 +679,22 @@ export class Worker {
     }
     this.navigating = false;
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "execution_failed", exec_id: execId, reason: "failed" });
+  }
+
+  private sendShotPiece(shot: HeldShot, piece: number): void {
+    this.send({
+      frame: "screenshot_piece",
+      shot_id: shot.shotId,
+      tab: shot.tab,
+      url: shot.url,
+      piece,
+      total: shot.pieces.length,
+      width: shot.width,
+      height: shot.height,
+      bytes: shot.bytes,
+      truncated: shot.truncated,
+      data: shot.pieces[piece] ?? ""
+    });
   }
 
   /// Send an operation's outcome from a background run. If it cannot be

@@ -41,9 +41,10 @@ pub struct JobProcess {
 /// downloads; generation 16 is SG-000122 slice A1 (the `enter` form action,
 /// one select option, single-line fills, and form-control kinds in
 /// observed nodes); generation 17 is SG-000122 slice A5 (form-control nodes
-/// marked `named`); generation 18 is W2-03 (the Stagehand-derived outline and
-/// schema extraction frames, `worker_outline`; denied by default).
-pub const WORKER_PROTOCOL_GENERATION: u32 = 18;
+/// marked `named`).
+/// 18 is W2-03's outline and extract_schema (PR #797, on main); 19 is
+/// SG-000135 OB-03: `screenshot`, `screenshot_more` and the tab frames.
+pub const WORKER_PROTOCOL_GENERATION: u32 = 19;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -73,6 +74,12 @@ pub const WORKER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// case: a 5 s layout snapshot and a 4 s extraction budget). Later pieces
 /// are already computed and take `WORKER_REPLY_TIMEOUT` each.
 pub const WORKER_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(20);
+/// SG-000135 OB-03: a screenshot (the worker's own budget is 10 s, plus a
+/// full page's layout metrics) and a tab request (a new page and its guard).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const WORKER_SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const WORKER_TAB_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// One node of a worker snapshot: ref, role, accessible name, (links
 /// only) the link URL and (main-frame form controls only, SG-000122) the
@@ -558,6 +565,31 @@ pub(crate) enum WorkerRequest<'a> {
         ver_id: u64,
         probes: &'a [crate::verify::Probe],
     },
+    /// SG-000135 OB-03: a bounded PNG of the active tab, secret fields
+    /// masked; pieces after the first through `ScreenshotMore`.
+    Screenshot {
+        shot_id: u64,
+        full_page: bool,
+    },
+    ScreenshotMore {
+        shot_id: u64,
+        piece: u32,
+    },
+    /// SG-000135 OB-03: the lifetime's tabs.
+    TabNew {
+        tab_req: u64,
+    },
+    TabSwitch {
+        tab_req: u64,
+        tab: u32,
+    },
+    TabClose {
+        tab_req: u64,
+        tab: u32,
+    },
+    Tabs {
+        tab_req: u64,
+    },
     /// W2-03: the bounded accessibility outline (sent only once
     /// `worker_outline::admit` allows it; denied by default).
     Outline {
@@ -600,8 +632,11 @@ pub(crate) enum WorkerReply {
         #[serde(default)]
         main_document: bool,
     },
+    /// SG-000135 OB-03: `tab` (here and in the other action replies) is
+    /// the worker tab the action ran on; `reply` checks it.
     Navigated {
         nav_id: u64,
+        tab: u32,
         url: String,
         status: u16,
     },
@@ -611,6 +646,7 @@ pub(crate) enum WorkerReply {
     },
     FetchedText {
         fetch_id: u64,
+        tab: u32,
         url: String,
         status: u16,
         media: String,
@@ -623,6 +659,7 @@ pub(crate) enum WorkerReply {
     },
     Observed {
         obs_id: u64,
+        tab: u32,
         url: String,
         truncated: bool,
         nodes: Vec<SnapshotNode>,
@@ -632,6 +669,7 @@ pub(crate) enum WorkerReply {
     },
     Discovered {
         disc_id: u64,
+        tab: u32,
         url: String,
         truncated: bool,
         tools: Vec<crate::webmcp::WireTool>,
@@ -641,6 +679,7 @@ pub(crate) enum WorkerReply {
     },
     Extracted {
         ext_id: u64,
+        tab: u32,
         url: String,
         truncated: bool,
         piece: u32,
@@ -653,6 +692,7 @@ pub(crate) enum WorkerReply {
     },
     Activated {
         act_id: u64,
+        tab: u32,
         url: String,
         status: u16,
     },
@@ -662,6 +702,7 @@ pub(crate) enum WorkerReply {
     },
     Downloaded {
         dl_id: u64,
+        tab: u32,
         url: String,
         name: String,
         media: String,
@@ -673,6 +714,7 @@ pub(crate) enum WorkerReply {
     },
     Executed {
         exec_id: u64,
+        tab: u32,
         url: String,
         status: u16,
         structured: Vec<String>,
@@ -684,11 +726,13 @@ pub(crate) enum WorkerReply {
     },
     Verified {
         ver_id: u64,
+        tab: u32,
         url: String,
         results: Vec<crate::verify::ProbeResult>,
     },
     FormDone {
         form_id: u64,
+        tab: u32,
         url: String,
         /// SG-000122 slice A6, Enter only: the main frame committed a new
         /// document after the key.
@@ -697,11 +741,13 @@ pub(crate) enum WorkerReply {
     },
     Waited {
         wait_id: u64,
+        tab: u32,
         url: String,
         met: bool,
     },
     Uploaded {
         up_id: u64,
+        tab: u32,
         url: String,
     },
     DialogsSeen {
@@ -723,9 +769,35 @@ pub(crate) enum WorkerReply {
     VerificationFailed {
         ver_id: u64,
     },
+    ScreenshotPiece {
+        shot_id: u64,
+        tab: u32,
+        url: String,
+        piece: u32,
+        total: u32,
+        width: u32,
+        height: u32,
+        bytes: u64,
+        truncated: bool,
+        data: String,
+    },
+    ScreenshotFailed {
+        shot_id: u64,
+        reason: String,
+    },
+    TabsState {
+        tab_req: u64,
+        active: u32,
+        tabs: Vec<crate::page_capture::WorkerTab>,
+    },
+    TabFailed {
+        tab_req: u64,
+        reason: String,
+    },
     /// W2-03: the outline's nodes (page text; never a value).
     Outlined {
         out_id: u64,
+        tab: u32,
         url: String,
         truncated: bool,
         nodes: Vec<crate::worker_outline::OutlineNode>,
@@ -736,6 +808,7 @@ pub(crate) enum WorkerReply {
     /// W2-03: one value per schema field (page text).
     SchemaExtracted {
         xs_id: u64,
+        tab: u32,
         url: String,
         truncated: bool,
         values: Vec<crate::worker_outline::SchemaValue>,
@@ -746,6 +819,98 @@ pub(crate) enum WorkerReply {
     Error {
         code: String,
     },
+}
+
+/// SG-000135 OB-03: the tab check of one worker reply against the tab the
+/// host acts on (`active`; None until the first reply or tab report). Ok
+/// holds the tab the host acts on afterwards. A reply from another tab is
+/// `OutcomeUnknown` for a navigation, activation or form action (it may
+/// have changed that other page) and `TargetStale` for a read; a tab id out
+/// of range is a protocol violation. Replies without a tab pass.
+#[cfg(any(windows, test))]
+pub(crate) fn reply_tab_check(
+    active: Option<u32>,
+    reply: &WorkerReply,
+) -> Result<Option<u32>, UnavailableReason> {
+    // Every reply kind is named here (no catch-all): a new reply must be
+    // classified before it compiles.
+    let (tab, acted) = match reply {
+        // Writes: they may have changed the page they ran on.
+        WorkerReply::Navigated { tab, .. }
+        | WorkerReply::Activated { tab, .. }
+        | WorkerReply::FormDone { tab, .. }
+        | WorkerReply::Executed { tab, .. }
+        | WorkerReply::Downloaded { tab, .. }
+        | WorkerReply::Uploaded { tab, .. } => (*tab, true),
+        // Reads (a text fetch navigates, but its document is only read).
+        WorkerReply::Observed { tab, .. }
+        | WorkerReply::Extracted { tab, .. }
+        | WorkerReply::Verified { tab, .. }
+        | WorkerReply::ScreenshotPiece { tab, .. }
+        | WorkerReply::FetchedText { tab, .. }
+        | WorkerReply::Discovered { tab, .. }
+        | WorkerReply::Waited { tab, .. }
+        | WorkerReply::Outlined { tab, .. }
+        | WorkerReply::SchemaExtracted { tab, .. } => (*tab, false),
+        // No page: the lifecycle, the route stack, typed failures (nothing
+        // was done), the dialog log (every page's) and the tab reports
+        // (which `tab_request` checks and follows itself).
+        WorkerReply::Hello { .. }
+        | WorkerReply::Launched {}
+        | WorkerReply::Pong { .. }
+        | WorkerReply::Bye {}
+        | WorkerReply::RouteRequest { .. }
+        | WorkerReply::NavigationFailed { .. }
+        | WorkerReply::FetchFailed { .. }
+        | WorkerReply::ObservationFailed { .. }
+        | WorkerReply::DiscoveryFailed { .. }
+        | WorkerReply::ExtractionFailed { .. }
+        | WorkerReply::ActivationFailed { .. }
+        | WorkerReply::DownloadFailed { .. }
+        | WorkerReply::ExecutionFailed { .. }
+        | WorkerReply::VerificationFailed { .. }
+        | WorkerReply::FormFailed { .. }
+        | WorkerReply::WaitFailed { .. }
+        | WorkerReply::UploadFailed { .. }
+        | WorkerReply::DialogsSeen { .. }
+        | WorkerReply::ScreenshotFailed { .. }
+        | WorkerReply::TabsState { .. }
+        | WorkerReply::TabFailed { .. }
+        | WorkerReply::OutlineFailed { .. }
+        | WorkerReply::SchemaExtractionFailed { .. }
+        | WorkerReply::Error { .. } => return Ok(active),
+    };
+    if tab == 0 || tab > crate::page_capture::MAX_TAB_ID {
+        return Err(UnavailableReason::ProtocolViolation);
+    }
+    match active {
+        None => Ok(Some(tab)),
+        Some(known) if known == tab => Ok(active),
+        Some(_) if acted => Err(UnavailableReason::OutcomeUnknown),
+        Some(_) => Err(UnavailableReason::TargetStale),
+    }
+}
+
+/// SG-000135 OB-03: a worker's screenshot failure, typed.
+#[cfg(any(windows, test))]
+pub(crate) fn screenshot_failure(reason: &str) -> UnavailableReason {
+    match reason {
+        "busy" => UnavailableReason::NavigationInFlight,
+        "oversized" => UnavailableReason::CaptureOversized,
+        _ => UnavailableReason::ActionFailed,
+    }
+}
+
+/// SG-000135 OB-03: a worker's tab failure, typed.
+#[cfg(any(windows, test))]
+pub(crate) fn tab_failure(reason: &str) -> HostError {
+    match reason {
+        "busy" => HostError::Unavailable(UnavailableReason::NavigationInFlight),
+        "cap" => HostError::Unavailable(UnavailableReason::TabLimitReached),
+        "unknown_tab" => HostError::Unavailable(UnavailableReason::TargetStale),
+        "last" => HostError::Invalid("the only tab cannot be closed".into()),
+        _ => HostError::Unavailable(UnavailableReason::ActionFailed),
+    }
 }
 
 /// Map a worker error code onto the typed vocabulary.
@@ -1647,6 +1812,11 @@ mod platform {
         /// W2-03: outline and schema-extraction ids (used only once admitted).
         next_out: u64,
         next_ext: u64,
+        /// SG-000135 OB-03: screenshot and tab request ids, and the tab
+        /// whose document `committed` names (None until a tab request).
+        next_shot: u64,
+        next_tab_req: u64,
+        active_tab: Option<u32>,
         next_act: u64,
         next_dl: u64,
         next_exec: u64,
@@ -1776,6 +1946,9 @@ mod platform {
             next_disc: 0,
             next_out: 0,
             next_ext: 0,
+            next_shot: 0,
+            next_tab_req: 0,
+            active_tab: None,
             next_act: 0,
             next_dl: 0,
             next_exec: 0,
@@ -1879,7 +2052,31 @@ mod platform {
                         };
                         self.answer_route(request_id, &kind, &url, &origin, &detail)?
                     }
-                    reply => return Ok(reply),
+                    reply => {
+                        self.check_reply_tab(&reply)?;
+                        return Ok(reply);
+                    }
+                }
+            }
+        }
+
+        /// SG-000135 OB-03: an action reply must come from the tab this host
+        /// acts on (learned from the first reply or tab report). A reply
+        /// from another tab is refused: for a navigation, activation or form
+        /// action it may have changed that other page, so nothing observed
+        /// holds and the outcome is unknown; for a read it is stale.
+        fn check_reply_tab(&mut self, reply: &WorkerReply) -> Result<(), HostError> {
+            match reply_tab_check(self.active_tab, reply) {
+                Ok(active) => {
+                    self.active_tab = active;
+                    Ok(())
+                }
+                Err(UnavailableReason::ProtocolViolation) => {
+                    Err(self.fail_closed(UnavailableReason::ProtocolViolation))
+                }
+                Err(reason) => {
+                    self.forget_page();
+                    Err(HostError::Unavailable(reason))
                 }
             }
         }
@@ -2194,6 +2391,7 @@ mod platform {
                     nav_id: done,
                     url: committed,
                     status,
+                    ..
                 } if !text && done == id => (committed, status, None),
                 WorkerReply::FetchedText {
                     fetch_id: done,
@@ -2202,6 +2400,7 @@ mod platform {
                     media,
                     text: body,
                     truncated,
+                    ..
                 } if text && done == id => {
                     let bad = |ch: char| {
                         (ch.is_control() && !matches!(ch, '\n' | '\t' | '\r'))
@@ -2302,6 +2501,7 @@ mod platform {
                         url: observed_url,
                         truncated,
                         nodes,
+                        ..
                     } if done == obs_id => (observed_url, truncated, nodes),
                     WorkerReply::ObservationFailed { obs_id: done } if done == obs_id => {
                         return Err(HostError::Unavailable(UnavailableReason::LaunchFailed))
@@ -3049,6 +3249,7 @@ mod platform {
                 WorkerReply::Uploaded {
                     up_id: done,
                     url: after,
+                    ..
                 } if done == up_id => {
                     if after != url {
                         self.host_nodes.clear();
@@ -3125,6 +3326,7 @@ mod platform {
                     wait_id: done,
                     url: seen,
                     met,
+                    ..
                 } if done == wait_id => {
                     if seen != url {
                         return Err(HostError::Invalid(
@@ -3212,6 +3414,7 @@ mod platform {
                         ver_id: done,
                         url: seen,
                         results,
+                        ..
                     } if done == ver_id => {
                         if seen != url {
                             return Err(HostError::Invalid(
@@ -3267,6 +3470,7 @@ mod platform {
                     url,
                     truncated,
                     tools,
+                    ..
                 } if done == disc_id => (url, truncated, tools),
                 WorkerReply::DiscoveryFailed { disc_id: done } if done == disc_id => {
                     return Err(HostError::Unavailable(UnavailableReason::ActionFailed))
@@ -3307,6 +3511,7 @@ mod platform {
                     url,
                     truncated,
                     nodes,
+                    ..
                 } if done == out_id => (url, truncated, nodes),
                 WorkerReply::OutlineFailed { out_id: done } if done == out_id => {
                     return Err(HostError::Unavailable(UnavailableReason::ActionFailed))
@@ -3349,6 +3554,7 @@ mod platform {
                     url,
                     truncated,
                     values,
+                    ..
                 } if done == xs_id => (url, truncated, values),
                 WorkerReply::SchemaExtractionFailed { xs_id: done } if done == xs_id => {
                     return Err(HostError::Unavailable(UnavailableReason::ActionFailed))
@@ -3440,6 +3646,7 @@ mod platform {
                     total,
                     chunk,
                     content,
+                    ..
                 } if done == ext_id => Ok(crate::extraction::WirePiece {
                     url,
                     truncated,
@@ -3453,6 +3660,170 @@ mod platform {
                 }
                 _ => Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
             }
+        }
+
+        /// SG-000135 OB-03: a bounded PNG of the active tab's committed
+        /// document (the viewport, or with `full_page` the page from its
+        /// top within the bounds), secret fields masked by the worker. The
+        /// pieces are checked and joined here; see `page_capture`.
+        pub fn screenshot(
+            &mut self,
+            full_page: bool,
+        ) -> Result<crate::page_capture::PageScreenshot, HostError> {
+            if self.committed.is_none() {
+                return Err(HostError::Invalid(
+                    "no committed document to capture".into(),
+                ));
+            }
+            self.next_shot += 1;
+            let shot_id = self.next_shot;
+            self.send(&WorkerRequest::Screenshot { shot_id, full_page })?;
+            let violation = |_| HostError::Unavailable(UnavailableReason::ProtocolViolation);
+            let (header, piece, data) =
+                self.screenshot_piece(shot_id, WORKER_SCREENSHOT_TIMEOUT)?;
+            let mut assembly = crate::page_capture::ScreenshotAssembly::start(header, piece, &data)
+                .map_err(violation)?;
+            while let Some(piece) = assembly.next() {
+                self.send(&WorkerRequest::ScreenshotMore { shot_id, piece })?;
+                let (header, at, data) = self.screenshot_piece(shot_id, WORKER_REPLY_TIMEOUT)?;
+                assembly.push(header, at, &data).map_err(violation)?;
+            }
+            assembly.finish().map_err(violation)
+        }
+
+        /// One `screenshot_piece` for `shot_id`, or its typed failure.
+        fn screenshot_piece(
+            &mut self,
+            shot_id: u64,
+            timeout: Duration,
+        ) -> Result<(crate::page_capture::PieceHeader, u32, String), HostError> {
+            match self.reply(timeout)? {
+                WorkerReply::ScreenshotPiece {
+                    shot_id: done,
+                    url,
+                    piece,
+                    total,
+                    width,
+                    height,
+                    bytes,
+                    truncated,
+                    data,
+                    ..
+                } if done == shot_id => {
+                    // The capture must be of the committed document.
+                    if self.committed.as_ref().map(|(committed, _)| committed) != Some(&url) {
+                        return Err(HostError::Unavailable(UnavailableReason::TargetStale));
+                    }
+                    Ok((
+                        crate::page_capture::PieceHeader {
+                            total,
+                            width,
+                            height,
+                            bytes,
+                            truncated,
+                        },
+                        piece,
+                        data,
+                    ))
+                }
+                WorkerReply::ScreenshotFailed {
+                    shot_id: done,
+                    reason,
+                } if done == shot_id => Err(HostError::Unavailable(screenshot_failure(&reason))),
+                _ => Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// SG-000135 OB-03: the active tab and the committed document's
+        /// generation, as this host knows them (what a tab request moves).
+        pub fn tabs_active(&self) -> (Option<u32>, Option<u64>) {
+            (
+                self.active_tab,
+                self.committed.as_ref().map(|(_, generation)| *generation),
+            )
+        }
+
+        /// SG-000135 OB-03: open a blank tab and make it active.
+        pub fn tab_new(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
+            self.tab_request(|tab_req| WorkerRequest::TabNew { tab_req })
+        }
+
+        /// SG-000135 OB-03: make tab `tab` active.
+        pub fn tab_switch(
+            &mut self,
+            tab: u32,
+        ) -> Result<crate::page_capture::TabsState, HostError> {
+            self.tab_request(|tab_req| WorkerRequest::TabSwitch { tab_req, tab })
+        }
+
+        /// SG-000135 OB-03: close tab `tab` (never the only one).
+        pub fn tab_close(&mut self, tab: u32) -> Result<crate::page_capture::TabsState, HostError> {
+            self.tab_request(|tab_req| WorkerRequest::TabClose { tab_req, tab })
+        }
+
+        /// SG-000135 OB-03: the lifetime's tabs.
+        pub fn tabs(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
+            self.tab_request(|tab_req| WorkerRequest::Tabs { tab_req })
+        }
+
+        /// One tab request and its checked report. When the active tab is
+        /// another than the one `committed` names, nothing observed holds
+        /// any more and the active tab's document is committed afresh (a new
+        /// document generation) when its URL is an https URL on the
+        /// committed origin, and is no committed document otherwise.
+        fn tab_request(
+            &mut self,
+            request: impl FnOnce(u64) -> WorkerRequest<'static>,
+        ) -> Result<crate::page_capture::TabsState, HostError> {
+            self.next_tab_req += 1;
+            let tab_req = self.next_tab_req;
+            self.send(&request(tab_req))?;
+            let state = match self.reply(WORKER_TAB_TIMEOUT)? {
+                WorkerReply::TabsState {
+                    tab_req: done,
+                    active,
+                    tabs,
+                } if done == tab_req => crate::page_capture::TabsState::checked(active, tabs)
+                    .map_err(|_| HostError::Unavailable(UnavailableReason::ProtocolViolation))?,
+                WorkerReply::TabFailed {
+                    tab_req: done,
+                    reason,
+                } if done == tab_req => return Err(tab_failure(&reason)),
+                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+            };
+            self.follow_active_tab(&state);
+            Ok(state)
+        }
+
+        fn follow_active_tab(&mut self, state: &crate::page_capture::TabsState) {
+            let active = (state.active != 0).then_some(state.active);
+            match self.active_tab {
+                // The first report names the tab the lifetime has been
+                // acting on: nothing moved.
+                None if state.tabs.len() <= 1 => {
+                    self.active_tab = active;
+                    return;
+                }
+                Some(known) if Some(known) == active => return,
+                _ => {}
+            }
+            self.active_tab = active;
+            self.host_nodes.clear();
+            self.host_tools.clear();
+            let url = state.active_url().unwrap_or("");
+            let on_origin = self.policy.committed_origin().is_some_and(|origin| {
+                crate::navigation::parse_navigation_url(url)
+                    .is_ok_and(|target| target.origin == origin)
+            });
+            self.committed = if on_origin {
+                let next = self
+                    .committed
+                    .as_ref()
+                    .map_or(1, |(_, generation)| generation + 1);
+                Some((url.to_owned(), next))
+            } else {
+                None
+            };
         }
 
         /// The state an execution approval must name: the tool, a digest of
@@ -3578,6 +3949,7 @@ mod platform {
                     status,
                     structured,
                     structured_complete,
+                    ..
                 } if done == exec_id => (url, status, structured, structured_complete),
                 WorkerReply::ExecutionFailed {
                     exec_id: done,
@@ -3733,6 +4105,7 @@ mod platform {
                     act_id: done,
                     url,
                     status,
+                    ..
                 } if done == act_id => NavigationOutcome { url, status },
                 WorkerReply::ActivationFailed {
                     act_id: done,
@@ -3906,6 +4279,7 @@ mod platform {
                     name: _,
                     media,
                     bytes,
+                    ..
                 } if done == dl_id => (url, media, bytes),
                 WorkerReply::DownloadFailed {
                     dl_id: done,
@@ -4281,6 +4655,55 @@ mod fallback {
             &mut self,
             _options: crate::extraction::ExtractOptions,
         ) -> Result<crate::extraction::PageExtraction, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn screenshot(
+            &mut self,
+            _full_page: bool,
+        ) -> Result<crate::page_capture::PageScreenshot, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tabs_active(&self) -> (Option<u32>, Option<u64>) {
+            (None, None)
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tab_new(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tab_switch(
+            &mut self,
+            _tab: u32,
+        ) -> Result<crate::page_capture::TabsState, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tab_close(
+            &mut self,
+            _tab: u32,
+        ) -> Result<crate::page_capture::TabsState, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn tabs(&mut self) -> Result<crate::page_capture::TabsState, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))
@@ -4665,10 +5088,10 @@ mod tests {
             r#"{"frame":"download","dl_id":1,"ref":"e5","path":"C:\\s\\dl-1.part"}"#
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
-        assert!(reply(r#"{"frame":"downloaded","dl_id":1,"url":"https://fixture.test/r.pdf","name":"r.pdf","media":"application/pdf","bytes":8}"#).is_ok());
+        assert!(reply(r#"{"frame":"downloaded","dl_id":1,"tab":1,"url":"https://fixture.test/r.pdf","name":"r.pdf","media":"application/pdf","bytes":8}"#).is_ok());
         assert!(reply(r#"{"frame":"download_failed","dl_id":1,"reason":"denied"}"#).is_ok());
         assert!(reply(
-            r#"{"frame":"downloaded","dl_id":1,"url":"u","name":"n","media":"m","bytes":1,"x":0}"#
+            r#"{"frame":"downloaded","dl_id":1,"tab":1,"url":"u","name":"n","media":"m","bytes":1,"x":0}"#
         )
         .is_err());
         let _ = std::fs::remove_dir_all(&root);
@@ -4859,11 +5282,14 @@ mod tests {
         ));
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(reply(
-            r#"{"frame":"activated","act_id":2,"url":"https://fixture.test/x","status":200}"#
+            r#"{"frame":"activated","act_id":2,"tab":1,"url":"https://fixture.test/x","status":200}"#
         )
         .is_ok());
         assert!(reply(r#"{"frame":"activation_failed","act_id":2,"reason":"denied"}"#).is_ok());
-        assert!(reply(r#"{"frame":"activated","act_id":2,"url":"u","status":200,"x":1}"#).is_err());
+        assert!(
+            reply(r#"{"frame":"activated","act_id":2,"tab":1,"url":"u","status":200,"x":1}"#)
+                .is_err()
+        );
     }
 
     /// SG-000122 slice A6: an Enter is committed only when the host's route
@@ -5180,7 +5606,7 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(matches!(
-            reply(r#"{"frame":"executed","exec_id":3,"url":"https://fixture.test/search?q=rust","status":200,"structured":["{}"],"structured_complete":true}"#).unwrap(),
+            reply(r#"{"frame":"executed","exec_id":3,"tab":1,"url":"https://fixture.test/search?q=rust","status":200,"structured":["{}"],"structured_complete":true}"#).unwrap(),
             WorkerReply::Executed { exec_id: 3, status: 200, .. }
         ));
         assert!(matches!(
@@ -5188,7 +5614,7 @@ mod tests {
             WorkerReply::ExecutionFailed { exec_id: 3, .. }
         ));
         assert!(reply(
-            r#"{"frame":"executed","exec_id":3,"url":"u","status":200,"structured":[],"structured_complete":true,"extra":1}"#
+            r#"{"frame":"executed","exec_id":3,"tab":1,"url":"u","status":200,"structured":[],"structured_complete":true,"extra":1}"#
         )
         .is_err());
     }
@@ -5242,7 +5668,7 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(matches!(
-            reply(r#"{"frame":"fetched_text","fetch_id":4,"url":"https://fixture.test/robots.txt","status":200,"media":"text/plain","text":"User-agent: *","truncated":false}"#).unwrap(),
+            reply(r#"{"frame":"fetched_text","fetch_id":4,"tab":1,"url":"https://fixture.test/robots.txt","status":200,"media":"text/plain","text":"User-agent: *","truncated":false}"#).unwrap(),
             WorkerReply::FetchedText { fetch_id: 4, status: 200, .. }
         ));
         assert!(matches!(
@@ -5250,7 +5676,7 @@ mod tests {
             WorkerReply::FetchFailed { fetch_id: 4, .. }
         ));
         assert!(reply(
-            r#"{"frame":"fetched_text","fetch_id":4,"url":"u","status":200,"media":"text/plain","text":"","truncated":false,"body":"x"}"#
+            r#"{"frame":"fetched_text","fetch_id":4,"tab":1,"url":"u","status":200,"media":"text/plain","text":"","truncated":false,"body":"x"}"#
         )
         .is_err());
     }
@@ -5275,7 +5701,7 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(matches!(
-            reply(r##"{"frame":"extracted","ext_id":2,"url":"https://fixture.test/","truncated":false,"piece":0,"total":2,"chunk":0,"content":"# A"}"##).unwrap(),
+            reply(r##"{"frame":"extracted","ext_id":2,"tab":1,"url":"https://fixture.test/","truncated":false,"piece":0,"total":2,"chunk":0,"content":"# A"}"##).unwrap(),
             WorkerReply::Extracted { ext_id: 2, piece: 0, total: 2, .. }
         ));
         assert!(matches!(
@@ -5283,9 +5709,9 @@ mod tests {
             WorkerReply::ExtractionFailed { ext_id: 2 }
         ));
         for bad in [
-            r#"{"frame":"extracted","ext_id":2,"url":"u","truncated":false,"piece":0,"total":1,"chunk":0,"content":"","html":"<b>"}"#,
-            r#"{"frame":"extracted","ext_id":2,"url":"u","truncated":false,"piece":-1,"total":1,"chunk":0,"content":""}"#,
-            r#"{"frame":"extracted","ext_id":2,"url":"u","truncated":false,"piece":0,"chunk":0,"content":""}"#,
+            r#"{"frame":"extracted","ext_id":2,"tab":1,"url":"u","truncated":false,"piece":0,"total":1,"chunk":0,"content":"","html":"<b>"}"#,
+            r#"{"frame":"extracted","ext_id":2,"tab":1,"url":"u","truncated":false,"piece":-1,"total":1,"chunk":0,"content":""}"#,
+            r#"{"frame":"extracted","ext_id":2,"tab":1,"url":"u","truncated":false,"piece":0,"chunk":0,"content":""}"#,
         ] {
             assert!(reply(bad).is_err(), "{bad}");
         }
@@ -5300,7 +5726,7 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         let tools = match reply(
-            r#"{"frame":"discovered","disc_id":2,"url":"https://fixture.test/t","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[]}]}"#,
+            r#"{"frame":"discovered","disc_id":2,"tab":1,"url":"https://fixture.test/t","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[]}]}"#,
         )
         .unwrap()
         {
@@ -5314,7 +5740,7 @@ mod tests {
         ));
         // Unknown fields anywhere in a tool are refused.
         assert!(reply(
-            r#"{"frame":"discovered","disc_id":2,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
+            r#"{"frame":"discovered","disc_id":2,"tab":1,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
         )
         .is_err());
     }
@@ -5370,14 +5796,16 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert_eq!(
-            reply(r#"{"frame":"uploaded","up_id":3,"url":"https://fixture.test/upload"}"#).unwrap(),
+            reply(r#"{"frame":"uploaded","up_id":3,"tab":1,"url":"https://fixture.test/upload"}"#)
+                .unwrap(),
             WorkerReply::Uploaded {
                 up_id: 3,
+                tab: 1,
                 url: "https://fixture.test/upload".into()
             }
         );
         assert!(reply(r#"{"frame":"upload_failed","up_id":3,"reason":"denied"}"#).is_ok());
-        assert!(reply(r#"{"frame":"uploaded","up_id":3,"url":"u","path":"x"}"#).is_err());
+        assert!(reply(r#"{"frame":"uploaded","up_id":3,"tab":1,"url":"u","path":"x"}"#).is_err());
     }
 
     /// BR-02: the form-action frames, as both sides write them.
@@ -5432,10 +5860,11 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert_eq!(
-            reply(r#"{"frame":"form_done","form_id":2,"url":"https://fixture.test/form"}"#)
+            reply(r#"{"frame":"form_done","form_id":2,"tab":1,"url":"https://fixture.test/form"}"#)
                 .unwrap(),
             WorkerReply::FormDone {
                 form_id: 2,
+                tab: 1,
                 url: "https://fixture.test/form".into(),
                 navigated: false
             }
@@ -5443,15 +5872,19 @@ mod tests {
         // SG-000122 slice A6: an Enter's reply says whether the main frame
         // committed a new document.
         assert_eq!(
-            reply(r#"{"frame":"form_done","form_id":3,"url":"https://fixture.test/order","navigated":true}"#)
+            reply(r#"{"frame":"form_done","form_id":3,"tab":1,"url":"https://fixture.test/order","navigated":true}"#)
                 .unwrap(),
             WorkerReply::FormDone {
                 form_id: 3,
+                tab: 1,
                 url: "https://fixture.test/order".into(),
                 navigated: true
             }
         );
-        assert!(reply(r#"{"frame":"form_done","form_id":3,"url":"u","navigated":"yes"}"#).is_err());
+        assert!(
+            reply(r#"{"frame":"form_done","form_id":3,"tab":1,"url":"u","navigated":"yes"}"#)
+                .is_err()
+        );
         assert!(reply(r#"{"frame":"form_failed","form_id":2,"reason":"denied"}"#).is_ok());
         assert_eq!(
             json(&WorkerRequest::FormAction {
@@ -5478,15 +5911,18 @@ mod tests {
             r#"{"frame":"wait_for","wait_id":1,"text":"Saved","appear":true,"timeout_ms":2000}"#
         );
         assert_eq!(
-            reply(r#"{"frame":"waited","wait_id":1,"url":"u","met":false}"#).unwrap(),
+            reply(r#"{"frame":"waited","wait_id":1,"tab":1,"url":"u","met":false}"#).unwrap(),
             WorkerReply::Waited {
                 wait_id: 1,
+                tab: 1,
                 url: "u".into(),
                 met: false
             }
         );
         assert!(reply(r#"{"frame":"wait_failed","wait_id":1,"text":"x"}"#).is_err());
-        assert!(reply(r#"{"frame":"form_done","form_id":2,"url":"u","value":"Ada"}"#).is_err());
+        assert!(
+            reply(r#"{"frame":"form_done","form_id":2,"tab":1,"url":"u","value":"Ada"}"#).is_err()
+        );
     }
 
     /// BR-07: the verify frames, as both sides write them.
@@ -5517,9 +5953,10 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert_eq!(
-            reply(r#"{"frame":"verified","ver_id":5,"url":"https://fixture.test/","results":[{"result":"visible","count":1},{"result":"visible","count":0},{"result":"unavailable","reason":"secret"},{"result":"checked","checked":true}]}"#).unwrap(),
+            reply(r#"{"frame":"verified","ver_id":5,"tab":1,"url":"https://fixture.test/","results":[{"result":"visible","count":1},{"result":"visible","count":0},{"result":"unavailable","reason":"secret"},{"result":"checked","checked":true}]}"#).unwrap(),
             WorkerReply::Verified {
                 ver_id: 5,
+                tab: 1,
                 url: "https://fixture.test/".into(),
                 results: vec![
                     crate::verify::ProbeResult::Visible { count: 1 },
@@ -5531,8 +5968,8 @@ mod tests {
         );
         assert!(reply(r#"{"frame":"verification_failed","ver_id":5}"#).is_ok());
         assert!(reply(r#"{"frame":"verification_failed","ver_id":5,"x":1}"#).is_err());
-        assert!(reply(r#"{"frame":"verified","ver_id":5,"url":"u","results":[{"result":"visible","count":1,"text":"leak"}]}"#).is_err());
-        assert!(reply(r#"{"frame":"verified","ver_id":5,"url":"u","results":[{"result":"verdict","passed":true}]}"#).is_err());
+        assert!(reply(r#"{"frame":"verified","ver_id":5,"tab":1,"url":"u","results":[{"result":"visible","count":1,"text":"leak"}]}"#).is_err());
+        assert!(reply(r#"{"frame":"verified","ver_id":5,"tab":1,"url":"u","results":[{"result":"verdict","passed":true}]}"#).is_err());
     }
 
     #[test]
@@ -5544,7 +5981,7 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         let observed = reply(
-            r#"{"frame":"observed","obs_id":4,"url":"https://fixture.test/r","truncated":false,"nodes":[{"ref":"e1","role":"list","name":"","children":[{"ref":"e2","role":"link","name":"Report 2026-09-30","url":"/r.pdf","children":[]}]}]}"#,
+            r#"{"frame":"observed","obs_id":4,"tab":1,"url":"https://fixture.test/r","truncated":false,"nodes":[{"ref":"e1","role":"list","name":"","children":[{"ref":"e2","role":"link","name":"Report 2026-09-30","url":"/r.pdf","children":[]}]}]}"#,
         )
         .unwrap();
         let nodes = match observed {
@@ -5553,7 +5990,7 @@ mod tests {
         };
         assert_eq!(nodes.len(), 1, "not an observation");
         // Unknown fields (for example a field value) are refused anywhere.
-        assert!(reply(r#"{"frame":"observed","obs_id":4,"url":"u","truncated":false,"nodes":[{"ref":"e1","role":"textbox","name":"","value":"secret","children":[]}]}"#).is_err());
+        assert!(reply(r#"{"frame":"observed","obs_id":4,"tab":1,"url":"u","truncated":false,"nodes":[{"ref":"e1","role":"textbox","name":"","value":"secret","children":[]}]}"#).is_err());
         assert!(reply(r#"{"frame":"observation_failed","obs_id":4,"x":1}"#).is_err());
         // Identities are host-issued and bound to the document generation;
         // the raw name stays in the host index; values are always empty.
@@ -5601,7 +6038,7 @@ mod tests {
 
     #[test]
     fn w2_03_outline_and_schema_frames_match_the_typescript_vocabulary() {
-        assert_eq!(WORKER_PROTOCOL_GENERATION, 18);
+        assert_eq!(WORKER_PROTOCOL_GENERATION, 19);
         let json = |request: &WorkerRequest<'_>| serde_json::to_string(request).unwrap();
         assert_eq!(
             json(&WorkerRequest::Outline { out_id: 3 }),
@@ -5633,22 +6070,22 @@ mod tests {
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(matches!(
             reply(
-                r#"{"frame":"outlined","out_id":3,"url":"https://fixture.test/","truncated":false,"nodes":[{"id":"0-5","role":"heading","name":"Fees","xpath":"/html[1]/body[1]/h1[1]","children":[]}]}"#
+                r#"{"frame":"outlined","out_id":3,"tab":1,"url":"https://fixture.test/","truncated":false,"nodes":[{"id":"0-5","role":"heading","name":"Fees","xpath":"/html[1]/body[1]/h1[1]","children":[]}]}"#
             ),
             Ok(WorkerReply::Outlined { out_id: 3, .. })
         ));
         assert!(matches!(
             reply(
-                r#"{"frame":"schema_extracted","xs_id":4,"url":"https://fixture.test/","truncated":false,"values":[{"key":"title","found":true,"text":"Fees"},{"key":"rows","found":false}]}"#
+                r#"{"frame":"schema_extracted","xs_id":4,"tab":1,"url":"https://fixture.test/","truncated":false,"values":[{"key":"title","found":true,"text":"Fees"},{"key":"rows","found":false}]}"#
             ),
             Ok(WorkerReply::SchemaExtracted { xs_id: 4, .. })
         ));
         assert!(reply(r#"{"frame":"outline_failed","out_id":3}"#).is_ok());
         assert!(reply(r#"{"frame":"schema_extraction_failed","xs_id":4}"#).is_ok());
         // A value field, or any unknown field, is refused anywhere.
-        assert!(reply(r#"{"frame":"outlined","out_id":3,"url":"u","truncated":false,"nodes":[{"id":"0-1","role":"textbox","name":"","xpath":"/x","value":"hunter2","children":[]}]}"#).is_err());
+        assert!(reply(r#"{"frame":"outlined","out_id":3,"tab":1,"url":"u","truncated":false,"nodes":[{"id":"0-1","role":"textbox","name":"","xpath":"/x","value":"hunter2","children":[]}]}"#).is_err());
         assert!(reply(r#"{"frame":"outline_failed","out_id":3,"x":1}"#).is_err());
-        assert!(reply(r#"{"frame":"schema_extracted","xs_id":4,"url":"u","truncated":false,"values":[{"key":"k","found":true,"html":"<b>"}]}"#).is_err());
+        assert!(reply(r#"{"frame":"schema_extracted","xs_id":4,"tab":1,"url":"u","truncated":false,"values":[{"key":"k","found":true,"html":"<b>"}]}"#).is_err());
         // The gate refuses both before anything could be sent.
         assert!(
             crate::worker_outline::admit(crate::worker_outline::WorkerCapability::Outline).is_err()
@@ -5710,11 +6147,12 @@ mod tests {
         assert!(reply(r#"{"frame":"route_request","request_id":2,"kind":"redirect","url":"u","origin":"","method":"GET","content_type":"","body":null,"body_bytes":0,"main_document":"yes"}"#).is_err());
         assert_eq!(
             reply(
-                r#"{"frame":"navigated","nav_id":3,"url":"https://fixture.test/a","status":200}"#
+                r#"{"frame":"navigated","nav_id":3,"tab":1,"url":"https://fixture.test/a","status":200}"#
             )
             .unwrap(),
             WorkerReply::Navigated {
                 nav_id: 3,
+                tab: 1,
                 url: "https://fixture.test/a".into(),
                 status: 200
             }
@@ -5727,12 +6165,17 @@ mod tests {
             }
         );
         // Unknown fields, negative ids and out-of-range statuses are refused.
-        assert!(reply(r#"{"frame":"navigated","nav_id":3,"url":"u","status":200,"x":1}"#).is_err());
+        assert!(
+            reply(r#"{"frame":"navigated","nav_id":3,"tab":1,"url":"u","status":200,"x":1}"#)
+                .is_err()
+        );
         assert!(reply(
             r#"{"frame":"route_request","request_id":-1,"kind":"frame","url":"u","origin":"","method":"GET","content_type":"","body":null,"body_bytes":0}"#
         )
         .is_err());
-        assert!(reply(r#"{"frame":"navigated","nav_id":3,"url":"u","status":70000}"#).is_err());
+        assert!(
+            reply(r#"{"frame":"navigated","nav_id":3,"tab":1,"url":"u","status":70000}"#).is_err()
+        );
         // Failure reasons map onto the typed vocabulary.
         assert!(matches!(
             navigation_failure("denied"),
@@ -5806,6 +6249,217 @@ mod tests {
         assert!(matches!(
             reply_error("anything"),
             HostError::Unavailable(UnavailableReason::ProtocolViolation)
+        ));
+    }
+
+    /// SG-000135 OB-03: the screenshot and tab frames match the
+    /// TypeScript vocabulary exactly; failures are typed.
+    #[test]
+    fn ob03_screenshot_and_tab_frames_are_exact() {
+        let json = |request: &WorkerRequest<'_>| serde_json::to_string(request).unwrap();
+        assert_eq!(WORKER_PROTOCOL_GENERATION, 19);
+        assert_eq!(
+            json(&WorkerRequest::Screenshot {
+                shot_id: 2,
+                full_page: true
+            }),
+            r#"{"frame":"screenshot","shot_id":2,"full_page":true}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::ScreenshotMore {
+                shot_id: 2,
+                piece: 1
+            }),
+            r#"{"frame":"screenshot_more","shot_id":2,"piece":1}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::TabNew { tab_req: 1 }),
+            r#"{"frame":"tab_new","tab_req":1}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::TabSwitch { tab_req: 2, tab: 3 }),
+            r#"{"frame":"tab_switch","tab_req":2,"tab":3}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::TabClose { tab_req: 3, tab: 3 }),
+            r#"{"frame":"tab_close","tab_req":3,"tab":3}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::Tabs { tab_req: 4 }),
+            r#"{"frame":"tabs","tab_req":4}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"screenshot_piece","shot_id":2,"tab":1,"url":"https://fixture.test/","piece":0,"total":1,"width":1280,"height":720,"bytes":3,"truncated":false,"data":"cG5n"}"#).unwrap(),
+            WorkerReply::ScreenshotPiece {
+                shot_id: 2,
+                tab: 1,
+                url: "https://fixture.test/".into(),
+                piece: 0,
+                total: 1,
+                width: 1280,
+                height: 720,
+                bytes: 3,
+                truncated: false,
+                data: "cG5n".into()
+            }
+        );
+        assert!(reply(r#"{"frame":"screenshot_piece","shot_id":2,"tab":1,"url":"https://fixture.test/","piece":0,"total":1,"width":1280,"height":720,"bytes":3,"truncated":false,"data":"cG5n","hwnd":1}"#).is_err());
+        // An action reply that does not name its tab is refused.
+        for untabbed in [
+            r#"{"frame":"navigated","nav_id":3,"url":"https://fixture.test/a","status":200}"#,
+            r#"{"frame":"form_done","form_id":2,"url":"https://fixture.test/form"}"#,
+            r#"{"frame":"observed","obs_id":4,"url":"u","truncated":false,"nodes":[]}"#,
+            r#"{"frame":"screenshot_piece","shot_id":2,"piece":0,"total":1,"width":1,"height":1,"bytes":3,"truncated":false,"data":"cG5n"}"#,
+        ] {
+            assert!(reply(untabbed).is_err(), "{untabbed}");
+        }
+        assert_eq!(
+            reply(r#"{"frame":"tabs_state","tab_req":1,"active":2,"tabs":[{"tab":1,"url":"https://fixture.test/"},{"tab":2,"url":"about:blank"}]}"#).unwrap(),
+            WorkerReply::TabsState {
+                tab_req: 1,
+                active: 2,
+                tabs: vec![
+                    crate::page_capture::WorkerTab {
+                        tab: 1,
+                        url: "https://fixture.test/".into()
+                    },
+                    crate::page_capture::WorkerTab {
+                        tab: 2,
+                        url: "about:blank".into()
+                    }
+                ]
+            }
+        );
+        assert!(reply(r#"{"frame":"tabs_state","tab_req":1,"active":1,"tabs":[{"tab":1,"url":"","title":"x"}]}"#).is_err());
+        assert_eq!(
+            reply(r#"{"frame":"tab_failed","tab_req":1,"reason":"cap"}"#).unwrap(),
+            WorkerReply::TabFailed {
+                tab_req: 1,
+                reason: "cap".into()
+            }
+        );
+        // A reply from another tab than the one the host acts on is refused.
+        let navigated = |tab: u32| WorkerReply::Navigated {
+            nav_id: 1,
+            tab,
+            url: "https://fixture.test/".into(),
+            status: 200,
+        };
+        let observed = |tab: u32| WorkerReply::Observed {
+            obs_id: 1,
+            tab,
+            url: "https://fixture.test/".into(),
+            truncated: false,
+            nodes: Vec::new(),
+        };
+        let shot = |tab: u32| WorkerReply::ScreenshotPiece {
+            shot_id: 1,
+            tab,
+            url: "https://fixture.test/".into(),
+            piece: 0,
+            total: 1,
+            width: 1,
+            height: 1,
+            bytes: 3,
+            truncated: false,
+            data: "cG5n".into(),
+        };
+        assert_eq!(reply_tab_check(None, &observed(2)), Ok(Some(2)));
+        assert_eq!(reply_tab_check(Some(2), &shot(2)), Ok(Some(2)));
+        assert_eq!(
+            reply_tab_check(Some(1), &shot(2)),
+            Err(UnavailableReason::TargetStale)
+        );
+        assert_eq!(
+            reply_tab_check(Some(1), &observed(2)),
+            Err(UnavailableReason::TargetStale)
+        );
+        assert_eq!(
+            reply_tab_check(Some(1), &navigated(2)),
+            Err(UnavailableReason::OutcomeUnknown)
+        );
+        assert_eq!(
+            reply_tab_check(Some(1), &navigated(0)),
+            Err(UnavailableReason::ProtocolViolation)
+        );
+        assert_eq!(
+            reply_tab_check(Some(1), &WorkerReply::Pong { nonce: "n".into() }),
+            Ok(Some(1))
+        );
+        // Every reply that names a tab is checked: the writes (execute,
+        // download, upload) as outcome unknown, the reads as stale.
+        let other = |text: &str| {
+            let parsed: WorkerReply = serde_json::from_str(text).unwrap();
+            reply_tab_check(Some(1), &parsed)
+        };
+        for write in [
+            r#"{"frame":"executed","exec_id":1,"tab":2,"url":"u","status":200,"structured":[],"structured_complete":true}"#,
+            r#"{"frame":"downloaded","dl_id":1,"tab":2,"url":"u","name":"n","media":"m","bytes":1}"#,
+            r#"{"frame":"uploaded","up_id":1,"tab":2,"url":"u"}"#,
+            r#"{"frame":"activated","act_id":1,"tab":2,"url":"u","status":200}"#,
+            r#"{"frame":"form_done","form_id":1,"tab":2,"url":"u"}"#,
+        ] {
+            assert_eq!(
+                other(write),
+                Err(UnavailableReason::OutcomeUnknown),
+                "{write}"
+            );
+        }
+        for read in [
+            r#"{"frame":"fetched_text","fetch_id":1,"tab":2,"url":"u","status":200,"media":"text/plain","text":"","truncated":false}"#,
+            r#"{"frame":"discovered","disc_id":1,"tab":2,"url":"u","truncated":false,"tools":[]}"#,
+            r#"{"frame":"waited","wait_id":1,"tab":2,"url":"u","met":true}"#,
+            r#"{"frame":"outlined","out_id":1,"tab":2,"url":"u","truncated":false,"nodes":[]}"#,
+            r#"{"frame":"schema_extracted","xs_id":1,"tab":2,"url":"u","truncated":false,"values":[]}"#,
+            r#"{"frame":"verified","ver_id":1,"tab":2,"url":"u","results":[]}"#,
+            r#"{"frame":"extracted","ext_id":1,"tab":2,"url":"u","truncated":false,"piece":0,"total":1,"chunk":0,"content":""}"#,
+        ] {
+            assert_eq!(other(read), Err(UnavailableReason::TargetStale), "{read}");
+        }
+        // The same tab passes, and none of them parses without a tab.
+        assert_eq!(
+            other(r#"{"frame":"uploaded","up_id":1,"tab":1,"url":"u"}"#),
+            Ok(Some(1))
+        );
+        for untabbed in [
+            r#"{"frame":"executed","exec_id":1,"url":"u","status":200,"structured":[],"structured_complete":true}"#,
+            r#"{"frame":"downloaded","dl_id":1,"url":"u","name":"n","media":"m","bytes":1}"#,
+            r#"{"frame":"uploaded","up_id":1,"url":"u"}"#,
+            r#"{"frame":"fetched_text","fetch_id":1,"url":"u","status":200,"media":"text/plain","text":"","truncated":false}"#,
+            r#"{"frame":"discovered","disc_id":1,"url":"u","truncated":false,"tools":[]}"#,
+            r#"{"frame":"waited","wait_id":1,"url":"u","met":true}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<WorkerReply>(untabbed).is_err(),
+                "{untabbed}"
+            );
+        }
+        assert_eq!(
+            screenshot_failure("busy"),
+            UnavailableReason::NavigationInFlight
+        );
+        assert_eq!(
+            screenshot_failure("oversized"),
+            UnavailableReason::CaptureOversized
+        );
+        assert_eq!(screenshot_failure("other"), UnavailableReason::ActionFailed);
+        assert!(matches!(
+            tab_failure("cap"),
+            HostError::Unavailable(UnavailableReason::TabLimitReached)
+        ));
+        assert!(matches!(
+            tab_failure("busy"),
+            HostError::Unavailable(UnavailableReason::NavigationInFlight)
+        ));
+        assert!(matches!(
+            tab_failure("unknown_tab"),
+            HostError::Unavailable(UnavailableReason::TargetStale)
+        ));
+        assert!(matches!(tab_failure("last"), HostError::Invalid(_)));
+        assert!(matches!(
+            tab_failure("x"),
+            HostError::Unavailable(UnavailableReason::ActionFailed)
         ));
     }
 

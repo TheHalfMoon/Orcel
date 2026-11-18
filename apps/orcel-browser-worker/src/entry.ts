@@ -11,7 +11,7 @@ import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
 import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
-import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
+import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, MAX_URL_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
@@ -33,9 +33,11 @@ import { nameControls } from "./actions/names.js";
 import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
+import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState } from "./worker.js";
+import { capturePng, fullPageClip, runExclusive, ScreenshotError } from "./screenshot.js";
+import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
 import { extractBySchema } from "./outline/schema-extract.js";
-import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
 if (startup !== null) {
@@ -76,22 +78,118 @@ const playwrightLauncher: Launcher = {
     // earlier refused navigation's error page late (even more than once),
     // which would interrupt a navigation in the same page. The previous
     // page is closed once the new one has its redirect guard.
-    let primary: Page = context.pages()[0] ?? (await context.newPage());
+    //
+    // SG-000135 OB-03: the pages are tabs (tabs.ts). Every action below acts
+    // on the active tab's page (`activeTab`), and its reply names that tab;
+    // a navigation's fresh page takes over the active tab and keeps its id.
+    // `primary` is the page the route stack classifies requests against: the
+    // active tab's, or the last one while no tab is active.
+    const own = new WeakSet<Page>();
+    const creating = new Set<Promise<Page>>();
+    const ownPage = async (): Promise<Page> => {
+      const pending = context.newPage();
+      creating.add(pending);
+      try {
+        const page = await pending;
+        own.add(page);
+        return page;
+      } finally {
+        creating.delete(pending);
+      }
+    };
+    const first = context.pages()[0];
+    let primary: Page = first ?? (await ownPage());
+    own.add(primary);
+    const tabs = new TabRegistry<Page>(MAX_URL_BYTES);
+    const watches = new WeakMap<Page, NavigationWatch>();
     // BR-05: every dialog, on every page, is answered as it opens and logged.
     const dialogs = new DialogLog();
     dialogs.listen(context);
     const routes = await installRoutes(context, () => primary, policy);
     let closing = false;
+    const syncPrimary = () => {
+      const active = tabs.activePage();
+      if (active) primary = active;
+    };
+    // Pages the worker closes itself (a navigation's previous page, a failed
+    // download's page, a tab the host closed): their tab is handled where
+    // they are closed.
+    const workerClosed = new WeakSet<Page>();
+    const closeOwn = async (page: Page) => {
+      workerClosed.add(page);
+      await page.close().catch(() => {});
+    };
+    // A tab whose page closed itself (window.close from page script) or
+    // whose renderer crashed is gone, and no other tab is made active in
+    // its place: every action fails until the host sends a tab request and
+    // learns the tabs.
+    const watchPage = (page: Page) => {
+      watches.set(page, new NavigationWatch(page));
+      const gone = () => {
+        if (workerClosed.has(page)) return;
+        const id = tabs.idOf(page);
+        if (id !== null) tabs.dropClosed(id);
+      };
+      page.on("close", gone);
+      page.on("crash", gone);
+    };
+    /// The active tab and its page, or a typed "stale" refusal when no tab
+    /// is active.
+    const activeTab = (): { tab: number; page: Page } => {
+      const tab = tabs.active;
+      const page = tabs.activePage();
+      if (tab === null || page === null) throw new NavigationError("stale");
+      return { tab, page };
+    };
+    tabs.add(primary);
+    watchPage(primary);
+    const tabsState = (): TabsState => ({ active: tabs.active ?? 0, tabs: tabs.list() });
+    // A page the page itself opened (a popup) becomes a tab only once the
+    // host admitted its first document and the lifetime is under its cap;
+    // otherwise it is closed.
+    // At most MAX_PENDING_POPUPS wait for admission at once; any further
+    // popup is closed at once.
+    let pendingPopups = 0;
+    context.on("page", (page) => {
+      void (async () => {
+        await Promise.allSettled([...creating]);
+        if (own.has(page) || closing) return;
+        if (pendingPopups >= MAX_PENDING_POPUPS) {
+          await page.close().catch(() => {});
+          return;
+        }
+        pendingPopups += 1;
+        let admitted = false;
+        try {
+          admitted = await admitPopup(page);
+        } finally {
+          pendingPopups -= 1;
+        }
+        if (!admitted || closing || page.isClosed() || tabs.add(page) === null) {
+          await page.close().catch(() => {});
+          return;
+        }
+        watchPage(page);
+      })().catch(() => {});
+    });
     // Each host navigation runs in a fresh page (see above).
     const open = async (url: string) => {
       traceStart();
-      const previous = primary;
-      const page = await context.newPage();
+      // The active tab keeps its id (its page may be one a failed download
+      // closed). With no active tab (its page closed itself), nothing
+      // navigates until the host sends a tab request.
+      const { tab, page: previous } = activeTab();
+      const page = await ownPage();
       traceMark("page_created");
       await routes.guardReady(page);
       traceMark("guard_ready");
+      if (tabs.active !== tab || !tabs.replace(tab, page)) {
+        await closeOwn(page);
+        throw new NavigationError("stale");
+      }
+      watchPage(page);
       primary = page;
-      await previous.close().catch(() => {});
+      await closeOwn(previous);
       traceMark("previous_closed");
       page.on("request", () => traceMark("request"));
       page.on("response", (response) => {
@@ -113,7 +211,7 @@ const playwrightLauncher: Launcher = {
         const response = await page.goto(url, { timeout: 30_000, waitUntil: "load" });
         stopWatching();
         watch.stop();
-        return { page, response };
+        return { tab, page, response };
       } catch (error) {
         stopWatching();
         watch.stop();
@@ -142,14 +240,14 @@ const playwrightLauncher: Launcher = {
     };
     return {
       async navigate(url: string) {
-        const { page, response } = await open(url);
-        return { url: page.url(), status: response?.status() ?? 0 };
+        const { tab, page, response } = await open(url);
+        return { tab, url: page.url(), status: response?.status() ?? 0 };
       },
       async fetchText(url: string) {
-        const { page, response } = await open(url);
+        const { tab, page, response } = await open(url);
         const status = response?.status() ?? 0;
         const media = (response?.headers()["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
-        if (!response || !FETCH_TEXT_MEDIA.includes(media)) return { url: page.url(), status, media, text: "", truncated: false };
+        if (!response || !FETCH_TEXT_MEDIA.includes(media)) return { tab, url: page.url(), status, media, text: "", truncated: false };
         let body: Buffer;
         try {
           body = await response.body();
@@ -161,13 +259,14 @@ const playwrightLauncher: Launcher = {
         const text = safeText(new TextDecoder("utf-8").decode(body.subarray(0, 4 * MAX_FETCH_TEXT_BYTES)));
         const { pieces } = toPieces([{ content: text, index: 0, total: 1, start: 0, end: text.length, overlap: "", hasMore: false }], MAX_FETCH_TEXT_BYTES, 1);
         const kept = pieces[0]?.content ?? "";
-        return { url: page.url(), status, media, text: kept, truncated: kept.length < text.length || body.length > 4 * MAX_FETCH_TEXT_BYTES };
+        return { tab, url: page.url(), status, media, text: kept, truncated: kept.length < text.length || body.length > 4 * MAX_FETCH_TEXT_BYTES };
       },
       async activate(ref: string, target?: ApprovedTarget) {
-        return clickAndLoad(primary, await approvedElement(primary, ref, target), routes.refusals);
+        const { tab, page } = activeTab();
+        return { tab, ...(await clickAndLoad(page, await approvedElement(page, ref, target), routes.refusals)) };
       },
       async execute(tool: string, fields: ExecField[]) {
-        const page = primary;
+        const { tab, page } = activeTab();
         // Host-built selectors only: the tool name is [A-Za-z0-9_.-] and
         // field names are quoted as CSS strings.
         const quoted = (value: string): string => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -255,11 +354,11 @@ const playwrightLauncher: Launcher = {
           structured = [];
           structuredComplete = false;
         }
-        return { url, status, structured, structuredComplete };
+        return { tab, url, status, structured, structuredComplete };
       },
       async download(ref: string, path: string, target?: ApprovedTarget) {
         if (existsSync(path)) throw new NavigationError("failed");
-        const page = primary;
+        const { tab, page } = activeTab();
         // Resolved before the capture is armed: a stale target clicks nothing.
         const element = await approvedElement(page, ref, target);
         const guard = await routes.guardReady(page);
@@ -275,7 +374,7 @@ const playwrightLauncher: Launcher = {
         // capture gave up would otherwise be rendered. The host requires a
         // fresh navigation (which opens a new page) before acting again.
         const fail = async (reason: "failed" | "timeout" | "http_status" | "oversized" | "occluded"): Promise<never> => {
-          await page.close().catch(() => {});
+          await closeOwn(page);
           throw new NavigationError(reason);
         };
         try {
@@ -297,6 +396,7 @@ const playwrightLauncher: Launcher = {
         if (document.status < 200 || document.status >= 300) return fail("http_status");
         writeFileSync(path, document.body, { flag: "wx" });
         return {
+          tab,
           url: document.url,
           name: suggestedName(document.url, document.disposition),
           media: document.media,
@@ -307,52 +407,60 @@ const playwrightLauncher: Launcher = {
         return dialogs.take();
       },
       async upload(ref, path, target) {
-        await uploadFile(primary, ref, path, target);
-        return { url: primary.url() };
+        const { tab, page } = activeTab();
+        await uploadFile(page, ref, path, target);
+        return { tab, url: page.url() };
       },
       async waitForText(text, appear, timeoutMs) {
-        const met = await waitForText(primary, text, appear, timeoutMs);
-        return { url: primary.url(), met };
+        const { tab, page } = activeTab();
+        const met = await waitForText(page, text, appear, timeoutMs);
+        return { tab, url: page.url(), met };
       },
       async formAction(ref, act, target, acceptConfirm) {
-        if (acceptConfirm !== undefined) dialogs.arm(acceptConfirm, primary);
+        const { tab, page } = activeTab();
+        if (acceptConfirm !== undefined) dialogs.arm(acceptConfirm, page);
         try {
           // SG-000122 slice A6: an Enter may submit; what the main frame did
           // after the key is reported (the host decided every request).
-          if (act.action === "enter") return await enterAndSettle(primary, routes.refusals, () => formAction(primary, ref, act, target));
-          await formAction(primary, ref, act, target);
+          if (act.action === "enter") return { tab, ...(await enterAndSettle(page, routes.refusals, () => formAction(page, ref, act, target))) };
+          await formAction(page, ref, act, target);
         } finally {
           dialogs.disarm();
         }
-        return { url: primary.url() };
+        return { tab, url: page.url() };
       },
       async verify(probes) {
-        const results = await runProbes(primary, probes);
-        return { url: primary.url(), results };
+        const { tab, page } = activeTab();
+        const results = await runProbes(page, probes);
+        return { tab, url: page.url(), results };
       },
       async observe() {
-        const raw: unknown = await primary.ariaSnapshotJSON({ mode: "ai", depth: 16, timeout: 2_000 });
+        const { tab, page } = activeTab();
+        const raw: unknown = await page.ariaSnapshotJSON({ mode: "ai", depth: 16, timeout: 2_000 });
         const snapshot = boundSnapshot(raw);
         // SG-000122: which main-frame form controls a form action may target.
-        await classifyControls(primary, snapshot.nodes);
+        await classifyControls(page, snapshot.nodes);
         // SG-000122 slice A5: which of their names carry text only.
-        await nameControls(primary, snapshot.nodes);
-        return { url: primary.url(), snapshot };
+        await nameControls(page, snapshot.nodes);
+        return { tab, url: page.url(), snapshot };
       },
       async outline() {
-        return takeOutline(context, primary);
+        const { tab, page } = activeTab();
+        return { tab, ...(await takeOutline(context, page)) };
       },
       async extractSchema(fields) {
-        const { url, outline } = await takeOutline(context, primary);
+        const { tab, page } = activeTab();
+        const { url, outline } = await takeOutline(context, page);
         const { values, truncated } = extractBySchema(outline.nodes, fields);
-        return { url, truncated: truncated || outline.truncated, values };
+        return { tab, url, truncated: truncated || outline.truncated, values };
       },
       async discover(discId: number) {
         // The engine serialises its own DOM: no page script runs. The whole
         // call (capture, discovery, fit) stays inside DISCOVERY_TOTAL_MS.
         const started = Date.now();
-        const before = primary.url();
-        const session = await context.newCDPSession(primary);
+        const { tab, page } = activeTab();
+        const before = page.url();
+        const session = await context.newCDPSession(page);
         // Playwright's protocol typings name this result differently;
         // documentModel reads every field defensively (missing arrays are
         // empty, a missing document throws into discovery_failed).
@@ -366,17 +474,18 @@ const playwrightLauncher: Launcher = {
         const model = documentModel(captured);
         // The snapshot must be of the page's document: if the page moved
         // during the capture, the result is stale and is refused.
-        const url = primary.url();
+        const url = page.url();
         if (model.url !== url || before !== url) throw new Error("the document changed during discovery");
         const remaining = Math.max(0, DISCOVERY_TOTAL_MS - CAPTURE_TIMEOUT_MS / 2 - (Date.now() - started));
         const found = discoverDeclarativeTools(model.root, Math.min(DISCOVERY_BUDGET_MS, remaining), model.encoding);
-        return fitTools(discId, url, model.truncated || found.truncated, found.tools);
+        return { tab, ...fitTools(discId, url, model.truncated || found.truncated, found.tools) };
       },
       async extract(options: { links: boolean; images: boolean }) {
         // The engine serialises its own DOM and layout: no page script runs,
         // and nothing on the page is scrolled, clicked or rendered first.
-        const before = primary.url();
-        const session = await context.newCDPSession(primary);
+        const { tab, page } = activeTab();
+        const before = page.url();
+        const session = await context.newCDPSession(page);
         const captured = (await captureWithin(
           {
             capture: () => session.send("DOMSnapshot.captureSnapshot", { computedStyles: [...CONTENT_STYLES] }),
@@ -384,11 +493,85 @@ const playwrightLauncher: Launcher = {
           },
           EXTRACT_CAPTURE_TIMEOUT_MS
         )) as unknown as LayoutSnapshot;
-        const url = primary.url();
+        const url = page.url();
         const extraction = extractMarkdown(captured, { ...options, budgetMs: EXTRACT_DEFAULTS.budgetMs });
         if (extraction.url !== url || before !== url) throw new Error("the document changed during extraction");
         const { pieces, truncated } = toPieces(extraction.chunks, MAX_PIECE_BYTES, MAX_EXTRACT_PIECES);
-        return { url, truncated: extraction.truncated || truncated, pieces };
+        return { tab, url, truncated: extraction.truncated || truncated, pieces };
+      },
+      async screenshot(fullPage: boolean) {
+        const active = tabs.activePage();
+        const tab = tabs.active;
+        // No active tab (its page closed itself): refused until the host
+        // learns the tabs.
+        if (active === null || tab === null) throw new ScreenshotError("busy");
+        const page = active;
+        if (page.isClosed()) throw new ScreenshotError("failed");
+        const loading = () => watches.get(page)?.loading === true;
+        if (loading()) throw new ScreenshotError("busy");
+        return runExclusive(page, async () => {
+          const before = page.url();
+          let clip: { x: number; y: number; width: number; height: number } | undefined;
+          let truncated = false;
+          if (fullPage) {
+            // The engine's own layout metrics: no page script runs.
+            const session = await context.newCDPSession(page);
+            let metrics: unknown;
+            try {
+              metrics = await session.send("Page.getLayoutMetrics");
+            } catch {
+              throw new ScreenshotError("failed");
+            } finally {
+              await session.detach().catch(() => {});
+            }
+            ({ clip, truncated } = fullPageClip(metrics));
+          }
+          const shot = await capturePng(page, clip);
+          // A capture that raced a navigation, or a tab change, is of no one
+          // document.
+          if (loading() || page.isClosed() || page.url() !== before || tabs.active !== tab) throw new ScreenshotError("busy");
+          return { ...shot, tab, url: before, truncated };
+        });
+      },
+      async tabNew() {
+        if (tabs.size >= MAX_TABS) throw new TabError("cap");
+        const page = await ownPage();
+        try {
+          await routes.guardReady(page);
+        } catch {
+          await closeOwn(page);
+          throw new TabError("failed");
+        }
+        const id = tabs.add(page);
+        if (id === null) {
+          await closeOwn(page);
+          throw new TabError("cap");
+        }
+        tabs.activate(id);
+        watchPage(page);
+        primary = page;
+        return tabsState();
+      },
+      async tabSwitch(tab: number) {
+        if (!tabs.activate(tab)) throw new TabError("unknown_tab");
+        syncPrimary();
+        return tabsState();
+      },
+      async tabClose(tab: number) {
+        const page = tabs.page(tab);
+        if (page === null) throw new TabError("unknown_tab");
+        if (tabs.size === 1) throw new TabError("last");
+        tabs.remove(tab);
+        syncPrimary();
+        // Closing runs the page's own unload and pagehide handlers, which
+        // may send requests (beacons); the route stack still decides each
+        // one, so only the lifetime's admitted site can receive them.
+        // orceld asks the takeover gate first (a write on that tab).
+        await closeOwn(page);
+        return tabsState();
+      },
+      tabs() {
+        return tabsState();
       },
       async close() {
         closing = true;

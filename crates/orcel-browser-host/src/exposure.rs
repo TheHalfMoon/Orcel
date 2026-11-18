@@ -131,12 +131,15 @@ pub const BROWSER_FULL_MCP_TOOLS: &[&str] = &[
     "browser_select",
     "browser_verify",
     "browser_extract",
+    "browser_screenshot",
+    "browser_tabs",
     "browser_close",
     "browser_task_status",
 ];
 
 /// The broker shape each `browser_full` tool forwards (tool, capability,
-/// operation), and the live host action it maps onto, if any.
+/// operation), and the live host action it maps onto, if any. SG-000135
+/// OB-03 adds `browser_screenshot` and `browser_tabs`.
 pub const BROWSER_FULL_TOOL_SHAPES: &[(&str, &str, &str)] = &[
     ("browser_session_create", "browser.session", "create"),
     ("browser_open", "browser.session", "open"),
@@ -146,6 +149,8 @@ pub const BROWSER_FULL_TOOL_SHAPES: &[(&str, &str, &str)] = &[
     ("browser_select", "browser.session", "select"),
     ("browser_verify", "browser.session", "verify"),
     ("browser_extract", "browser.session", "extract"),
+    ("browser_screenshot", "browser.session", "screenshot"),
+    ("browser_tabs", "browser.session", "tabs"),
     ("browser_close", "browser.session", "close"),
     ("browser_task_status", "browser.session", "status"),
 ];
@@ -282,15 +287,15 @@ mod tests {
     /// SG-000135 OB-02: the `browser_full` tools, one broker shape each,
     /// no denied shape, none of the uploads, and a profile of its own.
     #[test]
-    fn ob02_the_browser_full_set_is_ten_broker_tools() {
-        assert_eq!(BROWSER_FULL_MCP_TOOLS.len(), 10);
+    fn ob02_the_browser_full_set_is_twelve_broker_tools() {
+        assert_eq!(BROWSER_FULL_MCP_TOOLS.len(), 12);
         let tools: Vec<&str> = BROWSER_FULL_TOOL_SHAPES
             .iter()
             .map(|(t, _, _)| *t)
             .collect();
         assert_eq!(tools, BROWSER_FULL_MCP_TOOLS);
         let unique: HashSet<&str> = BROWSER_FULL_MCP_TOOLS.iter().copied().collect();
-        assert_eq!(unique.len(), 10);
+        assert_eq!(unique.len(), 12);
         for (tool, capability, _) in BROWSER_FULL_TOOL_SHAPES {
             assert_eq!(*capability, "browser.session", "{tool}");
             assert!(!is_denied_shape(tool), "{tool}");
