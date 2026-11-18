@@ -386,10 +386,6 @@ pub fn run_anchor_reset(
     client.anchor_status(log).map_err(authority)
 }
 
-/// The service accepts the first anchor after a reset only below this seq
-/// (`orcel_authority`'s bound).
-const MAX_FIRST_SEQ_AFTER_RESET: u64 = 2 * orcel_contracts::event::ANCHOR_INTERVAL_EVENTS;
-
 /// The opening record of the chain file at `chain`, as an anchor of
 /// orceld's log (seq 0, its own digest): what the owner CLI asks the service
 /// to hold right after a reset opened the file.
@@ -411,35 +407,15 @@ pub fn opening_anchor(
 
 /// After a confirmed anchor reset: opens the new first chain file at
 /// `chain`, naming the reset record from `status` (the service's
-/// `AnchorStatus` answer). The current file, if any, is kept beside it.
+/// `AnchorStatus` answer). Never keeps a file found on disk: whatever is at
+/// the chain path (an earlier run's file included) is moved aside and a
+/// fresh file opens, whose opening the CLI then anchors.
 pub fn open_reset_chain(chain: &std::path::Path, status: &Value) -> Result<Value, LifecycleError> {
     let reset = &status["reset"];
-    let Some(digest) = reset["event_digest"].as_str() else {
+    if reset["event_digest"].as_str().is_none() {
         return Err(LifecycleError::state(
             "the authority service reports no anchor reset for this log",
         ));
-    };
-    // Idempotent: a chain that already starts from this reset is kept, but
-    // only while the service can still accept it: it verifies clean (no
-    // break and no link_refused record, which the verifier marks broken) and
-    // has fewer records than the service's first-anchor bound. Otherwise it
-    // is moved aside and a fresh file opens.
-    if let Ok(report) = orcel_audit::verify_file(chain) {
-        let named = report
-            .reset_by_owner
-            .as_ref()
-            .and_then(|named| named["event_digest"].as_str());
-        let acceptable = report.verdict == orcel_audit::Verdict::ResetByOwner
-            && report.events < MAX_FIRST_SEQ_AFTER_RESET;
-        if named == Some(digest) && acceptable {
-            return Ok(serde_json::json!({
-                "chain": chain.display().to_string(),
-                "new_file_id": report.file_id,
-                "abandoned_file_kept_as": null,
-                "already_open": true,
-                "reset": reset,
-            }));
-        }
     }
     let opened = orcel_audit::open_after_reset(chain, orcel_audit::ORCELD_LOG, reset.clone())
         .map_err(|error| LifecycleError::state(error.to_string()))?;
@@ -627,36 +603,19 @@ mod tests {
         );
         let report = orcel_audit::verify_file(&chain).map_err(|e| e.to_string())?;
         assert_eq!(report.verdict, orcel_audit::Verdict::ResetByOwner);
-        // Resumed (the service still reports the same reset): the file that
-        // reset opened is kept, not replaced again.
-        let again = open_reset_chain(&chain, &status).map_err(|e| e.to_string())?;
-        assert_eq!(again["already_open"], serde_json::Value::Bool(true));
-        assert_eq!(again["new_file_id"], opened["new_file_id"]);
         assert_eq!(
             opening_anchor(&chain).map_err(|e| e.to_string())?.digest,
             opened["new_file_id"].as_str().unwrap_or_default()
         );
-        // Re-review: a reset file the service can no longer accept (grown
-        // past the first-anchor bound, or broken) is not kept: it is moved
+        // Resumed (the service still reports the same reset): the file found
+        // on disk is never kept, even the one this reset opened; it is moved
         // aside and a fresh file opens.
-        let writer = orcel_audit::ChainWriter::open(&chain, orcel_audit::ORCELD_LOG)
-            .map_err(|e| e.to_string())?;
-        for n in 0..MAX_FIRST_SEQ_AFTER_RESET {
-            writer
-                .append(orcel_audit::EventDraft::new(
-                    orcel_contracts::event::AuditEventKind::Request,
-                    serde_json::json!({ "n": n }),
-                ))
-                .map_err(|e| e.to_string())?;
-        }
-        let grown = open_reset_chain(&chain, &status).map_err(|e| e.to_string())?;
-        assert!(grown["already_open"].is_null(), "{grown}");
-        assert!(grown["abandoned_file_kept_as"].is_string());
-        let text = std::fs::read_to_string(&chain).map_err(|e| e.to_string())?;
-        std::fs::write(&chain, text.replacen("\"open\"", "\"opened\"", 1))
-            .map_err(|e| e.to_string())?;
-        let broken = open_reset_chain(&chain, &status).map_err(|e| e.to_string())?;
-        assert!(broken["already_open"].is_null(), "{broken}");
+        let again = open_reset_chain(&chain, &status).map_err(|e| e.to_string())?;
+        assert_ne!(again["new_file_id"], opened["new_file_id"]);
+        let moved = again["abandoned_file_kept_as"]
+            .as_str()
+            .ok_or("the earlier file is kept aside")?;
+        assert!(dir.join(moved).is_file());
         assert_eq!(
             orcel_audit::verify_file(&chain)
                 .map_err(|e| e.to_string())?

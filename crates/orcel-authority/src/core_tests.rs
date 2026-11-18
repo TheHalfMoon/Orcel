@@ -1945,16 +1945,25 @@ fn wp103_a_pending_reset_can_be_reset_again_and_its_opening_is_anchored_by_the_c
         )),
         Some(FailureCode::CapabilityDenied)
     );
-    // The owner CLI may anchor only seq 0, only in the reset state.
+    // The owner CLI may anchor only seq 0, only in the reset state, and only
+    // elevated (the enrollment checks): the non-elevated installed CLI is
+    // refused.
     assert_eq!(
         code(core.handle(
             &owner(),
+            anchor_after_reset('d', 0, 'd', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(
+            &elevated_owner(),
             anchor_after_reset('d', 5, 'e', None, Some(&second))
         )),
         Some(FailureCode::CapabilityDenied)
     );
     let opened = ok(core.handle(
-        &owner(),
+        &elevated_owner(),
         anchor_after_reset('d', 0, 'd', None, Some(&second)),
     ))?;
     assert_eq!(opened["new_file"], Value::Bool(true));
@@ -1969,7 +1978,7 @@ fn wp103_a_pending_reset_can_be_reset_again_and_its_opening_is_anchored_by_the_c
     );
     assert_eq!(
         code(core.handle(
-            &owner(),
+            &elevated_owner(),
             anchor_after_reset('f', 0, 'f', None, Some(&second))
         )),
         Some(FailureCode::CapabilityDenied)

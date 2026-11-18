@@ -1135,3 +1135,63 @@ fn chain_the_reset_files_opening_is_anchored_before_anything_else() -> TestResul
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+/// A holder in its reset state that takes far longer than a writer waits.
+struct SlowResetHolder(String);
+
+impl Anchorer for SlowResetHolder {
+    fn anchor(
+        &self,
+        _anchor: &AnchorRef,
+        _link: Option<&ChainLink>,
+        _reset: Option<&str>,
+    ) -> AnchorOutcome {
+        std::thread::sleep(std::time::Duration::from_secs(12));
+        AnchorOutcome::Unanchored {
+            reason: "slow".to_owned(),
+        }
+    }
+
+    fn held(&self, _log: &str) -> Option<crate::HeldState> {
+        Some(crate::HeldState {
+            anchor: None,
+            reset: Some(self.0.clone()),
+        })
+    }
+}
+
+/// Final review: the holder is asked for the reset file's opening without
+/// the file lock held and for a bounded time, so a hung holder stalls
+/// neither another writer nor this one beyond the wait.
+#[test]
+fn chain_a_slow_holder_never_holds_the_lock_or_stalls_the_writer() -> TestResult {
+    let dir = sandbox("slow-holder")?;
+    let path = dir.join("audit-chain.jsonl");
+    crate::open_after_reset(&path, ORCELD_LOG, json!({"event_digest": "e".repeat(64)}))
+        .map_err(|e| e.to_string())?;
+    let slow_path = path.clone();
+    let started = std::time::Instant::now();
+    let slow = std::thread::spawn(move || -> Result<bool, String> {
+        let writer = ChainWriter::open(&slow_path, ORCELD_LOG).map_err(|e| e.to_string())?;
+        writer.set_anchorer(Arc::new(SlowResetHolder("e".repeat(64))));
+        Ok(matches!(writer.append(draft(1)), Err(ChainError::Io(_))))
+    });
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Another writer (no holder) appends while the slow one waits.
+    let other_started = std::time::Instant::now();
+    write(&path, 1)?;
+    assert!(
+        other_started.elapsed() < std::time::Duration::from_secs(2),
+        "the lock was held during the holder call: {:?}",
+        other_started.elapsed()
+    );
+    let refused = slow.join().map_err(|_| "the slow writer panicked")??;
+    assert!(refused, "no answer in time refuses the append");
+    let waited = started.elapsed();
+    assert!(
+        waited < crate::chain::OPENING_ANCHOR_WAIT + std::time::Duration::from_secs(3),
+        "the writer waited {waited:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}

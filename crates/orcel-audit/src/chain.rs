@@ -59,6 +59,38 @@ pub const MAX_EVENT_BYTES: usize = 16 * 1024;
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 /// How long an append waits for another writer's lock.
 const LOCK_WAIT: Duration = Duration::from_secs(10);
+/// How long a writer waits for the holder to hold a reset file's opening.
+pub const OPENING_ANCHOR_WAIT: Duration = Duration::from_secs(3);
+
+/// Asks `anchorer` on a thread of its own and waits at most `wait`; no
+/// answer in time is an unanchored outcome (the thread is left to finish).
+fn ask_within(
+    anchorer: Arc<dyn Anchorer>,
+    at: AnchorRef,
+    reset: Option<String>,
+    wait: Duration,
+) -> AnchorOutcome {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("orcel-audit-opening-anchor".to_owned())
+        .spawn(move || {
+            let _ = sender.send(anchorer.anchor(&at, None, reset.as_deref()));
+        });
+    if let Err(error) = spawned {
+        return AnchorOutcome::Unanchored {
+            reason: format!("could not ask the anchor holder: {error}"),
+        };
+    }
+    receiver
+        .recv_timeout(wait)
+        .unwrap_or_else(|_| AnchorOutcome::Unanchored {
+            reason: format!(
+                "the anchor holder did not answer within {} s",
+                wait.as_secs()
+            ),
+        })
+}
+
 /// `previous_file_id` of a log's first file.
 pub const NO_PREVIOUS_FILE: &str = "none";
 /// The `status` of an anchor event whose holder refused the file.
@@ -589,6 +621,7 @@ impl ChainWriter {
     /// is due an anchor, asks the anchorer (outside the file lock) and
     /// records its answer as an `anchor` event.
     pub fn append(&self, draft: EventDraft) -> Result<Appended, ChainError> {
+        self.anchor_opening_if_due()?;
         let (mut appended, link, reset) = self.append_one(draft, false)?;
         if anchor_due(&appended.event) {
             let outcome = self
@@ -624,7 +657,10 @@ impl ChainWriter {
             });
         }
         if cursor.opening_unanchored && !record_refusal {
-            self.anchor_opening(&mut cursor)?;
+            return Err(ChainError::Io(
+                "the opening record after an owner reset is not anchored yet; nothing was appended"
+                    .to_owned(),
+            ));
         }
         let refusal = (draft.kind == AuditEventKind::Anchor && record_refusal).then(|| {
             draft.detail["reason"]
@@ -641,43 +677,58 @@ impl ChainWriter {
 
     /// Anchors the opening record of a file that starts from the holder's
     /// pending owner reset, before any other record, and records the answer.
-    /// A refusal fails the chain closed; an unavailable holder refuses this
-    /// append and the next one tries again.
-    fn anchor_opening(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
-        let Some(file_id) = cursor.file_id.clone() else {
+    /// The holder is asked with neither the file lock nor the cursor held,
+    /// and for at most [`OPENING_ANCHOR_WAIT`], so a hung holder never stalls
+    /// other writers or this one for long. A refusal fails the chain closed;
+    /// no answer in time, or an unavailable holder, refuses this append and
+    /// the next one tries again.
+    fn anchor_opening_if_due(&self) -> Result<(), ChainError> {
+        let pending = {
+            let mut cursor = self.cursor();
+            let _lock = lock(&self.lock_path)?;
+            self.sync(&mut cursor)?;
+            match (&cursor.file_id, cursor.opening_unanchored, &cursor.refused) {
+                (Some(file_id), true, None) => Some((file_id.clone(), cursor.reset.clone())),
+                _ => None,
+            }
+        };
+        let Some((file_id, reset)) = pending else {
             return Ok(());
         };
         let at = AnchorRef {
             log: self.log.clone(),
-            file_id: file_id.clone(),
+            digest: file_id.clone(),
+            file_id,
             seq: 0,
-            digest: file_id,
         };
-        let outcome = self.anchorer().anchor(&at, None, cursor.reset.as_deref());
+        let outcome = ask_within(self.anchorer(), at.clone(), reset, OPENING_ANCHOR_WAIT);
         if let AnchorOutcome::Unanchored { reason } = &outcome {
             return Err(ChainError::Io(format!(
                 "the opening record after an owner reset must be anchored first, and the anchor \
                  holder did not hold it: {reason}"
             )));
         }
-        let refused = matches!(outcome, AnchorOutcome::Refused { .. });
-        let reason = match &outcome {
-            AnchorOutcome::Refused { reason } => reason.clone(),
-            _ => String::new(),
-        };
+        let mut cursor = self.cursor();
+        let _lock = lock(&self.lock_path)?;
+        self.sync(&mut cursor)?;
+        if cursor.file_id.as_deref() != Some(at.file_id.as_str()) || !cursor.opening_unanchored {
+            // Another writer recorded it, or the file changed meanwhile.
+            return Ok(());
+        }
         self.write_event(
-            cursor,
+            &mut cursor,
             EventDraft {
                 asserted_by_session: false,
                 ..EventDraft::new(AuditEventKind::Anchor, outcome.detail(&at))
             },
         )?;
         cursor.opening_unanchored = false;
-        if refused {
-            cursor.refused = Some(format!("the anchor holder refused this file: {reason}"));
+        if let AnchorOutcome::Refused { reason } = outcome {
+            let reason = format!("the anchor holder refused this file: {reason}");
+            cursor.refused = Some(reason.clone());
             return Err(ChainError::Broken {
                 seq: cursor.next_seq,
-                reason: format!("refused: the anchor holder refused this file: {reason}"),
+                reason: format!("refused: {reason}"),
             });
         }
         Ok(())
@@ -757,6 +808,7 @@ impl ChainWriter {
             None
         };
         let mut digest_at_held = None;
+        let mut opening_anchored = false;
         if let Some(mut file) = file.filter(|_| end > cursor.len) {
             file.seek(SeekFrom::Start(cursor.len))
                 .map_err(|error| io_error("read the chain", error))?;
@@ -773,6 +825,13 @@ impl ChainWriter {
                             .is_some_and(|held| held.seq == event.seq)
                         {
                             digest_at_held = Some(event.digest.clone());
+                        }
+                        if event.kind == AuditEventKind::Anchor
+                            && event.detail["anchor"]["seq"] == 0
+                            && event.detail["status"] == "anchored"
+                        {
+                            cursor.opening_unanchored = false;
+                            opening_anchored = true;
                         }
                         if event.kind == AuditEventKind::Anchor
                             && event.detail["status"] == LINK_REFUSED
@@ -820,7 +879,7 @@ impl ChainWriter {
         if let (Some(held), Some(file_id)) = (&held, cursor.file_id.clone()) {
             let conflict = match (&held.reset, &held.anchor) {
                 (Some(reset), _) if cursor.reset.as_deref() == Some(reset.as_str()) => {
-                    cursor.opening_unanchored = true;
+                    cursor.opening_unanchored = !opening_anchored;
                     None
                 }
                 (Some(reset), _) => (cursor.reset.as_deref() != Some(reset.as_str())).then(|| {

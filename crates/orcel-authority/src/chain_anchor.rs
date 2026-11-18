@@ -340,8 +340,13 @@ impl AuthorityCore {
         // The owner CLI anchors the opening record of the file a reset just
         // opened (seq 0, reset state only), so no later file naming the same
         // public reset digest can be adopted in its place.
-        let owner_cli_opening =
-            role == CallerRole::Interactive && self.policy.is_owner_cli(caller) && anchor.seq == 0;
+        // The same checks as enrollment: the installed CLI, elevated, under
+        // UAC Always notify, not the unfiltered built-in Administrator.
+        let owner_cli_opening = role == CallerRole::Interactive
+            && anchor.seq == 0
+            && self
+                .require_elevated_owner(caller, role, ClaimedOrigin::OwnerCli)
+                .is_ok();
         if role != CallerRole::Orceld && !owner_cli_opening {
             return Err(AuthorityError::denied(
                 "only orceld (a configured trusted image) may anchor its audit chain",
