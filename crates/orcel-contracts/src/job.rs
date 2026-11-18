@@ -1,0 +1,174 @@
+//! Job contract and state machine (spec section 4.7).
+//!
+//! Jobs reuse the frozen SG-000093 `ExecutionState` vocabulary; no state is
+//! added. The transition table here is data: `orcel-jobs` and `orceld`
+//! enforce it.
+
+use serde::{Deserialize, Serialize};
+
+use crate::lease::DispatchAuthority;
+#[cfg(doc)]
+use crate::lease::MAX_TASK_BYTES;
+use crate::web::CrawlBudget;
+
+/// Outbound copy of the budget a job was admitted under. Unlike the inbound
+/// `CrawlBudget` configuration it tolerates unknown fields, so adding a
+/// budget field later does not break older readers of `Job`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct JobBudget {
+    pub max_pages: u32,
+    pub max_depth: u32,
+    pub max_duration_s: u32,
+    pub max_remembered_urls: u32,
+    pub min_delay_ms: u32,
+    pub max_batch_urls: u32,
+    pub max_job_result_bytes: u64,
+}
+
+impl From<CrawlBudget> for JobBudget {
+    fn from(budget: CrawlBudget) -> Self {
+        Self {
+            max_pages: budget.max_pages,
+            max_depth: budget.max_depth,
+            max_duration_s: budget.max_duration_s,
+            max_remembered_urls: budget.max_remembered_urls,
+            min_delay_ms: budget.min_delay_ms,
+            max_batch_urls: budget.max_batch_urls,
+            max_job_result_bytes: budget.max_job_result_bytes,
+        }
+    }
+}
+use crate::{Contract, FailureCode};
+
+/// SG-000093 execution state. Moved from `orcel-policy` with identical serde
+/// spellings; `orcel-policy` re-exports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionState {
+    NotStarted,
+    Dispatched,
+    Completed,
+    Cancelled,
+    OutcomeUnknown,
+}
+
+impl ExecutionState {
+    pub const ALL: [Self; 5] = [
+        Self::NotStarted,
+        Self::Dispatched,
+        Self::Completed,
+        Self::Cancelled,
+        Self::OutcomeUnknown,
+    ];
+
+    /// `completed`, `cancelled` and `outcome_unknown` are terminal.
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Cancelled | Self::OutcomeUnknown
+        )
+    }
+
+    /// The state a job admitted by policy starts in.
+    pub const INITIAL: Self = Self::NotStarted;
+
+    /// Whether the job state machine allows `self -> to` (section 4.7).
+    /// Staying in the same state is not a transition. `outcome_unknown` is
+    /// never retried (C-08): nothing leaves a terminal state.
+    pub const fn job_may_transition_to(self, to: Self) -> bool {
+        matches!(
+            (self, to),
+            (Self::NotStarted, Self::Cancelled)
+                | (Self::NotStarted, Self::Dispatched)
+                | (Self::Dispatched, Self::Completed)
+                | (Self::Dispatched, Self::Cancelled)
+                | (Self::Dispatched, Self::OutcomeUnknown)
+        )
+    }
+
+    /// Where an `orceld` restart moves a job in this state: approvals were
+    /// bound to the old `orcel_session_id`, so nothing resumes.
+    pub const fn after_restart(self) -> Self {
+        match self {
+            Self::NotStarted => Self::Cancelled,
+            Self::Dispatched => Self::OutcomeUnknown,
+            terminal => terminal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum JobKind {
+    WebCrawl,
+    /// A map run is one crawl-shaped unit in map mode (section 5.2 row 2).
+    WebMap,
+    WebBatchScrape,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum JobOutcome {
+    Succeeded,
+    /// Some units failed.
+    Partial,
+    Failed {
+        code: FailureCode,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct JobProgress {
+    pub total: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub skipped: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Job {
+    /// `"orcel.job/1"`.
+    pub contract: String,
+    /// 128-bit random, base32.
+    pub job_id: String,
+    pub kind: JobKind,
+    /// `Principal.principal_id`; only the owner may read or cancel (S7).
+    pub owner: String,
+    pub orcel_session_id: String,
+    /// Declared task, at most `MAX_TASK_BYTES`, escaped for prompts.
+    pub task: String,
+    /// SHA-256 of `canonical_json(scope)`: the destination scope the
+    /// approval binds (origins and their resolved-address sets).
+    pub scope_digest: String,
+    /// SHA-256 of `canonical_json(spec)`; the approval binds it.
+    pub spec_digest: String,
+    pub state: ExecutionState,
+    /// Only when `state` is `completed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<JobOutcome>,
+    pub authority: DispatchAuthority,
+    pub progress: JobProgress,
+    /// The effective budget the job was admitted under (section 4.11).
+    pub budget: JobBudget,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+    pub expires_at_ms: u64,
+}
+
+impl Contract for Job {
+    const CONTRACT: &'static str = "orcel.job/1";
+}
+
+impl Job {
+    /// Whether `outcome` is consistent with `state`: present exactly when
+    /// the job is `completed`.
+    pub fn outcome_matches_state(&self) -> bool {
+        (self.state == ExecutionState::Completed) == self.outcome.is_some()
+    }
+}

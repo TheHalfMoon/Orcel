@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnchorRef",
+  "description": "Where an anchor points in the chain: `(log, file id, seq, digest)`.",
+  "type": "object",
+  "properties": {
+    "digest": {
+      "type": "string"
+    },
+    "file_id": {
+      "type": "string"
+    },
+    "log": {
+      "description": "Which chain: for example `\"orceld\"` or `\"authority\"`.",
+      "type": "string"
+    },
+    "seq": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "log",
+    "file_id",
+    "seq",
+    "digest"
+  ]
+}

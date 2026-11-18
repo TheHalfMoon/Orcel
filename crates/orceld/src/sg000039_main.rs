@@ -17,6 +17,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 mod app_api;
+mod authority_link;
 #[cfg(test)]
 mod bm02_tier_b_tests;
 #[cfg(all(test, windows))]
@@ -133,6 +134,11 @@ mod legacy {
 }
 
 fn main() {
+    // SG-000132 slice 1: `orceld authority-status` / `authority-verify`.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = authority_link::run_cli(&args) {
+        std::process::exit(code);
+    }
     if let Err(error) = run() {
         eprintln!("orceld fatal: {error}");
         std::process::exit(1);

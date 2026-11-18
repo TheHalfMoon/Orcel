@@ -14,6 +14,7 @@ fresh-context security judge. Activation-ready grain JSONs live in [`unified-gra
   computer use working on the user's desktop while Orcel's authority lives outside the user session.
 - **Revision 7** applies the security review of `4e0f3606` (pipe anti-squatting, service-owned Job Objects, audit records as session-asserted claims, the grant window after a service-observed unlock, and two disclosure nits); section 13.5 maps them.
 - **Revision 8** applies the two nits of the review of `d6f2b3ba` (`READ_CONTROL` for the client owner check; grant intent plus a service-rendered confirmation, with the residual stated in C-27 (f)); section 13.6.
+- **Revision 9 (2026-11-17)** encodes the founder's later decision of the same day, verbatim: "all sources i have sent to you and all sources in the repo are legally and i have permission to copy all of them and re name them to orcel. so not worry about the licness anymore". The authorization is recorded as **OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17** (`docs/orcel/grants/2026-11-17-founder-attestation.md`). A licence type no longer blocks anything: C-15, C-16, C-17, C-20, section 5.6, section 6.1, WP1-01 and G-2 now require provenance, preserved notices and that authorization reference instead of licence allowlists; isolating a component (for example `apps/orcel-firecrawl`) is an architecture choice, not a licence requirement. SG-000131 records the same change as an amendment.
 - Revisions 2 to 5 resolved two rounds of fresh-context review; their tables are kept in section 13 as history. Where
   revision 6 replaces a design they record (notably the restricted-token executor profiles S and D of revision 4),
   the current text governs and section 13.4 says so.
@@ -133,24 +134,32 @@ fresh-context security judge. Activation-ready grain JSONs live in [`unified-gra
   the shipped core (the existing Go native host and Python agent are separate programs). The Firecrawl extract logic
   copied in Wave 2 runs on the already-pinned Node runtime inside the isolated component.
 
-### 1.4 Licensing (FD-UP-1 decided)
+### 1.4 Licensing (FD-UP-1 decided; amended by the founder decision of 2026-11-17, revision 9)
 
-- **C-15. Founder attestation recorded separately.** The founder confirms full permission to copy and adapt authorized
-  donor code, including Firecrawl, Browser Use and authorized private repositories
-  (`docs/orcel/grants/2026-11-17-founder-attestation.md`). It is recorded beside, not instead of, the upstream licence
-  terms in `DONOR_INVENTORY.md`.
-- **C-16. The core stays independently licensed.** `crates/*` and the Apache-2.0 apps contain Orcel's own code, the
-  already-recorded FD-06 files (`crawl_scope.rs`, `map_rank.rs`, `change_tracking.rs`, `apps/orcel-doc-parser`), and
-  permissively licensed ports with their notices.
-- **C-17. Copy-first Firecrawl code lives in an isolated AGPL component.** `apps/orcel-firecrawl` is a separate cargo
-  workspace and a separately packaged program, licensed AGPL-3.0 as upstream, with the upstream LICENSE, NOTICE,
-  `PROVENANCE.json`, `PATCHES.md` and a corresponding-source offer (the public repository at the release tag plus a
-  source archive attached to each release). Orcel talks to it only over a JSON-over-stdio protocol under orcel-contain
-  (section 4.17). No kernel crate links it.
+- **C-15. Owner-asserted authorization; licence type does not block.** The founder decided on 2026-11-17, verbatim:
+  "all sources i have sent to you and all sources in the repo are legally and i have permission to copy all of them and re name them to orcel. so not worry about the licness anymore". It is recorded as **OWNER-ASSERTED AUTHORIZATION, founder 2026-11-17** in
+  `docs/orcel/grants/2026-11-17-founder-attestation.md` and `docs/orcel/notices/licence-policy.json`: owner-asserted,
+  with no copyright-holder-signed grant in the repository. Every source the founder has sent and every source in the
+  repository may be copied and renamed to Orcel; no gate refuses code or a dependency because of its licence. The
+  upstream licence of every copied file is still recorded as it is (`DONOR_INVENTORY.md`,
+  `docs/orcel/notices/donor-provenance.json`).
+- **C-16. Copied code keeps its provenance and notices.** Wherever copied code lands (`crates/*` included), each copied
+  file has a provenance entry: source repository, pinned commit (or registry release with SHA-256), source path, the
+  original licence as recorded upstream, the original copyright or attribution notice preserved in the repository, and
+  the authorization reference of C-15. The already-recorded FD-06 files (`crawl_scope.rs`, `map_rank.rs`,
+  `change_tracking.rs`, `apps/orcel-doc-parser`) are recorded the same way.
+- **C-17. `apps/orcel-firecrawl` is an architecture boundary, not a licence boundary.** Copy-first Firecrawl code may
+  live in `apps/orcel-firecrawl`, a separate cargo workspace and separately packaged program that Orcel talks to only
+  over a JSON-over-stdio protocol under orcel-contain (section 4.17), with the upstream LICENSE, NOTICE and
+  `PATCHES.md` kept beside it. That isolation is chosen for process containment and a narrow interface; no licence
+  rule requires it, and no gate enforces it by licence. Whether to publish a source archive with each release is a
+  release decision, not a gate.
 - **C-18. Fleet:** reporting adapter only, from MIT parts; nothing from `ee/`. **UU Remote:** no source; remote desktop
   is built on the SG-000057 relay and WebRTC later.
 - **C-19. Sensitive web features are opt-in, not blocked** (FD-UP-2 decided, section 4.16).
-- **C-20. Licence and provenance gates run in CI per crate, package and component** (WP1-01).
+- **C-20. Provenance gates run in CI** (WP1-01): every copied file needs its provenance entry and preserved notice,
+  every file with a licence marker needs a provenance or reviewed reference entry, lockfiles pin every package, and
+  dependency licences are reported, not judged.
 
 ### 1.5 Web policy (FD-UP-2, 5, 8, 11 decided)
 
@@ -183,7 +192,7 @@ fresh-context security judge. Activation-ready grain JSONs live in [`unified-gra
         | Full Control: Authorize RPC         \ supervised children (contained, no ambient network)
         v                                      v
  ORCEL AUTHORITY SERVICE (own identity,      orcel-contain -> apps/orcel-doc-parser
- state unreachable from the session):        orcel-contain -> apps/orcel-firecrawl (AGPL component)
+ state unreachable from the session):        orcel-contain -> apps/orcel-firecrawl (Firecrawl component)
    keys, leases, epoch, standing approvals,  browser host -> worker -> Chromium (pipe) | Obscura (pipe, WPB)
    Full Control audit chain + Event Log,
    creates and owns executor Job Objects,     EXECUTORS ON THE USER DESKTOP (user token, each in a
@@ -226,7 +235,7 @@ Win+L, the indicator's Stop, the CLI or expiry make the service advance the epoc
 | orceld | `crates/orceld` | exists | W1 | Apache-2.0 | kernel crates | Web and job dispatch, Full Control dispatcher (service client), executors |
 | orcel-authority-service | `apps/orcel-authority-service` | **new** | W1 (Windows), X | Apache-2.0 | orcel-authority | Windows service (`NT SERVICE\OrcelAuthority`); macOS LaunchDaemon and Linux systemd unit in track X |
 | orcel-indicator | `apps/orcel-indicator` | **new** | W1 | Apache-2.0 | service pipe, orceld pipe | Disclosure and Stop |
-| orcel-firecrawl | `apps/orcel-firecrawl` (own workspace) | **new** | W1 (native), W2 (extract) | **AGPL-3.0** (upstream) | none in-process | Isolated copy-first Firecrawl component |
+| orcel-firecrawl | `apps/orcel-firecrawl` (own workspace) | **new** | W1 (native), W2 (extract) | **AGPL-3.0** (recorded upstream licence; not a boundary, rev 9) | none in-process | Isolated copy-first Firecrawl component |
 | orcel-mcp | `apps/orcel-mcp` | exists | W1, W2 | Apache-2.0 | orceld over a pipe | Catalog, MCP tools, REST routes, OpenAPI (W2) |
 | orcel-doc-parser | `apps/orcel-doc-parser` | exists | W2 | Apache-2.0 (+ FD-06 notice) | provider-process (test) | `/v2/parse` documents |
 | orcel-browser-worker | `apps/orcel-browser-worker` | exists | B | Apache-2.0 (+ MIT notice) | browser host pipe | Engine-neutral refs and actions |
@@ -241,7 +250,7 @@ Win+L, the indicator's Stop, the CLI or expiry make the service advance the epoc
 `apps/*`, `tests/*`, `packages/*` or `third_party/*`; `orcel-contracts` depends only on serde and serde_json at runtime;
 `orcel-web` only on `orcel-contracts`; `orcel-jobs` only on `orcel-contracts` and `orcel-journal`; separate workspaces
 (`apps/orcel-contain`, `apps/orcel-doc-parser`, `apps/orcel-native-host`, `apps/orcel-firecrawl`, `third_party/obscura`)
-stay separate; no Apache unit links an AGPL unit.
+stay separate. (Revision 9: these are architecture rules; no rule refers to a dependency's licence.)
 
 ## 4. Contracts and designs
 
@@ -552,6 +561,21 @@ Granted with STRONG presence for one identified client and one declared task; sh
 covers is authorized and audited individually with its id; ended by stop, lease end or expiry; never covers `Admin`,
 remote callers, out-of-scope targets or another client. Without one, each action keeps its own approval.
 
+Amended 2026-11-17, recorded in SG-000135 (`.specgrain/specs/SG-000135.json`), pending founder confirmation of the
+derived standing-approval coverage: for the remote `browser_full` capability profile only, a browser lease or browser
+standing approval issued by the owner may cover
+the remote caller that is the identified client named in it, through the Secure MCP Tunnel, within its origins,
+profiles, sessions, action families and expiry. Every other remote caller, executor and profile keeps the rule above.
+The founder's words (chat directive, 2026-11-17): "The current Orcel remote MCP profile does not expose browser
+actions. Implement an explicitly authorized remote browser capability profile. Do not merely copy BrowserOS's MCP
+server and claim that ChatGPT can already control it. Prove an actual end-to-end browser task over local MCP, then
+validate the ChatGPT tunnel integration where the client supports it." and "Full Access grants eliminate repeated
+approvals for routine actions already authorized by the owner." The founder's architecture decision of the same day
+describes the tunnel forwarding "to Orcel's local, authenticated and owner-lease-authorized MCP service". The remote
+standing-approval coverage is derived from these words, not quoted from them, and shares the same pending founder
+confirmation as remote coverage: until it is given, only a lease issued by the authority service covers a remote
+caller; the alternative is an interim-store browser lease gated by the existing SG-000055 STRONG remote-session lease.
+
 ### 4.16 Sensitive web features (FD-UP-2 decided)
 
 | Class | Features | Default | Gate |
@@ -650,9 +674,9 @@ dependency. Windows first; macOS and Linux follow WP1-13 on the parallel track.
 
 ### 5.6 Licence statement
 
-The contract layer (`orcel-contracts`, `orcel-web`, `orcel-jobs`, `orceld`, `orcel-mcp`) is Apache-2.0 Orcel code.
-Copy-first Firecrawl code lives only in `apps/orcel-firecrawl` under AGPL-3.0 with its obligations (C-17). The FD-06
-files are unchanged. The founder attestation is recorded separately (C-15). This is Orcel's engineering position, not
+The contract layer (`orcel-contracts`, `orcel-web`, `orcel-jobs`, `orceld`, `orcel-mcp`) is Orcel code. Copied Firecrawl
+code keeps its provenance and preserved notices wherever it lands (C-16); `apps/orcel-firecrawl` is an architecture
+choice (C-17). Copying rests on the owner-asserted authorization of C-15. This is Orcel's engineering position, not
 legal advice.
 
 ## 6. Donor file to destination mapping
@@ -661,7 +685,9 @@ legal advice.
 
 `COPY` (verbatim or minimal change, upstream licence and notice kept, `PATCHES.md`), `PORT-ALGO`, `PORT-CODE`,
 `CONTRACT-TEST`, `ORACLE`, `DATA`, `PATCH` (vendored with Orcel patches, own workspace), `REFERENCE`. Each copied
-directory carries `PROVENANCE.json { repo, sha, paths, licence, attestation_ref, patches }` checked by WP1-01.
+directory or file has a provenance entry with the fields `{ repo, sha, paths, licence, attestation_ref, patches }`, kept
+centrally in `docs/orcel/notices/donor-provenance.json` and checked by WP1-01 (revision 9: `attestation_ref` is the
+owner-asserted authorization of C-15; `licence` is recorded, not judged).
 
 ### 6.2 Wave 1
 
@@ -734,7 +760,7 @@ the browser host; OpenAPI 3.1.0 via zod's `z.toJSONSchema`.
  WP1-03 audit chain <------------+  |          WPX-03 macOS/Linux executors    WPB-04 measured corpus trial
  WP1-04 jobs <-------------------+  |
  WP1-05 web schemas <------------+  |
- WP1-08 fetch engine + component <--+ (needs 01 for the AGPL carve-out, 05)
+ WP1-08 fetch engine + component <--+ (needs 01 for provenance, 05)
  WP1-06 dispatch (03,04,05,08) -> WP1-07 MCP/REST -> WP1-09 harness -> WP1-16 headers + privacy gate
  WP1-10 authority service + dispatcher (02,03) -> WP1-12 indicator -> WP1-14 standing approvals
    -> WP1-15 executors: shells (SG-000096), filesystem/processes/apps (SG-000097)
@@ -758,30 +784,37 @@ and 08 are ready to implement** and are written to the file level.
 - Tests: `node scripts/check-current-identity.mjs`; the `ci.yml` "Validate SpecGrain JSON and canonical evidence" step;
   `npm test` in `apps/orcel-mcp` (p20 architecture test).
 
-#### WP1-01 Licence and provenance gates (ready)
+#### WP1-01 Provenance and dependency gates (ready; amended in revision 9)
+
+Revision 9 (founder decision of 2026-11-17, C-15): a licence type no longer blocks. The gates require provenance,
+preserved notices and the owner-asserted authorization reference instead of licence allowlists.
 
 Files:
-- `deny.toml` (root workspace): `[licenses] allow = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC",
-  "Unicode-3.0", "Zlib", "0BSD", "MPL-2.0"]` with `MPL-2.0` permitted only through `[[licenses.exceptions]]` entries;
-  `confidence-threshold = 0.93`; `[bans] multiple-versions = "warn"`; `[sources] unknown-registry = "deny"`,
-  `unknown-git = "deny"`.
-- `apps/orcel-firecrawl/deny.toml` (created with the component in WP1-08) allows `AGPL-3.0` for the component crate
-  only (`[[licenses.exceptions]] name = "orcel-firecrawl"`).
-- `scripts/check-npm-licenses.mjs` and `.test.mjs`: walks every `package-lock.json` under `apps/`, `packages/`,
-  `tests/`; reads each package's `license`; applies the allowlist; `tests/` may add `PSF-2.0`; exits non-zero naming the
-  package and lock file.
-- `scripts/check-agpl-markers.mjs` and `.test.mjs`: scans `crates/`, `apps/`, `packages/`, `tests/` for
-  `GNU AFFERO` and `SPDX-License-Identifier: AGPL`; allowed only under `apps/orcel-firecrawl/` and in the paths listed in
-  `docs/orcel/notices/fd06-files.txt` (new; one repository-relative path per line, from the FD-06 record).
-- `scripts/check-provenance.mjs` and `.test.mjs`: every directory named `upstream`, `third_party` or `vendor` under
-  `apps/` and `third_party/` holds a `PROVENANCE.json` with `repo`, `sha` (40 hex), `paths`, `licence`,
-  `attestation_ref` (a file under `docs/orcel/grants/` or `null`) and `patches`, and a licence text file.
-- `crates/orceld/tests/dependency_direction.rs`: runs `cargo metadata --format-version 1` and asserts section 3's rules.
-- `.github/workflows/ci.yml`: add `cargo deny check licenses bans sources` for the root workspace on all three Rust
-  legs, and the three node scripts on the Governance job.
+- `deny.toml` (root workspace): no `[licenses]` policy; `[graph] all-features = true`; `[bans] multiple-versions =
+  "warn"` with tokio and V8 banned (AD-16); `[sources] unknown-registry = "deny"`, `unknown-git = "deny"`. CI runs
+  `cargo deny check bans sources` and prints `cargo deny list` as a licence report.
+- `docs/orcel/notices/licence-policy.json`: the founder decision verbatim, the authorization reference, the scanned
+  trees (`crates/`, `apps/`, `packages/`, `tests/`, `distribution/`, `examples/`, `scripts/`, `third_party/`) and
+  reviewed exceptions for unreadable files.
+- `docs/orcel/notices/donor-provenance.json`: every donor (repository, pinned commit or release with SHA-256, original
+  licence recorded, preserved notice, authorization reference) and every copied file or directory (donor, source
+  paths, and for a directory its patch queue).
+- `scripts/check-donor-provenance.mjs` and `.test.mjs`: every file under an `upstream`, `vendor`, `vendored` or
+  `third_party` directory, every file naming a donor notice and every file an adapted-source record copies needs an
+  entry; donor fields are complete and pinned; the preserved notice exists and carries the recorded licence text
+  where the gate knows it; every per-task provenance record is consolidated.
+- `scripts/check-agpl-markers.mjs` and `.test.mjs`: a file with a licence marker (AGPL, GPL, LGPL, MPL, SSPL, BUSL or
+  FSL text, or an SPDX identifier other than Orcel's own) needs a provenance or reviewed reference entry; a file the
+  scan cannot read (binary, archive, over 4 MiB) needs one too.
+- `scripts/check-npm-licenses.mjs` and `.test.mjs`: every `package-lock.json` is read; every package is pinned
+  (version, resolved, integrity); other lockfile kinds and unlocked `package.json` files fail; licences are reported.
+- `crates/orceld/tests/dependency_direction.rs`: runs `cargo metadata` with every feature and asserts section 3's rules,
+  no `[patch]`/`[replace]`, and path packages only under `crates/`.
+- `.github/workflows/ci.yml`: the `licence-gates` job on all three legs.
 
-Definition of done: current main passes; a fixture crate with an AGPL dependency, a fixture file with an AGPL header
-outside the allowlist, an unpinned `upstream/` directory and a kernel crate depending on an app each fail.
+Definition of done: current main passes; a planted AGPL file with a provenance entry passes and without one fails; a
+copied file without provenance, an unpinned `upstream/` directory, an unpinned npm package and a kernel crate depending
+on an app each fail.
 Tests: the commands above. CI: all legs.
 
 #### WP1-02 Contracts v1 (ready)
@@ -909,7 +942,7 @@ model-backed `/v1` rows.
 | Gate | Measure |
 | --- | --- |
 | G-1 | Contract fixtures, schema drift, frozen spellings, every `FailureCode` mapped |
-| G-2 | Licence and provenance gates green; AGPL only in `apps/orcel-firecrawl` and FD-06 paths; source archive attached for the component |
+| G-2 | Provenance gates green: every copied file has pinned provenance, a preserved notice and the owner-asserted authorization reference (revision 9; licence type does not block) |
 | G-3 | 100% of Full Control dispatches have a service authorization and audit record written first; Safe golden pairs unchanged |
 | G-4 | No Orcel child owns a listening socket except the documented loopback server; the authority service's state is unreadable by a standard-user process |
 | G-5 | Every capability entry and parity row backed by a passing test or reported `unsupported`/`permission_required`/`blocked` |
@@ -985,7 +1018,7 @@ until their amendments land.
 | R10 FD prerequisites | FD-UP-1/5/7 (and 9, 11) added to packet prerequisites | 8.1 |
 | R11 missing tests/CI | WP1-00, WP1-09, WP1-11 now name commands and runners | 8.2 |
 | R12 G-7, J-1 site, cancel measurement | G-7 committed numbers (300 MB peak, 60 MB idle) with sampler and FD-UP-13; J-1 pinned fixture site plus named public site for founder leg; cancel probe defined | 10.1, 10.2, 11 |
-| R13 AGPL claim vs FD-06, scan scope | C-15/C-16 reworded to "no new AGPL"; `fd06-files.txt` allowlist; scan covers crates/apps/packages/tests | 1.4, WP1-01, SG-000101 draft |
+| R13 AGPL claim vs FD-06, scan scope | C-15/C-16 reworded to "no new AGPL"; `fd06-files.txt` allowlist; scan covers crates/apps/packages/tests | 1.4, WP1-01, SG-000101 draft (superseded by revision 9) |
 | R14 html5ever MSRV | Doc-parser workspace declares `rust-version = "1.88"` (at least 1.85); recorded | 3.1, 7.1, 7.2 |
 | R15 AuditKind relation | Lease events carry `AuthorityAuditEvent` verbatim; dispatch is a new `AuditEventKind`; `AuditKind` unchanged | 4.8 |
 | S1 same-user agent | C-25 (STRONG grant/renew, protected markers for grant/indicator/stop, input refusal tests), C-26 (executor children denied the state root, per-OS test), C-27 residual stated, FD-UP-9 mechanism | 1.2, WP1-10, WP1-12, 11 |

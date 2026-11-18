@@ -57,6 +57,13 @@ func nativeObserveWindow(req hostRequest) hostResponse {
 	}
 	resp := success(req.ID)
 	resp.Elements = elements
+	if req.RefTree {
+		// W2-01: the layout the ref tree's coordinate frame is issued for.
+		// A layout read failure leaves the tree without a frame.
+		if layout, err := currentLayout(windows.HWND(uintptr(req.HWND))); err == nil {
+			resp.Layout = &layout
+		}
+	}
 	return resp
 }
 

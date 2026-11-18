@@ -1,0 +1,470 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Job",
+  "type": "object",
+  "properties": {
+    "authority": {
+      "$ref": "#/$defs/DispatchAuthority"
+    },
+    "budget": {
+      "description": "The effective budget the job was admitted under (section 4.11).",
+      "$ref": "#/$defs/JobBudget"
+    },
+    "contract": {
+      "description": "`\"orcel.job/1\"`.",
+      "type": "string"
+    },
+    "created_at_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "expires_at_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "job_id": {
+      "description": "128-bit random, base32.",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/JobKind"
+    },
+    "orcel_session_id": {
+      "type": "string"
+    },
+    "outcome": {
+      "description": "Only when `state` is `completed`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JobOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "owner": {
+      "description": "`Principal.principal_id`; only the owner may read or cancel (S7).",
+      "type": "string"
+    },
+    "progress": {
+      "$ref": "#/$defs/JobProgress"
+    },
+    "scope_digest": {
+      "description": "SHA-256 of `canonical_json(scope)`: the destination scope the\napproval binds (origins and their resolved-address sets).",
+      "type": "string"
+    },
+    "spec_digest": {
+      "description": "SHA-256 of `canonical_json(spec)`; the approval binds it.",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/ExecutionState"
+    },
+    "task": {
+      "description": "Declared task, at most `MAX_TASK_BYTES`, escaped for prompts.",
+      "type": "string"
+    },
+    "updated_at_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "contract",
+    "job_id",
+    "kind",
+    "owner",
+    "orcel_session_id",
+    "task",
+    "scope_digest",
+    "spec_digest",
+    "state",
+    "authority",
+    "progress",
+    "budget",
+    "created_at_ms",
+    "updated_at_ms",
+    "expires_at_ms"
+  ],
+  "$defs": {
+    "ApprovalClass": {
+      "description": "Approval class. The wire spellings are the existing ones of the MCP tool\ncatalog (`\"none\"`, `\"SOFT\"`, `\"STRONG\"`) and of `orcel-approval`, so the\nRust tool mirror and the TypeScript catalog compare equal.",
+      "type": "string",
+      "enum": [
+        "none",
+        "SOFT",
+        "STRONG"
+      ]
+    },
+    "AuthorityMode": {
+      "description": "SG-000093 authority mode. Moved from `orcel-policy` with identical serde\nspellings; `orcel-policy` re-exports it.",
+      "type": "string",
+      "enum": [
+        "safe",
+        "full_user",
+        "full_admin",
+        "persistent_admin",
+        "remote_full_control"
+      ]
+    },
+    "DispatchAuthority": {
+      "description": "Attached by `orceld` to every dispatch and audit event.",
+      "type": "object",
+      "properties": {
+        "authorization_id": {
+          "description": "The authority service's `Authorize` decision id (section 4.13);\n`Some` for every Full Control dispatch.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "grant": {
+          "description": "`Some` for every per-action approved dispatch, with or without a\nlease (C-04).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GrantRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lease": {
+          "description": "`Some` for every Full Control dispatch (C-05).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeaseRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mode": {
+          "$ref": "#/$defs/AuthorityMode"
+        },
+        "standing": {
+          "description": "The standing approval id (section 4.15) that covered the dispatch\ninstead of a per-action grant.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ]
+    },
+    "ExecutionState": {
+      "description": "SG-000093 execution state. Moved from `orcel-policy` with identical serde\nspellings; `orcel-policy` re-exports it.",
+      "type": "string",
+      "enum": [
+        "not_started",
+        "dispatched",
+        "completed",
+        "cancelled",
+        "outcome_unknown"
+      ]
+    },
+    "FailureCode": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "INVALID_REQUEST",
+            "CAPABILITY_DENIED",
+            "WORKSPACE_DENIED",
+            "PATH_ESCAPE",
+            "PATH_RACE_DETECTED",
+            "APPROVAL_REQUIRED",
+            "APPROVAL_DENIED",
+            "APPROVAL_UNAVAILABLE",
+            "TARGET_STALE",
+            "PROVIDER_UNAVAILABLE",
+            "PROCESS_TIMEOUT",
+            "PROCESS_TERMINATION_UNVERIFIED",
+            "OUTPUT_LIMIT",
+            "POSTCONDITION_FAILED",
+            "INTERNAL_ERROR"
+          ]
+        },
+        {
+          "description": "SG-000055: a remote-context request without an exact active local\nremote-session lease. Never satisfiable by the remote side.",
+          "type": "string",
+          "const": "REMOTE_SESSION_INACTIVE"
+        },
+        {
+          "description": "Contracts v1: a lease-gated executor was asked for without an active\nlease.",
+          "type": "string",
+          "const": "LEASE_REQUIRED"
+        },
+        {
+          "description": "Contracts v1: a lease exists but a binding, the epoch, the policy\nrevision or the expiry does not match.",
+          "type": "string",
+          "const": "LEASE_INVALID"
+        },
+        {
+          "description": "Contracts v1: no identity binding exists on this OS yet.",
+          "type": "string",
+          "const": "LEASE_UNSUPPORTED_PLATFORM"
+        },
+        {
+          "description": "Contracts v1: Full Control dispatch refused because the protected\nindicator is not alive.",
+          "type": "string",
+          "const": "INDICATOR_UNAVAILABLE"
+        },
+        {
+          "description": "Contracts v1: the capability entry is `unsupported`.",
+          "type": "string",
+          "const": "UNSUPPORTED"
+        },
+        {
+          "description": "Contracts v1: the capability entry is `blocked` by policy.",
+          "type": "string",
+          "const": "POLICY_BLOCKED"
+        },
+        {
+          "description": "Contracts v1: the job is unknown, expired or not owned by the caller.",
+          "type": "string",
+          "const": "JOB_NOT_FOUND"
+        },
+        {
+          "description": "Contracts v1: a queue, store or pending-approval bound was reached.",
+          "type": "string",
+          "const": "QUEUE_FULL"
+        },
+        {
+          "description": "Contracts v1: a per-origin politeness budget is exhausted.",
+          "type": "string",
+          "const": "RATE_LIMITED"
+        },
+        {
+          "description": "Contracts v1: the job or unit ended in `outcome_unknown`; it is never\nretried automatically.",
+          "type": "string",
+          "const": "OUTCOME_UNKNOWN"
+        },
+        {
+          "description": "Contracts v1: the authority service is not installed or not\nanswering, so Full Control is unavailable.",
+          "type": "string",
+          "const": "AUTHORITY_UNAVAILABLE"
+        },
+        {
+          "description": "Contracts v1: an opt-in feature not granted to this client.",
+          "type": "string",
+          "const": "PERMISSION_REQUIRED"
+        }
+      ]
+    },
+    "GrantRef": {
+      "description": "A per-action approval: an existing `orcel-approval` one-shot nonce,\nbound to the client principal and the Orcel session.",
+      "type": "object",
+      "properties": {
+        "action_digest": {
+          "description": "What was approved, exactly (canonical JSON SHA-256 for new shapes).",
+          "type": "string"
+        },
+        "approval_class": {
+          "$ref": "#/$defs/ApprovalClass"
+        },
+        "contract": {
+          "description": "`\"orcel.grant-ref/1\"`.",
+          "type": "string"
+        },
+        "nonce_id": {
+          "description": "One-shot, short expiry (SG-000018).",
+          "type": "string"
+        },
+        "orcel_session_id": {
+          "description": "Bound: a restart invalidates every outstanding grant (S10).",
+          "type": "string"
+        },
+        "principal_id": {
+          "description": "The client principal the approval was given to; another client\ncannot use it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "approval_class",
+        "action_digest",
+        "nonce_id",
+        "orcel_session_id",
+        "principal_id"
+      ]
+    },
+    "JobBudget": {
+      "description": "Outbound copy of the budget a job was admitted under. Unlike the inbound\n`CrawlBudget` configuration it tolerates unknown fields, so adding a\nbudget field later does not break older readers of `Job`.",
+      "type": "object",
+      "properties": {
+        "max_batch_urls": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_depth": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_duration_s": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_job_result_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_pages": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_remembered_urls": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "min_delay_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "max_pages",
+        "max_depth",
+        "max_duration_s",
+        "max_remembered_urls",
+        "min_delay_ms",
+        "max_batch_urls",
+        "max_job_result_bytes"
+      ]
+    },
+    "JobKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "web_crawl",
+            "web_batch_scrape"
+          ]
+        },
+        {
+          "description": "A map run is one crawl-shaped unit in map mode (section 5.2 row 2).",
+          "type": "string",
+          "const": "web_map"
+        }
+      ]
+    },
+    "JobOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "const": "succeeded"
+            }
+          },
+          "required": [
+            "result"
+          ]
+        },
+        {
+          "description": "Some units failed.",
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "const": "partial"
+            }
+          },
+          "required": [
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/FailureCode"
+            },
+            "result": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "result",
+            "code"
+          ]
+        }
+      ]
+    },
+    "JobProgress": {
+      "type": "object",
+      "properties": {
+        "completed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total",
+        "completed",
+        "failed",
+        "skipped"
+      ]
+    },
+    "LeaseRef": {
+      "type": "object",
+      "properties": {
+        "authority_epoch": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "binding_digest": {
+          "type": "string"
+        },
+        "lease_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "lease_id",
+        "binding_digest",
+        "authority_epoch"
+      ]
+    }
+  }
+}

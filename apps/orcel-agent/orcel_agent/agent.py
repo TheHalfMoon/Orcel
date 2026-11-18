@@ -51,6 +51,12 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
     {"fs_read", "fs_read_range", "fs_list", "fs_stat", "fs_find", "fs_search", "workspace_get", "system_status"}
 )
 
+#: W2-02: desktop observation tools whose contract approval is also `none`
+#: (`apps/orcel-mcp/src/tool_contract.ts`: effect `desktop_observe`). An
+#: agent counts them as read-only only when its caller opts in through
+#: `observation_tools`; otherwise they stay fail-closed as mutating.
+DESKTOP_OBSERVE_TOOLS: frozenset[str] = frozenset({"desktop_window_list", "desktop_window_tree"})
+
 APPROVAL_DENIED = {"APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"}
 
 #: Stops after which the run can be resumed, so its store is kept.
@@ -132,6 +138,10 @@ class Agent:
     #: and in every dispatch. (Defence in depth: ChatModelPlanner refuses
     #: non-read-only tools on its own.)
     _read_only_only: bool = False
+    #: W2-02: the desktop observation tools this run treats as read-only (a
+    #: subset of DESKTOP_OBSERVE_TOOLS, checked in prepare()). Ignored by the
+    #: chat agent's read-only gate, which admits READ_ONLY_TOOLS only.
+    observation_tools: frozenset[str] = frozenset()
     steps: list[Step] = field(default_factory=list)
     approval_requests: int = 0
     _dispatched: int = 0
@@ -145,7 +155,10 @@ class Agent:
 
     def is_mutating(self, tool: str) -> bool:
         """Fail closed: anything not known read-only may change state or
-        prompt for approval."""
+        prompt for approval. A desktop observation tool counts as read-only
+        only when the caller opted in (W2-02)."""
+        if tool in self.observation_tools and tool in DESKTOP_OBSERVE_TOOLS:
+            return False
         return tool not in READ_ONLY_TOOLS
 
     def prepare(self) -> list[ToolSpec]:
@@ -156,6 +169,8 @@ class Agent:
             return list(self._tools.values())
         if self._read_only_only and not set(self.allowlist) <= READ_ONLY_TOOLS:
             raise AgentStop("allowlist-too-wide")
+        if not set(self.observation_tools) <= DESKTOP_OBSERVE_TOOLS:
+            raise AgentStop("observation-tools-too-wide")
         self._prepared = True
         self._tools = {tool.name: tool for tool in self.edge.list_tools() if tool.name in self.allowlist}
         self.events.emit("run.started", tools=sorted(self._tools))

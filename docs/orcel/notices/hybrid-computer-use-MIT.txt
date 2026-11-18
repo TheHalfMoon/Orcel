@@ -1,0 +1,37 @@
+Hybrid Computer Use (microsoft/Hybrid-Computer-Use) - adapted source notice
+
+Orcel adapts MIT-licensed source from microsoft/Hybrid-Computer-Use at commit
+00eaeebe8ac0d275e46f875bdb5347e5f326faa1 into the private Windows computer
+host: the semantic desktop layer (compact accessibility tree with short refs,
+ref continuity and staleness, semantic diff, window layout frame, batch plan
+compiler) from computer-use/internal/core/ and the layout frame rule from
+computer-use/native/windows/ComputerUse.Windows.Runtime/. The adapted files
+live under apps/orcel-computer-host/third_party/hcu/semantic/; each names its
+donor blob. Orcel's changes are listed in
+apps/orcel-computer-host/third_party/hcu/PATCHES.md, and
+docs/orcel/hcu_semantic_provenance.json records the provenance. None of the
+donor's separately licensed components (Apache-2.0 OSWorld files, the
+Playwright-derived Linux indexer, the macOS provider portions, Go
+dependencies, NuGet packages) is included.
+
+MIT License
+
+Copyright (c) 2026 Hybrid Computer Use authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

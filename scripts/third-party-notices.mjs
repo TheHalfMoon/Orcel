@@ -58,6 +58,12 @@ const VENDORED_NOTICES = [
     file: "docs/orcel/notices/playwright-Apache-2.0.txt",
     copyright: "Copyright (c) Microsoft Corporation"
   },
+  {
+    name: "Stagehand (browserbase/stagehand@82827a219512f0399cb159720a63f7d271d21480, adapted accessibility outline source)",
+    license: "MIT",
+    file: "docs/orcel/notices/stagehand-MIT.txt",
+    copyright: "Copyright (c) 2024 Browserbase Inc."
+  },
   // F5 slice 1: in the confined document parser, so only where it ships.
   // lopdf is a path dependency ([patch.crates-io]), so the crate walk below,
   // which lists registry crates only, never reaches it.

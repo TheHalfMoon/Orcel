@@ -204,9 +204,30 @@ test("SG-000094 and SG-000095 are closed and SG-000096 and SG-000097 are the onl
   // and SG-000134 (ORCEL-UP, the unified platform's Wave 1) and SG-000097
   // (DESKAL-P20, full filesystem access, out of the P20 sequential order) run
   // beside them by founder decision of 2026-11-17, given in the Claude Code
-  // session with no tracking issue; no other grain may be open, and
-  // SG-000101 and SG-000102 stay reserved.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000097", "SG-000127", "SG-000128", "SG-000131", "SG-000132", "SG-000133", "SG-000134"]);
+  // session with no tracking issue. SG-000135 (ORCEL-BROWSER, the Orcel
+  // Browser Session Broker, browser-full profile and Full Access browser
+  // leases) runs beside them by founder decision of 2026-11-17, given in the
+  // same way; no other grain may be open, and SG-000101 and SG-000102 stay
+  // reserved.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000097", "SG-000127", "SG-000128", "SG-000131", "SG-000132", "SG-000133", "SG-000134", "SG-000135"]);
+  // The SG-000135 activation grants nothing: a GRAIN with no tracking issue,
+  // its activation delta "None." and its release delta starting "None.".
+  const sg135 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number | null;
+    authority_delta: Record<string, string>;
+    activation_note: string;
+  }>(".specgrain/specs/SG-000135.json");
+  assert.equal(sg135.program, "ORCEL-BROWSER");
+  assert.equal(sg135.state, "GRAIN");
+  assert.equal(sg135.base, "48ae7a1247d5d793775c5b753d325dcff051b5e6");
+  assert.equal(sg135.planning_issue, null);
+  assert.deepEqual(Object.keys(sg135.authority_delta).sort(), ["activation", "broker", "leases", "mcp", "profiles", "release", "remote"]);
+  assert.equal(sg135.authority_delta.activation, "None.");
+  assert.match(sg135.authority_delta.release ?? "", /^None\. /);
+  assert.match(sg135.activation_note, /founder's go-ahead of 2026-11-17, given in the Claude Code session/);
   const sg119 = readJson<{
     program: string;
     state: string;

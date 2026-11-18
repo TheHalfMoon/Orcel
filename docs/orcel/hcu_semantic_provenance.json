@@ -1,0 +1,103 @@
+{
+  "schema": "orcel-vendored-provenance/1",
+  "task": "W2-01",
+  "proposed_grain": "SG-000132 (or an SG-000095 amendment) for any new action kind; an amendment of the SG-000128 observation surface for the ref_tree view",
+  "donor": {
+    "id": "hybrid-computer-use",
+    "repository": "microsoft/Hybrid-Computer-Use",
+    "commit": "00eaeebe8ac0d275e46f875bdb5347e5f326faa1",
+    "license": "MIT",
+    "license_path": "LICENSE",
+    "license_blob_sha": "aa706a7c365bb4dd3820dbe6710b762cea514bd2",
+    "notice_path": "docs/orcel/notices/hybrid-computer-use-MIT.txt",
+    "licence_text": "apps/orcel-computer-host/third_party/hcu/LICENSE",
+    "authorization": "Upstream MIT terms. The founder's W2 source-first authorization of 2026-11-17 was relayed by the coordinating agent and is not yet recorded under docs/orcel/grants; it is not needed for MIT code and is not claimed as a relicensing document."
+  },
+  "method": "COPY_ADAPT: functions copied from the donor and adapted; the donor files are not vendored verbatim, so no tree hash is reproducible. Each adapted file names its donor blob in its header.",
+  "patch_queue": "apps/orcel-computer-host/third_party/hcu/PATCHES.md",
+  "excluded_donor_components": [
+    "computer-use/native/macos (MIT open-codex-computer-use and cua-yabai portions, Swift)",
+    "computer-use/native/linux (Python AT-SPI provider, Apache-2.0 StableIndexer portions)",
+    "computer-use/native/windows .NET/FlaUI provider (only the layout frame rule is ported to Go)",
+    "osworld-overlay and hcu/osworld (Apache-2.0)",
+    "computer-use/vendor (golang.org/x/text, santhosh-tekuri/jsonschema)",
+    "MCP server, CLI, daemon, SDKs, telemetry and trace switches"
+  ],
+  "files": [
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/roles.go",
+      "donor_files": [{ "path": "computer-use/internal/core/ax_role_ontology.go", "blob_sha": "f5ed94abea98c2d8e1ca4496a48465a41b047e6f" }]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/identity.go",
+      "donor_files": [{ "path": "computer-use/internal/core/ax_snapshot_identity.go", "blob_sha": "fa1efac8dc6683f2460493d2cddf9056e740219d" }]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/refs.go",
+      "donor_files": [
+        { "path": "computer-use/internal/core/ax_ref_registry.go", "blob_sha": "36182c2f3a151fb272643ec50a4113750fefb245" },
+        { "path": "computer-use/internal/core/ax_ref_minting.go", "blob_sha": "51f642f6b2d96beba4f30914f7fe60a3671b454e" }
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/render.go",
+      "donor_files": [{ "path": "computer-use/internal/core/ax_renderer.go", "blob_sha": "fc202bfb3081b8539d1ad86bf91c2164bdae92a2" }]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/diff.go",
+      "donor_files": [{ "path": "computer-use/internal/core/ax_semantic_diff.go", "blob_sha": "cc30f95d0f3781eb8d1085615bf3e283aa1fec2d" }]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/layout.go",
+      "donor_files": [
+        { "path": "computer-use/native/windows/ComputerUse.Windows.Runtime/WindowsDesktopLayoutDiagnostics.cs", "blob_sha": "e6e158f1dd6116f0964e5167a5515594381dad45" },
+        { "path": "computer-use/native/windows/ComputerUse.Windows.Runtime/DesktopProvider.cs", "blob_sha": "c9d9f4cc97450cef8e6a46f5ccfe1b55309ed909" }
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/batch.go",
+      "donor_files": [{ "path": "computer-use/internal/core/ax_batch_plan.go", "blob_sha": "41b2560db454441f2a021c95e8d94ec4f427bd27" }]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/refs_test.go",
+      "donor_files": [{ "path": "computer-use/internal/core/ax_ref_registry_test.go", "blob_sha": "306c28b621d5ec56ade69b4a3137d56b387cbae0" }]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/render_test.go",
+      "donor_files": [
+        { "path": "computer-use/internal/core/ax_renderer_test.go", "blob_sha": "772253bde17d846262787cba0d551e3c979f41fa" },
+        { "path": "computer-use/internal/core/ax_semantic_diff_test.go", "blob_sha": "f62294b75bec5e5bdbf972bef489e15511e4113a" },
+        { "path": "computer-use/internal/core/ax_batch_plan_test.go", "blob_sha": "20d1f57c0c3250014c5c47cd1697777864a4df26" }
+      ]
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/doc.go",
+      "donor_files": []
+    },
+    {
+      "path": "apps/orcel-computer-host/third_party/hcu/semantic/adapter.go",
+      "donor_files": [],
+      "note": "Interface after the donor's per-platform provider split; no donor code."
+    }
+  ],
+  "donor_provenance_entry": {
+    "note": "The entry for docs/orcel/notices/donor-provenance.json (WP1-01, branch wp1/licence-gates, not yet on main). Merge it there when WP1-01 lands. FA-2026-10-18 is the key every permissive donor in that manifest uses (its scope is every donor recorded in Orcel); the upstream MIT terms cover this donor on their own, and the relayed W2 authorization of 2026-11-17 should be recorded under docs/orcel/grants before it is cited.",
+    "donors": {
+      "hybrid-computer-use": {
+        "repo": "microsoft/Hybrid-Computer-Use",
+        "commit": "00eaeebe8ac0d275e46f875bdb5347e5f326faa1",
+        "licence": "MIT",
+        "notice": "docs/orcel/notices/hybrid-computer-use-MIT.txt",
+        "licence_text": "apps/orcel-computer-host/third_party/hcu/LICENSE",
+        "attestation": "FA-2026-10-18",
+        "records": ["docs/orcel/hcu_semantic_provenance.json"]
+      }
+    },
+    "files": [
+      { "path": "apps/orcel-computer-host/third_party/hcu/", "donor": "hybrid-computer-use", "patches": "apps/orcel-computer-host/third_party/hcu/PATCHES.md" }
+    ],
+    "references": [
+      { "path": "docs/orcel/implementation-readiness/prep/W2_01_HCU_INTEGRATION.md", "reason": "W2-01 module map and integration record for the HCU semantic layer." }
+    ]
+  }
+}

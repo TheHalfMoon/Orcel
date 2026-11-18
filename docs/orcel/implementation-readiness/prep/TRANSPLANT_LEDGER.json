@@ -25,7 +25,7 @@
  },
  "authorization_vocabulary": {
   "OWNER-ASSERTED (founder, 2026-11-17)": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
-  "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17": "Founder's Vercel source expansion of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Vercel source expansion (2026-11-17)'): the founder states rights beyond the public licences, and licence type does not block copying (founder decision of 2026-11-17). Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository."
+  "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17": "Founder's Vercel source expansion of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Vercel source expansion (2026-11-17)'): the founder states rights beyond the public licences, and licence type does not block copying (founder decision of 2026-11-17). Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Also used for the founder's browser-donor authorization of 2026-11-17 (same file, section 'Browser donors (2026-11-17)'), which excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights."
  },
  "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy.",
  "architecture_layers": [
@@ -135,17 +135,24 @@
     "public_licence": "/: Apache-2.0; vendor/taffy: MIT; vendor/cosmic-text: MIT OR Apache-2.0; vendor/wreq-util: Apache-2.0; Noto Color Emoji font: OFL-1.1",
     "public_licence_role": "informational (kept for notices and provenance)",
     "public_licence_family": "permissive",
-    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
-    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
     "licence_blocks_copying_renaming_publishing": false,
     "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
-   "status": "NOT_ACQUIRED",
-   "status_evidence": "Pinned and inventoried through the GitHub API only (DONOR_INVENTORY.md section 3.1); no local copy, no Orcel code from it.",
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\obscura, SHA verified (Orcel Browser packet B0). Donor tests not run in B0. Nothing copied into Orcel.",
    "priority": "P2",
    "inventory_records": [
     "obscura.* (12 records)"
-   ]
+   ],
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\obscura",
+    "sha_verified": "0d9a2f764ffdb097269da048002c593865e83a9e",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   }
   },
   {
    "id": "browser_use",
@@ -225,8 +232,8 @@
     "public_licence": "/: MIT (Copyright (c) 2024 Gregor Zunic)",
     "public_licence_role": "informational (kept for notices and provenance)",
     "public_licence_family": "permissive",
-    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
-    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
     "licence_blocks_copying_renaming_publishing": false,
     "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
@@ -235,7 +242,15 @@
    "priority": "P1",
    "inventory_records": [
     "browser_use.* (6 records)"
-   ]
+   ],
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\browser-use",
+    "sha_verified": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md",
+    "note": "Full tree now cloned at the same SHA; status stays TESTED for the extraction subset already on main. browser-use 1.0 embeds browser-harness as its engine: transplant once."
+   }
   },
   {
    "id": "agent_desktop",
@@ -2315,9 +2330,9 @@
    },
    "repo": "browserbase/stagehand",
    "repo_url": "https://github.com/browserbase/stagehand",
-   "pinned_sha": "82827a219512f0399cb159720a63f7d271d21480",
+   "pinned_sha": "0f9a64c141d929b0595b4d909d89fb02e37c1ca4",
    "pinned_on": "2026-11-17",
-   "pin_method": "git ls-remote <repo> HEAD; metadata, languages, recursive tree and licence files via the GitHub API at that SHA",
+   "pin_method": "Founder-verified SHA (ORCEL_BROWSER_MASTER_DECISION.md, 2026-11-17); shallow clone at that SHA",
    "default_branch": "main",
    "archived": false,
    "size": {
@@ -2416,17 +2431,29 @@
     "public_licence": "/: MIT (Copyright (c) 2024 Browserbase Inc.); packages/cli: MIT (own LICENSE)",
     "public_licence_role": "informational (kept for notices and provenance)",
     "public_licence_family": "permissive",
-    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
-    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
     "licence_blocks_copying_renaming_publishing": false,
     "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
    "status": "SOURCE_ACQUIRED",
-   "status_evidence": "Shallow clone at this SHA in D:\\Orcel-REA-W2\\stagehand; no tests run.",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\stagehand (58.9 MB tree), SHA verified. Nothing copied into Orcel.",
    "priority": "P0",
    "inventory_records": [
     "stagehand.act_observe_extract (new)"
-   ]
+   ],
+   "previous_pin": {
+    "pinned_sha": "82827a219512f0399cb159720a63f7d271d21480",
+    "local_clone": "D:\\Orcel-REA-W2\\stagehand",
+    "note": "Wave 2 REA clone. Between 82827a2 and 0f9a64c, every upstream path listed in modules[] is byte-identical; 65 paths differ elsewhere (CLI daemon, sdk-ts browser surface, lint rules, CI). No Stagehand file has been copied into Orcel, so no Orcel file needs updating."
+   },
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\stagehand",
+    "sha_verified": "0f9a64c141d929b0595b4d909d89fb02e37c1ca4",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   }
   },
   {
    "id": "cua",
@@ -3269,9 +3296,9 @@
    },
    "repo": "browseros-ai/BrowserOS",
    "repo_url": "https://github.com/browseros-ai/BrowserOS",
-   "pinned_sha": "81c8f6a35c0ae5a2fe8c7a1d3f7e871aa207f24c",
+   "pinned_sha": "bd725831273884c4b1aee8425975afa122f720f2",
    "pinned_on": "2026-11-17",
-   "pin_method": "git ls-remote <repo> HEAD; metadata, languages, recursive tree and licence files via the GitHub API at that SHA",
+   "pin_method": "Founder-verified SHA (D:\\Orcel-Experience\\ORCEL_BROWSER_MASTER_DECISION.md, 2026-11-17); shallow clone at that SHA",
    "default_branch": "main",
    "archived": false,
    "size": {
@@ -3350,17 +3377,36 @@
     "public_licence": "/ and packages/browseros-agent: AGPL-3.0; ungoogled-chromium patches under packages/browseros/series_patches (per LICENSE.ungoogled_chromium): BSD-3-Clause (LICENSE.ungoogled_chromium); packages/browseros-agent/packages/{acpx-ai-provider, agent-mcp-manager}: MIT (Dani Akash); packages/browseros-agent/packages/agent-cursor: MIT (Cua AI, Inc.); packages/browseros-agent/crates/neo-sdk/neo-playwright/third_party/{playwright, mime, yaml}: Apache-2.0, MIT, ISC; packages/browseros/bos_build/steps/patches/fixtures: BSD-3-Clause (Chromium)",
     "public_licence_role": "informational (kept for notices and provenance)",
     "public_licence_family": "copyleft (AGPL/GPL)",
-    "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
-    "authorization_note": "Founder decision of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Founder decision: licences no longer block'): licence type no longer blocks copying, renaming or publishing. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
     "licence_blocks_copying_renaming_publishing": false,
     "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
-   "status": "NOT_ACQUIRED",
-   "status_evidence": "API pin only.",
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\BrowserOS (204.9 MB tree). Windows-buildable Rust packages of packages/browseros-agent (claw-server, browseros-cdp/core/mcp/decide, claw-api, harness-integrations, hosted-api, neo-takeover/trace/screencast/captcha/sdk-api): 2633 passed, 12 failed (Windows path, permission and error-classification differences), 18 ignored (live). neo-http and neo-playwright do not compile on Windows (std::os::unix). Full workspace and TypeScript suites not run. Nothing copied into Orcel.",
    "priority": "P2",
    "inventory_records": [
     "browseros.reference (new)"
-   ]
+   ],
+   "previous_pin": {
+    "pinned_sha": "81c8f6a35c0ae5a2fe8c7a1d3f7e871aa207f24c",
+    "note": "API pin from the 2026-11-17 ledger sweep; replaced by the founder-verified SHA."
+   },
+   "chromium_pin": {
+    "CHROMIUM_VERSION": "155.0.8059.26",
+    "BASE_COMMIT": "16c3e55476d3564bea713314b2fff638749ce3e6",
+    "BROWSEROS_VERSION": "0.53.0.0",
+    "chromium_patches_files": 425,
+    "note": "Chromium source not fetched or built (needs about 100 GB)."
+   },
+   "browseros_agent_layout": "packages/browseros-agent is a plain tree at this SHA (not a submodule); the only submodule is the private .internal-docs.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\BrowserOS",
+    "sha_verified": "bd725831273884c4b1aee8425975afa122f720f2",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   }
   },
   {
    "id": "skyvern",
@@ -4904,12 +4950,12 @@
     "public_licence_role": "informational (kept for notices and provenance)",
     "public_licence_family": "permissive",
     "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
-    "authorization_note": "Founder's Vercel source expansion of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Vercel source expansion (2026-11-17)'): the founder states rights beyond the public licences, and licence type does not block copying (founder decision of 2026-11-17). Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository.",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
     "licence_blocks_copying_renaming_publishing": false,
     "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
    },
-   "status": "NOT_ACQUIRED",
-   "status_evidence": "Pinned and inventoried through the GitHub API only (tree, manifests, licence files and key source files read at the SHA); no local copy, no Orcel code from it.",
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\agent-browser, SHA verified (Orcel Browser packet B0). Donor tests not run in B0. Nothing copied into Orcel.",
    "priority": "P0",
    "inventory_records": [
     "agent_browser.* (existing feature-level rows)"
@@ -4917,6 +4963,13 @@
    "promoted_from_tracked_donors": {
     "pinned_sha": "b06e2533ba9b3823b8a96c859d455cb55f4d7893",
     "note": "HEAD moved from 53384771fbafc261ba67608ac806dd5aa70b84f0 (2026-11-16). Orcel-owned equivalents in capability_inventory.json agent_browser.* rows."
+   },
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\agent-browser",
+    "sha_verified": "b06e2533ba9b3823b8a96c859d455cb55f4d7893",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
    }
   },
   {
@@ -8573,6 +8626,565 @@
    "inventory_records": [
     "detect_agent.agent_detection"
    ]
+  },
+  {
+   "id": "browseros_agent",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "BrowserOS-agent",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/BrowserOS-agent",
+   "repo_url": "https://github.com/browseros-ai/BrowserOS-agent",
+   "pinned_sha": "e886782210d1a60da45bf9ec20afc70ddc2eae66",
+   "pinned_on": "2026-11-17",
+   "pin_method": "Founder-verified SHA where given, else HEAD at clone; shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 958,
+    "tree_mb": 6.1
+   },
+   "classification": "CORE (legacy)",
+   "functionality": "Older BrowserOS agent monorepo (last commit 2026-06-18): apps/server (Bun MCP + agent loop), apps/agent (UI extension), apps/controller-ext (MV3 extension bridging chrome.tabs, bookmarks and history to the server over WebSocket). Superseded by packages/browseros-agent in BrowserOS except controller-ext, which BrowserOS's release specs still build from this repository.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "AGPL-3.0"
+     }
+    ]
+   },
+   "modules": [
+    {
+     "layer": "Execution",
+     "upstream_paths": [
+      "apps/controller-ext"
+     ],
+     "feature": "chrome.* bridge extension (tabs, bookmarks, history)",
+     "orcel_owner": "none yet (P1 human browser)"
+    }
+   ],
+   "target_owner": "reference only (controller-ext for the human browser, P1)",
+   "rights": {
+    "public_licence": "/: AGPL-3.0",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "copyleft (AGPL/GPL)",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\BrowserOS-agent, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\BrowserOS-agent",
+    "sha_verified": "e886782210d1a60da45bf9ec20afc70ddc2eae66",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P1"
+  },
+  {
+   "id": "browserclaw_claude_desktop",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "browserclaw-claude-desktop",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/browserclaw-claude-desktop",
+   "repo_url": "https://github.com/browseros-ai/browserclaw-claude-desktop",
+   "pinned_sha": "474c7ffe5b425ce1b0e1171707b9afc35e0c5a29",
+   "pinned_on": "2026-11-17",
+   "pin_method": "Founder-verified SHA where given, else HEAD at clone; shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 18,
+    "tree_mb": 0.1
+   },
+   "classification": "AGENT CONNECTOR",
+   "functionality": "Claude Desktop .mcpb extension bridging to the local BrowserOS neo MCP endpoint.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "MIT (Copyright (c) 2026 BrowserOS)"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "apps/orcel-mcp (connector packaging reference)",
+   "rights": {
+    "public_licence": "/: MIT (Copyright (c) 2026 BrowserOS)",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\browserclaw-claude-desktop, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\browserclaw-claude-desktop",
+    "sha_verified": "474c7ffe5b425ce1b0e1171707b9afc35e0c5a29",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P2"
+  },
+  {
+   "id": "browserclaw_codex_app",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "browserclaw-codex-app",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/browserclaw-codex-app",
+   "repo_url": "https://github.com/browseros-ai/browserclaw-codex-app",
+   "pinned_sha": "c755fd745c091a2bce764cafb6f7728dd3cc8ec5",
+   "pinned_on": "2026-11-17",
+   "pin_method": "Founder-verified SHA where given, else HEAD at clone; shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 20,
+    "tree_mb": 0.2
+   },
+   "classification": "AGENT CONNECTOR",
+   "functionality": "Codex plugin: a Node launcher discovers the local claw-server URL and hands off to mcp-remote (stdio to HTTP); no tools of its own.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "MIT (Copyright (c) 2026 BrowserOS)"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "apps/orcel-mcp (connector packaging reference)",
+   "rights": {
+    "public_licence": "/: MIT (Copyright (c) 2026 BrowserOS)",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\browserclaw-codex-app, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\browserclaw-codex-app",
+    "sha_verified": "c755fd745c091a2bce764cafb6f7728dd3cc8ec5",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P2"
+  },
+  {
+   "id": "browser_harness",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "Browser Harness",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browser-use/browser-harness",
+   "repo_url": "https://github.com/browser-use/browser-harness",
+   "pinned_sha": "bc274a297d893e94ee05b4901898809651876a2d",
+   "pinned_on": "2026-11-17",
+   "pin_method": "Founder-verified SHA where given, else HEAD at clone; shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 259,
+    "tree_mb": 5.1
+   },
+   "classification": "SECONDARY: AGENT CONNECTOR",
+   "functionality": "CDP helpers for attaching an agent to a consented, logged-in Chrome, plus domain and interaction skills. Now the engine inside browser-use 1.0; transplant once with browser_use.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "MIT (Copyright (c) 2026 Browser Use)"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "apps/orcel-browser-worker (consented attach, P1)",
+   "rights": {
+    "public_licence": "/: MIT (Copyright (c) 2026 Browser Use)",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\browser-harness, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\browser-harness",
+    "sha_verified": "bc274a297d893e94ee05b4901898809651876a2d",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P1"
+  },
+  {
+   "id": "browseros_skills",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "skills",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/skills",
+   "repo_url": "https://github.com/browseros-ai/skills",
+   "pinned_sha": "c882b80dd4fcbad127c8386cbee7ac191ffa62b1",
+   "pinned_on": "2026-11-17",
+   "pin_method": "HEAD at clone (2026-11-17); shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 4,
+    "tree_mb": 0.0
+   },
+   "classification": "AGENT CONNECTOR",
+   "functionality": "One agent skill (browseros) for browseros-cli.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "no LICENSE file"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "none (inventory only)",
+   "rights": {
+    "public_licence": "/: no LICENSE file",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "none (all rights reserved by default)",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\skills, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\skills",
+    "sha_verified": "c882b80dd4fcbad127c8386cbee7ac191ffa62b1",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P2"
+  },
+  {
+   "id": "browseros_homebrew_tap",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "homebrew-tap",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/homebrew-tap",
+   "repo_url": "https://github.com/browseros-ai/homebrew-tap",
+   "pinned_sha": "51866725f8a79fa904aab13307ba12a8e96f53ef",
+   "pinned_on": "2026-11-17",
+   "pin_method": "HEAD at clone (2026-11-17); shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 4,
+    "tree_mb": 0.0
+   },
+   "classification": "BUILD+DISTRIBUTION",
+   "functionality": "Homebrew cask browseros-neo.rb (macOS distribution).",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "MIT (Copyright (c) 2026 BrowserOS)"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "none (inventory only)",
+   "rights": {
+    "public_licence": "/: MIT (Copyright (c) 2026 BrowserOS)",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\homebrew-tap, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\homebrew-tap",
+    "sha_verified": "51866725f8a79fa904aab13307ba12a8e96f53ef",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P2"
+  },
+  {
+   "id": "browseros_cla_signatures",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "cla-signatures",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/cla-signatures",
+   "repo_url": "https://github.com/browseros-ai/cla-signatures",
+   "pinned_sha": "0d56cacd0f9f09cce474e76c1e42a56ffea15225",
+   "pinned_on": "2026-11-17",
+   "pin_method": "HEAD at clone (2026-11-17); shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 2,
+    "tree_mb": 0.0
+   },
+   "classification": "BUILD+DISTRIBUTION",
+   "functionality": "CLA signature register (68 contributors); rights evidence, not code.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "data only"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "none (inventory only)",
+   "rights": {
+    "public_licence": "/: data only",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "none",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\cla-signatures, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\cla-signatures",
+    "sha_verified": "0d56cacd0f9f09cce474e76c1e42a56ffea15225",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P2"
+  },
+  {
+   "id": "browseros_docs",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "docs",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/docs",
+   "repo_url": "https://github.com/browseros-ai/docs",
+   "pinned_sha": "3e4eb91ed75fc0abaf16b5e6d9e1f3e5a832d009",
+   "pinned_on": "2026-11-17",
+   "pin_method": "HEAD at clone (2026-11-17); shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 28,
+    "tree_mb": 0.5
+   },
+   "classification": "DOCS",
+   "functionality": "Unmodified Mintlify starter kit; no BrowserOS content.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "MIT (Copyright (c) 2023 Mintlify)"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "none (inventory only)",
+   "rights": {
+    "public_licence": "/: MIT (Copyright (c) 2023 Mintlify)",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\docs, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\docs",
+    "sha_verified": "3e4eb91ed75fc0abaf16b5e6d9e1f3e5a832d009",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P3"
+  },
+  {
+   "id": "browseros_mintlify_docs",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "mintlify-docs",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/mintlify-docs",
+   "repo_url": "https://github.com/browseros-ai/mintlify-docs",
+   "pinned_sha": "15709293ec0e8797c5d9d6b3198c949a1f473f7d",
+   "pinned_on": "2026-11-17",
+   "pin_method": "HEAD at clone (2026-11-17); shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 28,
+    "tree_mb": 0.5
+   },
+   "classification": "DOCS",
+   "functionality": "Byte-identical duplicate of docs.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "MIT (Copyright (c) 2023 Mintlify)"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "none (inventory only)",
+   "rights": {
+    "public_licence": "/: MIT (Copyright (c) 2023 Mintlify)",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\mintlify-docs, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\mintlify-docs",
+    "sha_verified": "15709293ec0e8797c5d9d6b3198c949a1f473f7d",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P3"
+  },
+  {
+   "id": "browseros_moltyflow",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "moltyflow",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/moltyflow",
+   "repo_url": "https://github.com/browseros-ai/moltyflow",
+   "pinned_sha": "7d4ebc5e494b2a6760b0a0216d42cfc1af144295",
+   "pinned_on": "2026-11-17",
+   "pin_method": "HEAD at clone (2026-11-17); shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 83,
+    "tree_mb": 2.4
+   },
+   "classification": "UNRELATED",
+   "functionality": "Agent-to-agent Q&A web app; not a browser component.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "Apache-2.0"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "none (inventory only)",
+   "rights": {
+    "public_licence": "/: Apache-2.0",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "permissive",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\moltyflow, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\moltyflow",
+    "sha_verified": "7d4ebc5e494b2a6760b0a0216d42cfc1af144295",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P3"
+  },
+  {
+   "id": "browseros_tmux_factory",
+   "group": "K",
+   "selection": "founder-named browser donor (2026-11-17)",
+   "directive_name": "tmux-factory",
+   "resolution": {
+    "state": "RESOLVED",
+    "note": "Named in the founder's browser-donor authorization of 2026-11-17."
+   },
+   "repo": "browseros-ai/tmux-factory",
+   "repo_url": "https://github.com/browseros-ai/tmux-factory",
+   "pinned_sha": "29026ff73f9e1b5a3e733dbd4d2e53a49f1b4d02",
+   "pinned_on": "2026-11-17",
+   "pin_method": "HEAD at clone (2026-11-17); shallow clone at that SHA (Orcel Browser packet B0)",
+   "size": {
+    "files": 33,
+    "tree_mb": 1.2
+   },
+   "classification": "UNRELATED",
+   "functionality": "Rust tmux orchestrator for coding-agent worktrees; not a browser component.",
+   "licences": {
+    "per_directory": [
+     {
+      "path": "/",
+      "licence": "no LICENSE file"
+     }
+    ]
+   },
+   "modules": [],
+   "target_owner": "none (inventory only)",
+   "rights": {
+    "public_licence": "/: no LICENSE file",
+    "public_licence_role": "informational (kept for notices and provenance)",
+    "public_licence_family": "none (all rights reserved by default)",
+    "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+    "authorization_note": "Founder's browser-donor authorization of 2026-11-17 (docs/orcel/grants/2026-11-17-founder-attestation.md, section 'Browser donors (2026-11-17)'): the founder asserts full legal permission to copy, modify, adapt, integrate and rename the entire accessible source regardless of public licence. Owner-asserted; not independently verified; no copyright-holder-signed grant is in the repository. Excludes Chromium/Chrome trademarks, hosted private services, credentials and proprietary model weights.",
+    "licence_blocks_copying_renaming_publishing": false,
+    "notice_preservation": "Keep upstream copyright, licence and NOTICE texts with copied files, and record provenance (repository, SHA, paths) in a provenance file for every copy."
+   },
+   "status": "SOURCE_ACQUIRED",
+   "status_evidence": "Shallow clone at D:\\Orcel-Browser\\donors\\tmux-factory, SHA verified. Nothing copied into Orcel.",
+   "source_acquisition": {
+    "clone_method": "git init + git fetch --depth 1 origin <sha> + checkout FETCH_HEAD; SHA verified with git rev-parse HEAD (Orcel Browser packet B0, 2026-11-17)",
+    "local_path": "D:\\Orcel-Browser\\donors\\tmux-factory",
+    "sha_verified": "29026ff73f9e1b5a3e733dbd4d2e53a49f1b4d02",
+    "acquired_on": "2026-11-17",
+    "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md"
+   },
+   "priority": "P3"
   }
  ],
  "tracked_donors": [
@@ -8893,7 +9505,7 @@
    "order": 5,
    "source": "stagehand",
    "repo": "browserbase/stagehand",
-   "pinned_sha": "82827a219512f0399cb159720a63f7d271d21480",
+   "pinned_sha": "0f9a64c141d929b0595b4d909d89fb02e37c1ca4",
    "feature": "Hybrid a11y/DOM snapshot and act/observe/extract with action cache",
    "source_paths": [
     "packages/extension/understudy/a11y/snapshot/capture.ts",
@@ -8907,8 +9519,9 @@
    ],
    "orcel_owner": "apps/orcel-browser-worker (no Browserbase transport)",
    "source_status": "SOURCE_ACQUIRED",
-   "authorization": "OWNER-ASSERTED (founder, 2026-11-17)",
-   "public_licence_family": "permissive"
+   "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+   "public_licence_family": "permissive",
+   "pin_note": "Re-pinned from 82827a219512f0399cb159720a63f7d271d21480 by packet B0 (2026-11-17); every source path above is byte-identical between the two SHAs."
   },
   {
    "order": 6,
@@ -9399,5 +10012,45 @@
     ]
    }
   ]
+ },
+ "browser_b0": {
+  "date": "2026-11-17",
+  "authorization": "OWNER-ASSERTED AUTHORIZATION \u2014 2026-11-17",
+  "authorization_record": "docs/orcel/grants/2026-11-17-founder-attestation.md (section 'Browser donors (2026-11-17)')",
+  "inventory": "docs/orcel/implementation-readiness/prep/ORCEL_BROWSER_B0_INVENTORY.md",
+  "donor_root": "D:\\Orcel-Browser\\donors (outside this repository)",
+  "reports": "D:\\Orcel-Browser\\reports (B0_SOURCE_INVENTORY.md, donor_manifest.json, B0_BASELINE.md, B0_ORCEL_OVERLAP.md, REDISTRIBUTION_GRANT_GAPS.md)",
+  "group_K": "Founder-named browser donors and the browseros-ai organisation inventory added by packet B0.",
+  "not_cloned": [
+   {
+    "repo": "browseros-ai/codex",
+    "classification": "UNRELATED (mirror/fork)",
+    "fork_of": "openai/codex",
+    "reason": "Fork of a coding agent with no browser code; separately owned upstream."
+   },
+   {
+    "repo": "browseros-ai/openclaw",
+    "classification": "UNRELATED (mirror/fork)",
+    "fork_of": "openclaw/openclaw",
+    "reason": "Fork of a personal-assistant project (737 MB) with separately owned contributors; not a browser component."
+   },
+   {
+    "repo": "browseros-ai/llama.cpp",
+    "classification": "UNRELATED (mirror/fork)",
+    "fork_of": "ggml-org/llama.cpp",
+    "reason": "Fork of an LLM inference engine; separately owned upstream; not part of the browser."
+   },
+   {
+    "repo": "browseros-ai/browserclaw-skills",
+    "classification": "EMPTY",
+    "reason": "No commits (size 0)."
+   },
+   {
+    "repo": "browseros-ai/internal-docs",
+    "classification": "PRIVATE",
+    "reason": "Private submodule of BrowserOS; not accessible and not covered by the owner assertion."
+   }
+  ],
+  "chromium": "Not fetched and not built (BrowserOS documents about 100 GB of disk). Pin: Chromium 155.0.8059.26."
  }
 }

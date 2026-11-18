@@ -85,10 +85,10 @@ test("Next output is a static export with a bounded explicit project base path",
   assert.equal((css.match(/var\(--orcel-mark-mask\)/g) ?? []).length, 1);
 });
 
-test("approved Orca Eye symbol is byte-pinned and single-color", async () => {
+test("approved Night Window symbol is byte-pinned", async () => {
   assert.equal(
     await sha256(join(root, "public", "brand", "orcel-o-white.svg")),
-    "d4d50363f6887f5d3fad6b7126391457b5517d7ea23828c6507f48e6ec48f092"
+    "fcf1532b4e48035d4e88b716e2b35f6293c002f36845f1ed49c9a2de20ec960c"
   );
   const css = await read(join(root, "app", "globals.css"));
   assert.equal((css.match(/var\(--orcel-mark-mask\)/g) ?? []).length, 1, "all site instances share one full-color SVG");
@@ -160,9 +160,9 @@ test("Pages workflow builds the canonical project path and verifies the deployed
   assert.match(workflow, /test "\$\{\{ steps\.pages\.outputs\.base_path \}\}" = "\/Orcel"/);
   assert.match(workflow, /\/Orcel\/_next\//);
   assert.match(workflow, /\/Orcel\/brand\/orcel-o-white\.svg/);
-  assert.match(workflow, /The Orca Eye\./);
+  assert.match(workflow, /The Night Window\./);
   assert.match(workflow, /orcel-wordmark-white\.svg/);
-  assert.match(workflow, /Orcel Orca Eye Identity 2026/);
+  assert.match(workflow, /Orcel Identity v4 2026/);
   assert.match(workflow, /https:\/\/thehalfmoon\.github\.io\/Orcel/);
   assert.match(workflow, /curl --fail --location/);
   assert.match(workflow, /https:\/\/github\.com\/TheHalfMoon\/Orcel\/releases/);
