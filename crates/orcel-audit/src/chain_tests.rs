@@ -954,3 +954,35 @@ fn chain_client_fields_lose_control_and_bidi_characters() -> TestResult {
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+/// An owner anchor reset: the current file is kept aside, a new first file
+/// opens naming the reset, writers continue it, and the verifier reports it
+/// as `reset_by_owner` rather than intact.
+#[test]
+fn chain_an_owner_reset_opens_a_visible_first_file() -> TestResult {
+    let dir = sandbox("reset")?;
+    let path = dir.join("audit-chain.jsonl");
+    write(&path, 3)?;
+    let reset = json!({"event_digest": "c".repeat(64), "authority_seq": 9});
+    let opened =
+        crate::open_after_reset(&path, ORCELD_LOG, reset.clone()).map_err(|e| e.to_string())?;
+    let moved = opened.moved_to.clone().ok_or("the old file is kept")?;
+    assert!(dir.join(&moved).is_file());
+    assert!(moved.contains(".quarantine-reset-"));
+    let events = events(&path)?;
+    assert_eq!(events[0].digest, opened.file_id);
+    assert_eq!(events[0].detail["previous_file_id"], "none");
+    assert_eq!(events[0].detail["anchor_reset"], reset);
+    write(&path, 2)?;
+    let report = verify_file(&path).map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::ResetByOwner, "{report:?}");
+    assert_eq!(report.reset_by_owner, Some(reset));
+    assert!(report.tamper_evidence.contains("owner anchor reset"));
+    // Without an existing file the reset just opens one.
+    let fresh = dir.join("fresh-chain.jsonl");
+    let opened = crate::open_after_reset(&fresh, ORCELD_LOG, json!({"event_digest": "d"}))
+        .map_err(|e| e.to_string())?;
+    assert_eq!(opened.moved_to, None);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}

@@ -113,6 +113,7 @@ pub(crate) const EXIT_BROKEN: i32 = 4;
 pub(crate) const EXIT_MISSING: i32 = 5;
 pub(crate) const EXIT_RECOVERED: i32 = 6;
 pub(crate) const EXIT_TRUNCATED: i32 = 7;
+pub(crate) const EXIT_RESET_BY_OWNER: i32 = 8;
 
 /// `orceld audit-verify [--chain <path>]` verifies the chain and prints the
 /// report as JSON; `orceld audit-move-aside [--chain <path>]` keeps a chain
@@ -185,6 +186,7 @@ pub(crate) fn verify_with_held(
         orcel_audit::Verdict::Missing => EXIT_MISSING,
         orcel_audit::Verdict::Recovered => EXIT_RECOVERED,
         orcel_audit::Verdict::Truncated => EXIT_TRUNCATED,
+        orcel_audit::Verdict::ResetByOwner => EXIT_RESET_BY_OWNER,
     };
     let mut value =
         serde_json::to_value(&report).map_err(|error| format!("encode the report: {error}"))?;

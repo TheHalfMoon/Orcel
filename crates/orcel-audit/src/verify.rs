@@ -23,6 +23,10 @@ use std::path::Path;
 pub enum Verdict {
     /// Every record chains and every anchor matches.
     Intact,
+    /// As intact, but this file is a first file the owner opened after
+    /// resetting the anchor holder's anchor of the log (elevated and
+    /// confirmed): whatever came before is not continued. Visible on purpose.
+    ResetByOwner,
     /// As intact, and the writer cut a torn tail (a crash mid-write) at
     /// least once; each cut is a recorded event naming the bytes it moved
     /// aside.
@@ -96,6 +100,9 @@ pub struct VerifyReport {
     /// The moved-aside files this one continues, newest first, each checked
     /// to end at the head its successor claims.
     pub predecessors: Vec<Predecessor>,
+    /// The owner's anchor reset this file starts after (the holder's reset
+    /// record digest and seq), when it is such a file.
+    pub reset_by_owner: Option<serde_json::Value>,
     pub tamper_evidence: String,
 }
 
@@ -199,6 +206,7 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
         last_verified_anchor_seq: None,
         anchor_checks: Vec::new(),
         predecessors: Vec::new(),
+        reset_by_owner: None,
         tamper_evidence: String::new(),
     };
     let file = match File::open(path) {
@@ -239,6 +247,10 @@ pub fn verify_with_anchors(path: &Path, held: &[AnchorRef]) -> io::Result<Verify
         }
         if event.seq == 0 {
             moved = moved_name(&event.detail);
+            if !event.detail["anchor_reset"].is_null() {
+                report.reset_by_owner = Some(event.detail["anchor_reset"].clone());
+                worst(&mut report, Verdict::ResetByOwner);
+            }
         }
         if event.kind == AuditEventKind::Rotation
             && event.detail["action"] == "quarantined_torn_tail"
@@ -455,5 +467,12 @@ fn tamper_evidence(report: &VerifyReport, by: &str) -> String {
         ),
         (None, None) => UNANCHORED_NOTE.to_owned(),
     };
-    format!("{anchors}; {link}")
+    let reset = match &report.reset_by_owner {
+        Some(reset) => format!(
+            "; this file starts after an owner anchor reset (holder record {})",
+            reset["event_digest"].as_str().unwrap_or("?")
+        ),
+        None => String::new(),
+    };
+    format!("{anchors}; {link}{reset}")
 }

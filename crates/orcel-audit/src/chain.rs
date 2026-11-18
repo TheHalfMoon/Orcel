@@ -747,7 +747,7 @@ impl ChainWriter {
             }
         }
         cursor.verified = true;
-        self.open_file_if_empty(cursor, None, None)?;
+        self.open_file_if_empty(cursor, None, None, None)?;
         if let (Some(held), Some(file_id)) = (&held, cursor.file_id.clone()) {
             if let Some(conflict) = held_conflict(
                 held,
@@ -779,7 +779,7 @@ impl ChainWriter {
             .open(&self.path)
             .and_then(|file| file.set_len(cursor.len).and_then(|()| file.sync_all()))
             .map_err(|error| io_error("cut the torn tail", error))?;
-        self.open_file_if_empty(cursor, None, None)?;
+        self.open_file_if_empty(cursor, None, None, None)?;
         let detail = json!({
             "action": "quarantined_torn_tail",
             "bytes": bytes.len(),
@@ -803,6 +803,7 @@ impl ChainWriter {
         cursor: &mut Cursor,
         link: Option<&ChainLink>,
         moved: Option<Value>,
+        reset: Option<Value>,
     ) -> Result<(), ChainError> {
         if cursor.next_seq > 0 {
             return Ok(());
@@ -816,6 +817,7 @@ impl ChainWriter {
             "previous_head_seq": link.map(|link| link.previous_head_seq),
             "previous_head_digest": link.map(|link| link.previous_head_digest.as_str()),
             "moved_aside": moved,
+            "anchor_reset": reset,
         });
         cursor.head = link.map_or_else(
             || GENESIS_PREV_DIGEST.to_owned(),
@@ -954,10 +956,53 @@ pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
         &mut cursor,
         link.as_ref(),
         Some(json!({"file": moved_to, "stopped": bounded(&stopped, MAX_FIELD_CHARS)})),
+        None,
     )?;
     Ok(MovedAside {
         moved_to,
         link,
+        file_id: cursor.file_id.unwrap_or_default(),
+    })
+}
+
+/// What [`open_after_reset`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResetOpened {
+    /// Where the abandoned file went, if there was one.
+    pub moved_to: Option<String>,
+    /// The new file's id.
+    pub file_id: String,
+}
+
+/// After the owner reset the anchor holder's anchor of this log (an
+/// elevated, confirmed `orcel audit reset-anchor`): keeps the current file,
+/// if any, as `<chain>.quarantine-reset-<ms>-<pid>` and opens a new first
+/// file whose opening record names the reset (`anchor_reset`: the holder's
+/// reset record digest and seq). The verifier reports such a file as
+/// `reset_by_owner`, never silently intact.
+pub fn open_after_reset(path: &Path, log: &str, reset: Value) -> Result<ResetOpened, ChainError> {
+    let _lock = lock(&lock_path_of(path))?;
+    let moved_to = if path.exists() {
+        let name = aside_name(path, "reset-");
+        std::fs::rename(path, path.with_file_name(&name))
+            .map_err(|error| io_error("move the abandoned chain aside", error))?;
+        Some(name)
+    } else {
+        None
+    };
+    let writer = ChainWriter::open(path, log).map_err(|error| io_error("open the chain", error))?;
+    let mut cursor = Cursor::empty();
+    cursor.verified = true;
+    writer.open_file_if_empty(
+        &mut cursor,
+        None,
+        moved_to
+            .as_ref()
+            .map(|name| json!({"file": name, "stopped": "abandoned by an owner anchor reset"})),
+        Some(reset),
+    )?;
+    Ok(ResetOpened {
+        moved_to,
         file_id: cursor.file_id.unwrap_or_default(),
     })
 }

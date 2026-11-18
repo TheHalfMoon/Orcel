@@ -25,8 +25,8 @@ pub mod verify;
 
 pub use anchor::{AnchorOutcome, Anchorer, LocalMarker};
 pub use chain::{
-    chain_path_for, move_aside, Appended, ChainError, ChainLink, ChainWriter, EventDraft,
-    MovedAside,
+    chain_path_for, move_aside, open_after_reset, Appended, ChainError, ChainLink, ChainWriter,
+    EventDraft, MovedAside, ResetOpened,
 };
 pub use redact::sha256_hex;
 pub use verify::{verify_file, verify_with_anchors, Verdict, VerifyReport};
