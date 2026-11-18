@@ -17,6 +17,9 @@ use std::path::Path;
 use std::path::PathBuf;
 
 mod app_api;
+// WP1-03: the audit chain's anchor holder, its sharing with the browser
+// broker's receipts, and `orceld audit-verify`.
+mod audit_chain;
 mod authority_link;
 #[cfg(test)]
 mod bm02_tier_b_tests;
@@ -139,6 +142,10 @@ fn main() {
     if let Some(code) = authority_link::run_cli(&args) {
         std::process::exit(code);
     }
+    // WP1-03: `orceld audit-verify [--chain <path>]`.
+    if let Some(code) = audit_chain::run_cli(&args) {
+        std::process::exit(code);
+    }
     if let Err(error) = run() {
         eprintln!("orceld fatal: {error}");
         std::process::exit(1);
@@ -155,6 +162,8 @@ fn run() -> Result<(), String> {
     let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
     let audit =
         AuditLogger::new(audit_path).map_err(|error| format!("initialize audit log: {error}"))?;
+    // WP1-03: anchors go to the authority service when it is installed.
+    audit_chain::install(audit.chain());
     #[cfg(not(feature = "browser-full-scripted-consent"))]
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;

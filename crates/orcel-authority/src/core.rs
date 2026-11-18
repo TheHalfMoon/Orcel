@@ -55,6 +55,7 @@ use crate::lease::{
 };
 use crate::protocol::{AuthorizeClaims, ClaimedOrigin, Request, PROTOCOL};
 use crate::{hex, sha256_hex, unhex, RunMode};
+use orcel_contracts::event::AnchorRef;
 use orcel_contracts::ExecutorClass;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -585,6 +586,7 @@ impl AuthorityCore {
             } => self.authorize(caller, role, &lease_id, executor, claims),
             Request::Revoke { lease_id } => self.revoke(caller, role, &lease_id),
             Request::Stop => self.stop(caller, role),
+            Request::Anchor { anchor } => self.anchor_chain(caller, role, &anchor),
         }
     }
 
@@ -1320,6 +1322,55 @@ impl AuthorityCore {
             "revocations": self.state.revocations,
             "job_name": Value::Null,
             "deferred": DEFERRED,
+        }))
+    }
+
+    /// WP1-03: holds an anchor of orceld's own audit chain. The anchor is
+    /// orceld's claim (sserted_by_session); what the service adds is that
+    /// it now sits outside the session, in this chain and in the Event Log,
+    /// where a later rewrite of orceld's chain cannot reach it.
+    fn anchor_chain(
+        &mut self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        anchor: &AnchorRef,
+    ) -> Result<Value, AuthorityError> {
+        if role != CallerRole::Orceld {
+            return Err(AuthorityError::denied(
+                "only orceld (a configured trusted image) may anchor its audit chain",
+            ));
+        }
+        Self::require_known(role, caller)?;
+        if anchor.log != "orceld" {
+            return Err(AuthorityError::invalid(
+                "only orceld's audit chain is anchored here",
+            ));
+        }
+        if !is_lower_hex(&anchor.file_id, 64) || !is_lower_hex(&anchor.digest, 64) {
+            return Err(AuthorityError::invalid(
+                "an anchor's file id and digest are SHA-256s in lowercase hex",
+            ));
+        }
+        let insertion = anchor
+            .event_log_insertion()
+            .ok_or_else(|| AuthorityError::invalid("an anchor part is empty or ambiguous"))?;
+        let record = self.audit(
+            "anchor",
+            json!({
+                "log": anchor.log,
+                "file_id": anchor.file_id,
+                "seq": anchor.seq,
+                "digest": anchor.digest,
+            }),
+            observed(caller, role),
+            json!({"decision": "recorded", "event_id": crate::EVENT_ANCHOR}),
+        )?;
+        self.event(crate::EVENT_ANCHOR, false, &insertion)?;
+        Ok(json!({
+            "anchored": true,
+            "event_id": crate::EVENT_ANCHOR,
+            "authority_seq": record.seq,
+            "authority_digest": record.digest,
         }))
     }
 

@@ -190,6 +190,16 @@ impl AuthorityClient {
     pub fn list(&self) -> Result<Value, AuthorityError> {
         self.call(&Request::List)
     }
+
+    /// WP1-03: asks the service to hold an anchor of orceld's audit chain.
+    pub fn anchor(
+        &self,
+        anchor: &orcel_contracts::event::AnchorRef,
+    ) -> Result<Value, AuthorityError> {
+        self.call(&Request::Anchor {
+            anchor: anchor.clone(),
+        })
+    }
 }
 
 #[cfg(windows)]

@@ -1,6 +1,31 @@
+//! Orcel's audit log.
+//!
+//! [AuditLogger] writes every request outcome twice: as the plain JSONL
+//! line it always wrote (udit.jsonl, kept so existing readers and logs
+//! stay as they are), and first as a contract AuditEvent in the hash chain
+//! beside it (udit-chain.jsonl, WP1-03, see [chain]). The chain is the
+//! record that verifies ([erify]); a chain that does not verify refuses
+//! the append, and the logger reports that as a failed record.
+
+pub mod anchor;
+pub mod chain;
+#[cfg(test)]
+mod chain_tests;
+mod redact;
+pub mod verify;
+
+pub use anchor::{AnchorOutcome, Anchorer, LocalMarker};
+pub use chain::{chain_path_for, Appended, ChainError, ChainWriter, EventDraft};
+pub use redact::sha256_hex;
+pub use verify::{verify_file, verify_with_anchors, Verdict, VerifyReport};
+
+use orcel_contracts::event::AuditEventKind;
 use orcel_contracts::RequestEnvelope;
 use orcel_platform::paths;
 pub use orcel_platform::PlatformError;
+#[cfg(test)]
+use redact::TRUNCATED;
+use redact::{bounded, shown_target};
 use serde::Serialize;
 use std::borrow::Cow;
 use std::ffi::OsString;
@@ -11,9 +36,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The log name of orceld's chain in its anchors.
+pub const ORCELD_LOG: &str = "orceld";
+
 #[derive(Debug, Clone)]
 pub struct AuditLogger {
     path: PathBuf,
+    /// The hash chain beside the plain log, shared by every clone.
+    chain: Arc<ChainWriter>,
     /// Whether the next record first checks for a torn last line: set when the log was torn
     /// when this logger was made, and after a failed write. The check reads the log, and a read
     /// that overlaps another writer's append can see it half done, so it runs only when there
@@ -25,7 +55,6 @@ pub struct AuditLogger {
 /// these values, so without a bound one request could make one record, and the log, any size.
 pub const MAX_FIELD_CHARS: usize = 256;
 pub const MAX_TARGET_CHARS: usize = 1024;
-const TRUNCATED: &str = "…[truncated]";
 
 #[derive(Debug, Serialize)]
 struct AuditEvent<'a> {
@@ -86,14 +115,6 @@ impl<'a> CallerEvent<'a> {
     }
 }
 
-/// `value`, or its first `max` characters marked as cut.
-fn bounded(value: &str, max: usize) -> Cow<'_, str> {
-    match value.char_indices().nth(max) {
-        None => Cow::Borrowed(value),
-        Some((end, _)) => Cow::Owned(format!("{}{TRUNCATED}", &value[..end])),
-    }
-}
-
 /// Whether the log ends in the middle of a line, as a crash or a full disk during an earlier
 /// write can leave it. The next record then starts on a line of its own, so it isn't glued onto
 /// the broken one.
@@ -112,7 +133,7 @@ fn ends_mid_line(path: &Path) -> bool {
 /// explicitly, owner read and write only, rather than by the process umask inside the private
 /// directory; the umask can only narrow that. An existing log keeps its mode: this never widens
 /// or rewrites it. Windows is unchanged.
-fn open_options() -> OpenOptions {
+pub(crate) fn open_options() -> OpenOptions {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]
@@ -123,7 +144,7 @@ fn open_options() -> OpenOptions {
 /// Create the log's missing parent directories. MAC-M1-09: on Unix each directory this creates is
 /// 0700, owner only, rather than the umask's default; the umask can only narrow that. A directory
 /// that already exists keeps its mode. Windows is unchanged.
-fn create_parent_dirs(parent: &Path) -> io::Result<()> {
+pub(crate) fn create_parent_dirs(parent: &Path) -> io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -139,14 +160,21 @@ impl AuditLogger {
         }
         // Made once at start, before this process writes anything.
         let torn = ends_mid_line(&path);
+        let chain = ChainWriter::open(chain_path_for(&path), ORCELD_LOG)?;
         Ok(Self {
             path,
+            chain: Arc::new(chain),
             check_tail: Arc::new(AtomicBool::new(torn)),
         })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The hash chain every record is written to first.
+    pub fn chain(&self) -> &Arc<ChainWriter> {
+        &self.chain
     }
 
     pub fn record(
@@ -197,6 +225,9 @@ impl AuditLogger {
             caller: caller.map(CallerEvent::of),
         };
 
+        // The chain first: it is the record that verifies.
+        let chained = self.chain.append(chain_draft(&event, request, caller));
+
         // One whole line in one write. Several orcelds (one per client session) append to the
         // same log, and an append-mode write lands at the end in one piece; written in parts, as
         // `to_writer` does, two records could interleave.
@@ -215,7 +246,45 @@ impl AuditLogger {
             // A failed write may have left part of the line.
             self.check_tail.store(true, Ordering::Release);
         }
+        // A record the chain refused is a failed record, even when the plain
+        // line was written.
+        chained.map_err(io::Error::from)?;
         written
+    }
+}
+
+/// The chain's event for one plain record: the same fields, with the
+/// target shown as a URL's scheme and host or a path without its query,
+/// and digested whole (spec 4.8).
+fn chain_draft(
+    event: &AuditEvent<'_>,
+    request: &RequestEnvelope,
+    caller: Option<&AuditCaller>,
+) -> EventDraft {
+    let kind = if event.outcome.ends_with("DENIED") {
+        AuditEventKind::Decision
+    } else {
+        AuditEventKind::Request
+    };
+    let target = request.target.as_deref();
+    let detail = serde_json::json!({
+        "source": ORCELD_LOG,
+        "timestamp_ms": u64::try_from(event.timestamp_ms).unwrap_or(u64::MAX),
+        "client_session_id": event.client_session_id,
+        "workspace_id": event.workspace_id,
+        "target": target.map(|target| shown_target(target, MAX_TARGET_CHARS)),
+        "target_sha256": target.map(|target| sha256_hex(target.as_bytes())),
+        "policy_revision": bounded(event.policy_revision, MAX_FIELD_CHARS),
+        "outcome": bounded(event.outcome, MAX_FIELD_CHARS),
+        "caller": event.caller.as_ref(),
+    });
+    EventDraft {
+        request_id: Some(event.request_id.clone().into_owned()),
+        capability: Some(event.capability.clone().into_owned()),
+        operation: Some(event.operation.clone().into_owned()),
+        caller_pid: caller.map(|caller| caller.pid),
+        caller_image: caller.and_then(|caller| caller.executable.clone().ok()),
+        ..EventDraft::new(kind, detail)
     }
 }
 

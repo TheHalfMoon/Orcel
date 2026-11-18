@@ -59,10 +59,32 @@ pub fn protected_state_roots_from(lookup: &dyn Fn(&str) -> Option<OsString>) -> 
     }
     for name in PROTECTED_STATE_OVERRIDES {
         if let Some(value) = lookup(name) {
-            roots.push(PathBuf::from(value));
+            let path = PathBuf::from(value);
+            let chain = (*name == "ORCEL_AUDIT_PATH").then(|| audit_chain_beside(&path));
+            roots.push(path);
+            if let Some(chain) = chain {
+                // WP1-03: the hash chain and its lock beside an audit override.
+                let mut lock = chain.clone().into_os_string();
+                lock.push(".lock");
+                roots.push(chain);
+                roots.push(PathBuf::from(lock));
+            }
         }
     }
     roots
+}
+
+/// The WP1-03 hash chain orcel_audit::chain_path_for keeps beside the plain
+/// audit log plain (udit.jsonl keeps udit-chain.jsonl). orceld's
+/// wp103_policy_protects_the_chain_beside_an_audit_override keeps the two
+/// rules equal.
+pub fn audit_chain_beside(plain: &Path) -> PathBuf {
+    let stem = plain
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "audit".to_owned());
+    plain.with_file_name(format!("{stem}-chain.jsonl"))
 }
 
 /// Resolves a protected root to its final path: the nearest existing ancestor
@@ -206,6 +228,8 @@ mod tests {
                 .chain(earlier)
                 .chain([
                     PathBuf::from("/a/audit.jsonl"),
+                    PathBuf::from("/a/audit-chain.jsonl"),
+                    PathBuf::from("/a/audit-chain.jsonl.lock"),
                     PathBuf::from("/t/trust.jsonl"),
                     PathBuf::from("/h/history.jsonl"),
                     PathBuf::from("/b"),

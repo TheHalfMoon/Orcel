@@ -13,6 +13,7 @@
 
 use crate::error::AuthorityError;
 use crate::lease::LeaseScope;
+use orcel_contracts::event::AnchorRef;
 use orcel_contracts::{ExecutorClass, FailureCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -106,6 +107,10 @@ pub enum Request {
     /// Spec C-28: end every lease of the caller's logon session, advance
     /// the epoch.
     Stop,
+    /// WP1-03: hold an anchor of orceld's own audit chain outside the user
+    /// session. orceld only; the anchor is recorded as orceld's claim in the
+    /// service's chain and written to the Event Log as event 4100.
+    Anchor { anchor: AnchorRef },
 }
 
 impl Request {
@@ -123,6 +128,7 @@ impl Request {
             Self::Authorize { .. } => "authorize",
             Self::Revoke { .. } => "revoke",
             Self::Stop => "stop",
+            Self::Anchor { .. } => "anchor",
         }
     }
 }

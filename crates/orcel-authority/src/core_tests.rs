@@ -874,3 +874,77 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+/// WP1-03: orceld, and only orceld, can have the service hold an anchor of
+/// its own audit chain; the anchor is recorded as orceld's claim and
+/// written to the Event Log as a signed 4100 event.
+#[test]
+fn wp103_the_service_holds_orcelds_chain_anchor() -> Result<(), String> {
+    use orcel_contracts::event::AnchorRef;
+    let dir = temp_dir("anchor")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let anchor = AnchorRef {
+        log: "orceld".to_owned(),
+        file_id: "a".repeat(64),
+        seq: 31,
+        digest: "b".repeat(64),
+    };
+    for caller in [owner(), other_process()] {
+        assert_eq!(
+            code(core.handle(
+                &caller,
+                Request::Anchor {
+                    anchor: anchor.clone()
+                }
+            )),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    for bad in [
+        AnchorRef {
+            log: "authority".to_owned(),
+            ..anchor.clone()
+        },
+        AnchorRef {
+            digest: "B".repeat(64),
+            ..anchor.clone()
+        },
+        AnchorRef {
+            file_id: "a|b".to_owned(),
+            ..anchor.clone()
+        },
+    ] {
+        assert_eq!(
+            code(core.handle(&orceld(), Request::Anchor { anchor: bad })),
+            Some(FailureCode::InvalidRequest)
+        );
+    }
+    let answer = ok(core.handle(
+        &orceld(),
+        Request::Anchor {
+            anchor: anchor.clone(),
+        },
+    ))?;
+    assert_eq!(answer["anchored"], Value::Bool(true));
+    assert_eq!(answer["event_id"], 4100);
+    let insertion = anchor.event_log_insertion().ok_or("insertion")?;
+    let written = events.with_id(4100);
+    assert!(
+        written
+            .iter()
+            .any(|text| text.contains(&insertion) && text.contains("|sig=")),
+        "{written:?}"
+    );
+    let audit =
+        std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
+    let record = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|record| record["kind"] == "anchor" && record["observed"]["role"] == "orceld")
+        .ok_or("an anchor record")?;
+    assert_eq!(record["asserted_by_session"]["digest"], anchor.digest);
+    assert_eq!(record["seq"], answer["authority_seq"]);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}

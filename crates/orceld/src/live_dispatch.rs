@@ -681,11 +681,11 @@ mod full {
                     .map_err(|error| crate::state_unavailable("browser profile", &error))?
                     .join("live")
                     .join("broker");
-                *slot = Some(Broker::start(
-                    root,
-                    instance_id(random8()?),
-                    Budgets::DEFAULT,
-                )?);
+                // OB-05 step 1: receipts are chained into orceld's audit log.
+                *slot = Some(
+                    Broker::start(root, instance_id(random8()?), Budgets::DEFAULT)?
+                        .with_audit_chain(crate::audit_chain::shared()),
+                );
             }
             match slot.as_mut() {
                 Some(broker) => action(broker),
