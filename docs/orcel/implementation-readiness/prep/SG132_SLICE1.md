@@ -45,8 +45,9 @@ with the published public key without ever holding the private key.
 | `crates/orcel-authority/src/win/runtime.rs`, `service.rs` | Shared runtime, SCM entry, start checks, session changes |
 | `crates/orcel-authority/src/bin/orcel-authority.rs` | `orcel-authority.exe` (service, or `--console` harness) |
 | `crates/orceld/src/authority_link.rs` | orceld's link: `ServiceOwnerChannel`, `orceld authority-status`, `orceld authority-verify` |
-| `scripts/install-orcel-authority.ps1` | The founder's elevated install (hash-pinned artifact only) and uninstall |
-| `.github/workflows/ci.yml` job `authority-artifact` | Builds both binaries for the exact commit and uploads them with `SHA256SUMS.txt` as a workflow artifact (no release) |
+| `scripts/install-orcel-authority.ps1` | The founder's elevated install (hash-pinned artifact only, run from the admin-only staging folder, which it verifies up to the volume root; rollback on failure) and uninstall |
+| `.github/workflows/ci.yml` job `authority-artifact` | Builds the binaries for the exact commit, adds the install script, attests the build provenance of every file and uploads them with `SHA256SUMS.txt` as a workflow artifact (no release) |
+| `.github/workflows/ci.yml` job `authority-install-e2e`, `scripts/authority-install-e2e.ps1` | Runs the runbook's Stage, Install and Uninstall command lines on a disposable runner and checks staging ACLs, refusals, rollback, install, fail-closed grant and reset, recovery and uninstall (JSON report) |
 
 Deviation from the spec's layout: the service binary lives in `crates/orcel-authority` (`[[bin]]`) instead of
 `apps/orcel-authority-service`, because `crates/orceld/tests/dependency_direction.rs` refuses path packages

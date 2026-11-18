@@ -1828,15 +1828,21 @@ jobs:
   # service from (scripts/install-orcel-authority.ps1 refuses any other
   # bytes). It runs only for a push to main or a manual dispatch on main of
   # TheHalfMoon/Orcel, never for a pull request (a fork's PR could build
-  # anything), builds and hashes the binaries of that exact commit, prints
-  # the SHA-256 values in the job log (the founder takes them from the log on
-  # github.com, not from the zip) and keeps the binaries as a workflow
+  # anything), builds and hashes the binaries of that exact commit, adds the
+  # install script, prints the SHA-256 values in the job log (the founder
+  # takes them from the log on github.com, not from the zip), attests the
+  # build provenance of every file (and checks it with `gh attestation
+  # verify` exactly as the runbook does) and keeps the files as a workflow
   # artifact for 30 days. It publishes no release.
   authority-artifact:
     name: Authority service artifact / windows-latest
     if: github.repository == 'TheHalfMoon/Orcel' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: windows-latest
     timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -1844,27 +1850,100 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
       - name: Build orcel-authority, orceld and the orcel CLI (release, locked)
         run: cargo build --release --locked -p orcel-authority -p orceld -p orcel-lifecycle --bin orcel-authority --bin orceld --bin orcel
-      - name: Record the SHA-256 of each binary
+      - name: Record the SHA-256 of each file
         shell: pwsh
         env:
           COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'authority-artifact'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $lines = @()
+          Copy-Item -LiteralPath 'scripts/install-orcel-authority.ps1' -Destination $out
           foreach ($name in @('orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
             Copy-Item -LiteralPath (Join-Path 'target/release' $name) -Destination $out
+          }
+          $lines = @()
+          foreach ($name in @('install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $out $name)).Hash.ToLowerInvariant()
             $lines += "$hash  $name"
           }
           $lines += "commit $env:COMMIT"
           Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS.txt') -Value $lines -Encoding ascii
           foreach ($line in $lines) { Write-Host "AUTHORITY-ARTIFACT $line" }
+      - name: Attest build provenance for every file
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/authority-artifact/*
+      - name: Verify the attestation as the runbook does
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          foreach ($name in @('install-orcel-authority.ps1', 'orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
+            gh attestation verify (Join-Path $env:RUNNER_TEMP "authority-artifact/$name") --repo TheHalfMoon/Orcel --signer-workflow TheHalfMoon/Orcel/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest $env:COMMIT --deny-self-hosted-runners
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: orcel-authority-windows-x64
           path: ${{ runner.temp }}/authority-artifact
           retention-days: 30
+
+  # SG-000132 install hardening: the founder's installation procedure, run
+  # for real on a disposable GitHub-hosted runner (an administrator there,
+  # discarded afterwards; never on anyone's PC). On main it installs the very
+  # files the authority-artifact job attested in this run; otherwise it
+  # builds them the same way. scripts/authority-install-e2e.ps1 takes the
+  # Stage, Install and Uninstall command lines from SG132_INSTALL_RUNBOOK.md
+  # and checks the staging ACL (as a temporary standard user), refusals with
+  # nothing changed, rollback, a clean install, fail-closed grant and reset
+  # without Windows Hello, recovery, uninstall, the console scripted grant
+  # and revoke tests and the pinned TPM root. Any mismatch fails the job; the
+  # JSON report is uploaded either way.
+  authority-install-e2e:
+    name: Authority install E2E / windows-latest
+    needs: authority-artifact
+    if: ${{ !cancelled() && (needs.authority-artifact.result == 'success' || needs.authority-artifact.result == 'skipped') }}
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Take the attested artifact of this run (main)
+        if: needs.authority-artifact.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: orcel-authority-windows-x64
+          path: ${{ runner.temp }}/authority-artifact
+      - name: Build the artifact the same way (pull request, or a dispatch off main)
+        if: needs.authority-artifact.result == 'skipped'
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p orcel-authority -p orceld -p orcel-lifecycle --bin orcel-authority --bin orceld --bin orcel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $out = Join-Path $env:RUNNER_TEMP 'authority-artifact'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -LiteralPath 'scripts/install-orcel-authority.ps1' -Destination $out
+          foreach ($name in @('orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
+            Copy-Item -LiteralPath (Join-Path 'target/release' $name) -Destination $out
+          }
+      - name: Run the install procedure on this runner
+        shell: powershell
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          & "$env:GITHUB_WORKSPACE\scripts\authority-install-e2e.ps1" -ArtifactDir "$env:RUNNER_TEMP\authority-artifact" -ReportPath "$env:RUNNER_TEMP\authority-install-e2e\authority-install-e2e.json" -Commit $env:COMMIT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authority-install-e2e-report
+          path: ${{ runner.temp }}/authority-install-e2e
+          if-no-files-found: error
+          retention-days: 90
 
   macos-dev-package:
     name: macOS dev package / macos-latest

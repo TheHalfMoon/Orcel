@@ -200,21 +200,27 @@ struct Vectors {
 
 impl Vectors {
     fn new() -> Result<Self, AuthorityError> {
+        Self::with_root_name("Test TPM Root")
+    }
+
+    /// A complete, internally valid chain whose self-signed root is named
+    /// `root_name`.
+    fn with_root_name(root_name: &str) -> Result<Self, AuthorityError> {
         let root_key = SoftwareHelloKey::generate(2048)?;
         let aik = SoftwareHelloKey::generate(2048)?;
         let hello = SoftwareHelloKey::generate(2048)?;
         let root_der = certificate(
             1,
-            "Test TPM Root",
+            root_name,
             &root_key,
-            "Test TPM Root",
+            root_name,
             &root_key,
             "20500101000000Z",
             vec![basic_constraints(true)],
         )?;
         let aik_der = certificate(
             2,
-            "Test TPM Root",
+            root_name,
             &root_key,
             "Test AIK",
             &aik,
@@ -501,5 +507,81 @@ fn the_pinned_microsoft_tpm_root_on_this_pc_is_self_signed_and_current() -> Resu
     if roots.is_empty() {
         eprintln!("no pinned TPM root on this machine; the real-root vector was not checked");
     }
+    Ok(())
+}
+
+/// The subject common name of the root the pin names.
+const MICROSOFT_TPM_ROOT_2014_NAME: &[u8] = b"Microsoft TPM Root Certificate Authority 2014";
+
+/// Install hardening (trust chain): the pinned SHA-256 is the Microsoft TPM
+/// Root Certificate Authority 2014 itself. Unlike the test above, the root
+/// is found here by NAME in the machine stores, not by the pin, so a pin
+/// that drifted from the real certificate fails. On a machine without that
+/// root (a hosted runner may lack it) nothing is compared, and the outcome
+/// line says so; the CI install E2E records it.
+#[test]
+fn tpm_root_by_name_on_this_machine_has_the_pinned_hash() -> Result<(), String> {
+    let mut found = Vec::new();
+    for der in crate::win::roots::machine_store_certificates(&["CA", "ROOT", "AuthRoot"]) {
+        let Ok(cert) = crate::der::Certificate::parse(&der) else {
+            continue;
+        };
+        let named = cert
+            .subject
+            .windows(MICROSOFT_TPM_ROOT_2014_NAME.len())
+            .any(|window| window == MICROSOFT_TPM_ROOT_2014_NAME);
+        if named && cert.subject == cert.issuer && !found.contains(&der) {
+            found.push(der);
+        }
+    }
+    for der in &found {
+        assert_eq!(
+            crate::sha256_hex(der),
+            attestation::MICROSOFT_TPM_ROOT_2014_SHA256,
+            "a self-signed certificate named Microsoft TPM Root Certificate Authority 2014 on this machine has another SHA-256 than the pin"
+        );
+        check_root(der, crate::now_ms(), &CngRsaVerifier).map_err(|e| e.to_string())?;
+    }
+    if found.is_empty() {
+        println!("TPM-ROOT-2014: absent");
+    } else {
+        println!(
+            "TPM-ROOT-2014: present sha256 {} equals the pin",
+            attestation::MICROSOFT_TPM_ROOT_2014_SHA256
+        );
+    }
+    Ok(())
+}
+
+/// Install hardening (trust chain): a complete, valid chain to a root that
+/// merely carries the Microsoft root's name is refused, whether the
+/// lookalike root comes in the chain or from this PC's certificate store.
+#[test]
+fn tpm_root_lookalike_named_like_microsofts_is_refused() -> Result<(), String> {
+    let name = std::str::from_utf8(MICROSOFT_TPM_ROOT_2014_NAME).map_err(|e| e.to_string())?;
+    let v = Vectors::with_root_name(name).map_err(|e| e.to_string())?;
+    // The vectors are sound: pinned by their own hash, they verify.
+    v.check(&v.attestation, &v.chain(), NOW)
+        .map_err(|e| e.to_string())?;
+    let spki = v.hello.spki().map_err(|e| e.to_string())?;
+    // With the real pin list: the root in the chain is refused.
+    refused(
+        attestation::verify(&spki, &v.attestation, &v.chain(), &[], NOW, &CngRsaVerifier)
+            .map(|r| r.root_sha256),
+        "pinned TPM root",
+    )?;
+    // And the same root offered as if it came from the machine store.
+    refused(
+        attestation::verify(
+            &spki,
+            &v.attestation,
+            &v.aik_der,
+            std::slice::from_ref(&v.root_der),
+            NOW,
+            &CngRsaVerifier,
+        )
+        .map(|r| r.root_sha256),
+        "pinned TPM root",
+    )?;
     Ok(())
 }

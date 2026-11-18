@@ -21,7 +21,20 @@ const LOCAL_MACHINE: u32 = CERT_SYSTEM_STORE_LOCAL_MACHINE_ID << CERT_SYSTEM_STO
 /// refused unless the chain itself carries the pinned root).
 pub fn pinned_roots_on_this_pc() -> Vec<Vec<u8>> {
     let mut out: Vec<Vec<u8>> = Vec::new();
-    for store in ["CA", "ROOT"] {
+    for der in machine_store_certificates(&["CA", "ROOT"]) {
+        let digest = crate::sha256_hex(&der);
+        if PINNED_ROOTS.contains(&digest.as_str()) && !out.contains(&der) {
+            out.push(der);
+        }
+    }
+    out
+}
+
+/// The DER of every certificate in the named `LocalMachine` system stores,
+/// opened read-only. A store that cannot be opened is skipped.
+pub fn machine_store_certificates(stores: &[&str]) -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    for store in stores {
         let name = super::wide(store);
         // SAFETY: a read-only system store opened by name; closed below.
         let handle = unsafe {
@@ -49,10 +62,7 @@ pub fn pinned_roots_on_this_pc() -> Vec<Vec<u8>> {
                 let cert = &*context;
                 std::slice::from_raw_parts(cert.pbCertEncoded, cert.cbCertEncoded as usize)
             };
-            let digest = crate::sha256_hex(der);
-            if PINNED_ROOTS.contains(&digest.as_str()) && !out.iter().any(|seen| seen == der) {
-                out.push(der.to_vec());
-            }
+            out.push(der.to_vec());
         }
         // SAFETY: opened above; closed once.
         unsafe { CertCloseStore(handle, 0) };

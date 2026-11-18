@@ -460,6 +460,10 @@ fn a_scripted_grant_issues_a_signed_browser_lease_over_the_pipe() {
     if status["caller_role"] != "interactive" {
         // A runner without an interactive console logon cannot be the
         // owner's CLI; the grant flow is covered by the core tests there.
+        record_scripted_outcome(&format!(
+            "skipped: caller_role {} (no interactive console logon)",
+            status["caller_role"]
+        ));
         let _ = std::fs::remove_dir_all(&log_dir);
         return;
     }
@@ -570,5 +574,18 @@ fn a_scripted_grant_issues_a_signed_browser_lease_over_the_pipe() {
         code(client.verify_lease(&lease.body.lease_id)),
         Some(FailureCode::LeaseInvalid)
     );
+    record_scripted_outcome(
+        "ran: scripted grant issued a signed lease, Authorize refused, revoke ended it",
+    );
     let _ = std::fs::remove_dir_all(&log_dir);
+}
+
+/// The CI install E2E (scripts/authority-install-e2e.ps1) records whether
+/// the scripted grant ran or the runner had no interactive console logon,
+/// so a skip is reported, never mistaken for a pass.
+#[cfg(feature = "authority-scripted-consent")]
+fn record_scripted_outcome(outcome: &str) {
+    if let Some(path) = std::env::var_os("ORCEL_E2E_SCRIPTED_GRANT_MARKER") {
+        std::fs::write(path, outcome).expect("write the scripted grant marker");
+    }
 }
