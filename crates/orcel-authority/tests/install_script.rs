@@ -543,9 +543,11 @@ fn the_location_check_accepts_system32_and_refuses_user_folders_and_junctions() 
         // The user's own folders: owned by the user (a standard session) or
         // by Administrators but with the user's full-control ACE (an
         // elevated runner); refused either way.
-        let user_folder = dir.parent().expect("temp").display().to_string();
+        // (Matched by the folder's own name: the temp path may be printed in
+        // its 8.3 short form.)
+        let user_folder = format!("{} ", dir.file_name().expect("name").to_string_lossy());
         assert!(
-            text.lines().any(|line| line.starts_with(&user_folder)
+            text.lines().any(|line| line.contains(&user_folder)
                 && (line.contains("not SYSTEM, Administrators or TrustedInstaller")
                     || line.contains(" change it (access mask"))),
             "{shell}: the temp folder is refused: {text}"
