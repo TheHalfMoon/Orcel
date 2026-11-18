@@ -1824,6 +1824,48 @@ jobs:
           apps/orcel-desktop-preview/tests/e2e-tasks.ps1 -Orceld "$env:GITHUB_WORKSPACE/target/debug/orceld.exe" -BuildDirectory "$env:RUNNER_TEMP/app"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  # SG-000132: the hash-pinned artifact the founder installs the authority
+  # service from (scripts/install-orcel-authority.ps1 refuses any other
+  # bytes). It runs only for a push to main or a manual dispatch on main of
+  # TheHalfMoon/Orcel, never for a pull request (a fork's PR could build
+  # anything), builds and hashes the binaries of that exact commit, prints
+  # the SHA-256 values in the job log (the founder takes them from the log on
+  # github.com, not from the zip) and keeps the binaries as a workflow
+  # artifact for 30 days. It publishes no release.
+  authority-artifact:
+    name: Authority service artifact / windows-latest
+    if: github.repository == 'TheHalfMoon/Orcel' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Build orcel-authority and orceld (release, locked)
+        run: cargo build --release --locked -p orcel-authority -p orceld
+      - name: Record the SHA-256 of each binary
+        shell: pwsh
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'authority-artifact'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $lines = @()
+          foreach ($name in @('orcel-authority.exe', 'orceld.exe')) {
+            Copy-Item -LiteralPath (Join-Path 'target/release' $name) -Destination $out
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $out $name)).Hash.ToLowerInvariant()
+            $lines += "$hash  $name"
+          }
+          $lines += "commit $env:COMMIT"
+          Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS.txt') -Value $lines -Encoding ascii
+          foreach ($line in $lines) { Write-Host "AUTHORITY-ARTIFACT $line" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: orcel-authority-windows-x64
+          path: ${{ runner.temp }}/authority-artifact
+          retention-days: 30
+
   macos-dev-package:
     name: macOS dev package / macos-latest
     runs-on: macos-latest
