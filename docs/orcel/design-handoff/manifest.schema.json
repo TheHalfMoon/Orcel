@@ -45,7 +45,7 @@
       }
     },
     "assets": {
-      "description": "Vector brand and interface assets. SVG only.",
+      "description": "Vector brand and interface assets. SVG only; no binary file may be committed in a package.",
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/asset" }
@@ -113,19 +113,26 @@
       }
     },
     "screens": {
-      "description": "Reference screens. Engineering reads them; they are never shipped or used as visual-regression baselines without being rendered from code.",
+      "description": "Reference screens. Never committed as PNG: each is either a generated entry rendered at build from an SVG source in the package, or a board reference (provenance only, refused at integration). Never shipped or used as visual-regression baselines.",
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["surface", "name", "path", "sha256", "theme", "width"],
+        "required": ["surface", "name", "theme", "width"],
         "properties": {
           "surface": { "$ref": "#/$defs/surface" },
           "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
-          "path": { "$ref": "#/$defs/relPath" },
-          "sha256": { "$ref": "#/$defs/sha256" },
+          "path": { "allOf": [{ "$ref": "#/$defs/relPath" }, { "pattern": "\\.png$" }] },
           "theme": { "enum": ["dark", "light"] },
-          "width": { "type": "integer", "minimum": 320, "maximum": 3840 }
+          "width": { "type": "integer", "minimum": 320, "maximum": 3840 },
+          "height": { "type": "integer", "minimum": 16, "maximum": 8192 },
+          "generated": { "$ref": "#/$defs/generated" },
+          "board": {
+            "description": "The design board the screen was drawn on. Provenance only; engineering never pulls from it.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
         }
       }
     },
@@ -193,16 +200,45 @@
       }
     },
     "icon": {
+      "description": "A committed SVG icon (sha256) or a raster icon rendered at build (generated); exactly one of the two.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "path", "format", "sha256"],
+      "required": ["role", "path", "format"],
       "properties": {
         "role": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
         "path": { "$ref": "#/$defs/relPath" },
         "format": { "enum": ["svg", "png", "ico", "icns"] },
         "sha256": { "$ref": "#/$defs/sha256" },
         "width": { "type": "integer", "minimum": 16, "maximum": 2048 },
-        "height": { "type": "integer", "minimum": 16, "maximum": 2048 }
+        "height": { "type": "integer", "minimum": 16, "maximum": 2048 },
+        "generated": { "$ref": "#/$defs/generated" }
+      }
+    },
+    "generated": {
+      "description": "A build output: never committed. path (on the entry) is relative to the build folder. The generator renders it from the SVG source in the package; check-design-handoff.mjs --build runs the generator and decodes the result.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "generator", "generatorVersion", "recipe"],
+      "properties": {
+        "sources": {
+          "description": "The SVG file(s) in this package the output is rendered from; each must be listed as an asset or a committed SVG icon.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "allOf": [{ "$ref": "#/$defs/relPath" }, { "pattern": "\\.svg$" }] }
+        },
+        "generator": { "const": "scripts/render-design-handoff.mjs" },
+        "generatorVersion": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+        "recipe": { "enum": ["render", "full-bleed", "centered-on-plate"] },
+        "plate": { "description": "Plate colour for full-bleed and centered-on-plate.", "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "contentHeight": { "description": "Height in pixels of the centred artwork for centered-on-plate.", "type": "integer", "minimum": 1, "maximum": 2048 },
+        "sizes": {
+          "description": "Pixel sizes of the images inside an ICO or ICNS output.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 16, "maximum": 1024 }
+        }
       }
     }
   }
