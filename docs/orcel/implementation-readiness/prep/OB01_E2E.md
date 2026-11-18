@@ -115,6 +115,49 @@ Edge 157 (qualified), Node 24.19.0, Windows 11 Home 10.0.26300, no managed Edge 
 - A second run on the final code passed the same way: open 8450 ms (Edge launch included), snapshot 189, fill 142, select 73, verify 62, click 152, verify 44, extract 35, status 7, close 1297 ms; whole session 14548 ms; 8 receipts chained (head `5c1543e168f92f2b...`); nothing left.
 - A third run after the security judge's low fixes (exact action titles, whole-target match, per-mode target folders, `--locked`) passed the same way: open 13926 ms, close 1623 ms, whole session 20629 ms, 8 receipts chained (head `0c107e148e46f87f...`), nothing left.
 
+## OB-03 extension: screenshot and tabs (SG-000135 OB-03)
+
+After `browser_extract`, the mission adds seven steps:
+
+| # | Tool | What it does | Approval |
+|---|---|---|---|
+| 10 | `browser_screenshot` | Viewport PNG of the second page, as MCP image content; its SHA-256, size and byte count are checked against the reply | none |
+| 11 | `browser_tabs` new | A second tab on `https://fixture.test/ob03-secret` (a navigation, title `navigate isolated browser page`) | SOFT |
+| 12 | `browser_tabs` list | Two tabs, the first inactive, its URL without query or fragment | none |
+| 13 | `browser_screenshot` | The second tab: the PNG is decoded and the pixels read. The ordinary field stays green (positive control). The password, one-time-code, card-number and secret-named fields are black (masked) | none |
+| 14 | `browser_tabs` switch | Back to the first tab | none |
+| 15 | `browser_verify` | The first tab still holds the second page | none |
+| 16 | `browser_tabs` close | The second tab closes, and one tab is left | none |
+
+Then `browser_task_status` must show 15 chained receipts, 5 with an approval record (open, fill, select, click and the new tab), and both screenshot receipts must carry the image digest only (`evidence_kind: screenshot`). Scripted consent must show 5 prompts. A founder run now shows 5 dialogs; the fifth is `navigate isolated browser page` with target `https://fixture.test/ob03-secret`.
+
+Scripted run on this PC, 2026-11-17 (Edge 157, Node 24.19.0): every step passed.
+
+- Step times: open 8368 ms (Edge launch included), screenshot 111 ms, new tab 780 ms, list 5 ms, masked screenshot 179 ms, switch 7 ms, verify 839 ms, close tab 26 ms, close 4495 ms.
+- Whole session 19812 ms. 15 receipts chained, head `6813401cfaa44cfc...`. 5 approval records. No Edge process and no session folder left. MCP exit 0.
+- Mask pixels: ordinary `[0,255,0]`, password, one-time code, card number and secret name all `[0,0,0]`.
+- **Scripted consent, not human acceptance.**
+
+A second run, after the security judge's fixes (tab-checked replies, no promotion when a tab closes itself, the wider mask, the pending-popup cap), also passed:
+
+- Step times: open 8544 ms, screenshot 173 ms, new tab 1005 ms, masked screenshot 267 ms, close 4339 ms.
+- Whole session 19837 ms. 15 receipts chained, head `bc00091fe0c48bad...`. 5 approval records. Same mask pixels as the first run. Nothing left.
+- Scripted consent, not human acceptance.
+
+A third run, after the re-judge's fixes (every page reply tab-checked, a crash handled like a self-close, and the mask census by place), also passed: open 8081 ms, masked screenshot 360 ms, close 915 ms, whole session 15590 ms, 15 receipts chained (head `9602290b018913a7...`), 5 approval records, the same mask pixels, nothing left. Scripted consent, not human acceptance.
+
+### OB-03 limits and rules (after the security judge on b4ed449a)
+
+- **A tab that closes itself.** When the active tab's page closes itself (`window.close()` from page script) or its renderer crashes, the worker makes no other tab active. Every action and screenshot is then refused (`TARGET_STALE`) until orceld sends a tab request (`browser_tabs`) and learns the tabs. Every page reply names the worker tab it ran on, and a screenshot reply also names the page's URL. That covers navigate, text fetch, observe, discovery, activate, form action, WebMCP execute, download, upload, wait, verify, extract and screenshot. The host checks the tab against the one it acts on and checks the URL against its committed document. A read from another tab is refused as stale. A navigation, click, form action, execute, download or upload reported from another tab ends as outcome unknown, with nothing observed kept. The host's check names every reply kind, so a new kind must be classified before it compiles.
+- **What the mask does not cover.** It paints fields matching the secret selector in every frame present right before the capture, open shadow roots included. That means password inputs, secret `autocomplete` tokens, secret-looking names and ids (pass, pwd, otp, cvc, cvv, csc, cc-, pin, ssn, iban, card, token, secret, security), editable regions, and inline `-webkit-text-security`. The capture is refused if the frames change while it runs, or if the place (bounding box) of any secret field in any frame changes; adding one field and removing another counts as a change. A frame with more than 256 secret fields is refused. Not masked:
+  - fields inside closed shadow roots;
+  - secret text drawn on a canvas, or shown as ordinary text;
+  - a text-security style applied by a stylesheet rule;
+  - a page script that removes or hides Playwright's mask overlay while the capture runs (the overlay is page-visible DOM for the capture's duration).
+- **Closing a tab runs its handlers.** It runs the page's own `unload` and `pagehide` handlers, which may send requests such as beacons. The worker's route stack still decides each request, so only the lifetime's admitted site can receive them. orceld asks the takeover gate first, as for any write on that tab.
+- **Popups.** At most 4 popups wait for admission at once; any further popup is closed at once.
+- **Where the image is kept.** It is in the tool reply only. The broker's receipt (`ActionRecord`, `browser_task_status`) keeps the SHA-256 digest (`evidence_kind: screenshot`) and never the image or its base64; the mission checks that no receipt holds `png_base64`.
+
 ## Not covered
 
 - The founder-present run (above).

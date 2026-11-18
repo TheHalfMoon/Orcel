@@ -3110,6 +3110,14 @@ mod sg000055_envelope_tests {
                 "extract",
                 json!({"session_id": session, "expected_generation": 1}),
             ),
+            (
+                "screenshot",
+                json!({"session_id": session, "expected_generation": 1, "full_page": false}),
+            ),
+            (
+                "tabs",
+                json!({"session_id": session, "action": "new", "url": "https://example.org/b"}),
+            ),
             ("close", json!({"session_id": session})),
             ("status", json!({"session_id": session})),
         ];
@@ -3181,6 +3189,10 @@ mod sg000055_envelope_tests {
             (
                 "fill",
                 json!({"session_id": session, "node_id": "d1-e2", "value": "a\u{202e}b", "expected_generation": 1}),
+            ),
+            (
+                "tabs",
+                json!({"session_id": session, "action": "new", "url": "http://example.org/"}),
             ),
         ] {
             let response = send(full(operation, "default", arguments), full_profile, None);

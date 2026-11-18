@@ -98,7 +98,7 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 ## browser_full (SG-000135, local only)
 
 Served by stdio and loopback HTTP only when local configuration selects it (`ORCEL_TOOL_SURFACE_PROFILE=browser_full`);
-never remote. It holds 55 tools: `desktop_structured` plus the Orcel Browser Session Broker tools below,
+never remote. It holds 57 tools: `desktop_structured` plus the Orcel Browser Session Broker tools below,
 which orceld's broker maps onto the existing live host actions. Under this profile `browser_click`, `browser_fill`,
 `browser_select` and `browser_verify` are the broker tools listed here; `browser_structured` keeps its own forms.
 
@@ -112,5 +112,7 @@ which orceld's broker maps onto the existing live host actions. Under this profi
 | `browser_select` | `browser.session/select` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, committed URL, record id and one provisional receipt; never the option label |
 | `browser_verify` | `browser.session/verify` | read | none | local-only | yes | no | yes | no | at most 16 pass or fail results with fixed evidence words and counts, the committed URL, a report digest and one provisional receipt |
 | `browser_extract` | `browser.session/extract` | read | none | local-only | yes | no | yes | no | the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one provisional receipt |
+| `browser_screenshot` | `browser.session/screenshot` | read | none | local-only | yes | no | yes | no | one PNG image of the session's active tab, at most 2 MiB and 2048 x 4096 CSS pixels, secret fields masked, its size and SHA-256, and one provisional receipt that keeps the digest only |
+| `browser_tabs` | `browser.session/tabs` | network | SOFT | local-only | no | no | no | yes | the session's tabs (at most 8: page id, generation, URL without credentials, query or fragment, and which is active), a new tab's navigation result, and one provisional receipt |
 | `browser_close` | `browser.session/close` | read | none | local-only | yes | no | no | no | whether the session's worker ended and its profile was removed |
 | `browser_task_status` | `browser.session/status` | read | none | local-only | yes | no | yes | no | the session's state, budgets and at most 128 provisional receipts |

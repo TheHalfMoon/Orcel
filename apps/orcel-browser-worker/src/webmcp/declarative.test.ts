@@ -337,7 +337,7 @@ test("the frame fit is linear and keeps the longest prefix that fits", () => {
   assert.ok(Date.now() - started < 1_000, `fit took ${Date.now() - started} ms`);
   assert.equal(fitted.truncated, true);
   // Whatever was kept encodes within the frame bound.
-  encodeFrame({ frame: "discovered", disc_id: 123456, ...fitted });
+  encodeFrame({ frame: "discovered", disc_id: 123456, tab: 1_000_000, ...fitted });
   // Small tools all fit and nothing is marked truncated.
   const small = discoverDeclarativeTools(doc(el("form", { toolname: "a", tooldescription: "d" }), el("form", { toolname: "b", tooldescription: "d" })));
   const kept = fitTools(1, "https://fixture.test/", false, small.tools);

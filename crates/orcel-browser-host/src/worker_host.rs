@@ -56,8 +56,11 @@ use std::path::{Path, PathBuf};
 /// an Enter's submission committed a new document (`navigation`); 8
 /// (SG-000135 OB-02): `extract`, the committed page's rendered content as
 /// bounded, untrusted page text, for the `browser_full` profile's
-/// `browser_extract`.
-pub const WORKER_HOST_GENERATION: u32 = 8;
+/// `browser_extract`; 9 (SG-000135 OB-03): `screenshot` and
+/// `screenshot_more` (a bounded PNG of the active tab, secret fields masked,
+/// in base64 pieces) and the tab frames (`tab_new`, `tab_switch`,
+/// `tab_close`, `tabs`).
+pub const WORKER_HOST_GENERATION: u32 = 9;
 
 /// SG-000135 OB-02: the most page text one `extracted` reply carries, in
 /// characters. The worker's extraction is cut here, on a chunk or
@@ -246,6 +249,26 @@ pub enum WorkerHostRequest {
     /// read-only and without approval, cut at `MAX_EXTRACT_REPLY_CHARS`.
     /// The text is the page's own: untrusted, and it grants nothing.
     Extract {},
+    /// SG-000135 OB-03: a bounded PNG of the active tab's committed
+    /// document, every secret field masked; read-only and without
+    /// approval. The first piece answers; `ScreenshotMore` reads the rest.
+    Screenshot {
+        full_page: bool,
+    },
+    ScreenshotMore {
+        piece: u32,
+    },
+    /// SG-000135 OB-03: the lifetime's tabs (pages of one engine
+    /// lifetime, all on its admitted origin). A new tab is blank and
+    /// active; its navigation is an ordinary approved `navigate`.
+    TabNew {},
+    TabSwitch {
+        tab: u32,
+    },
+    TabClose {
+        tab: u32,
+    },
+    Tabs {},
     /// End the current lifetime (profile removed); the host keeps serving.
     Close {},
     Shutdown {},
@@ -457,6 +480,24 @@ pub enum WorkerHostReply {
         truncated: bool,
         text: String,
     },
+    /// SG-000135 OB-03: one piece of a screenshot (base64 of its own
+    /// bytes) with the whole's size, byte count, digest and whether a full
+    /// page was cut.
+    Screenshot {
+        piece: u32,
+        total: u32,
+        width: u32,
+        height: u32,
+        bytes: u64,
+        sha256: String,
+        truncated: bool,
+        data: String,
+    },
+    /// SG-000135 OB-03: the lifetime's tabs; `active` is 0 when none is.
+    Tabs {
+        active: u32,
+        tabs: Vec<crate::page_capture::WorkerTab>,
+    },
     Closed {
         job_empty: bool,
         profile_removed: bool,
@@ -525,6 +566,35 @@ struct Lifetime {
     observed: Option<(PageIdentity, DocumentIdentity)>,
     /// Broker record ids already presented in this lifetime.
     used_records: HashSet<String>,
+    /// SG-000135 OB-03: the last screenshot's pieces and facts, until the
+    /// last piece is read.
+    screenshot: Option<HeldScreenshot>,
+}
+
+/// SG-000135 OB-03: a checked screenshot being read in pieces.
+struct HeldScreenshot {
+    pieces: Vec<String>,
+    width: u32,
+    height: u32,
+    bytes: u64,
+    sha256: String,
+    truncated: bool,
+}
+
+impl HeldScreenshot {
+    fn reply(&self, piece: u32) -> Option<WorkerHostReply> {
+        let data = self.pieces.get(piece as usize)?.clone();
+        Some(WorkerHostReply::Screenshot {
+            piece,
+            total: u32::try_from(self.pieces.len()).ok()?,
+            width: self.width,
+            height: self.height,
+            bytes: self.bytes,
+            sha256: self.sha256.clone(),
+            truncated: self.truncated,
+            data,
+        })
+    }
 }
 
 /// Serve the worker-mode vocabulary until shutdown, end of input or a
@@ -675,7 +745,60 @@ fn precheck(request: &WorkerHostRequest) -> Result<(), WorkerHostReply> {
 
 /// Frames that need a live lifetime.
 fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostReply {
+    // A screenshot's pieces are read right after it; anything else ends it.
+    if !matches!(request, WorkerHostRequest::ScreenshotMore { .. }) {
+        live.screenshot = None;
+    }
     match request {
+        WorkerHostRequest::Screenshot { full_page } => match live.worker.screenshot(full_page) {
+            Ok(shot) => {
+                let held = HeldScreenshot {
+                    pieces: crate::page_capture::base64_pieces(&shot.png),
+                    width: shot.width,
+                    height: shot.height,
+                    bytes: shot.png.len() as u64,
+                    sha256: Sha256::digest(&shot.png)
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect(),
+                    truncated: shot.truncated,
+                };
+                match held.reply(0) {
+                    Some(reply) => {
+                        if held.pieces.len() > 1 {
+                            live.screenshot = Some(held);
+                        }
+                        reply
+                    }
+                    None => error("invalid"),
+                }
+            }
+            Err(err) => refusal(&err),
+        },
+        WorkerHostRequest::ScreenshotMore { piece } => {
+            let reply = live
+                .screenshot
+                .as_ref()
+                .filter(|_| piece > 0)
+                .and_then(|held| held.reply(piece));
+            match reply {
+                Some(reply) => {
+                    let last = live
+                        .screenshot
+                        .as_ref()
+                        .is_some_and(|held| piece as usize + 1 == held.pieces.len());
+                    if last {
+                        live.screenshot = None;
+                    }
+                    reply
+                }
+                None => error("invalid"),
+            }
+        }
+        WorkerHostRequest::TabNew {} => tabs_reply(live, |worker| worker.tab_new()),
+        WorkerHostRequest::TabSwitch { tab } => tabs_reply(live, |worker| worker.tab_switch(tab)),
+        WorkerHostRequest::TabClose { tab } => tabs_reply(live, |worker| worker.tab_close(tab)),
+        WorkerHostRequest::Tabs {} => tabs_reply(live, |worker| worker.tabs()),
         WorkerHostRequest::Bind { action } => match host_binding(live, &action) {
             Ok(derived) => WorkerHostReply::Bound {
                 binding: derived.binding,
@@ -886,6 +1009,27 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
         WorkerHostRequest::Hello { .. }
         | WorkerHostRequest::Close {}
         | WorkerHostRequest::Shutdown {} => error("invalid"),
+    }
+}
+
+/// SG-000135 OB-03: one tab request. When the active tab changed, the
+/// latest observation no longer holds (its node ids belong to another page).
+fn tabs_reply(
+    live: &mut Lifetime,
+    request: impl FnOnce(&mut BrowserWorker) -> Result<crate::page_capture::TabsState, crate::HostError>,
+) -> WorkerHostReply {
+    let before = live.worker.tabs_active();
+    match request(&mut live.worker) {
+        Ok(state) => {
+            if live.worker.tabs_active() != before || state.active == 0 {
+                live.observed = None;
+            }
+            WorkerHostReply::Tabs {
+                active: state.active,
+                tabs: state.tabs,
+            }
+        }
+        Err(err) => refusal(&err),
     }
 }
 
@@ -1271,6 +1415,7 @@ fn open(
             pin: pin.to_string(),
             observed: None,
             used_records: HashSet::new(),
+            screenshot: None,
         },
         WorkerHostReply::Opened {
             lifetime: nonce,
@@ -1514,6 +1659,94 @@ mod tests {
     /// other key; each round-trips.
     /// SG-000135 OB-02: `extract` takes nothing, its reply round-trips, and
     /// the text is cut at the bound on a character boundary.
+    /// SG-000135 OB-03: the screenshot and tab frames are closed: a
+    /// screenshot names only whether it is a full page (never a window, a
+    /// target, a clip or another page), a tab request only a tab id; each
+    /// round-trips; a held screenshot answers its pieces in order and once.
+    #[test]
+    fn ob03_screenshot_and_tab_frames_are_closed_and_round_trip() {
+        for (text, request) in [
+            (
+                r#"{"frame":"screenshot","full_page":false}"#,
+                WorkerHostRequest::Screenshot { full_page: false },
+            ),
+            (
+                r#"{"frame":"screenshot_more","piece":2}"#,
+                WorkerHostRequest::ScreenshotMore { piece: 2 },
+            ),
+            (r#"{"frame":"tab_new"}"#, WorkerHostRequest::TabNew {}),
+            (
+                r#"{"frame":"tab_switch","tab":2}"#,
+                WorkerHostRequest::TabSwitch { tab: 2 },
+            ),
+            (
+                r#"{"frame":"tab_close","tab":2}"#,
+                WorkerHostRequest::TabClose { tab: 2 },
+            ),
+            (r#"{"frame":"tabs"}"#, WorkerHostRequest::Tabs {}),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<WorkerHostRequest>(text).unwrap(),
+                request
+            );
+        }
+        for bad in [
+            r#"{"frame":"screenshot"}"#,
+            r#"{"frame":"screenshot","full_page":false,"hwnd":7}"#,
+            r#"{"frame":"screenshot","full_page":false,"page_id":"pg-2"}"#,
+            r#"{"frame":"screenshot","full_page":false,"clip":[0,0,1,1]}"#,
+            r#"{"frame":"tab_new","url":"https://fixture.test/"}"#,
+            r#"{"frame":"tab_switch"}"#,
+            r#"{"frame":"tab_close","tab":-1}"#,
+            r#"{"frame":"capture_window","hwnd":7}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<WorkerHostRequest>(bad).is_err(),
+                "{bad}"
+            );
+        }
+        let png = crate::page_capture::test_png(1280, 720, 100_000);
+        let held = HeldScreenshot {
+            pieces: crate::page_capture::base64_pieces(&png),
+            width: 1280,
+            height: 720,
+            bytes: png.len() as u64,
+            sha256: "00".repeat(32),
+            truncated: false,
+        };
+        let first = held.reply(0).unwrap();
+        let line = serde_json::to_string(&first).unwrap();
+        assert!(line.len() < crate::proto::MAX_FRAME_BYTES);
+        assert_eq!(
+            serde_json::from_str::<WorkerHostReply>(&line).unwrap(),
+            first
+        );
+        assert!(held.reply(3).is_none());
+        let mut joined = Vec::new();
+        for piece in 0..3 {
+            match held.reply(piece) {
+                Some(WorkerHostReply::Screenshot { data, total, .. }) => {
+                    assert_eq!(total, 3);
+                    joined.extend(crate::page_capture::decode_base64(&data).unwrap());
+                }
+                other => assert!(other.is_none(), "{other:?}"),
+            }
+        }
+        assert_eq!(joined, png);
+        let tabs = WorkerHostReply::Tabs {
+            active: 1,
+            tabs: vec![crate::page_capture::WorkerTab {
+                tab: 1,
+                url: "https://fixture.test/".into(),
+            }],
+        };
+        let line = serde_json::to_string(&tabs).unwrap();
+        assert_eq!(
+            serde_json::from_str::<WorkerHostReply>(&line).unwrap(),
+            tabs
+        );
+    }
+
     #[test]
     fn ob02_extract_takes_no_fields_and_its_text_is_bounded() {
         let request: WorkerHostRequest = serde_json::from_str(r#"{"frame":"extract"}"#).unwrap();
@@ -1558,7 +1791,7 @@ mod tests {
 
     #[test]
     fn sg122_the_form_vocabulary_is_closed_and_round_trips() {
-        assert_eq!(WORKER_HOST_GENERATION, 8);
+        assert_eq!(WORKER_HOST_GENERATION, 9);
         assert_eq!(OBSERVATION_CONTRACT, 2);
         // SG-000122 slice A6: the reply names what happened to the document,
         // from a closed vocabulary.

@@ -66,6 +66,14 @@ pub enum UnavailableReason {
     /// way the page is no longer its observed document, so it must be
     /// navigated again (approved) before anything else.
     SubmissionRefused,
+    /// SG-000135 OB-03: a navigation of the page is in flight, so no
+    /// screenshot is taken and no tab changes; nothing was done.
+    NavigationInFlight,
+    /// SG-000135 OB-03: the screenshot would be larger than its bounds;
+    /// nothing was returned.
+    CaptureOversized,
+    /// SG-000135 OB-03: the lifetime already holds its cap of tabs.
+    TabLimitReached,
 }
 
 impl fmt::Display for UnavailableReason {
@@ -100,6 +108,9 @@ impl fmt::Display for UnavailableReason {
                 f,
                 "the approved action was dispatched and its outcome is unknown"
             ),
+            Self::NavigationInFlight => write!(f, "a navigation of the page is in flight"),
+            Self::CaptureOversized => write!(f, "the screenshot is larger than its bounds"),
+            Self::TabLimitReached => write!(f, "this browser lifetime holds its cap of tabs"),
         }
     }
 }
