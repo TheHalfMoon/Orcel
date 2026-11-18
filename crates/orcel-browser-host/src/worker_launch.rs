@@ -422,7 +422,7 @@ pub struct WorkerLaunch {
     pub destinations: Vec<AdmittedDestination>,
     /// SG-000135 OB-04: Shadow (headless, the SG-000108 argv) or Visible
     /// (a headed window named as an Orcel agent session).
-    pub mode: EngineMode,
+    pub mode: crate::confinement::EngineMode,
     /// SG-000108 decision 7: the runtime the build pinned. When set, launch
     /// verifies `node.exe` and the worker's runtime tree against it through
     /// handles that refuse writes and deletes, and holds them for the
