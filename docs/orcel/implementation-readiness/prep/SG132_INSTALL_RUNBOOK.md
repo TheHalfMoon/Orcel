@@ -18,8 +18,11 @@ with the elevated, installed `orcel.exe` and grant leases through the service ("
    Stage and Uninstall steps are `C:\Windows\System32\cmd.exe` running only System32 tools by full path (they
    first reset `PATH`, `SystemRoot`, `windir` and `COMSPEC`, which your user environment could redirect); the Install step
    is the staged, hash-checked native `orcel-authority.exe`, which takes no folder from the environment and
-   loads every DLL from System32 only: the DLLs it imports (its image says so, `DependentLoadFlags` 0x800,
-   and it imports no C runtime DLL at all) and, after start, any DLL it loads.
+   never loads a DLL from its own folder: at start it imports only KnownDLLs and API sets (kernel32,
+   advapi32, oleaut32, ntdll; no C runtime DLL at all), resolved from System32 only (`DependentLoadFlags`
+   0x800); the DLLs that are not KnownDLLs (wtsapi32, bcrypt, crypt32, and through them SspiCli and msasn1)
+   are delay-loaded, after its first instruction has restricted every load, their dependencies included, to
+   System32.
 2. **Nothing an elevated step consumes can be changed by a standard user.** The three binaries are staged in
    `C:\Program Files\OrcelStaging`: owner Administrators; SYSTEM and Administrators full control; Users read and
    execute; nothing inherited from `C:\Program Files`. `orcel-authority install` refuses to run, with nothing
@@ -209,8 +212,9 @@ process running as you; the binding checks are the hashes on the UAC-checked com
 Start the **Stage** line of the table above (your `<download-folder>` and three hashes), and check the UAC
 prompt against the table. The window must end with `STAGED: exactly the three files, each with its SHA-256`, the
 count `3` and the three hashes printed above it, and no error; press a key to close it. `STAGING REFUSED` means the folder was removed again: check the
-download and the hashes. "A subdirectory or file ... already exists" means an earlier staging is still there:
-uninstall first (it removes the staging), or inspect the folder.
+download and the hashes. "A subdirectory or file ... already exists" means an earlier staging is still there,
+whose contents you have not checked now: run the Remove the staging line (it runs nothing from the folder),
+then steps 1 to 5 again; if you meant to uninstall an earlier install, uninstall from that fresh staging.
 
 ### 5. Check the staging folder's ACL (normal shell)
 
@@ -396,8 +400,8 @@ and lists separately (`not_verified`) what the runner could not show:
 - **Runbook:** all nine `Start-Process` lines parse and each matches its UAC table row; no elevated step
   starts PowerShell or a .NET program.
 - **Binaries:** none of the three imports a C runtime DLL (the release build links it statically), and
-  `orcel-authority.exe` resolves every DLL it imports from System32 only (`DependentLoadFlags` 0x800), so a
-  DLL beside it is never loaded (`scripts/check-authority-binaries.ps1`, also run before the attestation).
+  `orcel-authority.exe` imports only KnownDLLs and API sets, resolves them from System32 only
+  (`DependentLoadFlags` 0x800) and delay-loads wtsapi32, bcrypt and crypt32, so a DLL beside it is never loaded (`scripts/check-authority-binaries.ps1`, also run before the attestation).
 - **Staging:** the Stage line with a wrong hash removes the folder and fails; so does a download in which
   `orcel-authority.exe` is really a folder holding the genuine program and a `wtsapi32.dll`; the real one gives exactly the
   ACL output in step 5; a temporary local standard user (created for the run) can read but cannot write,
@@ -406,7 +410,8 @@ and lists separately (`not_verified`) what the runner could not show:
 - **The old flaw:** a folder made like `mkdir C:\OrcelBuild` is writable by that standard user, and the
   installer refuses to run from it, with nothing changed.
 - **Failed installs, nothing changed:** a wrong hash; a real canary DLL planted in the staging folder as
-  `wtsapi32.dll` and as `VCRUNTIME140.dll` (refused, and never loaded); a pre-existing
+  `wtsapi32.dll`, `VCRUNTIME140.dll`, `SspiCli.dll`, `msasn1.dll`, `bcrypt.dll` and `crypt32.dll` in turn
+  (each refused, and never loaded); a pre-existing
   `%ProgramData%\Orcel\authority`; a `%ProgramData%\Orcel` a standard user created (refused, and the user's
   folder and file left as they were).
 - **Rollback:** a pre-created `\\.\pipe\orcel-authority` makes the service start fail after every other change;

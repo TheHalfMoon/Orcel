@@ -540,7 +540,9 @@ fn same_final_path(a: &Path, b: &Path) -> bool {
 /// handle; a folder's entries first, each checked the same way.
 fn delete_by_handle(path: &Path, expected: &Path) -> Result<(), String> {
     use windows_sys::Win32::Storage::FileSystem::{
-        FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
+        FileDispositionInfo, FileDispositionInfoEx, SetFileInformationByHandle,
+        FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO,
+        FILE_DISPOSITION_INFO_EX,
     };
     let handle = open_for_delete(path)?;
     // SAFETY: zeroed plain data, filled by the call.
@@ -576,22 +578,39 @@ fn delete_by_handle(path: &Path, expected: &Path) -> Result<(), String> {
             delete_by_handle(&entry.path(), &actual.join(entry.file_name()))?;
         }
     }
-    let disposition = FILE_DISPOSITION_INFO { DeleteFile: 1 };
+    // POSIX semantics first: the name goes at once even while another process
+    // (an antivirus scan, say) still has the file open; older systems that
+    // lack it get the classic disposition.
+    let posix = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+    };
     // SAFETY: a live handle opened with DELETE access; the struct is the class's.
-    if unsafe {
+    let deleted = unsafe {
         SetFileInformationByHandle(
             handle.as_raw_handle() as HANDLE,
-            FileDispositionInfo,
-            (&disposition as *const FILE_DISPOSITION_INFO).cast(),
-            std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            FileDispositionInfoEx,
+            (&posix as *const FILE_DISPOSITION_INFO_EX).cast(),
+            std::mem::size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
         )
-    } == 0
-    {
-        return Err(format!(
-            "delete {}: {}",
-            path.display(),
-            std::io::Error::last_os_error()
-        ));
+    } != 0;
+    if !deleted {
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: 1 };
+        // SAFETY: as above, with the classic structure.
+        if unsafe {
+            SetFileInformationByHandle(
+                handle.as_raw_handle() as HANDLE,
+                FileDispositionInfo,
+                (&disposition as *const FILE_DISPOSITION_INFO).cast(),
+                std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(format!(
+                "delete {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
     }
     // The entry goes when this handle closes.
     drop(handle);

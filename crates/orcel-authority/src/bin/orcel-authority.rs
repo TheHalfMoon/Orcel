@@ -120,6 +120,13 @@ fn main() {
     }
     #[cfg(windows)]
     {
+        // First of all: every DLL loaded from here on (the delay-loaded
+        // wtsapi32, bcrypt and crypt32 included, with their dependencies)
+        // comes from System32 only, never from this program's folder.
+        if let Err(error) = orcel_authority::win::install_os::harden_dll_search() {
+            eprintln!("orcel-authority: {error}");
+            std::process::exit(1);
+        }
         match args.first().map(String::as_str) {
             Some("install") => {
                 std::process::exit(orcel_authority::win::install::install_main(&args[1..]))

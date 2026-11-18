@@ -559,7 +559,7 @@ function Invoke-E2E {
   # The program must start (its imports come from System32 only, and it imports no C runtime DLL), refuse
   # the extra entry, and never load the canary. (A wrongly loaded wtsapi32.dll lacks the exports the program
   # imports, so the program would not even start and print its refusal.)
-  foreach ($dllName in @('wtsapi32.dll', 'VCRUNTIME140.dll')) {
+  foreach ($dllName in @('wtsapi32.dll', 'VCRUNTIME140.dll', 'SspiCli.dll', 'msasn1.dll', 'bcrypt.dll', 'crypt32.dll')) {
     $planted = Join-Path $Staging $dllName
     Copy-Item -LiteralPath $Report.hostile_environment.canary_dll -Destination $planted
     $hitsBefore = @(Get-CanaryHits).Count

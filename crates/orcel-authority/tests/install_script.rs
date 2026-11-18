@@ -348,6 +348,71 @@ fn the_authority_image_resolves_its_imports_from_system32_only() {
     );
     let build = read_lf(&["crates", "orcel-authority", "build.rs"]);
     assert!(build.contains("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800"));
+
+    // Review 3 finding 1: the DLLs that are not KnownDLLs are delay-loaded
+    // (after main restricted every load to System32), never imported.
+    let to_offset = |rva: u32| {
+        (0..sections)
+            .map(|i| table + 40 * i)
+            .find_map(|s| {
+                let va = u32_at(s + 12);
+                let size = u32_at(s + 8).max(u32_at(s + 16));
+                (rva >= va && rva < va + size).then(|| (rva - va + u32_at(s + 20)) as usize)
+            })
+            .expect("an RVA inside a section")
+    };
+    let name_at = |at: usize| {
+        let end = at + bytes[at..].iter().position(|b| *b == 0).expect("NUL");
+        String::from_utf8_lossy(&bytes[at..end]).to_lowercase()
+    };
+    let names = |directory: usize, stride: usize, name_field: usize| {
+        let mut out = Vec::new();
+        let rva = u32_at(optional + 112 + 8 * directory);
+        if rva == 0 {
+            return out;
+        }
+        let mut entry = to_offset(rva);
+        while u32_at(entry + name_field) != 0 {
+            out.push(name_at(to_offset(u32_at(entry + name_field))));
+            entry += stride;
+        }
+        out
+    };
+    let imports = names(1, 20, 12);
+    let delayed = names(13, 32, 4);
+    for dll in ["wtsapi32.dll", "bcrypt.dll", "crypt32.dll"] {
+        assert!(
+            !imports.contains(&dll.to_owned()),
+            "{dll} is imported: {imports:?}"
+        );
+        assert!(
+            delayed.contains(&dll.to_owned()),
+            "{dll} is not delay-loaded: {delayed:?}"
+        );
+        assert!(build.contains(dll), "build.rs names {dll}");
+    }
+    for dll in &imports {
+        assert!(
+            ["kernel32.dll", "advapi32.dll", "oleaut32.dll", "ntdll.dll"].contains(&dll.as_str())
+                || dll.starts_with("api-ms-win-")
+                || dll.starts_with("vcruntime")
+                || dll.starts_with("api-ms-win-crt-"),
+            "{dll} is imported but is not a KnownDLL (the debug build may import the C runtime; the release build must not)"
+        );
+    }
+    // main restricts the DLL search before anything else.
+    let main = read_lf(&[
+        "crates",
+        "orcel-authority",
+        "src",
+        "bin",
+        "orcel-authority.rs",
+    ]);
+    let body = &main[position(&main, "fn main()")..];
+    assert!(
+        position(body, "harden_dll_search()") < position(body, "match args.first()"),
+        "the DLL search is restricted first"
+    );
 }
 
 #[test]
