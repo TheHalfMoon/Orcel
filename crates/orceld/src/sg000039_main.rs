@@ -548,6 +548,9 @@ fn handle_envelope(
                 "requested workspace is not configured",
             );
         }
+        if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+            return *refused;
+        }
         return match remote_lease::authorize_enrollment(approval, &request) {
             Ok(value) => {
                 let _ = audit.record(&request, POLICY_REVISION, "SUCCESS");
@@ -567,6 +570,9 @@ fn handle_envelope(
                 FailureCode::WorkspaceDenied,
                 "requested workspace is not configured",
             );
+        }
+        if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+            return *refused;
         }
         return match executable_admin::dispatch_registry(
             &match orcel_policy::executable_registry::default_registry_path() {
@@ -604,6 +610,9 @@ fn handle_envelope(
                 FailureCode::WorkspaceDenied,
                 "requested workspace is not configured",
             );
+        }
+        if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+            return *refused;
         }
         let managed = ctx
             .as_ref()
@@ -673,6 +682,9 @@ fn handle_secret(
             "requested workspace is not configured".into(),
         );
     }
+    if let Err(refused) = audit_before_dispatch(audit, &audited, POLICY_REVISION) {
+        return *refused;
+    }
     let lookup = |name: &str| std::env::var_os(name);
     match secret_store::dispatch(
         secret_store::SecretStore::open_default(),
@@ -716,6 +728,9 @@ fn handle_live(
             return ResponseEnvelope::failure(request.request_id, error.code, error.message);
         }
     };
+    if let Err(refused) = audit_before_dispatch(audit, &request, decision.policy_revision) {
+        return *refused;
+    }
     let result = live_dispatch::dispatch(&decision.workspace, approval, &request);
     finish(audit, request, decision.policy_revision, result)
 }
@@ -751,6 +766,9 @@ fn handle_browser_full(
             ),
         );
     };
+    if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+        return *refused;
+    }
     let result = live_dispatch::dispatch_full(&workspace, approval, &request, &action);
     finish(audit, request, POLICY_REVISION, result)
 }
@@ -769,6 +787,9 @@ fn handle_request(
         }
     };
 
+    if let Err(refused) = audit_before_dispatch(audit, &request, decision.policy_revision) {
+        return *refused;
+    }
     let browser_resolver = browser::system_resolver();
     let mut stores = DefaultStores::default();
     let result = dispatch_with(
@@ -780,6 +801,32 @@ fn handle_request(
         &browser_resolver,
     );
     finish(audit, request, decision.policy_revision, result)
+}
+
+/// WP1-03 write before dispatch (spec 4.8): the request's `dispatch` record
+/// is in the audit chain, flushed, before anything runs; when it cannot be
+/// written the request is refused and nothing is dispatched (its outcome is
+/// still recorded as `AUDIT_REFUSED`, in the plain log at least). The cost
+/// is availability, by design: while the chain cannot be written (a disk
+/// error, a lock held past its wait, or a chain that does not verify) every
+/// dispatch is refused, until the operator runs `orceld audit-verify` to
+/// see why and `orceld audit-move-aside`, which keeps the file and opens a
+/// new one linked to its last verifiable record.
+pub(crate) fn audit_before_dispatch(
+    audit: &AuditLogger,
+    request: &RequestEnvelope,
+    policy_revision: &str,
+) -> Result<(), Box<ResponseEnvelope>> {
+    audit
+        .record_dispatch(request, policy_revision)
+        .map_err(|error| {
+            let _ = audit.record(request, policy_revision, "AUDIT_REFUSED");
+            Box::new(ResponseEnvelope::failure(
+                request.request_id.clone(),
+                FailureCode::InternalError,
+                format!("audit write failed before dispatch; nothing was dispatched: {error}"),
+            ))
+        })
 }
 
 /// Audit a dispatched request's outcome and build its response.

@@ -5,14 +5,22 @@
 //! [`AuditEvent`] per line, each carrying the previous event's digest, its
 //! own `seq` (0-based, gapless) and `digest` = SHA-256 of
 //! [`AuditEvent::digest_input`] (canonical JSON of the event without its
-//! digest, so `prev_digest` and `seq` are covered). Event 0 is a `rotation`
-//! event that opens the file; its digest is the file id anchors name.
+//! digest, so `prev_digest` and `seq` are covered).
+//!
+//! Event 0 is a `rotation` event (`action: open`) that opens the file; its
+//! digest is the file id anchors name. It records the file it follows: the
+//! previous file's id, head seq and head digest ([`ChainLink`]), or
+//! `previous_file_id: "none"` for a log's first file; its `prev_digest` is
+//! that head digest, or [`GENESIS_PREV_DIGEST`]. A file is replaced only by
+//! [`move_aside`], which keeps the old file and opens the new one linked to
+//! the old file's last verifiable record: never a clean slate.
 //!
 //! Appending takes an OS lock on `<chain>.lock` (several orcelds append to
 //! one file), brings this writer's view up to the file's end (verifying
-//! what other writers added), writes one whole line and `sync_data`s it
-//! before returning. A file that shrank, or whose added records do not
-//! chain, is refused: nothing is appended and the caller gets
+//! what other writers added, and following a linked replacement), writes
+//! one whole line and `sync_data`s it before returning. A file that shrank,
+//! was replaced by an unlinked file, or whose added records do not chain,
+//! is refused: nothing is appended and the caller gets
 //! [`ChainError::Broken`]. A torn last line (a crash in the middle of a
 //! write) is moved to `<chain>.quarantine-<ms>-<pid>`, cut from the file and
 //! recorded as a `rotation` event before anything else is appended, so the
@@ -22,6 +30,10 @@
 //! Every [`ANCHOR_INTERVAL_EVENTS`] events the writer asks its
 //! [`Anchorer`] to hold `(log, file id, seq, digest)` and records the answer
 //! as an `anchor` event (see [`crate::anchor`]).
+//!
+//! Limits (WP1-03 slice 1): one file grows without rotation (a writer reads
+//! it whole once per process); a writer follows one linked replacement, and
+//! refuses a file two replacements on until it restarts.
 
 use crate::anchor::{AnchorOutcome, Anchorer, LocalMarker};
 use crate::redact::{bounded, sha256_hex};
@@ -47,6 +59,13 @@ pub const MAX_EVENT_BYTES: usize = 16 * 1024;
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 /// How long an append waits for another writer's lock.
 const LOCK_WAIT: Duration = Duration::from_secs(10);
+/// `previous_file_id` of a log's first file.
+pub const NO_PREVIOUS_FILE: &str = "none";
+
+/// What the operator is told when a chain does not verify.
+pub const RECOVERY_HINT: &str = "run `orceld audit-verify` to see where; \
+     `orceld audit-move-aside` keeps this file and opens a new one linked to its last \
+     verifiable record (a continuation, not a clean slate); until then every dispatch is refused";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChainError {
@@ -68,8 +87,7 @@ impl fmt::Display for ChainError {
             Self::Busy => write!(f, "audit chain busy: another writer held its lock"),
             Self::Broken { seq, reason } => write!(
                 f,
-                "audit chain broken at seq {seq}: {reason}; nothing was appended \
-                 (run `orceld audit-verify`; move the file aside to start a new chain)"
+                "audit chain broken at seq {seq}: {reason}; nothing was appended ({RECOVERY_HINT})"
             ),
             Self::Encode(message) => write!(f, "audit chain encoding: {message}"),
         }
@@ -86,6 +104,40 @@ impl From<ChainError> for io::Error {
 
 fn io_error(what: &str, error: io::Error) -> ChainError {
     ChainError::Io(format!("{what}: {error}"))
+}
+
+/// The file a chain file follows, as its opening event records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainLink {
+    pub previous_file_id: String,
+    pub previous_head_seq: u64,
+    pub previous_head_digest: String,
+}
+
+impl ChainLink {
+    /// The link an opening event records, or `None` for a first file.
+    pub(crate) fn of_opening(event: &AuditEvent) -> Result<Option<Self>, String> {
+        if event.kind != AuditEventKind::Rotation || event.detail["action"] != "open" {
+            return Err("the first record does not open the file".to_owned());
+        }
+        let previous = event.detail["previous_file_id"]
+            .as_str()
+            .ok_or("the opening record names no previous file")?;
+        if previous == NO_PREVIOUS_FILE {
+            return Ok(None);
+        }
+        let seq = event.detail["previous_head_seq"]
+            .as_u64()
+            .ok_or("the opening record names no previous head seq")?;
+        let digest = event.detail["previous_head_digest"]
+            .as_str()
+            .ok_or("the opening record names no previous head digest")?;
+        Ok(Some(Self {
+            previous_file_id: previous.to_owned(),
+            previous_head_seq: seq,
+            previous_head_digest: digest.to_owned(),
+        }))
+    }
 }
 
 /// An event before the writer gives it its place in the chain.
@@ -192,15 +244,27 @@ pub(crate) struct Scanner<R> {
     pub next_seq: u64,
     pub head: String,
     pub file_id: Option<String>,
+    pub link: Option<ChainLink>,
 }
 
 impl<R: BufRead> Scanner<R> {
-    pub(crate) fn new(reader: R, next_seq: u64, head: String, file_id: Option<String>) -> Self {
+    pub(crate) fn new(reader: R) -> Self {
         Self {
             reader,
-            next_seq,
-            head,
-            file_id,
+            next_seq: 0,
+            head: GENESIS_PREV_DIGEST.to_owned(),
+            file_id: None,
+            link: None,
+        }
+    }
+
+    fn resume(reader: R, cursor: &Cursor) -> Self {
+        Self {
+            reader,
+            next_seq: cursor.next_seq,
+            head: cursor.head.clone(),
+            file_id: cursor.file_id.clone(),
+            link: cursor.link.clone(),
         }
     }
 
@@ -224,9 +288,10 @@ impl<R: BufRead> Scanner<R> {
         }
         let length = line.len() as u64;
         match self.check(&line[..line.len() - 1]) {
-            Ok(event) => {
+            Ok((event, link)) => {
                 if event.seq == 0 {
                     self.file_id = Some(event.digest.clone());
+                    self.link = link;
                 }
                 self.next_seq += 1;
                 self.head.clone_from(&event.digest);
@@ -236,8 +301,9 @@ impl<R: BufRead> Scanner<R> {
         }
     }
 
-    /// The event on `line` if it is the next link of the chain.
-    pub(crate) fn check(&self, line: &[u8]) -> Result<AuditEvent, String> {
+    /// The event on `line` if it is the next link of the chain, and, for an
+    /// opening event, the file it follows.
+    pub(crate) fn check(&self, line: &[u8]) -> Result<(AuditEvent, Option<ChainLink>), String> {
         let event: AuditEvent =
             serde_json::from_slice(line).map_err(|error| format!("not an audit event: {error}"))?;
         if event.contract != AuditEvent::CONTRACT {
@@ -249,26 +315,39 @@ impl<R: BufRead> Scanner<R> {
                 event.seq, self.next_seq
             ));
         }
-        if event.prev_digest != self.head {
-            return Err("prev_digest is not the previous record's digest".to_owned());
-        }
-        if event.seq == 0 && event.kind != AuditEventKind::Rotation {
-            return Err("the first record does not open the file".to_owned());
-        }
+        let link = if event.seq == 0 {
+            let link = ChainLink::of_opening(&event)?;
+            let expected = link.as_ref().map_or(GENESIS_PREV_DIGEST, |link| {
+                link.previous_head_digest.as_str()
+            });
+            if event.prev_digest != expected {
+                return Err(
+                    "the opening record's prev_digest is not the head it follows".to_owned(),
+                );
+            }
+            link
+        } else {
+            if event.prev_digest != self.head {
+                return Err("prev_digest is not the previous record's digest".to_owned());
+            }
+            None
+        };
         if digest_of(&event)? != event.digest {
             return Err("digest does not match the record (edited)".to_owned());
         }
-        Ok(event)
+        Ok((event, link))
     }
 }
 
 /// This writer's view of the file: everything before `len` verified.
+#[derive(Clone)]
 struct Cursor {
     verified: bool,
     len: u64,
     next_seq: u64,
     head: String,
     file_id: Option<String>,
+    link: Option<ChainLink>,
 }
 
 impl Cursor {
@@ -279,8 +358,23 @@ impl Cursor {
             next_seq: 0,
             head: GENESIS_PREV_DIGEST.to_owned(),
             file_id: None,
+            link: None,
         }
     }
+}
+
+/// The opening event of the file at `path`, if it has a whole first line.
+fn opening_of(path: &Path) -> io::Result<Option<(AuditEvent, Option<ChainLink>)>> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut scanner = Scanner::new(BufReader::new(file));
+    Ok(match scanner.step()? {
+        Step::Event(event, _) => Some((*event, scanner.link)),
+        _ => None,
+    })
 }
 
 /// Appends to one chain file. Every writer of the file, in this process or
@@ -302,6 +396,77 @@ impl fmt::Debug for ChainWriter {
     }
 }
 
+fn lock_path_of(path: &Path) -> PathBuf {
+    let mut lock_name = path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    PathBuf::from(lock_name)
+}
+
+/// Writers of one chain in this process take their turn here first, so
+/// the OS lock is contended by one thread per process and no thread
+/// starves polling it. One mutex per chain path, made once and kept for
+/// the process's life.
+fn process_turn(lock_path: &Path) -> &'static Mutex<()> {
+    type Turns = Mutex<std::collections::HashMap<PathBuf, &'static Mutex<()>>>;
+    static TURNS: std::sync::OnceLock<Turns> = std::sync::OnceLock::new();
+    let turns = TURNS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let mut turns = turns
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    turns
+        .entry(lock_path.to_path_buf())
+        .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
+}
+
+/// The chain's lock: this process's turn, then the file's OS lock, waiting
+/// up to [`LOCK_WAIT`] for other processes; released when dropped,
+/// including when the process dies.
+struct Held {
+    _file: File,
+    _turn: MutexGuard<'static, ()>,
+}
+
+fn lock(lock_path: &Path) -> Result<Held, ChainError> {
+    let turn = process_turn(lock_path)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let file = os_lock(lock_path)?;
+    Ok(Held {
+        _file: file,
+        _turn: turn,
+    })
+}
+fn os_lock(lock_path: &Path) -> Result<File, ChainError> {
+    let file = crate::open_options()
+        .read(true)
+        .open(lock_path)
+        .map_err(|error| io_error("open the chain lock", error))?;
+    let deadline = Instant::now() + LOCK_WAIT;
+    loop {
+        match fs4::FileExt::try_lock(&file) {
+            Ok(()) => return Ok(file),
+            Err(fs4::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(fs4::TryLockError::WouldBlock) => return Err(ChainError::Busy),
+            Err(fs4::TryLockError::Error(error)) => return Err(io_error("lock the chain", error)),
+        }
+    }
+}
+
+/// A name beside `path` for a file moved aside, owned by the chain's
+/// registered store (`.quarantine-` siblings).
+fn aside_name(path: &Path, what: &str) -> String {
+    format!(
+        "{}.quarantine-{what}{}-{}",
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        now_ms(),
+        std::process::id()
+    )
+}
+
 impl ChainWriter {
     /// A writer for the chain at `path`, named `log` in its anchors (for
     /// example `orceld`). Creates missing parent directories (owner only on
@@ -312,10 +477,8 @@ impl ChainWriter {
         if let Some(parent) = path.parent() {
             crate::create_parent_dirs(parent)?;
         }
-        let mut lock_name = path.as_os_str().to_owned();
-        lock_name.push(".lock");
         Ok(Self {
-            lock_path: PathBuf::from(lock_name),
+            lock_path: lock_path_of(&path),
             path,
             log: log.to_owned(),
             cursor: Mutex::new(Cursor::empty()),
@@ -356,9 +519,9 @@ impl ChainWriter {
     /// is due an anchor, asks the anchorer (outside the file lock) and
     /// records its answer as an `anchor` event.
     pub fn append(&self, draft: EventDraft) -> Result<Appended, ChainError> {
-        let mut appended = self.append_one(draft)?;
+        let (mut appended, link) = self.append_one(draft)?;
         if anchor_due(&appended.event) {
-            let outcome = self.anchorer().anchor(&appended.at);
+            let outcome = self.anchorer().anchor(&appended.at, link.as_ref());
             let marker = EventDraft {
                 asserted_by_session: false,
                 ..EventDraft::new(AuditEventKind::Anchor, outcome.detail(&appended.at))
@@ -372,40 +535,42 @@ impl ChainWriter {
         Ok(appended)
     }
 
-    fn append_one(&self, draft: EventDraft) -> Result<Appended, ChainError> {
+    fn append_one(&self, draft: EventDraft) -> Result<(Appended, Option<ChainLink>), ChainError> {
         let mut cursor = self.cursor();
-        let _lock = self.lock()?;
+        let _lock = lock(&self.lock_path)?;
         self.sync(&mut cursor)?;
-        self.write_event(&mut cursor, draft)
+        let appended = self.write_event(&mut cursor, draft)?;
+        Ok((appended, cursor.link.clone()))
     }
 
-    /// The file's OS lock, waiting up to [`LOCK_WAIT`]; released when the
-    /// handle closes, including when the process dies.
-    fn lock(&self) -> Result<File, ChainError> {
-        let file = crate::open_options()
-            .read(true)
-            .open(&self.lock_path)
-            .map_err(|error| io_error("open the chain lock", error))?;
-        let deadline = Instant::now() + LOCK_WAIT;
-        loop {
-            match fs4::FileExt::try_lock(&file) {
-                Ok(()) => return Ok(file),
-                Err(fs4::TryLockError::WouldBlock) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                Err(fs4::TryLockError::WouldBlock) => return Err(ChainError::Busy),
-                Err(fs4::TryLockError::Error(error)) => {
-                    return Err(io_error("lock the chain", error))
-                }
-            }
-        }
-    }
-
-    /// Brings `cursor` to the file's end under the lock: verifies what was
-    /// added since, quarantines a torn last line, opens an empty file.
+    /// Brings `cursor` to the file's end under the lock: follows a linked
+    /// replacement, verifies what was added since, quarantines a torn last
+    /// line, opens an empty file.
     fn sync(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
         if !cursor.verified {
             *cursor = Cursor::empty();
+        }
+        if let Some(known) = cursor.file_id.clone() {
+            match opening_of(&self.path).map_err(|error| io_error("read the chain", error))? {
+                Some((opening, _)) if opening.digest == known => {}
+                Some((_, Some(link))) if link.previous_file_id == known => {
+                    // Moved aside and continued by a linked file.
+                    *cursor = Cursor::empty();
+                }
+                Some(_) => {
+                    return Err(ChainError::Broken {
+                        seq: cursor.next_seq,
+                        reason: "the chain file was replaced by a file that does not link to it"
+                            .to_owned(),
+                    })
+                }
+                None => {
+                    return Err(ChainError::Broken {
+                        seq: cursor.next_seq,
+                        reason: "the chain file was removed or emptied".to_owned(),
+                    })
+                }
+            }
         }
         let file = match File::open(&self.path) {
             Ok(file) => Some(file),
@@ -423,7 +588,7 @@ impl ChainWriter {
             return Err(ChainError::Broken {
                 seq: cursor.next_seq,
                 reason: format!(
-                    "the file shrank from {} to {end} bytes (records were cut or the file replaced)",
+                    "the file shrank from {} to {end} bytes (records were cut)",
                     cursor.len
                 ),
             });
@@ -431,12 +596,7 @@ impl ChainWriter {
         if let Some(mut file) = file.filter(|_| end > cursor.len) {
             file.seek(SeekFrom::Start(cursor.len))
                 .map_err(|error| io_error("read the chain", error))?;
-            let mut scanner = Scanner::new(
-                BufReader::new(file),
-                cursor.next_seq,
-                cursor.head.clone(),
-                cursor.file_id.clone(),
-            );
+            let mut scanner = Scanner::resume(BufReader::new(file), cursor);
             loop {
                 match scanner
                     .step()
@@ -447,6 +607,7 @@ impl ChainWriter {
                         cursor.next_seq = scanner.next_seq;
                         cursor.head.clone_from(&scanner.head);
                         cursor.file_id.clone_from(&scanner.file_id);
+                        cursor.link.clone_from(&scanner.link);
                         cursor.verified = true;
                     }
                     Step::End => break,
@@ -474,28 +635,19 @@ impl ChainWriter {
             }
         }
         cursor.verified = true;
-        self.open_file_if_empty(cursor)
+        self.open_file_if_empty(cursor, None, None)
     }
 
     /// Moves a torn last line aside, cuts it from the chain and records
     /// both in the chain.
     fn quarantine_tail(&self, cursor: &mut Cursor, bytes: &[u8]) -> Result<(), ChainError> {
-        let name = format!(
-            "{}.quarantine-{}-{}",
-            self.path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            now_ms(),
-            std::process::id()
-        );
-        let aside = self.path.with_file_name(&name);
+        let name = aside_name(&self.path, "");
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
         options
-            .open(&aside)
+            .open(self.path.with_file_name(&name))
             .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()))
             .map_err(|error| io_error("quarantine the torn tail", error))?;
         OpenOptions::new()
@@ -503,7 +655,7 @@ impl ChainWriter {
             .open(&self.path)
             .and_then(|file| file.set_len(cursor.len).and_then(|()| file.sync_all()))
             .map_err(|error| io_error("cut the torn tail", error))?;
-        self.open_file_if_empty(cursor)?;
+        self.open_file_if_empty(cursor, None, None)?;
         let detail = json!({
             "action": "quarantined_torn_tail",
             "bytes": bytes.len(),
@@ -520,8 +672,14 @@ impl ChainWriter {
         .map(|_| ())
     }
 
-    /// Event 0 of a new file: a `rotation` event opening it.
-    fn open_file_if_empty(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
+    /// Event 0 of a new file: a `rotation` event opening it, linked to the
+    /// file it follows.
+    fn open_file_if_empty(
+        &self,
+        cursor: &mut Cursor,
+        link: Option<&ChainLink>,
+        moved: Option<Value>,
+    ) -> Result<(), ChainError> {
         if cursor.next_seq > 0 {
             return Ok(());
         }
@@ -530,7 +688,16 @@ impl ChainWriter {
             "log": self.log,
             "contract": AuditEvent::CONTRACT,
             "anchor_interval_events": ANCHOR_INTERVAL_EVENTS,
+            "previous_file_id": link.map_or(NO_PREVIOUS_FILE, |link| link.previous_file_id.as_str()),
+            "previous_head_seq": link.map(|link| link.previous_head_seq),
+            "previous_head_digest": link.map(|link| link.previous_head_digest.as_str()),
+            "moved_aside": moved,
         });
+        cursor.head = link.map_or_else(
+            || GENESIS_PREV_DIGEST.to_owned(),
+            |link| link.previous_head_digest.clone(),
+        );
+        cursor.link = link.cloned();
         self.write_event(
             cursor,
             EventDraft {
@@ -608,6 +775,69 @@ impl ChainWriter {
             anchor: None,
         })
     }
+}
+
+/// What [`move_aside`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MovedAside {
+    /// The old file's new name, beside the chain.
+    pub moved_to: String,
+    /// The new file's link to the old one (`None` when the old file held no
+    /// verifiable record).
+    pub link: Option<ChainLink>,
+    /// The new file's id.
+    pub file_id: String,
+}
+
+/// Operator recovery for a chain that does not verify: under the chain's
+/// lock, keeps the file as `<chain>.quarantine-moved-<ms>-<pid>` and opens a
+/// new file whose opening event links to the old file's last verifiable
+/// record and names where the old file went. Running writers follow the
+/// linked file. A continuation, never a clean slate: everything the old
+/// file held stays, and the gap is recorded.
+pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
+    let _lock = lock(&lock_path_of(path))?;
+    let file = File::open(path).map_err(|error| io_error("open the chain", error))?;
+    let mut scanner = Scanner::new(BufReader::new(file));
+    let mut stopped = "end".to_owned();
+    loop {
+        match scanner
+            .step()
+            .map_err(|error| io_error("read the chain", error))?
+        {
+            Step::Event(..) => {}
+            Step::End => break,
+            Step::Torn(_) => {
+                "torn tail".clone_into(&mut stopped);
+                break;
+            }
+            Step::Broken(reason) => {
+                stopped = format!("broken at seq {}: {reason}", scanner.next_seq);
+                break;
+            }
+        }
+    }
+    let link = scanner.file_id.clone().map(|file_id| ChainLink {
+        previous_file_id: file_id,
+        previous_head_seq: scanner.next_seq.saturating_sub(1),
+        previous_head_digest: scanner.head.clone(),
+    });
+    let moved_to = aside_name(path, "moved-");
+    std::fs::rename(path, path.with_file_name(&moved_to))
+        .map_err(|error| io_error("move the chain aside", error))?;
+    let writer = ChainWriter::open(path, log).map_err(|error| io_error("open the chain", error))?;
+    let mut cursor = Cursor::empty();
+    cursor.verified = true;
+    writer.open_file_if_empty(
+        &mut cursor,
+        link.as_ref(),
+        Some(json!({"file": moved_to, "stopped": bounded(&stopped, MAX_FIELD_CHARS)})),
+    )?;
+    Ok(MovedAside {
+        moved_to,
+        link,
+        file_id: cursor.file_id.unwrap_or_default(),
+    })
 }
 
 /// Digests `event` and encodes it as one JSON line (without its line end).

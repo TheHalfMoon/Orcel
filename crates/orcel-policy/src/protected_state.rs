@@ -74,9 +74,9 @@ pub fn protected_state_roots_from(lookup: &dyn Fn(&str) -> Option<OsString>) -> 
     roots
 }
 
-/// The WP1-03 hash chain orcel_audit::chain_path_for keeps beside the plain
-/// audit log plain (udit.jsonl keeps udit-chain.jsonl). orceld's
-/// wp103_policy_protects_the_chain_beside_an_audit_override keeps the two
+/// The WP1-03 hash chain `orcel_audit::chain_path_for` keeps beside the plain
+/// audit log `plain` (`audit.jsonl` keeps `audit-chain.jsonl`). orceld's
+/// `wp103_policy_protects_the_chain_beside_an_audit_override` keeps the two
 /// rules equal.
 pub fn audit_chain_beside(plain: &Path) -> PathBuf {
     let stem = plain

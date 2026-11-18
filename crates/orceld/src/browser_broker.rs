@@ -686,7 +686,7 @@ pub(crate) struct Broker<W> {
 }
 
 impl<W: SessionWorker> Broker<W> {
-    /// OB-05 step 1: write every session's receipts to chain too.
+    /// OB-05 step 1: write every session's receipts to `chain` too.
     pub(crate) fn with_audit_chain(
         mut self,
         chain: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
@@ -1572,6 +1572,28 @@ mod tests {
         }
         let report = orcel_audit::verify_file(&chain_path).map_err(|e| e.to_string())?;
         assert_eq!(report.verdict, orcel_audit::Verdict::Intact, "{report:?}");
+        // A chain that refuses the write marks the receipt failed, which
+        // live dispatch turns into a refusal of the action's result.
+        let edited = text.replacen("browser_click", "browser_type", 1);
+        std::fs::write(&chain_path, edited).map_err(|e| e.to_string())?;
+        let fresh = std::sync::Arc::new(
+            orcel_audit::ChainWriter::open(&chain_path, orcel_audit::ORCELD_LOG)
+                .map_err(|e| e.to_string())?,
+        );
+        let mut broken = scene
+            .broker("0123456789abcded", Budgets::DEFAULT)
+            .with_audit_chain(Some(fresh));
+        let third = scene
+            .create(&mut broken, "client-c", "3")
+            .map_err(|e| e.message)?;
+        let session = broken.session("client-c", &third).map_err(|e| e.message)?;
+        let receipt = session.record(record("browser_click", "done"), 10);
+        assert!(
+            matches!(&receipt.audit, ReceiptAudit::Failed(error) if error.contains("broken")),
+            "{:?}",
+            receipt.audit
+        );
+        assert!(receipt.to_json()["audit"]["error"].is_string());
         // Without a chain the receipt says so, and its digest is the same
         // function of the same fields.
         let mut plain = scene.broker("0123456789abcdee", Budgets::DEFAULT);

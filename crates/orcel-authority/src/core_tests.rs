@@ -11,8 +11,9 @@ use crate::core::{
 };
 use crate::error::{AuthorityError, ENROLLMENT_UNAVAILABLE};
 use crate::lease::{LeaseScope, SignedLease};
-use crate::protocol::{AuthorizeClaims, ClaimedOrigin, Request};
+use crate::protocol::{AuthorizeClaims, ChainLink, ClaimedOrigin, Request};
 use crate::{hex, sha256_hex, unhex, RunMode};
+use orcel_contracts::event::AnchorRef;
 use orcel_contracts::{ExecutorClass, FailureCode};
 use serde_json::Value;
 use std::cell::Cell;
@@ -875,60 +876,67 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
     Ok(())
 }
 
+fn anchor_request(file: char, seq: u64, digest: char, link: Option<ChainLink>) -> Request {
+    Request::Anchor {
+        anchor: AnchorRef {
+            log: "orceld".to_owned(),
+            file_id: file.to_string().repeat(64),
+            seq,
+            digest: digest.to_string().repeat(64),
+        },
+        link,
+    }
+}
+
+fn link_to(file: char, seq: u64, digest: char) -> Option<ChainLink> {
+    Some(ChainLink {
+        previous_file_id: file.to_string().repeat(64),
+        previous_head_seq: seq,
+        previous_head_digest: digest.to_string().repeat(64),
+    })
+}
+
 /// WP1-03: orceld, and only orceld, can have the service hold an anchor of
 /// its own audit chain; the anchor is recorded as orceld's claim and
 /// written to the Event Log as a signed 4100 event.
 #[test]
 fn wp103_the_service_holds_orcelds_chain_anchor() -> Result<(), String> {
-    use orcel_contracts::event::AnchorRef;
     let dir = temp_dir("anchor")?;
     let events = Events::default();
     let mut core = open(&dir, &events)?;
-    let anchor = AnchorRef {
-        log: "orceld".to_owned(),
-        file_id: "a".repeat(64),
-        seq: 31,
-        digest: "b".repeat(64),
-    };
     for caller in [owner(), other_process()] {
         assert_eq!(
-            code(core.handle(
-                &caller,
-                Request::Anchor {
-                    anchor: anchor.clone()
-                }
-            )),
+            code(core.handle(&caller, anchor_request('a', 31, 'b', None))),
             Some(FailureCode::CapabilityDenied)
         );
     }
-    for bad in [
-        AnchorRef {
+    let bad_log = Request::Anchor {
+        anchor: AnchorRef {
             log: "authority".to_owned(),
-            ..anchor.clone()
+            file_id: "a".repeat(64),
+            seq: 31,
+            digest: "b".repeat(64),
         },
-        AnchorRef {
-            digest: "B".repeat(64),
-            ..anchor.clone()
-        },
-        AnchorRef {
-            file_id: "a|b".to_owned(),
-            ..anchor.clone()
-        },
+        link: None,
+    };
+    for bad in [
+        bad_log,
+        anchor_request('a', 31, 'B', None),
+        anchor_request('a', 31, 'b', link_to('Z', 1, 'c')),
     ] {
         assert_eq!(
-            code(core.handle(&orceld(), Request::Anchor { anchor: bad })),
+            code(core.handle(&orceld(), bad)),
             Some(FailureCode::InvalidRequest)
         );
     }
-    let answer = ok(core.handle(
-        &orceld(),
-        Request::Anchor {
-            anchor: anchor.clone(),
-        },
-    ))?;
+    let answer = ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
     assert_eq!(answer["anchored"], Value::Bool(true));
     assert_eq!(answer["event_id"], 4100);
-    let insertion = anchor.event_log_insertion().ok_or("insertion")?;
+    let insertion = format!(
+        "orcel-anchor/1|orceld|{}|31|{}",
+        "a".repeat(64),
+        "b".repeat(64)
+    );
     let written = events.with_id(4100);
     assert!(
         written
@@ -943,8 +951,73 @@ fn wp103_the_service_holds_orcelds_chain_anchor() -> Result<(), String> {
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .find(|record| record["kind"] == "anchor" && record["observed"]["role"] == "orceld")
         .ok_or("an anchor record")?;
-    assert_eq!(record["asserted_by_session"]["digest"], anchor.digest);
+    assert_eq!(record["asserted_by_session"]["digest"], "b".repeat(64));
     assert_eq!(record["seq"], answer["authority_seq"]);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 review: per account and log the service refuses a seq
+/// regression or rewrite, answers a repeat without a second record, refuses
+/// a replacement file that does not link to the held one (and a file the
+/// log left), accepts a linked continuation, and caps the rate.
+#[test]
+fn wp103_the_service_refuses_rewrites_regressions_and_unlinked_files() -> Result<(), String> {
+    let dir = temp_dir("anchor-rules")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let count = || events.with_id(4100).len();
+    let before = count();
+    let repeat = ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    assert_eq!(repeat["duplicate"], Value::Bool(true));
+    assert_eq!(count(), before, "a repeat writes nothing");
+    for refused in [
+        anchor_request('a', 31, 'c', None),
+        anchor_request('a', 7, 'c', None),
+        // A new file with no link, a wrong link, or a head before the
+        // anchored record.
+        anchor_request('d', 31, 'e', None),
+        anchor_request('d', 31, 'e', link_to('f', 40, 'b')),
+        anchor_request('d', 31, 'e', link_to('a', 30, 'b')),
+        anchor_request('d', 31, 'e', link_to('a', 31, 'c')),
+    ] {
+        assert_eq!(
+            code(core.handle(&orceld(), refused)),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    ok(core.handle(&orceld(), anchor_request('a', 63, 'c', None)))?;
+    let moved = ok(core.handle(
+        &orceld(),
+        anchor_request('d', 31, 'e', link_to('a', 70, 'f')),
+    ))?;
+    assert_eq!(moved["new_file"], Value::Bool(true));
+    // The file the log left is refused from now on.
+    assert_eq!(
+        code(core.handle(&orceld(), anchor_request('a', 95, 'c', None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Another account's chain is its own.
+    let other_account = CallerFacts {
+        user_sid: "S-1-5-21-1-2-3-1002".to_owned(),
+        ..orceld()
+    };
+    ok(core.handle(&other_account, anchor_request('a', 31, 'b', None)))?;
+    // The rate cap.
+    let mut refused = None;
+    for n in 0..=crate::core::chain_anchor::ANCHORS_PER_MINUTE as u64 {
+        if let Err(error) = core.handle(&orceld(), anchor_request('d', 100 + n, 'e', None)) {
+            refused = Some(error);
+            break;
+        }
+    }
+    let refused = refused.ok_or("the rate cap never refused")?;
+    assert!(
+        refused.message.contains("in a minute"),
+        "{}",
+        refused.message
+    );
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

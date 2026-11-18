@@ -195,9 +195,11 @@ impl AuthorityClient {
     pub fn anchor(
         &self,
         anchor: &orcel_contracts::event::AnchorRef,
+        link: Option<crate::protocol::ChainLink>,
     ) -> Result<Value, AuthorityError> {
         self.call(&Request::Anchor {
             anchor: anchor.clone(),
+            link,
         })
     }
 }

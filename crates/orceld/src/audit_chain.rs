@@ -13,7 +13,7 @@
 //! refuses, the chain records a local marker that says `unanchored`; orceld
 //! never calls its chain tamper-proof without the service.
 
-use orcel_audit::{AnchorOutcome, Anchorer, ChainWriter};
+use orcel_audit::{AnchorOutcome, Anchorer, ChainLink, ChainWriter};
 use orcel_authority::client::AuthorityClient;
 use orcel_contracts::event::AnchorRef;
 use std::path::PathBuf;
@@ -46,8 +46,13 @@ pub(crate) const SERVICE_HOLDER: &str =
     "Orcel authority service (its audit chain and Event Log event 4100)";
 
 impl Anchorer for ServiceAnchorer {
-    fn anchor(&self, anchor: &AnchorRef) -> AnchorOutcome {
-        let answer = AuthorityClient::installed().and_then(|client| client.anchor(anchor));
+    fn anchor(&self, anchor: &AnchorRef, link: Option<&ChainLink>) -> AnchorOutcome {
+        let link = link.map(|link| orcel_authority::protocol::ChainLink {
+            previous_file_id: link.previous_file_id.clone(),
+            previous_head_seq: link.previous_head_seq,
+            previous_head_digest: link.previous_head_digest.clone(),
+        });
+        let answer = AuthorityClient::installed().and_then(|client| client.anchor(anchor, link));
         outcome(answer)
     }
 }
@@ -80,35 +85,62 @@ pub(crate) const EXIT_USAGE: i32 = 2;
 pub(crate) const EXIT_TORN_TAIL: i32 = 3;
 pub(crate) const EXIT_BROKEN: i32 = 4;
 pub(crate) const EXIT_MISSING: i32 = 5;
+pub(crate) const EXIT_RECOVERED: i32 = 6;
+pub(crate) const EXIT_TRUNCATED: i32 = 7;
 
-/// `orceld audit-verify [--chain <path>]`: verifies the chain and prints the
-/// report as JSON. `None` when `args` is not this command.
+/// `orceld audit-verify [--chain <path>]` verifies the chain and prints the
+/// report as JSON; `orceld audit-move-aside [--chain <path>]` keeps a chain
+/// that does not verify and opens a new file linked to its last verifiable
+/// record (the operator's recovery when every dispatch is refused). `None`
+/// when `args` is neither command.
 pub(crate) fn run_cli(args: &[String]) -> Option<i32> {
-    if args.first().map(String::as_str) != Some("audit-verify") {
+    let command = args.first().map(String::as_str)?;
+    if command != "audit-verify" && command != "audit-move-aside" {
         return None;
     }
     let path = match args.get(1..).unwrap_or_default() {
         [] => default_chain(),
         [flag, path] if flag == "--chain" => Ok(PathBuf::from(path)),
-        _ => Err("usage: orceld audit-verify [--chain <path>]".to_owned()),
+        _ => Err(format!("usage: orceld {command} [--chain <path>]")),
     };
     let path = match path {
         Ok(path) => path,
         Err(message) => {
-            eprintln!("orceld audit-verify: {message}");
+            eprintln!("orceld {command}: {message}");
             return Some(EXIT_USAGE);
         }
     };
-    Some(match verify(&path) {
+    let result = if command == "audit-verify" {
+        verify(&path)
+    } else {
+        move_aside(&path)
+    };
+    Some(match result {
         Ok((text, code)) => {
             println!("{text}");
             code
         }
         Err(message) => {
-            eprintln!("orceld audit-verify: {message}");
+            eprintln!("orceld {command}: {message}");
             EXIT_USAGE
         }
     })
+}
+
+/// Moves the chain at `path` aside and opens the linked file.
+pub(crate) fn move_aside(path: &std::path::Path) -> Result<(String, i32), String> {
+    let moved = orcel_audit::move_aside(path, orcel_audit::ORCELD_LOG)
+        .map_err(|error| error.to_string())?;
+    let text = serde_json::to_string_pretty(&serde_json::json!({
+        "moved_to": moved.moved_to,
+        "new_file_id": moved.file_id,
+        "previous_file_id": moved.link.as_ref().map(|link| link.previous_file_id.clone()),
+        "previous_head_seq": moved.link.as_ref().map(|link| link.previous_head_seq),
+        "note": "the old file is kept beside the chain; the new file continues it from its \
+                 last verifiable record (not a clean slate)",
+    }))
+    .map_err(|error| format!("encode the result: {error}"))?;
+    Ok((text, EXIT_INTACT))
 }
 
 /// The report as JSON text and the exit code it earns.
@@ -120,6 +152,8 @@ pub(crate) fn verify(path: &std::path::Path) -> Result<(String, i32), String> {
         orcel_audit::Verdict::TornTail => EXIT_TORN_TAIL,
         orcel_audit::Verdict::Broken => EXIT_BROKEN,
         orcel_audit::Verdict::Missing => EXIT_MISSING,
+        orcel_audit::Verdict::Recovered => EXIT_RECOVERED,
+        orcel_audit::Verdict::Truncated => EXIT_TRUNCATED,
     };
     let text = serde_json::to_string_pretty(&report)
         .map_err(|error| format!("encode the report: {error}"))?;
@@ -171,6 +205,7 @@ mod tests {
                 .map_err(|e| e.to_string())?;
         }
         let chain = logger.chain().path().to_path_buf();
+        let args = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         let (text, code) = verify(&chain)?;
         assert_eq!(code, EXIT_INTACT, "{text}");
         let report: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
@@ -188,14 +223,27 @@ mod tests {
         let (text, code) = verify(&chain)?;
         assert_eq!(code, EXIT_BROKEN, "{text}");
         assert_eq!(verify(&dir.join("absent.jsonl"))?.1, EXIT_MISSING);
+        // The operator's recovery: the broken file is kept and a linked file
+        // opens; the chain then verifies and accepts records again.
+        let chain_arg = chain.display().to_string();
+        assert_eq!(
+            run_cli(&args(&["audit-move-aside", "--chain", &chain_arg])),
+            Some(EXIT_INTACT)
+        );
+        let (text, code) = verify(&chain)?;
+        assert_eq!(code, EXIT_INTACT, "{text}");
+        let report: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        assert_eq!(report["previous_head_seq"], 1, "the last verifiable record");
+        logger
+            .record(&request(9), "p1", "SUCCESS")
+            .map_err(|e| e.to_string())?;
+        std::fs::write(&chain, original.replacen("r-1", "r-9", 1)).map_err(|e| e.to_string())?;
 
-        let args = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         assert_eq!(run_cli(&args(&["authority-status"])), None);
         assert_eq!(
             run_cli(&args(&["audit-verify", "--chain"])),
             Some(EXIT_USAGE)
         );
-        let chain_arg = chain.display().to_string();
         assert_eq!(
             run_cli(&args(&["audit-verify", "--chain", &chain_arg])),
             Some(EXIT_BROKEN)
@@ -257,7 +305,7 @@ mod tests {
         }
         let report = orcel_audit::verify_file(chain.path()).map_err(|e| e.to_string())?;
         assert_eq!(report.verdict, orcel_audit::Verdict::Intact);
-        assert_eq!(report.anchors_local + report.anchors_external, 1);
+        assert_eq!(report.anchors_local + report.anchors_claimed, 1);
         let _ = std::fs::remove_dir_all(dir);
         Ok(())
     }
@@ -271,6 +319,80 @@ mod tests {
             assert_eq!(
                 orcel_policy::protected_state::audit_chain_beside(plain),
                 orcel_audit::chain_path_for(plain)
+            );
+        }
+    }
+    /// Spec 4.8 write before dispatch: the guard writes the dispatch record
+    /// first, and a chain that cannot be written refuses the request with
+    /// nothing dispatched (the refusal is still in the plain log).
+    #[test]
+    fn audit_chain_dispatch_is_refused_when_the_record_fails() -> Result<(), String> {
+        let dir = sandbox("before-dispatch")?;
+        let plain = dir.join("audit.jsonl");
+        let logger = AuditLogger::new(&plain).map_err(|e| e.to_string())?;
+        crate::audit_before_dispatch(&logger, &request(1), "p1")
+            .map_err(|refused| format!("{:?}", refused.error))?;
+        let chain = logger.chain().path().to_path_buf();
+        let text = std::fs::read_to_string(&chain).map_err(|e| e.to_string())?;
+        assert!(text.contains("\"kind\":\"dispatch\""), "{text}");
+        assert!(text.contains("before_dispatch"));
+        std::fs::write(&chain, text.replacen("r-1", "r-7", 1)).map_err(|e| e.to_string())?;
+        let fresh = AuditLogger::new(&plain).map_err(|e| e.to_string())?;
+        let refused = crate::audit_before_dispatch(&fresh, &request(2), "p1")
+            .err()
+            .ok_or("the dispatch should be refused")?;
+        let error = refused.error.ok_or("an error")?;
+        assert_eq!(error.code, orcel_contracts::FailureCode::InternalError);
+        assert!(
+            error.message.contains("nothing was dispatched"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("audit-move-aside"),
+            "{}",
+            error.message
+        );
+        let plain_text = std::fs::read_to_string(&plain).map_err(|e| e.to_string())?;
+        assert!(plain_text.contains("AUDIT_REFUSED"), "{plain_text}");
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    /// Every dispatch call in orceld's request path is preceded by the
+    /// write-before-dispatch guard.
+    #[test]
+    fn audit_chain_every_dispatch_site_writes_its_record_first() {
+        let main = include_str!("sg000039_main.rs");
+        let production = main
+            .split("#[cfg(test)]\nmod tests {")
+            .next()
+            .unwrap_or_default();
+        let report = include_str!("report_task.rs");
+        for (source, call) in [
+            (production, "remote_lease::authorize_enrollment("),
+            (production, "executable_admin::dispatch_registry("),
+            (production, "remote_lease::dispatch_lease_management("),
+            (production, "secret_store::dispatch("),
+            (production, "live_dispatch::dispatch(&"),
+            (production, "live_dispatch::dispatch_full("),
+            (production, "let result = dispatch_with("),
+            (report, "match dispatch(&decision.workspace"),
+        ] {
+            let lines: Vec<&str> = source.lines().collect();
+            let sites: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| line.contains(call))
+                .map(|(index, _)| index)
+                .collect();
+            assert_eq!(sites.len(), 1, "{call}");
+            let before = &lines[sites[0].saturating_sub(12)..sites[0]];
+            assert!(
+                before
+                    .iter()
+                    .any(|line| line.contains("audit_before_dispatch(")),
+                "{call} runs without its dispatch record first"
             );
         }
     }

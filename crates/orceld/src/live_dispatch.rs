@@ -1062,6 +1062,18 @@ mod full {
             orcel_approval::now_ms(),
         );
         session.page_id = after.map(|(page, _)| page);
+        // WP1-03 / OB-05: the request's dispatch record was written before
+        // the action ran (orceld refuses the request otherwise); a receipt
+        // the chain refused withholds the action's result.
+        if let crate::browser_broker::ReceiptAudit::Failed(error) = &receipt.audit {
+            return Err(ProviderError::new(
+                FailureCode::InternalError,
+                format!(
+                    "the audit chain refused browser session receipt {}; its result is withheld: {error}",
+                    receipt.seq
+                ),
+            ));
+        }
         match result {
             Ok(mut done) => {
                 if let Value::Object(map) = &mut done.reply {

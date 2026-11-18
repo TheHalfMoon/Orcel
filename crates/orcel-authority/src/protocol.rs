@@ -109,8 +109,24 @@ pub enum Request {
     Stop,
     /// WP1-03: hold an anchor of orceld's own audit chain outside the user
     /// session. orceld only; the anchor is recorded as orceld's claim in the
-    /// service's chain and written to the Event Log as event 4100.
-    Anchor { anchor: AnchorRef },
+    /// service's chain and written to the Event Log as event 4100. `link` is
+    /// the anchored file's link to the file it follows (absent for a log's
+    /// first file).
+    Anchor {
+        anchor: AnchorRef,
+        #[serde(default)]
+        link: Option<ChainLink>,
+    },
+}
+
+/// WP1-03: the file an anchored chain file follows, as its opening record
+/// states it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChainLink {
+    pub previous_file_id: String,
+    pub previous_head_seq: u64,
+    pub previous_head_digest: String,
 }
 
 impl Request {

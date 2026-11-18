@@ -14,6 +14,7 @@
 //!
 //! [`ANCHOR_INTERVAL_EVENTS`]: orcel_contracts::event::ANCHOR_INTERVAL_EVENTS
 
+use crate::chain::ChainLink;
 use orcel_contracts::event::AnchorRef;
 use serde_json::{json, Value};
 
@@ -58,9 +59,12 @@ impl AnchorOutcome {
 pub const UNANCHORED_NOTE: &str = "local marker only: no anchor outside the user session; \
      edits, deletions and reorders are evident, a rewrite of the whole file or a cut at its end is not";
 
-/// Holds anchors outside the user session.
+/// Holds anchors outside the user session. `link` is the anchored file's
+/// link to the file it follows (`None` for a log's first file), so the
+/// holder can refuse an anchor for a file that replaced its known file
+/// without linking to it.
 pub trait Anchorer: Send + Sync {
-    fn anchor(&self, anchor: &AnchorRef) -> AnchorOutcome;
+    fn anchor(&self, anchor: &AnchorRef, link: Option<&ChainLink>) -> AnchorOutcome;
 }
 
 /// No external holder: every anchor is a local, unanchored marker.
@@ -68,7 +72,7 @@ pub trait Anchorer: Send + Sync {
 pub struct LocalMarker;
 
 impl Anchorer for LocalMarker {
-    fn anchor(&self, _anchor: &AnchorRef) -> AnchorOutcome {
+    fn anchor(&self, _anchor: &AnchorRef, _link: Option<&ChainLink>) -> AnchorOutcome {
         AnchorOutcome::Unanchored {
             reason: "no authority service anchors this chain".to_owned(),
         }

@@ -3,7 +3,7 @@
 //! processes, torn-write recovery, size bounds, anchors and redaction.
 
 use crate::anchor::{AnchorOutcome, Anchorer, UNANCHORED_NOTE};
-use crate::chain::{ChainError, ChainWriter, EventDraft, MAX_EVENT_BYTES};
+use crate::chain::{move_aside, ChainError, ChainLink, ChainWriter, EventDraft, MAX_EVENT_BYTES};
 use crate::verify::{verify_file, verify_with_anchors, Verdict};
 use crate::{AuditLogger, ORCELD_LOG};
 use orcel_contracts::event::{
@@ -196,10 +196,10 @@ fn chain_truncation_is_reported() -> TestResult {
     rewrite(&path, &all[..4])?;
     let alone = verify_file(&path).map_err(|e| e.to_string())?;
     assert_eq!(alone.verdict, Verdict::Intact);
-    assert_eq!(alone.tamper_evidence, UNANCHORED_NOTE);
+    assert!(alone.tamper_evidence.starts_with(UNANCHORED_NOTE));
     let anchored =
         verify_with_anchors(&path, std::slice::from_ref(&held)).map_err(|e| e.to_string())?;
-    assert_eq!(anchored.verdict, Verdict::Broken);
+    assert_eq!(anchored.verdict, Verdict::Truncated);
     assert_eq!(anchored.anchor_checks[0].result, "beyond_end");
     let refused = writer.append(draft(7));
     assert!(
@@ -250,7 +250,7 @@ fn chain_a_torn_write_is_quarantined_and_recorded() -> TestResult {
     assert!(kept.starts_with("{\"contract\""), "{kept}");
     assert_eq!(events[4].detail["bytes"], kept.len());
     let report = verify_file(&path).map_err(|e| e.to_string())?;
-    assert_eq!(report.verdict, Verdict::Intact, "{report:?}");
+    assert_eq!(report.verdict, Verdict::Recovered, "{report:?}");
     assert_eq!(report.quarantined_tails, 1);
     // A torn opening record: the file starts over from a new opening.
     let fresh = dir.join("fresh-chain.jsonl");
@@ -261,7 +261,7 @@ fn chain_a_torn_write_is_quarantined_and_recorded() -> TestResult {
     assert_eq!(events[1].detail["action"], "quarantined_torn_tail");
     assert_eq!(
         verify_file(&fresh).map_err(|e| e.to_string())?.verdict,
-        Verdict::Intact
+        Verdict::Recovered
     );
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
@@ -324,7 +324,7 @@ fn chain_records_are_bounded() -> TestResult {
 struct HeldAnchors(std::sync::Mutex<Vec<AnchorRef>>);
 
 impl Anchorer for HeldAnchors {
-    fn anchor(&self, anchor: &AnchorRef) -> AnchorOutcome {
+    fn anchor(&self, anchor: &AnchorRef, _link: Option<&ChainLink>) -> AnchorOutcome {
         if let Ok(mut held) = self.0.lock() {
             held.push(anchor.clone());
         }
@@ -368,8 +368,8 @@ fn chain_anchors_every_interval_and_never_overclaims() -> TestResult {
     assert_eq!(marker.detail["note"], UNANCHORED_NOTE);
     assert_eq!(marker.detail["anchor"]["seq"], ANCHOR_INTERVAL_EVENTS - 1);
     let report = verify_file(&path).map_err(|e| e.to_string())?;
-    assert_eq!((report.anchors_local, report.anchors_external), (1, 0));
-    assert_eq!(report.tamper_evidence, UNANCHORED_NOTE);
+    assert_eq!((report.anchors_local, report.anchors_claimed), (1, 0));
+    assert!(report.tamper_evidence.starts_with(UNANCHORED_NOTE));
 
     let holder = Arc::new(HeldAnchors(std::sync::Mutex::new(Vec::new())));
     writer.set_anchorer(holder.clone());
@@ -379,11 +379,22 @@ fn chain_anchors_every_interval_and_never_overclaims() -> TestResult {
     let held = holder.0.lock().map_err(|e| e.to_string())?.clone();
     assert_eq!(held.len(), 1);
     assert_eq!(held[0].log, ORCELD_LOG);
+    // Without the held copy, the anchor record is only a claim.
+    let claimed = verify_file(&path).map_err(|e| e.to_string())?;
+    assert_eq!((claimed.anchors_claimed, claimed.anchors_verified), (1, 0));
+    assert!(
+        claimed.tamper_evidence.contains("claim test holder")
+            && claimed.tamper_evidence.contains("unverified"),
+        "{}",
+        claimed.tamper_evidence
+    );
     let report = verify_with_anchors(&path, &held).map_err(|e| e.to_string())?;
     assert_eq!(report.verdict, Verdict::Intact, "{report:?}");
-    assert_eq!(report.anchors_external, 1);
-    assert_eq!(report.last_external_anchor_seq, Some(held[0].seq));
-    assert!(report.tamper_evidence.contains("test holder"));
+    assert_eq!(report.anchors_verified, 1);
+    assert_eq!(report.last_verified_anchor_seq, Some(held[0].seq));
+    assert!(report
+        .tamper_evidence
+        .starts_with("verified against held anchors"));
 
     // An anchor record that names another digest breaks the chain even when
     // it is re-hashed to fit.
@@ -507,7 +518,7 @@ fn chain_logger_records_keep_their_fields_and_no_secret() -> TestResult {
         pid: 77,
         start_generation: 5,
         generation_source: "test".into(),
-        executable: Ok(r"C:\tools\caller.exe".into()),
+        executable: Ok(r"C:\Users\alice-profile\tools\caller.exe".into()),
     };
     logger
         .record_with_caller(&request("src/lib.rs"), "p1", "DENIED", &caller)
@@ -533,17 +544,21 @@ fn chain_logger_records_keep_their_fields_and_no_secret() -> TestResult {
     assert_eq!(success.detail["workspace_id"], "w");
     assert_eq!(success.detail["policy_revision"], "p1");
     assert_eq!(success.detail["outcome"], "SUCCESS");
-    assert_eq!(success.detail["target"], "https://example.test/…");
+    assert_eq!(success.detail["phase"], "outcome");
+    assert_eq!(success.detail["target"]["label"], "url");
     assert_eq!(
-        success.detail["target_sha256"],
+        success.detail["target"]["sha256"],
         crate::sha256_hex(target.as_bytes())
     );
     let denied = &events[2];
     assert_eq!(denied.kind, AuditEventKind::Decision);
     assert_eq!(denied.caller_pid, Some(77));
-    assert_eq!(denied.caller_image.as_deref(), Some(r"C:\tools\caller.exe"));
+    assert_eq!(denied.caller_image.as_deref(), Some("caller.exe"));
     assert_eq!(denied.detail["caller"]["start_generation"], 5);
-    assert_eq!(denied.detail["target"], "src/lib.rs");
+    assert_eq!(denied.detail["caller"]["executable_name"], "caller.exe");
+    assert_eq!(denied.detail["target"]["label"], "path");
+    assert!(!chain_text.contains("alice-profile"));
+    assert!(!chain_text.contains("src/lib.rs"));
     // The plain log is unchanged in shape.
     let plain_text = std::fs::read_to_string(&plain).map_err(|e| e.to_string())?;
     assert_eq!(plain_text.lines().count(), 2);
@@ -591,4 +606,131 @@ fn chain_beside_the_default_log_is_the_registered_store() {
         crate::chain_path_for(Path::new("/x/custom-audit.jsonl")),
         Path::new("/x/custom-audit-chain.jsonl")
     );
+}
+
+/// Spec 4.8 write before dispatch: the dispatch record reaches the chain
+/// (and only the chain) before the outcome, and fails when the chain does.
+#[test]
+fn chain_dispatch_records_come_first_and_fail_with_the_chain() -> TestResult {
+    let dir = sandbox("dispatch")?;
+    let plain = dir.join("audit.jsonl");
+    let logger = AuditLogger::new(&plain).map_err(|e| e.to_string())?;
+    logger
+        .record_dispatch(&request("a"), "p1")
+        .map_err(|e| e.to_string())?;
+    logger
+        .record(&request("a"), "p1", "SUCCESS")
+        .map_err(|e| e.to_string())?;
+    let events = events(logger.chain().path())?;
+    assert_eq!(events[1].kind, AuditEventKind::Dispatch);
+    assert_eq!(events[1].detail["phase"], "before_dispatch");
+    assert!(events[1].detail["outcome"].is_null());
+    assert_eq!(events[2].detail["phase"], "outcome");
+    assert_eq!(lines(&plain)?.len(), 1, "the plain log keeps outcomes only");
+    let chain = logger.chain().path().to_path_buf();
+    let mut all = lines(&chain)?;
+    all[1] = all[1].replace("before_dispatch", "after_dispatch");
+    rewrite(&chain, &all)?;
+    let fresh = AuditLogger::new(&plain).map_err(|e| e.to_string())?;
+    let error = fresh
+        .record_dispatch(&request("b"), "p1")
+        .err()
+        .ok_or("the dispatch record should fail")?;
+    assert!(error.to_string().contains("audit-move-aside"), "{error}");
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// Moving a broken chain aside keeps it and opens a new file linked to its
+/// last verifiable record; a running writer follows the linked file; held
+/// anchors of the old file check against the link; an unlinked replacement
+/// is refused by writers and is a break for held anchors.
+#[test]
+fn chain_move_aside_links_the_new_file_and_an_unlinked_one_breaks() -> TestResult {
+    let dir = sandbox("move-aside")?;
+    let path = dir.join("audit-chain.jsonl");
+    let running = write(&path, 5)?;
+    let old = events(&path)?;
+    let old_id = old[0].digest.clone();
+    let held_old_head = AnchorRef {
+        log: ORCELD_LOG.to_owned(),
+        file_id: old_id.clone(),
+        seq: 3,
+        digest: old[3].digest.clone(),
+    };
+    let held_old_early = AnchorRef {
+        seq: 1,
+        digest: old[1].digest.clone(),
+        ..held_old_head.clone()
+    };
+    // Break record 4, then move the file aside.
+    let mut all = lines(&path)?;
+    all[4] = all[4].replace("\"n\":3", "\"n\":8");
+    rewrite(&path, &all)?;
+    assert!(matches!(
+        write(&path, 0)?.append(draft(50)),
+        Err(ChainError::Broken { seq: 4, .. })
+    ));
+    let moved = move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    assert!(dir.join(&moved.moved_to).is_file(), "the old file is kept");
+    assert!(moved.moved_to.contains(".quarantine-moved-"));
+    let link = moved.link.clone().ok_or("a link")?;
+    assert_eq!(
+        link,
+        ChainLink {
+            previous_file_id: old_id.clone(),
+            previous_head_seq: 3,
+            previous_head_digest: old[3].digest.clone(),
+        }
+    );
+    let fresh = events(&path)?;
+    assert_eq!(
+        fresh[0].prev_digest, old[3].digest,
+        "continues the old head"
+    );
+    assert_eq!(fresh[0].detail["previous_file_id"], old_id.as_str());
+    assert!(fresh[0].detail["moved_aside"]["stopped"]
+        .as_str()
+        .is_some_and(|stopped| stopped.contains("broken at seq 4")));
+    // The writer that saw the break follows the linked file.
+    let appended = running.append(draft(51)).map_err(|e| e.to_string())?;
+    assert_eq!(appended.at.file_id, moved.file_id);
+    assert_eq!(appended.event.seq, 1);
+    let report = verify_with_anchors(&path, &[held_old_head.clone(), held_old_early.clone()])
+        .map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::Intact, "{report:?}");
+    assert_eq!(report.previous_file_id.as_deref(), Some(old_id.as_str()));
+    assert_eq!(report.anchor_checks[0].result, "previous_file_head");
+    assert_eq!(report.anchor_checks[1].result, "previous_file");
+    assert!(report.tamper_evidence.contains("follows"));
+    // A held anchor past the linked head: the old file was cut first.
+    let past = AnchorRef {
+        seq: 4,
+        ..held_old_head.clone()
+    };
+    let report = verify_with_anchors(&path, &[past]).map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::Truncated);
+    assert_eq!(report.anchor_checks[0].result, "beyond_link");
+
+    // An unlinked replacement (the file deleted and a new one opened).
+    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    write(&path, 1)?;
+    let replaced = events(&path)?;
+    assert_eq!(replaced[0].detail["previous_file_id"], "none");
+    let refused = running.append(draft(52));
+    assert!(
+        matches!(&refused, Err(ChainError::Broken { reason, .. }) if reason.contains("does not link")),
+        "{refused:?}"
+    );
+    let held_new = AnchorRef {
+        file_id: moved.file_id.clone(),
+        seq: 1,
+        digest: appended.event.digest.clone(),
+        ..held_old_head
+    };
+    let report = verify_with_anchors(&path, &[held_new]).map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::Broken);
+    assert_eq!(report.anchor_checks[0].result, "unlinked_file");
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
 }
