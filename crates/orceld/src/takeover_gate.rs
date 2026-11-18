@@ -215,6 +215,31 @@ impl<C: Clock> TakeoverGate<C> {
         self.gate.as_mut()
     }
 
+    /// SG-000135 OB-08: the page's intervention epoch (each human
+    /// intervention advances it), which a Full Access lease's use is pinned
+    /// to; `None` while the switch is off or the page is not tracked.
+    pub(crate) fn intervention_epoch(&self, page_id: &str) -> Option<u64> {
+        self.gate
+            .as_ref()
+            .and_then(|gate| gate.epoch(&ResourceId::new(page_id)))
+    }
+
+    /// OB-08 review: the intervention epoch of every page the gate tracks,
+    /// or `None` while the switch is off (then no person's input can be
+    /// seen, and a lease covers nothing).
+    pub(crate) fn interventions(&self) -> Option<std::collections::BTreeMap<String, u64>> {
+        let gate = self.gate.as_ref()?;
+        Some(
+            self.basis
+                .keys()
+                .filter_map(|page| {
+                    gate.epoch(&ResourceId::new(page.as_str()))
+                        .map(|epoch| (page.clone(), epoch))
+                })
+                .collect(),
+        )
+    }
+
     /// Whether the gate is on.
     pub(crate) fn is_on(&self) -> bool {
         self.gate.is_some()
@@ -1078,5 +1103,133 @@ mod tests {
             matches!(&refused, Err(e) if !e.message.contains("hunter2")),
             "{refused:?}"
         );
+    }
+
+    /// SG-000135 OB-07 with OB-08: HUMAN_VERIFICATION_REQUIRED stays ahead of
+    /// any Full Access lease. The live browser asks the gate (`gate_write`)
+    /// before it consults the lease (`authorize`) and again (`gate_confirm`)
+    /// before the lease is used (`spend`, the service's Authorize). On a page
+    /// awaiting the person, both refuse with HUMAN_VERIFICATION_REQUIRED, and
+    /// the lease is never used: the service's Authorize is never asked.
+    #[test]
+    fn ob07_ob08_a_covered_action_on_a_page_awaiting_verification_is_refused_without_lease_use() {
+        use crate::browser_lease::{
+            AuthorityView, CoveredAction, FullAccess, LeaseDecision, LeaseMoment, LeaseQuery,
+            LeaseSource, SecretMatcher,
+        };
+        use orcel_contracts::browser_impact::Impact;
+        use orcel_policy::browser_lease::{client_ref, BrowserFamily, BrowserLease};
+        use orcel_provider_fs::ProviderError;
+        use std::cell::{Cell, RefCell};
+        use std::rc::Rc;
+
+        const SESSION: &str = "bs-0123456789abcdef-1-0001020304050607";
+        const NOW: u64 = 1_800_000_000_000;
+        let client = client_ref("mcp-client-a");
+        let lease = BrowserLease {
+            lease_id: format!("al-{}", "7".repeat(32)),
+            client_ref: client.clone(),
+            session_id: SESSION.into(),
+            windows_user_sid: "S-1-5-21-1-2-3-1001".into(),
+            logon_session_id: 42,
+            authority_epoch: 5,
+            revocations_at_issue: 2,
+            origins: vec!["https://fixture.test".into()],
+            families: vec![BrowserFamily::Navigate, BrowserFamily::Click],
+            issued_at_ms: NOW,
+            expires_at_ms: NOW + 60 * 60_000,
+            task: None,
+            principal_id: client.clone(),
+            requester: "pid 7 orcel.exe (via the Orcel authority service)".into(),
+        };
+        struct Source {
+            lease: BrowserLease,
+            authorized: Rc<Cell<usize>>,
+        }
+        impl LeaseSource for Source {
+            fn read(&self) -> Result<Option<AuthorityView>, ProviderError> {
+                Ok(Some(AuthorityView {
+                    epoch: 5,
+                    revocations: 2,
+                    leases: vec![self.lease.clone()],
+                }))
+            }
+            fn authorize(&self, _action: &CoveredAction) -> Result<(), ProviderError> {
+                self.authorized.set(self.authorized.get() + 1);
+                Ok(())
+            }
+            fn end_session(&self, _session_id: &str) {}
+        }
+        struct NoSecrets;
+        impl SecretMatcher for NoSecrets {
+            fn matches(&self, _value: &str) -> Result<bool, ()> {
+                Ok(false)
+            }
+        }
+        let authorized = Rc::new(Cell::new(0));
+        let mut access = FullAccess::new(
+            SESSION,
+            &client,
+            None,
+            Box::new(Source {
+                lease,
+                authorized: Rc::clone(&authorized),
+            }),
+            Box::new(NoSecrets),
+            Some(("S-1-5-21-1-2-3-1001".into(), 42)),
+        );
+        let decisions = RefCell::new(Vec::new());
+        let (_clock, mut gate) = on();
+        let moment = |gate: &TakeoverGate<ManualClock>| LeaseMoment {
+            approval_epoch: Some(1),
+            now_ms: NOW + 1_000,
+            interventions: gate.interventions(),
+        };
+        let query = LeaseQuery {
+            family: BrowserFamily::Click,
+            also: None,
+            effect_origin: "https://fixture.test",
+            committed_origin: Some("https://fixture.test"),
+            impact: Impact::Routine,
+            page_id: "page-1",
+        };
+        // Before any challenge the lease covers the click (the live order).
+        let ticket = gate
+            .before_write("page-1", "click", "n1", ActionClass::Repeatable)
+            .ok()
+            .flatten();
+        let used = match access.decide(&query, &moment(&gate)) {
+            LeaseDecision::Covered(used) => Some(used),
+            other => {
+                decisions.borrow_mut().push(format!("{other:?}"));
+                None
+            }
+        };
+        assert!(
+            used.is_some(),
+            "covered before the challenge: {decisions:?}"
+        );
+        // The detector sees a CAPTCHA while the action is pending: the check
+        // right before the lease would be used refuses it.
+        if let Some(session) = gate.session_gate() {
+            let _ = session.challenge(
+                &ResourceId::new("page-1"),
+                ChallengeKind::Captcha,
+                ChallengeOrigin::Detected,
+            );
+        }
+        let refused = gate.before_dispatch(ticket.as_ref());
+        assert!(
+            matches!(&refused, Err(e) if e.code == FailureCode::HumanVerificationRequired),
+            "{refused:?}"
+        );
+        // A new covered action on the waiting page is refused before the
+        // lease is consulted at all.
+        let again = gate.before_write("page-1", "click", "n2", ActionClass::Repeatable);
+        assert!(
+            matches!(&again, Err(e) if e.code == FailureCode::HumanVerificationRequired),
+            "{again:?}"
+        );
+        assert_eq!(authorized.get(), 0, "the lease was never used");
     }
 }

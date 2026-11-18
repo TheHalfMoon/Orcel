@@ -33,13 +33,15 @@ pub const REMOTE_SCOPES: [&str; 3] = ["orcel.read", "orcel.write", "orcel.execut
 
 /// Capability prefixes that manage local authority and are never reachable
 /// from a remote-context request, whatever lease exists.
-const LOCAL_ONLY_PREFIXES: [&str; 6] = [
+const LOCAL_ONLY_PREFIXES: [&str; 7] = [
     "remote.",
     "workspace.trust.",
     "trust.",
     "approval.",
     "lifecycle.",
     "executable.",
+    // SG-000135 OB-08: Full Access browser lease management.
+    "browser.lease.",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

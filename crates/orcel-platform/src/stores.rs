@@ -61,6 +61,8 @@ use Kind::{Dir, File, NumberedDirs};
 
 // Top level: user data.
 pub const AUDIT: Store = store("audit.jsonl", File, UserData, Migrate::Copy);
+/// WP1-03: the hash chain beside the plain audit log (`orcel_audit::chain_path_for`).
+pub const AUDIT_CHAIN: Store = store("audit-chain.jsonl", File, UserData, Migrate::Copy);
 pub const APPROVAL_HISTORY: Store = store("approval-history.jsonl", File, UserData, Migrate::Copy);
 pub const TRUST: Store = store("trust.jsonl", File, UserData, Migrate::Copy);
 pub const EXECUTABLE_REGISTRY: Store =
@@ -128,6 +130,7 @@ pub const DEVICE_KEY: Store = store("secrets/device.key.dpapi", File, UserData, 
 /// Every store, top level first.
 pub const STORES: &[Store] = &[
     AUDIT,
+    AUDIT_CHAIN,
     APPROVAL_HISTORY,
     TRUST,
     EXECUTABLE_REGISTRY,

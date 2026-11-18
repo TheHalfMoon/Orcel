@@ -55,11 +55,21 @@ fn state_dir(suffix: &str) -> PathBuf {
 }
 
 fn spawn(suffix: &str, dir: &Path, trust_this_test: bool) -> std::io::Result<Child> {
+    spawn_with(suffix, dir, trust_this_test, &[])
+}
+
+fn spawn_with(
+    suffix: &str,
+    dir: &Path,
+    trust_this_test: bool,
+    extra: &[&std::ffi::OsStr],
+) -> std::io::Result<Child> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_orcel-authority"));
     command
         .args(["--console", "--state-dir"])
         .arg(dir)
-        .args(["--pipe-suffix", suffix]);
+        .args(["--pipe-suffix", suffix])
+        .args(extra);
     if trust_this_test {
         command
             .arg("--trusted-orceld")
@@ -73,9 +83,14 @@ fn spawn(suffix: &str, dir: &Path, trust_this_test: bool) -> std::io::Result<Chi
 }
 
 fn start(name: &str, trust_this_test: bool) -> Harness {
+    start_with(name, trust_this_test, &[])
+}
+
+fn start_with(name: &str, trust_this_test: bool, extra: &[&std::ffi::OsStr]) -> Harness {
     let suffix = unique(name);
     let dir = state_dir(&suffix);
-    let mut child = spawn(&suffix, &dir, trust_this_test).expect("spawn the console harness");
+    let mut child =
+        spawn_with(&suffix, &dir, trust_this_test, extra).expect("spawn the console harness");
     let stdout = child.stdout.take().expect("stdout");
     let mut line = String::new();
     BufReader::new(stdout)
@@ -128,6 +143,7 @@ fn claims() -> AuthorizeClaims {
         principal_id: "mcp-client-1".into(),
         task: "a task".into(),
         action_digest: "0".repeat(64),
+        origin: None,
     }
 }
 
@@ -309,19 +325,28 @@ fn issuance_is_refused_to_orceld_and_to_claimed_agent_origins() {
         });
         assert_eq!(code(begin), Some(FailureCode::CapabilityDenied));
     }
-    // Enrollment is not available in slice 1, whoever asks and whatever
-    // origin they claim.
+    // Slice 2: enrollment needs an elevated caller of the installed
+    // service; the console harness never enrolls, whoever asks and
+    // whatever origin they claim, and a reset is refused the same way.
     for origin in [ClaimedOrigin::OwnerCli, ClaimedOrigin::Mcp] {
         let enroll = other.call(&Request::EnrollBegin {
             origin,
             public_key_spki_hex: "00".into(),
+            attestation_hex: "00".into(),
+            certificate_chain_hex: "00".into(),
+            replace: false,
         });
         let error = enroll.expect_err("enrollment refused");
-        assert_eq!(error.code, FailureCode::Unsupported);
-        assert!(error
-            .message
-            .starts_with(orcel_authority::error::ENROLLMENT_UNAVAILABLE));
+        assert_eq!(error.code, FailureCode::CapabilityDenied, "{error}");
+        let reset = other.call(&Request::ResetEnrollment { origin });
+        assert_eq!(
+            reset.expect_err("reset refused").code,
+            FailureCode::CapabilityDenied
+        );
     }
+    let status = other.status().expect("status");
+    assert_eq!(status["enrollment_available"], Value::Bool(false));
+    assert!(status["caller_elevated"].is_boolean());
     // Even the owner origin cannot complete a grant here: no key is
     // enrolled and console mode never observes an unlock.
     let begin = other.call(&Request::GrantBegin {
@@ -404,4 +429,146 @@ fn malformed_frames_are_refused_and_the_audit_chain_verifies_after_shutdown() {
         events.contains("\"event_id\":4100"),
         "anchors are written: {events}"
     );
+}
+
+/// SG-000132 slice 2, TEST BUILDS ONLY (`cargo test -p orcel-authority
+/// --features authority-scripted-consent`): the whole grant flow over the
+/// pipe, with the scripted consent standing in for the unlock, the
+/// confirmation and Windows Hello. The lease verifies with the published
+/// public key, Authorize stays orceld's alone, and a revoke ends it.
+#[cfg(feature = "authority-scripted-consent")]
+#[test]
+fn a_scripted_grant_issues_a_signed_browser_lease_over_the_pipe() {
+    use orcel_authority::lease::{BrowserFamily, LeaseScope, SignatureVerifier, SignedLease};
+    use sha2::{Digest, Sha256};
+    let log_dir = state_dir(&unique("scripted-log"));
+    std::fs::create_dir_all(&log_dir).expect("log dir");
+    let log = log_dir.join("authority-consent.jsonl");
+    let me = std::env::current_exe().expect("this test's path");
+    let harness = start_with(
+        "scripted",
+        false,
+        &[
+            std::ffi::OsStr::new("--e2e-scripted-consent"),
+            log.as_os_str(),
+            std::ffi::OsStr::new("--trusted-cli"),
+            me.as_os_str(),
+        ],
+    );
+    let client = client(&harness);
+    let status = client.status().expect("status");
+    if status["caller_role"] != "interactive" {
+        // A runner without an interactive console logon cannot be the
+        // owner's CLI; the grant flow is covered by the core tests there.
+        let _ = std::fs::remove_dir_all(&log_dir);
+        return;
+    }
+    let client_ref = format!("cl-{}", "ab".repeat(16));
+    let begun = client
+        .call(&Request::GrantBegin {
+            origin: ClaimedOrigin::OwnerCli,
+            scope: Some(LeaseScope::BrowserFullAccess {
+                client_ref: client_ref.clone(),
+                session_id: "bs-0123456789abcdef-1-0001020304050607".into(),
+                origins: vec!["https://fixture.test".into()],
+                families: vec![BrowserFamily::Navigate, BrowserFamily::Click],
+                task: Some("console grant".into()),
+            }),
+            minutes: Some(30),
+            principal_id: client_ref.clone(),
+            task: "console grant".into(),
+        })
+        .expect("grant begin");
+    let intent_id = begun["intent_id"].as_str().expect("intent").to_owned();
+    let status = client
+        .call(&Request::IntentStatus {
+            intent_id: intent_id.clone(),
+        })
+        .expect("intent status");
+    assert_eq!(status["state"], "awaiting_presence");
+    let challenge =
+        orcel_authority::unhex(status["challenge_hex"].as_str().expect("challenge")).expect("hex");
+    // A wrong presence is refused and consumes the intent.
+    let mut wrong = Sha256::new();
+    wrong.update(b"not the scripted domain");
+    wrong.update(&challenge);
+    let refused = client.call(&Request::PresenceComplete {
+        intent_id: intent_id.clone(),
+        code: begun["code"].as_str().expect("code").to_owned(),
+        signature_hex: orcel_authority::hex(&wrong.finalize()),
+    });
+    assert_eq!(code(refused), Some(FailureCode::CapabilityDenied));
+    // Again, properly.
+    let begun = client
+        .call(&Request::GrantBegin {
+            origin: ClaimedOrigin::OwnerCli,
+            scope: Some(LeaseScope::BrowserFullAccess {
+                client_ref: client_ref.clone(),
+                session_id: "bs-0123456789abcdef-1-0001020304050607".into(),
+                origins: vec!["https://fixture.test".into()],
+                families: vec![BrowserFamily::Navigate, BrowserFamily::Click],
+                task: Some("console grant".into()),
+            }),
+            minutes: Some(30),
+            principal_id: client_ref.clone(),
+            task: "console grant".into(),
+        })
+        .expect("grant begin");
+    let intent_id = begun["intent_id"].as_str().expect("intent").to_owned();
+    let status = client
+        .call(&Request::IntentStatus {
+            intent_id: intent_id.clone(),
+        })
+        .expect("intent status");
+    let challenge =
+        orcel_authority::unhex(status["challenge_hex"].as_str().expect("challenge")).expect("hex");
+    let mut presence = Sha256::new();
+    presence.update(orcel_authority::win::runtime::SCRIPTED_PRESENCE_DOMAIN);
+    presence.update(&challenge);
+    let done = client
+        .call(&Request::PresenceComplete {
+            intent_id,
+            code: begun["code"].as_str().expect("code").to_owned(),
+            signature_hex: orcel_authority::hex(&presence.finalize()),
+        })
+        .expect("issued");
+    let lease: SignedLease = serde_json::from_value(done["lease"].clone()).expect("lease");
+    let published: Value = serde_json::from_str(
+        &std::fs::read_to_string(harness.dir.join("public").join("lease-signing-key.json"))
+            .expect("public key"),
+    )
+    .expect("json");
+    let verifier = orcel_authority::win::crypto::EcdsaP256Verifier::from_public_blob(
+        &orcel_authority::unhex(published["public_key_hex"].as_str().expect("hex")).expect("hex"),
+    )
+    .expect("verifier");
+    assert_eq!(verifier.key_id(), lease.body.key_id);
+    lease
+        .verify_signature(&verifier)
+        .expect("the published key verifies the lease");
+    let confirmations = std::fs::read_to_string(&log).expect("consent log");
+    assert_eq!(confirmations.lines().count(), 2, "{confirmations}");
+    assert!(confirmations.contains("origins [https://fixture.test]"));
+    // Authorize is orceld's alone; verify works for the owner; a revoke ends it.
+    assert_eq!(
+        client.status().expect("status")["caller_is_owner_cli"],
+        Value::Bool(true)
+    );
+    let authorize = client.authorize(
+        &lease.body.lease_id,
+        ExecutorClass::Browser,
+        AuthorizeClaims {
+            principal_id: client_ref,
+            origin: Some("https://fixture.test".into()),
+            ..claims()
+        },
+    );
+    assert_eq!(code(authorize), Some(FailureCode::CapabilityDenied));
+    client.verify_lease(&lease.body.lease_id).expect("active");
+    client.revoke(&lease.body.lease_id).expect("revoke");
+    assert_eq!(
+        code(client.verify_lease(&lease.body.lease_id)),
+        Some(FailureCode::LeaseInvalid)
+    );
+    let _ = std::fs::remove_dir_all(&log_dir);
 }

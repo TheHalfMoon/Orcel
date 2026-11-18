@@ -556,7 +556,9 @@ fn the_live_browser_test_feature_never_reaches_a_release_build() {
 /// build. Only orceld's manifest (its own definition, enabling nothing but
 /// the approval crate's test support), orceld's entry point and the consent
 /// module, the harness script and documentation may name it (no workflow or
-/// other build surface), and it is never a default feature.
+/// other build surface), and it is never a default feature. SG-000132 slice
+/// 2: orceld's authority link may name it too, for the harness's authority
+/// console (`ORCEL_E2E_AUTHORITY`), read only in that test build.
 #[test]
 fn the_browser_full_scripted_consent_feature_never_reaches_a_release_build() {
     let root = repo_root();
@@ -568,6 +570,7 @@ fn the_browser_full_scripted_consent_feature_never_reaches_a_release_build() {
         let allowed = relative == "crates/orceld/Cargo.toml"
             || relative == "crates/orceld/src/sg000039_main.rs"
             || relative == "crates/orceld/src/browser_full_e2e_consent.rs"
+            || relative == "crates/orceld/src/authority_link.rs"
             || relative == "scripts/browser-full-e2e.mjs"
             || relative.starts_with("docs/");
         if !allowed {
@@ -597,6 +600,72 @@ fn the_browser_full_scripted_consent_feature_never_reaches_a_release_build() {
     );
 }
 
+/// SG-000132 slice 2: OB-08's stand-in owner channel
+/// (`browser-lease-dev-issuance`) is gone; browser leases come from the
+/// authority service only. No code or manifest names it again.
+#[test]
+fn the_browser_lease_dev_issuance_feature_is_gone() {
+    let root = repo_root();
+    let mut hits = Vec::new();
+    for (relative, text) in text_files(&root) {
+        if text.contains("browser-lease-dev-issuance") && !relative.starts_with("docs/") {
+            hits.push(relative);
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "browser-lease-dev-issuance is named again:\n{}",
+        hits.join("\n")
+    );
+}
+
+/// SG-000132 slice 2: the authority's scripted consent (a console-mode
+/// stand-in for the unlock, the confirmation and Windows Hello) never
+/// reaches a development or release build. Only the authority's manifest
+/// (which defines it, empty, never as a default), the source that compiles
+/// it, its console tests, the end-to-end script and documentation may name
+/// it.
+#[test]
+fn the_authority_scripted_consent_feature_never_reaches_a_release_build() {
+    let root = repo_root();
+    let mut hits = Vec::new();
+    for (relative, text) in text_files(&root) {
+        if !text.contains("authority-scripted-consent") {
+            continue;
+        }
+        let allowed = relative == "crates/orcel-authority/Cargo.toml"
+            || relative == "crates/orcel-authority/src/core.rs"
+            || relative == "crates/orcel-authority/src/win/runtime.rs"
+            || relative == "crates/orcel-authority/src/bin/orcel-authority.rs"
+            || relative == "crates/orcel-authority/tests/console_harness.rs"
+            || relative == "scripts/browser-full-e2e.mjs"
+            || relative.starts_with("docs/");
+        if !allowed {
+            hits.push(relative);
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "authority-scripted-consent is named outside its test places:\n{}",
+        hits.join("\n")
+    );
+    let manifest =
+        fs::read_to_string(root.join("crates/orcel-authority/Cargo.toml")).expect("manifest");
+    let naming: Vec<&str> = manifest
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("authority-scripted-consent") && !line.starts_with('#'))
+        .collect();
+    assert_eq!(
+        naming,
+        ["authority-scripted-consent = []"],
+        "orcel-authority may only define authority-scripted-consent, never enable it by default"
+    );
+    assert!(
+        !manifest.contains("default ="),
+        "orcel-authority has no default features"
+    );
+}
 /// SG-000108 slice 3b-ii (decision 7): the development-only
 /// `live-browser-dev` feature (the host's public worker mode, running only
 /// the runtime its build pinned) never reaches a release build. Only the

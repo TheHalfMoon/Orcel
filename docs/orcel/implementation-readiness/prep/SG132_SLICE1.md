@@ -7,6 +7,9 @@ SG-000135 amendment) and sections 1.2, 4.8, 4.13 to 4.15 of
 [UNIFIED_INTEGRATION_SPEC.md](UNIFIED_INTEGRATION_SPEC.md). Revision 2 of this slice answers the independent
 review of `ecb66ab3` (findings 1 to 9), revision 3 the re-review of `2d774e45`; both are listed at the end.
 
+Slice 2 (attested enrollment, the grant CLIs, OB-08 on the service, the desktop migration step) is
+[SG132_SLICE2.md](SG132_SLICE2.md).
+
 **No grant completes in slice 1.** Windows Hello enrollment is refused (`enrollment_unavailable`) until slice 2
 brings attested keys and an elevated enrollment caller; without an enrolled key `GrantBegin` is refused. The
 grant flow below is implemented and tested with an enrolled key seeded by the tests only.

@@ -1,18 +1,23 @@
 //! Rules of the authority core, on every OS, with test doubles for the
 //! platform pieces: a keyed-hash signer, a presence verifier that accepts
 //! `sha256(spki || challenge)`, a recording event sink, counter entropy and
-//! a per-thread clock. Enrollment is refused in slice 1, so the grant flow
-//! tests seed an enrolled key through `enroll_for_test`.
+//! a per-thread clock, and a scripted attestation verifier. Most grant flow
+//! tests seed an enrolled key through `enroll_for_test`; the slice 2
+//! enrollment tests run the whole elevated, attested, confirmed flow.
 
+use crate::attestation::AttestationReport;
 use crate::caller::{CallerFacts, ClientPolicy};
 use crate::core::{
-    check_signing_key_history, display_image, AuthorityCore, ConfirmAnswer, Entropy, EventSink,
-    LeaseSigner, PresenceVerifier, Services, EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS, INTENT_TTL_MS,
+    check_signing_key_history, display_image, is_builtin_administrator, key_fingerprint,
+    AttestationVerifier, AuthorityCore, ConfirmAnswer, Entropy, EventSink, LeaseSigner,
+    PresenceVerifier, Services, UacPolicy, UacSettings, EVENT_SIGNING_DOMAIN, GRANT_WINDOW_MS,
+    INTENT_TTL_MS,
 };
 use crate::error::{AuthorityError, ENROLLMENT_UNAVAILABLE};
 use crate::lease::{LeaseScope, SignedLease};
-use crate::protocol::{AuthorizeClaims, ClaimedOrigin, Request};
+use crate::protocol::{AuthorizeClaims, ChainLink, ClaimedOrigin, Request};
 use crate::{hex, sha256_hex, unhex, RunMode};
+use orcel_contracts::event::AnchorRef;
 use orcel_contracts::{ExecutorClass, FailureCode};
 use serde_json::Value;
 use std::cell::Cell;
@@ -82,8 +87,16 @@ impl PresenceVerifier for HashPresence {
 #[derive(Clone, Default)]
 struct Events(Arc<Mutex<Vec<(u32, String)>>>);
 
+thread_local! {
+    /// WP1-03: makes every Event Log write of this thread fail.
+    static EVENTS_FAIL: Cell<bool> = const { Cell::new(false) };
+}
+
 impl EventSink for Events {
     fn record(&self, event_id: u32, _error: bool, text: &str) -> Result<(), AuthorityError> {
+        if EVENTS_FAIL.with(Cell::get) {
+            return Err(AuthorityError::internal("the event log is unavailable"));
+        }
         self.0
             .lock()
             .map_err(|_| AuthorityError::internal("poisoned"))?
@@ -109,6 +122,71 @@ impl Events {
     }
 }
 
+/// What the scripted attestation verifier answers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Attest {
+    Verified,
+    NoRoot,
+}
+
+thread_local! {
+    static ATTEST: Cell<Attest> = const { Cell::new(Attest::Verified) };
+}
+
+thread_local! {
+    static UAC_ALWAYS_NOTIFY: Cell<bool> = const { Cell::new(true) };
+    static FILTER_ADMINISTRATOR_TOKEN: Cell<Option<u32>> = const { Cell::new(None) };
+}
+
+/// The scripted UAC policy: Always notify on the secure desktop, or the
+/// Windows default (notify only for apps, ConsentPromptBehaviorAdmin 5).
+struct ScriptedUac;
+
+impl UacPolicy for ScriptedUac {
+    fn read(&self) -> UacSettings {
+        UacSettings {
+            enable_lua: Some(1),
+            consent_prompt_behavior_admin: Some(if UAC_ALWAYS_NOTIFY.with(Cell::get) {
+                2
+            } else {
+                5
+            }),
+            prompt_on_secure_desktop: Some(1),
+            filter_administrator_token: FILTER_ADMINISTRATOR_TOKEN.with(Cell::get),
+        }
+    }
+}
+
+struct ScriptedAttestation;
+
+impl AttestationVerifier for ScriptedAttestation {
+    fn available(&self) -> bool {
+        ATTEST.with(Cell::get) != Attest::NoRoot
+    }
+
+    fn verify(
+        &self,
+        spki_der: &[u8],
+        attestation: &[u8],
+        _chain: &[u8],
+        _now_ms: u64,
+    ) -> Result<AttestationReport, AuthorityError> {
+        if ATTEST.with(Cell::get) != Attest::Verified || attestation != b"attested:".as_slice() {
+            return Err(AuthorityError::denied("key attestation refused: scripted"));
+        }
+        Ok(AttestationReport {
+            format: "scripted".to_owned(),
+            root_sha256: crate::attestation::MICROSOFT_TPM_ROOT_2014_SHA256.to_owned(),
+            aik_certificate_sha256: sha256_hex(spki_der),
+            chain_length: 2,
+            name_alg: "sha256".to_owned(),
+            object_attributes: 0x0004_0072,
+            verified: vec!["scripted".to_owned()],
+            not_verified: Vec::new(),
+        })
+    }
+}
+
 struct Counter(AtomicU64);
 
 impl Entropy for Counter {
@@ -122,6 +200,7 @@ impl Entropy for Counter {
 }
 
 const ORCELD: &str = r"C:\Program Files\Orcel\orceld.exe";
+const OWNER_CLI: &str = r"C:\Program Files\Orcel\orcel.exe";
 const SPKI: &[u8] = b"spki:owner-hello-key";
 
 fn temp_dir(name: &str) -> Result<PathBuf, String> {
@@ -135,15 +214,22 @@ fn temp_dir(name: &str) -> Result<PathBuf, String> {
 }
 
 fn open(dir: &Path, events: &Events) -> Result<AuthorityCore, String> {
+    open_in(RunMode::Service, dir, events)
+}
+
+fn open_in(mode: RunMode, dir: &Path, events: &Events) -> Result<AuthorityCore, String> {
     AuthorityCore::open(
-        RunMode::Service,
+        mode,
         dir,
         ClientPolicy {
             trusted_orceld_images: vec![PathBuf::from(ORCELD)],
+            trusted_owner_cli_images: vec![PathBuf::from(OWNER_CLI)],
         },
         Services {
             signer: Box::new(KeyedHashSigner),
             presence: Box::new(HashPresence),
+            attestation: Box::new(ScriptedAttestation),
+            uac: Box::new(ScriptedUac),
             events: Box::new(events.clone()),
             entropy: Box::new(Counter(AtomicU64::new(0))),
             clock,
@@ -169,6 +255,17 @@ fn owner() -> CallerFacts {
         ts_session_id: 1,
         interactive: true,
         console_session: true,
+        elevated: false,
+    }
+}
+
+/// The owner's elevated `orcel authority enroll` process.
+fn elevated_owner() -> CallerFacts {
+    CallerFacts {
+        pid: 4300,
+        logon_session_id: 0x6666,
+        elevated: true,
+        ..owner()
     }
 }
 
@@ -273,6 +370,7 @@ fn claims() -> AuthorizeClaims {
         principal_id: "mcp-client-1".to_owned(),
         task: "tidy the downloads folder".to_owned(),
         action_digest: sha256_hex(b"click 10 20"),
+        origin: None,
     }
 }
 
@@ -292,39 +390,400 @@ fn authorize(
     )
 }
 
+const NEW_SPKI: &[u8] = b"spki:replacement-hello-key";
+
+fn enroll_request(spki: &[u8], replace: bool) -> Request {
+    Request::EnrollBegin {
+        origin: ClaimedOrigin::OwnerCli,
+        public_key_spki_hex: hex(spki),
+        attestation_hex: hex(b"attested:"),
+        certificate_chain_hex: hex(b"chain"),
+        replace,
+    }
+}
+
+/// Runs an enrollment to its end: begin, the rendered confirmation, Yes,
+/// and the new key's signature. Returns the confirmation text.
+fn enroll(core: &mut AuthorityCore, spki: &[u8], replace: bool) -> Result<String, String> {
+    let caller = elevated_owner();
+    let begun = ok(core.handle(&caller, enroll_request(spki, replace)))?;
+    let id = str_of(&begun, "intent_id")?;
+    let one_time = str_of(&begun, "code")?;
+    let fingerprint = str_of(&begun, "key_fingerprint")?;
+    assert_eq!(fingerprint, key_fingerprint(&sha256_hex(spki)));
+    let tasks = core.take_pending_confirmations();
+    assert_eq!(tasks.len(), 1);
+    let text = tasks[0].text.clone();
+    assert!(
+        text.contains(&one_time) && text.contains(&fingerprint),
+        "{text}"
+    );
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let status = ok(core.handle(
+        &caller,
+        Request::IntentStatus {
+            intent_id: id.clone(),
+        },
+    ))?;
+    assert_eq!(str_of(&status, "purpose")?, "enroll");
+    let challenge = unhex(&str_of(&status, "challenge_hex")?).ok_or("challenge")?;
+    ok(core.handle(
+        &caller,
+        Request::PresenceComplete {
+            intent_id: id,
+            code: one_time,
+            signature_hex: presence_signature(spki, &challenge),
+        },
+    ))?;
+    Ok(text)
+}
+
 #[test]
-fn enrollment_is_refused_in_this_slice_whoever_asks() -> Result<(), String> {
-    let dir = temp_dir("enroll")?;
+fn enrollment_needs_an_elevated_owner_and_a_verified_attestation() -> Result<(), String> {
+    let dir = temp_dir("enroll-refused")?;
     let events = Events::default();
     let mut core = open(&dir, &events)?;
+    // Not elevated, orceld, another session's process: refused, whatever
+    // they claim.
     for caller in [owner(), orceld(), other_process()] {
-        let result = core.handle(
-            &caller,
-            Request::EnrollBegin {
-                origin: ClaimedOrigin::OwnerCli,
-                public_key_spki_hex: hex(SPKI),
-            },
-        );
-        let error = result.err().ok_or("enrollment was not refused")?;
-        assert_eq!(error.code, FailureCode::Unsupported);
-        assert!(
-            error.message.starts_with(ENROLLMENT_UNAVAILABLE),
-            "{}",
-            error.message
+        assert_eq!(
+            code(core.handle(&caller, enroll_request(SPKI, false))),
+            Some(FailureCode::CapabilityDenied)
         );
     }
+    let mut elevated_orceld = orceld();
+    elevated_orceld.elevated = true;
+    assert_eq!(
+        code(core.handle(&elevated_orceld, enroll_request(SPKI, false))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let agent_claim = Request::EnrollBegin {
+        origin: ClaimedOrigin::Agent,
+        public_key_spki_hex: hex(SPKI),
+        attestation_hex: hex(b"attested:"),
+        certificate_chain_hex: hex(b"chain"),
+        replace: false,
+    };
+    assert_eq!(
+        code(core.handle(&elevated_owner(), agent_claim)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // An attestation that does not verify refuses enrollment (fail closed).
+    let unattested = Request::EnrollBegin {
+        origin: ClaimedOrigin::OwnerCli,
+        public_key_spki_hex: hex(SPKI),
+        attestation_hex: hex(b"software key"),
+        certificate_chain_hex: hex(b"chain"),
+        replace: false,
+    };
+    assert_eq!(
+        code(core.handle(&elevated_owner(), unattested)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // No pinned root on this PC: enrollment is unavailable.
+    ATTEST.with(|a| a.set(Attest::NoRoot));
+    let error = core
+        .handle(&elevated_owner(), enroll_request(SPKI, false))
+        .err()
+        .ok_or("enrollment without a root was not refused")?;
+    ATTEST.with(|a| a.set(Attest::Verified));
+    assert_eq!(error.code, FailureCode::Unsupported);
+    assert!(
+        error.message.starts_with(ENROLLMENT_UNAVAILABLE),
+        "{}",
+        error.message
+    );
+    // Not an RSA key the presence verifier accepts.
+    assert_eq!(
+        code(core.handle(&elevated_owner(), enroll_request(b"not a key", false))),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert!(core.take_pending_confirmations().is_empty());
     let status = ok(core.handle(&owner(), Request::Status))?;
-    assert_eq!(status["enrollment_available"], Value::Bool(false));
+    assert_eq!(status["caller_enrolled"], Value::Bool(false));
     assert_eq!(status["can_issue"], Value::Bool(false));
+    assert_eq!(status["enrollment_available"], Value::Bool(true));
     // Without an enrolled key, a grant cannot even begin.
     assert_eq!(
         code(core.handle(&owner(), grant_begin(None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Console mode never enrolls, elevated or not.
+    let console_dir = temp_dir("enroll-console")?;
+    let mut console = open_in(RunMode::Console, &console_dir, &Events::default())?;
+    assert_eq!(
+        code(console.handle(&elevated_owner(), enroll_request(SPKI, false))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&console_dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn enrollment_shows_the_fingerprint_and_enrolls_only_after_the_new_key_signs() -> Result<(), String>
+{
+    let dir = temp_dir("enroll-flow")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let caller = elevated_owner();
+    let begun = ok(core.handle(&caller, enroll_request(SPKI, false)))?;
+    let id = str_of(&begun, "intent_id")?;
+    let one_time = str_of(&begun, "code")?;
+    assert_eq!(str_of(&begun, "state")?, "awaiting_confirmation");
+    let tasks = core.take_pending_confirmations();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(
+        sha256_hex(tasks[0].text.as_bytes()),
+        str_of(&begun, "confirmation_text_digest")?
+    );
+    assert!(tasks[0].text.is_ascii());
+    // Another process cannot see or complete it.
+    assert_eq!(
+        code(core.handle(
+            &other_process(),
+            Request::IntentStatus {
+                intent_id: id.clone()
+            }
+        )),
+        Some(FailureCode::InvalidRequest)
+    );
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let status = ok(core.handle(
+        &caller,
+        Request::IntentStatus {
+            intent_id: id.clone(),
+        },
+    ))?;
+    let challenge = unhex(&str_of(&status, "challenge_hex")?).ok_or("challenge")?;
+    // Signed by another key (the enrolled one does not exist yet; a
+    // stranger's key): refused, the intent is consumed, nothing enrolled.
+    assert_eq!(
+        code(core.handle(
+            &caller,
+            Request::PresenceComplete {
+                intent_id: id.clone(),
+                code: one_time.clone(),
+                signature_hex: presence_signature(NEW_SPKI, &challenge),
+            }
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        ok(core.handle(&owner(), Request::Status))?["caller_enrolled"],
+        Value::Bool(false)
+    );
+    // The whole flow.
+    let text = enroll(&mut core, SPKI, false)?;
+    assert!(text.contains("TPM attestation: verified"), "{text}");
+    let status = ok(core.handle(&owner(), Request::Status))?;
+    assert_eq!(status["caller_enrolled"], Value::Bool(true));
+    assert_eq!(
+        status["caller_key_fingerprint"],
+        Value::String(key_fingerprint(&sha256_hex(SPKI)))
+    );
+    assert!(events
+        .with_id(crate::EVENT_ENROLLED)
+        .iter()
+        .any(|e| e.contains("|enrolled|")));
+    // The enrolled key now completes a grant.
+    let (lease, _) = grant(&mut core, None)?;
+    assert_eq!(lease.body.grant.presence_key_digest, sha256_hex(SPKI));
+    // A No leaves nothing enrolled or replaced.
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn re_enrollment_needs_replace_and_ends_every_lease_of_the_user() -> Result<(), String> {
+    let dir = temp_dir("enroll-replace")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    enroll(&mut core, SPKI, false)?;
+    let (lease, _) = grant(&mut core, None)?;
+    let epoch = core.epoch();
+    // Already enrolled: replacing needs --replace; the same key is refused.
+    assert_eq!(
+        code(core.handle(&elevated_owner(), enroll_request(NEW_SPKI, false))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(&elevated_owner(), enroll_request(SPKI, true))),
+        Some(FailureCode::InvalidRequest)
+    );
+    let text = enroll(&mut core, NEW_SPKI, true)?;
+    assert!(
+        text.contains(&format!(
+            "REPLACES the enrolled key {}",
+            key_fingerprint(&sha256_hex(SPKI))
+        )),
+        "{text}"
+    );
+    assert!(core.epoch() > epoch);
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            Request::Verify {
+                lease_id: lease.body.lease_id.clone()
+            }
+        )),
+        Some(FailureCode::LeaseInvalid)
+    );
+    // A grant signed with the old key fails now.
+    let begun = ok(core.handle(&owner(), grant_begin(None)))?;
+    let id = str_of(&begun, "intent_id")?;
+    let (challenge, _) = confirm_yes(&mut core, &owner(), &id)?;
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            presence(&id, &str_of(&begun, "code")?, &challenge)
+        )),
         Some(FailureCode::CapabilityDenied)
     );
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
+#[test]
+fn a_reset_needs_elevation_and_a_confirmed_yes() -> Result<(), String> {
+    let dir = temp_dir("enroll-reset")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    enroll(&mut core, SPKI, false)?;
+    let reset = || Request::ResetEnrollment {
+        origin: ClaimedOrigin::OwnerCli,
+    };
+    assert_eq!(
+        code(core.handle(&owner(), reset())),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // No: nothing changes.
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    let id = str_of(&begun, "intent_id")?;
+    let tasks = core.take_pending_confirmations();
+    assert!(tasks[0].text.contains("REMOVE"), "{}", tasks[0].text);
+    core.confirmation_answer(&id, ConfirmAnswer::No)
+        .map_err(|e| e.to_string())?;
+    assert_eq!(
+        ok(core.handle(&owner(), Request::Status))?["caller_enrolled"],
+        Value::Bool(true)
+    );
+    // Yes: the key goes, the epoch moves, the status reports it once.
+    let epoch = core.epoch();
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.take_pending_confirmations();
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let status = ok(core.handle(
+        &elevated_owner(),
+        Request::IntentStatus {
+            intent_id: id.clone(),
+        },
+    ))?;
+    assert_eq!(str_of(&status, "state")?, "completed");
+    assert_eq!(
+        code(core.handle(&elevated_owner(), Request::IntentStatus { intent_id: id })),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert!(core.epoch() > epoch);
+    assert_eq!(
+        ok(core.handle(&owner(), Request::Status))?["caller_enrolled"],
+        Value::Bool(false)
+    );
+    assert!(events
+        .with_id(crate::EVENT_ENROLLED)
+        .iter()
+        .any(|e| e.contains("|reset|")));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn browser_grants_name_their_client_and_only_the_routine_families() -> Result<(), String> {
+    use crate::lease::BrowserFamily;
+    let dir = temp_dir("browser-scope")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let client = format!("cl-{}", "a".repeat(32));
+    let scope =
+        |families: Vec<BrowserFamily>, origins: Vec<String>| LeaseScope::BrowserFullAccess {
+            client_ref: client.clone(),
+            session_id: "bs-0123456789abcdef-1-0001020304050607".to_owned(),
+            origins,
+            families,
+            task: Some("Book a table".to_owned()),
+        };
+    let one = vec!["https://fixture.test".to_owned()];
+    for family in [
+        BrowserFamily::Scroll,
+        BrowserFamily::Read,
+        BrowserFamily::Download,
+    ] {
+        assert_eq!(
+            code(core.handle(
+                &owner(),
+                grant_begin_with(
+                    Some(scope(vec![BrowserFamily::Navigate, family], one.clone())),
+                    &client,
+                    "browse"
+                )
+            )),
+            Some(FailureCode::InvalidRequest),
+            "{family:?}"
+        );
+    }
+    let seventeen: Vec<String> = (0..17).map(|n| format!("https://h{n}.test")).collect();
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            grant_begin_with(
+                Some(scope(vec![BrowserFamily::Click], seventeen)),
+                &client,
+                "browse"
+            )
+        )),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            grant_begin_with(
+                Some(scope(vec![BrowserFamily::Click], one.clone())),
+                "mcp-client-1",
+                "browse"
+            )
+        )),
+        Some(FailureCode::InvalidRequest),
+        "the principal is the client_ref"
+    );
+    let routine = vec![
+        BrowserFamily::Navigate,
+        BrowserFamily::Click,
+        BrowserFamily::Type,
+        BrowserFamily::Select,
+        BrowserFamily::Tabs,
+    ];
+    let begun = ok(core.handle(
+        &owner(),
+        grant_begin_with(Some(scope(routine, one)), &client, "browse"),
+    ))?;
+    let id = str_of(&begun, "intent_id")?;
+    let (challenge, text) = confirm_yes(&mut core, &owner(), &id)?;
+    assert!(text.contains("browser Full Access"), "{text}");
+    let done = ok(core.handle(
+        &owner(),
+        presence(&id, &str_of(&begun, "code")?, &challenge),
+    ))?;
+    let lease: SignedLease =
+        serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
+    assert!(lease.body.scope.admits(ExecutorClass::Browser));
+    assert!(!lease.body.scope.admits(ExecutorClass::DesktopInput));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
 #[test]
 fn issuance_is_refused_for_every_non_owner_caller() -> Result<(), String> {
     let dir = temp_dir("non-owner")?;
@@ -845,9 +1304,10 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
     let dir = temp_dir("browser")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
+    let client = format!("cl-{}", "0123456789abcdef".repeat(2));
     let scope = LeaseScope::BrowserFullAccess {
-        client_ref: "cl-abc123".to_owned(),
-        session_id: "bs-1".to_owned(),
+        client_ref: client.clone(),
+        session_id: "bs-0123456789abcdef-1-0001020304050607".to_owned(),
         origins: vec!["https://example.com".to_owned()],
         families: vec![
             crate::lease::BrowserFamily::Click,
@@ -855,22 +1315,676 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
         ],
         task: Some("fill the form".to_owned()),
     };
-    let (lease, _) = grant(&mut core, Some(scope))?;
-    ok(authorize(
-        &mut core,
-        &orceld(),
-        &lease.body.lease_id,
-        ExecutorClass::Browser,
+    let begun = ok(core.handle(
+        &owner(),
+        grant_begin_with(Some(scope), &client, "fill the form"),
     ))?;
+    let id = str_of(&begun, "intent_id")?;
+    let (challenge, _) = confirm_yes(&mut core, &owner(), &id)?;
+    let done = ok(core.handle(
+        &owner(),
+        presence(&id, &str_of(&begun, "code")?, &challenge),
+    ))?;
+    let lease: SignedLease =
+        serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
+    let browser_claims = AuthorizeClaims {
+        principal_id: client.clone(),
+        origin: Some("https://example.com".to_owned()),
+        ..claims()
+    };
+    let as_browser = |executor| Request::Authorize {
+        lease_id: lease.body.lease_id.clone(),
+        executor,
+        claims: browser_claims.clone(),
+    };
+    ok(core.handle(&orceld(), as_browser(ExecutorClass::Browser)))?;
     assert_eq!(
-        code(authorize(
-            &mut core,
-            &orceld(),
-            &lease.body.lease_id,
-            ExecutorClass::DesktopInput
+        code(core.handle(&orceld(), as_browser(ExecutorClass::DesktopInput))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+fn anchor_request(file: char, seq: u64, digest: char, link: Option<ChainLink>) -> Request {
+    anchor_after_reset(file, seq, digest, link, None)
+}
+
+fn anchor_after_reset(
+    file: char,
+    seq: u64,
+    digest: char,
+    link: Option<ChainLink>,
+    reset: Option<&str>,
+) -> Request {
+    Request::Anchor {
+        anchor: AnchorRef {
+            log: "orceld".to_owned(),
+            file_id: file.to_string().repeat(64),
+            seq,
+            digest: digest.to_string().repeat(64),
+        },
+        link,
+        reset: reset.map(str::to_owned),
+    }
+}
+
+fn link_to(file: char, seq: u64, digest: char) -> Option<ChainLink> {
+    Some(ChainLink {
+        previous_file_id: file.to_string().repeat(64),
+        previous_head_seq: seq,
+        previous_head_digest: digest.to_string().repeat(64),
+    })
+}
+
+/// WP1-03: orceld, and only orceld, can have the service hold an anchor of
+/// its own audit chain; the anchor is recorded as orceld's claim and
+/// written to the Event Log as a signed 4100 event.
+#[test]
+fn wp103_the_service_holds_orcelds_chain_anchor() -> Result<(), String> {
+    let dir = temp_dir("anchor")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    for caller in [owner(), other_process()] {
+        assert_eq!(
+            code(core.handle(&caller, anchor_request('a', 31, 'b', None))),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    let bad_log = Request::Anchor {
+        anchor: AnchorRef {
+            log: "authority".to_owned(),
+            file_id: "a".repeat(64),
+            seq: 31,
+            digest: "b".repeat(64),
+        },
+        link: None,
+        reset: None,
+    };
+    for bad in [
+        bad_log,
+        anchor_request('a', 31, 'B', None),
+        anchor_request('a', 31, 'b', link_to('Z', 1, 'c')),
+    ] {
+        assert_eq!(
+            code(core.handle(&orceld(), bad)),
+            Some(FailureCode::InvalidRequest)
+        );
+    }
+    let answer = ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    assert_eq!(answer["anchored"], Value::Bool(true));
+    assert_eq!(answer["event_id"], 4100);
+    let insertion = format!(
+        "orcel-anchor/1|orceld|{}|31|{}",
+        "a".repeat(64),
+        "b".repeat(64)
+    );
+    let written = events.with_id(4100);
+    assert!(
+        written
+            .iter()
+            .any(|text| text.contains(&insertion) && text.contains("|sig=")),
+        "{written:?}"
+    );
+    let audit =
+        std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
+    let record = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|record| record["kind"] == "anchor" && record["observed"]["role"] == "orceld")
+        .ok_or("an anchor record")?;
+    assert_eq!(record["asserted_by_session"]["digest"], "b".repeat(64));
+    assert_eq!(record["seq"], answer["authority_seq"]);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 review: per account and log the service refuses a seq
+/// regression or rewrite, answers a repeat without a second record, refuses
+/// a replacement file that does not link to the held one (and a file the
+/// log left), accepts a linked continuation, and caps the rate.
+#[test]
+fn wp103_the_service_refuses_rewrites_regressions_and_unlinked_files() -> Result<(), String> {
+    let dir = temp_dir("anchor-rules")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let count = || events.with_id(4100).len();
+    let before = count();
+    let repeat = ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    assert_eq!(repeat["duplicate"], Value::Bool(true));
+    assert_eq!(count(), before, "a repeat writes nothing");
+    for refused in [
+        anchor_request('a', 31, 'c', None),
+        anchor_request('a', 7, 'c', None),
+        // A new file with no link, a wrong link, or a head before the
+        // anchored record.
+        anchor_request('d', 31, 'e', None),
+        anchor_request('d', 31, 'e', link_to('f', 40, 'b')),
+        anchor_request('d', 31, 'e', link_to('a', 30, 'b')),
+        anchor_request('d', 31, 'e', link_to('a', 31, 'c')),
+    ] {
+        assert_eq!(
+            code(core.handle(&orceld(), refused)),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    ok(core.handle(&orceld(), anchor_request('a', 63, 'c', None)))?;
+    let moved = ok(core.handle(
+        &orceld(),
+        anchor_request('d', 31, 'e', link_to('a', 70, 'f')),
+    ))?;
+    assert_eq!(moved["new_file"], Value::Bool(true));
+    // The file the log left is refused from now on.
+    assert_eq!(
+        code(core.handle(&orceld(), anchor_request('a', 95, 'c', None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Another account's chain is its own.
+    let other_account = CallerFacts {
+        user_sid: "S-1-5-21-1-2-3-1002".to_owned(),
+        ..orceld()
+    };
+    ok(core.handle(&other_account, anchor_request('a', 31, 'b', None)))?;
+    // The rate cap.
+    let mut refused = None;
+    for n in 0..=crate::core::chain_anchor::ANCHORS_PER_MINUTE as u64 {
+        if let Err(error) = core.handle(&orceld(), anchor_request('d', 100 + n, 'e', None)) {
+            refused = Some(error);
+            break;
+        }
+    }
+    let refused = refused.ok_or("the rate cap never refused")?;
+    assert!(
+        refused.message.contains("in a minute"),
+        "{}",
+        refused.message
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 re-review: orceld reads back what the service holds of its chain
+/// (the verifier and a starting writer check against it), and every rule
+/// refusal carries the prefix orceld records as `link_refused`.
+#[test]
+fn wp103_the_service_reports_its_held_anchor_and_marks_rule_refusals() -> Result<(), String> {
+    let dir = temp_dir("anchor-status")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let status = |core: &mut AuthorityCore, caller: &CallerFacts| {
+        core.handle(
+            caller,
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"], Value::Null);
+    assert_eq!(
+        code(status(&mut core, &other_process())),
+        Some(FailureCode::CapabilityDenied)
+    );
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let held = ok(status(&mut core, &orceld()))?;
+    assert_eq!(held["held"]["file_id"], "a".repeat(64));
+    assert_eq!(held["held"]["seq"], 31);
+    assert_eq!(held["held"]["digest"], "b".repeat(64));
+    let refused = core
+        .handle(&orceld(), anchor_request('d', 31, 'e', None))
+        .err()
+        .ok_or("an unlinked file is refused")?;
+    assert!(
+        refused
+            .message
+            .starts_with(crate::core::chain_anchor::REFUSED_PREFIX),
+        "{}",
+        refused.message
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn review_f1_enroll_and_reset_need_always_notify_and_every_intent_the_owner_cli(
+) -> Result<(), String> {
+    let dir = temp_dir("review-f1")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    UAC_ALWAYS_NOTIFY.with(|v| v.set(false));
+    let refused = core.handle(&elevated_owner(), enroll_request(SPKI, false));
+    let reset = core.handle(
+        &elevated_owner(),
+        Request::ResetEnrollment {
+            origin: ClaimedOrigin::OwnerCli,
+        },
+    );
+    let status = ok(core.handle(&owner(), Request::Status))?;
+    UAC_ALWAYS_NOTIFY.with(|v| v.set(true));
+    let error = refused
+        .err()
+        .ok_or("enrollment under the default UAC was not refused")?;
+    assert_eq!(error.code, FailureCode::CapabilityDenied);
+    assert!(error.message.contains("Always notify"), "{}", error.message);
+    assert_eq!(code(reset), Some(FailureCode::CapabilityDenied));
+    assert_eq!(
+        status["uac_always_notify_on_secure_desktop"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        status["uac"]["consent_prompt_behavior_admin"],
+        Value::from(5)
+    );
+    // Any image but the installed CLI: no grant, enrollment or reset intent.
+    let elsewhere = CallerFacts {
+        image: r"C:\Users\me\Downloads\orcel.exe".to_owned(),
+        ..elevated_owner()
+    };
+    assert_eq!(
+        code(core.handle(&elsewhere, enroll_request(SPKI, false))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    enroll(&mut core, SPKI, false)?;
+    let cli_elsewhere = CallerFacts {
+        image: r"C:\Users\me\Downloads\orcel.exe".to_owned(),
+        ..owner()
+    };
+    let refused = core
+        .handle(&cli_elsewhere, grant_begin(None))
+        .err()
+        .ok_or("a grant from another image was not refused")?;
+    assert!(
+        refused.message.contains("installed Orcel CLI"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        ok(core.handle(&owner(), Request::Status))?["caller_is_owner_cli"],
+        Value::Bool(true)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn review_f4_f7_browser_authorize_checks_family_and_origin_and_the_box_says_browser(
+) -> Result<(), String> {
+    use crate::lease::BrowserFamily;
+    let dir = temp_dir("review-f4")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let client = format!("cl-{}", "cd".repeat(16));
+    let scope = LeaseScope::BrowserFullAccess {
+        client_ref: client.clone(),
+        session_id: "bs-0123456789abcdef-1-0001020304050607".to_owned(),
+        origins: vec!["https://fixture.test".to_owned()],
+        families: vec![BrowserFamily::Navigate, BrowserFamily::Click],
+        task: None,
+    };
+    let begun = ok(core.handle(&owner(), grant_begin_with(Some(scope), &client, "browse")))?;
+    let id = str_of(&begun, "intent_id")?;
+    let (challenge, text) = confirm_yes(&mut core, &owner(), &id)?;
+    assert!(
+        text.starts_with("A program asked for Orcel Browser Full Access"),
+        "{text}"
+    );
+    assert!(text.contains("Approve this browser grant?"), "{text}");
+    assert!(text.contains("PIN or fingerprint"), "{text}");
+    let done = ok(core.handle(
+        &owner(),
+        presence(&id, &str_of(&begun, "code")?, &challenge),
+    ))?;
+    let lease: SignedLease =
+        serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
+    let ask = |operation: &str, origin: Option<&str>| Request::Authorize {
+        lease_id: lease.body.lease_id.clone(),
+        executor: ExecutorClass::Browser,
+        claims: AuthorizeClaims {
+            principal_id: client.clone(),
+            operation: operation.to_owned(),
+            origin: origin.map(str::to_owned),
+            ..claims()
+        },
+    };
+    ok(core.handle(&orceld(), ask("click", Some("https://fixture.test"))))?;
+    ok(core.handle(&orceld(), ask("navigate", Some("https://fixture.test"))))?;
+    assert_eq!(
+        code(core.handle(&orceld(), ask("type", Some("https://fixture.test")))),
+        Some(FailureCode::CapabilityDenied),
+        "a family the lease does not name"
+    );
+    assert_eq!(
+        code(core.handle(&orceld(), ask("click", Some("https://other.test")))),
+        Some(FailureCode::CapabilityDenied),
+        "an origin the lease does not name"
+    );
+    assert_eq!(
+        code(core.handle(&orceld(), ask("click", None))),
+        Some(FailureCode::InvalidRequest),
+        "no origin"
+    );
+    // A desktop grant keeps the Full Control wording.
+    let (_, desktop_text) = {
+        ok(core.handle(&orceld(), Request::Stop))?;
+        grant(&mut core, None)?
+    };
+    assert!(
+        desktop_text.starts_with("A program asked for Orcel Full Control"),
+        "{desktop_text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn review_reverify_the_builtin_administrator_needs_admin_approval_mode() -> Result<(), String> {
+    assert!(is_builtin_administrator("S-1-5-21-1-2-3-500"));
+    assert!(!is_builtin_administrator("S-1-5-21-1-2-3-1001"));
+    assert!(!is_builtin_administrator("S-1-5-21-1-2-3-1500"));
+    assert!(!is_builtin_administrator("S-1-5-32-500"));
+    let dir = temp_dir("review-rid500")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let administrator = CallerFacts {
+        user_sid: "S-1-5-21-1-2-3-500".to_owned(),
+        ..elevated_owner()
+    };
+    let refused = core
+        .handle(&administrator, enroll_request(SPKI, false))
+        .err()
+        .ok_or("the built-in Administrator enrolled without Admin Approval Mode")?;
+    assert!(
+        refused.message.contains("FilterAdministratorToken"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        code(core.handle(
+            &administrator,
+            Request::ResetEnrollment {
+                origin: ClaimedOrigin::OwnerCli
+            }
         )),
         Some(FailureCode::CapabilityDenied)
     );
+    let status = ok(core.handle(&administrator, Request::Status))?;
+    assert_eq!(status["caller_is_builtin_administrator"], Value::Bool(true));
+    FILTER_ADMINISTRATOR_TOKEN.with(|v| v.set(Some(1)));
+    let begun = core.handle(&administrator, enroll_request(SPKI, false));
+    let status = ok(core.handle(&administrator, Request::Status))?;
+    FILTER_ADMINISTRATOR_TOKEN.with(|v| v.set(None));
+    ok(begun)?;
+    assert_eq!(status["uac"]["filter_administrator_token"], Value::from(1));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 owner recovery: only the elevated owner CLI may ask; the
+/// service-rendered confirmation names the log and the held head; No
+/// changes nothing; Yes records a signed `anchor_reset`, reports the reset
+/// to orceld and the CLI, accepts a new unlinked first file, and keeps
+/// refusing the abandoned one.
+#[test]
+fn wp103_an_owner_anchor_reset_is_elevated_confirmed_and_recorded() -> Result<(), String> {
+    let dir = temp_dir("anchor-reset")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    let reset = || Request::AnchorReset {
+        origin: ClaimedOrigin::OwnerCli,
+        log: "orceld".to_owned(),
+    };
+    assert_eq!(
+        code(core.handle(&elevated_owner(), reset())),
+        Some(FailureCode::InvalidRequest),
+        "nothing held, nothing to reset"
+    );
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    for caller in [owner(), other_process(), orceld()] {
+        assert_eq!(
+            code(core.handle(&caller, reset())),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    let status = |core: &mut AuthorityCore, caller: &CallerFacts| {
+        core.handle(
+            caller,
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    // No: nothing changes.
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    assert_eq!(begun["held"]["seq"], 31);
+    let id = str_of(&begun, "intent_id")?;
+    let tasks = core.take_pending_confirmations();
+    let text = &tasks[0].text;
+    assert!(
+        text.contains("RESET") && text.contains("Log: orceld"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&"a".repeat(64)) && text.contains("seq 31"),
+        "{text}"
+    );
+    assert!(text.contains(&str_of(&begun, "code")?), "{text}");
+    core.confirmation_answer(&id, ConfirmAnswer::No)
+        .map_err(|e| e.to_string())?;
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"]["seq"], 31);
+    // Yes: reset, recorded and signed.
+    let begun = ok(core.handle(&elevated_owner(), reset()))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.take_pending_confirmations();
+    core.confirmation_answer(&id, ConfirmAnswer::Yes)
+        .map_err(|e| e.to_string())?;
+    let done = ok(core.handle(&elevated_owner(), Request::IntentStatus { intent_id: id }))?;
+    assert_eq!(str_of(&done, "state")?, "completed");
+    let after = ok(status(&mut core, &orceld()))?;
+    assert_eq!(after["held"], Value::Null);
+    let digest = after["reset"]["event_digest"]
+        .as_str()
+        .ok_or("the reset record digest")?
+        .to_owned();
+    // The owner CLI reads the same status (to open the new file).
+    assert_eq!(
+        ok(status(&mut core, &owner()))?["reset"]["event_digest"],
+        digest.as_str()
+    );
+    assert!(
+        events
+            .with_id(crate::EVENT_ANCHOR)
+            .iter()
+            .any(|text| text.contains("orcel-anchor-reset/1|orceld|")
+                && text.contains(&format!("record {digest}"))
+                && text.contains("|sig=")),
+        "{:?}",
+        events.with_id(crate::EVENT_ANCHOR)
+    );
+    let audit =
+        std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
+    assert!(audit
+        .lines()
+        .any(|line| line.contains("\"kind\":\"anchor_reset\"") && line.contains(&digest)));
+    // Review: only the file the reset opened, naming the reset record, at
+    // one of its first anchors. A dropped-in unlinked file, a file naming
+    // another record, or a long chain grown before it asked are refused,
+    // and the status keeps reporting the reset until the right one comes.
+    let wrong = "f".repeat(64);
+    for refused in [
+        anchor_request('d', 31, 'e', None),
+        anchor_after_reset('d', 31, 'e', None, Some(&wrong)),
+        anchor_after_reset('d', 95, 'e', None, Some(&digest)),
+    ] {
+        let error = core
+            .handle(&orceld(), refused)
+            .err()
+            .ok_or("refused after the reset")?;
+        assert!(
+            error
+                .message
+                .starts_with(crate::core::chain_anchor::REFUSED_PREFIX),
+            "{}",
+            error.message
+        );
+        assert_eq!(
+            ok(status(&mut core, &orceld()))?["reset"]["event_digest"],
+            digest.as_str()
+        );
+    }
+    let fresh = ok(core.handle(
+        &orceld(),
+        anchor_after_reset('d', 31, 'e', None, Some(&digest)),
+    ))?;
+    assert_eq!(fresh["new_file"], Value::Bool(true));
+    assert_eq!(ok(status(&mut core, &orceld()))?["held"]["seq"], 31);
+    assert_eq!(
+        code(core.handle(&orceld(), anchor_request('a', 63, 'c', None))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 review: the Event Log entry is written before the state commits,
+/// so a failed entry leaves the held anchor (and a pending reset) as it was.
+#[test]
+fn wp103_a_failed_event_log_write_commits_no_anchor_state() -> Result<(), String> {
+    let dir = temp_dir("anchor-event-fails")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let status = |core: &mut AuthorityCore| {
+        core.handle(
+            &orceld(),
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    EVENTS_FAIL.with(|fail| fail.set(true));
+    let failed = core.handle(&orceld(), anchor_request('a', 63, 'c', None));
+    EVENTS_FAIL.with(|fail| fail.set(false));
+    assert!(failed.is_err());
+    assert_eq!(ok(status(&mut core))?["held"]["seq"], 31);
+    // A confirmed reset whose entry fails resets nothing.
+    let begun = ok(core.handle(
+        &elevated_owner(),
+        Request::AnchorReset {
+            origin: ClaimedOrigin::OwnerCli,
+            log: "orceld".to_owned(),
+        },
+    ))?;
+    let id = str_of(&begun, "intent_id")?;
+    core.take_pending_confirmations();
+    EVENTS_FAIL.with(|fail| fail.set(true));
+    let answered = core.confirmation_answer(&id, ConfirmAnswer::Yes);
+    EVENTS_FAIL.with(|fail| fail.set(false));
+    assert!(answered.is_err());
+    let after = ok(status(&mut core))?;
+    assert_eq!(after["held"]["seq"], 31, "{after}");
+    assert!(after.get("reset").is_none_or(Value::is_null), "{after}");
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// WP1-03 re-review: a pending reset can be reset again by the owner (same
+/// gate and box; the new record supersedes the old), and the owner CLI
+/// anchors the opening record of the file the reset opened, after which no
+/// other file naming the same reset digest is adopted.
+#[test]
+fn wp103_a_pending_reset_can_be_reset_again_and_its_opening_is_anchored_by_the_cli(
+) -> Result<(), String> {
+    let dir = temp_dir("anchor-rereset")?;
+    let events = Events::default();
+    let mut core = open(&dir, &events)?;
+    ok(core.handle(&orceld(), anchor_request('a', 31, 'b', None)))?;
+    let reset = || Request::AnchorReset {
+        origin: ClaimedOrigin::OwnerCli,
+        log: "orceld".to_owned(),
+    };
+    let status = |core: &mut AuthorityCore| {
+        core.handle(
+            &orceld(),
+            Request::AnchorStatus {
+                log: "orceld".to_owned(),
+            },
+        )
+    };
+    let confirm = |core: &mut AuthorityCore| -> Result<String, String> {
+        let begun = ok(core.handle(&elevated_owner(), reset()))?;
+        let id = str_of(&begun, "intent_id")?;
+        let tasks = core.take_pending_confirmations();
+        let text = tasks
+            .first()
+            .map(|task| task.text.clone())
+            .unwrap_or_default();
+        core.confirmation_answer(&id, ConfirmAnswer::Yes)
+            .map_err(|e| e.to_string())?;
+        // Reported once, which frees the session's intent slot.
+        ok(core.handle(&elevated_owner(), Request::IntentStatus { intent_id: id }))?;
+        Ok(text)
+    };
+    confirm(&mut core)?;
+    let first = ok(status(&mut core))?["reset"]["event_digest"]
+        .as_str()
+        .ok_or("a pending reset")?
+        .to_owned();
+    // The file of that reset was lost or refused: reset again.
+    let text = confirm(&mut core)?;
+    assert!(text.contains("AGAIN") && text.contains(&first), "{text}");
+    let second = ok(status(&mut core))?["reset"]["event_digest"]
+        .as_str()
+        .ok_or("a pending reset")?
+        .to_owned();
+    assert_ne!(first, second);
+    // The superseded reset no longer opens anything.
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            anchor_after_reset('d', 0, 'd', None, Some(&first))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // The owner CLI may anchor only seq 0, only in the reset state, and only
+    // elevated (the enrollment checks): the non-elevated installed CLI is
+    // refused.
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            anchor_after_reset('d', 0, 'd', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(
+            &elevated_owner(),
+            anchor_after_reset('d', 5, 'e', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let opened = ok(core.handle(
+        &elevated_owner(),
+        anchor_after_reset('d', 0, 'd', None, Some(&second)),
+    ))?;
+    assert_eq!(opened["new_file"], Value::Bool(true));
+    assert_eq!(ok(status(&mut core))?["held"]["file_id"], "d".repeat(64));
+    // A forged replacement naming the same public digest is not adopted.
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            anchor_after_reset('f', 0, 'f', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(
+            &elevated_owner(),
+            anchor_after_reset('f', 0, 'f', None, Some(&second))
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // orceld continues the anchored file.
+    ok(core.handle(&orceld(), anchor_request('d', 31, 'c', None)))?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

@@ -977,6 +977,10 @@ pub(crate) fn handle_envelope(
             return ResponseEnvelope::failure(request.request_id, refusal.code, refusal.message);
         }
     };
+    // WP1-03: the dispatch record first; nothing runs without it.
+    if let Err(refused) = crate::audit_before_dispatch(audit, &request, decision.policy_revision) {
+        return *refused;
+    }
     match dispatch(&decision.workspace, approval, tasks, &request) {
         Ok(value) => {
             if let Err(failure) = audit.record(&request, decision.policy_revision, "SUCCESS") {

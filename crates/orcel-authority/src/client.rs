@@ -54,6 +54,21 @@ impl Expectation {
     }
 }
 
+/// Slice 2 (desktop lease migration): whether the authority service is
+/// installed (registered with the SCM), running or not. When it is, new
+/// Full Control leases come from it only: the user-readable store issues
+/// nothing, and an unreachable service fails closed instead of falling back.
+pub fn service_installed() -> bool {
+    #[cfg(windows)]
+    {
+        scm::installed()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// A lease the service confirmed active, with a verified signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedLease {
@@ -190,6 +205,29 @@ impl AuthorityClient {
     pub fn list(&self) -> Result<Value, AuthorityError> {
         self.call(&Request::List)
     }
+
+    /// WP1-03: the latest anchor the service holds of this account's `log`
+    /// (`Value::Null` when it holds none).
+    pub fn anchor_status(&self, log: &str) -> Result<Value, AuthorityError> {
+        self.call(&Request::AnchorStatus {
+            log: log.to_owned(),
+        })
+    }
+
+    /// WP1-03: asks the service to hold an anchor of orceld's audit chain;
+    /// `reset` is the owner reset record digest a post-reset file names.
+    pub fn anchor(
+        &self,
+        anchor: &orcel_contracts::event::AnchorRef,
+        link: Option<crate::protocol::ChainLink>,
+        reset: Option<String>,
+    ) -> Result<Value, AuthorityError> {
+        self.call(&Request::Anchor {
+            anchor: anchor.clone(),
+            link,
+            reset,
+        })
+    }
 }
 
 #[cfg(windows)]
@@ -210,6 +248,28 @@ mod scm {
                 unsafe { CloseServiceHandle(self.0) };
             }
         }
+    }
+
+    /// Whether the service is registered with the SCM.
+    pub(super) fn installed() -> bool {
+        // SAFETY: plain calls; handles are closed by Sc.
+        let manager =
+            Sc(unsafe { OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT) });
+        if manager.0 == 0 {
+            // The SCM could not be asked: treat the service as present, so
+            // nothing falls back to the user-readable store (fail closed).
+            return true;
+        }
+        let name = wide(crate::SERVICE_NAME);
+        let service = Sc(unsafe { OpenServiceW(manager.0, name.as_ptr(), SERVICE_QUERY_STATUS) });
+        if service.0 != 0 {
+            return true;
+        }
+        // Only "does not exist" means not installed; any other failure
+        // (access denied, for example) fails closed as installed.
+        // SAFETY: plain call.
+        let error = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+        error != windows_sys::Win32::Foundation::ERROR_SERVICE_DOES_NOT_EXIST
     }
 
     /// The running service's process id.

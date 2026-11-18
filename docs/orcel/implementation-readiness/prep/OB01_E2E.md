@@ -158,6 +158,54 @@ A third run, after the re-judge's fixes (every page reply tab-checked, a crash h
 - **Popups.** At most 4 popups wait for admission at once; any further popup is closed at once.
 - **Where the image is kept.** It is in the tool reply only. The broker's receipt (`ActionRecord`, `browser_task_status`) keeps the SHA-256 digest (`evidence_kind: screenshot`) and never the image or its base64; the mission checks that no receipt holds `png_base64`.
 
+## OB-08 extension: Full Access browser lease (SG-000135 OB-08, FA-E)
+
+After the OB-03 steps, the mission tests Full Access on the same session:
+
+1. `browser_session_create` also returned `client_ref` (a digest of the MCP session id; it grants nothing).
+2. The owner's local path issues a lease. The script starts a second orceld of the same build on the same state root, with no tool surface profile (as the lifecycle CLI would), and sends one `browser.lease.issue` request: this session, its `client_ref`, origin `https://fixture.test`, families `navigate, click, type, select, tabs` (after the review; `read` is refused at issuance), 30 minutes. Issuance needs STRONG presence. In the scripted build, the scripted presence approves exactly this prompt (the lease title, a broker session id as the target, the fixture origin as the only origin) and denies every other STRONG prompt. In a founder run it is the real Windows Hello prompt, and the script does not answer it.
+3. `browser_task_status` shows the lease to the agent, read-only (`full_access`: lease id, origins, families, expiry, `active`, `routine_only`). No Windows user or device is shown.
+4. 25 routine actions run under the lease: 6 rounds of open the routine page, snapshot, fill `Full name`, select `City`, click `Continue to the next page`, then one more open. That is 7 opens, 6 fills, 6 selects and 6 clicks. None of them raises an Orcel prompt, and each receipt names the lease (`lease_id`) instead of an approval record.
+5. A click on the link named `Submit order` is not routine, so it asks once (a SOFT prompt for `https://fixture.test/ob08-submitted`). Its receipt carries an approval record and no lease.
+6. The owner revokes the lease through the second orceld (`browser.lease.revoke`). The very next `browser_open` is refused `CAPABILITY_DENIED` with `lease_invalid: the browser lease was revoked`, and nothing is sent. The open after that asks again.
+
+### Scripted run on this PC, 2026-11-17 (OB-08)
+
+Same machine and Edge as above. The run passed: 54 steps, 50 receipts chained, receipt digests recomputed with the new `lease_id` field (receipt domain `orcel-ob01-receipt/2`), chain head `dcfc4a8366348a4c...`.
+
+- One scripted STRONG prompt (the lease issuance), approved.
+- 25 routine actions, 0 Orcel prompts, 25 receipts with the lease id.
+- The submit link asked once.
+- After the revoke: the next action was refused `lease_invalid` and the following one asked.
+- 7 SOFT prompts in all (the 5 earlier ones, the submit, and the open after the revoke), each approved by the scripted decider.
+- 0 Edge processes and 0 session folders left; MCP exit 0; whole session 27152 ms.
+- A second run on the final code (after the clippy fixes: the host's `impact` is a closed enum on the wire, and an unknown word refuses the reply) passed the same way: 50 receipts chained (head `cbef093adc22b317...`), 7 approval records, 0 Edge and 0 session folders left, whole session 23682 ms.
+
+**This is scripted consent, not human acceptance.** The founder run, where the founder answers the Windows Hello issuance prompt and the dialogs, has not run yet. FA-E also needs Shadow mode with the foreground window, cursor and clipboard unchanged. Shadow mode comes from OB-04, which is not in this stack, so FA-E and FX-6 stay open.
+
+### OB-08 after the independent review (2026-11-17)
+
+The independent review failed OB-08. Two findings are architectural and stay open until the SG-000132 authority service exists under a separate principal (a founder decision). OB-08 does not merge before then:
+
+- **Finding 1, issuance not authenticated to the owner.** Any process of the same user can start orceld and ask for `browser.lease.issue`. This branch adds an owner-channel seam (`browser_lease::OwnerChannel`). The Control Room pipe or the authority service plugs in there. No build has a real channel yet, so **issuance is OFF in default, development and release builds**. Only the test-and-development feature `browser-lease-dev-issuance` provides a stand-in channel. That stand-in names orceld's parent process as the requester; it identifies the requester but does not authenticate the owner. orceld refuses to compile the feature without `live-browser-dev`, and the release-blocker sweep confines its name. The requester (pid and image), the client reference and the session's task label are shown on the STRONG prompt and bound into its digest and into the lease.
+- **Finding 2, same-user processes can read `authority.key`.** They can forge or replay leases. This branch makes every revoke, replacement and invalidation advance a revocation counter. The counter is bound into each lease and mirrored in an HMAC'd mark beside the store, so restoring an older copy of the store alone cannot bring back a revoked lease. A same-user process that also restores the mark, or holds the key, still can: only a separate principal fixes that.
+
+Done in this branch:
+
+- **Takeover gate required.** Without the takeover gate (feature off), a lease covers nothing. The per-page intervention marks are taken when the lease is cached and when a page opens.
+- **No real click, no page posts.** A lease-covered link click is a GET navigation to the bound href, with no synthetic click, so the page's click listeners, `href="#"` and `javascript:` handlers never run. From the first lease use in a lifetime, the host refuses every page request but GET/HEAD (fetch, XHR, form posts, `navigator.sendBeacon`) for the rest of that lifetime. Only an approved submission's own document is exempt. Fill and select stay routine because this rule is enforced at the host's route decision, not inside a timing window.
+- **Unimplemented families refused.** `read`, `scroll` and `download` are refused at issuance.
+- **Clock check.** The store keeps a last-seen time. A clock behind it, or behind what the session already saw, refuses.
+- **Secret values.** A value that looks secret (card number, PIN or one-time code, credential prefixes, long tokens, secret words), or that holds a secret from the secret store, is never typed under a lease. If the secret store cannot be checked, the fill asks.
+
+The scripted E2E builds with `browser-takeover-gate` and `browser-lease-dev-issuance`. It adds a page whose `oninput` and link `onclick` post with `fetch` and `navigator.sendBeacon`; the fill and the link click run under the lease. The scripted run on this PC passed:
+
+- 54 receipts chained (head `8c3bcf87ced956cb...`), 7 SOFT prompts, 1 scripted STRONG prompt (its summary names the requester, client and task).
+- 25 routine actions plus the 3 on the posting page under the lease, 0 prompts.
+- The fixture saw no `/ob08-sink` or `/ob08-beacon` request.
+- The submit asked; after the revoke the next action was refused and the one after asked.
+- Whole session 21659 ms. Scripted consent, not human acceptance.
+
 ## OB-04 extension: modes and persistent profiles (SG-000135 OB-04)
 
 Design: `OB04_MODES_PROFILES.md`. The script adds the following, all native on Windows. Nothing sends keyboard or mouse input.
@@ -229,3 +277,24 @@ Scripted runs on this PC, 2026-11-18 (Edge 157, Windows 11 Home 10.0.26300):
 - Emergency stop during a session, a crashed orceld, the per-client and device session caps, and a second MCP client naming this session: these are covered by orceld's unit tests, not by this mission.
 - Public HTTPS sites: this mission uses the loopback fixture only.
 - macOS and Linux.
+
+## SG-000132 slice 2: leases from the authority service
+
+Supersedes the OB-08 issuance above (steps 2 and the STRONG prompt, findings 1 and 2): orceld no longer
+issues or stores browser leases, `browser-lease-dev-issuance` is gone, and the user-readable store holds no
+browser lease. Design: [SG132_SLICE2.md](SG132_SLICE2.md).
+
+- The scripted run builds `orcel-authority` with the test-only `authority-scripted-consent` feature and starts
+  its console harness (`--console --trusted-orceld <this run's orceld> --e2e-scripted-consent <log>`), which
+  stands in for the unlock, the service-rendered confirmation (answered Yes, its text logged to
+  `authority-consent.jsonl`) and Windows Hello. orceld (built with `browser-full-scripted-consent`) finds it
+  through `ORCEL_E2E_AUTHORITY`; no other build reads that variable.
+- Step 2 becomes: orceld's `browser.lease.issue` is refused; the script then grants as `orcel browser grant`
+  does, over the authority pipe (`GrantBegin`, `IntentStatus`, `PresenceComplete` with the scripted presence).
+  The lease id is `al-` and 32 hex digits and carries the service's ECDSA P-256 signature.
+- orceld admits the lease only after checking that signature with the public key the verified authority
+  reported, and asks the authority's `Authorize` before each covered action.
+- The end checks: no STRONG prompt in orceld's consent log, and exactly one authority confirmation, naming this
+  session and only `https://fixture.test`.
+- A founder run skips the Full Access part: the installed service trusts only the installed orceld, never this
+  test build; the summary records why.

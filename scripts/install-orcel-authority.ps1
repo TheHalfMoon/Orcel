@@ -8,15 +8,16 @@
   whose SHA-256 you checked (the script prints its own hash first). Run with -WhatIf to see every change
   without making any.
 
-  The script installs only hash-pinned bytes: -ArtifactDir holds orcel-authority.exe and orceld.exe (the CI
+  The script installs only hash-pinned bytes: -ArtifactDir holds orcel-authority.exe, orceld.exe and orcel.exe (the CI
   "Authority service artifact" of the reviewed commit, or a build made in a folder only administrators can
-  write), and -AuthoritySha256 / -OrceldSha256 are the SHA-256 values from that artifact's SHA256SUMS.txt.
-  Both files are hashed before copying and again after copying into %ProgramFiles%; any mismatch stops the
+  write), and -AuthoritySha256 / -OrceldSha256 / -OrcelSha256 are the SHA-256 values from that artifact's SHA256SUMS.txt.
+  All files are hashed before copying and again after copying into %ProgramFiles%; any mismatch stops the
   install. It never copies from the repository's target directory implicitly.
 
   Install makes exactly these system changes:
-    1. Copies orcel-authority.exe to %ProgramFiles%\Orcel\Authority\ and orceld.exe to %ProgramFiles%\Orcel\
-       (admin-only write), after verifying both hashes.
+    1. Copies orcel-authority.exe to %ProgramFiles%\Orcel\Authority\, and orceld.exe and orcel.exe (the owner
+       CLI the service trusts for grants, enrollment and reset) to %ProgramFiles%\Orcel\ (admin-only write), after
+       verifying every hash.
     2. Registers the service with the SCM: name OrcelAuthority, display name "Orcel Authority", own process,
        automatic start, account NT SERVICE\OrcelAuthority (a virtual account; no password), service SID type
        unrestricted, required privileges SeChangeNotifyPrivilege, SeImpersonatePrivilege and
@@ -27,7 +28,8 @@
        delete or rename entries in it.
     4. Creates %ProgramData%\Orcel\authority at once with owner Administrators and a protected DACL: SYSTEM,
        Administrators and NT SERVICE\OrcelAuthority full control, nobody else. Writes config.json there,
-       trusting only %ProgramFiles%\Orcel\orceld.exe.
+       trusting only %ProgramFiles%\Orcel\orceld.exe (for Authorize) and %ProgramFiles%\Orcel\orcel.exe (to
+       record grant, enrollment and reset intents).
     5. Creates %ProgramData%\Orcel\authority-public at once with owner Administrators and a protected DACL:
        SYSTEM and Administrators full control, the service modify, Users read and execute.
     6. Registers the Event Log source "Orcel" in the Application log
@@ -43,13 +45,16 @@
   it. Events already written to the Application log stay in the log.
 
 .PARAMETER ArtifactDir
-  Directory holding orcel-authority.exe and orceld.exe to install. Required for install.
+  Directory holding orcel-authority.exe, orceld.exe and orcel.exe to install. Required for install.
 
 .PARAMETER AuthoritySha256
   Expected SHA-256 (hex) of orcel-authority.exe. Required for install.
 
 .PARAMETER OrceldSha256
   Expected SHA-256 (hex) of orceld.exe. Required for install.
+
+.PARAMETER OrcelSha256
+  Expected SHA-256 (hex) of orcel.exe (the owner CLI). Required for install.
 
 .PARAMETER Uninstall
   Remove everything Install made.
@@ -62,6 +67,7 @@ param(
   [string]$ArtifactDir,
   [string]$AuthoritySha256,
   [string]$OrceldSha256,
+  [string]$OrcelSha256,
   [switch]$Uninstall,
   [switch]$KeepState
 )
@@ -77,6 +83,7 @@ $ProgramFilesOrcel = Join-Path $env:ProgramFiles 'Orcel'
 $ProgramFilesDir = Join-Path $ProgramFilesOrcel 'Authority'
 $InstalledAuthority = Join-Path $ProgramFilesDir 'orcel-authority.exe'
 $InstalledOrceld = Join-Path $ProgramFilesOrcel 'orceld.exe'
+$InstalledOrcel = Join-Path $ProgramFilesOrcel 'orcel.exe'
 $ProgramDataOrcel = Join-Path $env:ProgramData 'Orcel'
 $StateDir = Join-Path $ProgramDataOrcel 'authority'
 $PublicDir = Join-Path $ProgramDataOrcel 'authority-public'
@@ -175,19 +182,21 @@ function New-ProtectedDirectory([string]$Path, [string]$Sddl) {
 
 function Install-Authority {
   Assert-Elevated
-  if (-not $ArtifactDir -or -not $AuthoritySha256 -or -not $OrceldSha256) {
-    throw 'Install needs -ArtifactDir, -AuthoritySha256 and -OrceldSha256 (from the reviewed commit''s CI artifact SHA256SUMS.txt). Nothing was changed.'
+  if (-not $ArtifactDir -or -not $AuthoritySha256 -or -not $OrceldSha256 -or -not $OrcelSha256) {
+    throw 'Install needs -ArtifactDir, -AuthoritySha256, -OrceldSha256 and -OrcelSha256 (from the reviewed commit''s CI artifact SHA256SUMS.txt). Nothing was changed.'
   }
-  foreach ($hash in @($AuthoritySha256, $OrceldSha256)) {
+  foreach ($hash in @($AuthoritySha256, $OrceldSha256, $OrcelSha256)) {
     if ($hash -notmatch '^[0-9a-fA-F]{64}$') { throw "Not a SHA-256: $hash. Nothing was changed." }
   }
   $sourceAuthority = Join-Path $ArtifactDir 'orcel-authority.exe'
   $sourceOrceld = Join-Path $ArtifactDir 'orceld.exe'
-  foreach ($file in @($sourceAuthority, $sourceOrceld)) {
+  $sourceOrcel = Join-Path $ArtifactDir 'orcel.exe'
+  foreach ($file in @($sourceAuthority, $sourceOrceld, $sourceOrcel)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "No $file. Nothing was changed." }
   }
   Assert-Hash $sourceAuthority $AuthoritySha256
   Assert-Hash $sourceOrceld $OrceldSha256
+  Assert-Hash $sourceOrcel $OrcelSha256
 
   if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
     throw "The service $ServiceName already exists. Run with -Uninstall first. Nothing was changed."
@@ -219,20 +228,22 @@ function Install-Authority {
   }
 
   Write-Host 'Planned system changes:'
-  Write-Host "  copy the verified binaries to $InstalledAuthority and $InstalledOrceld"
+  Write-Host "  copy the verified binaries to $InstalledAuthority, $InstalledOrceld and $InstalledOrcel"
   Write-Host "  SCM: create $ServiceName ($DisplayName) as $ServiceAccount, automatic start, SID type unrestricted"
   Write-Host "  directories created with protected ACLs: $StateDir (no user access), $PublicDir (users read)"
-  Write-Host "  Event Log source Orcel (Application) unless present; trusted orceld image: $InstalledOrceld"
+  Write-Host "  Event Log source Orcel (Application) unless present; trusted orceld image: $InstalledOrceld; trusted owner CLI: $InstalledOrcel"
 
-  if ($PSCmdlet.ShouldProcess($ProgramFilesOrcel, 'Copy and re-verify orcel-authority.exe and orceld.exe')) {
+  if ($PSCmdlet.ShouldProcess($ProgramFilesOrcel, 'Copy and re-verify orcel-authority.exe, orceld.exe and orcel.exe')) {
     New-Item -ItemType Directory -Force -Path $ProgramFilesDir | Out-Null
     Copy-Item -LiteralPath $sourceAuthority -Destination $InstalledAuthority -Force
     Copy-Item -LiteralPath $sourceOrceld -Destination $InstalledOrceld -Force
+    Copy-Item -LiteralPath $sourceOrcel -Destination $InstalledOrcel -Force
     try {
       Assert-Hash $InstalledAuthority $AuthoritySha256
       Assert-Hash $InstalledOrceld $OrceldSha256
+      Assert-Hash $InstalledOrcel $OrcelSha256
     } catch {
-      Remove-Item -LiteralPath $InstalledAuthority, $InstalledOrceld -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $InstalledAuthority, $InstalledOrceld, $InstalledOrcel -Force -ErrorAction SilentlyContinue
       throw
     }
   }
@@ -260,7 +271,7 @@ function Install-Authority {
 
   if ($PSCmdlet.ShouldProcess($StateDir, 'Create with owner Administrators and a protected ACL (service, SYSTEM, Administrators only)')) {
     New-ProtectedDirectory $StateDir "O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;$serviceSid)"
-    $config = @{ trusted_orceld_images = @($InstalledOrceld) } | ConvertTo-Json -Compress
+    $config = @{ trusted_orceld_images = @($InstalledOrceld); trusted_owner_cli_images = @($InstalledOrcel) } | ConvertTo-Json -Compress
     [IO.File]::WriteAllText((Join-Path $StateDir 'config.json'), $config, (New-Object Text.UTF8Encoding($false)))
   }
 
@@ -323,7 +334,7 @@ function Uninstall-Authority {
       Write-Host 'The Event Log source Orcel was not created by this script; left unchanged.'
     }
   }
-  foreach ($item in @($InstalledOrceld, $ProgramFilesDir, $PublicDir)) {
+  foreach ($item in @($InstalledOrceld, $InstalledOrcel, $ProgramFilesDir, $PublicDir)) {
     if ((Test-Path -LiteralPath $item) -and $PSCmdlet.ShouldProcess($item, 'Delete')) { Remove-Item -LiteralPath $item -Recurse -Force }
   }
   if ((Test-Path -LiteralPath $StateDir) -and -not $KeepState) {

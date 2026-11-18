@@ -18,7 +18,17 @@ sha2.workspace = true
 fs4.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.52", features = ["Foundation", "Security_Credentials_UI"] }
+# SG-000132 slice 2 adds the Windows Hello key credential (KeyCredentialManager,
+# its public key, TPM attestation and signatures): the same crate and version,
+# more of its WinRT features.
+windows = { version = "0.52", features = [
+  "Foundation",
+  "Security_Credentials",
+  "Security_Credentials_UI",
+  "Security_Cryptography",
+  "Security_Cryptography_Core",
+  "Storage_Streams",
+] }
 
 # XP-09: STRONG presence on macOS through LocalAuthentication (LAContext,
 # LAPolicyDeviceOwnerAuthentication), the bindings the Cua donor uses

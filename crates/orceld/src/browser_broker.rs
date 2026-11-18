@@ -44,8 +44,10 @@
 //! Every action yields a provisional receipt (session, page, generation
 //! before and after, action, outcome, evidence digest), chained by digest
 //! within the session and returned by `browser_task_status`. Receipts are
-//! orceld's own records of what it dispatched; the SG-000131 audit chain
-//! (OB-05) is not here yet.
+//! orceld's own records of what it dispatched. OB-05 step 1 (WP1-03): each
+//! receipt is also written to orceld's hash-chained audit log as a
+//! `dispatch` event (the receipt and its digest, unchanged), so receipts
+//! are anchored with the chain; the receipt names its place there.
 //!
 //! The broker grants nothing: profile gate, policy, the takeover gate and
 //! the approval broker still decide every action. It is generic over the
@@ -76,8 +78,9 @@ pub(crate) const MAX_TASK_CHARS: usize = 64;
 /// Ended sessions remembered so a late request learns why its session ended.
 const ENDED_MEMORY: usize = 64;
 /// Domain separation for receipt digests.
-/// SG-000135 OB-04: version 2 adds the session's persistent profile.
-const RECEIPT_DOMAIN: &str = "orcel-ob04-receipt/2";
+/// Version 3: SG-000135 OB-08 adds the lease id and OB-04 the session's
+/// persistent profile.
+const RECEIPT_DOMAIN: &str = "orcel-ob08-receipt/3";
 
 /// The broker's budgets. Configured by orceld only; never a caller's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,6 +398,9 @@ pub(crate) struct Receipt {
     pub evidence_sha256: Option<String>,
     /// The approval broker's record id, for an approved action.
     pub record_id: Option<String>,
+    /// SG-000135 OB-08: the Full Access lease that authorized the action
+    /// instead of an approval (then `record_id` is `None`).
+    pub lease_id: Option<String>,
     /// SG-000135 OB-04: the persistent Orcel-managed profile the session
     /// acted in, or `None` for an ephemeral profile.
     pub profile: Option<String>,
@@ -402,6 +408,35 @@ pub(crate) struct Receipt {
     /// The previous receipt's digest in this session (empty for the first).
     pub previous_sha256: String,
     pub receipt_sha256: String,
+    /// OB-05 step 1: where the receipt sits in orceld's audit chain. Not
+    /// covered by `receipt_sha256` (the receipt digest is unchanged).
+    pub audit: ReceiptAudit,
+}
+
+/// OB-05 step 1: a receipt's audit chain event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReceiptAudit {
+    /// No audit chain was given to the broker (tests and validation builds).
+    NotConfigured,
+    /// Written: `(log, file id, seq, digest)` of the event.
+    Chained(orcel_contracts::event::AnchorRef),
+    /// The chain refused or failed the write.
+    Failed(String),
+}
+
+impl ReceiptAudit {
+    fn to_json(&self) -> Value {
+        match self {
+            Self::NotConfigured => Value::Null,
+            Self::Chained(at) => json!({
+                "log": at.log,
+                "file_id": at.file_id,
+                "seq": at.seq,
+                "digest": at.digest,
+            }),
+            Self::Failed(error) => json!({"error": error}),
+        }
+    }
 }
 
 impl Receipt {
@@ -418,12 +453,33 @@ impl Receipt {
             "evidence_kind": self.evidence_kind,
             "evidence_sha256": self.evidence_sha256,
             "record_id": self.record_id,
+            "lease_id": self.lease_id,
             "profile": self.profile,
             "at_ms": self.at_ms,
             "previous_sha256": self.previous_sha256,
             "receipt_sha256": self.receipt_sha256,
             "provisional": true,
+            "audit": self.audit.to_json(),
         })
+    }
+
+    /// OB-05 step 1: the receipt's `dispatch` event in orceld's chain:
+    /// the receipt's own fields and digest (ids, outcome and evidence
+    /// digests only; never a URL or page content).
+    fn audit_draft(&self, client: &str) -> orcel_audit::EventDraft {
+        let mut receipt = self.to_json();
+        if let Value::Object(map) = &mut receipt {
+            map.remove("audit");
+        }
+        orcel_audit::EventDraft {
+            principal_id: Some(client.to_owned()),
+            capability: Some("browser.session".to_owned()),
+            operation: Some(self.action.clone()),
+            ..orcel_audit::EventDraft::new(
+                orcel_contracts::event::AuditEventKind::Dispatch,
+                json!({"source": "browser_receipt", "receipt": receipt}),
+            )
+        }
     }
 }
 
@@ -439,6 +495,8 @@ pub(crate) struct ActionRecord {
     pub evidence_kind: String,
     pub evidence_sha256: Option<String>,
     pub record_id: Option<String>,
+    /// SG-000135 OB-08: the lease that authorized the action, if one did.
+    pub lease_id: Option<String>,
 }
 
 /// A device-wide session slot: an exclusive lock on one slot file, held
@@ -482,6 +540,8 @@ pub(crate) struct BrokerSession<W> {
     receipts_dropped: u64,
     last_receipt_sha256: String,
     next_seq: u64,
+    /// OB-05 step 1: orceld's audit chain, when the broker was given one.
+    audit: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
     _slot: DeviceSlot,
 }
 
@@ -515,12 +575,20 @@ impl<W> BrokerSession<W> {
             evidence_kind: record.evidence_kind,
             evidence_sha256: record.evidence_sha256,
             record_id: record.record_id,
+            lease_id: record.lease_id,
             profile: self.profile_name().map(str::to_owned),
             at_ms,
             previous_sha256: previous,
             receipt_sha256: String::new(),
+            audit: ReceiptAudit::NotConfigured,
         };
         receipt.receipt_sha256 = receipt_digest(&receipt);
+        if let Some(chain) = &self.audit {
+            receipt.audit = match chain.append(receipt.audit_draft(&self.client)) {
+                Ok(appended) => ReceiptAudit::Chained(appended.at),
+                Err(error) => ReceiptAudit::Failed(error.to_string()),
+            };
+        }
         self.last_receipt_sha256 = receipt.receipt_sha256.clone();
         if self.receipts.len() >= self.receipts_budget {
             self.receipts.pop_front();
@@ -582,6 +650,7 @@ fn receipt_digest(receipt: &Receipt) -> String {
         receipt.evidence_kind.clone(),
         optional(&receipt.evidence_sha256),
         optional(&receipt.record_id),
+        optional(&receipt.lease_id),
         optional(&receipt.profile),
         receipt.at_ms.to_string(),
         receipt.previous_sha256.clone(),
@@ -619,11 +688,22 @@ pub(crate) struct Broker<W> {
     /// not be verified, orceld's input closing), so a revoke always asks
     /// again before a signed-in profile is reused.
     profile_approvals: std::collections::BTreeSet<(String, String, String)>,
+    /// OB-05 step 1: orceld's audit chain every receipt is also written to.
+    audit: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
     /// This instance's lock, held for the broker's (orceld's) lifetime.
     _instance_lock: File,
 }
 
 impl<W: SessionWorker> Broker<W> {
+    /// OB-05 step 1: write every session's receipts to `chain` too.
+    pub(crate) fn with_audit_chain(
+        mut self,
+        chain: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
+    ) -> Self {
+        self.audit = chain;
+        self
+    }
+
     /// Start a broker rooted at `root` (orceld's own state, never a
     /// caller's) for the orceld instance `instance` (16 lowercase hex
     /// characters): hold the instance's lock, then sweep what exited
@@ -660,6 +740,7 @@ impl<W: SessionWorker> Broker<W> {
             epoch: None,
             quarantined: Vec::new(),
             profile_approvals: std::collections::BTreeSet::new(),
+            audit: None,
             _instance_lock: lock,
         };
         broker.sweep_leftovers();
@@ -854,6 +935,7 @@ impl<W: SessionWorker> Broker<W> {
             receipts_dropped: 0,
             last_receipt_sha256: String::new(),
             next_seq: 1,
+            audit: self.audit.clone(),
             _slot: slot,
         };
         Ok(self.sessions.entry(id).or_insert(session))
@@ -1507,6 +1589,92 @@ mod tests {
         }
     }
 
+    /// OB-05 step 1 (WP1-03): with orceld's audit chain given, every receipt
+    /// is also a chained `dispatch` event holding the receipt and its
+    /// unchanged digest, and the receipt names its place in the chain.
+    #[test]
+    fn ob05_receipts_produce_chained_audit_events() -> Result<(), String> {
+        use orcel_contracts::event::{AuditEvent, AuditEventKind};
+        let mut scene = Scene::new("ob05-audit");
+        let chain_path = scene.root.join("audit-chain.jsonl");
+        let chain = std::sync::Arc::new(
+            orcel_audit::ChainWriter::open(&chain_path, orcel_audit::ORCELD_LOG)
+                .map_err(|e| e.to_string())?,
+        );
+        let mut broker = scene
+            .broker(INSTANCE, Budgets::DEFAULT)
+            .with_audit_chain(Some(chain));
+        let id = scene
+            .create(&mut broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &id).map_err(|e| e.message)?;
+        let mut receipts = Vec::new();
+        for n in 0..2u64 {
+            session.begin_action().map_err(|e| e.message)?;
+            receipts.push(session.record(record("browser_click", "done"), 10 + n));
+        }
+        let text = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
+        let events: Vec<AuditEvent> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).map_err(|e| e.to_string()))
+            .collect::<Result<_, _>>()?;
+        assert_eq!(events.len(), 3, "the opening event and one per receipt");
+        for (receipt, event) in receipts.iter().zip(&events[1..]) {
+            assert_eq!(event.kind, AuditEventKind::Dispatch);
+            assert_eq!(event.operation.as_deref(), Some("browser_click"));
+            assert_eq!(event.principal_id.as_deref(), Some("client-a"));
+            assert_eq!(event.detail["source"], "browser_receipt");
+            assert_eq!(
+                event.detail["receipt"]["receipt_sha256"],
+                receipt.receipt_sha256.as_str()
+            );
+            // The shipped receipt digest is unchanged by the audit link.
+            assert_eq!(receipt.receipt_sha256, receipt_digest(receipt));
+            let ReceiptAudit::Chained(at) = &receipt.audit else {
+                return Err(format!("not chained: {:?}", receipt.audit));
+            };
+            assert_eq!(
+                (at.seq, at.digest.as_str()),
+                (event.seq, event.digest.as_str())
+            );
+            assert_eq!(receipt.to_json()["audit"]["seq"], event.seq);
+        }
+        let report = orcel_audit::verify_file(&chain_path).map_err(|e| e.to_string())?;
+        assert_eq!(report.verdict, orcel_audit::Verdict::Intact, "{report:?}");
+        // A chain that refuses the write marks the receipt failed, which
+        // live dispatch turns into a refusal of the action's result.
+        let edited = text.replacen("browser_click", "browser_type", 1);
+        std::fs::write(&chain_path, edited).map_err(|e| e.to_string())?;
+        let fresh = std::sync::Arc::new(
+            orcel_audit::ChainWriter::open(&chain_path, orcel_audit::ORCELD_LOG)
+                .map_err(|e| e.to_string())?,
+        );
+        let mut broken = scene
+            .broker("0123456789abcded", Budgets::DEFAULT)
+            .with_audit_chain(Some(fresh));
+        let third = scene
+            .create(&mut broken, "client-c", "3")
+            .map_err(|e| e.message)?;
+        let session = broken.session("client-c", &third).map_err(|e| e.message)?;
+        let receipt = session.record(record("browser_click", "done"), 10);
+        assert!(
+            matches!(&receipt.audit, ReceiptAudit::Failed(error) if error.contains("broken")),
+            "{:?}",
+            receipt.audit
+        );
+        assert!(receipt.to_json()["audit"]["error"].is_string());
+        // Without a chain the receipt says so, and its digest is the same
+        // function of the same fields.
+        let mut plain = scene.broker("0123456789abcdee", Budgets::DEFAULT);
+        let other = scene
+            .create(&mut plain, "client-b", "2")
+            .map_err(|e| e.message)?;
+        let session = plain.session("client-b", &other).map_err(|e| e.message)?;
+        let receipt = session.record(record("browser_click", "done"), 10);
+        assert_eq!(receipt.audit, ReceiptAudit::NotConfigured);
+        assert!(receipt.to_json()["audit"].is_null());
+        Ok(())
+    }
     #[test]
     fn receipts_chain_by_digest_and_stay_bounded() {
         let mut scene = Scene::new("receipts");

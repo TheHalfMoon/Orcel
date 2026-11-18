@@ -735,8 +735,9 @@ mod tests {
             ),
             _ => None,
         });
-        // Windows also protects the earlier root.
-        assert_eq!(roots.len(), 7 + usize::from(cfg!(windows)));
+        // Windows also protects the earlier root; the audit override brings its
+        // WP1-03 chain and the chain's lock.
+        assert_eq!(roots.len(), 9 + usize::from(cfg!(windows)));
         for dir in [
             "lad",
             "audit",

@@ -32,9 +32,13 @@ browser-takeover-gate = []
 # test-support soft decider) that approves only the mission's four browser
 # actions whose whole target is the loopback fixture origin, and records
 # each prompt's dialog text.
-# orceld refuses to start without ORCEL_E2E_CONSENT_LOG. Never default, never
+# orceld refuses to start without ORCEL_E2E_CONSENT_LOG. SG-000132 slice 2: in
+# this build only, the Full Access lease source talks to the harness's
+# authority console (ORCEL_E2E_AUTHORITY) instead of the installed service.
+# Never default, never
 # in a development or release build; the release-blocker sweep confines it.
 browser-full-scripted-consent = ["orcel-approval/test-support"]
+
 
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }

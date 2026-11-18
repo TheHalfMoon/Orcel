@@ -35,16 +35,28 @@
 //! 6. The lease is signed, stored, audited, and its granted scope written to
 //!    the Event Log (4101).
 //!
-//! Enrollment of a Hello key is refused in slice 1
-//! ([`AuthorityError::enrollment_unavailable`]): it waits for attested
-//! KeyCredentialManager keys and an elevated (UAC secure desktop) enrollment
-//! caller in slice 2. Until then no key is enrolled and no grant completes.
+//! Enrollment (slice 2): `EnrollBegin` from an ELEVATED interactive caller
+//! (observed from its token, so the UAC prompt on the secure desktop is the
+//! human gate) with a Windows Hello key credential's public key and its TPM
+//! attestation ([`crate::attestation`]). An unverifiable attestation refuses
+//! enrollment ([`AuthorityError::enrollment_unavailable`] when this PC has no
+//! pinned root). The service renders a confirmation showing the key's
+//! fingerprint; on Yes the new key signs a challenge bound to that text (one
+//! Hello gesture), and only then is it enrolled. Replacing an enrolled key
+//! and resetting one (`ResetEnrollment`) need the same elevated caller and
+//! confirmation; both end that user's leases and advance the epoch.
 //!
 //! Grants are refused while any lease is active in the session. Stop (from
 //! any process of the logon session, from session lock, sign-out and
 //! disconnect, and on expiry) ends the leases, advances the epoch and the
 //! revocation counter, and writes `emergency_stop`.
 
+// WP1-03: anchors of orceld's own audit chain (a child module, so it keeps
+// to the core's own audit and Event Log paths).
+#[path = "chain_anchor.rs"]
+pub mod chain_anchor;
+
+use crate::attestation::AttestationReport;
 use crate::audit::{AuditChain, AuditRecord, Observed};
 use crate::caller::{CallerFacts, CallerRole, ClientPolicy};
 use crate::error::AuthorityError;
@@ -87,9 +99,12 @@ const PRESENCE_DOMAIN: &[u8] = b"orcel-authority-presence-challenge/2\n";
 /// Domain of the signature appended to every Event Log entry.
 pub const EVENT_SIGNING_DOMAIN: &[u8] = b"orcel-authority-event-signature/1\n";
 
+/// The enrollment challenge's domain.
+const ENROLL_DOMAIN: &[u8] = b"orcel-authority-enrollment-challenge/1\n";
+
 /// What this slice does not do yet; returned by `Status` and `Authorize`.
 pub const DEFERRED: [&str; 8] = [
-    "Windows Hello enrollment (attested KeyCredentialManager keys, elevated enrollment caller); no grant completes in slice 1",
+    "TPM attestation freshness and AIK revocation checks (see SG132_SLICE2.md)",
     "service-owned Job Objects (Authorize returns job_name null)",
     "standing approvals (spec 4.15)",
     "indicator heartbeat",
@@ -118,7 +133,53 @@ pub trait PresenceVerifier: Send {
     ) -> Result<(), AuthorityError>;
 }
 
-/// Writes Event Log entries (4100, 4101, 4102).
+/// Verifies a Hello key's TPM attestation at enrollment.
+pub trait AttestationVerifier: Send {
+    /// Whether this PC can verify attestations at all (a pinned root is
+    /// present); enrollment is refused otherwise.
+    fn available(&self) -> bool;
+    fn verify(
+        &self,
+        spki_der: &[u8],
+        attestation: &[u8],
+        chain: &[u8],
+        now_ms: u64,
+    ) -> Result<AttestationReport, AuthorityError>;
+}
+
+/// Slice 2 review F1 (a): the machine's UAC policy values (read-only).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UacSettings {
+    pub enable_lua: Option<u32>,
+    pub consent_prompt_behavior_admin: Option<u32>,
+    pub prompt_on_secure_desktop: Option<u32>,
+    /// Admin Approval Mode for the built-in Administrator (RID 500).
+    #[serde(default)]
+    pub filter_administrator_token: Option<u32>,
+}
+
+/// Whether `sid` is a machine or domain's built-in Administrator (RID 500),
+/// which UAC does not prompt unless `FilterAdministratorToken` is 1.
+pub fn is_builtin_administrator(sid: &str) -> bool {
+    sid.starts_with("S-1-5-21-") && sid.rsplit('-').next() == Some("500")
+}
+
+impl UacSettings {
+    /// UAC on, "Always notify" for administrators, prompts on the secure
+    /// desktop. Anything missing or different is not.
+    pub fn always_notify_on_secure_desktop(&self) -> bool {
+        self.enable_lua == Some(1)
+            && self.consent_prompt_behavior_admin == Some(2)
+            && self.prompt_on_secure_desktop == Some(1)
+    }
+}
+
+/// Reads the UAC policy.
+pub trait UacPolicy: Send {
+    fn read(&self) -> UacSettings;
+}
+
+/// Writes Event Log entries (4100 to 4104).
 pub trait EventSink: Send {
     fn record(&self, event_id: u32, error: bool, text: &str) -> Result<(), AuthorityError>;
 }
@@ -132,6 +193,8 @@ pub trait Entropy: Send {
 pub struct Services {
     pub signer: Box<dyn LeaseSigner>,
     pub presence: Box<dyn PresenceVerifier>,
+    pub attestation: Box<dyn AttestationVerifier>,
+    pub uac: Box<dyn UacPolicy>,
     pub events: Box<dyn EventSink>,
     pub entropy: Box<dyn Entropy>,
     pub clock: fn() -> u64,
@@ -191,6 +254,9 @@ pub struct EnrolledKey {
     pub spki_hex: String,
     pub key_digest: String,
     pub enrolled_at_ms: u64,
+    /// What the attestation check verified at enrollment.
+    #[serde(default)]
+    pub attestation: Option<AttestationReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,7 +287,11 @@ impl PersistedState {
 enum Awaiting {
     Unlock,
     Confirmation,
-    Presence { challenge: Vec<u8> },
+    Presence {
+        challenge: Vec<u8>,
+    },
+    /// A reset confirmed and done; reported once by `IntentStatus`.
+    Done,
 }
 
 impl Awaiting {
@@ -230,8 +300,56 @@ impl Awaiting {
             Self::Unlock => "awaiting_unlock",
             Self::Confirmation => "awaiting_confirmation",
             Self::Presence { .. } => "awaiting_presence",
+            Self::Done => "completed",
         }
     }
+}
+
+/// What an intent asks for.
+#[derive(Debug, Clone)]
+enum Purpose {
+    Grant {
+        scope: LeaseScope,
+        minutes: u64,
+        principal_id: String,
+        task: String,
+    },
+    Enroll {
+        spki: Vec<u8>,
+        key_digest: String,
+        /// The key digest of the enrolled key this one replaces.
+        replaces: Option<String>,
+        report: AttestationReport,
+    },
+    Reset {
+        key_digest: String,
+    },
+    /// WP1-03: abandon the held anchor of an audit chain (`held`).
+    AnchorReset {
+        held: orcel_contracts::event::AnchorRef,
+    },
+}
+
+impl Purpose {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Grant { .. } => "grant",
+            Self::Enroll { .. } => "enroll",
+            Self::Reset { .. } => "reset",
+            Self::AnchorReset { .. } => "anchor_reset",
+        }
+    }
+}
+
+/// The key fingerprint the CLI prints and the confirmation shows: the
+/// SHA-256 of the SubjectPublicKeyInfo in 16 groups of four hex digits.
+pub fn key_fingerprint(key_digest: &str) -> String {
+    key_digest
+        .as_bytes()
+        .chunks(4)
+        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug, Clone)]
@@ -247,10 +365,7 @@ struct Intent {
     requester: ObservedRequester,
     /// The requesting process's creation time: a reused PID is refused.
     requester_generation: u64,
-    scope: LeaseScope,
-    minutes: u64,
-    principal_id: String,
-    task: String,
+    purpose: Purpose,
     expires_at_ms: u64,
     window_ends_ms: Option<u64>,
     /// The exact confirmation text, once rendered, and its SHA-256.
@@ -267,6 +382,9 @@ pub struct AuthorityCore {
     state: PersistedState,
     intents: Vec<Intent>,
     audit: AuditChain,
+    /// Confirmations requests asked for (enrollment), for the runtime to
+    /// render outside the lock.
+    pending_confirmations: Vec<ConfirmationTask>,
 }
 
 fn observed(caller: &CallerFacts, role: CallerRole) -> Observed {
@@ -390,6 +508,7 @@ impl AuthorityCore {
             state,
             intents: Vec::new(),
             audit,
+            pending_confirmations: Vec::new(),
         };
         core.persist()?;
         let detail = json!({
@@ -423,7 +542,7 @@ impl AuthorityCore {
         key_id_of(&self.services.signer.public_key())
     }
 
-    /// Test seam: an enrolled key, standing in for the slice 2 enrollment.
+    /// Test seam: an enrolled key, without the enrollment flow.
     #[cfg(test)]
     pub(crate) fn enroll_for_test(&mut self, sid: &str, spki: &[u8]) -> Result<(), AuthorityError> {
         self.state.enrolled.push(EnrolledKey {
@@ -431,8 +550,54 @@ impl AuthorityCore {
             spki_hex: hex(spki),
             key_digest: sha256_hex(spki),
             enrolled_at_ms: self.now(),
+            attestation: None,
         });
         self.persist()
+    }
+
+    /// TEST BUILDS ONLY (`authority-scripted-consent`, the scripted E2E harness): a
+    /// placeholder key for `sid`, so the scripted presence stands in for
+    /// Windows Hello. Never compiled into a development or release build.
+    #[cfg(feature = "authority-scripted-consent")]
+    pub fn enroll_scripted(&mut self, sid: &str) -> Result<(), AuthorityError> {
+        if self.mode != RunMode::Console {
+            return Err(AuthorityError::denied(
+                "scripted consent exists only in console mode",
+            ));
+        }
+        if self
+            .state
+            .enrolled
+            .iter()
+            .any(|key| key.windows_user_sid == sid)
+        {
+            return Ok(());
+        }
+        let marker = b"orcel-e2e-scripted-presence-key";
+        self.state.enrolled.push(EnrolledKey {
+            windows_user_sid: sid.to_owned(),
+            spki_hex: hex(marker),
+            key_digest: sha256_hex(marker),
+            enrolled_at_ms: self.now(),
+            attestation: None,
+        });
+        self.persist()
+    }
+
+    /// Confirmations requests asked for since the last call, for the
+    /// runtime to render outside the lock.
+    pub fn take_pending_confirmations(&mut self) -> Vec<ConfirmationTask> {
+        std::mem::take(&mut self.pending_confirmations)
+    }
+
+    /// The intents still waiting for their unlock (the scripted E2E harness
+    /// stands in for the unlock with them).
+    pub fn sessions_awaiting_unlock(&self) -> Vec<u32> {
+        self.intents
+            .iter()
+            .filter(|intent| intent.state == Awaiting::Unlock)
+            .map(|intent| intent.ts_session_id)
+            .collect()
     }
 
     fn now(&self) -> u64 {
@@ -538,7 +703,7 @@ impl AuthorityCore {
         let op = request.op();
         let result = self.dispatch(caller, role, request);
         if let Err(error) = &result {
-            if !matches!(op, "status" | "intent_status") {
+            if !matches!(op, "status" | "intent_status" | "anchor_status") {
                 let detail = json!({
                     "op": op,
                     "decision": "refused",
@@ -568,7 +733,22 @@ impl AuthorityCore {
                 principal_id,
                 task,
             } => self.grant_begin(caller, role, origin, scope, minutes, principal_id, task),
-            Request::EnrollBegin { .. } => Err(AuthorityError::enrollment_unavailable()),
+            Request::EnrollBegin {
+                origin,
+                public_key_spki_hex,
+                attestation_hex,
+                certificate_chain_hex,
+                replace,
+            } => self.enroll_begin(
+                caller,
+                role,
+                origin,
+                &public_key_spki_hex,
+                &attestation_hex,
+                &certificate_chain_hex,
+                replace,
+            ),
+            Request::ResetEnrollment { origin } => self.reset_begin(caller, role, origin),
             Request::IntentStatus { intent_id } => self.intent_status(caller, &intent_id),
             Request::PresenceComplete {
                 intent_id,
@@ -585,6 +765,15 @@ impl AuthorityCore {
             } => self.authorize(caller, role, &lease_id, executor, claims),
             Request::Revoke { lease_id } => self.revoke(caller, role, &lease_id),
             Request::Stop => self.stop(caller, role),
+            Request::Anchor {
+                anchor,
+                link,
+                reset,
+            } => self.anchor_chain(caller, role, &anchor, link.as_ref(), reset.as_deref()),
+            Request::AnchorStatus { log } => self.anchor_status(caller, role, &log),
+            Request::AnchorReset { origin, log } => {
+                self.anchor_reset_begin(caller, role, origin, &log)
+            }
         }
     }
 
@@ -602,15 +791,31 @@ impl AuthorityCore {
             "audit_seq": self.audit.last_seq(),
             "audit_head": self.audit.head(),
             "caller_role": role.as_str(),
+            "caller_elevated": caller.elevated,
             "caller_enrolled": self.state.enrolled.iter().any(|key| key.windows_user_sid == caller.user_sid),
-            "enrollment_available": false,
-            "can_issue": self.mode == RunMode::Service && !self.state.enrolled.is_empty(),
+            "caller_key_fingerprint": self
+                .state
+                .enrolled
+                .iter()
+                .find(|key| key.windows_user_sid == caller.user_sid)
+                .map(|key| key_fingerprint(&key.key_digest)),
+            "enrollment_available": self.mode == RunMode::Service && self.services.attestation.available(),
+            "uac": self.services.uac.read(),
+            "uac_always_notify_on_secure_desktop": self.services.uac.read().always_notify_on_secure_desktop(),
+            "caller_is_owner_cli": self.policy.is_owner_cli(caller),
+            "caller_is_builtin_administrator": is_builtin_administrator(&caller.user_sid),
+            "can_issue": self.can_issue(),
             "deferred": DEFERRED,
         })
     }
 
+    fn can_issue(&self) -> bool {
+        self.mode == RunMode::Service && !self.state.enrolled.is_empty()
+    }
+
     fn require_owner_path(
         &self,
+        caller: &CallerFacts,
         role: CallerRole,
         origin: ClaimedOrigin,
     ) -> Result<(), AuthorityError> {
@@ -634,6 +839,14 @@ impl AuthorityCore {
         if origin != ClaimedOrigin::OwnerCli {
             return Err(AuthorityError::denied(
                 "agent, MCP, orceld and remote self-grant is denied; only the owner's CLI may record a grant intent",
+            ));
+        }
+        // Review F1 (b): the requesting image must be the trusted, installed
+        // owner CLI (observed, never claimed). A same-user process can still
+        // start that image (C-27 e); the code, the box and Hello remain.
+        if !self.policy.is_owner_cli(caller) {
+            return Err(AuthorityError::denied(
+                "only the installed Orcel CLI (%ProgramFiles%\\Orcel\\orcel.exe) may record a grant, enrollment or reset intent",
             ));
         }
         Ok(())
@@ -671,9 +884,18 @@ impl AuthorityCore {
         principal_id: String,
         task: String,
     ) -> Result<Value, AuthorityError> {
-        self.require_owner_path(role, origin)?;
+        self.require_owner_path(caller, role, origin)?;
         let scope = scope.unwrap_or_else(LeaseScope::narrow_default);
         scope.validate()?;
+        if let LeaseScope::BrowserFullAccess { client_ref, .. } = &scope {
+            // Authorize checks the principal: a browser lease's client is
+            // its principal.
+            if &principal_id != client_ref {
+                return Err(AuthorityError::invalid(
+                    "a browser lease's principal_id is its client_ref",
+                ));
+            }
+        }
         if scope.describe().chars().count() > MAX_SCOPE_DISPLAY_CHARS {
             return Err(AuthorityError::invalid(
                 "the scope is too long to show in the confirmation; ask for fewer roots or origins",
@@ -697,7 +919,7 @@ impl AuthorityCore {
             .any(|key| key.windows_user_sid == caller.user_sid)
         {
             return Err(AuthorityError::denied(
-                "no Windows Hello key credential is enrolled for this user; enrollment arrives in slice 2, so no grant can complete yet",
+                "no Windows Hello key credential is enrolled for this user; run `orcel authority enroll` from an elevated terminal first",
             ));
         }
         let now = self.now();
@@ -768,10 +990,12 @@ impl AuthorityCore {
                 image: caller.image.clone(),
             },
             requester_generation: caller.process_generation,
-            scope,
-            minutes,
-            principal_id,
-            task,
+            purpose: Purpose::Grant {
+                scope,
+                minutes,
+                principal_id,
+                task,
+            },
             expires_at_ms,
             window_ends_ms: None,
             text: None,
@@ -818,6 +1042,7 @@ impl AuthorityCore {
         let intent = &self.intents[index];
         let mut value = json!({
             "intent_id": intent.id,
+            "purpose": intent.purpose.as_str(),
             "state": intent.state.as_str(),
             "expires_at_ms": intent.expires_at_ms,
             "window_ends_ms": intent.window_ends_ms,
@@ -826,6 +1051,10 @@ impl AuthorityCore {
             value["challenge_hex"] = Value::String(hex(challenge));
             value["confirmation_text"] = json!(intent.text);
             value["confirmation_text_digest"] = json!(intent.text_digest);
+        }
+        if intent.state == Awaiting::Done {
+            // Reported once.
+            self.intents.remove(index);
         }
         Ok(value)
     }
@@ -852,6 +1081,409 @@ impl AuthorityCore {
         Ok(json!({ "intent_id": intent.id, "state": "cancelled" }))
     }
 
+    /// The observed facts an enrollment or reset needs: the owner's path,
+    /// an elevated token (the UAC prompt on the secure desktop was the human
+    /// gate), and a readable requesting process.
+    fn require_elevated_owner(
+        &self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        origin: ClaimedOrigin,
+    ) -> Result<(), AuthorityError> {
+        self.require_owner_path(caller, role, origin)?;
+        let uac = self.services.uac.read();
+        if !uac.always_notify_on_secure_desktop() {
+            return Err(AuthorityError::denied(format!(
+                "enrollment and reset need UAC set to Always notify on the secure desktop (EnableLUA 1, ConsentPromptBehaviorAdmin 2, PromptOnSecureDesktop 1); this PC has {:?}, {:?}, {:?}",
+                uac.enable_lua, uac.consent_prompt_behavior_admin, uac.prompt_on_secure_desktop
+            )));
+        }
+        // Review re-verify item 2: the built-in Administrator is not asked by
+        // UAC at all unless Admin Approval Mode covers it.
+        if is_builtin_administrator(&caller.user_sid) && uac.filter_administrator_token != Some(1) {
+            return Err(AuthorityError::denied(
+                "the built-in Administrator account elevates without a UAC prompt unless FilterAdministratorToken is 1; enroll and reset from your own administrator account",
+            ));
+        }
+        if !caller.elevated {
+            return Err(AuthorityError::denied(
+                "enrollment and reset need an elevated caller: run the orcel authority command from an elevated terminal (the UAC prompt on the secure desktop is the human gate)",
+            ));
+        }
+        if caller.image.is_empty() || caller.process_generation == 0 {
+            return Err(AuthorityError::denied(
+                "the requesting process's image or creation time could not be read; an intent must name its process",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Records an enrollment or reset intent and queues its confirmation.
+    fn record_confirmed_intent(
+        &mut self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        purpose: Purpose,
+        asserted: Value,
+    ) -> Result<Value, AuthorityError> {
+        let now = self.now();
+        self.drop_expired_intents(now);
+        if self
+            .intents
+            .iter()
+            .any(|intent| intent.ts_session_id == caller.ts_session_id)
+        {
+            return Err(AuthorityError::denied(
+                "an intent is already pending in this session; its requesting process may cancel it, or it expires",
+            ));
+        }
+        let id = format!("in-{}", hex(&self.random(16)?));
+        let code = self.one_time_code()?;
+        let digest = sha256_hex(
+            format!(
+                "{id}|{}|{}|{}|{}|{}|{}",
+                purpose.as_str(),
+                caller.user_sid,
+                caller.logon_session_id,
+                caller.ts_session_id,
+                caller.pid,
+                serde_json::to_string(&asserted).unwrap_or_default()
+            )
+            .as_bytes(),
+        );
+        let expires_at_ms = now.saturating_add(INTENT_TTL_MS);
+        let mut intent = Intent {
+            id: id.clone(),
+            digest: digest.clone(),
+            code: code.clone(),
+            ts_session_id: caller.ts_session_id,
+            sid: caller.user_sid.clone(),
+            logon_session_id: caller.logon_session_id,
+            requester: ObservedRequester {
+                pid: caller.pid,
+                image: caller.image.clone(),
+            },
+            requester_generation: caller.process_generation,
+            purpose,
+            expires_at_ms,
+            window_ends_ms: Some(now.saturating_add(GRANT_WINDOW_MS)),
+            text: None,
+            text_digest: None,
+            state: Awaiting::Confirmation,
+        };
+        let text = confirmation_text(&intent);
+        let text_digest = sha256_hex(text.as_bytes());
+        intent.text = Some(text.clone());
+        intent.text_digest = Some(text_digest.clone());
+        let kind = intent.purpose.as_str();
+        self.audit(
+            "intent",
+            asserted,
+            observed(caller, role),
+            json!({
+                "intent_id": id,
+                "purpose": kind,
+                "intent_digest": digest,
+                "confirmation_text_digest": text_digest,
+                "elevated": caller.elevated,
+            }),
+        )?;
+        self.event(
+            crate::EVENT_INTENT,
+            false,
+            &format!(
+                "orcel-intent/1|recorded|{id}|{kind}|session {}|requester pid {} {}|elevated|text {text_digest}",
+                caller.ts_session_id,
+                caller.pid,
+                display_image(&caller.image),
+            ),
+        )?;
+        self.pending_confirmations.push(ConfirmationTask {
+            intent_id: id.clone(),
+            ts_session_id: caller.ts_session_id,
+            title: CONFIRMATION_TITLE.to_owned(),
+            text,
+            timeout_secs: CONFIRMATION_TIMEOUT_SECS,
+        });
+        self.intents.push(intent);
+        Ok(json!({
+            "intent_id": id,
+            "code": code,
+            "state": "awaiting_confirmation",
+            "expires_at_ms": expires_at_ms,
+            "confirmation_text_digest": text_digest,
+        }))
+    }
+
+    /// Slice 2 enrollment: an elevated caller, an attested key, then the
+    /// service-rendered confirmation with the key's fingerprint, then the
+    /// new key's own signature over the text-bound challenge.
+    #[allow(clippy::too_many_arguments)]
+    fn enroll_begin(
+        &mut self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        origin: ClaimedOrigin,
+        spki_hex: &str,
+        attestation_hex: &str,
+        chain_hex: &str,
+        replace: bool,
+    ) -> Result<Value, AuthorityError> {
+        self.require_elevated_owner(caller, role, origin)?;
+        if self.mode != RunMode::Service {
+            return Err(AuthorityError::denied(
+                "enrollment needs the installed service (console mode never enrolls)",
+            ));
+        }
+        if !self.services.attestation.available() {
+            return Err(AuthorityError::enrollment_unavailable());
+        }
+        let bounded = |text: &str, max: usize, name: &str| {
+            unhex(text)
+                .filter(|bytes| !bytes.is_empty() && bytes.len() <= max)
+                .ok_or_else(|| AuthorityError::invalid(format!("{name} is not bounded hex")))
+        };
+        let spki = bounded(spki_hex, 2_048, "public_key_spki_hex")?;
+        let attestation = bounded(
+            attestation_hex,
+            crate::attestation::MAX_ATTESTATION_BYTES,
+            "attestation_hex",
+        )?;
+        let chain = bounded(
+            chain_hex,
+            crate::attestation::MAX_CHAIN_BYTES,
+            "certificate_chain_hex",
+        )?;
+        self.services.presence.check_public_key(&spki)?;
+        let now = self.now();
+        let report = self
+            .services
+            .attestation
+            .verify(&spki, &attestation, &chain, now)?;
+        let key_digest = sha256_hex(&spki);
+        let current = self
+            .state
+            .enrolled
+            .iter()
+            .find(|key| key.windows_user_sid == caller.user_sid)
+            .map(|key| key.key_digest.clone());
+        let replaces = match (current, replace) {
+            (Some(old), _) if old == key_digest => {
+                return Err(AuthorityError::invalid("this key is already enrolled"))
+            }
+            (Some(_), false) => {
+                return Err(AuthorityError::denied(
+                    "a key is already enrolled for this user; replacing it needs --replace (elevated, confirmed)",
+                ))
+            }
+            (Some(old), true) => Some(old),
+            (None, true) => {
+                return Err(AuthorityError::invalid(
+                    "--replace was given but no key is enrolled for this user",
+                ))
+            }
+            (None, false) => None,
+        };
+        let asserted = json!({
+            "origin": origin,
+            "key_digest": key_digest,
+            "replace": replace,
+        });
+        let mut answer = self.record_confirmed_intent(
+            caller,
+            role,
+            Purpose::Enroll {
+                spki,
+                key_digest: key_digest.clone(),
+                replaces,
+                report,
+            },
+            asserted,
+        )?;
+        answer["key_fingerprint"] = Value::String(key_fingerprint(&key_digest));
+        answer["next"] = Value::String(
+            "The Orcel Authority confirmation shows this code and fingerprint. Choose Yes only if both match; Windows Hello then asks for your gesture once.".to_owned(),
+        );
+        Ok(answer)
+    }
+
+    /// Slice 2 reset: remove the caller's enrolled key (elevated, confirmed).
+    fn reset_begin(
+        &mut self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        origin: ClaimedOrigin,
+    ) -> Result<Value, AuthorityError> {
+        self.require_elevated_owner(caller, role, origin)?;
+        if self.mode != RunMode::Service {
+            return Err(AuthorityError::denied(
+                "a reset needs the installed service (console mode never enrolls)",
+            ));
+        }
+        let key_digest = self
+            .state
+            .enrolled
+            .iter()
+            .find(|key| key.windows_user_sid == caller.user_sid)
+            .map(|key| key.key_digest.clone())
+            .ok_or_else(|| AuthorityError::invalid("no key is enrolled for this user"))?;
+        let asserted = json!({ "origin": origin, "reset": key_digest });
+        let mut answer = self.record_confirmed_intent(
+            caller,
+            role,
+            Purpose::Reset {
+                key_digest: key_digest.clone(),
+            },
+            asserted,
+        )?;
+        answer["key_fingerprint"] = Value::String(key_fingerprint(&key_digest));
+        Ok(answer)
+    }
+
+    /// Ends every active lease of `sid`; returns their ids.
+    fn end_user_leases(&mut self, sid: &str, now: u64) -> Vec<String> {
+        let mut ended = Vec::new();
+        for index in 0..self.state.leases.len() {
+            if self.state.leases[index].state == LeaseState::Active
+                && self.state.leases[index].lease.body.windows_user_sid == sid
+            {
+                ended.push(self.state.leases[index].lease.body.lease_id.clone());
+                self.end_lease(index, LeaseState::Stopped, now);
+            }
+        }
+        ended
+    }
+
+    fn finish_enrollment(
+        &mut self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        intent: &Intent,
+        now: u64,
+    ) -> Result<Value, AuthorityError> {
+        let Purpose::Enroll {
+            spki,
+            key_digest,
+            replaces,
+            report,
+        } = &intent.purpose
+        else {
+            return Err(AuthorityError::internal("not an enrollment intent"));
+        };
+        let current = self
+            .state
+            .enrolled
+            .iter()
+            .position(|key| key.windows_user_sid == intent.sid);
+        match (current, replaces) {
+            (Some(index), Some(old)) if &self.state.enrolled[index].key_digest == old => {
+                self.state.enrolled.remove(index);
+            }
+            (None, None) => {}
+            _ => return Err(AuthorityError::denied(
+                "the enrolled key changed while this enrollment was pending; nothing was enrolled",
+            )),
+        }
+        let ended = self.end_user_leases(&intent.sid, now);
+        if replaces.is_some() || !ended.is_empty() {
+            self.advance_epoch()?;
+        }
+        self.state.enrolled.push(EnrolledKey {
+            windows_user_sid: intent.sid.clone(),
+            spki_hex: hex(spki),
+            key_digest: key_digest.clone(),
+            enrolled_at_ms: now,
+            attestation: Some(report.clone()),
+        });
+        self.persist()?;
+        let decision = if replaces.is_some() {
+            "replaced"
+        } else {
+            "enrolled"
+        };
+        self.audit(
+            "enrollment",
+            Value::Null,
+            observed(caller, role),
+            json!({
+                "decision": decision,
+                "intent_id": intent.id,
+                "key_digest": key_digest,
+                "replaces": replaces,
+                "ended": ended,
+                "epoch": self.state.epoch,
+                "confirmation_text_digest": intent.text_digest,
+                "attestation": report,
+            }),
+        )?;
+        self.event(
+            crate::EVENT_ENROLLED,
+            false,
+            &format!(
+                "orcel-enroll/1|{decision}|user {}|key {}|replaces {}|epoch {}",
+                intent.sid,
+                key_fingerprint(key_digest),
+                replaces
+                    .as_deref()
+                    .map(key_fingerprint)
+                    .unwrap_or_else(|| "none".to_owned()),
+                self.state.epoch
+            ),
+        )?;
+        Ok(json!({
+            "enrolled": true,
+            "key_digest": key_digest,
+            "key_fingerprint": key_fingerprint(key_digest),
+            "replaced": replaces,
+            "ended_leases": ended,
+            "epoch": self.state.epoch,
+        }))
+    }
+
+    /// A confirmed reset: remove the key, end the user's leases, advance
+    /// the epoch.
+    fn finish_reset(&mut self, index: usize, key_digest: &str) -> Result<(), AuthorityError> {
+        let now = self.now();
+        let sid = self.intents[index].sid.clone();
+        let intent_id = self.intents[index].id.clone();
+        let Some(position) = self
+            .state
+            .enrolled
+            .iter()
+            .position(|key| key.windows_user_sid == sid && key.key_digest == key_digest)
+        else {
+            self.intents.remove(index);
+            return Err(AuthorityError::invalid(
+                "the enrolled key changed while the reset was pending; nothing was removed",
+            ));
+        };
+        self.state.enrolled.remove(position);
+        let ended = self.end_user_leases(&sid, now);
+        self.advance_epoch()?;
+        self.persist()?;
+        self.intents[index].state = Awaiting::Done;
+        self.audit_service(
+            "enrollment",
+            json!({
+                "decision": "reset",
+                "intent_id": intent_id,
+                "key_digest": key_digest,
+                "ended": ended,
+                "epoch": self.state.epoch,
+            }),
+        )?;
+        self.event(
+            crate::EVENT_ENROLLED,
+            false,
+            &format!(
+                "orcel-enroll/1|reset|user {sid}|key {}|epoch {}",
+                key_fingerprint(key_digest),
+                self.state.epoch
+            ),
+        )?;
+        Ok(())
+    }
+
     /// Spec 4.13 step 2: a service-observed unlock of `ts_session_id`.
     /// Opens the window for that session's pending intent, if any, and
     /// returns the confirmation to render. Nothing opens without an intent.
@@ -860,7 +1492,9 @@ impl AuthorityCore {
         self.drop_expired_intents(now);
         let lease_active = self.active_lease_in_session(ts_session_id, now);
         let index = self.intents.iter().position(|intent| {
-            intent.ts_session_id == ts_session_id && intent.state == Awaiting::Unlock
+            intent.ts_session_id == ts_session_id
+                && intent.state == Awaiting::Unlock
+                && matches!(intent.purpose, Purpose::Grant { .. })
         })?;
         if lease_active {
             let intent = self.intents.remove(index);
@@ -920,13 +1554,28 @@ impl AuthorityCore {
             other => other.as_str().to_owned(),
         };
         if answer == ConfirmAnswer::Yes && in_window {
+            if let Purpose::AnchorReset { held } = self.intents[index].purpose.clone() {
+                return self.finish_anchor_reset(index, &held);
+            }
+            if let Purpose::Reset { key_digest } = self.intents[index].purpose.clone() {
+                return self.finish_reset(index, &key_digest);
+            }
             let nonce = self.random(32)?;
             let intent = &mut self.intents[index];
             let text_digest = intent.text_digest.clone().unwrap_or_default();
             // The challenge binds the intent and the exact text the user
-            // approved: a signature over it is presence for that text.
-            let mut input = Vec::with_capacity(PRESENCE_DOMAIN.len() + 160);
-            input.extend_from_slice(PRESENCE_DOMAIN);
+            // approved: a signature over it is presence for that text. An
+            // enrollment's also binds the new key's digest and its own
+            // domain, so it never answers a grant.
+            let mut input = Vec::with_capacity(PRESENCE_DOMAIN.len() + 240);
+            match &intent.purpose {
+                Purpose::Enroll { key_digest, .. } => {
+                    input.extend_from_slice(ENROLL_DOMAIN);
+                    input.extend_from_slice(key_digest.as_bytes());
+                    input.push(b'|');
+                }
+                _ => input.extend_from_slice(PRESENCE_DOMAIN),
+            }
             input.extend_from_slice(intent.digest.as_bytes());
             input.push(b'|');
             input.extend_from_slice(text_digest.as_bytes());
@@ -1003,6 +1652,13 @@ impl AuthorityCore {
         let signature = unhex(signature_hex)
             .filter(|bytes| !bytes.is_empty() && bytes.len() <= 1024)
             .ok_or_else(|| AuthorityError::invalid("the signature is not bounded hex"))?;
+        if let Purpose::Enroll { spki, .. } = &intent.purpose {
+            // The new key itself signs: possession and one Hello gesture.
+            self.services
+                .presence
+                .verify(spki, &challenge, &signature)?;
+            return self.finish_enrollment(caller, role, &intent, now);
+        }
         let key = self
             .state
             .enrolled
@@ -1030,19 +1686,30 @@ impl AuthorityCore {
         key: &EnrolledKey,
         now: u64,
     ) -> Result<SignedLease, AuthorityError> {
+        let Purpose::Grant {
+            scope,
+            minutes,
+            principal_id,
+            task,
+        } = &intent.purpose
+        else {
+            return Err(AuthorityError::internal(
+                "only a grant intent issues a lease",
+            ));
+        };
         let lease_id = format!("{LEASE_ID_PREFIX}{}", hex(&self.random(16)?));
         let expires_at_ms = now
-            .checked_add(intent.minutes.saturating_mul(60_000))
+            .checked_add(minutes.saturating_mul(60_000))
             .ok_or_else(|| AuthorityError::invalid("lease expiry overflow"))?;
         let body = LeaseBody {
             contract: LEASE_CONTRACT.to_owned(),
             lease_id: lease_id.clone(),
-            scope: intent.scope.clone(),
+            scope: scope.clone(),
             windows_user_sid: intent.sid.clone(),
             logon_session_id: intent.logon_session_id,
             ts_session_id: intent.ts_session_id,
-            principal_id: intent.principal_id.clone(),
-            task: intent.task.clone(),
+            principal_id: principal_id.clone(),
+            task: task.clone(),
             requester: intent.requester.clone(),
             authority_epoch: self.state.epoch,
             revocations_at_issue: self.state.revocations,
@@ -1291,6 +1958,38 @@ impl AuthorityCore {
                 "the lease was granted to another client principal",
             ));
         }
+        // Review F4: a browser action names a leased family and lands on a
+        // leased origin, as the service itself checks.
+        if let LeaseScope::BrowserFullAccess {
+            origins, families, ..
+        } = &body.scope
+        {
+            let family_named = families.iter().any(|family| {
+                serde_json::to_value(family)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .as_deref()
+                    == Some(claims.operation.as_str())
+            });
+            if !family_named {
+                return Err(AuthorityError::denied(
+                    "the browser lease does not name this action family",
+                ));
+            }
+            match claims.origin.as_deref() {
+                Some(origin) if origins.iter().any(|leased| leased == origin) => {}
+                Some(_) => {
+                    return Err(AuthorityError::denied(
+                        "the browser lease does not name this origin",
+                    ))
+                }
+                None => {
+                    return Err(AuthorityError::invalid(
+                        "a browser action names the origin it lands on",
+                    ))
+                }
+            }
+        }
         let authorization_id = format!("az-{}", hex(&self.random(16)?));
         // Write before dispatch: the record is on disk before the answer.
         self.audit(
@@ -1302,6 +2001,7 @@ impl AuthorityCore {
                 "principal_id": claims.principal_id,
                 "task": claims.task,
                 "action_digest": claims.action_digest,
+                "origin": claims.origin,
                 "executor": executor,
             }),
             observed(caller, role),
@@ -1487,15 +2187,73 @@ impl AuthorityCore {
 /// validated at `GrantBegin` (scope, principal, task) or cleaned here (the
 /// observed image).
 fn confirmation_text(intent: &Intent) -> String {
-    let warning = "Full Control acts with your Windows rights. Effects made through Windows outside Orcel's process trees (scheduled tasks, other programs) can persist after Stop, and Orcel cannot undo them. A program running as you can record a request like this and lock your PC, and can draw windows that imitate this one: if you did not just ask for exactly this, or the code or process differs from what your orcel command printed, choose No. Biometric Windows Hello is recommended; a PIN can be observed by programs running as you.";
-    format!(
-        "A program asked for Orcel Full Control. Approve only if you asked for exactly this:\n\nCode: {}\nScope: {}\nClient: {}\nTask: {}\nExpires: {} minutes after approval\nRequested by: process {} {}\n\n{warning}\n\nApprove this grant?",
-        intent.code,
-        intent.scope.describe(),
-        intent.principal_id,
-        intent.task,
-        intent.minutes,
+    let requested_by = format!(
+        "process {} {}",
         intent.requester.pid,
         display_image(&intent.requester.image)
-    )
+    );
+    match &intent.purpose {
+        Purpose::Grant {
+            scope,
+            minutes,
+            principal_id,
+            task,
+        } => {
+            let warning = "Full Control acts with your Windows rights. Effects made through Windows outside Orcel's process trees (scheduled tasks, other programs) can persist after Stop, and Orcel cannot undo them. A program running as you can record a request like this and lock your PC, and can draw windows that imitate this one: if you did not just ask for exactly this, or the code or process differs from what your orcel command printed, choose No. This box, after an unlock the service observed, is the approval; Windows Hello only confirms you are present. A PIN or fingerprint is recommended over face recognition.";
+            // Review F7: a browser lease is named as one.
+            let (what, question) = match scope {
+                LeaseScope::BrowserFullAccess { .. } => (
+                    "Orcel Browser Full Access (routine actions in one Orcel browser session)",
+                    "Approve this browser grant?",
+                ),
+                LeaseScope::DesktopFullUser { .. } => {
+                    ("Orcel Full Control", "Approve this grant?")
+                }
+            };
+            format!(
+                "A program asked for {what}. Approve only if you asked for exactly this:\n\nCode: {}\nScope: {}\nClient: {principal_id}\nTask: {task}\nExpires: {minutes} minutes after approval\nRequested by: {requested_by}\n\n{warning}\n\n{question}",
+                intent.code,
+                scope.describe(),
+            )
+        }
+        Purpose::Enroll {
+            key_digest,
+            replaces,
+            ..
+        } => {
+            let replacing = match replaces {
+                Some(old) => format!(
+                    "\nIt REPLACES the enrolled key {}; every Orcel lease of yours ends now.",
+                    key_fingerprint(old)
+                ),
+                None => String::new(),
+            };
+            format!(
+                "An elevated program asked to enroll a Windows Hello key for Orcel Full Control grants. Approve only if your elevated orcel authority enroll command printed exactly this code and fingerprint:\n\nCode: {}\nKey fingerprint (SHA-256): {}\nTPM attestation: verified{replacing}\nRequested by: {requested_by}\n\nAfter Yes, Windows Hello asks for your gesture once to prove the key. Choose No if anything differs.\n\nEnroll this key?",
+                intent.code,
+                key_fingerprint(key_digest),
+            )
+        }
+        Purpose::Reset { key_digest } => format!(
+            "An elevated program asked to REMOVE your enrolled Orcel Windows Hello key. Every Orcel lease of yours ends now, and no grant is possible until you enroll again.\n\nCode: {}\nKey fingerprint (SHA-256): {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel authority reset command printed this code.\n\nRemove this key?",
+            intent.code,
+            key_fingerprint(key_digest),
+        ),
+        Purpose::AnchorReset { held } if held.file_id == chain_anchor::RESET_MARK => format!(
+            "An elevated program asked to RESET the Orcel audit chain anchor of the log {} AGAIN. An earlier reset is still pending (no first file of it was anchored); this one supersedes it, and the service accepts only the new file this command opens.\n\nCode: {}\nLog: {}\nPending reset record: {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel audit reset-anchor command printed this code.\n\nReset this anchor again?",
+            held.log,
+            intent.code,
+            held.log,
+            held.digest,
+        ),
+        Purpose::AnchorReset { held } => format!(
+            "An elevated program asked to RESET the Orcel audit chain anchor of the log {}. The service stops holding the head below and accepts a NEW, unlinked first chain file for this log: nothing recorded before it is continued, and the new file says so. Do this only if you lost or replaced the audit chain yourself and cannot restore it.\n\nCode: {}\nLog: {}\nHeld chain file: {}\nHeld head: seq {}, digest {}\nRequested by: {requested_by}\n\nChoose No unless your elevated orcel audit reset-anchor command printed this code.\n\nReset this anchor?",
+            held.log,
+            intent.code,
+            held.log,
+            held.file_id,
+            held.seq,
+            held.digest,
+        ),
+    }
 }

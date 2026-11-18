@@ -31,7 +31,7 @@
 
 use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
 use orcel_contracts::{FailureCode, RequestEnvelope};
-use orcel_policy::{full_control_store, Workspace, POLICY_REVISION};
+use orcel_policy::{Workspace, POLICY_REVISION};
 use orcel_provider_fs::ProviderError;
 use orcel_provider_uia::{
     capture_approval_digest, coordinate_derivation_digest, execute_approval_digest,
@@ -214,10 +214,11 @@ fn arm_input(
     Ok(())
 }
 
-fn require_full_user_desktop() -> Result<(), ProviderError> {
-    full_control_store::check_current_desktop_input()
-        .map(|_| ())
-        .map_err(|error| ProviderError::new(error.code, error.message))
+/// SG-000132 slice 2: the desktop lease gate prefers the authority service
+/// when it is installed (`authority_link::desktop_input_gate`); the
+/// deprecated user-readable store applies only where it is not.
+fn require_full_user_desktop(request: &RequestEnvelope) -> Result<(), ProviderError> {
+    crate::authority_link::desktop_input_gate(request)
 }
 
 pub fn is_full_user_desktop_shape(capability: &str, operation: &str) -> bool {
@@ -250,7 +251,7 @@ fn full_user_cursor(request: &RequestEnvelope) -> Result<Value, ProviderError> {
         ));
     }
     reject_uia_arguments(request, &[])?;
-    require_full_user_desktop()?;
+    require_full_user_desktop(request)?;
     let cursor = computer_host()?
         .cursor_position()
         .map_err(|error| ProviderError::new(error.code, error.message))?;
@@ -509,7 +510,7 @@ fn full_user_input_with_approval(
     orcel_provider_uia::check_native_input_limits(&action)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
 
-    require_full_user_desktop()?;
+    require_full_user_desktop(request)?;
     let binding = {
         let guard = locked_registry()?;
         guard
@@ -576,7 +577,7 @@ fn full_user_input_with_approval(
             let cursor = host
                 .cursor_position()
                 .map_err(|error| ProviderError::new(error.code, error.message))?;
-            require_full_user_desktop()?;
+            require_full_user_desktop(request)?;
             let rebound = {
                 let guard = locked_registry()?;
                 guard
@@ -659,7 +660,7 @@ fn full_user_window_action_with_approval(
         }
     };
 
-    require_full_user_desktop()?;
+    require_full_user_desktop(request)?;
     let binding = {
         let guard = locked_registry()?;
         guard
@@ -709,7 +710,7 @@ fn full_user_window_action_with_approval(
             let cursor = host
                 .cursor_position()
                 .map_err(|error| ProviderError::new(error.code, error.message))?;
-            require_full_user_desktop()?;
+            require_full_user_desktop(request)?;
             let rebound = {
                 let guard = locked_registry()?;
                 guard
@@ -1130,7 +1131,7 @@ fn invoke_with_approval(
             Ok(token)
         },
         |token| {
-            require_full_user_desktop()?;
+            require_full_user_desktop(request)?;
             let adapter = computer_host()?;
             arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "invoke", None)?;
             let result = locked_registry().and_then(|mut guard| {
@@ -1264,7 +1265,7 @@ fn set_value_with_approval(
             Ok(token)
         },
         |token| {
-            require_full_user_desktop()?;
+            require_full_user_desktop(request)?;
             let adapter = computer_host()?;
             arm_semantic(
                 adapter,
@@ -1392,7 +1393,7 @@ fn select_with_approval(
             Ok(token)
         },
         |token| {
-            require_full_user_desktop()?;
+            require_full_user_desktop(request)?;
             let adapter = computer_host()?;
             arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "select", None)?;
             let result = locked_registry().and_then(|mut guard| {
@@ -1764,7 +1765,7 @@ fn capture_with_approval(
             orcel_approval::now_ms(),
         )
         .map_err(|error| ProviderError::new(error.code, error.message))?;
-    require_full_user_desktop()?;
+    require_full_user_desktop(request)?;
     let adapter = computer_host()?;
     let mut guard = locked_registry()?;
     let evidence = guard
@@ -1911,7 +1912,7 @@ fn scroll_with_approval(
             Ok(token)
         },
         |token| {
-            require_full_user_desktop()?;
+            require_full_user_desktop(request)?;
             let adapter = computer_host()?;
             let mut guard = locked_registry()?;
             let evidence = guard
@@ -2032,7 +2033,7 @@ fn toggle_with_approval(
             Ok(token)
         },
         |token| {
-            require_full_user_desktop()?;
+            require_full_user_desktop(request)?;
             let adapter = computer_host()?;
             arm_semantic(
                 adapter,

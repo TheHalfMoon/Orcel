@@ -23,7 +23,14 @@ import {
  *   bound to this MCP session. Every other tool names that `session_id`.
  * - `browser_open`, `browser_click`, `browser_fill` and `browser_select`
  *   map onto the existing live host actions, each with its own fresh local
- *   SOFT approval, one per action (no lease caching).
+ *   SOFT approval, one per action, unless (SG-000135 OB-08) the owner
+ *   issued this session a Full Access lease, locally and with STRONG
+ *   presence, that covers the action: a positively routine action of a
+ *   leased family on a leased origin then runs without a prompt and its
+ *   receipt names the lease. A submit, send, buy, publish or delete link, a
+ *   secret, payment or unnamed field, another origin, a check or an Enter
+ *   still ask. No tool issues, widens or revokes a lease;
+ *   `browser_task_status` reads its scope and expiry.
  * - `browser_snapshot`, `browser_verify` and `browser_extract` are
  *   read-only and ask nothing; `browser_extract` returns the page's rendered
  *   text, untrusted, bounded and marked.
@@ -197,6 +204,9 @@ export function browserExtractSchema(defaultWorkspace: string) {
 }
 
 const DEV_ONLY = "Windows development builds only; other builds answer typed unavailable.";
+/** SG-000135 OB-08: what a Full Access lease changes for an approved tool. */
+const LEASE_NOTE =
+  "Under a Full Access lease the owner issued for this session, a routine action on a leased origin runs without a prompt and its receipt names the lease; anything else still asks.";
 
 export function registerSessionBrokerTools(server: McpServer, kernel: KernelClient, defaultWorkspace: string): void {
   // Each tool forwards exactly its broker shape: the capability and
@@ -214,7 +224,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_session_create",
     {
-      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes. mode: shadow (default) runs headless, and Orcel never uses your mouse, keyboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", after fresh local Orcel approval; the browser may bring it to the front when it opens and when it opens a page, so it does not claim no-interference. profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). A Visible session, and the first use of a persistent profile in this MCP session, each ask fresh local Orcel approval first (the profile may be signed in to sites); every page prompt in a persistent profile names it. Pages get no async clipboard or other permission and no file dialog, but in either mode a page can still copy text to your system clipboard after an approved click (the legacy execCommand("copy") path). At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
+      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes, and client_ref, which the owner names when asking the Orcel authority service for a Full Access lease (it grants nothing). mode: shadow (default) runs headless, and Orcel never uses your mouse, keyboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", after fresh local Orcel approval; the browser may bring it to the front when it opens and when it opens a page, so it does not claim no-interference. profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). A Visible session, and the first use of a persistent profile in this MCP session, each ask fresh local Orcel approval first (the profile may be signed in to sites); every page prompt in a persistent profile names it. Pages get no async clipboard or other permission and no file dialog, but in either mode a page can still copy text to your system clipboard after an approved click (the legacy execCommand("copy") path). At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
       inputSchema: browserSessionCreateSchema(defaultWorkspace)
     },
     async ({ workspace_id, task, mode, profile }) =>
@@ -229,7 +239,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_open",
     {
-      description: `Open one public HTTPS URL in the session's page, after fresh local Orcel approval bound to the page and the address Orcel pinned for the site. A new site starts a fresh isolated lifetime and earlier node ids go stale. Returns the page id, committed URL, status, the new generation and a provisional receipt. ${DEV_ONLY}`,
+      description: `Open one public HTTPS URL in the session's page, after fresh local Orcel approval bound to the page and the address Orcel pinned for the site. A new site starts a fresh isolated lifetime and earlier node ids go stale. Returns the page id, committed URL, status, the new generation and a provisional receipt. ${LEASE_NOTE} ${DEV_ONLY}`,
       inputSchema: browserOpenSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id, url }) => forward("browser_open", workspace_id, { session_id, url }, APPROVAL_TIMEOUT_MS)
@@ -247,7 +257,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_click",
     {
-      description: `Open one observed link in the session's page (links only), after fresh local Orcel approval bound to the page generation, the node and the link's destination on the same site. ${DEV_ONLY}`,
+      description: `Open one observed link in the session's page (links only), after fresh local Orcel approval bound to the page generation, the node and the link's destination on the same site. ${LEASE_NOTE} ${DEV_ONLY}`,
       inputSchema: browserSessionClickSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id, node_id, expected_generation }) =>
@@ -257,7 +267,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_fill",
     {
-      description: `Fill one observed single-line text field in the session's page with value, after fresh local Orcel approval that shows the value exactly and in full; one approval per fill. Never a password or secret-looking field. The reply never carries the value. ${DEV_ONLY}`,
+      description: `Fill one observed single-line text field in the session's page with value, after fresh local Orcel approval that shows the value exactly and in full; one approval per fill. Never a password or secret-looking field. The reply never carries the value. ${LEASE_NOTE} ${DEV_ONLY}`,
       inputSchema: browserSessionFillSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id, node_id, value, expected_generation }) =>
@@ -267,7 +277,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_select",
     {
-      description: `Choose exactly one option of one observed native select in the session's page, named by its exact label, after fresh local Orcel approval that shows the label exactly and in full; one approval per choice. The reply never carries the label. ${DEV_ONLY}`,
+      description: `Choose exactly one option of one observed native select in the session's page, named by its exact label, after fresh local Orcel approval that shows the label exactly and in full; one approval per choice. The reply never carries the label. ${LEASE_NOTE} ${DEV_ONLY}`,
       inputSchema: browserSessionSelectSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id, node_id, option, expected_generation }) =>
@@ -314,7 +324,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_tabs",
     {
-      description: `Manage the session's tabs (at most 8, all on its current site). action list: every tab's page_id, generation, URL (no query or fragment) and which is active. new: a blank active tab, or with url a tab opened there after fresh local Orcel approval, as browser_open. switch / close with page_id: make that tab active (take a snapshot afterwards), or close it; closing the last tab keeps the session with no page. Every other tool acts on the active tab. A popup the page opens becomes a tab only when Orcel's navigation rules admitted it. ${DEV_ONLY}`,
+      description: `Manage the session's tabs (at most 8, all on its current site). action list: every tab's page_id, generation, URL (no query or fragment) and which is active. new: a blank active tab, or with url a tab opened there after fresh local Orcel approval, as browser_open. switch / close with page_id: make that tab active (take a snapshot afterwards), or close it; closing the last tab keeps the session with no page. Every other tool acts on the active tab. A popup the page opens becomes a tab only when Orcel's navigation rules admitted it. ${LEASE_NOTE} ${DEV_ONLY}`,
       inputSchema: browserTabsSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id, action, url, page_id }) =>
@@ -338,7 +348,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_task_status",
     {
-      description: `Read the session's state, budgets and its provisional receipts: one per action, with the page, generation before and after, outcome, evidence digest and a digest chain. Receipts are Orcel's own records, never a model summary. Also lists under needs_you each page that waits for a person to complete a sign-in, code, passkey or CAPTCHA check (Orcel never completes one; actions on it are refused with HUMAN_VERIFICATION_REQUIRED), and the active page's state; read it again until the page no longer needs you, then take a new snapshot before acting. ${DEV_ONLY}`,
+      description: `Read the session's state, budgets and its provisional receipts: one per action, with the page, generation before and after, outcome, evidence digest and a digest chain. Receipts are Orcel's own records, never a model summary. Also lists under needs_you each page that waits for a person to complete a sign-in, code, passkey or CAPTCHA check (Orcel never completes one; actions on it are refused with HUMAN_VERIFICATION_REQUIRED), and the active page's state; read it again until the page no longer needs you, then take a new snapshot before acting. full_access is the session's Full Access lease, read-only: its origins, action families, expiry and whether it is active; no tool can issue, widen or renew one. ${DEV_ONLY}`,
       inputSchema: browserSessionSchema(defaultWorkspace)
     },
     async ({ workspace_id, session_id }) => forward("browser_task_status", workspace_id, { session_id }, OBSERVE_TIMEOUT_MS)

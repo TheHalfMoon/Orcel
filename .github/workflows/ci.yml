@@ -1294,6 +1294,17 @@ jobs:
           node scripts/sync-brand.mjs --check
           node scripts/render-brand.mjs
           python3 scripts/export-brand.py
+      # Design handoff packages are text only (docs/orcel/design-handoff/CONTRACT.md 2.8):
+      # render every generated icon and screen with the sharp installed above, decode the
+      # outputs, and keep them out of Git (build/design-handoff/ is gitignored).
+      - name: Design handoff checker tests and generated exports
+        run: |
+          node --test scripts/check-design-handoff.test.mjs
+          for pkg in design/handoff/*/; do
+            [ -d "$pkg" ] || continue
+            node scripts/check-design-handoff.mjs "$pkg" --build
+          done
+          node scripts/check-design-handoff.mjs --repo .
       - name: Typecheck
         run: npm run web:typecheck
       - name: Test
@@ -1842,8 +1853,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
-      - name: Build orcel-authority and orceld (release, locked)
-        run: cargo build --release --locked -p orcel-authority -p orceld
+      - name: Build orcel-authority, orceld and the orcel CLI (release, locked)
+        run: cargo build --release --locked -p orcel-authority -p orceld -p orcel-lifecycle --bin orcel-authority --bin orceld --bin orcel
       - name: Record the SHA-256 of each binary
         shell: pwsh
         env:
@@ -1852,7 +1863,7 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'authority-artifact'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           $lines = @()
-          foreach ($name in @('orcel-authority.exe', 'orceld.exe')) {
+          foreach ($name in @('orcel-authority.exe', 'orceld.exe', 'orcel.exe')) {
             Copy-Item -LiteralPath (Join-Path 'target/release' $name) -Destination $out
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $out $name)).Hash.ToLowerInvariant()
             $lines += "$hash  $name"

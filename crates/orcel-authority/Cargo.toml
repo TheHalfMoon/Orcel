@@ -12,6 +12,15 @@ autobins = false
 name = "orcel-authority"
 path = "src/bin/orcel-authority.rs"
 
+[features]
+# SG-000132 slice 2, TEST BUILDS ONLY: the scripted E2E harness
+# (scripts/browser-full-e2e.mjs) runs `orcel-authority --console
+# --e2e-scripted-consent <log>`, which stands in for the service-observed
+# unlock, the confirmation (answered Yes, logged) and the Windows Hello
+# signature. Never default, never in a development or release build; the
+# release-blocker sweep confines it.
+authority-scripted-consent = []
+
 [dependencies]
 orcel-contracts = { path = "../orcel-contracts" }
 orcel-platform = { path = "../orcel-platform" }
@@ -34,6 +43,7 @@ windows-sys = { version = "0.52", features = [
   "Win32_System_EventLog",
   "Win32_System_IO",
   "Win32_System_Pipes",
+  "Win32_System_Registry",
   "Win32_System_RemoteDesktop",
   "Win32_System_Services",
   "Win32_System_Threading",
