@@ -325,6 +325,16 @@ pub fn run_reset(
         text(&begun, "code")?,
         text(&begun, "key_fingerprint")?
     ));
+    await_completion(client, intent_id, "reset")
+}
+
+/// Polls a confirmed intent until the service completed it; cancels it
+/// after [`MAX_WAIT`].
+fn await_completion(
+    client: &AuthorityClient,
+    intent_id: String,
+    what: &str,
+) -> Result<(), LifecycleError> {
     let started = Instant::now();
     loop {
         let status = client
@@ -333,7 +343,7 @@ pub fn run_reset(
             })
             .map_err(|error| {
                 LifecycleError::state(format!(
-                    "the reset ended without approval (refused, timed out, or the window closed): {error}"
+                    "the {what} ended without approval (refused, timed out, or the window closed): {error}"
                 ))
             })?;
         if status["state"].as_str() == Some("completed") {
@@ -341,12 +351,80 @@ pub fn run_reset(
         }
         if started.elapsed() > MAX_WAIT {
             let _ = client.call(&Request::CancelIntent { intent_id });
-            return Err(LifecycleError::state(
-                "the reset timed out and was cancelled",
-            ));
+            return Err(LifecycleError::state(format!(
+                "the {what} timed out and was cancelled"
+            )));
         }
         std::thread::sleep(POLL);
     }
+}
+
+/// WP1-03 `orcel audit reset-anchor` (elevated): asks the service to reset
+/// its held anchor of `log` and waits for the owner's Yes in the
+/// service-rendered box. Returns the service's `AnchorStatus` answer after
+/// the reset (it names the reset record).
+pub fn run_anchor_reset(
+    client: &AuthorityClient,
+    log: &str,
+    progress: &mut dyn FnMut(&str),
+) -> Result<Value, LifecycleError> {
+    let begun = client
+        .call(&Request::AnchorReset {
+            origin: ClaimedOrigin::OwnerCli,
+            log: log.to_owned(),
+        })
+        .map_err(authority)?;
+    let intent_id = text(&begun, "intent_id")?;
+    progress(&format!(
+        "Audit anchor reset requested for the log {log}. One-time code: {}\nThe service stops holding chain file {} at seq {} (digest {}).\nChoose Yes in the Orcel Authority box only if the code matches and you lost or replaced the audit chain yourself.",
+        text(&begun, "code")?,
+        begun["held"]["file_id"].as_str().unwrap_or("?"),
+        begun["held"]["seq"],
+        begun["held"]["digest"].as_str().unwrap_or("?"),
+    ));
+    await_completion(client, intent_id, "anchor reset")?;
+    client.anchor_status(log).map_err(authority)
+}
+
+/// The opening record of the chain file at `chain`, as an anchor of
+/// orceld's log (seq 0, its own digest): what the owner CLI asks the service
+/// to hold right after a reset opened the file.
+pub fn opening_anchor(
+    chain: &std::path::Path,
+) -> Result<orcel_contracts::event::AnchorRef, LifecycleError> {
+    let report = orcel_audit::verify_file(chain)
+        .map_err(|error| LifecycleError::state(format!("read the chain: {error}")))?;
+    let file_id = report
+        .file_id
+        .ok_or_else(|| LifecycleError::state("the chain file has no opening record"))?;
+    Ok(orcel_contracts::event::AnchorRef {
+        log: orcel_audit::ORCELD_LOG.to_owned(),
+        digest: file_id.clone(),
+        file_id,
+        seq: 0,
+    })
+}
+
+/// After a confirmed anchor reset: opens the new first chain file at
+/// `chain`, naming the reset record from `status` (the service's
+/// `AnchorStatus` answer). Never keeps a file found on disk: whatever is at
+/// the chain path (an earlier run's file included) is moved aside and a
+/// fresh file opens, whose opening the CLI then anchors.
+pub fn open_reset_chain(chain: &std::path::Path, status: &Value) -> Result<Value, LifecycleError> {
+    let reset = &status["reset"];
+    if reset["event_digest"].as_str().is_none() {
+        return Err(LifecycleError::state(
+            "the authority service reports no anchor reset for this log",
+        ));
+    }
+    let opened = orcel_audit::open_after_reset(chain, orcel_audit::ORCELD_LOG, reset.clone())
+        .map_err(|error| LifecycleError::state(error.to_string()))?;
+    Ok(serde_json::json!({
+        "chain": chain.display().to_string(),
+        "new_file_id": opened.file_id,
+        "abandoned_file_kept_as": opened.moved_to,
+        "reset": reset,
+    }))
 }
 
 /// The active leases of this user and logon session, as the service lists
@@ -495,6 +573,65 @@ pub mod hello {
 mod tests {
     use super::*;
 
+    /// WP1-03: after a confirmed anchor reset the CLI keeps the abandoned
+    /// chain and opens a first file naming the reset record, which the
+    /// verifier reports as reset_by_owner; without a reported reset it
+    /// opens nothing.
+    #[test]
+    fn wp103_a_confirmed_anchor_reset_opens_a_visible_first_chain_file() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "orcel-lifecycle-anchor-reset-{}-{}",
+            std::process::id(),
+            orcel_authority::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let chain = dir.join("audit-chain.jsonl");
+        std::fs::write(&chain, "{\"broken\":true}\n").map_err(|e| e.to_string())?;
+        let refused = open_reset_chain(&chain, &serde_json::json!({"held": null}));
+        assert!(refused.is_err());
+        let status = serde_json::json!({
+            "held": null,
+            "reset": {"event_digest": "e".repeat(64), "authority_seq": 12},
+        });
+        let opened = open_reset_chain(&chain, &status).map_err(|e| e.to_string())?;
+        let kept = opened["abandoned_file_kept_as"]
+            .as_str()
+            .ok_or("the abandoned file is kept")?;
+        assert_eq!(
+            std::fs::read_to_string(dir.join(kept)).map_err(|e| e.to_string())?,
+            "{\"broken\":true}\n"
+        );
+        let report = orcel_audit::verify_file(&chain).map_err(|e| e.to_string())?;
+        assert_eq!(report.verdict, orcel_audit::Verdict::ResetByOwner);
+        assert_eq!(
+            opening_anchor(&chain).map_err(|e| e.to_string())?.digest,
+            opened["new_file_id"].as_str().unwrap_or_default()
+        );
+        // Resumed (the service still reports the same reset): the file found
+        // on disk is never kept, even the one this reset opened; it is moved
+        // aside and a fresh file opens.
+        let again = open_reset_chain(&chain, &status).map_err(|e| e.to_string())?;
+        assert_ne!(again["new_file_id"], opened["new_file_id"]);
+        let moved = again["abandoned_file_kept_as"]
+            .as_str()
+            .ok_or("the earlier file is kept aside")?;
+        assert!(dir.join(moved).is_file());
+        assert_eq!(
+            orcel_audit::verify_file(&chain)
+                .map_err(|e| e.to_string())?
+                .verdict,
+            orcel_audit::Verdict::ResetByOwner
+        );
+        assert_eq!(
+            report
+                .reset_by_owner
+                .as_ref()
+                .map(|reset| reset["event_digest"].clone()),
+            Some(serde_json::Value::from("e".repeat(64)))
+        );
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
     #[test]
     fn sg132_desktop_grants_default_to_the_narrow_scope_and_widen_explicitly() {
         assert_eq!(desktop_scope(None, Vec::new(), false).ok(), Some(None));

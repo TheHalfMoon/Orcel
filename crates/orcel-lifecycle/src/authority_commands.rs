@@ -305,6 +305,92 @@ fn reset() -> Result<Output, LifecycleError> {
     ))
 }
 
+/// WP1-03 `orcel audit reset-anchor [--pause]`: the owner's recovery for a
+/// lost or replaced audit chain (SG132_INSTALL_RUNBOOK.md).
+pub fn audit(args: &mut Args) -> Result<Output, LifecycleError> {
+    let action = args.positional("audit action (reset-anchor)")?;
+    match action.as_str() {
+        "reset-anchor" => {
+            let pause = args.flag("--pause");
+            args.finish()?;
+            let result = reset_anchor();
+            if let Err(error) = &result {
+                eprintln!("orcel audit reset-anchor: {error}");
+            }
+            pause_if(pause);
+            result
+        }
+        other => Err(LifecycleError::usage(format!(
+            "unknown audit action {other:?}; run orcel help"
+        ))),
+    }
+}
+
+#[cfg(windows)]
+fn reset_anchor() -> Result<Output, LifecycleError> {
+    use authority_grant::hello;
+    if !hello::this_process_is_elevated() {
+        return Err(LifecycleError::prerequisite(
+            "start `orcel audit reset-anchor` elevated, directly (Start-Process -Verb RunAs on %ProgramFiles%\\Orcel\\orcel.exe): the UAC prompt on the secure desktop is the human gate",
+        ));
+    }
+    let chain = orcel_audit::default_audit_path()
+        .map(|plain| orcel_audit::chain_path_for(&plain))
+        .map_err(|error| LifecycleError::state(format!("resolve the audit chain: {error}")))?;
+    let client = installed_client()?;
+    // Resume: a reset the service already reports (an earlier run confirmed
+    // it but stopped before opening the file) goes straight to the file.
+    let earlier = client
+        .anchor_status(orcel_audit::ORCELD_LOG)
+        .map_err(|error| LifecycleError::state(error.to_string()))?;
+    let status = if earlier["reset"]["event_digest"].is_string() {
+        progress(
+            "The service already reports an anchor reset for this log; opening its chain file.",
+        );
+        earlier
+    } else {
+        authority_grant::run_anchor_reset(&client, orcel_audit::ORCELD_LOG, &mut progress)?
+    };
+    let opened = authority_grant::open_reset_chain(&chain, &status)?;
+    // Anchor the new file's opening record now (the service accepts this
+    // from the owner CLI in the reset state only), so no other file naming
+    // the same reset can be adopted; orceld anchors it first otherwise.
+    let anchored = authority_grant::opening_anchor(&chain).and_then(|opening| {
+        client
+            .anchor(
+                &opening,
+                None,
+                status["reset"]["event_digest"].as_str().map(str::to_owned),
+            )
+            .map_err(|error| LifecycleError::state(error.to_string()))
+    });
+    if let Err(error) = &anchored {
+        progress(&format!(
+            "The new file's opening record could not be anchored now ({error}); orceld anchors it before its first record."
+        ));
+    }
+    Ok(Output {
+        exit_code: 0,
+        human: format!(
+            "The Orcel authority service reset its audit anchor of orceld's chain (record {}). A new first chain file was opened at {}; it is reported as reset_by_owner by `orceld audit-verify`. Restart orceld so it writes to the new file.\n",
+            status["reset"]["event_digest"].as_str().unwrap_or("?"),
+            chain.display()
+        ),
+        json: json!({
+            "ok": true,
+            "anchor_reset": opened,
+            "opening_anchored": anchored.is_ok(),
+        }),
+    })
+}
+
+#[cfg(not(windows))]
+fn reset_anchor() -> Result<Output, LifecycleError> {
+    Err(LifecycleError::prerequisite(
+        "the Orcel authority service is Windows only in this slice",
+    ))
+}
+
 /// `orcel browser grant|leases|revoke` (SG-000135 Full Access through the
 /// service only).
 pub fn browser(args: &mut Args) -> Result<Output, LifecycleError> {

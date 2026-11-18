@@ -917,8 +917,11 @@ fn task_stop(
     id: &Value,
     params: &serde_json::Map<String, Value>,
 ) -> Value {
+    // WP1-03: the attempt is in the audit chain before the stop runs. A
+    // failed write is reported and never withholds the stop (below).
+    audit_stop(shared, peer, id, params, None);
     let frame = task_stop_frame(shared, id, params);
-    audit_stop(shared, peer, id, params, &frame);
+    audit_stop(shared, peer, id, params, Some(&frame));
     frame
 }
 
@@ -927,12 +930,17 @@ fn task_stop(
 /// kernel identified the peer. A failed write goes to stderr and never
 /// changes the answer: the stop only takes authority away, so it is not
 /// withheld for want of a record.
+///
+/// WP1-03: with `frame` `None` this writes the attempt's `dispatch` record to
+/// the chain before the stop runs. Spec 4.8 refuses a dispatch whose record
+/// fails; a stop is the one exception, deliberately: it only ends work, and
+/// refusing it would let a broken audit chain keep a task running.
 fn audit_stop(
     shared: &Shared,
     peer: &PeerInfo,
     id: &Value,
     params: &serde_json::Map<String, Value>,
-    frame: &Value,
+    frame: Option<&Value>,
 ) {
     let Some(audit) = &shared.audit else {
         return;
@@ -946,14 +954,16 @@ fn audit_stop(
         .and_then(|task| shared.tasks.get(task))
         .and_then(|task| task["workspace_id"].as_str().map(str::to_owned))
         .unwrap_or_default();
-    let outcome = if frame["ok"] == true {
-        "SUCCESS".to_owned()
-    } else {
-        frame["error"]["code"]
-            .as_str()
-            .unwrap_or("INTERNAL")
-            .to_owned()
-    };
+    let outcome = frame.map(|frame| {
+        if frame["ok"] == true {
+            "SUCCESS".to_owned()
+        } else {
+            frame["error"]["code"]
+                .as_str()
+                .unwrap_or("INTERNAL")
+                .to_owned()
+        }
+    });
     let request = orcel_contracts::RequestEnvelope {
         version: 1,
         request_id: match id {
@@ -974,9 +984,17 @@ fn audit_stop(
         generation_source: peer.process.source.to_owned(),
         executable: peer_executable(&peer.process),
     };
-    if let Err(failure) =
-        audit.record_with_caller(&request, &shared.facts.policy_revision, &outcome, &caller)
-    {
+    let written = match &outcome {
+        Some(outcome) => {
+            audit.record_with_caller(&request, &shared.facts.policy_revision, outcome, &caller)
+        }
+        None => audit.record_dispatch_with_caller(
+            &request,
+            &shared.facts.policy_revision,
+            Some(&caller),
+        ),
+    };
+    if let Err(failure) = written {
         eprintln!("orceld app api: task.stop audit write failed: {failure}");
     }
 }

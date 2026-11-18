@@ -971,10 +971,12 @@ dependencies = [
 name = "orcel-audit"
 version = "0.2.0"
 dependencies = [
+ "fs4",
  "orcel-contracts",
  "orcel-platform",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1036,6 +1038,7 @@ dependencies = [
  "fs4",
  "libc",
  "orcel-approval",
+ "orcel-audit",
  "orcel-authority",
  "orcel-contracts",
  "orcel-platform",
