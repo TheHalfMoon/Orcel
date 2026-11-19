@@ -29,6 +29,7 @@
 //! Identities are process-lifetime: a orceld restart drops the registry,
 //! so pre-restart identities fail closed as unknown rather than retargeting.
 
+use crate::full_control_dispatch::BoundedExecution;
 use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
 use orcel_contracts::{FailureCode, RequestEnvelope};
 use orcel_policy::{Workspace, POLICY_REVISION};
@@ -1575,6 +1576,7 @@ fn execute_with_approval(
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &coord_id);
+    let approved_digest = digest.clone();
     crate::mutation_journal::journaled_with(
         crate::mutation_journal::global(),
         journaled,
@@ -1592,17 +1594,55 @@ fn execute_with_approval(
             Ok(token)
         },
         |token| {
-            let adapter = NativeAdapter::new();
-            let mut guard = locked_registry()?;
-            let evidence = guard
-                .execute_input(
-                    &adapter,
-                    &binding.lease_id,
-                    &workspace.id,
-                    POLICY_REVISION,
-                    orcel_approval::now_ms(),
-                )
-                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            // SG132_SLICE7.md: with the authority service installed this is
+            // a lease-gated desktop action (service lease, `Authorize`, the
+            // lease's host in its Job Object, the host generation on every
+            // message); the in-process adapter runs only where no service is
+            // installed (deprecated, unchanged).
+            // The service's audit digest covers the resolved click the
+            // person approved, not only the coordinate identity.
+            let resolved = json!({
+                "process_id": binding.process_id,
+                "window_id": binding.window_id,
+                "window_generation": binding.window_generation,
+                "hwnd": binding.hwnd,
+                "x": binding.x,
+                "y": binding.y,
+                "operation": binding.operation,
+                "input_lease_id": binding.lease_id,
+                "approval_digest": approved_digest,
+            });
+            let route = crate::authority_link::bounded_execution_gate(request, &resolved)?;
+            let evidence = match route {
+                BoundedExecution::InProcess => {
+                    let adapter = NativeAdapter::new();
+                    locked_registry()?.execute_input(
+                        &adapter,
+                        &binding.lease_id,
+                        &workspace.id,
+                        POLICY_REVISION,
+                        orcel_approval::now_ms(),
+                    )
+                }
+                BoundedExecution::Leased(lease_id) => {
+                    if !computer_host_selected() {
+                        return Err(ProviderError::new(
+                            FailureCode::ProviderUnavailable,
+                            "leased bounded desktop execution runs only in the computer host (ORCEL_COMPUTER_HOST_BIN), never in orceld",
+                        ));
+                    }
+                    crate::desktop_host_job::require_for(&lease_id)?;
+                    let adapter = computer_host()?;
+                    locked_registry()?.execute_input(
+                        adapter,
+                        &binding.lease_id,
+                        &workspace.id,
+                        POLICY_REVISION,
+                        orcel_approval::now_ms(),
+                    )
+                }
+            }
+            .map_err(|error| ProviderError::new(error.code, error.message))?;
             let mut stamped = evidence;
             stamped["approval_record"] = Value::String(token.record_id);
             Ok(stamped)
