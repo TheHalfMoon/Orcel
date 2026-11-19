@@ -556,6 +556,14 @@ impl GitProvider {
     }
 }
 
+/// The input checks of a stage or unstage path list (before any Git
+/// command): 1 to 128 distinct repository-relative paths, no control data,
+/// no pathspec magic, no `..`, no `.git` component, no `.gitmodules`.
+/// SG132_SLICE8.md: orceld also runs them before asking the person.
+pub fn validate_mutation_paths(paths: &[String]) -> Result<Vec<String>, GitProviderError> {
+    validate_paths(paths)
+}
+
 fn validate_paths(paths: &[String]) -> Result<Vec<String>, GitProviderError> {
     if paths.is_empty() || paths.len() > MAX_MUTATION_PATHS {
         return Err(invalid(format!(
@@ -667,7 +675,8 @@ fn require_exact_names(repo: &Path, paths: &[String]) -> Result<(), GitProviderE
     Ok(())
 }
 
-fn validate_branch_input(branch: &str) -> Result<(), GitProviderError> {
+/// The input checks of a branch name (before any Git command).
+pub fn validate_branch_input(branch: &str) -> Result<(), GitProviderError> {
     if branch.is_empty()
         || branch.len() > 255
         || branch
@@ -680,7 +689,8 @@ fn validate_branch_input(branch: &str) -> Result<(), GitProviderError> {
     Ok(())
 }
 
-fn validate_commit_message(message: &str) -> Result<(), GitProviderError> {
+/// The input checks of a commit message (before any Git command).
+pub fn validate_commit_message(message: &str) -> Result<(), GitProviderError> {
     if message.trim().is_empty()
         || message.len() > MAX_COMMIT_MESSAGE_BYTES
         || message.contains('\0')

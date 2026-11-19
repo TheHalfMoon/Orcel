@@ -157,7 +157,7 @@ pub(crate) const CHILD_ENVIRONMENT: &[&str] = &[
 
 /// `\\?\C:\x` as `C:\x` (canonicalized paths are verbatim on Windows; a
 /// working folder or program path in that form confuses some programs).
-fn plain(path: &Path) -> PathBuf {
+pub(crate) fn plain(path: &Path) -> PathBuf {
     match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
         Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
         _ => path.to_path_buf(),
@@ -390,14 +390,15 @@ fn captured(shared: &Arc<Mutex<Capture>>) -> (String, u64, bool) {
 }
 
 /// The process family: runs `program` with `args` in `cwd`.
-pub(crate) fn run_program(
+/// The bounds of a run's own arguments, checked before anything is
+/// resolved: here in the worker and, SG132_SLICE8.md, by orceld before the
+/// person is asked (`WorkerOp::check_arguments`).
+pub(crate) fn check_run_arguments(
     program: &str,
     args: &[String],
-    cwd: &str,
     timeout_ms: u64,
     max_output_bytes: usize,
-    roots: &[String],
-) -> Result<Value, ProviderError> {
+) -> Result<(), ProviderError> {
     if timeout_ms == 0 || timeout_ms > MAX_PROCESS_TIMEOUT_MS {
         return Err(failure(
             FailureCode::InvalidRequest,
@@ -434,6 +435,18 @@ pub(crate) fn run_program(
             "the command line would exceed 32000 characters",
         ));
     }
+    Ok(())
+}
+
+pub(crate) fn run_program(
+    program: &str,
+    args: &[String],
+    cwd: &str,
+    timeout_ms: u64,
+    max_output_bytes: usize,
+    roots: &[String],
+) -> Result<Value, ProviderError> {
+    check_run_arguments(program, args, timeout_ms, max_output_bytes)?;
     let resolved = resolve_program(program, roots)?;
     let folder = plain(&resolve_folder(cwd, roots)?);
     let mut command = Command::new(&resolved.path);
@@ -567,7 +580,7 @@ pub(crate) fn git_program() -> Result<PathBuf, ProviderError> {
         })
 }
 
-fn git_error(error: GitProviderError) -> ProviderError {
+pub(crate) fn git_error(error: GitProviderError) -> ProviderError {
     ProviderError::new(error.code, error.message)
 }
 

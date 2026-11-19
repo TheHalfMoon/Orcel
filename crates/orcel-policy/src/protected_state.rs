@@ -74,6 +74,26 @@ pub fn protected_state_roots_from(lookup: &dyn Fn(&str) -> Option<OsString>) -> 
     roots
 }
 
+/// SG132_SLICE8.md: the protected roots a write must stay out of, from the
+/// process environment ([`protected_write_roots_from`]).
+pub fn protected_write_roots() -> Result<Vec<PathBuf>, String> {
+    protected_write_roots_from(&|name| std::env::var_os(name))
+}
+
+/// SG132_SLICE8.md: [`protected_state_roots_from`] for a writer that must
+/// never write Orcel's state (Full Control's lease-covered file writes),
+/// failing closed: when the per-OS state root cannot be established it is
+/// an error, so the caller refuses every write, instead of being left out
+/// of the list (which [`protected_state_roots_from`] does because every
+/// default store fails closed on its own in that case).
+pub fn protected_write_roots_from(
+    lookup: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<Vec<PathBuf>, String> {
+    orcel_platform::paths::state_root_from(lookup)
+        .map_err(|error| format!("the Orcel state root cannot be established: {error}"))?;
+    Ok(protected_state_roots_from(lookup))
+}
+
 /// The WP1-03 hash chain `orcel_audit::chain_path_for` keeps beside the plain
 /// audit log `plain` (`audit.jsonl` keeps `audit-chain.jsonl`). orceld's
 /// `wp103_policy_protects_the_chain_beside_an_audit_override` keeps the two
@@ -194,6 +214,25 @@ mod tests {
         } else {
             BTreeMap::from([("HOME", OsString::from("/home/u"))])
         }
+    }
+
+    /// SG132_SLICE8.md: a writer that must stay out of Orcel's state fails
+    /// closed when the per-OS state root cannot be established, even when
+    /// overrides exist; with the root it gets the same list as the policy.
+    #[test]
+    fn write_roots_fail_closed_without_a_state_root() {
+        let overrides_only =
+            BTreeMap::from([("ORCEL_AUDIT_PATH", OsString::from("/a/audit.jsonl"))]);
+        assert!(protected_write_roots_from(&lookup(overrides_only.clone())).is_err());
+        assert!(protected_write_roots_from(&lookup(BTreeMap::new())).is_err());
+        // The policy's own list still skips the missing root.
+        assert!(!protected_state_roots_from(&lookup(overrides_only)).is_empty());
+        let mut values = state_root_values();
+        values.insert("ORCEL_TRUST_PATH", OsString::from("/t/trust.json"));
+        let strict = protected_write_roots_from(&lookup(values.clone())).expect("a state root");
+        assert_eq!(strict, protected_state_roots_from(&lookup(values.clone())));
+        let state_root = orcel_platform::paths::state_root_from(&lookup(values)).expect("root");
+        assert!(strict.contains(&state_root));
     }
 
     #[test]

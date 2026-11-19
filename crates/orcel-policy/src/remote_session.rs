@@ -33,7 +33,7 @@ pub const REMOTE_SCOPES: [&str; 3] = ["orcel.read", "orcel.write", "orcel.execut
 
 /// Capability prefixes that manage local authority and are never reachable
 /// from a remote-context request, whatever lease exists.
-const LOCAL_ONLY_PREFIXES: [&str; 7] = [
+const LOCAL_ONLY_PREFIXES: [&str; 8] = [
     "remote.",
     "workspace.trust.",
     "trust.",
@@ -42,6 +42,10 @@ const LOCAL_ONLY_PREFIXES: [&str; 7] = [
     "executable.",
     // SG-000135 OB-08: Full Access browser lease management.
     "browser.lease.",
+    // SG132_SLICE8.md: Full Control request capabilities (`fc.fs`,
+    // `fc.process`, `fc.git`, `fc.status`). orceld refuses a remote one
+    // before this gate; this keeps the gate's own answer local-only too.
+    "fc.",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

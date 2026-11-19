@@ -84,9 +84,9 @@ pub(crate) fn request(capability: &str, operation: &str, arguments: Value) -> Re
 
 /// A fake authority service: what it holds and what it was asked.
 #[derive(Default)]
-struct FakeService {
+pub(crate) struct FakeService {
     installed: bool,
-    unreachable: bool,
+    pub(crate) unreachable: bool,
     leases: Vec<LeaseBody>,
     /// Replaces the Authorize answer when set.
     answer: Option<Value>,
@@ -106,18 +106,18 @@ struct FakeService {
     host_answer: Option<Value>,
     refuse_host: Option<FailureCode>,
     /// What happened, in order ("authorize", "ack", "active", "host").
-    calls: Vec<&'static str>,
-    authorized: Vec<(String, ExecutorClass, AuthorizeClaims)>,
-    outcomes: Vec<(String, DispatchOutcome, Option<FailureCode>)>,
+    pub(crate) calls: Vec<&'static str>,
+    pub(crate) authorized: Vec<(String, ExecutorClass, AuthorizeClaims)>,
+    pub(crate) outcomes: Vec<(String, DispatchOutcome, Option<FailureCode>)>,
     deprecated_checks: u32,
     next: u32,
 }
 
 #[derive(Clone, Default)]
-struct FakePort(Rc<RefCell<FakeService>>);
+pub(crate) struct FakePort(pub(crate) Rc<RefCell<FakeService>>);
 
 impl FakePort {
-    fn installed(leases: Vec<LeaseBody>) -> Self {
+    pub(crate) fn installed(leases: Vec<LeaseBody>) -> Self {
         let port = Self::default();
         port.0.borrow_mut().installed = true;
         port.0.borrow_mut().leases = leases;
@@ -256,10 +256,10 @@ impl AuthorityPort for FakePort {
 
 /// A fake launcher: "assigns" the suspended worker, then resumes it only if
 /// `confirm` (the service's DispatchActive) succeeds, as the real one does.
-struct FakeLauncher {
+pub(crate) struct FakeLauncher {
     service: FakePort,
     fails: Option<FailureCode>,
-    runs: Cell<u32>,
+    pub(crate) runs: Cell<u32>,
 }
 
 impl WorkerLauncher for FakeLauncher {
@@ -310,7 +310,7 @@ impl ActionApproval for FakeApproval {
     }
 }
 
-fn launcher(service: &FakePort) -> FakeLauncher {
+pub(crate) fn launcher(service: &FakePort) -> FakeLauncher {
     FakeLauncher {
         service: service.clone(),
         fails: None,

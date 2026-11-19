@@ -97,6 +97,11 @@ mod desktop_host_job;
 )]
 mod document_parse;
 mod executable_admin;
+// SG132_SLICE8.md: the local-only Full Control request capabilities
+// (`fc.fs`, `fc.process`, `fc.git`, `fc.status`) over the WP1-10 dispatcher.
+mod fc_requests;
+#[cfg(test)]
+mod fc_requests_tests;
 // SG-000132 WP1-10: `orceld fc-worker`, the child that performs Full Control
 // filesystem, process and git operations (WP1-15) inside the dispatch's
 // service-made Job Object.
@@ -532,6 +537,19 @@ fn handle_envelope(
         let _ = audit.record(&request, POLICY_REVISION, "PROFILE_DENIED");
         return ResponseEnvelope::failure(request.request_id, code, message);
     }
+    // SG132_SLICE8.md: Full Control requests (`fc.*`) are local only. A
+    // remote one is refused here, before any remote-session lease, policy
+    // or dispatch step, and no `fc.*` request reaches the Safe dispatcher.
+    if fc_requests::is_request(&request.capability) {
+        return handle_full_control(
+            policy,
+            audit,
+            approval,
+            request,
+            remote.is_some(),
+            profile.as_deref(),
+        );
+    }
     // SG-000108 slice 3c: a live shape the gate admitted (local,
     // `browser_structured`) is authorized in its live form and dispatched to
     // the live browser, never to the model-only browser shapes.
@@ -819,6 +837,49 @@ fn handle_browser_lease(
     if unrecorded {
         return finish_unrecorded(audit, request, result);
     }
+    finish(audit, request, POLICY_REVISION, result)
+}
+
+/// SG132_SLICE8.md: a Full Control request (`fc.*`). A remote caller, or a
+/// request naming a tool surface other than `desktop_structured`, is
+/// refused before anything is read or asked; then the request's own form,
+/// a configured workspace (which only fills the envelope, as for the
+/// desktop tools) and orceld's dispatch record; then the dispatcher, whose
+/// lease check, approval where one is needed, and the service's audit-first
+/// `Authorize` come before anything runs.
+fn handle_full_control(
+    policy: &PolicyEngine,
+    audit: &AuditLogger,
+    approval: &impl ApprovalBroker,
+    request: RequestEnvelope,
+    remote: bool,
+    profile: Option<&str>,
+) -> ResponseEnvelope {
+    if let Err(error) = fc_requests::refuse_untrusted(remote, profile) {
+        let state = if remote {
+            "REMOTE_DENIED"
+        } else {
+            "PROFILE_DENIED"
+        };
+        let _ = audit.record(&request, POLICY_REVISION, state);
+        return ResponseEnvelope::failure(request.request_id, error.code, error.message);
+    }
+    if let Err(error) = fc_requests::validate(&request) {
+        let _ = audit.record(&request, POLICY_REVISION, "DENIED");
+        return ResponseEnvelope::failure(request.request_id, error.code, error.message);
+    }
+    if policy.workspace(&request.workspace_id).is_none() {
+        let _ = audit.record(&request, POLICY_REVISION, "DENIED");
+        return ResponseEnvelope::failure(
+            request.request_id,
+            FailureCode::WorkspaceDenied,
+            "requested workspace is not configured",
+        );
+    }
+    if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
+        return *refused;
+    }
+    let result = fc_requests::dispatch_installed(approval, &request);
     finish(audit, request, POLICY_REVISION, result)
 }
 

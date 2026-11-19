@@ -149,7 +149,9 @@ Test names: `core_tests` in `crates/orcel-authority/src/`, `full_control_dispatc
    calling client, the lease's host in its job, the host generation on every message. Done in
    [SG132_SLICE7.md](SG132_SLICE7.md).
 4. Request capabilities and MCP tools for the filesystem, process and git operations (slice 4 section 6, step 1),
-   and a surface that shows a desktop client its reference (residual 2): founder product decisions.
+   and a surface that shows a desktop client its reference (residual 2): founder product decisions. Decided on
+   2026-11-19; the request capabilities and `fc.status` (which shows the reference) are done in
+   [SG132_SLICE8.md](SG132_SLICE8.md), the MCP tools are its next step.
 5. Possibly a private global atom table for the desktop host job (`GLOBALATOMS`), once UI Automation inside such a
    job is verified on a real desktop with the installed service.
 6. Then the indicator and its heartbeat (WP1-12) and standing approvals (WP1-14): founder decisions.
