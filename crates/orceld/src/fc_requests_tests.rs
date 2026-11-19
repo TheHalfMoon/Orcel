@@ -852,7 +852,15 @@ fn fc_requests_bad_arguments_are_refused_before_the_prompt() {
         (add(&[]), FailureCode::InvalidRequest),
         (add(&["../outside.txt"]), FailureCode::InvalidRequest),
         (add(&[".git/config"]), FailureCode::InvalidRequest),
-        (add(&[r"C:\work\repo\a.txt"]), FailureCode::InvalidRequest),
+        // An absolute path, as this OS spells one (the provider's rule).
+        (
+            add(&[if cfg!(windows) {
+                r"C:\work\repo\a.txt"
+            } else {
+                "/work/repo/a.txt"
+            }]),
+            FailureCode::InvalidRequest,
+        ),
         (add(&[":(glob)*"]), FailureCode::InvalidRequest),
         (add(&["a.txt", "a.txt"]), FailureCode::InvalidRequest),
         (
