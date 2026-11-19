@@ -57,7 +57,24 @@ where the approval ledger, trust records and audit chain live). Since the amendm
 the worker now refuses (`CAPABILITY_DENIED`) any `write_text` or `mkdir` whose resolved target is in the authority's
 state folder (`...\Orcel\authority`) or in a protected state root (`orcel_policy::protected_state`: the per-OS
 state root, the earlier `%LOCALAPPDATA%\Orcel` and every `ORCEL_*` override, read from the environment the worker
-inherits from orceld). A protected root that cannot be resolved refuses every write (fail closed).
+inherits from orceld). It fails closed: a per-OS state root that cannot be established
+(`orcel_policy::protected_state::protected_write_roots`, unlike the policy's own list, which skips it) or a protected
+root that cannot be resolved refuses every write.
+
+The authority-state rule is deliberately broad: any target with two adjacent path components `Orcel` and `authority`
+(case-insensitive) is refused, wherever it is, matching the lease root check (`check_root` refuses `\orcel\authority`
+in a root). A user folder that happens to be named `...\Orcel\authority\...` inside the roots is therefore refused
+too (a false refusal, by design: the rule cannot be fooled by where the service's state folder lives).
+
+**The target is checked again by its handle (Windows).** The path checks run before the open, so a folder inside the
+roots could be swapped for a junction (into Orcel's state, or out of the roots) between the checks and the open. After
+opening, the worker reads where the handle really is (`GetFinalPathNameByHandleW`) and checks it again: inside the
+resolved roots, outside any `.git` folder, outside Orcel's state; on a mismatch it refuses with
+`PATH_RACE_DETECTED` before writing a byte. A file this call created is opened with delete access and removed by its
+handle (never by a name that could now point elsewhere); an existing file is left untouched. For `mkdir`, the created
+folder is opened again by name without following a reparse point and checked the same way; on a mismatch it is removed
+by its handle, which succeeds only while it is empty. Outside Windows there is no authority service, no lease and no
+worker dispatch (the dispatcher refuses before any launch), so only the path checks exist there.
 
 ## 2. What changed
 
@@ -164,7 +181,8 @@ real desktop shows.
 | A tool runs without a lease, or a files-only lease runs a program or Git | `LEASE_REQUIRED` for every tool without a lease; a lease without `shell_process` covers files only; the person is never asked without a covering lease; no service is `AUTHORITY_UNAVAILABLE` | `fc_requests_without_a_lease_every_tool_refuses_lease_required` |
 | One MCP client uses a lease granted to another | The principal is the caller's `client_ref`; a lease bound to another client refuses before `Authorize` (and the service checks it again) | `fc_requests_the_principal_is_the_calling_clients_reference`; `fc_dispatch_the_desktop_gate_names_the_calling_client` (same binding) |
 | **SG-000132 amendment (2026-11-19):** a file write or folder creation runs without a per-call approval | By the amendment: the lease covers `write_text` and `mkdir`. What still holds: the lease's executor, client and roots; the service's audit-first `Authorize` and its record; the dispatch job; the worker's root, link, hard link and `.git` checks; the outcome record | `fc_requests_file_writes_are_lease_covered_and_ask_nothing` (no approval asked; `Authorize`, executor `filesystem`, paths and outcome present); the worker's checks: `fc_worker_tests` (slice 3) |
-| A lease-covered write inside a broad root overwrites Orcel's own state (approval ledger, trust records, audit chain, the authority's state) without a prompt | Spec 4.14, kept by the amendment: the worker refuses writes and folder creation in the authority's state folder and in every protected state root, after resolving the target; an unresolvable protected root refuses all writes | `fc_requests_file_writes_never_reach_orcel_state` (every OS); `fc_requests_the_worker_refuses_writes_into_orcel_state` (Windows, real folders, a case variant included) |
+| A lease-covered write inside a broad root overwrites Orcel's own state (approval ledger, trust records, audit chain, the authority's state) without a prompt | Spec 4.14, kept by the amendment: the worker refuses writes and folder creation in the authority's state folder and in every protected state root, after resolving the target; an unresolvable protected root refuses all writes | `fc_requests_file_writes_never_reach_orcel_state` (every OS); `fc_requests_the_worker_refuses_writes_into_orcel_state` (Windows, real folders, a case variant included); `fc_requests_junctions_and_short_names_into_state_are_refused` (Windows: a junction inside the roots into the state folder, and the state folder's 8.3 short name, skipped with a message on a volume without short names); fail closed without a state root: `orcel-policy` `write_roots_fail_closed_without_a_state_root` |
+| A folder inside the roots is swapped for a junction (into Orcel's state or out of the roots) after the path checks and before the open | The opened handle's final path is checked again; a mismatch is `PATH_RACE_DETECTED`, nothing is written, and a file or (empty) folder this call created is removed by its handle | `fc_requests_a_junction_swapped_in_after_the_checks_is_caught` (Windows: a real swap between the checks and the open, for a file and a folder); `fc_requests_the_opened_target_is_checked_again` (every OS, the check itself) |
 | A program or a Git change runs without the person's fresh approval, or one approval covers two actions | `run`, `git_add`, `git_unstage`, `git_commit`, `git_branch_create` ask on every call; each approval is bound to that call's digest, which the service records; a No authorizes and runs nothing | `fc_requests_process_and_git_mutations_ask_every_call` (two rounds, every digest distinct and equal to an `Authorize` digest); `fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_digest` |
 | The approval is an in-app control, or not SOFT, or not bound to the action | `BrokerApproval` asks orceld's broker for a SOFT, single-use prompt with the action digest, the program or repository, and a local origin; No and unavailable refuse | `fc_requests_the_windows_approval_is_soft_and_bound_to_the_digest` (scripted brokers); that the broker's SOFT prompt is the Windows dialog: `orcel-approval`'s own suites; the dialog itself on a real desktop: **UNVERIFIED (founder run)** |
 | `fc.status` grants or leaks authority | Read-only: no `Authorize`, no job, no approval; lists only desktop Full User leases this client can use (bound to it, or unbound); another client's lease is not listed | `fc_requests_status_shows_the_lease_scope_and_grants_nothing` |
@@ -196,9 +214,14 @@ real desktop shows.
    which program is behind it.
 6. **Long arguments are shortened in the dialog.** The dialog bounds its fields; the approval is bound to the digest
    over the whole operation, so a long argument list the person did not see in full is still the one that runs.
-7. **No MCP tool yet.** Until option B's slice 2, only a local process that writes orceld's request line can send
+7. **The handle re-check has its own small windows.** A folder created through a swapped junction is removed only if
+   it is still empty when the re-check fails (another writer could fill it first; it is then left, and the call is
+   still refused). The re-check of `mkdir` opens the new folder by name again; if the name was swapped back in that
+   instant, the check sees the intended place and passes while the folder was made elsewhere (an empty folder, no
+   content). Outside Windows there is no re-check (no Full Control dispatch exists there).
+8. **No MCP tool yet.** Until option B's slice 2, only a local process that writes orceld's request line can send
    these requests (the same exposure as every other local shape).
-8. Slice 4 residuals (the program between check and start, window routes, Git's bundled programs) and slice 5 and 6
+9. Slice 4 residuals (the program between check and start, window routes, Git's bundled programs) and slice 5 and 6
    residuals stand unchanged.
 
 ## 6. Not done; next steps

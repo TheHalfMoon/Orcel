@@ -1023,3 +1023,190 @@ fn fc_requests_the_worker_refuses_writes_into_orcel_state() {
         .expect("a folder merely named Orcel");
     let _ = std::fs::remove_dir_all(base);
 }
+
+/// The re-check by handle (every OS, on paths): an opened target must still
+/// be inside the roots, outside `.git` and outside Orcel's state.
+#[test]
+fn fc_requests_the_opened_target_is_checked_again() {
+    use crate::fc_worker::check_final_path;
+    use std::path::Path;
+    let base = Path::new("base");
+    let roots = vec![base.join("work")];
+    let protected = vec![base.join("work").join("state")];
+    check_final_path(&base.join("work").join("a.txt"), &roots, &protected).expect("inside");
+    for (actual, label) in [
+        (base.join("elsewhere").join("a.txt"), "outside the roots"),
+        (base.join("work").join(".git").join("config"), ".git"),
+        (
+            base.join("work").join("state").join("ledger"),
+            "Orcel state",
+        ),
+        (
+            base.join("work").join("Orcel").join("authority").join("x"),
+            "authority state",
+        ),
+    ] {
+        assert_eq!(
+            code(check_final_path(&actual, &roots, &protected)),
+            Some(FailureCode::PathRaceDetected),
+            "{label}"
+        );
+    }
+}
+
+/// Windows helpers for the worker's real-folder tests.
+#[cfg(windows)]
+mod windows_folders {
+    use std::path::{Path, PathBuf};
+
+    pub(super) fn scratch(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!(
+            "orcel-fc-{label}-{}-{nanos}-{}",
+            std::process::id(),
+            crate::tests::next_temp_sequence()
+        ));
+        std::fs::create_dir_all(&base).expect("scratch");
+        base
+    }
+
+    /// A junction at `link` to `target` (`mklink /J` needs no elevation).
+    pub(super) fn junction(link: &Path, target: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("mklink");
+        assert!(status.success(), "mklink /J failed");
+    }
+
+    /// The 8.3 short name of an existing path, if the volume makes them.
+    pub(super) fn short_name(path: &Path) -> Option<PathBuf> {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut buffer = vec![0u16; 1024];
+        // SAFETY: a NUL-terminated input and a buffer as long as stated.
+        let len =
+            unsafe { GetShortPathNameW(wide.as_ptr(), buffer.as_mut_ptr(), buffer.len() as u32) };
+        if len == 0 || len as usize >= buffer.len() {
+            return None;
+        }
+        let short = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..len as usize]));
+        (short != path).then_some(short)
+    }
+}
+
+/// A folder inside the roots swapped for a junction into Orcel's state
+/// after the path checks and before the open: the write is refused by the
+/// handle re-check and the file it created there is removed by its handle;
+/// a folder created through the swap is removed as well.
+#[cfg(windows)]
+#[test]
+fn fc_requests_a_junction_swapped_in_after_the_checks_is_caught() {
+    use crate::fc_worker::{creatable_with, opened};
+    use windows_folders::{junction, scratch};
+    let base = scratch("swap");
+    let work = base.join("work");
+    let state = work.join("protected-state");
+    std::fs::create_dir_all(work.join("safe")).expect("safe");
+    std::fs::create_dir_all(&state).expect("state");
+    let root = work.to_string_lossy().into_owned();
+    let roots = vec![root.clone()];
+    let resolved_roots = vec![std::fs::canonicalize(&work).expect("root")];
+    let protected =
+        vec![orcel_policy::protected_state::resolve_protected_root(&state).expect("resolved")];
+    let file = creatable_with(&format!(r"{root}\safe\x.txt"), &roots, &protected)
+        .expect("checked while safe is a folder");
+    let folder = creatable_with(&format!(r"{root}\safe\new"), &roots, &protected)
+        .expect("checked while safe is a folder");
+    // The swap: `safe` becomes a junction into the protected state.
+    std::fs::rename(work.join("safe"), work.join("safe-old")).expect("rename");
+    junction(&work.join("safe"), &state);
+    let (opened_file, created) = opened::open_for_write(&file, false).expect("opened");
+    assert!(created);
+    assert!(
+        state.join("x.txt").exists(),
+        "the open went through the junction"
+    );
+    assert_eq!(
+        code(opened::recheck(&opened_file, &resolved_roots, &protected)),
+        Some(FailureCode::PathRaceDetected)
+    );
+    opened::discard(&opened_file);
+    drop(opened_file);
+    assert!(!state.join("x.txt").exists(), "removed by its handle");
+    std::fs::create_dir(&folder).expect("created through the junction");
+    let opened_folder = opened::open_created_folder(&folder).expect("opened");
+    assert_eq!(
+        code(opened::recheck(&opened_folder, &resolved_roots, &protected)),
+        Some(FailureCode::PathRaceDetected)
+    );
+    opened::discard(&opened_folder);
+    drop(opened_folder);
+    assert!(!state.join("new").exists(), "removed by its handle");
+    // Without a swap the same open passes the re-check.
+    let plain =
+        creatable_with(&format!(r"{root}\safe-old\y.txt"), &roots, &protected).expect("checked");
+    let (opened_plain, _) = opened::open_for_write(&plain, true).expect("opened");
+    opened::recheck(&opened_plain, &resolved_roots, &protected).expect("inside the roots");
+    drop(opened_plain);
+    let _ = std::fs::remove_dir(work.join("safe"));
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// A junction inside the roots that points into Orcel's state, and an 8.3
+/// short name of the state folder: both resolve to the state folder and are
+/// refused before anything is opened.
+#[cfg(windows)]
+#[test]
+fn fc_requests_junctions_and_short_names_into_state_are_refused() {
+    use crate::fc_worker::creatable_with;
+    use windows_folders::{junction, scratch, short_name};
+    let base = scratch("names");
+    let work = base.join("work");
+    let state = work.join("protected-state");
+    std::fs::create_dir_all(&state).expect("state");
+    let root = work.to_string_lossy().into_owned();
+    let roots = vec![root.clone()];
+    let protected =
+        vec![orcel_policy::protected_state::resolve_protected_root(&state).expect("resolved")];
+    junction(&work.join("into-state"), &state);
+    assert_eq!(
+        code(creatable_with(
+            &format!(r"{root}\into-state\ledger.json"),
+            &roots,
+            &protected
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    match short_name(&state) {
+        Some(short) => {
+            let name = short
+                .file_name()
+                .expect("a short name")
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(
+                code(creatable_with(
+                    &format!(r"{root}\{name}\ledger.json"),
+                    &roots,
+                    &protected
+                )),
+                Some(FailureCode::CapabilityDenied),
+                "{name}"
+            );
+        }
+        None => eprintln!(
+            "skipped the 8.3 case: this volume makes no short names for {}",
+            state.display()
+        ),
+    }
+    let _ = std::fs::remove_dir(work.join("into-state"));
+    let _ = std::fs::remove_dir_all(base);
+}

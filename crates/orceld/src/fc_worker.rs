@@ -381,7 +381,13 @@ fn existing(path: &str, roots: &[String]) -> Result<PathBuf, ProviderError> {
 /// resolves it; one that cannot be resolved refuses every write (fail
 /// closed).
 fn protected_write_roots() -> Result<Vec<PathBuf>, ProviderError> {
-    orcel_policy::protected_state::protected_state_roots()
+    orcel_policy::protected_state::protected_write_roots()
+        .map_err(|error| {
+            failure(
+                FailureCode::CapabilityDenied,
+                format!("Orcel's protected state could not be located, so nothing is written: {error}"),
+            )
+        })?
         .iter()
         .map(|root| {
             orcel_policy::protected_state::resolve_protected_root(root).map_err(|error| {
@@ -410,13 +416,139 @@ pub(crate) fn is_protected_write(target: &Path, protected: &[PathBuf]) -> bool {
             .any(|root| orcel_policy::protected_state::path_within(target, root))
 }
 
-/// A path to create: its parent resolved inside the roots, the name plain,
-/// and no link or junction already at the name.
-fn creatable(path: &str, roots: &[String]) -> Result<PathBuf, ProviderError> {
-    creatable_with(path, roots, &protected_write_roots()?)
+/// SG132_SLICE8.md (review of the state-write refusal, TOCTOU): where an
+/// opened write target really is, by its handle, checked again after the
+/// open: inside the resolved roots, outside any `.git` folder, outside
+/// Orcel's protected state. A folder swapped for a junction between the
+/// path checks and the open is caught here (`PATH_RACE_DETECTED`).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn check_final_path(
+    actual: &Path,
+    roots: &[PathBuf],
+    protected: &[PathBuf],
+) -> Result<(), ProviderError> {
+    let actual = exec::plain(actual);
+    let within =
+        |base: &PathBuf| orcel_policy::protected_state::path_within(&actual, &exec::plain(base));
+    if !roots.iter().any(within) {
+        return Err(failure(
+            FailureCode::PathRaceDetected,
+            "the opened target lies outside the lease's roots; it changed after the checks",
+        ));
+    }
+    let protected: Vec<PathBuf> = protected.iter().map(|root| exec::plain(root)).collect();
+    if actual
+        .components()
+        .any(|component| component.as_os_str().eq_ignore_ascii_case(".git"))
+        || is_protected_write(&actual, &protected)
+    {
+        return Err(failure(
+            FailureCode::PathRaceDetected,
+            "the opened target is in a .git folder or Orcel's own state; it changed after the checks",
+        ));
+    }
+    Ok(())
 }
 
-/// [`creatable`] with the protected state roots given (tests).
+/// Opened write targets, re-checked by handle (Windows). Elsewhere Full
+/// Control has no authority service and no worker dispatch, so the path
+/// checks before the open are the only ones (documented in SG132_SLICE8.md).
+#[cfg(windows)]
+pub(crate) mod opened {
+    use super::{check_final_path, failure};
+    use orcel_contracts::FailureCode;
+    use orcel_provider_fs::ProviderError;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::{Path, PathBuf};
+    use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileDispositionInfo, SetFileInformationByHandle, DELETE, FILE_DISPOSITION_INFO,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+    };
+
+    /// The file to write, opened with delete access so a file this call
+    /// created can be removed by its handle; `true` when this call created
+    /// it.
+    pub(crate) fn open_for_write(
+        resolved: &Path,
+        create_new: bool,
+    ) -> std::io::Result<(std::fs::File, bool)> {
+        let open = |create: bool| {
+            let mut options = std::fs::OpenOptions::new();
+            // `write` lets the standard library create the file; the
+            // access itself is `access_mode`'s.
+            options
+                .write(true)
+                .access_mode(GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES);
+            if create {
+                options.create_new(true);
+            }
+            options.open(resolved)
+        };
+        if create_new {
+            return open(true).map(|file| (file, true));
+        }
+        match open(false) {
+            Ok(file) => Ok((file, false)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => match open(true) {
+                Ok(file) => Ok((file, true)),
+                // Created by someone else meanwhile: an existing file.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    open(false).map(|file| (file, false))
+                }
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The folder this call just created, opened by its name without
+    /// following a reparse point, with delete access.
+    pub(crate) fn open_created_folder(resolved: &Path) -> std::io::Result<std::fs::File> {
+        std::fs::OpenOptions::new()
+            .access_mode(DELETE | FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(resolved)
+    }
+
+    /// [`check_final_path`] for an open handle.
+    pub(crate) fn recheck(
+        file: &std::fs::File,
+        roots: &[PathBuf],
+        protected: &[PathBuf],
+    ) -> Result<(), ProviderError> {
+        let actual = orcel_authority::win::install_os::final_path(file).map_err(|error| {
+            failure(
+                FailureCode::PathRaceDetected,
+                format!("where the opened target is could not be read: {error}"),
+            )
+        })?;
+        check_final_path(&actual, roots, protected)
+    }
+
+    /// Removes what this call created, by its handle (never by a name that
+    /// could now point elsewhere). A folder is removed only while empty
+    /// (the disposition fails otherwise). Best effort: the refusal stands
+    /// either way.
+    pub(crate) fn discard(file: &std::fs::File) {
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: 1 };
+        // SAFETY: a live handle opened with DELETE access; the structure
+        // is the class's.
+        let _ = unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle() as HANDLE,
+                FileDispositionInfo,
+                (&disposition as *const FILE_DISPOSITION_INFO).cast(),
+                std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+        };
+    }
+}
+
+/// A path to create: its parent resolved inside the roots, the name plain,
+/// no link or junction already at the name, and nothing in a `.git` folder
+/// or in `protected` (Orcel's state, [`protected_write_roots`]).
 pub(crate) fn creatable_with(
     path: &str,
     roots: &[String],
@@ -619,21 +751,42 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
                     "write_text writes at most 262144 bytes",
                 ));
             }
-            let resolved = creatable(path, roots)?;
-            let mut options = std::fs::OpenOptions::new();
-            options.write(true);
-            if *create_new {
-                options.create_new(true);
-            } else {
-                // Not truncated on open: the link count is checked first.
-                options.create(true).truncate(false);
-            }
-            let mut file = options
-                .open(&resolved)
-                .map_err(|error| io_failure("open the file for writing", &error))?;
-            // Review: a hard link inside the roots can name a file outside
-            // them; a file with more than one name is never written.
-            refuse_hard_links(&file)?;
+            let protected = protected_write_roots()?;
+            let resolved = creatable_with(path, roots, &protected)?;
+            #[cfg(windows)]
+            let mut file = {
+                // Not truncated on open: the link count and, by the handle,
+                // where the file really is are checked first.
+                let (file, created) = opened::open_for_write(&resolved, *create_new)
+                    .map_err(|error| io_failure("open the file for writing", &error))?;
+                // Review: a hard link inside the roots can name a file
+                // outside them; a file with more than one name is never
+                // written.
+                let checked = refuse_hard_links(&file)
+                    .and_then(|()| opened::recheck(&file, &resolved_roots(roots), &protected));
+                if let Err(error) = checked {
+                    if created {
+                        opened::discard(&file);
+                    }
+                    return Err(error);
+                }
+                file
+            };
+            #[cfg(not(windows))]
+            let mut file = {
+                let mut options = std::fs::OpenOptions::new();
+                options.write(true);
+                if *create_new {
+                    options.create_new(true);
+                } else {
+                    options.create(true).truncate(false);
+                }
+                let file = options
+                    .open(&resolved)
+                    .map_err(|error| io_failure("open the file for writing", &error))?;
+                refuse_hard_links(&file)?;
+                file
+            };
             file.set_len(0)
                 .map_err(|error| io_failure("truncate the file", &error))?;
             file.write_all(text.as_bytes())
@@ -642,9 +795,26 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
             Ok(json!({ "bytes": text.len() }))
         }
         WorkerOp::Mkdir { path } => {
-            let resolved = creatable(path, roots)?;
+            let protected = protected_write_roots()?;
+            let resolved = creatable_with(path, roots, &protected)?;
             std::fs::create_dir(&resolved)
                 .map_err(|error| io_failure("create the folder", &error))?;
+            // Where the new folder really is, by its handle; a folder
+            // created through a swapped junction is removed (while empty)
+            // and refused.
+            #[cfg(windows)]
+            {
+                let folder = opened::open_created_folder(&resolved).map_err(|error| {
+                    failure(
+                        FailureCode::PathRaceDetected,
+                        format!("the created folder could not be opened again: {error}"),
+                    )
+                })?;
+                if let Err(error) = opened::recheck(&folder, &resolved_roots(roots), &protected) {
+                    opened::discard(&folder);
+                    return Err(error);
+                }
+            }
             Ok(json!({ "created": true }))
         }
         WorkerOp::Run {

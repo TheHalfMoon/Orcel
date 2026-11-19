@@ -157,7 +157,7 @@ pub(crate) const CHILD_ENVIRONMENT: &[&str] = &[
 
 /// `\\?\C:\x` as `C:\x` (canonicalized paths are verbatim on Windows; a
 /// working folder or program path in that form confuses some programs).
-fn plain(path: &Path) -> PathBuf {
+pub(crate) fn plain(path: &Path) -> PathBuf {
     match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
         Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
         _ => path.to_path_buf(),
