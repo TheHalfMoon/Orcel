@@ -551,6 +551,49 @@ pub(crate) fn desktop_gate(
     Ok(lease)
 }
 
+/// How the SG-000036 bounded execution shape (`uia.input/execute`) may run
+/// ([`bounded_execution_gate`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BoundedExecution {
+    /// DEPRECATED, unchanged: no service is installed, so the action keeps
+    /// its SG-000036 single-use input lease and per-action approval only,
+    /// through the in-process adapter (which actuates nothing today).
+    InProcess,
+    /// The service admitted the action under this lease: it runs only in
+    /// that lease's computer host, inside the lease's service-made Job
+    /// Object, with the host generation checked on every message.
+    Leased(String),
+}
+
+/// SG132_SLICE7.md (slice 6 residual 5): the gate of the SG-000036 bounded
+/// execution shape. With the service installed it is a lease-gated desktop
+/// action like every other one (SG-000132: the dispatcher is the only path
+/// for lease-gated executors; spec 4.14: desktop input runs in a host in a
+/// service-owned Job Object, never in orceld): [`desktop_gate`] (a service
+/// lease admitting the calling client, the service's audit-first
+/// `Authorize`, the outcome reported), and the action then runs only in the
+/// lease's host. Its own SG-000036 input lease and approval stay (a lease
+/// alone never replaces an approval). Where no service is installed nothing
+/// changes: the deprecated store is not consulted, as it never was for this
+/// shape.
+pub(crate) fn bounded_execution_gate(
+    port: &dyn AuthorityPort,
+    request: &RequestEnvelope,
+    now_ms: u64,
+) -> Result<BoundedExecution, ProviderError> {
+    if !port.installed() {
+        return Ok(BoundedExecution::InProcess);
+    }
+    match desktop_gate(port, request, now_ms)? {
+        Some(lease) => Ok(BoundedExecution::Leased(lease)),
+        // The deprecated store never admits anything once a service is
+        // installed; refuse rather than run in process.
+        None => Err(unavailable(
+            "bounded desktop execution runs only under an Orcel authority service lease while the service is installed",
+        )),
+    }
+}
+
 /// SG132_SLICE5.md: starts the desktop input host into a service-made Job
 /// Object (`full_control_dispatch::ensure_lease_host`; the computer host on
 /// Windows, a fake in tests).

@@ -133,7 +133,9 @@ Test names: `core_tests` in `crates/orcel-authority/src/`, `full_control_dispatc
    (`orcel_provider_uia::is_input_execute_shape`, `uia.rs` -> `execute_with_approval`) runs in-process through
    `NativeAdapter` under its own SG-000036 bounded lease and per-action approval. It does not pass the Full Control
    dispatcher, the service's `Authorize`, the lease's client binding, the desktop host job or the host generation
-   check. Moving it onto the dispatcher is next step 3.
+   check. Moving it onto the dispatcher is next step 3. **Closed by [SG132_SLICE7.md](SG132_SLICE7.md):** with the
+   service installed the shape now needs a service lease, `Authorize` and the lease's host (generation checked on
+   every message); without the service it is unchanged.
 6. Slice 5 residuals 1 to 3 and 5 to 9 stand unchanged (double loss of an acknowledgement reply, service restart,
    handle copies, what a job does not contain, observation outside a job, snapshots after a host switch, the
    15-second window, founder runs).
@@ -144,7 +146,8 @@ Test names: `core_tests` in `crates/orcel-authority/src/`, `full_control_dispatc
 2. Retire `authority.key` and the deprecated store after the founder's first real desktop grant through the
    installed service (slice 3 section 6).
 3. Move the SG-000036 bounded execution path (residual 5) onto the dispatcher: service `Authorize` with the
-   calling client, the lease's host in its job, the host generation on every message.
+   calling client, the lease's host in its job, the host generation on every message. Done in
+   [SG132_SLICE7.md](SG132_SLICE7.md).
 4. Request capabilities and MCP tools for the filesystem, process and git operations (slice 4 section 6, step 1),
    and a surface that shows a desktop client its reference (residual 2): founder product decisions.
 5. Possibly a private global atom table for the desktop host job (`GLOBALATOMS`), once UI Automation inside such a

@@ -554,6 +554,18 @@ pub(crate) fn desktop_input_gate(
     )
 }
 
+/// SG132_SLICE7.md: the SG-000036 bounded execution shape's gate against
+/// the installed service (`full_control_dispatch::bounded_execution_gate`).
+pub(crate) fn bounded_execution_gate(
+    request: &RequestEnvelope,
+) -> Result<crate::full_control_dispatch::BoundedExecution, ProviderError> {
+    crate::full_control_dispatch::bounded_execution_gate(
+        &ServicePort::installed_service(),
+        request,
+        orcel_approval::now_ms(),
+    )
+}
+
 /// Review F5: the SHA-256 the service's audit records for one desktop
 /// action: its workspace, capability, operation, target, arguments and time,
 /// so the record names what was done, not only its kind.

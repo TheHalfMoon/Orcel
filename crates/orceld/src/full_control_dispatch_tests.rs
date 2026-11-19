@@ -6,9 +6,9 @@
 
 use crate::fc_worker::WorkerOp;
 use crate::full_control_dispatch::{
-    action_digest, authorize, desktop_gate, ensure_lease_host, run_in_worker as dispatch_worker,
-    with_desktop_outcomes, Action, ActionApproval, AuthorityPort, Family, HostLauncher, JobGrant,
-    Ticket, WorkerLauncher,
+    action_digest, authorize, bounded_execution_gate, desktop_gate, ensure_lease_host,
+    run_in_worker as dispatch_worker, with_desktop_outcomes, Action, ActionApproval, AuthorityPort,
+    BoundedExecution, Family, HostLauncher, JobGrant, Ticket, WorkerLauncher,
 };
 use orcel_authority::lease::{
     BrowserFamily, GrantEvidence, LeaseBody, LeaseScope, ObservedRequester, LEASE_CONTRACT,
@@ -1057,6 +1057,152 @@ fn fc_dispatch_the_desktop_gate_names_the_calling_client() {
         Some(FailureCode::CapabilityDenied)
     );
     assert_eq!(port.0.borrow().authorized.len(), 1);
+}
+
+/// SG132_SLICE7.md (slice 6 residual 5): the SG-000036 bounded execution
+/// shape `uia.input/execute`.
+fn bounded_request() -> RequestEnvelope {
+    request(
+        "uia.input",
+        "execute",
+        json!({
+            "coord_id": "c",
+            "expected_derivation_generation": 1,
+            "operation": "click",
+        }),
+    )
+}
+
+#[test]
+fn fc_dispatch_bounded_execution_without_the_service_is_unchanged() {
+    // No service: the deprecated in-process route, as before; the
+    // deprecated store is not consulted (it never was for this shape) and
+    // nothing is authorized or reported.
+    let port = FakePort::default();
+    assert_eq!(
+        bounded_execution_gate(&port, &bounded_request(), 5).expect("unchanged"),
+        BoundedExecution::InProcess
+    );
+    let service = port.0.borrow();
+    assert_eq!(service.deprecated_checks, 0);
+    assert!(service.authorized.is_empty());
+    assert!(service.calls.is_empty());
+}
+
+#[test]
+fn fc_dispatch_bounded_execution_with_the_service_needs_a_lease_and_authorize() {
+    // Installed, a lease covering desktop input for this client: the
+    // service authorizes it (desktop input, the calling client) and the
+    // action runs only in that lease's host; the outcome is reported.
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let routed = with_desktop_outcomes(
+        || Box::new(port.clone()),
+        || bounded_execution_gate(&port, &bounded_request(), 5),
+    )
+    .expect("leased");
+    assert_eq!(
+        routed,
+        BoundedExecution::Leased(format!("al-{}", "1".repeat(32)))
+    );
+    {
+        let service = port.0.borrow();
+        assert_eq!(service.calls, vec!["authorize"]);
+        let (lease_id, executor, claims) = &service.authorized[0];
+        assert_eq!(lease_id, &format!("al-{}", "1".repeat(32)));
+        assert_eq!(*executor, ExecutorClass::DesktopInput);
+        assert_eq!(claims.principal_id, client());
+        assert_eq!(claims.capability, "uia.input");
+        assert_eq!(claims.operation, "execute");
+        assert_eq!(service.outcomes.len(), 1);
+        assert_eq!(service.outcomes[0].1, DispatchOutcome::Succeeded);
+        assert_eq!(service.deprecated_checks, 0);
+    }
+
+    // Installed, no lease: refused, never in process, nothing authorized.
+    let port = FakePort::installed(Vec::new());
+    assert_eq!(
+        code(bounded_execution_gate(&port, &bounded_request(), 6)),
+        Some(FailureCode::LeaseRequired)
+    );
+    assert!(port.0.borrow().authorized.is_empty());
+    assert_eq!(port.0.borrow().deprecated_checks, 0);
+
+    // Installed, a lease without desktop input: refused.
+    let filesystem_only = LeaseScope::DesktopFullUser {
+        executors: vec![ExecutorClass::Filesystem],
+        roots: vec![r"C:\work".to_owned()],
+        shells: false,
+    };
+    let port = FakePort::installed(vec![lease('2', filesystem_only)]);
+    assert_eq!(
+        code(bounded_execution_gate(&port, &bounded_request(), 7)),
+        Some(FailureCode::LeaseRequired)
+    );
+    assert!(port.0.borrow().authorized.is_empty());
+
+    // Installed, a lease bound to another client: refused before Authorize.
+    let mut other = bounded_request();
+    other.client_session_id = "another-mcp-client".into();
+    let port = FakePort::installed(vec![lease('3', full_scope())]);
+    assert_eq!(
+        code(bounded_execution_gate(&port, &other, 8)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert!(port.0.borrow().authorized.is_empty());
+
+    // Installed but not answering: refused, never the store or in process.
+    let port = FakePort::installed(vec![lease('4', full_scope())]);
+    port.with(|service| service.unreachable = true);
+    assert_eq!(
+        code(bounded_execution_gate(&port, &bounded_request(), 9)),
+        Some(FailureCode::AuthorityUnavailable)
+    );
+    assert_eq!(port.0.borrow().deprecated_checks, 0);
+
+    // The service refuses Authorize (a malformed answer stands in for any
+    // refusal): refused, nothing runs.
+    let port = FakePort::installed(vec![lease('5', full_scope())]);
+    port.with(|service| service.answer = Some(json!({})));
+    assert!(bounded_execution_gate(&port, &bounded_request(), 10).is_err());
+}
+
+#[test]
+fn fc_dispatch_bounded_execution_uses_the_in_process_adapter_only_without_the_service() {
+    // Structural: in `uia.rs` the bounded execution path asks the gate first,
+    // builds the in-process adapter only on the deprecated route, and runs
+    // the leased route in the lease's host.
+    let source = include_str!("uia.rs");
+    let start = source
+        .find("fn execute_with_approval(")
+        .expect("execute_with_approval");
+    let end = start
+        + source[start..]
+            .find("\nfn derive_with_approval(")
+            .expect("the next function");
+    let body = &source[start..end];
+    let gate = body
+        .find("bounded_execution_gate(request)?")
+        .expect("the gate");
+    let in_process = body
+        .find("BoundedExecution::InProcess =>")
+        .expect("the deprecated route");
+    let leased = body
+        .find("BoundedExecution::Leased(lease_id) =>")
+        .expect("the leased route");
+    let native: Vec<usize> = body
+        .match_indices("NativeAdapter::new()")
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(native.len(), 1, "one in-process adapter, on one route");
+    assert!(gate < in_process && in_process < native[0] && native[0] < leased);
+    let leased_route = &body[leased..];
+    let require = leased_route
+        .find("desktop_host_job::require_for(&lease_id)?")
+        .expect("the lease's host");
+    let host = leased_route
+        .find("computer_host()?")
+        .expect("the computer host");
+    assert!(require < host);
 }
 
 // ---------------------------------------------------------------------
