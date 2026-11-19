@@ -203,6 +203,14 @@ impl LeaseScope {
                         "shells and the shell_process executor are granted together or not at all",
                     ));
                 }
+                // SG132_SLICE6.md: every shell/process dispatch names paths
+                // inside the roots, so shells without roots could never
+                // authorize anything; such a lease is refused at the grant.
+                if *shells && roots.is_empty() {
+                    return Err(AuthorityError::invalid(
+                        "shells need at least one root: every shell/process dispatch names paths inside the roots",
+                    ));
+                }
                 if !roots.is_empty() && !executors.contains(&ExecutorClass::Filesystem) {
                     return Err(AuthorityError::invalid(
                         "roots need the filesystem executor",
@@ -607,9 +615,15 @@ impl LeaseBody {
     /// with `--client cl-...`) admits that client only. An unbound desktop
     /// lease (a free label, such as the default `orcel-owner`) admits any
     /// client reference, which the audit then records, and its own
-    /// principal, which an orceld from before this rule names.
-    pub fn admits_client(&self, client: &str) -> bool {
-        client == self.principal_id || (!is_client_ref(&self.principal_id) && is_client_ref(client))
+    /// principal, which an orceld from before this rule names. That
+    /// relaxation is for `executor` desktop input only (the one family whose
+    /// gate names the real client today); every other executor keeps the
+    /// exact match, so wiring a caller later never silently broadens it.
+    pub fn admits_client(&self, executor: ExecutorClass, client: &str) -> bool {
+        client == self.principal_id
+            || (executor == ExecutorClass::DesktopInput
+                && !is_client_ref(&self.principal_id)
+                && is_client_ref(client))
     }
 
     /// Binding, epoch and time. Revocation is the service's record.
@@ -686,6 +700,17 @@ mod tests {
             shells: true,
         };
         assert!(shells_without_executor.validate().is_err());
+        // SG132_SLICE6.md: shells without roots could never authorize a
+        // dispatch (each names paths inside the roots); refused.
+        let shells_without_roots = LeaseScope::DesktopFullUser {
+            executors: vec![ExecutorClass::DesktopInput, ExecutorClass::ShellProcess],
+            roots: Vec::new(),
+            shells: true,
+        };
+        assert_eq!(
+            shells_without_roots.validate().map_err(|e| e.code),
+            Err(orcel_contracts::FailureCode::InvalidRequest)
+        );
         let roots_without_fs = LeaseScope::DesktopFullUser {
             executors: vec![ExecutorClass::DesktopInput],
             roots: vec!["D:\\work".into()],

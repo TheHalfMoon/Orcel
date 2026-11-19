@@ -3194,8 +3194,47 @@ fn wp110_desktop_authorize_checks_the_calling_client_against_the_lease() -> Resu
     }
     assert_eq!(
         allowed(&dir)?,
-        vec![bound_client, other_client, "orcel-owner".to_owned()]
+        vec![
+            bound_client.clone(),
+            other_client.clone(),
+            "orcel-owner".to_owned()
+        ]
     );
+    ok(core.handle(
+        &owner(),
+        Request::Revoke {
+            lease_id: unbound_id,
+        },
+    ))?;
+
+    // The unbound relaxation is desktop input's only: filesystem and
+    // shell/process keep the exact match, even under an unbound lease.
+    let wide = grant_to(&mut core, Some(full_scope()), "orcel-owner")?;
+    let wide_id = wide.body.lease_id.clone();
+    for executor in [ExecutorClass::Filesystem, ExecutorClass::ShellProcess] {
+        let ask = |core: &mut AuthorityCore, principal: &str| {
+            core.handle(
+                &orceld(),
+                Request::Authorize {
+                    lease_id: wide_id.clone(),
+                    executor,
+                    claims: AuthorizeClaims {
+                        principal_id: principal.to_owned(),
+                        paths: Some(vec![SHELL_PATH.to_owned()]),
+                        ..claims()
+                    },
+                    job_ack: true,
+                },
+            )
+        };
+        assert_eq!(
+            code(ask(&mut core, &other_client)),
+            Some(FailureCode::CapabilityDenied),
+            "{executor:?}"
+        );
+        ok(ask(&mut core, "orcel-owner"))?;
+    }
+    ok(authorize_desktop_as(&mut core, &wide_id, &other_client))?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

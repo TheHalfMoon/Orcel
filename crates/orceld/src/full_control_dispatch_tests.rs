@@ -1037,10 +1037,26 @@ fn fc_dispatch_the_desktop_gate_names_the_calling_client() {
     unbound.principal_id = "orcel-owner".to_owned();
     let port = FakePort::installed(vec![unbound]);
     desktop_gate(&port, &other, 7).expect("an unbound lease");
-    let service = port.0.borrow();
-    assert_eq!(service.authorized.len(), 1);
-    assert_eq!(service.authorized[0].2.principal_id, other_ref);
-    assert_eq!(service.authorized[0].1, ExecutorClass::DesktopInput);
+    {
+        let service = port.0.borrow();
+        assert_eq!(service.authorized.len(), 1);
+        assert_eq!(service.authorized[0].2.principal_id, other_ref);
+        assert_eq!(service.authorized[0].1, ExecutorClass::DesktopInput);
+    }
+    // The unbound relaxation is desktop input's only: a filesystem dispatch
+    // naming a client keeps the exact match and is refused before Authorize.
+    assert_eq!(
+        code(run_in_worker(
+            &port,
+            &launcher(&port),
+            &fs_request(),
+            Some(&other_ref),
+            &read_op(r"C:\work\a.txt"),
+            8
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(port.0.borrow().authorized.len(), 1);
 }
 
 // ---------------------------------------------------------------------

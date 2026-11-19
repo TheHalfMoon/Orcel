@@ -318,7 +318,7 @@ fn authorize_with(
         }
         if action
             .principal_id
-            .is_some_and(|principal| !body.admits_client(principal))
+            .is_some_and(|principal| !body.admits_client(executor, principal))
         {
             nearest = Some(ProviderError::new(
                 FailureCode::CapabilityDenied,

@@ -208,7 +208,9 @@ lease. A Hello failure cancels the intent.
   falls back. Without the service, the deprecated store check is unchanged. Residual: the desktop gate names the
   lease's own principal in `Authorize` (orceld does not know the MCP client at that gate); WP1-10's dispatcher
   carries the real client. **Closed in slice 6** ([SG132_SLICE6.md](SG132_SLICE6.md) section 1.1): the gate names
-  the calling client's reference and a lease bound to a client admits only that client.
+  the calling client's reference and a lease bound to a client admits only that client. That reference derives from
+  the client-chosen `client_session_id`, so the binding has the same strength as OB-08's browser lease binding
+  ([SG132_SLICE6.md](SG132_SLICE6.md) residual 1).
 - Next: WP1-10 moves every lease-gated executor behind `Authorize` with Job Objects, then the store is retired.
   The dispatcher, the service-made Job Objects and `orceld fc-worker` are in [SG132_SLICE3.md](SG132_SLICE3.md).
 
