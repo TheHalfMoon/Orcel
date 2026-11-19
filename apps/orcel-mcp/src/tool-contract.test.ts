@@ -200,6 +200,9 @@ test("annotations, effect classes, and approval classes are mutually consistent"
     if (entry.effect === "lease_write") {
       assert.equal(entry.remote, "local_only", `${name} is local only`);
       assert.equal(entry.capability, "fc.fs", `${name} is a Full Control file operation`);
+      // Only the two operations the amendment covers; a future delete or
+      // move tagged lease_write fails here.
+      assert.ok(["write_text", "mkdir"].includes(entry.operation), `${name}: lease_write covers write_text and mkdir only`);
     }
     if (entry.approval === "STRONG") {
       strong.push(name);

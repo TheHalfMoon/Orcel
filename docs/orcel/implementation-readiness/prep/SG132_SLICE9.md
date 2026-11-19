@@ -40,7 +40,8 @@ characters (orceld's dispatch path check does the rest: alternate data streams, 
 The schemas are a first filter only; orceld checks every bound again before the lease is used or the person is asked.
 
 Descriptions say, for every tool, that it needs a Full Control lease from the Orcel authority service covering this
-client (with `fc_status` for the reference), that it refuses with `LEASE_REQUIRED` otherwise, and that it is local only;
+client (with `fc_status` for the reference), that it refuses otherwise (`LEASE_REQUIRED`, `CAPABILITY_DENIED`,
+`PATH_ESCAPE`), and that it is local only;
 which tools ask on every call; that file writes and folder creation are covered by the lease with no per-call
 approval (founder decision, the SG-000132 amendment); and which need a lease that includes programs (shells).
 
@@ -87,7 +88,14 @@ Test names: `apps/orcel-mcp/src/full-control.test.ts` unless stated.
 2. **The tools are listed before any lease exists** (founder decision 3) and refuse with `LEASE_REQUIRED` until one does.
 3. **The client reference changes when the MCP server restarts** (slice 6 residual 2, slice 8 residual 5). `fc_status`
    shows the current one.
-4. Slice 8's residuals stand unchanged (lease-covered writes without undo, Git changes without `expected_head`, the
+4. **A forwarded loopback port makes local-only tools remotely reachable.** The loopback HTTP transport serves
+   `desktop_structured` behind its bearer token and Host and Origin checks. Anyone who forwards that port through a
+   third-party tunnel (or shares the loopback token) turns every local-only tool into a remote one that orceld sees as
+   local, and `fc_fs_write` and `fc_fs_mkdir` then run without a prompt inside a granted lease's roots (the other
+   changes still raise the Windows dialog on this computer). The loopback token must never be shared and the port must
+   never be forwarded; Orcel's own remote path (the relay and tunnel) serves only `core` and is refused by orceld for
+   `fc.*`.
+5. Slice 8's residuals stand unchanged (lease-covered writes without undo, Git changes without `expected_head`, the
    approval asked before `Authorize`, the handle re-check's small windows, the founder runs).
 
 ## 6. Not done; next steps

@@ -180,7 +180,7 @@ export function fcStatusSchema(defaultWorkspace: string) {
 }
 
 const LEASE =
-  "Needs an active Full Control lease from the Orcel authority service that covers this client (see fc_status for its reference), and paths inside the lease's roots; refuses with LEASE_REQUIRED otherwise. Local only.";
+  "Needs an active Full Control lease from the Orcel authority service that covers this client (see fc_status for its reference), and paths inside the lease's roots; refuses otherwise (LEASE_REQUIRED without a covering lease, CAPABILITY_DENIED for a lease bound to another client or a refused shape, PATH_ESCAPE outside the roots). Local only.";
 const ASKS = "Asks the person a fresh Windows approval on every call.";
 const COVERED = "Covered by the lease: no per-call approval (founder decision, SG-000132 amendment of 2026-11-19).";
 const READS = "Read-only; asks nothing.";
