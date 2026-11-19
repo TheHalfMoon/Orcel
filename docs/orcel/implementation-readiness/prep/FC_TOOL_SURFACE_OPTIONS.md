@@ -1,6 +1,7 @@
 # Full Control tools for files, programs and Git: options for the founder
 
-Status: decision brief, docs only. Nothing here changes code. Written 2026-11-19 against `main` at `f22247a3` (#828).
+Status: decided. The founder chose option B on 2026-11-19 (section 8). Docs only; nothing here changes code.
+Written 2026-11-19 against `main` at `f22247a3` (#828).
 
 ## 1. What is built, and what is missing
 
@@ -95,9 +96,9 @@ worker.
 - Effort: large. Contract table split, remote scope table, parity inventory, golden Safe pairs re-qualified;
   about three slices.
 
-### Option B: separate `fc_*` tools, one per worker operation (recommended)
+### Option B: separate `fc_*` tools, one per worker operation (recommended; CHOSEN by the founder 2026-11-19)
 
-13 new local-only tools. Capability per family (`fc.fs`, `fc.process`, `fc.git`); the operation is the `WorkerOp`
+13 new local-only tools, plus `fc_status` (section 8). Capability per family (`fc.fs`, `fc.process`, `fc.git`); the operation is the `WorkerOp`
 name, which `run_in_worker` already requires. Paths are absolute and must be inside the lease's roots.
 `workspace_id` is optional and only fills the request envelope, as the `desktop_*` tools do.
 
@@ -106,8 +107,8 @@ name, which `run_in_worker` already requires. Paths are absolute and must be ins
 | `fc_fs_stat` | `path` | none (lease) |
 | `fc_fs_list` | `path`, `max_entries` 1..1000 | none (lease) |
 | `fc_fs_read` | `path`, `max_bytes` 1..262144 | none (lease) |
-| `fc_fs_write` | `path`, `text` (at most 256 KiB), `create_new` | decision question 2 |
-| `fc_fs_mkdir` | `path` | decision question 2 |
+| `fc_fs_write` | `path`, `text` (at most 256 KiB), `create_new` | none (lease; founder decision 2026-11-19) |
+| `fc_fs_mkdir` | `path` | none (lease; founder decision 2026-11-19) |
 | `fc_process_run` | `program` (absolute `.exe` in the roots), `args` (at most 64), `cwd`, `timeout_ms` 1..50000, `max_output_bytes` 1..65536 | SOFT, every call |
 | `fc_git_status` | `repository` | none (lease) |
 | `fc_git_diff` | `repository`, `staged` | none (lease) |
@@ -116,6 +117,7 @@ name, which `run_in_worker` already requires. Paths are absolute and must be ins
 | `fc_git_unstage` | `repository`, `paths` | SOFT, every call |
 | `fc_git_commit` | `repository`, `message` | SOFT, every call |
 | `fc_git_branch_create` | `repository`, `branch` | SOFT, every call |
+| `fc_status` | none | none (read-only; shows the active lease's executors, roots and expiry and this client's reference; added by founder decision 2026-11-19) |
 
 "None (lease)" means the lease covers it and the person is not asked, matching the Safe-mode read tools, which ask
 nothing (`approval: "none"` in `tool_contract.ts`). Every call, asked or not, still gets the service's own
@@ -180,3 +182,21 @@ If the founder prefers the smallest first step, option C is option B's first hal
 Interactive shells (SG-000096 ConPTY sessions), app launch and close, process listing and termination, copy, move,
 rename, delete to the Recycle Bin and large or binary files (SG-000097) need worker operations that do not exist yet;
 they get tools when they are built, under whichever naming the founder picks here. Standing approvals are WP1-14.
+
+## 8. Founder decision (2026-11-19)
+
+The founder answered the four questions of section 6 on 2026-11-19 (relayed to this engineering session the same
+day):
+
+1. **Option B**: separate `fc_*` tools.
+2. **No**: Full Control file writes (`fc_fs_write`, `fc_fs_mkdir`) are covered by the lease, with no per-call Windows
+   prompt. This is a founder decision that knowingly departs from the SG-000132 invariant "a lease alone never
+   replaces an approval", for these two file operations only. `fc_process_run` and the four Git changes
+   (`fc_git_stage`, `fc_git_unstage`, `fc_git_commit`, `fc_git_branch_create`) keep a SOFT approval on every call.
+3. **The normal local tool list** (`desktop_structured`), refusing with `LEASE_REQUIRED` until a lease exists.
+4. **Yes**: add the read-only `fc_status` tool (the active lease's executors, roots and expiry and this client's
+   reference; no approval).
+
+Recorded as an amendment in `.specgrain/specs/SG-000132.json` (`amendments`, 2026-11-19). Each covered write still
+has the service's authorize and audit record first, stays inside the lease's roots and is ended by Stop, revoke and
+expiry. The next step is option B's two slices (section 4), with `fc_status` in the MCP slice.

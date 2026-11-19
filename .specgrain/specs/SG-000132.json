@@ -118,6 +118,18 @@
         "Interim issuance (an SG-000135 grain decision, not a founder decision, pending the OB-08 independent security judge): until WP1-10 lands, browser leases are issued on the existing Hello-gated full-control store (orcel-policy full_control_store.rs, the SG-000093/SG-000095 STRONG grant) and migrate into the authority service with the same scope schema; an interim lease is ended at migration, never converted or widened. This is the only exception to the invariant that only the service issues leases, and it covers the Browser executor only.",
         "Spec 4.15 is amended for the remote browser_full profile only: a browser lease or browser standing approval may cover the remote caller that is the identified client named in it. Pending founder confirmation, such coverage requires a lease issued by the authority service with the grant window, narrow default scope and Event Log scope record qualified, and the interim store never covers a remote caller; the alternative is remote coverage by an interim-store browser lease gated by the existing SG-000055 STRONG remote-session lease (SG-000135 decisions)."
       ]
+    },
+    {
+      "title": "SG-000132 amendment: Full Control file writes covered by the lease, and the fc_* tool surface",
+      "created": "2026-11-19",
+      "base": "f22247a399c6019b212a443bd4203935fa7024b6",
+      "decision": "DECIDED (founder, 2026-11-19, answers to docs/orcel/implementation-readiness/prep/FC_TOOL_SURFACE_OPTIONS.md section 6): option B, separate local-only fc_* tools; Full Control file writes (fc_fs_write, fc_fs_mkdir) are covered by the lease with no per-call Windows prompt; the fc_* tools are in the normal local tool list (desktop_structured) and refuse with LEASE_REQUIRED until a lease exists; a read-only fc_status tool is added.",
+      "note": "Relayed to the engineering session on 2026-11-19 and recorded in FC_TOOL_SURFACE_OPTIONS.md section 8. The founder knowingly departs from the invariant that a lease alone never replaces an approval, for these two file operations only. The amendment keeps this spec in state GRAIN and adds no code, tool or authority by itself; the WP1-15 tool slices implement it.",
+      "changes": [
+        "Exception to the invariant 'A lease alone never replaces an approval': under a Full User lease that names the filesystem executor, the fc-worker operations write_text (tool fc_fs_write) and mkdir (tool fc_fs_mkdir) inside the lease's roots are covered by the lease and ask no per-action approval. Each still has a service Authorize and audit record first, stays inside the roots, refuses .git paths, keeps spec 4.14's refusal of the authority state and of writes to the user-session Orcel state root, and is ended by stop, revoke and expiry. No other operation is covered by this exception.",
+        "Unchanged: a process run (fc_process_run) and the git mutations (fc_git_stage, fc_git_unstage, fc_git_commit, fc_git_branch_create) keep a fresh SOFT approval on every call (SG-000096 A3), unless a standing approval (spec 4.15) covers them; deletion keeps its own approval (SG-000097); remote callers stay excluded (SG-000105).",
+        "Tool surface: one local-only fc_* MCP tool per fc-worker operation plus fc_status (read-only; the active lease's executors, roots and expiry and the calling client's reference; no approval), listed in desktop_structured, with no OAuth scope and never served remotely."
+      ]
     }
   ],
   "done_when": "WP1-10, WP1-12 and WP1-14 merge with exact-head qualification, J-3 and J-3b pass on Windows, and the canonical record names this grain CLOSED."
