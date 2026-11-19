@@ -29,6 +29,9 @@ pub enum EffectClass {
     DesktopCapture,
     DesktopControl,
     Clipboard,
+    // SG132_SLICE9.md: a Full Control file write covered by the lease (no
+    // per-call approval; the SG-000132 amendment of 2026-11-19).
+    LeaseWrite,
 }
 
 /// Remote exposure, spelled as in the TypeScript catalog: the string

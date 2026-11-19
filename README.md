@@ -59,7 +59,7 @@ Orcel is an **open-source computer-access authority layer** for MCP-compatible A
 
 ## What ChatGPT can do through Orcel
 
-Local MCP clients get the default `desktop_structured` profile: exactly the 45 tools below (the generated contract with every tool's bounds is [`docs/p16/TOOL_CONTRACT.md`](docs/p16/TOOL_CONTRACT.md); a test keeps this table equal to the profile):
+Local MCP clients get the default `desktop_structured` profile: exactly the 59 tools below (the generated contract with every tool's bounds is [`docs/p16/TOOL_CONTRACT.md`](docs/p16/TOOL_CONTRACT.md); a test keeps this table equal to the profile):
 
 | Area | Tools | Approval |
 |---|---|---|
@@ -78,8 +78,12 @@ Local MCP clients get the default `desktop_structured` profile: exactly the 45 t
 | Git (local changes) | `git_branch_create`, `git_stage`, `git_unstage`, `git_commit` | local approval, bound to the exact repository state |
 | Git (network) | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` | local approval; see limitations |
 | Processes | `process_spawn` | local approval; see limitations |
+| Full Control status | `fc_status` | none (read-only; shows this client's reference and the leases it can use); local-only |
+| Full Control reads | `fc_fs_stat`, `fc_fs_list`, `fc_fs_read`, `fc_git_status`, `fc_git_diff`, `fc_git_log` | none; each needs a Full Control lease from the Orcel authority service (granted with Windows Hello, for named folders, this client and a limited time); local-only |
+| Full Control file writes | `fc_fs_write`, `fc_fs_mkdir` | covered by the Full Control lease, no per-call approval (founder decision); never inside `.git` or Orcel's own state; local-only |
+| Full Control programs and Git changes | `fc_process_run`, `fc_git_stage`, `fc_git_unstage`, `fc_git_commit`, `fc_git_branch_create` | a Full Control lease that includes programs, and local approval on every call; local-only |
 
-Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: every desktop, clipboard, network, search and report task tool is local-only and cannot be reached remotely. The twelve live browser tools (open, navigate, observe, link click, download preview and download, and, from SG-000122, form fill, option select, checkbox or radio check, Enter, text wait and verify) are served only under the separate `browser_structured` profile of a Windows development build; release builds serve no browser automation.
+Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: every desktop, Full Control, clipboard, network, search and report task tool is local-only and cannot be reached remotely. The twelve live browser tools (open, navigate, observe, link click, download preview and download, and, from SG-000122, form fill, option select, checkbox or radio check, Enter, text wait and verify) are served only under the separate `browser_structured` profile of a Windows development build; release builds serve no browser automation.
 
 ### Current limitations
 

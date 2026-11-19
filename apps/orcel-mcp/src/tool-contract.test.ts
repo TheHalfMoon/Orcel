@@ -38,6 +38,20 @@ const LOCAL_ONLY = [
   "desktop_window_capture",
   "desktop_window_list",
   "desktop_window_tree",
+  "fc_fs_list",
+  "fc_fs_mkdir",
+  "fc_fs_read",
+  "fc_fs_stat",
+  "fc_fs_write",
+  "fc_git_branch_create",
+  "fc_git_commit",
+  "fc_git_diff",
+  "fc_git_log",
+  "fc_git_stage",
+  "fc_git_status",
+  "fc_git_unstage",
+  "fc_process_run",
+  "fc_status",
   "report_commit",
   "report_preview",
   "report_start",
@@ -160,7 +174,7 @@ test("annotations, effect classes, and approval classes are mutually consistent"
     if (["read", "preview", "desktop_observe", "desktop_capture"].includes(entry.effect)) {
       assert.equal(a.readOnlyHint, true, `${name} observes only`);
     }
-    if (["write", "destructive", "execute", "desktop_control"].includes(entry.effect)) {
+    if (["write", "destructive", "execute", "desktop_control", "lease_write"].includes(entry.effect)) {
       assert.equal(a.readOnlyHint, false, `${name} changes state`);
     }
     if (a.readOnlyHint) {
@@ -175,11 +189,21 @@ test("annotations, effect classes, and approval classes are mutually consistent"
     if (!["network", "execute"].includes(entry.effect)) {
       assert.equal(a.openWorldHint, false, `${name} is closed-world`);
     }
+    // SG132_SLICE9.md: a lease-covered Full Control write is the one change
+    // with no per-call approval (the SG-000132 amendment of 2026-11-19), and
+    // only on a local-only tool.
     assert.equal(
       entry.approval === "none",
-      ["read", "preview", "desktop_observe"].includes(entry.effect),
+      ["read", "preview", "desktop_observe", "lease_write"].includes(entry.effect),
       `${name}: approval is required exactly for effects beyond observation`
     );
+    if (entry.effect === "lease_write") {
+      assert.equal(entry.remote, "local_only", `${name} is local only`);
+      assert.equal(entry.capability, "fc.fs", `${name} is a Full Control file operation`);
+      // Only the two operations the amendment covers; a future delete or
+      // move tagged lease_write fails here.
+      assert.ok(["write_text", "mkdir"].includes(entry.operation), `${name}: lease_write covers write_text and mkdir only`);
+    }
     if (entry.approval === "STRONG") {
       strong.push(name);
     }
@@ -226,8 +250,10 @@ test("profile membership is exact and unmapped profiles fail closed", () => {
   assert.deepEqual([...profileTools("core")].sort(), CORE);
   assert.deepEqual([...profileTools("desktop_structured")].sort(), [...CORE, ...LOCAL_ONLY].sort());
   // SG-000135 OB-02: browser_full is pinned in browser-full.test.ts.
-  // SG-000108: browser_structured adds exactly the live browser tools.
-  assert.deepEqual([...profileTools("browser_structured")].sort(), [...CORE, ...LOCAL_ONLY, ...LIVE].sort());
+  // SG-000108: browser_structured adds exactly the live browser tools; the
+  // Full Control tools are desktop_structured's only (SG132_SLICE9.md).
+  const withoutFullControl = LOCAL_ONLY.filter((tool) => !tool.startsWith("fc_"));
+  assert.deepEqual([...profileTools("browser_structured")].sort(), [...CORE, ...withoutFullControl, ...LIVE].sort());
   for (const profile of ["developer", "coordinate_fallback", "admin", "", "__proto__", "constructor"]) {
     assert.throws(() => profileTools(profile), /not mapped/, profile);
   }

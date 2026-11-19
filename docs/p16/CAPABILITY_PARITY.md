@@ -54,7 +54,7 @@ Totals: implemented_exposed: 24, implemented_hidden: 0, missing: 1, intentionall
 
 ## Capability shapes
 
-Totals: implemented_exposed: 57, implemented_hidden: 4, missing: 0, intentionally_denied: 21.
+Totals: implemented_exposed: 71, implemented_hidden: 4, missing: 0, intentionally_denied: 21.
 
 | Shape | Status | MCP tool, owner, or reason |
 | --- | --- | --- |
@@ -140,3 +140,17 @@ Totals: implemented_exposed: 57, implemented_hidden: 4, missing: 0, intentionall
 | `desktop.cursor/get` | implemented_exposed | `desktop_cursor_get` |
 | `desktop.input/execute` | implemented_exposed | `desktop_input_execute` |
 | `desktop.window/action` | implemented_exposed | `desktop_window_action` |
+| `fc.status/get` | implemented_exposed | `fc_status` |
+| `fc.fs/stat` | implemented_exposed | `fc_fs_stat` |
+| `fc.fs/list` | implemented_exposed | `fc_fs_list` |
+| `fc.fs/read_text` | implemented_exposed | `fc_fs_read` |
+| `fc.fs/write_text` | implemented_exposed | `fc_fs_write` |
+| `fc.fs/mkdir` | implemented_exposed | `fc_fs_mkdir` |
+| `fc.process/run` | implemented_exposed | `fc_process_run` |
+| `fc.git/git_status` | implemented_exposed | `fc_git_status` |
+| `fc.git/git_diff` | implemented_exposed | `fc_git_diff` |
+| `fc.git/git_log` | implemented_exposed | `fc_git_log` |
+| `fc.git/git_add` | implemented_exposed | `fc_git_stage` |
+| `fc.git/git_unstage` | implemented_exposed | `fc_git_unstage` |
+| `fc.git/git_commit` | implemented_exposed | `fc_git_commit` |
+| `fc.git/git_branch_create` | implemented_exposed | `fc_git_branch_create` |

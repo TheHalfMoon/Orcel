@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { registerClipboardNetworkTools } from "./clipboard_network.js";
 import { registerDesktopTools } from "./desktop.js";
+import { registerFullControlTools } from "./full_control.js";
 import { registerFsMutationTools } from "./fs_mutation.js";
 import { registerGitFetchTools } from "./git_fetch.js";
 import { registerGitMutationTools } from "./git_mutation.js";
@@ -165,6 +166,20 @@ export const CANONICAL_TOOL_NAMES: readonly string[] = [
   "desktop_window_capture",
   "desktop_window_list",
   "desktop_window_tree",
+  "fc_fs_list",
+  "fc_fs_mkdir",
+  "fc_fs_read",
+  "fc_fs_stat",
+  "fc_fs_write",
+  "fc_git_branch_create",
+  "fc_git_commit",
+  "fc_git_diff",
+  "fc_git_log",
+  "fc_git_stage",
+  "fc_git_status",
+  "fc_git_unstage",
+  "fc_process_run",
+  "fc_status",
   "fs_edit",
   "fs_find",
   "fs_list",
@@ -536,6 +551,8 @@ export function registerOrcelTools(
   registerGitMutationTools(server, kernel, defaultWorkspace);
   registerFsMutationTools(server, kernel, defaultWorkspace);
   registerDesktopTools(server, kernel, defaultWorkspace);
+  // SG132_SLICE9.md: listed only under desktop_structured (the contract gate).
+  registerFullControlTools(server, kernel, defaultWorkspace);
   registerClipboardNetworkTools(server, kernel, defaultWorkspace);
   registerWebSearchTools(server, kernel, defaultWorkspace);
   registerReportTools(server, kernel, defaultWorkspace);

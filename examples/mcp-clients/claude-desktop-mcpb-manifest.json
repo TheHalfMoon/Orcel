@@ -89,6 +89,62 @@
       "description": "Read the bounded UI Automation control tree of one listed window, read-only, with password values never read."
     },
     {
+      "name": "fc_fs_list",
+      "description": "List one folder under a Full Control lease, read-only."
+    },
+    {
+      "name": "fc_fs_mkdir",
+      "description": "Create one folder under a Full Control lease; covered by the lease, no per-call approval."
+    },
+    {
+      "name": "fc_fs_read",
+      "description": "Read one UTF-8 text file under a Full Control lease, read-only."
+    },
+    {
+      "name": "fc_fs_stat",
+      "description": "Read one path's metadata under a Full Control lease, read-only."
+    },
+    {
+      "name": "fc_fs_write",
+      "description": "Write one UTF-8 text file under a Full Control lease; covered by the lease, no per-call approval."
+    },
+    {
+      "name": "fc_git_branch_create",
+      "description": "Create and switch to one Git branch under a Full Control lease, after a fresh approval."
+    },
+    {
+      "name": "fc_git_commit",
+      "description": "Commit the staged changes under a Full Control lease, after a fresh approval."
+    },
+    {
+      "name": "fc_git_diff",
+      "description": "Read one repository's Git diff under a Full Control lease, read-only."
+    },
+    {
+      "name": "fc_git_log",
+      "description": "Read one repository's Git log under a Full Control lease, read-only."
+    },
+    {
+      "name": "fc_git_stage",
+      "description": "Stage explicit paths under a Full Control lease, after a fresh approval."
+    },
+    {
+      "name": "fc_git_status",
+      "description": "Read one repository's Git status under a Full Control lease, read-only."
+    },
+    {
+      "name": "fc_git_unstage",
+      "description": "Unstage explicit paths under a Full Control lease, after a fresh approval."
+    },
+    {
+      "name": "fc_process_run",
+      "description": "Run one program inside the lease's roots under a Full Control lease, after a fresh approval."
+    },
+    {
+      "name": "fc_status",
+      "description": "Show this client's reference and the Full Control leases it can use, read-only."
+    },
+    {
       "name": "fs_edit",
       "description": "Replace exact text in one file bound to its SHA-256 after local approval."
     },
