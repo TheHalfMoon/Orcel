@@ -1,0 +1,217 @@
+{
+  "schema": "orcel.source_pins.v1",
+  "created_at": "2026-11-16",
+  "purpose": "Provenance reference for unified-platform planning PR; references are not imported code or proof of rights",
+  "license_policy": "Each imported unit must preserve required notices and comply with identified upstream/third-party license or a documented copyright-holder grant.",
+  "status": "planning_only",
+  "sources": [
+    {
+      "id": "obscura",
+      "repository": "h4ckf0r0day/obscura",
+      "url": "https://github.com/h4ckf0r0day/obscura",
+      "ref": "main",
+      "sha": "0d9a2f764ffdb097269da048002c593865e83a9e",
+      "license_status": "reported_apache_2_0",
+      "role": "preferred_browser_engine",
+      "features": [
+        "rust_browser_engine",
+        "cdp",
+        "pdf",
+        "screenshot",
+        "mcp"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "browser-use",
+      "repository": "browser-use/browser-use",
+      "url": "https://github.com/browser-use/browser-use",
+      "ref": "main",
+      "sha": "4b5b1b0aa0ab45a1d6a2a31984d37d3e748c0134",
+      "license_status": "reported_mit",
+      "role": "browser_agent",
+      "features": [
+        "agent_loop",
+        "dom",
+        "actions",
+        "sessions"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "vercel-agent-browser",
+      "repository": "vercel-labs/agent-browser",
+      "url": "https://github.com/vercel-labs/agent-browser",
+      "ref": "main",
+      "sha": "53384771fbafc261ba67608ac806dd5aa70b84f0",
+      "license_status": "reported_apache_2_0",
+      "role": "browser_cli_and_daemon",
+      "features": [
+        "cli",
+        "daemon",
+        "accessibility_refs",
+        "sessions"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "vercel-remote-agent-browser",
+      "repository": "vercel-labs/remote-agent-browser",
+      "url": "https://github.com/vercel-labs/remote-agent-browser",
+      "ref": "main",
+      "sha": "8770ea28f3ab0e8822e104e12e0efb65339d235b",
+      "license_status": "verify",
+      "role": "remote_browser_reference",
+      "features": [
+        "remote_sessions",
+        "provider_contract"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "crawlee",
+      "repository": "apify/crawlee",
+      "url": "https://github.com/apify/crawlee",
+      "ref": "master",
+      "sha": "7bec9ad5631f8e529ae067494f6841dba3c12683",
+      "license_status": "reported_apache_2_0",
+      "role": "crawler_jobs",
+      "features": [
+        "request_queue",
+        "retry",
+        "rate",
+        "storage"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "scrapling",
+      "repository": "D4Vinci/Scrapling",
+      "url": "https://github.com/D4Vinci/Scrapling",
+      "ref": "main",
+      "sha": "bb223f2f5fc8f743772751a5ce283ef7851ca6be",
+      "license_status": "reported_bsd_3_clause",
+      "role": "web_extraction",
+      "features": [
+        "adaptive_selectors",
+        "spiders",
+        "parsers"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "firecrawl",
+      "repository": "firecrawl/firecrawl",
+      "url": "https://github.com/firecrawl/firecrawl",
+      "ref": "main",
+      "sha": "25a92fc3175babbd75fd50a0e8122aaa44b068ad",
+      "license_status": "reported_agpl_3_0_root_and_mit_subtrees",
+      "role": "web_intelligence",
+      "features": [
+        "scrape",
+        "crawl",
+        "map",
+        "search",
+        "batch",
+        "extract",
+        "change_tracking"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "mika",
+      "repository": "wangzan101/Mika",
+      "url": "https://github.com/wangzan101/Mika",
+      "ref": "main",
+      "sha": "e956f5529ad4cfd7881aafaa630318097949f56a",
+      "license_status": "reported_apache_2_0",
+      "role": "mobile_android",
+      "features": [
+        "android_agents",
+        "background_control",
+        "device_tasks"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "fleet",
+      "repository": "fleetdm/fleet",
+      "url": "https://github.com/fleetdm/fleet",
+      "ref": "main",
+      "sha": "99e64e6bbee9e7a9b5334fea2527303992f747f7",
+      "license_status": "mixed_licenses_verify_component",
+      "role": "device_management",
+      "features": [
+        "inventory",
+        "policies",
+        "software_management"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    },
+    {
+      "id": "phone-harness",
+      "repository": "phone-harness/phone-harness",
+      "url": "https://github.com/phone-harness/phone-harness",
+      "ref": "main",
+      "sha": "4bebff105af853215fb74c958c2c5e78bc275be2",
+      "license_status": "MIT_verified_ROOT_LICENSE",
+      "role": "phone_control",
+      "features": [
+        "local_android_adb",
+        "macos_iphone_mirroring",
+        "vision_ocr",
+        "screenshots",
+        "touch_swipe_type",
+        "python_unified_helpers",
+        "optional_cloud_provider"
+      ],
+      "source_admission": "not_started",
+      "integration_status": "not_started",
+      "test_evidence": [],
+      "copyright_grant": "founder_attestation_only_scope_not_verified"
+    }
+  ],
+  "unresolved_sources": [
+    {
+      "name": "UU Remote",
+      "reason": "exact official/reusable source not identified"
+    },
+    {
+      "name": "Vercel agent-use",
+      "reason": "exact repository not identified"
+    }
+  ],
+  "constraints": [
+    "Local Android runs via ADB across supported host OSes",
+    "Local iPhone Mirroring is macOS-only; cloud integration is optional",
+    "Do not infer cloud subscriptions/assets from open-source repo",
+    "No donor code imported or sublicensed by this inventory."
+  ]
+}
