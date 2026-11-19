@@ -127,9 +127,64 @@ fn trusted_native_host(
     .map_err(|error| ProviderError::new(error.code, error.message))
 }
 
-fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
-    static HOST: OnceLock<ComputerHostAdapter> = OnceLock::new();
+/// orceld's one computer host adapter (its host process can be replaced).
+static HOST: OnceLock<ComputerHostAdapter> = OnceLock::new();
+
+/// SG132_SLICE5.md: whether the computer host process is running.
+pub(crate) fn computer_host_running() -> bool {
+    HOST.get().is_some_and(ComputerHostAdapter::host_running)
+}
+
+/// SG132_SLICE5.md: makes a host orceld started (suspended, in a lease's
+/// service-made Job Object, then resumed) the computer host; the host it
+/// replaces is ended.
+#[cfg(windows)]
+pub(crate) fn adopt_computer_host(
+    path: std::path::PathBuf,
+    process: Box<dyn orcel_provider_uia::SpawnedHost>,
+    stdin: Box<dyn std::io::Write + Send>,
+    stdout: Box<dyn std::io::Read + Send>,
+) -> Result<(), ProviderError> {
+    let provider =
+        |error: orcel_provider_uia::UiaError| ProviderError::new(error.code, error.message);
     if let Some(host) = HOST.get() {
+        return host.adopt_host(process, stdin, stdout).map_err(provider);
+    }
+    let adapter = ComputerHostAdapter::adopting(path, process, stdin, stdout).map_err(provider)?;
+    // Another request made the adapter meanwhile: the new host is ended
+    // with the refused adapter and this action refuses (fail closed).
+    HOST.set(adapter).map_err(|_| {
+        ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "the computer host changed while the lease's host started; try again",
+        )
+    })
+}
+
+fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
+    // SG132_SLICE5.md: a request the authority service admitted under a
+    // lease uses only that lease's host, inside its Job Object; it never
+    // starts or falls back to a host outside it.
+    if let Some(lease) = crate::desktop_host_job::required() {
+        return HOST
+            .get()
+            .filter(|host| host.host_running() && crate::desktop_host_job::serves(&lease))
+            .ok_or_else(|| {
+                ProviderError::new(
+                    FailureCode::LeaseInvalid,
+                    "the lease's desktop input host has ended (its Job Object ends with the lease); nothing runs outside it",
+                )
+            });
+    }
+    if let Some(host) = HOST.get() {
+        // The leased host ends with its lease's job; observation then
+        // starts a plain host again, outside any job.
+        #[cfg(windows)]
+        if !host.host_running() {
+            crate::desktop_host_job::forget();
+            host.restart_host()
+                .map_err(|error| ProviderError::new(error.code, error.message))?;
+        }
         return Ok(host);
     }
     #[cfg(not(windows))]
@@ -218,8 +273,19 @@ fn arm_input(
 /// when it is installed (`authority_link::desktop_input_gate`); the
 /// deprecated user-readable store applies only where it is not. WP1-10: it
 /// is the Full Control dispatcher's desktop input path.
+///
+/// SG132_SLICE5.md: when the service admitted the action under a lease and
+/// the computer host is selected, the action runs only in a host inside that
+/// lease's service-made Job Object (started fresh for a new lease, ended by
+/// the service with the lease); if that cannot be arranged, nothing runs.
 fn require_full_user_desktop(request: &RequestEnvelope) -> Result<(), ProviderError> {
-    crate::authority_link::desktop_input_gate(request)
+    let lease = crate::authority_link::desktop_input_gate(request)?;
+    if let Some(lease_id) = lease {
+        if computer_host_selected() {
+            crate::desktop_host_job::require_for(&lease_id)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn is_full_user_desktop_shape(capability: &str, operation: &str) -> bool {
@@ -861,10 +927,13 @@ pub fn dispatch_uia(
     approval: &impl ApprovalBroker,
     request: &RequestEnvelope,
 ) -> Result<Option<Value>, ProviderError> {
-    crate::full_control_dispatch::with_desktop_outcomes(
+    crate::desktop_host_job::clear_required();
+    let result = crate::full_control_dispatch::with_desktop_outcomes(
         || Box::new(crate::authority_link::ServicePort::installed_service()),
         || dispatch_uia_request(workspace, approval, request),
-    )
+    );
+    crate::desktop_host_job::clear_required();
+    result
 }
 
 fn dispatch_uia_request(

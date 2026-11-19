@@ -92,6 +92,9 @@ mod sg000128_dispatch_tests;
     )),
     allow(dead_code)
 )]
+// SG-000132 WP1-10 (SG132_SLICE5.md): the desktop input host in a
+// lease-lifetime, service-made Job Object.
+mod desktop_host_job;
 mod document_parse;
 mod executable_admin;
 // SG-000132 WP1-10: `orceld fc-worker`, the child that performs Full Control

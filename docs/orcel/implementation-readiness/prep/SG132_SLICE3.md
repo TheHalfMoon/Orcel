@@ -41,7 +41,8 @@ One path for desktop input, filesystem, process and git:
    roots again, makes the dispatch's job, and writes the allow record naming it (`job_id`) before it answers.
    orceld refuses an answer without an authorization id, for another lease, or whose job is missing or malformed
    for a job family, or present for desktop input (`AUTHORITY_UNAVAILABLE`); a job handle that came with a
-   refused answer is closed.
+   refused answer is closed. (Slice 5 changed this: orceld leaves such a handle alone and the service, which
+   never received its acknowledgement, closes it in orceld; [SG132_SLICE5.md](SG132_SLICE5.md) section 1.3.)
 4. **Run.** Desktop input runs in orceld as before (the computer host; SG-000095's per-action approval
    unchanged). Filesystem operations run only in `orceld fc-worker` in the job, which runs only after
    `DispatchActive` confirmed the authorization (section 3). Process and git use the same launch and are the
@@ -99,7 +100,10 @@ Decisions:
   terminated by the service (age limit, lease end); nothing can be resumed in it because `DispatchActive`
   refuses an authorization whose job the service no longer holds. Cost: one leaked handle per lost reply. Not
   fixed in this slice (an acknowledgement with the handle value, and terminating unacknowledged jobs after a
-  short timeout, is recorded as a next step).
+  short timeout, is recorded as a next step). **Closed in slice 5** ([SG132_SLICE5.md](SG132_SLICE5.md)
+  section 1.3): orceld acknowledges each handle (`JobAck`) before using it, a job not confirmed within 15 s is
+  ended, and the service closes an unacknowledged handle in orceld itself; what remains (an acknowledgement
+  whose reply is also lost) is slice 5 residual 1.
 - **Residual, service restart:** a same-user process that copied orceld's assign-only handle (it holds
   `PROCESS_DUP_HANDLE` on orceld) keeps the job object alive. If the service restarts while processes run in
   that job, the restarted service no longer knows the job, kill-on-close does not fire while that copy exists,
@@ -191,6 +195,8 @@ persist.
   `orcel-lifecycle/src/full_control.rs`, make `deprecated_desktop_check` refuse, then remove the store.
 - The desktop input host (`apps/orcel-computer-host`, spawned by `HostSession::spawn`) is not yet launched into
   a service-made job; desktop input still runs in orceld's host session (listed in the service's `deferred`).
+  **Done in slice 5** ([SG132_SLICE5.md](SG132_SLICE5.md)): a lease-lifetime job per desktop Full User lease;
+  desktop input admitted under a lease runs only in a host inside it.
 - No request capability reaches `run_in_worker` yet: the filesystem, process and git capabilities under a Full
   User lease (SG-000097, SG-000096) need their policy shapes, MCP tools and per-action approvals.
 
@@ -202,14 +208,14 @@ WP1-10 and WP1-15 (the step numbers below are referred to by slice 4):
    argv only, the repository path in the roots, the broker residuals of section 5 closed) and the
    SG-000097/SG-000096 capabilities that call `run_in_worker`, with their approvals.
 2. The desktop input host started into a service-made job (suspended, assigned, confirmed, resumed), so Stop
-   kills it too.
+   kills it too. Done in slice 5 ([SG132_SLICE5.md](SG132_SLICE5.md)).
 3. Retire `authority.key` and the deprecated store (section 6) after the founder's first real desktop grant.
 4. The real MCP client principal at the desktop gate (slice 2 residual).
 5. An acknowledgement of each job handle by orceld, with unacknowledged jobs terminated (and their handles
    closed in orceld) after a short timeout, for the lost-reply residual of section 2. The acknowledgement names
    the `authorization_id` and the handle value, is accepted only from the same user, logon session and orceld
    instance (PID and creation time) the handle went to, and the timeout fires only before that authorization's
-   `DispatchActive`.
+   `DispatchActive`. Done in slice 5 ([SG132_SLICE5.md](SG132_SLICE5.md) section 1.3).
 6. Founder runs (UNVERIFIED rows above): a handle duplicated by the installed service into a real orceld after
    impersonating it; Stop through the installed service killing an in-flight `fc-worker`; a desktop action's
    outcome in the service's audit.
@@ -235,7 +241,7 @@ Re-review of `073b7fee` (pass, with lows):
 | An evicted open dispatch kept its job | Eviction terminates the evicted dispatch's job (`core_tests::wp110_an_evicted_open_dispatch_ends_its_job`) |
 | The request's `operation` could differ from the operation run | Refused (`full_control_dispatch_tests::fc_dispatch_the_operation_is_the_request_arguments_or_nothing`) |
 | Optional: `IsProcessInJob(worker, job)` after assigning | Not done: it needs `JOB_OBJECT_QUERY`, which orceld's handle deliberately lacks (section 2) |
-| Residuals: a lost Authorize reply leaks the handle in orceld; a same-user copy keeps a job alive across a service restart | Documented in section 2 and the threat model; the acknowledgement is next step 5 |
+| Residuals: a lost Authorize reply leaks the handle in orceld; a same-user copy keeps a job alive across a service restart | Documented in section 2 and the threat model; the acknowledgement is next step 5 (done in slice 5; the restart residual stands) |
 
 ## Tests
 

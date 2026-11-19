@@ -20,9 +20,12 @@
 //!    answers; for the filesystem and process/git families the answer must
 //!    carry the dispatch's service-made, unnamed Job Object as an
 //!    assign-only handle the service duplicated into this process
-//!    (`job_id`, `job_handle`), or nothing runs;
-//! 4. runs the action: desktop input in orceld as before (SG-000095's
-//!    per-action approval unchanged); filesystem, process and git operations
+//!    (`job_id`, `job_handle`), or nothing runs; SG132_SLICE5.md: the handle
+//!    is acknowledged (`JobAck`) before it is used;
+//! 4. runs the action: desktop input through orceld's computer host as
+//!    before (SG-000095's per-action approval unchanged), SG132_SLICE5.md:
+//!    in a host inside the lease's service-made Job Object
+//!    ([`ensure_lease_host`]); filesystem, process and git operations
 //!    only in `orceld fc-worker` inside that Job Object ([`crate::fc_worker`]),
 //!    never in this long-lived process. The worker is assigned while
 //!    suspended and resumed only after the service confirms the
@@ -166,9 +169,15 @@ pub(crate) trait AuthorityPort {
     /// Whether the authorization still stands (lease active, job held);
     /// asked after the worker is assigned and before it is resumed.
     fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError>;
-    /// Closes a job handle the service duplicated into this process that
-    /// will not be used (an answer refused here).
-    fn release_job_handle(&self, handle: u64);
+    /// SG132_SLICE5.md: acknowledges the job handle an answer carried,
+    /// before it is used. A handle whose acknowledgement fails is neither
+    /// used nor closed here: the service closes an unacknowledged handle in
+    /// this process itself (after its acknowledgement timeout), and closing
+    /// it here too could close a reused handle value.
+    fn job_ack(&self, authorization_id: &str, job_handle: u64) -> Result<(), ProviderError>;
+    /// SG132_SLICE5.md: a Job Object for the desktop input host under
+    /// `lease_id` (`authorization_id`, `lease_id`, `job_id`, `job_handle`).
+    fn desktop_host_job(&self, lease_id: &str) -> Result<Value, ProviderError>;
 }
 
 /// The person's fresh approval of one worker operation (SG-000096's
@@ -357,23 +366,19 @@ fn authorize_with(
         paths: (!action.paths.is_empty()).then(|| action.paths.clone()),
     };
     let answer = port.authorize(&body.lease_id, executor, claims)?;
-    let release = |answer: &Value| {
-        if let Some(handle) = answer["job_handle"].as_u64().filter(|handle| *handle != 0) {
-            port.release_job_handle(handle);
-        }
-    };
+    // SG132_SLICE5.md: a job handle that came with an answer refused here
+    // is left alone (never acknowledged, used or closed): the service
+    // closes it in this process after its acknowledgement timeout.
     let Some(authorization_id) = answer["authorization_id"]
         .as_str()
         .filter(|id| id.starts_with("az-"))
         .map(str::to_owned)
     else {
-        release(&answer);
         return Err(unavailable(
             "the authority's Authorize answer names no authorization",
         ));
     };
     if answer["lease_id"].as_str() != Some(body.lease_id.as_str()) {
-        release(&answer);
         return Err(unavailable(
             "the authority authorized a different lease than the one asked for",
         ));
@@ -391,14 +396,24 @@ fn authorize_with(
             ))
         }
         _ => {
-            if let Some(handle) = handle {
-                port.release_job_handle(handle);
-            }
             return Err(unavailable(
                 "the authority's job is malformed or unexpected for this family",
-            ));
+            ))
         }
     };
+    // SG132_SLICE5.md: acknowledged before anything uses the handle. A
+    // refused acknowledgement runs nothing; its outcome is reported, which
+    // ends the job (the service also closes the unacknowledged handle).
+    if let Some(job) = &job {
+        if let Err(error) = port.job_ack(&authorization_id, job.handle) {
+            let _ = port.outcome(
+                &authorization_id,
+                DispatchOutcome::Failed,
+                Some(error.code.clone()),
+            );
+            return Err(error);
+        }
+    }
     Ok(Ticket::Service(Grant {
         authorization_id,
         lease_id: body.lease_id.clone(),
@@ -498,12 +513,15 @@ thread_local! {
 
 /// The desktop input gate (SG-000095's `require_full_user_desktop`): the
 /// dispatcher's steps 1 to 3 for desktop input. A service authorization is
-/// remembered so [`with_desktop_outcomes`] reports how the request ended.
+/// remembered so [`with_desktop_outcomes`] reports how the request ended,
+/// and its lease is returned: SG132_SLICE5.md, the desktop input then runs
+/// only in that lease's computer host ([`ensure_lease_host`]). `None`
+/// means the deprecated store admitted it (no service installed).
 pub(crate) fn desktop_gate(
     port: &dyn AuthorityPort,
     request: &RequestEnvelope,
     now_ms: u64,
-) -> Result<(), ProviderError> {
+) -> Result<Option<String>, ProviderError> {
     let ticket = authorize(
         port,
         &Action {
@@ -514,10 +532,96 @@ pub(crate) fn desktop_gate(
         },
         now_ms,
     )?;
-    if matches!(ticket, Ticket::Service(_)) {
+    let lease = match &ticket {
+        Ticket::Service(grant) => Some(grant.lease_id.clone()),
+        Ticket::DeprecatedStore => None,
+    };
+    if lease.is_some() {
         DESKTOP_GRANTS.with(|grants| grants.borrow_mut().push(ticket));
     }
-    Ok(())
+    Ok(lease)
+}
+
+/// SG132_SLICE5.md: starts the desktop input host into a service-made Job
+/// Object (`full_control_dispatch::ensure_lease_host`; the computer host on
+/// Windows, a fake in tests).
+pub(crate) trait HostLauncher {
+    /// Whether the host the launcher last started is still running.
+    fn running(&self) -> bool;
+    /// Starts a fresh host suspended, assigns it with `job_handle` (and
+    /// closes that handle on every path), calls `confirm`, resumes it only
+    /// if that succeeds (terminating it otherwise), and makes it the host
+    /// desktop requests use; the host it replaces is ended.
+    fn start_in_job(
+        &self,
+        job_handle: u64,
+        confirm: &dyn Fn() -> Result<(), ProviderError>,
+    ) -> Result<(), ProviderError>;
+}
+
+/// The lease whose job the running desktop input host is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LeaseHost {
+    pub lease_id: String,
+    pub authorization_id: String,
+    pub job_id: String,
+}
+
+/// SG132_SLICE5.md: makes sure desktop input for `lease_id` runs in a
+/// computer host inside that lease's service-made Job Object. A host that
+/// is already running in this lease's job is kept (one host per lease, not
+/// per dispatch, because the host is long-lived across dispatches); any
+/// other case (no host in a job yet, a host in another lease's job, or a
+/// host that ended, as it does when the service ends the job on revoke,
+/// Stop, lock, sign-out or expiry) asks the service for a fresh job
+/// (`DesktopHostJob`), acknowledges its handle, starts a fresh host
+/// suspended, assigns it, confirms with `DispatchActive` and resumes it.
+/// Every failure refuses the desktop action (fail closed); the host and the
+/// state from before are left as they were.
+pub(crate) fn ensure_lease_host(
+    port: &dyn AuthorityPort,
+    launcher: &dyn HostLauncher,
+    current: &std::sync::Mutex<Option<LeaseHost>>,
+    lease_id: &str,
+) -> Result<LeaseHost, ProviderError> {
+    let mut current = current
+        .lock()
+        .map_err(|_| unavailable("the desktop host state is poisoned"))?;
+    if let Some(host) = current.as_ref() {
+        if host.lease_id == lease_id && launcher.running() {
+            return Ok(host.clone());
+        }
+    }
+    let answer = port.desktop_host_job(lease_id)?;
+    let authorization_id = answer["authorization_id"]
+        .as_str()
+        .filter(|id| id.starts_with("az-"))
+        .map(str::to_owned);
+    let job_id = answer["job_id"]
+        .as_str()
+        .filter(|id| is_job_id(id))
+        .map(str::to_owned);
+    let handle = answer["job_handle"].as_u64().filter(|handle| *handle != 0);
+    let (Some(authorization_id), Some(job_id), Some(handle)) = (authorization_id, job_id, handle)
+    else {
+        return Err(unavailable(
+            "the authority's desktop host job is malformed; the desktop host runs only in one",
+        ));
+    };
+    if answer["lease_id"].as_str() != Some(lease_id) {
+        return Err(unavailable(
+            "the authority made the desktop host job for a different lease",
+        ));
+    }
+    port.job_ack(&authorization_id, handle)?;
+    launcher.start_in_job(handle, &|| port.dispatch_active(&authorization_id))?;
+    let host = LeaseHost {
+        lease_id: lease_id.to_owned(),
+        authorization_id,
+        job_id,
+    };
+    *current = Some(host.clone());
+    Ok(host)
 }
 
 /// Runs one desktop request and reports the outcome of every desktop

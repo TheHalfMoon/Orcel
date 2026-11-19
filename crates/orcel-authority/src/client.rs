@@ -215,6 +215,27 @@ impl AuthorityClient {
         })
     }
 
+    /// SG132_SLICE5.md: acknowledges the job handle an answer carried,
+    /// before it is used.
+    pub fn job_ack(
+        &self,
+        authorization_id: &str,
+        job_handle: u64,
+    ) -> Result<Value, AuthorityError> {
+        self.call(&Request::JobAck {
+            authorization_id: authorization_id.to_owned(),
+            job_handle,
+        })
+    }
+
+    /// SG132_SLICE5.md: a Job Object for the desktop input host under
+    /// `lease_id` (lease lifetime).
+    pub fn desktop_host_job(&self, lease_id: &str) -> Result<Value, AuthorityError> {
+        self.call(&Request::DesktopHostJob {
+            lease_id: lease_id.to_owned(),
+        })
+    }
+
     pub fn revoke(&self, lease_id: &str) -> Result<Value, AuthorityError> {
         self.call(&Request::Revoke {
             lease_id: lease_id.to_owned(),

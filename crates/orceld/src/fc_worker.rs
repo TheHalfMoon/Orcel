@@ -678,6 +678,8 @@ fn keep_standard_handles_private() {}
 #[cfg(windows)]
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use launch::JobLauncher;
+#[cfg(windows)]
+pub(crate) use launch::{start_suspended_in_job, Launch};
 
 #[cfg(windows)]
 #[cfg_attr(not(test), allow(dead_code))]
@@ -689,12 +691,12 @@ mod launch {
     use orcel_contracts::FailureCode;
     use orcel_provider_fs::ProviderError;
     use serde_json::Value;
-    use std::ffi::c_void;
+    use std::ffi::{c_void, OsString};
     use std::fs::File;
     use std::io::{Read, Write};
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::FromRawHandle;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::ptr;
     use std::time::Duration;
     use windows_sys::Win32::Foundation::{
@@ -709,9 +711,9 @@ mod launch {
     use windows_sys::Win32::System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
         ResumeThread, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
-        CREATE_NO_WINDOW, CREATE_SUSPENDED, EXTENDED_STARTUPINFO_PRESENT,
-        LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-        STARTF_USESTDHANDLES, STARTUPINFOEXW,
+        CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+        EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
+        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
     };
 
     /// How long one worker operation may run.
@@ -865,92 +867,158 @@ mod launch {
             Ok(orcel_authority::hex(&bytes))
         }
 
-        /// Starts the worker suspended, assigns it to `job`, closes the
-        /// job handle, asks `confirm`, and resumes it only if that succeeds
-        /// (terminating it otherwise). Returns the process and orceld's ends
-        /// of its stdin and stdout.
+        /// Starts the worker suspended in `job` ([`start_suspended_in_job`]).
         fn start(
             &self,
             job: Owned,
             confirm: &dyn Fn() -> Result<(), ProviderError>,
         ) -> Result<(Owned, File, File), ProviderError> {
-            let (child_stdin, host_stdin) = pipe(true)?;
-            let (child_stdout, host_stdout) = pipe(false)?;
-            let child_stderr = null_output()?;
-            let inherited = [child_stdin.0, child_stdout.0, child_stderr.0];
-            let mut attributes = AttributeList::handle_list(&inherited)?;
-            let program = self.program.as_os_str();
-            let mut command: Vec<u16> = format!("\"{}\" fc-worker", program.to_string_lossy())
+            start_suspended_in_job(
+                &Launch {
+                    program: &self.program,
+                    arguments: "fc-worker",
+                    environment: None,
+                    no_window: true,
+                },
+                job,
+                confirm,
+            )
+        }
+    }
+
+    /// One process start into a service-made Job Object.
+    pub(crate) struct Launch<'a> {
+        /// The image, started by its absolute path (no search).
+        pub program: &'a Path,
+        /// What follows the quoted program on the command line.
+        pub arguments: &'a str,
+        /// The whole environment (sorted by name here), or `None` to
+        /// inherit orceld's.
+        pub environment: Option<&'a [(OsString, OsString)]>,
+        /// `CREATE_NO_WINDOW` (the worker); the computer host keeps
+        /// orceld's console, as the standard library's start did.
+        pub no_window: bool,
+    }
+
+    /// A UTF-16 environment block: `NAME=VALUE` entries sorted by name
+    /// (case-insensitively), each NUL-terminated, then a final NUL.
+    fn environment_block(environment: &[(OsString, OsString)]) -> Vec<u16> {
+        let mut entries: Vec<&(OsString, OsString)> = environment.iter().collect();
+        entries.sort_by_key(|(name, _)| name.to_string_lossy().to_uppercase());
+        let mut block = Vec::new();
+        for (name, value) in entries {
+            block.extend(name.encode_wide());
+            block.push(u16::from(b'='));
+            block.extend(value.encode_wide());
+            block.push(0);
+        }
+        if block.is_empty() {
+            block.push(0);
+        }
+        block.push(0);
+        block
+    }
+
+    /// Starts `launch` suspended (inheritance limited by
+    /// `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` to its stdin, stdout and a `NUL`
+    /// stderr), assigns it to `job`, closes the job handle, asks `confirm`,
+    /// and resumes it only if that succeeds (terminating it otherwise).
+    /// Returns the process and orceld's ends of its stdin and stdout.
+    /// Used for `orceld fc-worker` (one dispatch) and, SG132_SLICE5.md, for
+    /// the computer host (one lease).
+    pub(crate) fn start_suspended_in_job(
+        launch: &Launch<'_>,
+        job: Owned,
+        confirm: &dyn Fn() -> Result<(), ProviderError>,
+    ) -> Result<(Owned, File, File), ProviderError> {
+        let (child_stdin, host_stdin) = pipe(true)?;
+        let (child_stdout, host_stdout) = pipe(false)?;
+        let child_stderr = null_output()?;
+        let inherited = [child_stdin.0, child_stdout.0, child_stderr.0];
+        let mut attributes = AttributeList::handle_list(&inherited)?;
+        let program = launch.program.as_os_str();
+        let mut command: Vec<u16> =
+            format!("\"{}\" {}", program.to_string_lossy(), launch.arguments)
+                .trim_end()
                 .encode_utf16()
                 .chain(Some(0))
                 .collect();
-            let application = wide(program);
-            // SAFETY: a zeroed STARTUPINFOEXW is valid before the fields are set.
-            let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
-            startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
-            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-            startup.StartupInfo.hStdInput = child_stdin.0;
-            startup.StartupInfo.hStdOutput = child_stdout.0;
-            startup.StartupInfo.hStdError = child_stderr.0;
-            startup.lpAttributeList = attributes.raw();
-            // SAFETY: a zeroed PROCESS_INFORMATION is a valid out-parameter.
-            let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
-            // SAFETY: every buffer is NUL-terminated and outlives the call;
-            // inheritance is limited to `inherited`, which is alive.
-            let created = unsafe {
-                CreateProcessW(
-                    application.as_ptr(),
-                    command.as_mut_ptr(),
-                    ptr::null(),
-                    ptr::null(),
-                    1,
-                    EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW,
-                    ptr::null(),
-                    ptr::null(),
-                    &startup.StartupInfo,
-                    &mut info,
-                )
-            };
-            drop(attributes);
-            if created == 0 {
-                return Err(platform("CreateProcessW(fc-worker)"));
-            }
-            let process = Owned(info.hProcess);
-            let thread = Owned(info.hThread);
-            drop((child_stdin, child_stdout, child_stderr));
-            // SAFETY: valid handles; the process is still suspended.
-            if unsafe { AssignProcessToJobObject(job.0, process.0) } == 0 {
-                let error = platform("AssignProcessToJobObject(fc-worker)");
-                // SAFETY: the suspended process's own handle.
-                unsafe { TerminateProcess(process.0, 1) };
-                return Err(error);
-            }
-            // Only the service holds the job from here on.
-            drop(job);
-            // Review of 291e045e: the worker is in the job but has not run;
-            // it runs only if the authorization still stands now. A revoke,
-            // Stop or expiry from here on terminates the job, worker
-            // included.
-            if let Err(error) = confirm() {
-                // SAFETY: the suspended process's own handle.
-                unsafe { TerminateProcess(process.0, 1) };
-                return Err(error);
-            }
-            // SAFETY: the suspended process's primary thread.
-            if unsafe { ResumeThread(thread.0) } == u32::MAX {
-                let error = platform("ResumeThread(fc-worker)");
-                // SAFETY: the process's own handle.
-                unsafe { TerminateProcess(process.0, 1) };
-                return Err(error);
-            }
-            // SAFETY: orceld's ends are owned here and move into `File`.
-            let stdin = unsafe { File::from_raw_handle(host_stdin.0 as _) };
-            std::mem::forget(host_stdin);
-            // SAFETY: as above.
-            let stdout = unsafe { File::from_raw_handle(host_stdout.0 as _) };
-            std::mem::forget(host_stdout);
-            Ok((process, stdin, stdout))
+        let application = wide(program);
+        let environment = launch.environment.map(environment_block);
+        let mut flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED;
+        if launch.no_window {
+            flags |= CREATE_NO_WINDOW;
         }
+        if environment.is_some() {
+            flags |= CREATE_UNICODE_ENVIRONMENT;
+        }
+        // SAFETY: a zeroed STARTUPINFOEXW is valid before the fields are set.
+        let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
+        startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = child_stdin.0;
+        startup.StartupInfo.hStdOutput = child_stdout.0;
+        startup.StartupInfo.hStdError = child_stderr.0;
+        startup.lpAttributeList = attributes.raw();
+        // SAFETY: a zeroed PROCESS_INFORMATION is a valid out-parameter.
+        let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: every buffer is NUL-terminated and outlives the call (the
+        // environment block ends with two NULs); inheritance is limited to
+        // `inherited`, which is alive.
+        let created = unsafe {
+            CreateProcessW(
+                application.as_ptr(),
+                command.as_mut_ptr(),
+                ptr::null(),
+                ptr::null(),
+                1,
+                flags,
+                environment
+                    .as_ref()
+                    .map_or(ptr::null(), |block| block.as_ptr() as *const c_void),
+                ptr::null(),
+                &startup.StartupInfo,
+                &mut info,
+            )
+        };
+        drop(attributes);
+        if created == 0 {
+            return Err(platform("CreateProcessW(suspended, for a Job Object)"));
+        }
+        let process = Owned(info.hProcess);
+        let thread = Owned(info.hThread);
+        drop((child_stdin, child_stdout, child_stderr));
+        // SAFETY: valid handles; the process is still suspended.
+        if unsafe { AssignProcessToJobObject(job.0, process.0) } == 0 {
+            let error = platform("AssignProcessToJobObject");
+            // SAFETY: the suspended process's own handle.
+            unsafe { TerminateProcess(process.0, 1) };
+            return Err(error);
+        }
+        // Only the service holds the job from here on.
+        drop(job);
+        // Review of 291e045e: the process is in the job but has not run; it
+        // runs only if the authorization still stands now. A revoke, Stop or
+        // expiry from here on terminates the job, process included.
+        if let Err(error) = confirm() {
+            // SAFETY: the suspended process's own handle.
+            unsafe { TerminateProcess(process.0, 1) };
+            return Err(error);
+        }
+        // SAFETY: the suspended process's primary thread.
+        if unsafe { ResumeThread(thread.0) } == u32::MAX {
+            let error = platform("ResumeThread");
+            // SAFETY: the process's own handle.
+            unsafe { TerminateProcess(process.0, 1) };
+            return Err(error);
+        }
+        // SAFETY: orceld's ends are owned here and move into `File`.
+        let stdin = unsafe { File::from_raw_handle(host_stdin.0 as _) };
+        std::mem::forget(host_stdin);
+        // SAFETY: as above.
+        let stdout = unsafe { File::from_raw_handle(host_stdout.0 as _) };
+        std::mem::forget(host_stdout);
+        Ok((process, stdin, stdout))
     }
 
     impl WorkerLauncher for JobLauncher {

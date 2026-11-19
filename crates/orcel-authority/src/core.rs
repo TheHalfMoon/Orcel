@@ -107,9 +107,8 @@ pub const EVENT_SIGNING_DOMAIN: &[u8] = b"orcel-authority-event-signature/1\n";
 const ENROLL_DOMAIN: &[u8] = b"orcel-authority-enrollment-challenge/1\n";
 
 /// What this slice does not do yet; returned by `Status` and `Authorize`.
-pub const DEFERRED: [&str; 8] = [
+pub const DEFERRED: [&str; 7] = [
     "TPM attestation freshness and AIK revocation checks (see SG132_SLICE2.md)",
-    "a service-owned Job Object for the desktop input host (WP1-10 gives one to every filesystem and shell/process dispatch)",
     "standing approvals (spec 4.15)",
     "indicator heartbeat",
     "TPM-backed signing key (the key is a CNG software key wrapped by DPAPI)",
@@ -787,6 +786,11 @@ impl AuthorityCore {
             Request::DispatchActive { authorization_id } => {
                 self.dispatch_active(caller, role, &authorization_id)
             }
+            Request::JobAck {
+                authorization_id,
+                job_handle,
+            } => self.job_ack(caller, role, &authorization_id, job_handle),
+            Request::DesktopHostJob { lease_id } => self.desktop_host_job(caller, role, &lease_id),
             Request::Revoke { lease_id } => self.revoke(caller, role, &lease_id),
             Request::Stop => self.stop(caller, role),
             Request::Anchor {

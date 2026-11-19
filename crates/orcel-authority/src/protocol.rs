@@ -9,7 +9,8 @@
 //! `Authorize`, `Stop` and `Status`, plus lease `Verify`, `List` and
 //! `Revoke`, and the attested enrollment and reset of a Windows Hello key.
 //! WP1-10 adds `job_id` and `job_handle` to `Authorize`, `DispatchActive`
-//! and the dispatch `Outcome`.
+//! and the dispatch `Outcome`; SG132_SLICE5.md adds `JobAck` and
+//! `DesktopHostJob`.
 //! Standing approvals and the indicator heartbeat are later slices; their
 //! requests are not accepted yet.
 
@@ -145,6 +146,28 @@ pub enum Request {
     /// dispatch's job and before resuming it, whether the authorization
     /// still stands (lease active, job held); `LEASE_INVALID` otherwise.
     DispatchActive { authorization_id: String },
+    /// SG132_SLICE5.md: orceld acknowledges the job handle an answer
+    /// carried (`Authorize` or `DesktopHostJob`), naming the authorization
+    /// and the handle's value, before it uses the handle. Accepted only from
+    /// the user, logon session and orceld instance (PID and creation time)
+    /// the handle went to, with the exact value, once; `DispatchActive`
+    /// refuses a job whose handle was not acknowledged. A job not confirmed
+    /// within the service's acknowledgement timeout is ended, and an
+    /// unacknowledged handle is closed in orceld by the service. An older
+    /// service refuses the request as unknown, and orceld then uses nothing.
+    JobAck {
+        authorization_id: String,
+        job_handle: u64,
+    },
+    /// SG132_SLICE5.md: a Job Object for orceld's desktop input host under
+    /// one active desktop Full User lease of the caller that covers desktop
+    /// input. Lease lifetime: the service ends it with the lease, and asking
+    /// again for the same lease ends the earlier one. The answer carries
+    /// `authorization_id`, `job_id` and `job_handle` (an assign-only handle
+    /// duplicated into the calling orceld process); orceld acknowledges it,
+    /// starts the host suspended, assigns it, asks `DispatchActive` with
+    /// that authorization id and only then resumes it.
+    DesktopHostJob { lease_id: String },
     /// WP1-10: orceld reports how an authorized dispatch ended (once per
     /// authorization). The service records it and terminates the
     /// dispatch's Job Object.
@@ -207,6 +230,8 @@ impl Request {
             Self::Authorize { .. } => "authorize",
             Self::Outcome { .. } => "outcome",
             Self::DispatchActive { .. } => "dispatch_active",
+            Self::JobAck { .. } => "job_ack",
+            Self::DesktopHostJob { .. } => "desktop_host_job",
             Self::Revoke { .. } => "revoke",
             Self::Stop => "stop",
             Self::Anchor { .. } => "anchor",

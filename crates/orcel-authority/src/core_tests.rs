@@ -8,7 +8,8 @@
 use crate::attestation::AttestationReport;
 use crate::caller::{CallerFacts, ClientPolicy};
 use crate::core::dispatch_jobs::{
-    is_job_id, DispatchJob, JobHost, JOB_IDLE_MS, JOB_MAX_MS, MAX_JOBS_PER_LEASE,
+    is_job_id, DispatchJob, JobHost, JobProfile, JOB_ACK_TIMEOUT_MS, JOB_IDLE_MS, JOB_MAX_MS,
+    MAX_JOBS_PER_LEASE,
 };
 use crate::core::{
     check_signing_key_history, display_image, is_builtin_administrator, key_fingerprint,
@@ -201,6 +202,8 @@ struct JobLog {
     withdrawn: Vec<String>,
     fail: bool,
     active: u32,
+    /// The profile each job was made with.
+    profiles: Vec<(String, JobProfile)>,
 }
 
 thread_local! {
@@ -210,7 +213,12 @@ thread_local! {
 struct FakeJobs;
 
 impl JobHost for FakeJobs {
-    fn create(&mut self, id: &str, caller: &CallerFacts) -> Result<DispatchJob, AuthorityError> {
+    fn create(
+        &mut self,
+        id: &str,
+        caller: &CallerFacts,
+        profile: JobProfile,
+    ) -> Result<DispatchJob, AuthorityError> {
         JOBS.with(|log| {
             let mut log = log.borrow_mut();
             if log.fail {
@@ -218,11 +226,12 @@ impl JobHost for FakeJobs {
                     "CreateJobObjectW: scripted failure",
                 ));
             }
+            log.profiles.push((id.to_owned(), profile));
             log.live.push(id.to_owned());
             log.targets.push((caller.pid, caller.process_generation));
             Ok(DispatchJob {
                 id: id.to_owned(),
-                handle: 0x1000 + 4 * log.live.len() as u64,
+                handle: 0x1000 + 4 * log.profiles.len() as u64,
             })
         })
     }
@@ -2101,6 +2110,36 @@ fn authorize_paths(
     )
 }
 
+/// orceld acknowledges the job handle an answer carried.
+fn ack_as(core: &mut AuthorityCore, caller: &CallerFacts, answer: &Value) -> Option<FailureCode> {
+    code(core.handle(
+        caller,
+        Request::JobAck {
+            authorization_id: answer["authorization_id"].as_str()?.to_owned(),
+            job_handle: answer["job_handle"].as_u64()?,
+        },
+    ))
+}
+
+/// orceld acknowledges the handle and confirms the job (`DispatchActive`),
+/// as it does between starting its process suspended and resuming it.
+fn ack_and_confirm(core: &mut AuthorityCore, answer: &Value) -> Result<(), String> {
+    if let Some(refused) = ack_as(core, &orceld(), answer) {
+        return Err(format!("ack refused: {refused:?}"));
+    }
+    ok(core.handle(
+        &orceld(),
+        Request::DispatchActive {
+            authorization_id: str_of(answer, "authorization_id")?,
+        },
+    ))
+    .map(|_| ())
+}
+
+fn withdrawn_jobs() -> Vec<String> {
+    JOBS.with(|log| log.borrow().withdrawn.clone())
+}
+
 fn audit_records(dir: &Path) -> Result<Vec<Value>, String> {
     let text =
         std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
@@ -2420,12 +2459,13 @@ fn wp110_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number() -> Result<(),
     let (lease, _) = grant(&mut core, Some(full_scope()))?;
     JOBS.with(|log| log.borrow_mut().active = 1);
     for _ in 0..MAX_JOBS_PER_LEASE {
-        ok(authorize_paths(
+        let allowed = ok(authorize_paths(
             &mut core,
             &lease.body.lease_id,
             ExecutorClass::ShellProcess,
             None,
         ))?;
+        ack_and_confirm(&mut core, &allowed)?;
     }
     assert_eq!(
         code(authorize_paths(
@@ -2513,6 +2553,12 @@ fn wp110_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), Str
         None,
     ))?;
     let first = str_of(&allowed, "authorization_id")?;
+    // SG132_SLICE5.md: the handle is acknowledged first.
+    assert_eq!(
+        code(core.handle(&orceld(), ask(&first))),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert_eq!(ack_as(&mut core, &orceld(), &allowed), None);
     assert_eq!(ok(core.handle(&orceld(), ask(&first)))?["active"], true);
     assert_eq!(
         code(core.handle(&owner(), ask(&first))),
@@ -2529,6 +2575,7 @@ fn wp110_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), Str
         ExecutorClass::ShellProcess,
         None,
     ))?;
+    ack_and_confirm(&mut core, &busy)?;
     JOBS.with(|log| log.borrow_mut().active = 1);
     advance(JOB_MAX_MS);
     core.tick().map_err(|e| e.to_string())?;
@@ -2544,6 +2591,7 @@ fn wp110_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), Str
         ExecutorClass::ShellProcess,
         None,
     ))?;
+    assert_eq!(ack_as(&mut core, &orceld(), &late), None);
     ok(core.handle(
         &owner(),
         Request::Revoke {
@@ -2594,6 +2642,374 @@ fn wp110_an_evicted_open_dispatch_ends_its_job() -> Result<(), String> {
         ExecutorClass::DesktopInput,
     ))?;
     assert!(terminated_jobs().contains(&first) && !live_jobs().contains(&first));
+    JOBS.with(|log| log.borrow_mut().active = 0);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// SG132_SLICE5.md (WP1-10): job handle acknowledgement, the desktop input
+// host's lease-lifetime job.
+// ---------------------------------------------------------------------
+
+/// The acknowledgement names the authorization and the handle value and is
+/// accepted only from the user, logon session and orceld instance the
+/// handle went to; once; and `DispatchActive` needs it first.
+#[test]
+fn wp110_a_job_ack_binds_authorization_handle_and_orceld_instance() -> Result<(), String> {
+    let dir = temp_dir("s5-ack")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let allowed = ok(authorize_paths(
+        &mut core,
+        &lease.body.lease_id,
+        ExecutorClass::ShellProcess,
+        None,
+    ))?;
+    let authorization = str_of(&allowed, "authorization_id")?;
+    let handle = allowed["job_handle"].as_u64().ok_or("a handle")?;
+    let ack = |id: &str, job_handle: u64| Request::JobAck {
+        authorization_id: id.to_owned(),
+        job_handle,
+    };
+    // Not orceld.
+    assert_eq!(
+        code(core.handle(&owner(), ack(&authorization, handle))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Malformed and unknown authorizations.
+    assert_eq!(
+        code(core.handle(&orceld(), ack("az-1", handle))),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert_eq!(
+        code(core.handle(&orceld(), ack(&format!("az-{}", "0".repeat(32)), handle))),
+        Some(FailureCode::LeaseInvalid)
+    );
+    // The wrong handle value.
+    assert_eq!(
+        code(core.handle(&orceld(), ack(&authorization, handle + 4))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Another orceld instance: another PID, a recycled PID (another
+    // creation time), an unreadable creation time, another logon session.
+    for elsewhere in [
+        CallerFacts {
+            pid: orceld().pid + 4,
+            ..orceld()
+        },
+        CallerFacts {
+            process_generation: orceld().process_generation + 1,
+            ..orceld()
+        },
+        CallerFacts {
+            process_generation: 0,
+            ..orceld()
+        },
+        CallerFacts {
+            logon_session_id: 0x7777,
+            ..orceld()
+        },
+    ] {
+        assert_eq!(
+            code(core.handle(&elsewhere, ack(&authorization, handle))),
+            Some(FailureCode::CapabilityDenied),
+            "{elsewhere:?}"
+        );
+        // Nor may that instance confirm it.
+        assert_ne!(
+            code(core.handle(
+                &elsewhere,
+                Request::DispatchActive {
+                    authorization_id: authorization.clone()
+                }
+            )),
+            None
+        );
+    }
+    // DispatchActive before the acknowledgement is refused.
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            Request::DispatchActive {
+                authorization_id: authorization.clone()
+            }
+        )),
+        Some(FailureCode::InvalidRequest)
+    );
+    // The right one, once.
+    let acked = ok(core.handle(&orceld(), ack(&authorization, handle)))?;
+    assert_eq!(acked["acknowledged"], Value::Bool(true));
+    assert_eq!(acked["job_id"], allowed["job_id"]);
+    assert_eq!(
+        code(core.handle(&orceld(), ack(&authorization, handle))),
+        Some(FailureCode::InvalidRequest)
+    );
+    // A desktop authorization holds no job and has nothing to acknowledge.
+    let desktop = ok(authorize(
+        &mut core,
+        &orceld(),
+        &lease.body.lease_id,
+        ExecutorClass::DesktopInput,
+    ))?;
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            ack(&str_of(&desktop, "authorization_id")?, handle)
+        )),
+        Some(FailureCode::LeaseInvalid)
+    );
+    let status = ok(core.handle(&orceld(), Request::Status))?;
+    assert_eq!(
+        status["job_objects"]["acknowledgement"]["timeout_ms"],
+        JOB_ACK_TIMEOUT_MS
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// A lost `Authorize` reply: a job that is not confirmed in time is ended;
+/// if its handle was never acknowledged it is withdrawn (the service closes
+/// the handle in orceld). The timeout never touches a confirmed dispatch.
+#[test]
+fn wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay() -> Result<(), String>
+{
+    let dir = temp_dir("s5-timeout")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let id = lease.body.lease_id.clone();
+    JOBS.with(|log| log.borrow_mut().active = 1);
+    let mut answers = Vec::new();
+    for _ in 0..3 {
+        answers.push(ok(authorize_paths(
+            &mut core,
+            &id,
+            ExecutorClass::ShellProcess,
+            None,
+        ))?);
+    }
+    let [lost, unconfirmed, confirmed] = [&answers[0], &answers[1], &answers[2]];
+    assert_eq!(ack_as(&mut core, &orceld(), unconfirmed), None);
+    ack_and_confirm(&mut core, confirmed)?;
+    let job = |answer: &Value| str_of(answer, "job_id");
+
+    // Just before the timeout nothing ends.
+    advance(JOB_ACK_TIMEOUT_MS - 1);
+    core.tick().map_err(|e| e.to_string())?;
+    assert_eq!(live_jobs().len(), 3);
+
+    advance(1);
+    core.tick().map_err(|e| e.to_string())?;
+    assert!(withdrawn_jobs().contains(&job(lost)?), "handle closed");
+    assert!(terminated_jobs().contains(&job(unconfirmed)?));
+    assert!(
+        !withdrawn_jobs().contains(&job(unconfirmed)?),
+        "an acknowledged handle is orceld's own to close"
+    );
+    assert_eq!(live_jobs(), vec![job(confirmed)?]);
+    // A late acknowledgement or confirmation is refused.
+    assert_eq!(
+        ack_as(&mut core, &orceld(), lost),
+        Some(FailureCode::LeaseInvalid)
+    );
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            Request::DispatchActive {
+                authorization_id: str_of(unconfirmed, "authorization_id")?
+            }
+        )),
+        Some(FailureCode::LeaseInvalid)
+    );
+    // The confirmed dispatch keeps running well past the timeout and still
+    // reports its outcome, which ends its job.
+    advance(JOB_ACK_TIMEOUT_MS * 3);
+    core.tick().map_err(|e| e.to_string())?;
+    assert_eq!(live_jobs(), vec![job(confirmed)?]);
+    let reported = ok(core.handle(
+        &orceld(),
+        Request::Outcome {
+            authorization_id: str_of(confirmed, "authorization_id")?,
+            outcome: DispatchOutcome::Succeeded,
+            code: None,
+        },
+    ))?;
+    assert_eq!(reported["job_terminated"], Value::Bool(true));
+    assert!(live_jobs().is_empty());
+    JOBS.with(|log| log.borrow_mut().active = 0);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// The desktop input host's job: one per desktop Full User lease that
+/// covers desktop input, made for orceld only, with the desktop host
+/// profile, no age limit, replaced on a new request, and ended with the
+/// lease (revoke, Stop, lock, expiry).
+#[test]
+fn wp110_the_desktop_host_job_lives_with_its_lease() -> Result<(), String> {
+    let dir = temp_dir("s5-desktop")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let host = |core: &mut AuthorityCore, caller: &CallerFacts, id: &str| {
+        core.handle(
+            caller,
+            Request::DesktopHostJob {
+                lease_id: id.to_owned(),
+            },
+        )
+    };
+    let profile_of = |job: &str| {
+        JOBS.with(|log| {
+            log.borrow()
+                .profiles
+                .iter()
+                .find(|(id, _)| id == job)
+                .map(|(_, profile)| *profile)
+        })
+    };
+
+    let (lease, _) = grant(&mut core, None)?;
+    let id = lease.body.lease_id.clone();
+    // orceld only; a live lease of the caller only.
+    assert_eq!(
+        code(host(&mut core, &owner(), &id)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(host(
+            &mut core,
+            &orceld(),
+            &format!("al-{}", "0".repeat(32))
+        )),
+        Some(FailureCode::LeaseInvalid)
+    );
+    let elsewhere = CallerFacts {
+        logon_session_id: 0x7777,
+        ..orceld()
+    };
+    assert_ne!(code(host(&mut core, &elsewhere, &id)), None);
+    assert!(live_jobs().is_empty());
+
+    let first = ok(host(&mut core, &orceld(), &id))?;
+    let first_job = str_of(&first, "job_id")?;
+    assert!(is_job_id(&first_job));
+    assert_eq!(profile_of(&first_job), Some(JobProfile::DesktopHost));
+    assert_eq!(first["lease_id"], Value::String(id.clone()));
+    // Recorded before the answer.
+    let recorded = audit_records(&dir)?
+        .into_iter()
+        .find(|record| record["kind"] == "desktop_host_job")
+        .ok_or("a desktop_host_job record")?;
+    assert_eq!(
+        recorded["detail"]["job_id"],
+        Value::String(first_job.clone())
+    );
+    assert_eq!(recorded["detail"]["profile"], "desktop_host");
+    // Acknowledged and confirmed like a dispatch job, by authorization id.
+    ack_and_confirm(&mut core, &first)?;
+    // It is not a dispatch: there is no outcome to report for it.
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            Request::Outcome {
+                authorization_id: str_of(&first, "authorization_id")?,
+                outcome: DispatchOutcome::Succeeded,
+                code: None,
+            }
+        )),
+        Some(FailureCode::InvalidRequest)
+    );
+    // No age limit while the lease lives (a dispatch job ends at 10 min).
+    JOBS.with(|log| log.borrow_mut().active = 1);
+    advance(JOB_MAX_MS + 60_000);
+    core.tick().map_err(|e| e.to_string())?;
+    assert_eq!(live_jobs(), vec![first_job.clone()]);
+    // Asking again ends the earlier job: a fresh host per request.
+    let second = ok(host(&mut core, &orceld(), &id))?;
+    let second_job = str_of(&second, "job_id")?;
+    assert!(terminated_jobs().contains(&first_job));
+    assert_eq!(live_jobs(), vec![second_job.clone()]);
+    // An unconfirmed desktop host job is withdrawn after the timeout.
+    advance(JOB_ACK_TIMEOUT_MS);
+    core.tick().map_err(|e| e.to_string())?;
+    assert!(withdrawn_jobs().contains(&second_job));
+    assert_eq!(
+        code(core.handle(
+            &orceld(),
+            Request::DispatchActive {
+                authorization_id: str_of(&second, "authorization_id")?,
+            }
+        )),
+        Some(FailureCode::InvalidRequest),
+        "no open dispatch and no held job under that id"
+    );
+    // Revoke ends it.
+    let third = ok(host(&mut core, &orceld(), &id))?;
+    ack_and_confirm(&mut core, &third)?;
+    ok(core.handle(&owner(), Request::Revoke { lease_id: id }))?;
+    assert!(terminated_jobs().contains(&str_of(&third, "job_id")?));
+    assert!(live_jobs().is_empty());
+
+    // Stop, lock and expiry end it too.
+    for end in ["stop", "lock", "expiry"] {
+        let (lease, _) = grant(&mut core, None)?;
+        let answer = ok(host(&mut core, &orceld(), &lease.body.lease_id))?;
+        ack_and_confirm(&mut core, &answer)?;
+        match end {
+            "stop" => {
+                ok(core.handle(&other_process(), Request::Stop))?;
+            }
+            "lock" => core
+                .session_ended(1, "session_lock", true)
+                .map_err(|e| e.to_string())?,
+            _ => {
+                advance(30 * 60_000);
+                core.tick().map_err(|e| e.to_string())?;
+            }
+        }
+        assert!(
+            terminated_jobs().contains(&str_of(&answer, "job_id")?),
+            "{end}"
+        );
+        assert!(live_jobs().is_empty(), "{end}");
+    }
+
+    // A lease that does not cover desktop input gets no host job.
+    let (files, _) = grant(
+        &mut core,
+        Some(LeaseScope::DesktopFullUser {
+            executors: vec![ExecutorClass::Filesystem],
+            roots: vec![ROOT.to_owned()],
+            shells: false,
+        }),
+    )?;
+    assert_eq!(
+        code(host(&mut core, &orceld(), &files.body.lease_id)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    ok(core.handle(
+        &owner(),
+        Request::Revoke {
+            lease_id: files.body.lease_id.clone(),
+        },
+    ))?;
+    // A job that cannot be made refuses.
+    let (lease, _) = grant(&mut core, None)?;
+    JOBS.with(|log| log.borrow_mut().fail = true);
+    let refused = host(&mut core, &orceld(), &lease.body.lease_id);
+    JOBS.with(|log| log.borrow_mut().fail = false);
+    assert_eq!(code(refused), Some(FailureCode::AuthorityUnavailable));
+    let status = ok(core.handle(&orceld(), Request::Status))?;
+    assert_eq!(status["job_objects"]["desktop_host"]["lifetime"], "lease");
+    assert!(!status["deferred"]
+        .as_array()
+        .ok_or("deferred")?
+        .iter()
+        .any(|item| item
+            .as_str()
+            .is_some_and(|text| text.contains("desktop input host"))));
     JOBS.with(|log| log.borrow_mut().active = 0);
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
