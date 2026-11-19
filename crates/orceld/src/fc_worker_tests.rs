@@ -241,7 +241,7 @@ mod windows {
         let launcher = JobLauncher::with_program(orceld_exe());
         let request = request(
             "full_control.fs",
-            "worker",
+            op.name(),
             serde_json::to_value(&op).expect("op"),
         );
         run_in_worker(port, &launcher, &request, None, 5)
@@ -405,7 +405,7 @@ mod windows {
     /// Review of 291e045e (low 3): a hard link inside the roots to a file
     /// outside them is never written through.
     #[test]
-    fn fc_worker_never_writes_through_a_hard_link() {
+    fn fc_worker_never_uses_a_hard_link() {
         let root = root();
         let outside = root.with_extension("outside-hl");
         std::fs::create_dir_all(&outside).expect("outside");
@@ -438,6 +438,22 @@ mod windows {
             std::fs::read_to_string(&target).expect("victim"),
             "original"
         );
+        // Re-review: nor is it read or described.
+        for op in [
+            WorkerOp::ReadText {
+                path: link.display().to_string(),
+                max_bytes: 64,
+            },
+            WorkerOp::Stat {
+                path: link.display().to_string(),
+            },
+        ] {
+            assert_eq!(
+                perform(&op, &roots).err().map(|e| e.code),
+                Some(FailureCode::PathEscape),
+                "{op:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
     }

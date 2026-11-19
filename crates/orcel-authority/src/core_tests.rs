@@ -2557,3 +2557,44 @@ fn wp112_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), Str
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+/// Re-review of 073b7fee: when the open-dispatch queue evicts its oldest
+/// entry, that dispatch's job is terminated with it.
+#[test]
+fn wp112_an_evicted_open_dispatch_ends_its_job() -> Result<(), String> {
+    use crate::core::dispatch_jobs::MAX_OPEN_DISPATCHES;
+    let dir = temp_dir("wp112-evict")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let id = lease.body.lease_id.clone();
+    JOBS.with(|log| log.borrow_mut().active = 1);
+    let first = str_of(
+        &ok(authorize_paths(
+            &mut core,
+            &id,
+            ExecutorClass::ShellProcess,
+            None,
+        ))?,
+        "job_id",
+    )?;
+    for _ in 1..MAX_OPEN_DISPATCHES {
+        ok(authorize(
+            &mut core,
+            &orceld(),
+            &id,
+            ExecutorClass::DesktopInput,
+        ))?;
+    }
+    assert!(live_jobs().contains(&first), "still open");
+    ok(authorize(
+        &mut core,
+        &orceld(),
+        &id,
+        ExecutorClass::DesktopInput,
+    ))?;
+    assert!(terminated_jobs().contains(&first) && !live_jobs().contains(&first));
+    JOBS.with(|log| log.borrow_mut().active = 0);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}

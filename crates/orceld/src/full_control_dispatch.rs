@@ -413,6 +413,12 @@ pub(crate) fn run_in_worker(
                 format!("the arguments are not one Full Control worker operation: {error}"),
             )
         })?;
+    if request.operation != op.name() {
+        return Err(ProviderError::new(
+            FailureCode::InvalidRequest,
+            "the request's operation does not name the worker operation in its arguments",
+        ));
+    }
     let action = Action {
         family: op.family(),
         request,

@@ -269,6 +269,7 @@ fn run_in_worker(
     now_ms: u64,
 ) -> Result<Value, ProviderError> {
     let mut request = base.clone();
+    request.operation = op.name().to_owned();
     request.arguments = serde_json::to_value(op).expect("op");
     dispatch_worker(port, launcher, &request, principal_id, now_ms)
 }
@@ -544,6 +545,13 @@ fn fc_dispatch_the_operation_is_the_request_arguments_or_nothing() {
             "{arguments}"
         );
     }
+    // An operation name that differs from the arguments' is refused too.
+    let mut renamed = fs_request();
+    renamed.operation = "stat".into();
+    assert_eq!(
+        code(dispatch_worker(&port, &launcher(&port), &renamed, None, 5)),
+        Some(FailureCode::InvalidRequest)
+    );
     assert!(port.0.borrow().authorized.is_empty());
     let ran = dispatch_worker(&port, &launcher(&port), &fs_request(), None, 5).expect("ran");
     assert_eq!(ran["ran"][0], r"C:\work\a.txt");

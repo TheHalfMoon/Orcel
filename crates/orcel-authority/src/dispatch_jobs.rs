@@ -220,7 +220,13 @@ impl AuthorityCore {
         job_id: Option<&str>,
     ) {
         while self.open_dispatches.len() >= MAX_OPEN_DISPATCHES {
-            self.open_dispatches.pop_front();
+            // An evicted dispatch can no longer be confirmed or reported, so
+            // its job ends with it.
+            if let Some(evicted) = self.open_dispatches.pop_front() {
+                if let Some(id) = &evicted.job_id {
+                    self.end_job(id);
+                }
+            }
         }
         self.open_dispatches.push_back(OpenDispatch {
             authorization_id: authorization_id.to_owned(),

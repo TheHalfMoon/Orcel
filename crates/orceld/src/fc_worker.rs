@@ -18,8 +18,8 @@
 //! unless it is in some Job Object (`IsProcessInJob` with no job handle: a
 //! sanity check, not a boundary; the boundary is orceld assigning it before
 //! it runs), resolves each path and the lease's roots (junctions and links
-//! included) and acts only inside them, refuses to write through a hard
-//! link (a file with more than one name), and exits.
+//! included) and acts only inside them, refuses any file with more than
+//! one name (a hard link), and exits.
 //!
 //! Operations in this slice: the filesystem family (`stat`, `list`,
 //! `read_text`, `write_text`, `mkdir`). Process and git operations use the
@@ -71,6 +71,17 @@ pub(crate) enum WorkerOp {
 impl WorkerOp {
     pub(crate) fn family(&self) -> Family {
         Family::Filesystem
+    }
+
+    /// The operation's name, as the request's `operation` must state it.
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::Stat { .. } => "stat",
+            Self::List { .. } => "list",
+            Self::ReadText { .. } => "read_text",
+            Self::WriteText { .. } => "write_text",
+            Self::Mkdir { .. } => "mkdir",
+        }
     }
 
     /// The paths the operation touches (checked against the roots by the
@@ -248,6 +259,18 @@ fn link_count(file: &std::fs::File) -> Result<u32, ProviderError> {
     Ok(u32::try_from(metadata.nlink()).unwrap_or(u32::MAX))
 }
 
+/// A hard link inside the roots can name a file outside them, so a file
+/// with more than one name is never read, written or described.
+fn refuse_hard_links(file: &std::fs::File) -> Result<(), ProviderError> {
+    if link_count(file)? > 1 {
+        return Err(failure(
+            FailureCode::PathEscape,
+            "the file has more than one name (a hard link); it is not used",
+        ));
+    }
+    Ok(())
+}
+
 /// Performs one operation inside `roots`.
 pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, ProviderError> {
     match op {
@@ -255,6 +278,11 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
             let resolved = existing(path, roots)?;
             let metadata = std::fs::metadata(&resolved)
                 .map_err(|error| io_failure("read the metadata", &error))?;
+            if metadata.is_file() {
+                let file = std::fs::File::open(&resolved)
+                    .map_err(|error| io_failure("open the file", &error))?;
+                refuse_hard_links(&file)?;
+            }
             Ok(json!({
                 "kind": kind(metadata.file_type()),
                 "len": metadata.len(),
@@ -301,6 +329,7 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
             let resolved = existing(path, roots)?;
             let file = std::fs::File::open(&resolved)
                 .map_err(|error| io_failure("open the file", &error))?;
+            refuse_hard_links(&file)?;
             let mut bytes = Vec::new();
             file.take(*max_bytes as u64 + 1)
                 .read_to_end(&mut bytes)
@@ -351,12 +380,7 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
                 .map_err(|error| io_failure("open the file for writing", &error))?;
             // Review: a hard link inside the roots can name a file outside
             // them; a file with more than one name is never written.
-            if link_count(&file)? > 1 {
-                return Err(failure(
-                    FailureCode::PathEscape,
-                    "the file has more than one name (a hard link); it is not written",
-                ));
-            }
+            refuse_hard_links(&file)?;
             file.set_len(0)
                 .map_err(|error| io_failure("truncate the file", &error))?;
             file.write_all(text.as_bytes())
