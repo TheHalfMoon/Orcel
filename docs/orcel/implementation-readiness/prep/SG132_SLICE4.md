@@ -244,6 +244,39 @@ show it.
   future version are not on the refused list until added; the list is a denylist of known keys (the review's
   preferred allowlist of tolerated keys would refuse ordinary repositories whose configuration carries editor or
   tool settings, and is recorded as a possible tightening).
+- **Untracked nested `.git` files (follow-up to #824; fixed, `orcel-provider-git/src/nested.rs`).** Git's
+  untracked-file walk reads the `.git` file of every untracked nested folder and checks the folder its `gitdir:`
+  names, so `gitdir: \\host\share` would have opened SMB (NTLM leak) from a plain `git_status`, which needs no
+  approval. Experiment, local folders only (a nested `.git` file pointing at an existing repository versus a
+  missing folder): the results of `status -uall`, `status -unormal` (shown with a folder holding only the `.git`
+  file) and `ls-files --others` change with the target, so all three follow it; `status -uno` and a commit with
+  `status.showUntrackedFiles=no` read nothing. Fix: every provider command now runs with
+  `-c status.showUntrackedFiles=no` (so a commit's own status walks nothing), and before any operation (every one
+  resolves its repository first) the provider walks the working tree itself the way Git does: from the
+  repository root, never following links or junctions, skipping folders the exclude rules ignore
+  (`git check-ignore --stdin`, which reads paths and never walks) unless the index tracks something under them
+  (`git ls-files`, index only; Git walks those). The walk still checks an ignored folder's own `.git`, because Git
+  asks whether the ignored folder itself is a repository before it skips it. For each nested `.git`, the walk
+  refuses (`PATH_ESCAPE`) a link or junction, and a `gitdir:` or `commondir` naming a share, a device, a link, or a
+  place outside the workspace. It also refuses a nested Git folder (or its common folder) whose `HEAD`, `objects` or
+  `refs` is a link or any reparse point, since Git opens them when it validates the nested repository (review of
+  #825). It does not descend below a nested repository. It fails closed (`CAPABILITY_DENIED`)
+  past 200 000 entries or 64 levels. Only then does `git_status` run with `--untracked-files=all`. `git add` walks
+  towards each path it is given, so a path under an ignored folder the index tracks nothing in is refused
+  (`CAPABILITY_DENIED`, same `check-ignore` and index answers) in both the add preview and the add (review of
+  #825). Every path the provider passes to Git (add, unstage and their previews) must name each component
+  byte-identically to its name on disk (delta review of #825): a Windows short name (`NODE_M~1`), which
+  `check-ignore` does not report as ignored but Git resolves to the long folder, and a case variant, which with
+  `core.ignoreCase=false` is another path to the same folder, are refused (`INVALID_REQUEST`), as are components
+  with `~` followed by a digit, empty components and `.` segments (`./a.txt`). A missing component (a tracked file
+  deleted from the working tree) ends the check, since Git takes the rest from the index. Full Control's own paths
+  (repository, working folder, program) are resolved by the worker to their on-disk names before use, and the
+  repository-relative path it hands the provider is computed from those resolved names. Tests with real Git: `orcel-provider-git/tests/nested_gitfile.rs`. Cost: every operation's repository
+  resolution walks the working tree (outside ignored folders) and asks `check-ignore` once per folder level, so a
+  large tree costs time on every call; a walk that runs into the provider's 30 s per-command limit or the worker's
+  60 s limit fails closed, as do the entry and depth caps. Residuals: very large working trees outside ignored
+  folders are refused rather than walked. A same-user process could add a nested `.git` file between the walk and Git's own walk
+  (the same TOCTOU class as the configuration gate).
 - **Approval binding.** The per-action approval binds the request (paths, message, branch), not the file contents
   staged at that moment (the Safe-mode git mutation binds that material); the worker's own state check still
   refuses a repository that changed between its read and its write.
