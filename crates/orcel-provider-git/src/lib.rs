@@ -319,6 +319,40 @@ impl GitProvider {
         Ok(tracked)
     }
 
+    /// Review of #825: `git add` walks towards each path it is given and
+    /// may resolve a nested `.git` inside an ignored folder, which the
+    /// nested walk skips. A path under an ignored folder that the index
+    /// tracks nothing in is refused (fail closed).
+    pub(crate) fn refuse_paths_under_ignored_folders(
+        &self,
+        repo: &Path,
+        paths: &[String],
+    ) -> Result<(), GitProviderError> {
+        let mut ancestors = std::collections::BTreeSet::new();
+        for path in paths {
+            let parts: Vec<&str> = path.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
+            for end in 1..parts.len() {
+                ancestors.insert(parts[..end].join("/"));
+            }
+        }
+        let ancestors: Vec<String> = ancestors.into_iter().collect();
+        let ignored = self.ignored_dirs(repo, &ancestors)?;
+        let ignored: Vec<String> = ancestors
+            .into_iter()
+            .filter(|dir| ignored.contains(dir))
+            .collect();
+        let tracked = self.tracked_dirs(repo, &ignored)?;
+        if let Some(dir) = ignored.iter().find(|dir| !tracked.contains(*dir)) {
+            return Err(GitProviderError::new(
+                FailureCode::CapabilityDenied,
+                format!(
+                    "a path lies under the ignored folder {dir}, which nothing tracked is in; Git is not run towards it"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// [`GitProvider::run_git_raw`] with `input` on Git's stdin.
     fn run_git_input(
         &self,

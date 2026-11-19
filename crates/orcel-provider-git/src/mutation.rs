@@ -114,6 +114,7 @@ impl GitProvider {
     ) -> Result<GitMutationState, GitProviderError> {
         let repo = self.repository_root(relative)?;
         let paths = validate_paths(paths)?;
+        self.refuse_paths_under_ignored_folders(&repo, &paths)?;
         self.ensure_no_external_filters(&repo, &paths)?;
         let material = self.path_material(&repo, &paths)?;
         self.base_state(&repo, material)
@@ -197,6 +198,7 @@ impl GitProvider {
         let repo = self.repository_root(relative)?;
         self.ensure_supported_repository_state(&repo)?;
         let paths = validate_paths(paths)?;
+        self.refuse_paths_under_ignored_folders(&repo, &paths)?;
         self.ensure_no_external_filters(&repo, &paths)?;
         let current = self.base_state(&repo, self.path_material(&repo, &paths)?)?;
         require_state(&current, expected)?;

@@ -110,16 +110,46 @@ fn inside_without_links(root: &Path, target: &Path, what: &str) -> Result<(), Gi
     Ok(())
 }
 
-/// A nested repository's Git folder: its `commondir` and `HEAD` checked.
-fn check_git_folder(root: &Path, git_dir: &Path) -> Result<(), GitProviderError> {
-    if std::fs::symlink_metadata(git_dir.join("HEAD")).is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err(escape("a nested repository's HEAD is a link"));
+/// Whether `path` is a link, a junction or any other reparse point.
+fn is_reparse(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            // FILE_ATTRIBUTE_REPARSE_POINT
+            if metadata.file_attributes() & 0x400 != 0 {
+                return true;
+            }
+        }
+        metadata.file_type().is_symlink()
+    })
+}
+
+/// The entries Git opens when it validates a repository folder (`HEAD`,
+/// `objects`, `refs`) are not links or reparse points.
+fn check_git_entries(git_dir: &Path) -> Result<(), GitProviderError> {
+    for name in ["HEAD", "objects", "refs"] {
+        if is_reparse(&git_dir.join(name)) {
+            return Err(escape(format!(
+                "a nested repository's {name} is a link or reparse point"
+            )));
+        }
     }
+    Ok(())
+}
+
+/// A nested repository's Git folder: `HEAD`, `objects`, `refs` and
+/// `commondir` checked (and the common folder's own entries).
+fn check_git_folder(root: &Path, git_dir: &Path) -> Result<(), GitProviderError> {
+    check_git_entries(git_dir)?;
     if let Some(bytes) = read_bounded(&git_dir.join("commondir"), "nested commondir")? {
         let text = String::from_utf8(bytes)
             .map_err(|_| escape("a nested repository's commondir is not UTF-8"))?;
         let common = pointed_folder(&text, git_dir, "nested repository's commondir")?;
         inside_without_links(root, &common, "a nested repository's commondir")?;
+        if common.is_dir() {
+            check_git_entries(&common)?;
+        }
     }
     Ok(())
 }

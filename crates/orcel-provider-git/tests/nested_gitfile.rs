@@ -167,3 +167,79 @@ fn a_working_tree_deeper_than_the_bound_is_refused() {
     assert_eq!(code(&provider), Some(FailureCode::CapabilityDenied));
     let _ = fs::remove_dir_all(&repo);
 }
+
+/// Review of #825 (low 1): a nested repository's `objects` or `refs` that
+/// is a link or junction is refused (Git opens them when it validates the
+/// nested repository).
+#[test]
+fn a_nested_repository_with_linked_objects_or_refs_is_refused() {
+    for entry in ["objects", "refs"] {
+        let repo = repository();
+        let nested = repo.join("sub");
+        fs::create_dir_all(&nested).expect("nested");
+        assert!(git(&nested, &["init", "-q"]));
+        let target = temp_root("elsewhere");
+        let linked = nested.join(".git").join(entry);
+        fs::rename(&linked, target.join(entry)).expect("move aside");
+        if !make_dir_link(&linked, &target.join(entry)) {
+            println!("no directory link could be made here; {entry} case skipped");
+            let _ = fs::remove_dir_all(&repo);
+            let _ = fs::remove_dir_all(&target);
+            continue;
+        }
+        let provider = GitProvider::new(&repo).expect("provider");
+        assert_eq!(code(&provider), Some(FailureCode::PathEscape), "{entry}");
+        let _ = fs::remove_dir_all(&linked);
+        let _ = fs::remove_dir_all(&repo);
+        let _ = fs::remove_dir_all(&target);
+    }
+}
+
+/// A junction on Windows (no privilege needed), a symlink elsewhere.
+fn make_dir_link(link: &Path, target: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+/// Review of #825 (low 2): `git add` walks towards a path under an
+/// ignored folder, where the nested walk did not look; such a path is
+/// refused unless the index tracks something in that folder.
+#[test]
+fn adding_a_path_under_an_ignored_untracked_folder_is_refused() {
+    let repo = repository();
+    let nested = repo.join("build").join("sub");
+    fs::create_dir_all(&nested).expect("nested");
+    fs::write(nested.join("x.txt"), "x\n").expect("x");
+    fs::write(
+        nested.join(".git"),
+        "gitdir: //orcel-unreachable.invalid/share/x\n",
+    )
+    .expect(".git file");
+    fs::write(repo.join("build").join("y.txt"), "y\n").expect("y");
+    let provider = GitProvider::new(&repo).expect("provider");
+    for path in ["build/sub/x.txt", "build/y.txt"] {
+        let paths = vec![path.to_owned()];
+        assert_eq!(
+            provider.path_state(".", &paths).err().map(|e| e.code),
+            Some(FailureCode::CapabilityDenied),
+            "{path}"
+        );
+    }
+    // An ordinary path still works.
+    fs::write(repo.join("a.txt"), "two\n").expect("a");
+    let paths = vec!["a.txt".to_owned()];
+    let state = provider.path_state(".", &paths).expect("state");
+    provider.stage(".", &paths, &state).expect("stage");
+    let _ = fs::remove_dir_all(&repo);
+}

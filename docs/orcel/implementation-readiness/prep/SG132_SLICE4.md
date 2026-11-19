@@ -258,10 +258,17 @@ show it.
   (`git ls-files`, index only; Git walks those). The walk still checks an ignored folder's own `.git`, because Git
   asks whether the ignored folder itself is a repository before it skips it. For each nested `.git`, the walk
   refuses (`PATH_ESCAPE`) a link or junction, and a `gitdir:` or `commondir` naming a share, a device, a link, or a
-  place outside the workspace. It does not descend below a nested repository. It fails closed (`CAPABILITY_DENIED`)
-  past 200 000 entries or 64 levels. Only then does `git_status` run with `--untracked-files=all`. Tests with real
-  Git: `orcel-provider-git/tests/nested_gitfile.rs`. Residuals: very large working trees outside ignored folders are
-  refused rather than walked. A same-user process could add a nested `.git` file between the walk and Git's own walk
+  place outside the workspace. It also refuses a nested Git folder (or its common folder) whose `HEAD`, `objects` or
+  `refs` is a link or any reparse point, since Git opens them when it validates the nested repository (review of
+  #825). It does not descend below a nested repository. It fails closed (`CAPABILITY_DENIED`)
+  past 200 000 entries or 64 levels. Only then does `git_status` run with `--untracked-files=all`. `git add` walks
+  towards each path it is given, so a path under an ignored folder the index tracks nothing in is refused
+  (`CAPABILITY_DENIED`, same `check-ignore` and index answers) in both the add preview and the add (review of
+  #825). Tests with real Git: `orcel-provider-git/tests/nested_gitfile.rs`. Cost: every operation's repository
+  resolution walks the working tree (outside ignored folders) and asks `check-ignore` once per folder level, so a
+  large tree costs time on every call; a walk that runs into the provider's 30 s per-command limit or the worker's
+  60 s limit fails closed, as do the entry and depth caps. Residuals: very large working trees outside ignored
+  folders are refused rather than walked. A same-user process could add a nested `.git` file between the walk and Git's own walk
   (the same TOCTOU class as the configuration gate).
 - **Approval binding.** The per-action approval binds the request (paths, message, branch), not the file contents
   staged at that moment (the Safe-mode git mutation binds that material); the worker's own state check still
