@@ -136,13 +136,15 @@ impl WorkerOp {
     /// that change the repository), on every call: standing approvals
     /// (WP1-14) do not exist yet.
     ///
-    /// Founder decision of 2026-11-19 (SG132_SLICE8.md, amending decision 2
-    /// of FC_TOOL_SURFACE_OPTIONS.md for these two operations only): the
-    /// Full Control file writes, `write_text` and `mkdir`, are covered by
-    /// the lease the person granted with Windows Hello and ask nothing per
-    /// call; their roots, link and `.git` checks, the service's
-    /// audit-first `Authorize` and the dispatch job still apply. Reads
-    /// (filesystem and git) ask nothing, like the Safe-mode read tools.
+    /// The exception: the SG-000132 amendment "SG-000132 amendment: Full Control file writes covered by the lease, and the fc_* tool surface" (2026-11-19,
+    /// `.specgrain/specs/SG-000132.json` `amendments`; the founder's answers
+    /// in FC_TOOL_SURFACE_OPTIONS.md section 8; SG132_SLICE8.md). Under a
+    /// Full User lease that names the filesystem executor, `write_text`
+    /// and `mkdir` inside the lease's roots are covered by the lease and
+    /// ask nothing per call; their roots, link, `.git` and Orcel state
+    /// checks, the service's audit-first `Authorize` and the dispatch job
+    /// still apply. No other operation is covered. Reads (filesystem and
+    /// git) ask nothing, like the Safe-mode read tools.
     ///
     /// The match is exhaustive on purpose: a new operation (a delete, a
     /// move) does not compile until someone decides whether it asks.
@@ -153,7 +155,7 @@ impl WorkerOp {
             | Self::GitUnstage { .. }
             | Self::GitCommit { .. }
             | Self::GitBranchCreate { .. } => true,
-            // Founder amendment of 2026-11-19: lease-covered file writes.
+            // The SG-000132 amendment of 2026-11-19: lease-covered writes.
             Self::WriteText { .. } | Self::Mkdir { .. } => false,
             // Reads.
             Self::Stat { .. }
@@ -369,9 +371,57 @@ fn existing(path: &str, roots: &[String]) -> Result<PathBuf, ProviderError> {
     Ok(resolved)
 }
 
+/// Spec 4.14, kept by the SG-000132 amendment of 2026-11-19 (Full Control
+/// file writes covered by the lease): the provider always refuses writes to
+/// the authority's state (`%ProgramData%\Orcel\authority`) and to the
+/// user-session Orcel state root (`orcel_policy::protected_state`: the
+/// per-OS state root, the earlier `%LOCALAPPDATA%\Orcel`, and every
+/// `ORCEL_*` override, read from this process's environment, which the
+/// worker inherits from orceld). Each root is resolved as the policy
+/// resolves it; one that cannot be resolved refuses every write (fail
+/// closed).
+fn protected_write_roots() -> Result<Vec<PathBuf>, ProviderError> {
+    orcel_policy::protected_state::protected_state_roots()
+        .iter()
+        .map(|root| {
+            orcel_policy::protected_state::resolve_protected_root(root).map_err(|error| {
+                failure(
+                    FailureCode::CapabilityDenied,
+                    format!("Orcel's protected state could not be located, so nothing is written: {error}"),
+                )
+            })
+        })
+        .collect()
+}
+
+/// Whether a resolved write target lies in Orcel's protected state.
+pub(crate) fn is_protected_write(target: &Path, protected: &[PathBuf]) -> bool {
+    let names: Vec<String> = target
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .collect();
+    // The authority's state folder (`...\Orcel\authority`), as the lease's
+    // root check names it.
+    names
+        .windows(2)
+        .any(|pair| pair[0] == "orcel" && pair[1] == "authority")
+        || protected
+            .iter()
+            .any(|root| orcel_policy::protected_state::path_within(target, root))
+}
+
 /// A path to create: its parent resolved inside the roots, the name plain,
 /// and no link or junction already at the name.
 fn creatable(path: &str, roots: &[String]) -> Result<PathBuf, ProviderError> {
+    creatable_with(path, roots, &protected_write_roots()?)
+}
+
+/// [`creatable`] with the protected state roots given (tests).
+pub(crate) fn creatable_with(
+    path: &str,
+    roots: &[String],
+    protected: &[PathBuf],
+) -> Result<PathBuf, ProviderError> {
     lexical(path, roots)?;
     let target = Path::new(path);
     let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
@@ -400,6 +450,15 @@ fn creatable(path: &str, roots: &[String]) -> Result<PathBuf, ProviderError> {
         return Err(failure(
             FailureCode::CapabilityDenied,
             "Full Control does not write inside a .git folder or create a .git entry",
+        ));
+    }
+    if std::iter::once(&resolved)
+        .chain(existing_name.as_ref())
+        .any(|path| is_protected_write(path, protected))
+    {
+        return Err(failure(
+            FailureCode::CapabilityDenied,
+            "Full Control does not write Orcel's own state (the authority's state or the Orcel state root)",
         ));
     }
     if let Ok(metadata) = std::fs::symlink_metadata(&resolved) {

@@ -22,8 +22,10 @@
 //! calling MCP client's reference (`client_ref` of the request's client
 //! session), as the desktop gate names it since SG132_SLICE6.md.
 //!
-//! Approvals (founder decision 2 with its amendment, 2026-11-19): file
-//! writes (`write_text`, `mkdir`) are covered by the lease and ask nothing;
+//! Approvals (the SG-000132 amendment "Full Control file writes covered by
+//! the lease, and the fc_* tool surface", 2026-11-19, recording the
+//! founder's answers in FC_TOOL_SURFACE_OPTIONS.md section 8): file writes
+//! (`write_text`, `mkdir`) are covered by the lease and ask nothing;
 //! a program run and the four git changes ask a fresh SOFT approval on
 //! every call (SG-000096 A3), through orceld's approval broker, whose prompt
 //! is the Windows approval dialog, never an in-app control

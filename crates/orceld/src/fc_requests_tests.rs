@@ -952,3 +952,74 @@ fn fc_requests_validate_accepts_every_tool_request() {
     empty.arguments = json!({});
     validate(&empty).expect("empty status arguments");
 }
+
+/// Spec 4.14, kept by the SG-000132 amendment of 2026-11-19: a lease-covered
+/// file write never reaches Orcel's own state (the authority's state folder
+/// or a protected state root), even inside the lease's roots.
+#[test]
+fn fc_requests_file_writes_never_reach_orcel_state() {
+    use crate::fc_worker::is_protected_write;
+    use std::path::Path;
+    let base = Path::new("base");
+    let protected = vec![base.join("state")];
+    assert!(is_protected_write(&base.join("state"), &protected));
+    assert!(is_protected_write(
+        &base.join("state").join("approvals.jsonl"),
+        &protected
+    ));
+    assert!(is_protected_write(
+        &base.join("Orcel").join("authority").join("leases.json"),
+        &protected
+    ));
+    assert!(!is_protected_write(
+        &base.join("work").join("a.txt"),
+        &protected
+    ));
+    assert!(!is_protected_write(&base.join("statement.txt"), &protected));
+    assert!(!is_protected_write(
+        &base.join("Orcel").join("authority-notes.txt"),
+        &protected
+    ));
+}
+
+/// The same refusal in the worker's own resolution of a write target
+/// (Windows: real folders, resolved names).
+#[cfg(windows)]
+#[test]
+fn fc_requests_the_worker_refuses_writes_into_orcel_state() {
+    use crate::fc_worker::creatable_with;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let base = std::env::temp_dir().join(format!(
+        "orcel-fc-state-{}-{nanos}-{}",
+        std::process::id(),
+        crate::tests::next_temp_sequence()
+    ));
+    let work = base.join("work");
+    std::fs::create_dir_all(work.join("state")).expect("state");
+    std::fs::create_dir_all(work.join("Orcel").join("authority")).expect("authority");
+    let root = work.to_string_lossy().into_owned();
+    let roots = vec![root.clone()];
+    let protected =
+        vec![
+            orcel_policy::protected_state::resolve_protected_root(&work.join("state"))
+                .expect("resolved"),
+        ];
+    for refused in [
+        format!(r"{root}\state\approvals.jsonl"),
+        format!(r"{root}\STATE\new-folder"),
+        format!(r"{root}\Orcel\authority\leases.json"),
+    ] {
+        assert_eq!(
+            code(creatable_with(&refused, &roots, &protected)),
+            Some(FailureCode::CapabilityDenied),
+            "{refused}"
+        );
+    }
+    creatable_with(&format!(r"{root}\notes.txt"), &roots, &protected).expect("an ordinary file");
+    creatable_with(&format!(r"{root}\Orcel\notes.txt"), &roots, &protected)
+        .expect("a folder merely named Orcel");
+    let _ = std::fs::remove_dir_all(base);
+}

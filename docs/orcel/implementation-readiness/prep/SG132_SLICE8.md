@@ -21,7 +21,9 @@ they exist no agent tool sends these requests.
 
 ## 1. Founder decisions (2026-11-19), as built
 
-Answering the four questions of the brief:
+The authority is the spec amendment in `.specgrain/specs/SG-000132.json` (`amendments`: "SG-000132 amendment: Full Control file writes covered by the lease, and the fc_* tool surface",
+created 2026-11-19, PR #829), which records the founder's answers in
+[FC_TOOL_SURFACE_OPTIONS.md](FC_TOOL_SURFACE_OPTIONS.md) section 8. Answering the four questions of the brief:
 
 1. **Option B:** separate local-only tools, one per worker operation (`WorkerOp`), plus a read-only `fc_status`. The
    tool names and their operations: `fc_fs_stat` (`stat`), `fc_fs_list` (`list`), `fc_fs_read` (`read_text`),
@@ -38,14 +40,24 @@ Answering the four questions of the brief:
 4. **`fc_status`:** read-only; shows the active lease's executors, roots and expiry and this client's reference
    (`client_ref(client_session_id)`); grants nothing.
 
-**The amendment departs from the specs' general rule, deliberately.** `SG-000132.json` says "A lease alone never
-replaces an approval; only a standing approval for the same client, task and scope does", and the unified spec
-section 4.15 says each action keeps its own approval without a standing approval. For Full Control file writes the
-founder chose the lease (granted with the service's confirmation and Windows Hello, for named roots, a named client
-and a limited time) as the approval. Safe-mode writes are unchanged and still ask SOFT, so Full Control writes now ask
-less than Safe-mode writes, inside the lease's roots only. The spec texts are not edited by this slice (residual 1).
-The amendment is recorded in code at `WorkerOp::needs_approval` (`crates/orceld/src/fc_worker.rs`) and in the module
-header of `crates/orceld/src/fc_requests.rs`.
+**The exception, as the SG-000132 amendment states it.** The amendment makes an exception to the invariant "A lease
+alone never replaces an approval": under a Full User lease that names the filesystem executor, the fc-worker
+operations `write_text` (tool `fc_fs_write`) and `mkdir` (tool `fc_fs_mkdir`) inside the lease's roots are covered by
+the lease and ask no per-action approval. Each still has a service `Authorize` and audit record first, stays inside
+the roots, refuses `.git` paths, keeps spec 4.14's refusal of the authority state and of writes to the user-session
+Orcel state root, and is ended by Stop, revoke and expiry. No other operation is covered by this exception: a program
+run and the Git changes keep a fresh SOFT approval on every call (SG-000096 A3) unless a standing approval (spec 4.15)
+covers them, deletion keeps its own approval (SG-000097), and remote callers stay excluded (SG-000105). Safe-mode
+writes are unchanged and still ask SOFT. In code the exception is cited at `WorkerOp::needs_approval`
+(`crates/orceld/src/fc_worker.rs`) and in the module header of `crates/orceld/src/fc_requests.rs`.
+
+**Spec 4.14's state refusal, enforced in this slice.** Before this slice the worker refused `.git` writes but not
+writes to Orcel's own state inside a broad root (a lease on `C:\Users\<name>` covered `%USERPROFILE%\.orcel`,
+where the approval ledger, trust records and audit chain live). Since the amendment makes these writes prompt-free,
+the worker now refuses (`CAPABILITY_DENIED`) any `write_text` or `mkdir` whose resolved target is in the authority's
+state folder (`...\Orcel\authority`) or in a protected state root (`orcel_policy::protected_state`: the per-OS
+state root, the earlier `%LOCALAPPDATA%\Orcel` and every `ORCEL_*` override, read from the environment the worker
+inherits from orceld). A protected root that cannot be resolved refuses every write (fail closed).
 
 ## 2. What changed
 
@@ -151,7 +163,8 @@ real desktop shows.
 | A request smuggles an operation of another family, free arguments, or a target | Only the table's shapes; the arguments must be exactly one worker operation whose name is the request's operation | `fc_requests_shapes_are_validated_before_anything_is_asked` (nothing authorized, asked or run); `fc_requests_the_entry_checks_form_and_workspace_locally`; `fc_dispatch_the_operation_is_the_request_arguments_or_nothing` |
 | A tool runs without a lease, or a files-only lease runs a program or Git | `LEASE_REQUIRED` for every tool without a lease; a lease without `shell_process` covers files only; the person is never asked without a covering lease; no service is `AUTHORITY_UNAVAILABLE` | `fc_requests_without_a_lease_every_tool_refuses_lease_required` |
 | One MCP client uses a lease granted to another | The principal is the caller's `client_ref`; a lease bound to another client refuses before `Authorize` (and the service checks it again) | `fc_requests_the_principal_is_the_calling_clients_reference`; `fc_dispatch_the_desktop_gate_names_the_calling_client` (same binding) |
-| **Founder amendment:** a file write or folder creation runs without a per-call approval | By decision: the lease covers `write_text` and `mkdir`. What still holds: the lease's executor, client and roots; the service's audit-first `Authorize` and its record; the dispatch job; the worker's root, link, hard link and `.git` checks; the outcome record | `fc_requests_file_writes_are_lease_covered_and_ask_nothing` (no approval asked; `Authorize`, executor `filesystem`, paths and outcome present); the worker's checks: `fc_worker_tests` (slice 3) |
+| **SG-000132 amendment (2026-11-19):** a file write or folder creation runs without a per-call approval | By the amendment: the lease covers `write_text` and `mkdir`. What still holds: the lease's executor, client and roots; the service's audit-first `Authorize` and its record; the dispatch job; the worker's root, link, hard link and `.git` checks; the outcome record | `fc_requests_file_writes_are_lease_covered_and_ask_nothing` (no approval asked; `Authorize`, executor `filesystem`, paths and outcome present); the worker's checks: `fc_worker_tests` (slice 3) |
+| A lease-covered write inside a broad root overwrites Orcel's own state (approval ledger, trust records, audit chain, the authority's state) without a prompt | Spec 4.14, kept by the amendment: the worker refuses writes and folder creation in the authority's state folder and in every protected state root, after resolving the target; an unresolvable protected root refuses all writes | `fc_requests_file_writes_never_reach_orcel_state` (every OS); `fc_requests_the_worker_refuses_writes_into_orcel_state` (Windows, real folders, a case variant included) |
 | A program or a Git change runs without the person's fresh approval, or one approval covers two actions | `run`, `git_add`, `git_unstage`, `git_commit`, `git_branch_create` ask on every call; each approval is bound to that call's digest, which the service records; a No authorizes and runs nothing | `fc_requests_process_and_git_mutations_ask_every_call` (two rounds, every digest distinct and equal to an `Authorize` digest); `fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_digest` |
 | The approval is an in-app control, or not SOFT, or not bound to the action | `BrokerApproval` asks orceld's broker for a SOFT, single-use prompt with the action digest, the program or repository, and a local origin; No and unavailable refuse | `fc_requests_the_windows_approval_is_soft_and_bound_to_the_digest` (scripted brokers); that the broker's SOFT prompt is the Windows dialog: `orcel-approval`'s own suites; the dialog itself on a real desktop: **UNVERIFIED (founder run)** |
 | `fc.status` grants or leaks authority | Read-only: no `Authorize`, no job, no approval; lists only desktop Full User leases this client can use (bound to it, or unbound); another client's lease is not listed | `fc_requests_status_shows_the_lease_scope_and_grants_nothing` |
@@ -162,13 +175,15 @@ real desktop shows.
 
 ## 5. Residuals
 
-1. **The spec texts still say a lease never replaces an approval.** The founder's amendment (section 1) is recorded
-   here and in code; `.specgrain/specs/SG-000132.json` (invariants), `SG-000097.json` and the unified spec section
-   4.15 are not edited by this slice. Amending them is the founder's call.
+1. **Other spec texts are not edited.** `SG-000097.json` and the unified spec section 4.15 still state the general
+   rule (each action keeps its own approval without a standing approval). The SG-000132 amendment of 2026-11-19
+   ("SG-000132 amendment: Full Control file writes covered by the lease, and the fc_* tool surface") governs for `write_text` and `mkdir` under a Full Control lease, and only for them.
 2. **File writes inside the roots need no per-call approval** (by decision). An agent holding a lease can overwrite
    any text file up to 256 KiB inside the roots without a prompt, within the lease's time. There is no preview or
    hash binding (unlike Safe-mode `fs_write`), no Recycle Bin copy of the overwritten content, and no undo. The
-   person's protection is the narrowness of the roots and the lease's expiry and Stop.
+   person's protection is the narrowness of the roots, the lease's expiry and Stop, and the refusal of Orcel's own
+   state (section 1). Other programs' configuration inside the roots (a shell profile, a Git global configuration
+   in a home-folder root) is not protected beyond the `.git` rule.
 3. **Git changes have no `expected_head`.** The approval names the exact request (repository, paths, message or
    branch), not the repository's state (slice 4, "Approval binding").
 4. **The approval is asked before `Authorize`.** As in slice 4: a covering lease is found first, so the person is not
@@ -194,8 +209,7 @@ real desktop shows.
 2. Founder runs for this slice's UNVERIFIED rows: with the installed service and a lease granted to the client's
    reference, `fc.status`, a file write without a prompt, a program run with the Windows dialog (Yes and No), a Git
    commit with the dialog.
-3. Founder decision on residual 1 (spec text).
-4. Slice 6 section 5 steps 1, 2 and 5 to 6 stand; its step 4 is done for orceld here and for MCP in step 1.
+3. Slice 6 section 5 steps 1, 2 and 5 to 6 stand; its step 4 is done for orceld here and for MCP in step 1.
 
 ## Tests
 
