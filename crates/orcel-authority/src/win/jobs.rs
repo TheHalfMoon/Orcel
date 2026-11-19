@@ -1,4 +1,4 @@
-//! WP1-12 (SG-000132): the dispatch Job Objects, made and held by the
+//! WP1-10 (SG-000132): the dispatch Job Objects, made and held by the
 //! service (spec 4.14).
 //!
 //! Each job is UNNAMED: no process can open it by name, squat its name, or
@@ -24,6 +24,19 @@
 //! `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`, so `CREATE_BREAKAWAY_FROM_JOB`
 //! fails inside the job.
 //!
+//! WP1-15 (SG-000097, SG-000096; SG132_SLICE4.md): every dispatch job also
+//! carries the UI restrictions of [`JOB_UI_LIMITS`]. The worker and the
+//! console programs it runs need none of what they take away, and they
+//! reduce the window-message and DDE routes to processes outside the job
+//! (they are not a boundary: no job restriction covers synthesized input,
+//! and a GUI program can still make its own windows): a process in
+//! the job cannot use USER handles (windows, hooks) of processes outside it,
+//! has its own global atom table (DDE conversations with the shell need the
+//! shared one), cannot create or switch desktops, read or write the
+//! clipboard, log off or shut down, or change system parameters or display
+//! settings. They do not close COM, WMI, RPC or Task Scheduler requests to
+//! out-of-job brokers (SG132_SLICE4.md, residuals).
+//!
 //! Residual: a process running as the user can duplicate the assign-only
 //! handle out of orceld (it holds `PROCESS_DUP_HANDLE` on orceld) and assign
 //! its own processes to the job. That only puts them where the service will
@@ -38,11 +51,14 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_CLOSE_SOURCE, FILETIME, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
-    CreateJobObjectW, JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
-    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    CreateJobObjectW, JobObjectBasicAccountingInformation, JobObjectBasicUIRestrictions,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_BASIC_UI_RESTRICTIONS,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+    JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_UILIMIT_DESKTOP, JOB_OBJECT_UILIMIT_DISPLAYSETTINGS, JOB_OBJECT_UILIMIT_EXITWINDOWS,
+    JOB_OBJECT_UILIMIT_GLOBALATOMS, JOB_OBJECT_UILIMIT_HANDLES, JOB_OBJECT_UILIMIT_READCLIPBOARD,
+    JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS, JOB_OBJECT_UILIMIT_WRITECLIPBOARD,
 };
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, GetProcessTimes, OpenProcess, PROCESS_DUP_HANDLE,
@@ -62,6 +78,18 @@ pub const ACTIVE_PROCESS_LIMIT: u32 = 64;
 pub const JOB_LIMIT_FLAGS: u32 = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
     | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+/// The UI restrictions every dispatch job carries (WP1-15): no USER
+/// handles of processes outside the job, a separate global atom table, no
+/// desktop creation or switching, no clipboard, no log off or shutdown, no
+/// system parameter or display setting changes.
+pub const JOB_UI_LIMITS: u32 = JOB_OBJECT_UILIMIT_HANDLES
+    | JOB_OBJECT_UILIMIT_GLOBALATOMS
+    | JOB_OBJECT_UILIMIT_DESKTOP
+    | JOB_OBJECT_UILIMIT_EXITWINDOWS
+    | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS
+    | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS
+    | JOB_OBJECT_UILIMIT_READCLIPBOARD
+    | JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
 
 /// A pipe client's process, opened for handle duplication, with the
 /// creation time it was opened at.
@@ -147,6 +175,27 @@ pub fn limit_flags(job: HANDLE) -> Result<u32, AuthorityError> {
     Ok(limits.BasicLimitInformation.LimitFlags)
 }
 
+/// The job's UI restrictions as the kernel reports them.
+pub fn ui_limits(job: HANDLE) -> Result<u32, AuthorityError> {
+    let mut limits = JOBOBJECT_BASIC_UI_RESTRICTIONS {
+        UIRestrictionsClass: 0,
+    };
+    // SAFETY: pointer and size describe `limits`.
+    if unsafe {
+        QueryInformationJobObject(
+            job,
+            JobObjectBasicUIRestrictions,
+            (&mut limits as *mut JOBOBJECT_BASIC_UI_RESTRICTIONS).cast(),
+            std::mem::size_of::<JOBOBJECT_BASIC_UI_RESTRICTIONS>() as u32,
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(os_error("QueryInformationJobObject(UI restrictions)"));
+    }
+    Ok(limits.UIRestrictionsClass)
+}
+
 /// Processes in the job now.
 pub fn active_processes(job: HANDLE) -> Result<u32, AuthorityError> {
     // SAFETY: zeroed accounting information is a valid out-parameter.
@@ -167,7 +216,7 @@ pub fn active_processes(job: HANDLE) -> Result<u32, AuthorityError> {
     Ok(info.ActiveProcesses)
 }
 
-/// Creates an unnamed job with the dispatch limits.
+/// Creates an unnamed job with the dispatch limits and UI restrictions.
 pub fn create_job() -> Result<Owned, AuthorityError> {
     // SAFETY: no attributes and no name: an unnamed job, not inheritable.
     let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
@@ -190,6 +239,21 @@ pub fn create_job() -> Result<Owned, AuthorityError> {
     } == 0
     {
         return Err(os_error("SetInformationJobObject(dispatch limits)"));
+    }
+    let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS {
+        UIRestrictionsClass: JOB_UI_LIMITS,
+    };
+    // SAFETY: pointer and size describe `ui`; the handle has every right.
+    if unsafe {
+        SetInformationJobObject(
+            job.0,
+            JobObjectBasicUIRestrictions,
+            (&ui as *const JOBOBJECT_BASIC_UI_RESTRICTIONS).cast(),
+            std::mem::size_of::<JOBOBJECT_BASIC_UI_RESTRICTIONS>() as u32,
+        )
+    } == 0
+    {
+        return Err(os_error("SetInformationJobObject(UI restrictions)"));
     }
     Ok(job)
 }

@@ -191,7 +191,7 @@ impl AttestationVerifier for ScriptedAttestation {
     }
 }
 
-/// WP1-12: what the fake job host saw, per test thread.
+/// WP1-10: what the fake job host saw, per test thread.
 #[derive(Default)]
 struct JobLog {
     live: Vec<String>,
@@ -2063,7 +2063,7 @@ fn wp103_a_pending_reset_can_be_reset_again_and_its_opening_is_anchored_by_the_c
 }
 
 // ---------------------------------------------------------------------
-// WP1-12: dispatch Job Objects, paths inside the roots, outcomes.
+// WP1-10: dispatch Job Objects, paths inside the roots, outcomes.
 // ---------------------------------------------------------------------
 
 const ROOT: &str = r"C:\work";
@@ -2111,9 +2111,9 @@ fn audit_records(dir: &Path) -> Result<Vec<Value>, String> {
 }
 
 #[test]
-fn wp112_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop() -> Result<(), String>
+fn wp110_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop() -> Result<(), String>
 {
-    let dir = temp_dir("wp112-jobs")?;
+    let dir = temp_dir("wp110-jobs")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, _) = grant(&mut core, Some(full_scope()))?;
@@ -2176,8 +2176,8 @@ fn wp112_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop() -
 }
 
 #[test]
-fn wp112_filesystem_dispatches_name_paths_inside_the_roots() -> Result<(), String> {
-    let dir = temp_dir("wp112-roots")?;
+fn wp110_filesystem_dispatches_name_paths_inside_the_roots() -> Result<(), String> {
+    let dir = temp_dir("wp110-roots")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, _) = grant(&mut core, Some(full_scope()))?;
@@ -2256,8 +2256,8 @@ fn wp112_filesystem_dispatches_name_paths_inside_the_roots() -> Result<(), Strin
 }
 
 #[test]
-fn wp112_revoke_stop_lock_and_expiry_terminate_the_dispatch_jobs() -> Result<(), String> {
-    let dir = temp_dir("wp112-stop")?;
+fn wp110_revoke_stop_lock_and_expiry_terminate_the_dispatch_jobs() -> Result<(), String> {
+    let dir = temp_dir("wp110-stop")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let shell = |core: &mut AuthorityCore, id: &str| -> Result<String, String> {
@@ -2313,8 +2313,8 @@ fn wp112_revoke_stop_lock_and_expiry_terminate_the_dispatch_jobs() -> Result<(),
 }
 
 #[test]
-fn wp112_a_job_that_cannot_be_made_refuses_before_any_allow_record() -> Result<(), String> {
-    let dir = temp_dir("wp112-fail")?;
+fn wp110_a_job_that_cannot_be_made_refuses_before_any_allow_record() -> Result<(), String> {
+    let dir = temp_dir("wp110-fail")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, _) = grant(&mut core, Some(full_scope()))?;
@@ -2337,8 +2337,8 @@ fn wp112_a_job_that_cannot_be_made_refuses_before_any_allow_record() -> Result<(
 }
 
 #[test]
-fn wp112_outcomes_are_orcelds_once_per_authorization_and_end_the_job() -> Result<(), String> {
-    let dir = temp_dir("wp112-outcome")?;
+fn wp110_outcomes_are_orcelds_once_per_authorization_and_end_the_job() -> Result<(), String> {
+    let dir = temp_dir("wp110-outcome")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, _) = grant(&mut core, Some(full_scope()))?;
@@ -2413,8 +2413,8 @@ fn wp112_outcomes_are_orcelds_once_per_authorization_and_end_the_job() -> Result
 }
 
 #[test]
-fn wp112_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number() -> Result<(), String> {
-    let dir = temp_dir("wp112-idle")?;
+fn wp110_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number() -> Result<(), String> {
+    let dir = temp_dir("wp110-idle")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, _) = grant(&mut core, Some(full_scope()))?;
@@ -2456,7 +2456,7 @@ fn wp112_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number() -> Result<(),
 }
 
 #[test]
-fn wp112_job_ids_and_dispatch_paths_are_checked_lexically() {
+fn wp110_job_ids_and_dispatch_paths_are_checked_lexically() {
     use crate::lease::{check_dispatch_path, path_within_roots};
     assert!(is_job_id(&format!("fcj-{}", "a1".repeat(16))));
     for bad in [
@@ -2498,8 +2498,8 @@ fn wp112_job_ids_and_dispatch_paths_are_checked_lexically() {
 /// Review of 291e045e: orceld asks between assigning its suspended worker
 /// and resuming it; a revoke, Stop or ended job in between refuses.
 #[test]
-fn wp112_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), String> {
-    let dir = temp_dir("wp112-active")?;
+fn wp110_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), String> {
+    let dir = temp_dir("wp110-active")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, _) = grant(&mut core, Some(full_scope()))?;
@@ -2561,9 +2561,9 @@ fn wp112_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), Str
 /// Re-review of 073b7fee: when the open-dispatch queue evicts its oldest
 /// entry, that dispatch's job is terminated with it.
 #[test]
-fn wp112_an_evicted_open_dispatch_ends_its_job() -> Result<(), String> {
+fn wp110_an_evicted_open_dispatch_ends_its_job() -> Result<(), String> {
     use crate::core::dispatch_jobs::MAX_OPEN_DISPATCHES;
-    let dir = temp_dir("wp112-evict")?;
+    let dir = temp_dir("wp110-evict")?;
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, _) = grant(&mut core, Some(full_scope()))?;

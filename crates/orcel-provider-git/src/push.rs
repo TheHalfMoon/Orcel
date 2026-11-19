@@ -1345,6 +1345,9 @@ impl GitProvider {
         let before_head = preview.head.clone();
         let before_branch = preview.branch.clone();
         let before_status = self.push_worktree_status(&repo)?;
+        // Review of #824: the configuration gate before every Git process
+        // the transport starts (it calls neutralizing_args itself).
+        crate::repo_config::check_repository(&self.workspace_root, &repo)?;
         let remote_actual = transport
             .query_remote_ref(&RemoteQuery {
                 repo: &repo,
@@ -1367,6 +1370,9 @@ impl GitProvider {
                 "remote destination ref changed after push preview; push is denied",
             ));
         }
+        // Review of #824: the configuration gate before every Git process
+        // the transport starts (it calls neutralizing_args itself).
+        crate::repo_config::check_repository(&self.workspace_root, &repo)?;
         transport
             .send_push(&PushOperation {
                 repo: &repo,
@@ -1384,6 +1390,9 @@ impl GitProvider {
                     redact_secret_text(&error.message, credential.secret.as_ref()),
                 )
             })?;
+        // Review of #824: the configuration gate before every Git process
+        // the transport starts (it calls neutralizing_args itself).
+        crate::repo_config::check_repository(&self.workspace_root, &repo)?;
         let resulting = transport
             .query_remote_ref(&RemoteQuery {
                 repo: &repo,

@@ -216,7 +216,7 @@ fn arm_input(
 
 /// SG-000132 slice 2: the desktop lease gate prefers the authority service
 /// when it is installed (`authority_link::desktop_input_gate`); the
-/// deprecated user-readable store applies only where it is not. WP1-12: it
+/// deprecated user-readable store applies only where it is not. WP1-10: it
 /// is the Full Control dispatcher's desktop input path.
 fn require_full_user_desktop(request: &RequestEnvelope) -> Result<(), ProviderError> {
     crate::authority_link::desktop_input_gate(request)
@@ -854,7 +854,7 @@ impl<A: orcel_provider_uia::UiaAdapter> RefTreeAdapter for HostObserver<'_, A> {
 /// Dispatch the SG-000036 UIA shapes. Returns `Ok(None)` for non-UIA shapes
 /// so the caller falls through to the browser, trust, Git, and legacy
 /// dispatchers.
-/// SG-000132 WP1-12: every desktop request reports the outcome of the
+/// SG-000132 WP1-10: every desktop request reports the outcome of the
 /// desktop authorizations it took to the authority service.
 pub fn dispatch_uia(
     workspace: &Workspace,

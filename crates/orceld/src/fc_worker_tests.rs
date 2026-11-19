@@ -1,10 +1,14 @@
-//! SG-000132 WP1-12: `orceld fc-worker`. The request and reply contract on
+//! SG-000132 WP1-10: `orceld fc-worker`. The request and reply contract on
 //! every OS; on Windows, the real worker (the built `orceld.exe`) launched
 //! into real, unnamed Job Objects made in this unelevated test process the
 //! way the service makes them (an assign-only handle duplicated into this
-//! process), the operations inside the roots, and the refusals: a revoke
-//! before the resume (the worker never runs), a junction or a hard link out
-//! of the root.
+//! process, the dispatch limits and UI restrictions), the operations inside
+//! the roots, and the refusals: a revoke before the resume (the worker
+//! never runs), a junction or a hard link out of the root. WP1-15
+//! (SG132_SLICE4.md): real programs started by the worker inside the job
+//! (a copy of this test binary as the program, driven by a mode file in
+//! its working folder, since its environment is scrubbed), and real Git
+//! against a repository whose hooks and configuration try to run programs.
 
 use crate::fc_worker::{serve, WorkerOp, WorkerReply, WorkerRequest, WORKER_CONTRACT};
 use orcel_contracts::FailureCode;
@@ -56,9 +60,10 @@ fn fc_worker_acts_only_inside_a_job_and_echoes_the_token() {
 #[cfg(windows)]
 mod windows {
     use super::*;
+    use crate::fc_worker::exec::CHILD_ENVIRONMENT;
     use crate::fc_worker::{perform, JobLauncher};
     use crate::full_control_dispatch::{run_in_worker, AuthorityPort, JobGrant, WorkerLauncher};
-    use crate::full_control_dispatch_tests::{lease, request};
+    use crate::full_control_dispatch_tests::{lease, request, FakeApproval};
     use orcel_authority::caller::CallerFacts;
     use orcel_authority::core::dispatch_jobs::JobHost;
     use orcel_authority::lease::{LeaseBody, LeaseScope};
@@ -101,7 +106,7 @@ mod windows {
     }
 
     fn root() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("orceld-wp112-{}", unique()));
+        let dir = std::env::temp_dir().join(format!("orceld-wp110-{}", unique()));
         std::fs::create_dir_all(&dir).expect("root");
         std::fs::canonicalize(&dir)
             .ok()
@@ -146,9 +151,9 @@ mod windows {
     impl JobPort {
         fn new(root: &Path) -> Self {
             let scope = LeaseScope::DesktopFullUser {
-                executors: vec![ExecutorClass::Filesystem],
+                executors: vec![ExecutorClass::Filesystem, ExecutorClass::ShellProcess],
                 roots: vec![root.display().to_string()],
-                shells: false,
+                shells: true,
             };
             let slot: ClientSlot = Arc::new(Mutex::new(None));
             Self {
@@ -244,7 +249,7 @@ mod windows {
             op.name(),
             serde_json::to_value(&op).expect("op"),
         );
-        run_in_worker(port, &launcher, &request, None, 5)
+        run_in_worker(port, &launcher, &FakeApproval::default(), &request, None, 5)
     }
 
     #[test]
@@ -515,6 +520,859 @@ mod windows {
         );
         assert_eq!(lexical.err().map(|e| e.code), Some(FailureCode::PathEscape));
         let _ = std::fs::remove_dir(&link);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    // -----------------------------------------------------------------
+    // WP1-15: the process and git families (SG132_SLICE4.md).
+    // -----------------------------------------------------------------
+
+    /// The file in a helper's working folder that says what it does.
+    const MODE_FILE: &str = "orcel-fc-helper-mode";
+    /// The helper program's name inside the roots.
+    const HELPER_EXE: &str = "fchelper.exe";
+    /// A variable the test process holds and no started program may see.
+    const SECRET: &str = "ORCEL_FC_WORKER_TEST_SECRET_TOKEN";
+
+    /// Not a test of its own: the program the process tests run (a copy
+    /// of this test binary inside the roots). Its environment is scrubbed,
+    /// so it reads what to do from [`MODE_FILE`] in its working folder;
+    /// without that file (every ordinary test run) it does nothing.
+    #[test]
+    fn fc_worker_helper_child() {
+        let Ok(mode) = std::fs::read_to_string(MODE_FILE) else {
+            return;
+        };
+        match mode.trim() {
+            "env" => {
+                for (name, _) in std::env::vars_os() {
+                    println!("ENV:{}", name.to_string_lossy());
+                }
+            }
+            "sleep" => std::thread::sleep(std::time::Duration::from_secs(30)),
+            "flood" => {
+                let line = "x".repeat(1_000);
+                for _ in 0..200 {
+                    println!("{line}");
+                }
+            }
+            "spawn" => {
+                // A grandchild that inherits stdout (so it holds the
+                // worker's capture pipe) and writes late.txt after 5 s.
+                let late = std::env::current_dir().expect("cwd").join("late");
+                // Deliberately not waited for: it must outlive this process.
+                #[allow(clippy::zombie_processes)]
+                let _grandchild = std::process::Command::new(std::env::current_exe().expect("exe"))
+                    .args(std::env::args().skip(1))
+                    .current_dir(&late)
+                    .stdin(std::process::Stdio::null())
+                    .spawn()
+                    .expect("start the grandchild");
+            }
+            "late" => {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                std::fs::write("late.txt", "the job did not end me").expect("late");
+            }
+            "exit7" => std::process::exit(7),
+            _ => std::process::exit(3),
+        }
+    }
+
+    /// A root holding a copy of this test binary as [`HELPER_EXE`], and a
+    /// working folder `name` in it with the mode file.
+    fn helper_root(name: &str, mode: &str) -> (PathBuf, PathBuf) {
+        let root = root();
+        std::fs::copy(
+            std::env::current_exe().expect("this test binary"),
+            root.join(HELPER_EXE),
+        )
+        .expect("copy the helper into the root");
+        let cwd = root.join(name);
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::write(cwd.join(MODE_FILE), mode).expect("mode");
+        (root, cwd)
+    }
+
+    fn helper_op(root: &Path, cwd: &Path, timeout_ms: u64, max_output_bytes: usize) -> WorkerOp {
+        WorkerOp::Run {
+            program: root.join(HELPER_EXE).display().to_string(),
+            args: vec![
+                "--exact".to_owned(),
+                "fc_worker_tests::windows::fc_worker_helper_child".to_owned(),
+                "--nocapture".to_owned(),
+                "--test-threads=1".to_owned(),
+            ],
+            cwd: cwd.display().to_string(),
+            timeout_ms,
+            max_output_bytes,
+        }
+    }
+
+    #[test]
+    fn fc_worker_runs_a_program_in_the_job_with_a_scrubbed_environment() {
+        std::env::set_var(SECRET, "must-not-reach-the-child");
+        let (root, cwd) = helper_root("env", "env");
+        let port = JobPort::new(&root);
+        let ran = run(&port, helper_op(&root, &cwd, 30_000, 64 * 1024)).expect("ran in the job");
+        assert_eq!(ran["exit_code"], 0, "{ran}");
+        assert_eq!(ran["output_complete"], true);
+        let names: Vec<String> = ran["stdout"]
+            .as_str()
+            .expect("stdout")
+            .lines()
+            .filter_map(|line| line.strip_prefix("ENV:"))
+            .map(str::to_owned)
+            .collect();
+        assert!(
+            names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case("SystemRoot")),
+            "{names:?}"
+        );
+        for name in &names {
+            assert!(
+                CHILD_ENVIRONMENT
+                    .iter()
+                    .any(|allowed| allowed.eq_ignore_ascii_case(name)),
+                "{name} reached the program"
+            );
+        }
+        assert!(!names.iter().any(|name| name == SECRET));
+        // The program's exit code is reported, not turned into a failure.
+        std::fs::write(cwd.join(MODE_FILE), "exit7").expect("mode");
+        let seven = run(&port, helper_op(&root, &cwd, 30_000, 1_024)).expect("ran");
+        assert_eq!(seven["exit_code"], 7);
+        let outcomes = port.outcomes.borrow();
+        assert!(outcomes
+            .iter()
+            .all(|(outcome, _)| *outcome == DispatchOutcome::Succeeded));
+        assert!(port.held.borrow().is_empty(), "every job ended");
+        drop(outcomes);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A program's descendants stay in the dispatch's job (no breakaway),
+    /// keep no pipe of orceld's, and end when the job is terminated.
+    #[test]
+    fn fc_worker_descendants_stay_in_the_job_and_end_with_it() {
+        let (root, cwd) = helper_root("spawn", "spawn");
+        let late = cwd.join("late");
+        std::fs::create_dir_all(&late).expect("late");
+        std::fs::write(late.join(MODE_FILE), "late").expect("mode");
+        let port = JobPort::new(&root);
+        let (id, handle) = port.make_job();
+        let launcher = JobLauncher::with_program(orceld_exe());
+        let ran = launcher
+            .run(
+                &JobGrant {
+                    id: id.clone(),
+                    handle,
+                },
+                &[root.display().to_string()],
+                &helper_op(&root, &cwd, 30_000, 4_096),
+                &|| Ok(()),
+            )
+            .expect("the worker replied although a descendant still runs");
+        assert_eq!(ran["exit_code"], 0, "{ran}");
+        assert_eq!(
+            ran["output_complete"], false,
+            "the grandchild held the capture pipe"
+        );
+        let held = port.jobs.borrow().active_processes(&id);
+        assert!(
+            held.is_some_and(|count| count >= 1),
+            "the grandchild is in the job: {held:?}"
+        );
+        port.jobs.borrow_mut().terminate(&id);
+        std::thread::sleep(std::time::Duration::from_secs(7));
+        assert!(
+            !late.join("late.txt").exists(),
+            "terminating the job ended the grandchild"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fc_worker_a_run_has_a_timeout_and_bounded_output() {
+        let (root, cwd) = helper_root("sleep", "sleep");
+        let port = JobPort::new(&root);
+        let started = std::time::Instant::now();
+        let slow = run(&port, helper_op(&root, &cwd, 1_500, 1_024));
+        assert_eq!(
+            slow.err().map(|e| e.code),
+            Some(FailureCode::ProcessTimeout)
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+        assert_eq!(
+            port.outcomes.borrow().last().cloned(),
+            Some((DispatchOutcome::Failed, Some(FailureCode::ProcessTimeout)))
+        );
+        std::fs::write(cwd.join(MODE_FILE), "flood").expect("mode");
+        let flood = run(&port, helper_op(&root, &cwd, 30_000, 1_000)).expect("ran");
+        assert_eq!(flood["stdout"].as_str().map(str::len), Some(1_000));
+        assert_eq!(flood["stdout_truncated"], true);
+        assert!(flood["stdout_bytes"].as_u64().is_some_and(|n| n >= 200_000));
+        for (timeout_ms, max_output_bytes) in
+            [(0, 1_000), (50_001, 1_000), (1_000, 0), (1_000, 65_537)]
+        {
+            let refused = perform(
+                &helper_op(&root, &cwd, timeout_ms, max_output_bytes),
+                &[root.display().to_string()],
+            );
+            assert_eq!(
+                refused.err().map(|e| e.code),
+                Some(FailureCode::InvalidRequest)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fc_worker_runs_only_resolved_exe_programs_inside_the_roots() {
+        let (root, cwd) = helper_root("paths", "exit7");
+        let roots = vec![root.display().to_string()];
+        let outside = root.with_extension("outside-exe");
+        std::fs::create_dir_all(&outside).expect("outside");
+        std::fs::copy(root.join(HELPER_EXE), outside.join(HELPER_EXE)).expect("copy");
+        let attempt = |program: PathBuf| {
+            perform(
+                &WorkerOp::Run {
+                    program: program.display().to_string(),
+                    args: Vec::new(),
+                    cwd: cwd.display().to_string(),
+                    timeout_ms: 5_000,
+                    max_output_bytes: 64,
+                },
+                &roots,
+            )
+            .err()
+            .map(|e| e.code)
+        };
+        // Lexically outside, and through a junction out of the root.
+        assert_eq!(
+            attempt(outside.join(HELPER_EXE)),
+            Some(FailureCode::PathEscape)
+        );
+        let link = root.join("escape");
+        let made = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .expect("mklink");
+        assert!(made.status.success());
+        assert_eq!(
+            attempt(link.join(HELPER_EXE)),
+            Some(FailureCode::PathEscape)
+        );
+        // A hard link inside the roots (in-box Windows programs have
+        // WinSxS names too).
+        std::fs::hard_link(outside.join(HELPER_EXE), root.join("alias.exe")).expect("hard link");
+        assert_eq!(
+            attempt(root.join("alias.exe")),
+            Some(FailureCode::PathEscape)
+        );
+        // Shells, launchers and Git by name; scripts and batch files by
+        // kind. A copy is refused by its name before it is ever started.
+        for name in [
+            "cmd.exe",
+            "PowerShell.exe",
+            "schtasks.exe",
+            "wmic.exe",
+            "explorer.exe",
+            "rundll32.exe",
+            "mshta.exe",
+            "git.exe",
+        ] {
+            std::fs::copy(root.join(HELPER_EXE), root.join(name)).expect("copy");
+            assert_eq!(
+                attempt(root.join(name)),
+                Some(FailureCode::CapabilityDenied),
+                "{name}"
+            );
+        }
+        for name in ["run.bat", "run.cmd", "run.ps1", "run.com", "noext"] {
+            std::fs::write(root.join(name), "echo hi").expect("script");
+            assert_eq!(
+                attempt(root.join(name)),
+                Some(FailureCode::CapabilityDenied),
+                "{name}"
+            );
+        }
+        // A working folder outside the roots.
+        let refused = perform(
+            &WorkerOp::Run {
+                program: root.join(HELPER_EXE).display().to_string(),
+                args: Vec::new(),
+                cwd: outside.display().to_string(),
+                timeout_ms: 5_000,
+                max_output_bytes: 64,
+            },
+            &roots,
+        );
+        assert_eq!(refused.err().map(|e| e.code), Some(FailureCode::PathEscape));
+        let _ = std::fs::remove_dir(&link);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    /// Git for the test's own setup, with no system or global config.
+    fn setup_git(cwd: &Path, args: &[&str]) {
+        let status =
+            std::process::Command::new(crate::fc_worker::exec::git_program().expect("Git"))
+                .args(args)
+                .current_dir(cwd)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .status()
+                .expect("git");
+        assert!(status.success(), "{args:?}");
+    }
+
+    /// The marker file a planted program named `name` would leave.
+    fn marker(root: &Path, name: &str) -> PathBuf {
+        root.join(format!("marker-{name}"))
+    }
+
+    /// A shell command that leaves `name`'s marker.
+    fn marker_command(root: &Path, name: &str) -> String {
+        format!(
+            "echo ran > '{}'",
+            marker(root, name).display().to_string().replace('\\', "/")
+        )
+    }
+
+    /// Review of #824: configuration that names programs (hooks defined in
+    /// configuration, which `core.hooksPath` and `--no-verify` do not turn
+    /// off, a hooks folder, transport, editor, pager, diff and signing
+    /// programs, credentials). The gate refuses the repository.
+    fn configure_programs(root: &Path, repo: &Path) -> Vec<PathBuf> {
+        let custom = repo.join("myhooks");
+        std::fs::create_dir_all(&custom).expect("custom hooks");
+        for name in ["pre-commit", "post-commit", "post-index-change"] {
+            std::fs::write(
+                custom.join(name),
+                format!(
+                    "#!/bin/sh\n{}\n",
+                    marker_command(root, &format!("custom-{name}"))
+                ),
+            )
+            .expect("hook");
+        }
+        setup_git(repo, &["config", "core.hooksPath", "myhooks"]);
+        let mut names = vec![
+            "custom-pre-commit".to_owned(),
+            "custom-post-commit".to_owned(),
+            "custom-post-index-change".to_owned(),
+        ];
+        for (index, event) in ["post-index-change", "reference-transaction", "post-commit"]
+            .iter()
+            .enumerate()
+        {
+            let name = format!("config-hook-{event}");
+            setup_git(
+                repo,
+                &[
+                    "config",
+                    &format!("hook.evil{index}.command"),
+                    &marker_command(root, &name),
+                ],
+            );
+            setup_git(repo, &["config", &format!("hook.evil{index}.event"), event]);
+            names.push(name);
+        }
+        for (key, name) in [
+            ("core.fsmonitor", "fsmonitor"),
+            ("core.pager", "pager"),
+            ("diff.external", "diff-external"),
+            ("gpg.program", "gpg"),
+            ("core.sshCommand", "ssh"),
+            ("core.askPass", "askpass"),
+            ("credential.helper", "credential"),
+            ("diff.evil.textconv", "textconv"),
+        ] {
+            setup_git(
+                repo,
+                &[
+                    "config",
+                    key,
+                    &format!("!sh -c \"{}\"", marker_command(root, name)),
+                ],
+            );
+            names.push(name.to_owned());
+        }
+        names.iter().map(|name| marker(root, name)).collect()
+    }
+
+    /// A repository whose `.git/hooks`, filter drivers and attributes try
+    /// to run programs that leave a marker file next to the repository;
+    /// its configuration names no program the gate refuses (filters are
+    /// neutralized, not refused).
+    fn hostile_repository(root: &Path) -> (PathBuf, Vec<PathBuf>) {
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).expect("repo");
+        setup_git(&repo, &["init", "-q", "-b", "main"]);
+        setup_git(&repo, &["config", "user.name", "Orcel Test"]);
+        setup_git(&repo, &["config", "user.email", "orcel@example.invalid"]);
+        // A first commit, made before anything hostile is planted (the
+        // provider's mutations need a HEAD).
+        std::fs::write(repo.join("a.txt"), "zero\n").expect("a");
+        setup_git(&repo, &["add", "a.txt"]);
+        setup_git(&repo, &["commit", "-q", "-m", "initial"]);
+        let hooks = repo.join(".git").join("hooks");
+        for name in [
+            "pre-commit",
+            "commit-msg",
+            "post-commit",
+            "post-checkout",
+            "post-index-change",
+            "reference-transaction",
+        ] {
+            std::fs::write(
+                hooks.join(name),
+                format!("#!/bin/sh\n{}\n", marker_command(root, name)),
+            )
+            .expect("hook");
+        }
+        for (key, name) in [
+            ("filter.evil.clean", "filter-clean"),
+            ("filter.evil.smudge", "filter-smudge"),
+            ("filter.evil.process", "filter-process"),
+        ] {
+            setup_git(
+                &repo,
+                &[
+                    "config",
+                    key,
+                    &format!("!sh -c \"{}\"", marker_command(root, name)),
+                ],
+            );
+        }
+        setup_git(&repo, &["config", "commit.gpgSign", "true"]);
+        setup_git(&repo, &["config", "log.showSignature", "true"]);
+        setup_git(&repo, &["config", "filter.evil.required", "true"]);
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "*.evil filter=evil diff=evil\n",
+        )
+        .expect("attributes");
+        std::fs::write(repo.join("a.txt"), "one\n").expect("a");
+        let markers = [
+            "pre-commit",
+            "commit-msg",
+            "post-commit",
+            "post-checkout",
+            "post-index-change",
+            "reference-transaction",
+            "filter-clean",
+            "filter-smudge",
+            "filter-process",
+        ]
+        .iter()
+        .map(|name| marker(root, name))
+        .collect();
+        (repo, markers)
+    }
+
+    /// Review of #824 (high): a repository whose configuration defines
+    /// hooks (`hook.<name>.command` and `.event`, run by Git 2.36 and later
+    /// despite `core.hooksPath` and `--no-verify`) or names other programs
+    /// is refused before Git runs in it, for reads and mutations alike.
+    #[test]
+    fn fc_worker_git_refuses_a_repository_whose_configuration_runs_programs() {
+        let root = root();
+        let (repo, mut markers) = hostile_repository(&root);
+        markers.extend(configure_programs(&root, &repo));
+        let port = JobPort::new(&root);
+        let repository = repo.display().to_string();
+        for op in [
+            WorkerOp::GitStatus {
+                repository: repository.clone(),
+            },
+            WorkerOp::GitDiff {
+                repository: repository.clone(),
+                staged: false,
+            },
+            WorkerOp::GitLog {
+                repository: repository.clone(),
+                max_count: 5,
+            },
+            WorkerOp::GitAdd {
+                repository: repository.clone(),
+                paths: vec!["a.txt".to_owned()],
+            },
+            WorkerOp::GitBranchCreate {
+                repository: repository.clone(),
+                branch: "topic".to_owned(),
+            },
+        ] {
+            assert_eq!(
+                run(&port, op.clone()).err().map(|e| e.code),
+                Some(FailureCode::CapabilityDenied),
+                "{op:?}"
+            );
+        }
+        for marker in &markers {
+            assert!(!marker.exists(), "{} ran", marker.display());
+        }
+        // Each refused key alone is enough.
+        setup_git(&repo, &["config", "--unset", "core.hooksPath"]);
+        for key in [
+            "core.fsmonitor",
+            "core.pager",
+            "diff.external",
+            "gpg.program",
+            "core.sshCommand",
+            "core.askPass",
+            "credential.helper",
+            "diff.evil.textconv",
+        ] {
+            setup_git(&repo, &["config", "--unset", key]);
+        }
+        for section in ["hook.evil1", "hook.evil2"] {
+            setup_git(&repo, &["config", "--remove-section", section]);
+        }
+        assert_eq!(
+            run(
+                &port,
+                WorkerOp::GitDiff {
+                    repository: repository.clone(),
+                    staged: false,
+                }
+            )
+            .err()
+            .map(|e| e.code),
+            Some(FailureCode::CapabilityDenied),
+            "one post-index-change hook in configuration"
+        );
+        setup_git(&repo, &["config", "--remove-section", "hook.evil0"]);
+        run(
+            &port,
+            WorkerOp::GitDiff {
+                repository,
+                staged: false,
+            },
+        )
+        .expect("the same repository without program keys");
+        for marker in &markers {
+            assert!(!marker.exists(), "{} ran", marker.display());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Review of #824: Full Control's filesystem operations never write
+    /// into a `.git` folder or create a `.git` entry, so they cannot plant
+    /// a hook or configuration for Git to follow.
+    #[test]
+    fn fc_worker_filesystem_never_writes_into_git_folders() {
+        let root = root();
+        let (repo, _) = hostile_repository(&root);
+        let roots = vec![root.display().to_string()];
+        for op in [
+            WorkerOp::WriteText {
+                path: repo.join(".git").join("config").display().to_string(),
+                text: "[hook \"x\"]\n\tcommand = evil\n".to_owned(),
+                create_new: false,
+            },
+            WorkerOp::WriteText {
+                path: repo
+                    .join(".GIT")
+                    .join("hooks")
+                    .join("pre-commit")
+                    .display()
+                    .to_string(),
+                text: "evil".to_owned(),
+                create_new: true,
+            },
+            WorkerOp::Mkdir {
+                path: repo.join(".git").join("more").display().to_string(),
+            },
+            WorkerOp::WriteText {
+                path: root.join("other").join(".git").display().to_string(),
+                text: "gitdir: //host/share/x".to_owned(),
+                create_new: true,
+            },
+            WorkerOp::Mkdir {
+                path: root.join(".git").display().to_string(),
+            },
+        ] {
+            let _ = std::fs::create_dir_all(root.join("other"));
+            assert_eq!(
+                perform(&op, &roots).err().map(|e| e.code),
+                Some(FailureCode::CapabilityDenied),
+                "{op:?}"
+            );
+        }
+        assert!(!root.join("other").join(".git").exists());
+        assert!(!root.join(".git").exists());
+        // Ordinary files next to them still work.
+        perform(
+            &WorkerOp::WriteText {
+                path: repo.join("notes.txt").display().to_string(),
+                text: "fine".to_owned(),
+                create_new: true,
+            },
+            &roots,
+        )
+        .expect("an ordinary file");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Review of #824: the program is held from its checks to its start
+    /// (no write, rename or delete meanwhile), and nothing under a Git
+    /// installation runs through `run`.
+    #[test]
+    fn fc_worker_holds_the_checked_program_and_refuses_the_git_installation() {
+        let (root, _cwd) = helper_root("hold", "exit7");
+        let roots = vec![root.display().to_string()];
+        let program = root.join(HELPER_EXE);
+        let resolved =
+            crate::fc_worker::exec::resolve_program(&program.display().to_string(), &roots)
+                .expect("resolved");
+        assert!(!resolved.identity.is_empty());
+        assert!(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&program)
+                .is_err(),
+            "no write while held"
+        );
+        assert!(
+            std::fs::rename(&program, root.join("moved.exe")).is_err(),
+            "no rename while held"
+        );
+        resolved.reverify().expect("still the same program");
+        drop(resolved);
+        std::fs::rename(&program, root.join("moved.exe")).expect("released");
+        // Git for Windows' own programs, wherever the roots reach.
+        for candidate in crate::fc_worker::exec::git_candidates() {
+            let Some(install) = candidate.parent().and_then(Path::parent) else {
+                continue;
+            };
+            for tool in [
+                r"cmd\scalar.exe",
+                r"usr\bin\env.exe",
+                r"usr\bin\tr.exe",
+                r"mingw64\bin\git-upload-pack.exe",
+            ] {
+                let tool = install.join(tool);
+                if tool.is_file() {
+                    let refused = perform(
+                        &WorkerOp::Run {
+                            program: tool.display().to_string(),
+                            args: Vec::new(),
+                            cwd: root.display().to_string(),
+                            timeout_ms: 5_000,
+                            max_output_bytes: 64,
+                        },
+                        &[install.display().to_string(), root.display().to_string()],
+                    );
+                    assert_eq!(
+                        refused.err().map(|e| e.code),
+                        Some(FailureCode::CapabilityDenied),
+                        "{}",
+                        tool.display()
+                    );
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fc_worker_git_honors_no_hook_or_hostile_configuration() {
+        let root = root();
+        let (repo, markers) = hostile_repository(&root);
+        let port = JobPort::new(&root);
+        let repository = repo.display().to_string();
+        let status = run(
+            &port,
+            WorkerOp::GitStatus {
+                repository: repository.clone(),
+            },
+        )
+        .expect("status");
+        assert!(
+            status["porcelain_v2"]
+                .as_str()
+                .is_some_and(|text| text.contains("a.txt")),
+            "{status}"
+        );
+        run(
+            &port,
+            WorkerOp::GitAdd {
+                repository: repository.clone(),
+                paths: vec!["a.txt".to_owned(), ".gitattributes".to_owned()],
+            },
+        )
+        .expect("add");
+        let diff = run(
+            &port,
+            WorkerOp::GitDiff {
+                repository: repository.clone(),
+                staged: true,
+            },
+        )
+        .expect("diff");
+        assert!(
+            diff["diff"]
+                .as_str()
+                .is_some_and(|text| text.contains("+one")),
+            "{diff}"
+        );
+        let committed = run(
+            &port,
+            WorkerOp::GitCommit {
+                repository: repository.clone(),
+                message: "first".to_owned(),
+            },
+        )
+        .expect("commit with hooks and signing disabled");
+        assert_eq!(committed["branch"], "main");
+        run(
+            &port,
+            WorkerOp::GitBranchCreate {
+                repository: repository.clone(),
+                branch: "topic".to_owned(),
+            },
+        )
+        .expect("branch");
+        std::fs::write(repo.join("b.txt"), "two\n").expect("b");
+        run(
+            &port,
+            WorkerOp::GitAdd {
+                repository: repository.clone(),
+                paths: vec!["b.txt".to_owned()],
+            },
+        )
+        .expect("add b");
+        run(
+            &port,
+            WorkerOp::GitUnstage {
+                repository: repository.clone(),
+                paths: vec!["b.txt".to_owned()],
+            },
+        )
+        .expect("unstage b");
+        let log = run(
+            &port,
+            WorkerOp::GitLog {
+                repository: repository.clone(),
+                max_count: 5,
+            },
+        )
+        .expect("log");
+        assert_eq!(log["commits"][0]["subject"], "first");
+        // A file under a configured filter driver is refused, not filtered.
+        std::fs::write(repo.join("x.evil"), "x\n").expect("x");
+        let filtered = run(
+            &port,
+            WorkerOp::GitAdd {
+                repository: repository.clone(),
+                paths: vec!["x.evil".to_owned()],
+            },
+        );
+        assert!(filtered.is_err(), "{filtered:?}");
+        for marker in &markers {
+            assert!(!marker.exists(), "{} ran", marker.display());
+        }
+        assert!(port.held.borrow().is_empty(), "every job ended");
+        // Control: the same repository with plain Git does run its hook,
+        // so the absence above is the worker's hardening, not a dead hook.
+        let _ = std::process::Command::new(crate::fc_worker::exec::git_program().expect("Git"))
+            .args(["-c", "commit.gpgSign=false", "-c", "core.fsmonitor=false"])
+            .args(["commit", "-q", "--allow-empty", "-m", "control"])
+            .current_dir(&repo)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status();
+        assert!(
+            root.join("marker-pre-commit").exists(),
+            "plain Git runs the planted hook"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fc_worker_git_refuses_injected_options_and_repositories_outside_the_roots() {
+        let root = root();
+        let (repo, markers) = hostile_repository(&root);
+        let roots = vec![root.display().to_string()];
+        let repository = repo.display().to_string();
+        let code = |op: WorkerOp| perform(&op, &roots).err().map(|e| e.code);
+        // Options where a branch name or a path belongs.
+        for branch in ["-c core.sshCommand=evil", "--upload-pack=evil", "-f"] {
+            assert_eq!(
+                code(WorkerOp::GitBranchCreate {
+                    repository: repository.clone(),
+                    branch: branch.to_owned(),
+                }),
+                Some(FailureCode::InvalidRequest),
+                "{branch}"
+            );
+        }
+        for path in [
+            "--upload-pack=evil",
+            ":(glob)*",
+            "../outside.txt",
+            ".git/config",
+        ] {
+            assert!(
+                code(WorkerOp::GitAdd {
+                    repository: repository.clone(),
+                    paths: vec![path.to_owned()],
+                })
+                .is_some(),
+                "{path}"
+            );
+        }
+        // A commit message that looks like an option is only a message.
+        std::fs::write(repo.join("a.txt"), "one\n").expect("a");
+        perform(
+            &WorkerOp::GitAdd {
+                repository: repository.clone(),
+                paths: vec!["a.txt".to_owned()],
+            },
+            &roots,
+        )
+        .expect("add");
+        let committed = perform(
+            &WorkerOp::GitCommit {
+                repository: repository.clone(),
+                message: "--upload-pack=evil".to_owned(),
+            },
+            &roots,
+        )
+        .expect("commit");
+        assert_eq!(committed["branch"], "main");
+        // A repository outside the roots, or whose Git directory is
+        // outside them (a .git file pointing out), is refused.
+        let outside = root.with_extension("outside-repo");
+        std::fs::create_dir_all(&outside).expect("outside");
+        setup_git(&outside, &["init", "-q"]);
+        assert_eq!(
+            code(WorkerOp::GitStatus {
+                repository: outside.display().to_string(),
+            }),
+            Some(FailureCode::PathEscape)
+        );
+        let pointer = root.join("pointer");
+        std::fs::create_dir_all(&pointer).expect("pointer");
+        std::fs::write(
+            pointer.join(".git"),
+            format!("gitdir: {}\n", outside.join(".git").display()),
+        )
+        .expect(".git file");
+        assert_eq!(
+            code(WorkerOp::GitStatus {
+                repository: pointer.display().to_string(),
+            }),
+            Some(FailureCode::PathEscape)
+        );
+        for marker in &markers {
+            assert!(!marker.exists(), "{} ran", marker.display());
+        }
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
     }

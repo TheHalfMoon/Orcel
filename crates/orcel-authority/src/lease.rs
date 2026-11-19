@@ -415,13 +415,13 @@ pub fn is_canonical_origin(text: &str) -> bool {
     host_ok && port_ok
 }
 
-/// WP1-12: the longest path one Full Control dispatch may name.
+/// WP1-10: the longest path one Full Control dispatch may name.
 pub const MAX_DISPATCH_PATH_CHARS: usize = 1024;
 
-/// WP1-12: the most paths one Full Control dispatch may name.
+/// WP1-10: the most paths one Full Control dispatch may name.
 pub const MAX_DISPATCH_PATHS: usize = 8;
 
-/// WP1-12: a path a Full Control filesystem or git dispatch names, checked
+/// WP1-10: a path a Full Control filesystem or git dispatch names, checked
 /// lexically (the service never touches the user's files): an absolute
 /// drive path (`C:\...`), at most [`MAX_DISPATCH_PATH_CHARS`] characters,
 /// no control characters, no `\\?\` or UNC form, no `:` after the drive (no
@@ -464,7 +464,7 @@ pub fn check_dispatch_path(path: &str) -> Result<(), AuthorityError> {
     Ok(())
 }
 
-/// WP1-12: whether `path` is one of `roots` or lies under one, compared
+/// WP1-10: whether `path` is one of `roots` or lies under one, compared
 /// lexically and case-insensitively on whole components (`C:\work` covers
 /// `C:\work\a` and not `C:\workshop`). `path` must pass
 /// [`check_dispatch_path`]; the roots passed the grant's own check.

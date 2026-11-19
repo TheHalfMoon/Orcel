@@ -8,7 +8,7 @@
 //! completion (as [`Request::PresenceComplete`], shared with enrollment),
 //! `Authorize`, `Stop` and `Status`, plus lease `Verify`, `List` and
 //! `Revoke`, and the attested enrollment and reset of a Windows Hello key.
-//! WP1-12 adds `job_id` and `job_handle` to `Authorize`, `DispatchActive`
+//! WP1-10 adds `job_id` and `job_handle` to `Authorize`, `DispatchActive`
 //! and the dispatch `Outcome`.
 //! Standing approvals and the indicator heartbeat are later slices; their
 //! requests are not accepted yet.
@@ -60,7 +60,7 @@ pub struct AuthorizeClaims {
     /// (and `operation` against its families). Absent for desktop actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
-    /// WP1-12: the absolute paths a filesystem or git dispatch touches.
+    /// WP1-10: the absolute paths a filesystem or git dispatch touches.
     /// The service checks each against the lease's roots (a filesystem
     /// dispatch must name at least one). Absent for desktop and browser
     /// actions.
@@ -68,7 +68,7 @@ pub struct AuthorizeClaims {
     pub paths: Option<Vec<String>>,
 }
 
-/// WP1-12: how a dispatch the service authorized ended, as orceld reports
+/// WP1-10: how a dispatch the service authorized ended, as orceld reports
 /// it (session-asserted).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -130,7 +130,7 @@ pub enum Request {
     /// The signed lease and its state now.
     Verify { lease_id: String },
     /// Spec 4.13 Authorize: lease, epoch, binding, executor, scope (roots
-    /// for paths) and the audit record written first. WP1-12: for the
+    /// for paths) and the audit record written first. WP1-10: for the
     /// filesystem and shell/process executors the service creates an
     /// unnamed Job Object for this dispatch, duplicates an assign-only
     /// handle to it into the calling orceld process and returns `job_id`
@@ -141,11 +141,11 @@ pub enum Request {
         executor: ExecutorClass,
         claims: AuthorizeClaims,
     },
-    /// WP1-12: orceld asks, after assigning its suspended worker to the
+    /// WP1-10: orceld asks, after assigning its suspended worker to the
     /// dispatch's job and before resuming it, whether the authorization
     /// still stands (lease active, job held); `LEASE_INVALID` otherwise.
     DispatchActive { authorization_id: String },
-    /// WP1-12: orceld reports how an authorized dispatch ended (once per
+    /// WP1-10: orceld reports how an authorized dispatch ended (once per
     /// authorization). The service records it and terminates the
     /// dispatch's Job Object.
     Outcome {

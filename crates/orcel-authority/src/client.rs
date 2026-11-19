@@ -192,7 +192,7 @@ impl AuthorityClient {
         })
     }
 
-    /// WP1-12: reports how an authorized dispatch ended; the service
+    /// WP1-10: reports how an authorized dispatch ended; the service
     /// records it and terminates the dispatch's Job Object.
     pub fn outcome(
         &self,
@@ -207,7 +207,7 @@ impl AuthorityClient {
         })
     }
 
-    /// WP1-12: whether an authorization still stands (lease active, job
+    /// WP1-10: whether an authorization still stands (lease active, job
     /// held); asked between assigning a worker and resuming it.
     pub fn dispatch_active(&self, authorization_id: &str) -> Result<Value, AuthorityError> {
         self.call(&Request::DispatchActive {

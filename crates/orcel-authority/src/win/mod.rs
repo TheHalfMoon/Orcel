@@ -7,7 +7,7 @@ pub mod eventlog;
 pub mod identity;
 pub mod install;
 pub mod install_os;
-// WP1-12: the dispatch Job Objects the service makes and holds.
+// WP1-10: the dispatch Job Objects the service makes and holds.
 pub mod jobs;
 pub mod pipe;
 pub mod roots;

@@ -24,7 +24,7 @@
 //!   action needs an active service-issued desktop lease and the service's
 //!   `Authorize` (DesktopInput); the deprecated user-readable store is
 //!   consulted only where the service is not installed (existing
-//!   behaviour), never as a fallback for an unreachable service. WP1-12
+//!   behaviour), never as a fallback for an unreachable service. WP1-10
 //!   runs it through the Full Control dispatcher
 //!   (`full_control_dispatch`), with [`ServicePort`] as its service.
 //!
@@ -427,7 +427,7 @@ impl LeaseManager for ServiceLeaseManager {
     }
 }
 
-/// WP1-12: the authority service as the Full Control dispatcher uses it.
+/// WP1-10: the authority service as the Full Control dispatcher uses it.
 /// It verifies the server before sending anything (`AuthorityClient`) and
 /// admits only leases whose ECDSA signature verifies with the key the
 /// verified service reported. With the service installed every failure
@@ -535,7 +535,7 @@ impl crate::full_control_dispatch::AuthorityPort for ServicePort {
     }
 }
 
-/// SG-000132 slice 2, desktop lease migration step, now on the WP1-12
+/// SG-000132 slice 2, desktop lease migration step, now on the WP1-10
 /// dispatcher: with the service installed only a service-issued desktop
 /// lease of this user and logon session counts, admitted by the service's
 /// audit-first `Authorize`, and the request's outcome is reported

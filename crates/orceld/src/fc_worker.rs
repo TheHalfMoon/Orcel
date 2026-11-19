@@ -1,6 +1,7 @@
-//! SG-000132 WP1-12: `orceld fc-worker`, the child process that performs a
-//! Full Control filesystem operation inside the dispatch's service-made Job
-//! Object, so the long-lived orceld never performs it in its own process.
+//! SG-000132 WP1-10: `orceld fc-worker`, the child process that performs a
+//! Full Control filesystem, process or git operation inside the dispatch's
+//! service-made Job Object, so the long-lived orceld never performs it in
+//! its own process.
 //!
 //! Launch (Windows, [`JobLauncher`]): `Authorize` duplicated an assign-only
 //! handle to the dispatch's unnamed job into this process. orceld starts its
@@ -21,9 +22,13 @@
 //! included) and acts only inside them, refuses any file with more than
 //! one name (a hard link), and exits.
 //!
-//! Operations in this slice: the filesystem family (`stat`, `list`,
-//! `read_text`, `write_text`, `mkdir`). Process and git operations use the
-//! same launch and are a later WP1-12 step (SG132_SLICE3.md).
+//! Operations (WP1-15, SG-000097 and SG-000096): the filesystem family
+//! (`stat`, `list`, `read_text`, `write_text`, `mkdir`; SG132_SLICE3.md),
+//! the process family (`run`) and the git family (`git_status`, `git_diff`,
+//! `git_log`, `git_add`, `git_unstage`, `git_commit`, `git_branch_create`)
+//! in [`exec`] (SG132_SLICE4.md). The worker's own stdin, stdout and stderr
+//! are made non-inheritable before it acts, so a program it starts (and that
+//! program's descendants) can never hold orceld's reply pipe.
 
 use crate::full_control_dispatch::Family;
 use orcel_contracts::FailureCode;
@@ -35,14 +40,18 @@ use std::path::{Path, PathBuf};
 
 /// The request and reply contract.
 pub(crate) const WORKER_CONTRACT: &str = "orcel.fc-worker/1";
-/// The largest request the worker reads and reply orceld reads.
-pub(crate) const MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// The largest request the worker reads and reply orceld reads (a git
+/// diff is up to 2 MiB before JSON escaping).
+pub(crate) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 /// The most bytes `read_text` returns and `write_text` writes.
 pub(crate) const MAX_TEXT_BYTES: usize = 256 * 1024;
 /// The most entries `list` returns.
 pub(crate) const MAX_LIST_ENTRIES: usize = 1_000;
 
-/// One Full Control filesystem operation.
+#[path = "fc_worker_exec.rs"]
+pub(crate) mod exec;
+
+/// One Full Control filesystem, process or git operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum WorkerOp {
@@ -65,12 +74,77 @@ pub(crate) enum WorkerOp {
     Mkdir {
         path: String,
     },
+    /// The process family: an absolute `.exe` inside the roots, an
+    /// argument vector, a working folder inside the roots.
+    Run {
+        program: String,
+        args: Vec<String>,
+        cwd: String,
+        timeout_ms: u64,
+        max_output_bytes: usize,
+    },
+    GitStatus {
+        repository: String,
+    },
+    GitDiff {
+        repository: String,
+        staged: bool,
+    },
+    GitLog {
+        repository: String,
+        max_count: usize,
+    },
+    GitAdd {
+        repository: String,
+        paths: Vec<String>,
+    },
+    GitUnstage {
+        repository: String,
+        paths: Vec<String>,
+    },
+    GitCommit {
+        repository: String,
+        message: String,
+    },
+    GitBranchCreate {
+        repository: String,
+        branch: String,
+    },
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl WorkerOp {
     pub(crate) fn family(&self) -> Family {
-        Family::Filesystem
+        match self {
+            Self::Stat { .. }
+            | Self::List { .. }
+            | Self::ReadText { .. }
+            | Self::WriteText { .. }
+            | Self::Mkdir { .. } => Family::Filesystem,
+            Self::Run { .. } => Family::Process,
+            Self::GitStatus { .. }
+            | Self::GitDiff { .. }
+            | Self::GitLog { .. }
+            | Self::GitAdd { .. }
+            | Self::GitUnstage { .. }
+            | Self::GitCommit { .. }
+            | Self::GitBranchCreate { .. } => Family::Git,
+        }
+    }
+
+    /// Whether the operation needs the person's fresh per-action approval
+    /// before Authorize (SG-000096: every new process; git operations that
+    /// change the repository). Filesystem operations and git reads do not
+    /// ask in this slice (SG132_SLICE4.md).
+    pub(crate) fn needs_approval(&self) -> bool {
+        matches!(
+            self,
+            Self::Run { .. }
+                | Self::GitAdd { .. }
+                | Self::GitUnstage { .. }
+                | Self::GitCommit { .. }
+                | Self::GitBranchCreate { .. }
+        )
     }
 
     /// The operation's name, as the request's `operation` must state it.
@@ -81,11 +155,20 @@ impl WorkerOp {
             Self::ReadText { .. } => "read_text",
             Self::WriteText { .. } => "write_text",
             Self::Mkdir { .. } => "mkdir",
+            Self::Run { .. } => "run",
+            Self::GitStatus { .. } => "git_status",
+            Self::GitDiff { .. } => "git_diff",
+            Self::GitLog { .. } => "git_log",
+            Self::GitAdd { .. } => "git_add",
+            Self::GitUnstage { .. } => "git_unstage",
+            Self::GitCommit { .. } => "git_commit",
+            Self::GitBranchCreate { .. } => "git_branch_create",
         }
     }
 
     /// The paths the operation touches (checked against the roots by the
-    /// dispatcher, the service and the worker).
+    /// dispatcher, the service and the worker): the path, the working
+    /// folder and the program of a run, the repository of a git operation.
     pub(crate) fn paths(&self) -> Vec<String> {
         match self {
             Self::Stat { path }
@@ -93,6 +176,14 @@ impl WorkerOp {
             | Self::ReadText { path, .. }
             | Self::WriteText { path, .. }
             | Self::Mkdir { path } => vec![path.clone()],
+            Self::Run { program, cwd, .. } => vec![cwd.clone(), program.clone()],
+            Self::GitStatus { repository }
+            | Self::GitDiff { repository, .. }
+            | Self::GitLog { repository, .. }
+            | Self::GitAdd { repository, .. }
+            | Self::GitUnstage { repository, .. }
+            | Self::GitCommit { repository, .. }
+            | Self::GitBranchCreate { repository, .. } => vec![repository.clone()],
         }
     }
 }
@@ -208,6 +299,24 @@ fn creatable(path: &str, roots: &[String]) -> Result<PathBuf, ProviderError> {
         std::fs::canonicalize(parent).map_err(|error| io_failure("resolve the parent", &error))?;
     inside(&parent, &resolved_roots(roots))?;
     let resolved = parent.join(name);
+    // Review of #824: a Git repository's own folder (its configuration,
+    // hooks and pointers) is never written or created through Full
+    // Control's filesystem operations, so they cannot plant a hook or a
+    // configuration Git would follow. The names are resolved, so a short
+    // name (`GIT~1`) of the parent arrives here as `.git`.
+    // An existing entry is resolved too, so a short name (`GIT~1`) for an
+    // existing `.git` file is caught as well.
+    let existing_name = std::fs::canonicalize(&resolved).ok();
+    if std::iter::once(&resolved)
+        .chain(existing_name.as_ref())
+        .flat_map(|path| path.components())
+        .any(|component| component.as_os_str().eq_ignore_ascii_case(".git"))
+    {
+        return Err(failure(
+            FailureCode::CapabilityDenied,
+            "Full Control does not write inside a .git folder or create a .git entry",
+        ));
+    }
     if let Ok(metadata) = std::fs::symlink_metadata(&resolved) {
         if metadata.file_type().is_symlink() {
             return Err(failure(
@@ -394,6 +503,42 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
                 .map_err(|error| io_failure("create the folder", &error))?;
             Ok(json!({ "created": true }))
         }
+        WorkerOp::Run {
+            program,
+            args,
+            cwd,
+            timeout_ms,
+            max_output_bytes,
+        } => exec::run_program(program, args, cwd, *timeout_ms, *max_output_bytes, roots),
+        WorkerOp::GitStatus { repository } => {
+            exec::run_git(repository, exec::GitAction::Status, roots)
+        }
+        WorkerOp::GitDiff { repository, staged } => {
+            exec::run_git(repository, exec::GitAction::Diff { staged: *staged }, roots)
+        }
+        WorkerOp::GitLog {
+            repository,
+            max_count,
+        } => exec::run_git(
+            repository,
+            exec::GitAction::Log {
+                max_count: *max_count,
+            },
+            roots,
+        ),
+        WorkerOp::GitAdd { repository, paths } => {
+            exec::run_git(repository, exec::GitAction::Add { paths }, roots)
+        }
+        WorkerOp::GitUnstage { repository, paths } => {
+            exec::run_git(repository, exec::GitAction::Unstage { paths }, roots)
+        }
+        WorkerOp::GitCommit {
+            repository,
+            message,
+        } => exec::run_git(repository, exec::GitAction::Commit { message }, roots),
+        WorkerOp::GitBranchCreate { repository, branch } => {
+            exec::run_git(repository, exec::GitAction::BranchCreate { branch }, roots)
+        }
     }
 }
 
@@ -461,7 +606,25 @@ pub(crate) fn serve(input: &mut impl Read, output: &mut impl Write, in_job: bool
             message: Some(error.message.clone()),
         },
     };
-    let written = serde_json::to_string(&reply)
+    let (encoded, result) = match serde_json::to_string(&reply) {
+        Ok(line) if line.len() >= MAX_FRAME_BYTES => {
+            let limit = failure(
+                FailureCode::OutputLimit,
+                "the operation's result exceeds the worker's reply limit",
+            );
+            let reply = WorkerReply {
+                contract: WORKER_CONTRACT.to_owned(),
+                token: request.token.clone(),
+                ok: false,
+                result: Value::Null,
+                code: Some(limit.code.clone()),
+                message: Some(limit.message.clone()),
+            };
+            (serde_json::to_string(&reply), Err(limit))
+        }
+        other => (other, result),
+    };
+    let written = encoded
         .map_err(|error| std::io::Error::other(error.to_string()))
         .and_then(|line| writeln!(output, "{line}"))
         .and_then(|()| output.flush());
@@ -481,10 +644,36 @@ pub(crate) fn run_cli(args: &[String]) -> Option<i32> {
         eprintln!("usage: orceld fc-worker (started by orceld inside a Job Object)");
         return Some(2);
     }
+    keep_standard_handles_private();
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     Some(serve(&mut stdin.lock(), &mut stdout.lock(), in_a_job()))
 }
+
+/// Makes the worker's stdin, stdout and stderr non-inheritable, so a
+/// program the worker starts never inherits orceld's request or reply pipe
+/// (the standard library makes its own child pipes inheritable only for the
+/// child they belong to).
+#[cfg(windows)]
+fn keep_standard_handles_private() {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+    for handle in [
+        std::io::stdin().as_raw_handle(),
+        std::io::stdout().as_raw_handle(),
+        std::io::stderr().as_raw_handle(),
+    ] {
+        if handle.is_null() {
+            continue;
+        }
+        // SAFETY: this process's own standard handle; clearing its inherit
+        // flag changes nothing else about it (an invalid value just fails).
+        unsafe { SetHandleInformation(handle as _, HANDLE_FLAG_INHERIT, 0) };
+    }
+}
+
+#[cfg(not(windows))]
+fn keep_standard_handles_private() {}
 
 #[cfg(windows)]
 #[cfg_attr(not(test), allow(unused_imports))]
