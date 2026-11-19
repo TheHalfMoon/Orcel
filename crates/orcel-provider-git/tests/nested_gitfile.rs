@@ -243,3 +243,70 @@ fn adding_a_path_under_an_ignored_untracked_folder_is_refused() {
     provider.stage(".", &paths, &state).expect("stage");
     let _ = fs::remove_dir_all(&repo);
 }
+
+/// Review of #825 (delta): a path the provider passes to Git names every
+/// component exactly as on disk; a case variant (with core.ignoreCase off),
+/// a Windows short name or a `./` segment is refused before Git runs.
+#[test]
+fn git_paths_must_name_entries_exactly_as_on_disk() {
+    let repo = repository();
+    assert!(git(&repo, &["config", "core.ignoreCase", "false"]));
+    let nested = repo.join("build").join("x");
+    fs::create_dir_all(&nested).expect("nested");
+    fs::write(nested.join("f.txt"), "f\n").expect("f");
+    fs::write(
+        nested.join(".git"),
+        "gitdir: //orcel-unreachable.invalid/share/x\n",
+    )
+    .expect(".git file");
+    fs::write(repo.join("a.txt"), "two\n").expect("a");
+    let provider = GitProvider::new(&repo).expect("provider");
+    for path in ["Build/x/f.txt", "BUILD/x/f.txt", "./a.txt", "A.TXT"] {
+        let paths = vec![path.to_owned()];
+        assert_eq!(
+            provider.path_state(".", &paths).err().map(|e| e.code),
+            Some(FailureCode::InvalidRequest),
+            "{path}"
+        );
+    }
+    let paths = vec!["a.txt".to_owned()];
+    provider.path_state(".", &paths).expect("the exact name");
+    let _ = fs::remove_dir_all(&repo);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_short_names_are_refused() {
+    let repo = repository();
+    let long = repo.join("build").join("averylongfoldername");
+    fs::create_dir_all(long.join("x")).expect("long");
+    fs::write(long.join("x").join("f.txt"), "f\n").expect("f");
+    // `dir /x` lists each entry's short name before its long name.
+    let output = Command::new("cmd")
+        .args(["/d", "/c", "dir", "/x", "/ad"])
+        .arg(repo.join("build"))
+        .output()
+        .expect("cmd");
+    let listing = String::from_utf8_lossy(&output.stdout).into_owned();
+    let short_name = listing
+        .lines()
+        .find(|line| line.trim_end().ends_with("averylongfoldername"))
+        .and_then(|line| {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            tokens.len().checked_sub(2).map(|at| tokens[at].to_owned())
+        })
+        .unwrap_or_default();
+    if !short_name.contains('~') {
+        println!("8.3 short names are disabled on this volume; skipped");
+        let _ = fs::remove_dir_all(&repo);
+        return;
+    }
+    let provider = GitProvider::new(&repo).expect("provider");
+    let paths = vec![format!("build/{short_name}/x/f.txt")];
+    assert_eq!(
+        provider.path_state(".", &paths).err().map(|e| e.code),
+        Some(FailureCode::InvalidRequest),
+        "{paths:?}"
+    );
+    let _ = fs::remove_dir_all(&repo);
+}

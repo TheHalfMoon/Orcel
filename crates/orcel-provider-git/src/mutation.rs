@@ -114,6 +114,7 @@ impl GitProvider {
     ) -> Result<GitMutationState, GitProviderError> {
         let repo = self.repository_root(relative)?;
         let paths = validate_paths(paths)?;
+        require_exact_names(&repo, &paths)?;
         self.refuse_paths_under_ignored_folders(&repo, &paths)?;
         self.ensure_no_external_filters(&repo, &paths)?;
         let material = self.path_material(&repo, &paths)?;
@@ -128,6 +129,7 @@ impl GitProvider {
         let repo = self.repository_root(relative)?;
         self.ensure_supported_repository_state(&repo)?;
         let paths = validate_paths(paths)?;
+        require_exact_names(&repo, &paths)?;
         self.staged_paths_state(&repo, &paths)
     }
 
@@ -198,6 +200,7 @@ impl GitProvider {
         let repo = self.repository_root(relative)?;
         self.ensure_supported_repository_state(&repo)?;
         let paths = validate_paths(paths)?;
+        require_exact_names(&repo, &paths)?;
         self.refuse_paths_under_ignored_folders(&repo, &paths)?;
         self.ensure_no_external_filters(&repo, &paths)?;
         let current = self.base_state(&repo, self.path_material(&repo, &paths)?)?;
@@ -225,6 +228,7 @@ impl GitProvider {
         let repo = self.repository_root(relative)?;
         self.ensure_supported_repository_state(&repo)?;
         let paths = validate_paths(paths)?;
+        require_exact_names(&repo, &paths)?;
         let current = self.staged_paths_state(&repo, &paths)?;
         require_state(&current, expected)?;
         let literal = literal_pathspecs(&paths);
@@ -599,6 +603,68 @@ fn validate_paths(paths: &[String]) -> Result<Vec<String>, GitProviderError> {
         validated.push(value.clone());
     }
     Ok(validated)
+}
+
+/// Review of #825: every component of a path the provider passes to Git
+/// is byte-identical to its name on disk. A Windows short name
+/// (`NODE_M~1`) or a case variant would let Git reach a folder (and a
+/// nested `.git` there) under a name the ignore and index checks did not
+/// see, and with `core.ignoreCase=false` a case variant is another path
+/// to them. Components with `~` followed by a digit, `.` or empty
+/// components are refused outright. A component that does not exist (a
+/// tracked file deleted from the working tree) ends the check: Git takes
+/// the rest from the index.
+fn require_exact_names(repo: &Path, paths: &[String]) -> Result<(), GitProviderError> {
+    for path in paths {
+        let mut folder = repo.to_path_buf();
+        for part in path.split(['/', '\\']) {
+            let short_name = part.char_indices().any(|(at, c)| {
+                c == '~' && part[at + 1..].starts_with(|d: char| d.is_ascii_digit())
+            });
+            if part.is_empty() || part == "." || part == ".." || short_name {
+                return Err(invalid(
+                    "a Git path has an empty, dot or short-name (~digit) component",
+                ));
+            }
+            let entries = match fs::read_dir(&folder) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) => {
+                    return Err(provider_error(format!(
+                        "list a folder of a Git path: {error}"
+                    )))
+                }
+            };
+            let mut exact = false;
+            let mut folded = false;
+            for entry in entries {
+                let entry = entry
+                    .map_err(|error| provider_error(format!("read a folder entry: {error}")))?;
+                let name = entry.file_name();
+                if name.to_str() == Some(part) {
+                    exact = true;
+                    break;
+                }
+                if name
+                    .to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(part))
+                {
+                    folded = true;
+                }
+            }
+            if !exact {
+                if folded || folder.join(part).exists() {
+                    return Err(invalid(
+                        "a Git path names an entry by another name than its own on disk (case or short name)",
+                    ));
+                }
+                // Not on disk at all: the rest comes from the index.
+                break;
+            }
+            folder.push(part);
+        }
+    }
+    Ok(())
 }
 
 fn validate_branch_input(branch: &str) -> Result<(), GitProviderError> {

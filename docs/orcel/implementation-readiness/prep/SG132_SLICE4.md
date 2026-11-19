@@ -264,7 +264,14 @@ show it.
   past 200 000 entries or 64 levels. Only then does `git_status` run with `--untracked-files=all`. `git add` walks
   towards each path it is given, so a path under an ignored folder the index tracks nothing in is refused
   (`CAPABILITY_DENIED`, same `check-ignore` and index answers) in both the add preview and the add (review of
-  #825). Tests with real Git: `orcel-provider-git/tests/nested_gitfile.rs`. Cost: every operation's repository
+  #825). Every path the provider passes to Git (add, unstage and their previews) must name each component
+  byte-identically to its name on disk (delta review of #825): a Windows short name (`NODE_M~1`), which
+  `check-ignore` does not report as ignored but Git resolves to the long folder, and a case variant, which with
+  `core.ignoreCase=false` is another path to the same folder, are refused (`INVALID_REQUEST`), as are components
+  with `~` followed by a digit, empty components and `.` segments (`./a.txt`). A missing component (a tracked file
+  deleted from the working tree) ends the check, since Git takes the rest from the index. Full Control's own paths
+  (repository, working folder, program) are resolved by the worker to their on-disk names before use, and the
+  repository-relative path it hands the provider is computed from those resolved names. Tests with real Git: `orcel-provider-git/tests/nested_gitfile.rs`. Cost: every operation's repository
   resolution walks the working tree (outside ignored folders) and asks `check-ignore` once per folder level, so a
   large tree costs time on every call; a walk that runs into the provider's 30 s per-command limit or the worker's
   60 s limit fails closed, as do the entry and depth caps. Residuals: very large working trees outside ignored
