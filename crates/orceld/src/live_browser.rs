@@ -2376,6 +2376,7 @@ impl LiveBrowser {
         self.require_lifetime()?;
         orcel_browser_host::check_postconditions(&checks)
             .map_err(|_| ProviderError::new(FailureCode::InvalidRequest, "malformed checks"))?;
+        let checks = self.url_checks_without_oracle(checks);
         match self.request(&WorkerHostRequest::Verify { checks })? {
             WorkerHostReply::Verified {
                 url,
@@ -3105,6 +3106,37 @@ impl LiveBrowser {
         crate::agent_url::agent_url(url, self.sign_in_seen)
     }
 
+    /// SG-000135 OB-07b: `url_is` compares URLs as the agent may read them.
+    /// Both sides go through `agent_url` with the session's mode: when they
+    /// match, the host checks orceld's committed URL (so it passes unless
+    /// the page moved on); otherwise the host checks the sanitized expected
+    /// URL, which cannot equal a committed URL whose sanitized form differs.
+    /// A guessed redacted value (a password in a GET sign-in's query) never
+    /// changes the outcome, so `url_is` is no oracle for it, and it works
+    /// in strict mode with the redacted form the agent was shown.
+    fn url_checks_without_oracle(
+        &self,
+        checks: Vec<orcel_browser_host::Postcondition>,
+    ) -> Vec<orcel_browser_host::Postcondition> {
+        use orcel_browser_host::Postcondition;
+        checks
+            .into_iter()
+            .map(|check| match check {
+                Postcondition::UrlIs { url } => {
+                    let shown = self.agent_url(&url);
+                    let url = match self.page_url.as_deref() {
+                        Some(committed) if self.agent_url(committed) == shown => {
+                            committed.to_owned()
+                        }
+                        _ => shown,
+                    };
+                    Postcondition::UrlIs { url }
+                }
+                other => other,
+            })
+            .collect()
+    }
+
     /// SG-000135 OB-07b: whether a page of this session was a sign-in page.
     pub fn sign_in_seen(&self) -> bool {
         self.sign_in_seen
@@ -3634,6 +3666,75 @@ mod tests {
             "https://fixture.test/home?user=[redacted]&pw2=[redacted]&lang=[redacted]"
         );
         assert!(!shown.contains("hunter2") && !shown.contains("ann"));
+    }
+
+    /// SG-000135 OB-07b: `url_is` is decided on sanitized URLs: a guessed
+    /// secret value never changes what the host is asked, and the redacted
+    /// form the agent was shown matches in strict mode.
+    #[test]
+    fn ob07b_url_is_compares_sanitized_urls_and_is_no_oracle() {
+        use orcel_browser_host::Postcondition;
+        let dir = scratch("ob07b-url-is");
+        let mut browser = hostless(false, None, &dir);
+        let committed = "https://fixture.test/home?user=ann&password=hunter2";
+        browser.page_url = Some(committed.into());
+        let asked = |browser: &LiveBrowser, url: &str| match browser
+            .url_checks_without_oracle(vec![Postcondition::UrlIs { url: url.into() }])
+            .pop()
+        {
+            Some(Postcondition::UrlIs { url }) => url,
+            _ => String::new(),
+        };
+        // A right and a wrong guess of the password are asked the same.
+        let right = asked(&browser, committed);
+        let wrong = asked(
+            &browser,
+            "https://fixture.test/home?user=ann&password=guess",
+        );
+        assert_eq!(right, committed);
+        assert_eq!(wrong, committed);
+        // The redacted form the agent was shown matches too.
+        assert_eq!(
+            asked(
+                &browser,
+                "https://fixture.test/home?user=ann&password=[redacted]"
+            ),
+            committed
+        );
+        // A different non-secret value differs, and the host is never sent
+        // a guess: only the sanitized form.
+        assert_eq!(
+            asked(
+                &browser,
+                "https://fixture.test/home?user=bob&password=hunter2"
+            ),
+            "https://fixture.test/home?user=bob&password=[redacted]"
+        );
+        // Strict mode: every value is redacted on both sides.
+        browser.sign_in_seen = true;
+        assert_eq!(
+            asked(
+                &browser,
+                "https://fixture.test/home?user=[redacted]&password=[redacted]"
+            ),
+            committed
+        );
+        assert_eq!(
+            asked(&browser, "https://fixture.test/home?user=zed&password=x"),
+            committed
+        );
+        assert_eq!(
+            asked(&browser, "https://fixture.test/other?user=ann"),
+            "https://fixture.test/other?user=[redacted]"
+        );
+        // Other checks pass through unchanged.
+        let other = Postcondition::TextVisible {
+            text: "Welcome".into(),
+        };
+        assert_eq!(
+            browser.url_checks_without_oracle(vec![other.clone()]),
+            vec![other]
+        );
     }
 
     #[test]
