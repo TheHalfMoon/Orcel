@@ -126,3 +126,22 @@ The re-review confirmed all seven fixes and failed the head on one item: agent-f
 - **After a sign-in page:** once the detector saw a `sign_in` page in the session, every query and fragment value and every bare query item is redacted for the rest of the session, whatever the names. Any later URL may carry what the person typed. The flag is per session and never cleared, the cheapest form that fails closed. Plain anchor fragments keep the rule above. `browser_structured` has no detector (its gate is off), so only the name rules apply there.
 
 The agent keeps the path and the parameter names, enough to know where it is. Tests: `agent_url.rs` checks each rule, including the strict mode and the tab form. `live_browser.rs` checks the session's switch to strict after a sign-in. The vault scan requires every reply field named `url` (or ending in `url`) in `live_dispatch.rs` and `browser_broker.rs` to be built by `agent_url` or `agent_url::bare`, at least 11 of them. It also now cuts `#[cfg(all(test, ...))]` modules as test code, and it checks that the native host keeps cua-driver-core on `orcel-minimal` with default features off.
+
+## 10. Follow-ups after the merge (branch `browser/agent-url-followups`)
+
+The reviewer's low residuals on #820 (merge 7ad1ac77):
+
+1. **`url_is` is no oracle.** Before a `url_is` check reaches the host, orceld compares both URLs as the agent may read them, in the session's mode (`LiveBrowser::url_checks_without_oracle`). If they match, the host is asked about orceld's committed URL, which passes unless the page moved on. If not, the host is asked about the sanitized expected URL, which cannot equal the committed one. A right and a wrong guess of a redacted value (a password in a GET sign-in's query) give the same answer. The redacted form the agent was shown matches, in strict mode too.
+2. **Sanitizer.**
+   - `;` separates parameters as well as `&`, and each separator is kept as it was.
+   - A name is `%XX`-decoded up to three times before it is matched, so `%2570ass` matches. A fourth level is not unwrapped (bounded).
+   - A parsed download's `source_url` (WI-05 document parse) now goes through the sanitizer too. A download link may carry a signed token.
+3. **A sign-in the detector never saw.** Strict mode starts only when the detector has seen a `sign_in` page in the session. The detector runs before each agent action and on status reads. A person could load a GET sign-in form and submit it between two of them. The resulting URL then gets only the name rules, which still redact any secret-looking name (a password field named `password`, `pw`, `pass`, `pin` and so on).
+
+   I considered turning strict mode on whenever a navigation comes from a form submission on a page that had a password field. The worker's toggle memory does know which pages had a password field. But the worker cannot tell a person's form submission from any other navigation without page script, and the route question carries no such flag. That would mean a protocol change for a residual the name rules mostly cover, so it is recorded, not built.
+4. **Scan breadth.** The vault scan now checks every orceld source, not only the two reply builders. It looks at:
+   - every URL-like key: `url`, `href`, `location`, `link`, `redirect`, or any key ending in `_<one of them>`;
+   - written as a JSON key (also with the value on the next line) or a map `insert`;
+   - every URL-like field of a type that derives `Serialize`.
+
+   Each must be built by `agent_url` or `agent_url::bare`, or be on an explicit allowlist with its reason. The allowlist holds the journal input a `browser_full` action maps onto, the observation's page-authored `latest_dated_link`, and web search results. A unit test pins the detection on each form.

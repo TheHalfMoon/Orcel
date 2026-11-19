@@ -362,54 +362,198 @@ fn ob07b_a_request_body_leaves_the_worker_only_for_an_armed_execution() -> Outco
     Ok(())
 }
 
-/// The reply builders an agent reads page URLs from.
-const REPLY_BUILDERS: &[&str] = &[
-    "crates/orceld/src/live_dispatch.rs",
-    "crates/orceld/src/browser_broker.rs",
+/// The name parts of a URL-like key or field: the name is one of them or
+/// ends with `_<part>` (`target_url`, `source_url`, `latest_dated_link`).
+const URL_LIKE: &[&str] = &["url", "href", "location", "link", "redirect"];
+
+/// URL-like keys in orceld's sources that are not a page URL the agent
+/// reads from a reply built here, each with its reason. Anything else must
+/// be built by `agent_url` or `agent_url::bare`.
+const URL_KEY_ALLOWED: &[(&str, &str, &str)] = &[
+    (
+        "crates/orceld/src/browser_full.rs",
+        "url",
+        "the live request a browser_full action maps onto (journal input built from the agent's own arguments), not a reply",
+    ),
+    (
+        "crates/orceld/src/live_dispatch.rs",
+        "latest_dated_link",
+        "a page-authored link from the observation, like the link URLs a snapshot shows; not the committed URL or anything a person typed",
+    ),
+    (
+        "crates/orceld/src/search.rs",
+        "url",
+        "web search results from the search provider, not a browser page",
+    ),
 ];
+
+/// Whether `name` is URL-like.
+fn url_like(name: &str) -> bool {
+    URL_LIKE
+        .iter()
+        .any(|part| name == *part || name.ends_with(&format!("_{part}")))
+}
+
+/// The quoted keys on `line` that a value follows: `"key":` (a JSON object
+/// key) and `insert("key"` (a map insert), with what follows each on the
+/// line.
+fn keyed_values(line: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (at, _) in line.match_indices("\":") {
+        if let Some(open) = line[..at].rfind('"') {
+            let key = &line[open + 1..at];
+            if key.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                out.push((key.to_owned(), line[at + 2..].to_owned()));
+            }
+        }
+    }
+    for (at, _) in line.match_indices("insert(\"") {
+        let rest = &line[at + 8..];
+        if let Some(close) = rest.find('"') {
+            out.push((rest[..close].to_owned(), rest[close + 1..].to_owned()));
+        }
+    }
+    out
+}
+
+/// The field name a struct field line declares (`pub url: String,`).
+fn field_name(line: &str) -> Option<&str> {
+    let rest = line.trim_start();
+    let rest = rest
+        .strip_prefix("pub(crate) ")
+        .or_else(|| rest.strip_prefix("pub(super) "))
+        .or_else(|| rest.strip_prefix("pub "))
+        .unwrap_or(rest);
+    let (name, _) = rest.split_once(": ")?;
+    name.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        .then_some(name)
+}
+
+fn sanitized(value: &str) -> bool {
+    value.contains("agent_url(") || value.contains("agent_url::bare")
+}
+
+/// Every URL-like key or serialized field in `text` that is not built by
+/// the sanitizer and not allowed: (line number, key).
+fn unsanitized_url_keys(file: &str, text: &str) -> (Vec<String>, usize) {
+    let lines = production_lines(text);
+    let mut out = Vec::new();
+    let mut sanitized_count = 0;
+    let allowed = |key: &str| {
+        URL_KEY_ALLOWED
+            .iter()
+            .any(|(allowed_file, allowed_key, _)| *allowed_file == file && *allowed_key == key)
+    };
+    // A struct deriving Serialize: its URL-like fields would reach a reply
+    // without passing a builder line.
+    let mut serialize_pending = false;
+    let mut in_serialized: Option<String> = None;
+    for (index, (number, line)) in lines.iter().enumerate() {
+        if is_comment(line) {
+            continue;
+        }
+        let trimmed = line.trim();
+        if let Some(close) = &in_serialized {
+            if line.trim_end() == close {
+                in_serialized = None;
+            } else if let Some(name) = field_name(line) {
+                if url_like(name) && !allowed(name) {
+                    out.push(format!("{file}:{}: serialized field {name}", number + 1));
+                }
+            }
+            continue;
+        }
+        if trimmed.starts_with("#[derive(") {
+            serialize_pending = trimmed.contains("Serialize");
+            continue;
+        }
+        if serialize_pending && trimmed.starts_with("#[") {
+            continue;
+        }
+        if serialize_pending
+            && (trimmed.contains("struct ") || trimmed.contains("enum "))
+            && trimmed.ends_with('{')
+        {
+            let indent = &line[..line.len() - line.trim_start().len()];
+            in_serialized = Some(format!("{indent}}}"));
+            serialize_pending = false;
+            continue;
+        }
+        serialize_pending = false;
+        for (key, rest) in keyed_values(line) {
+            if !url_like(&key) {
+                continue;
+            }
+            // A value on the following line (a multi-line key).
+            let value = if rest.trim().is_empty() {
+                lines
+                    .get(index + 1)
+                    .map(|(_, next)| next.to_string())
+                    .unwrap_or_default()
+            } else {
+                rest
+            };
+            if sanitized(&value) {
+                sanitized_count += 1;
+            } else if !allowed(&key) {
+                out.push(format!("{file}:{}: {key}: {}", number + 1, trimmed));
+            }
+        }
+    }
+    (out, sanitized_count)
+}
+
+#[test]
+fn ob07b_url_key_detection_covers_multi_line_inserts_and_serialized_fields() {
+    let text = "fn reply() {\n    json!({\n        \"url\":\n            page.url,\n        \"target_url\": agent_url(&x),\n        \"href\": raw,\n    });\n    map.insert(\"location\", raw);\n    map.insert(\"redirect\".into(), agent_url(&y, false));\n    json!({\"name\": url, \"curl\": 1});\n}\n#[derive(Debug, Serialize)]\npub struct Reply {\n    pub url: String,\n    pub title: String,\n}\n#[derive(Debug)]\npub struct Internal {\n    pub url: String,\n}\n";
+    let (hits, sanitized_count) = unsanitized_url_keys("x.rs", text);
+    assert_eq!(sanitized_count, 2, "{hits:#?}");
+    let joined = hits.join("\n");
+    assert!(joined.contains("x.rs:3: url"), "{joined}");
+    assert!(joined.contains("x.rs:6: href"), "{joined}");
+    assert!(joined.contains("x.rs:8: location"), "{joined}");
+    assert!(joined.contains("x.rs:14: serialized field url"), "{joined}");
+    assert_eq!(hits.len(), 4, "{joined}");
+}
 
 #[test]
 fn ob07b_every_agent_facing_url_goes_through_the_sanitizer() -> Outcome {
-    // A reply field that names a page URL ("url", or any key ending in
-    // "url") must be built by `agent_url` (the redacting sanitizer) or
-    // `agent_url::bare` (tab lists); agent_url.rs tests the sanitizer, and
-    // live_browser.rs its strict mode after a sign-in.
+    // Every URL-like key (url, href, location, link, redirect, *_url, ...)
+    // that a reply builder in orceld writes, on one line or the next, by a
+    // JSON key or a map insert, and every URL-like field of a serialized
+    // type, must be built by `agent_url` (the redacting sanitizer) or
+    // `agent_url::bare` (tab lists), or be allowed above with its reason.
+    // agent_url.rs tests the sanitizer, and live_browser.rs its strict mode
+    // after a sign-in and `url_is`.
     let root = repo();
+    let mut files = Vec::new();
+    sources(&root.join("crates/orceld/src"), "rs", &mut files)?;
+    assert!(files.len() > 40, "orceld's sources were found");
     let mut unsanitized = Vec::new();
-    let mut sanitized = 0;
-    for file in REPLY_BUILDERS {
-        let text = std::fs::read_to_string(root.join(file))?;
-        for (number, line) in production_lines(&text) {
-            if is_comment(line) {
-                continue;
-            }
-            let names_url = line.match_indices("url\":").any(|(at, _)| {
-                line[..at].rfind('"').is_some_and(|open| {
-                    line[open + 1..at]
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c == '_')
-                })
-            });
-            if !names_url {
-                continue;
-            }
-            if line.contains("agent_url(") || line.contains("agent_url::bare") {
-                sanitized += 1;
-            } else {
-                unsanitized.push(format!("{file}:{}: {}", number + 1, line.trim()));
-            }
-        }
+    let mut sanitized_count = 0;
+    for file in &files {
+        let name = relative(&root, file);
+        let text = std::fs::read_to_string(file)?;
+        let (hits, count) = unsanitized_url_keys(&name, &text);
+        unsanitized.extend(hits);
+        sanitized_count += count;
     }
     assert!(
         unsanitized.is_empty(),
         "agent-facing URL fields without the sanitizer: {unsanitized:#?}"
     );
     // open, click, form action, verify (live shapes); open, click, form
-    // action, verify, extract, tab navigation (browser_full); tab list.
+    // action, verify, extract, tab navigation (browser_full); tab list; a
+    // parsed download's source.
     assert!(
-        sanitized >= 11,
-        "only {sanitized} sanitized URL fields were found"
+        sanitized_count >= 12,
+        "only {sanitized_count} sanitized URL fields were found"
     );
+    for (file, _, reason) in URL_KEY_ALLOWED {
+        assert!(root.join(file).is_file(), "{file}");
+        assert!(!reason.is_empty());
+    }
     Ok(())
 }
 

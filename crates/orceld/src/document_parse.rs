@@ -712,7 +712,9 @@ fn result(download: &CommittedDownload, parser: &ParserPin, document: &ParsedDoc
             "relative_destination": download.relative,
             "sha256": download.sha256,
             "bytes": download.bytes,
-            "source_url": download.source_url,
+            // SG-000135 OB-07b: a download's link may carry a signed token
+            // in its query; the agent reads it sanitized.
+            "source_url": crate::agent_url::agent_url(&download.source_url, false),
         },
         "format": document.format.as_str(),
         "pages": document.pages,

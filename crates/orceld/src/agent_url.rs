@@ -23,6 +23,11 @@
 //! (OB-07 `sign_in`), any later URL may carry the person's input. The agent
 //! keeps the path and the parameter names, enough to know where it is.
 //!
+//! Parameters are separated by `&` or `;`. A name is `%XX`-decoded up to
+//! three times before it is matched, so a double-encoded name still
+//! matches. `url_is` checks compare both URLs in this form
+//! (`LiveBrowser::url_checks_without_oracle`).
+//!
 //! Tab lists use [`bare`], which drops the query and fragment entirely
 //! (OB-03).
 
@@ -63,11 +68,28 @@ const TOKEN_RUN: usize = 16;
 
 /// Whether a parameter name looks secret.
 fn secret_name(name: &str) -> bool {
-    let lower = percent_decoded(name).to_ascii_lowercase();
+    let lower = fully_decoded(name).to_ascii_lowercase();
     SECRET_PARTS.iter().any(|part| lower.contains(part))
         || lower
             .split(|c: char| !c.is_ascii_alphanumeric())
             .any(|word| word == "pin")
+}
+
+/// How many rounds of `%XX` decoding a name gets before it is matched, so a
+/// double- or triple-encoded name (`%2570ass`) still matches.
+const DECODE_ROUNDS: usize = 3;
+
+/// A name decoded until it stops changing, at most `DECODE_ROUNDS` times.
+fn fully_decoded(name: &str) -> String {
+    let mut current = name.to_owned();
+    for _ in 0..DECODE_ROUNDS {
+        let next = percent_decoded(&current);
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+    current
 }
 
 /// Best-effort `%XX` decoding, for matching names only (never shown).
@@ -116,23 +138,35 @@ fn token_like(text: &str) -> bool {
 }
 
 /// `a=1&b=2` with each value kept or redacted.
+/// `a=1&b=2;c=3` with each value kept or redacted. Both `&` and `;` separate
+/// parameters (servers accept either), and each separator is kept as it was.
 fn parameters(text: &str, strict: bool) -> String {
-    text.split('&')
-        .map(|item| match item.split_once('=') {
-            Some((name, value)) => {
-                if strict || secret_name(name) || token_like(name) {
-                    let name = if token_like(name) { REDACTED } else { name };
-                    format!("{name}={REDACTED}")
-                } else {
-                    format!("{name}={value}")
-                }
+    let mut out = String::with_capacity(text.len());
+    let mut start = 0;
+    for (at, separator) in text.match_indices(['&', ';']) {
+        out.push_str(&parameter(&text[start..at], strict));
+        out.push_str(separator);
+        start = at + separator.len();
+    }
+    out.push_str(&parameter(&text[start..], strict));
+    out
+}
+
+/// One `name=value` or bare item, kept or redacted.
+fn parameter(item: &str, strict: bool) -> String {
+    match item.split_once('=') {
+        Some((name, value)) => {
+            if strict || secret_name(name) || token_like(name) {
+                let name = if token_like(name) { REDACTED } else { name };
+                format!("{name}={REDACTED}")
+            } else {
+                format!("{name}={value}")
             }
-            None if item.is_empty() => String::new(),
-            None if strict || token_like(item) || secret_name(item) => REDACTED.to_owned(),
-            None => item.to_owned(),
-        })
-        .collect::<Vec<_>>()
-        .join("&")
+        }
+        None if item.is_empty() => String::new(),
+        None if strict || token_like(item) || secret_name(item) => REDACTED.to_owned(),
+        None => item.to_owned(),
+    }
 }
 
 /// The fragment as shown: parameters when it has `=`, else a plain anchor
@@ -298,6 +332,34 @@ mod tests {
         ] {
             assert_eq!(agent_url(url, false), shown, "{url}");
         }
+    }
+
+    #[test]
+    fn semicolons_separate_parameters_and_names_are_decoded_repeatedly() {
+        for (url, shown) in [
+            (
+                "https://fixture.test/a?q=rust;password=hunter2&page=2",
+                "https://fixture.test/a?q=rust;password=[redacted]&page=2",
+            ),
+            (
+                "https://fixture.test/a;jsessionid=abc?x=1",
+                "https://fixture.test/a;jsessionid=abc?x=1",
+            ),
+            (
+                "https://fixture.test/a?%2570ass=hunter2&%252570wd=x&%252570in=1",
+                "https://fixture.test/a?%2570ass=[redacted]&%252570wd=[redacted]&%252570in=[redacted]",
+            ),
+            (
+                "https://fixture.test/cb#state=ok;id_token=abc",
+                "https://fixture.test/cb#state=ok;id_token=[redacted]",
+            ),
+        ] {
+            assert_eq!(agent_url(url, false), shown, "{url}");
+        }
+        assert_eq!(fully_decoded("%2570ass"), "pass");
+        assert_eq!(fully_decoded("%252570wd"), "pwd");
+        // Bounded: a fourth level of encoding is not unwrapped.
+        assert_eq!(fully_decoded("%2525252570in"), "%2570in");
     }
 
     #[test]
