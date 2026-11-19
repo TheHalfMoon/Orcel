@@ -516,10 +516,22 @@ impl crate::full_control_dispatch::AuthorityPort for ServicePort {
             .map_err(provider)
     }
 
-    /// The installed service owns its jobs: this session must be unable
-    /// to terminate them.
-    fn jobs_are_service_owned(&self) -> bool {
-        true
+    fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError> {
+        self.client()?
+            .dispatch_active(authorization_id)
+            .map(|_| ())
+            .map_err(provider)
+    }
+
+    fn release_job_handle(&self, handle: u64) {
+        #[cfg(windows)]
+        // SAFETY: a handle value the verified service duplicated into this
+        // process for this answer, closed once and never used.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(handle as _);
+        }
+        #[cfg(not(windows))]
+        let _ = handle;
     }
 }
 

@@ -1,27 +1,34 @@
 //! WP1-12 (SG-000132): the Job Object of each Full Control dispatch.
 //!
 //! For the filesystem and shell/process executors (filesystem, process and
-//! git operations), `Authorize` creates a fresh named Job Object for that one
-//! dispatch before it writes the allow record, holds its only full-access
-//! handle, and returns its `job_name`. orceld opens the job by name with
-//! `JOB_OBJECT_ASSIGN_PROCESS` (the only right the job's DACL gives the
-//! caller's user), starts `orceld fc-worker` suspended, assigns it, closes its
-//! handle and resumes it. The job is kill-on-close with no breakaway limit,
-//! so nothing the worker starts can leave it.
+//! git operations), `Authorize` creates a fresh UNNAMED Job Object for that
+//! one dispatch before it writes the allow record, keeps its full-access
+//! handle, and duplicates one handle with only `JOB_OBJECT_ASSIGN_PROCESS`
+//! into the verified orceld process; the answer carries that handle value
+//! (`job_handle`) and the job's id (`job_id`, for the audit). orceld starts
+//! `orceld fc-worker` suspended, assigns it with that handle, closes the
+//! handle, asks `DispatchActive` whether the authorization still stands, and
+//! only then resumes it (otherwise it terminates the worker). The job is
+//! kill-on-close with no breakaway limit, so nothing the worker starts can
+//! leave it.
+//!
+//! No names: review of `291e045e` showed a standard user can create
+//! `Global\` objects and hold a named job open past its end, so a name could
+//! be squatted or a revoked job reused. An unnamed job can be reached only
+//! through a handle.
 //!
 //! Decision: one job per dispatch, not per lease. A dispatch's processes end
-//! with its outcome (`Outcome` terminates the job), one dispatch cannot add
-//! processes to another's job, and a job's name is useful for exactly one
-//! launch. The service ends a lease's jobs whenever the lease stops being
-//! active: revoke, Stop, session lock, sign-out, disconnect, expiry, an
-//! epoch move, re-enrollment and reset. Jobs whose processes all exited are
-//! closed after [`JOB_IDLE_MS`]; a lease holds at most
-//! [`MAX_JOBS_PER_LEASE`] jobs and the service [`MAX_JOBS`].
+//! with its outcome (`Outcome` terminates the job), and one dispatch cannot
+//! add processes to another's job. The service ends a lease's jobs whenever
+//! the lease stops being active: revoke, Stop, session lock, sign-out,
+//! disconnect, expiry, an epoch move, re-enrollment and reset. Jobs whose
+//! processes all exited are closed after [`JOB_IDLE_MS`], and every job is
+//! terminated [`JOB_MAX_MS`] after it was made whatever it holds; a lease
+//! holds at most [`MAX_JOBS_PER_LEASE`] jobs and the service [`MAX_JOBS`].
 //!
 //! The service holds jobs in memory only: a restarted service holds no
-//! handle, so kill-on-close has already ended whatever ran in them (unless
-//! a client still holds a handle, which orceld closes before it resumes the
-//! worker).
+//! handle, so kill-on-close has ended whatever ran in them once orceld
+//! closed its own handle (it does right after assigning its worker).
 
 use super::{observed, AuthorityCore};
 use crate::caller::{CallerFacts, CallerRole};
@@ -38,44 +45,47 @@ pub const MAX_JOBS_PER_LEASE: usize = 16;
 pub const MAX_JOBS: usize = 128;
 /// A job whose processes all exited is closed this long after it was made.
 pub const JOB_IDLE_MS: u64 = 60_000;
+/// Every job is terminated this long after it was made, busy or not (a
+/// worker operation is bounded at 60 s; process and git families that need
+/// longer arrive with SG-000134's long-running jobs).
+pub const JOB_MAX_MS: u64 = 10 * 60_000;
 /// Authorizations whose outcome is still expected (the oldest is dropped).
 pub const MAX_OPEN_DISPATCHES: usize = 256;
-/// Every dispatch job's name, after its namespace.
-pub const JOB_NAME_STEM: &str = "orcel-fc-";
+/// Every dispatch job id starts with this, then 32 lowercase hex.
+pub const JOB_ID_PREFIX: &str = "fcj-";
+
+/// A dispatch job as `Authorize` hands it to orceld: its id and the value of
+/// the assign-only handle the service duplicated into the caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchJob {
+    pub id: String,
+    pub handle: u64,
+}
 
 /// Creates, terminates and inspects the dispatch Job Objects. The Windows
 /// implementation is `win::jobs::ServiceJobs`.
 pub trait JobHost: Send {
-    /// `Global` for the installed service, `Local` for the console harness
-    /// (a standard user cannot create `Global\` objects).
-    fn namespace(&self) -> &'static str;
-    /// Creates the job `name` (refusing a name that already exists),
-    /// kill-on-close with no breakaway, whose DACL gives the service
-    /// terminate and query and `assign_sid` only assign-process.
-    fn create(&mut self, name: &str, assign_sid: &str) -> Result<(), AuthorityError>;
+    /// Creates an unnamed, kill-on-close, no-breakaway job `id` and
+    /// duplicates an assign-only, non-inheritable handle to it into the
+    /// caller's process (the observed pipe client).
+    fn create(&mut self, id: &str, caller: &CallerFacts) -> Result<DispatchJob, AuthorityError>;
     /// Terminates every process in the job and closes the service's handle.
-    fn terminate(&mut self, name: &str);
+    fn terminate(&mut self, id: &str);
+    /// As [`JobHost::terminate`], and also closes the handle duplicated into
+    /// the caller: only for a job whose answer was never sent.
+    fn withdraw(&mut self, id: &str);
     /// How many processes the job holds now, when that can be read.
-    fn active_processes(&self, name: &str) -> Option<u32>;
+    fn active_processes(&self, id: &str) -> Option<u32>;
 }
 
-/// The name of a dispatch job: `<namespace>\orcel-fc-<32 hex>`.
-pub fn job_name(namespace: &str, random_hex: &str) -> String {
-    format!("{namespace}\\{JOB_NAME_STEM}{random_hex}")
-}
-
-/// Whether `text` is a dispatch job name as the service makes them.
-pub fn is_job_name(text: &str) -> bool {
-    let rest = text
-        .strip_prefix("Global\\")
-        .or_else(|| text.strip_prefix("Local\\"));
-    rest.and_then(|rest| rest.strip_prefix(JOB_NAME_STEM))
-        .is_some_and(|random| {
-            random.len() == 32
-                && random
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        })
+/// Whether `text` is a dispatch job id as the service makes them.
+pub fn is_job_id(text: &str) -> bool {
+    text.strip_prefix(JOB_ID_PREFIX).is_some_and(|random| {
+        random.len() == 32
+            && random
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
 }
 
 /// Whether a dispatch of `executor` runs in a service-made Job Object.
@@ -89,7 +99,7 @@ pub fn executor_runs_in_job(executor: ExecutorClass) -> bool {
 /// A dispatch job the service holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HeldJob {
-    name: String,
+    id: String,
     lease_id: String,
     created_ms: u64,
 }
@@ -101,7 +111,7 @@ pub(crate) struct OpenDispatch {
     user_sid: String,
     logon_session_id: u64,
     lease_id: String,
-    job_name: Option<String>,
+    job_id: Option<String>,
 }
 
 fn is_authorization_id(text: &str) -> bool {
@@ -153,7 +163,7 @@ impl AuthorityCore {
         executor: ExecutorClass,
         lease_id: &str,
         authorization_id: &str,
-    ) -> Result<Option<String>, AuthorityError> {
+    ) -> Result<Option<DispatchJob>, AuthorityError> {
         if !executor_runs_in_job(executor) {
             return Ok(None);
         }
@@ -169,29 +179,35 @@ impl AuthorityCore {
                 "too many dispatch Job Objects are held; earlier dispatches must report their outcome",
             ));
         }
-        let name = job_name(self.services.jobs.namespace(), &hex(&self.random(16)?));
-        self.services
-            .jobs
-            .create(&name, &caller.user_sid)
-            .map_err(|error| {
-                AuthorityError::unavailable(format!(
-                    "the dispatch Job Object for {authorization_id} could not be created: {}",
-                    error.message
-                ))
-            })?;
+        let id = format!("{JOB_ID_PREFIX}{}", hex(&self.random(16)?));
+        let job = self.services.jobs.create(&id, caller).map_err(|error| {
+            AuthorityError::unavailable(format!(
+                "the dispatch Job Object for {authorization_id} could not be created: {}",
+                error.message
+            ))
+        })?;
         self.jobs.push(HeldJob {
-            name: name.clone(),
+            id,
             lease_id: lease_id.to_owned(),
             created_ms: now,
         });
-        Ok(Some(name))
+        Ok(Some(job))
     }
 
     /// Terminates and forgets one held job.
-    pub(super) fn end_job(&mut self, name: &str) {
-        if let Some(index) = self.jobs.iter().position(|job| job.name == name) {
+    pub(super) fn end_job(&mut self, id: &str) {
+        if let Some(index) = self.jobs.iter().position(|job| job.id == id) {
             self.jobs.remove(index);
-            self.services.jobs.terminate(name);
+            self.services.jobs.terminate(id);
+        }
+    }
+
+    /// Terminates a job whose answer was never sent, closing the handle the
+    /// service duplicated into the caller too.
+    pub(super) fn withdraw_job(&mut self, id: &str) {
+        if let Some(index) = self.jobs.iter().position(|job| job.id == id) {
+            self.jobs.remove(index);
+            self.services.jobs.withdraw(id);
         }
     }
 
@@ -201,7 +217,7 @@ impl AuthorityCore {
         caller: &CallerFacts,
         authorization_id: &str,
         lease_id: &str,
-        job_name: Option<&str>,
+        job_id: Option<&str>,
     ) {
         while self.open_dispatches.len() >= MAX_OPEN_DISPATCHES {
             self.open_dispatches.pop_front();
@@ -211,58 +227,117 @@ impl AuthorityCore {
             user_sid: caller.user_sid.clone(),
             logon_session_id: caller.logon_session_id,
             lease_id: lease_id.to_owned(),
-            job_name: job_name.map(str::to_owned),
+            job_id: job_id.map(str::to_owned),
         });
     }
 
+    fn lease_active(&self, lease_id: &str, now: u64) -> bool {
+        self.state.leases.iter().any(|record| {
+            record.lease.body.lease_id == lease_id && self.effective_state(record, now) == "active"
+        })
+    }
+
     /// Ends every held job whose lease is no longer active (revoked,
-    /// stopped, expired, from an older epoch, or gone).
+    /// stopped, expired, from an older epoch, or gone). Their open
+    /// dispatches stay, so the outcome is still recorded.
     pub(super) fn sweep_jobs(&mut self) {
         let now = self.now();
         let dead: Vec<String> = self
             .jobs
             .iter()
-            .filter(|job| {
-                !self.state.leases.iter().any(|record| {
-                    record.lease.body.lease_id == job.lease_id
-                        && self.effective_state(record, now) == "active"
-                })
-            })
-            .map(|job| job.name.clone())
+            .filter(|job| !self.lease_active(&job.lease_id, now))
+            .map(|job| job.id.clone())
             .collect();
-        // Their open dispatches stay, so the outcome is still recorded.
-        for name in dead {
-            self.end_job(&name);
+        for id in dead {
+            self.end_job(&id);
         }
     }
 
-    /// Closes jobs older than [`JOB_IDLE_MS`] whose processes all exited.
+    /// Closes jobs older than [`JOB_IDLE_MS`] whose processes all exited,
+    /// and terminates every job older than [`JOB_MAX_MS`].
     pub(super) fn reap_idle_jobs(&mut self, now: u64) {
-        let idle: Vec<String> = self
+        let stale: Vec<String> = self
             .jobs
             .iter()
             .filter(|job| {
-                now.saturating_sub(job.created_ms) >= JOB_IDLE_MS
-                    && self.services.jobs.active_processes(&job.name) == Some(0)
+                let age = now.saturating_sub(job.created_ms);
+                age >= JOB_MAX_MS
+                    || (age >= JOB_IDLE_MS
+                        && self.services.jobs.active_processes(&job.id) == Some(0))
             })
-            .map(|job| job.name.clone())
+            .map(|job| job.id.clone())
             .collect();
-        for name in idle {
-            self.end_job(&name);
+        for id in stale {
+            self.end_job(&id);
         }
     }
 
     /// What `Status` reports about the dispatch jobs.
     pub(super) fn job_status(&self) -> Value {
         json!({
-            "namespace": self.services.jobs.namespace(),
+            "named": false,
             "held": self.jobs.len(),
             "per_dispatch": true,
             "per_lease_limit": MAX_JOBS_PER_LEASE,
+            "max_age_ms": JOB_MAX_MS,
             "kill_on_close": true,
             "breakaway": false,
-            "client_access": "JOB_OBJECT_ASSIGN_PROCESS",
+            "client_access": "JOB_OBJECT_ASSIGN_PROCESS (duplicated handle)",
         })
+    }
+
+    fn open_dispatch_of(
+        &self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        authorization_id: &str,
+    ) -> Result<usize, AuthorityError> {
+        if role != CallerRole::Orceld {
+            return Err(AuthorityError::denied(
+                "only orceld (a configured trusted image) asks about its dispatches",
+            ));
+        }
+        if !is_authorization_id(authorization_id) {
+            return Err(AuthorityError::invalid(
+                "authorization_id is az- and 32 lowercase hex characters",
+            ));
+        }
+        self.open_dispatches
+            .iter()
+            .position(|open| {
+                open.authorization_id == authorization_id
+                    && open.user_sid == caller.user_sid
+                    && open.logon_session_id == caller.logon_session_id
+            })
+            .ok_or_else(|| {
+                AuthorityError::invalid(
+                    "no open dispatch of this caller has that authorization (reported already, or ended)",
+                )
+            })
+    }
+
+    /// orceld asks, after assigning its suspended worker and before resuming
+    /// it, whether the authorization still stands: its lease is active and
+    /// its job still held. Anything else is `LEASE_INVALID`.
+    pub(super) fn dispatch_active(
+        &mut self,
+        caller: &CallerFacts,
+        role: CallerRole,
+        authorization_id: &str,
+    ) -> Result<Value, AuthorityError> {
+        let index = self.open_dispatch_of(caller, role, authorization_id)?;
+        let now = self.now();
+        let open = &self.open_dispatches[index];
+        let job_held = open
+            .job_id
+            .as_ref()
+            .is_none_or(|id| self.jobs.iter().any(|job| &job.id == id));
+        if !self.lease_active(&open.lease_id, now) || !job_held {
+            return Err(AuthorityError::lease_invalid(
+                "the dispatch's lease ended or its Job Object was terminated",
+            ));
+        }
+        Ok(json!({ "authorization_id": authorization_id, "active": true }))
     }
 
     /// orceld reports how an authorized dispatch ended; the service
@@ -275,39 +350,17 @@ impl AuthorityCore {
         outcome: DispatchOutcome,
         code: Option<FailureCode>,
     ) -> Result<Value, AuthorityError> {
-        if role != CallerRole::Orceld {
-            return Err(AuthorityError::denied(
-                "only orceld (a configured trusted image) reports dispatch outcomes",
-            ));
-        }
-        if !is_authorization_id(authorization_id) {
-            return Err(AuthorityError::invalid(
-                "authorization_id is az- and 32 lowercase hex characters",
-            ));
-        }
-        let index = self
-            .open_dispatches
-            .iter()
-            .position(|open| {
-                open.authorization_id == authorization_id
-                    && open.user_sid == caller.user_sid
-                    && open.logon_session_id == caller.logon_session_id
-            })
-            .ok_or_else(|| {
-                AuthorityError::invalid(
-                    "no open dispatch of this caller has that authorization (reported already, or ended)",
-                )
-            })?;
+        let index = self.open_dispatch_of(caller, role, authorization_id)?;
         let open = self
             .open_dispatches
             .remove(index)
             .ok_or_else(|| AuthorityError::internal("the open dispatch vanished"))?;
         let held = open
-            .job_name
+            .job_id
             .as_ref()
-            .is_some_and(|name| self.jobs.iter().any(|job| &job.name == name));
-        if let Some(name) = &open.job_name {
-            self.end_job(name);
+            .is_some_and(|id| self.jobs.iter().any(|job| &job.id == id));
+        if let Some(id) = &open.job_id {
+            self.end_job(id);
         }
         self.audit(
             "outcome",
@@ -319,7 +372,7 @@ impl AuthorityCore {
             observed(caller, role),
             json!({
                 "lease_id": open.lease_id,
-                "job_name": open.job_name,
+                "job_id": open.job_id,
                 "job_terminated": held,
             }),
         )?;

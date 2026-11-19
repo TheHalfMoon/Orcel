@@ -8,7 +8,8 @@
 //! completion (as [`Request::PresenceComplete`], shared with enrollment),
 //! `Authorize`, `Stop` and `Status`, plus lease `Verify`, `List` and
 //! `Revoke`, and the attested enrollment and reset of a Windows Hello key.
-//! WP1-12 adds `job_name` to `Authorize` and the dispatch `Outcome`.
+//! WP1-12 adds `job_id` and `job_handle` to `Authorize`, `DispatchActive`
+//! and the dispatch `Outcome`.
 //! Standing approvals and the indicator heartbeat are later slices; their
 //! requests are not accepted yet.
 
@@ -130,14 +131,20 @@ pub enum Request {
     Verify { lease_id: String },
     /// Spec 4.13 Authorize: lease, epoch, binding, executor, scope (roots
     /// for paths) and the audit record written first. WP1-12: for the
-    /// filesystem and shell/process executors the service creates a named
-    /// Job Object for this dispatch and returns its `job_name`; no standing
-    /// approval or heartbeat yet.
+    /// filesystem and shell/process executors the service creates an
+    /// unnamed Job Object for this dispatch, duplicates an assign-only
+    /// handle to it into the calling orceld process and returns `job_id`
+    /// and `job_handle` (the handle's value in orceld); no standing approval
+    /// or heartbeat yet.
     Authorize {
         lease_id: String,
         executor: ExecutorClass,
         claims: AuthorizeClaims,
     },
+    /// WP1-12: orceld asks, after assigning its suspended worker to the
+    /// dispatch's job and before resuming it, whether the authorization
+    /// still stands (lease active, job held); `LEASE_INVALID` otherwise.
+    DispatchActive { authorization_id: String },
     /// WP1-12: orceld reports how an authorized dispatch ended (once per
     /// authorization). The service records it and terminates the
     /// dispatch's Job Object.
@@ -199,6 +206,7 @@ impl Request {
             Self::Verify { .. } => "verify",
             Self::Authorize { .. } => "authorize",
             Self::Outcome { .. } => "outcome",
+            Self::DispatchActive { .. } => "dispatch_active",
             Self::Revoke { .. } => "revoke",
             Self::Stop => "stop",
             Self::Anchor { .. } => "anchor",

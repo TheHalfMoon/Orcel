@@ -2,20 +2,24 @@
 //! Full Control filesystem operation inside the dispatch's service-made Job
 //! Object, so the long-lived orceld never performs it in its own process.
 //!
-//! Launch (Windows, [`JobLauncher`]): orceld opens the job by name with
-//! `JOB_OBJECT_ASSIGN_PROCESS` only (a job that is gone means the lease
-//! ended after `Authorize`: `LEASE_INVALID`), checks that this session
-//! cannot open it to terminate it (so the installed service made it), starts
-//! its own image as `orceld fc-worker` suspended with inheritance limited to
-//! the worker's stdin, stdout and a `NUL` stderr, assigns it to the job,
-//! closes the job handle and resumes it.
+//! Launch (Windows, [`JobLauncher`]): `Authorize` duplicated an assign-only
+//! handle to the dispatch's unnamed job into this process. orceld starts its
+//! own image as `orceld fc-worker` suspended, with inheritance limited to
+//! the worker's stdin, stdout and a `NUL` stderr, assigns it to the job with
+//! that handle, closes the handle, asks the service `DispatchActive` (a
+//! revoke, Stop or expiry since `Authorize` refuses: the worker is
+//! terminated without having run), and only then resumes it. Jobs have no
+//! names, so nothing can be pre-created, squatted or reopened by name.
 //!
 //! IPC: one JSON request on the worker's stdin and one JSON reply on its
 //! stdout, both anonymous pipes. There is no listener, no named pipe and no
 //! network. The request carries a per-launch random token that the reply
 //! must echo, so a reply is bound to its launch. The worker refuses to act
-//! unless it is in a Job Object, resolves each path and the lease's roots
-//! (junctions and links included) and acts only inside them, and exits.
+//! unless it is in some Job Object (`IsProcessInJob` with no job handle: a
+//! sanity check, not a boundary; the boundary is orceld assigning it before
+//! it runs), resolves each path and the lease's roots (junctions and links
+//! included) and acts only inside them, refuses to write through a hard
+//! link (a file with more than one name), and exits.
 //!
 //! Operations in this slice: the filesystem family (`stat`, `list`,
 //! `read_text`, `write_text`, `mkdir`). Process and git operations use the
@@ -216,6 +220,34 @@ fn kind(file_type: std::fs::FileType) -> &'static str {
     }
 }
 
+/// How many names (hard links) the open file has.
+#[cfg(windows)]
+fn link_count(file: &std::fs::File) -> Result<u32, ProviderError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    // SAFETY: a zeroed BY_HANDLE_FILE_INFORMATION is a valid out-parameter.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: an open file handle and a live out-parameter.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+        return Err(io_failure(
+            "read the file's link count",
+            &std::io::Error::last_os_error(),
+        ));
+    }
+    Ok(info.nNumberOfLinks)
+}
+
+#[cfg(unix)]
+fn link_count(file: &std::fs::File) -> Result<u32, ProviderError> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file
+        .metadata()
+        .map_err(|error| io_failure("read the file's link count", &error))?;
+    Ok(u32::try_from(metadata.nlink()).unwrap_or(u32::MAX))
+}
+
 /// Performs one operation inside `roots`.
 pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, ProviderError> {
     match op {
@@ -311,11 +343,22 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
             if *create_new {
                 options.create_new(true);
             } else {
-                options.create(true).truncate(true);
+                // Not truncated on open: the link count is checked first.
+                options.create(true).truncate(false);
             }
             let mut file = options
                 .open(&resolved)
                 .map_err(|error| io_failure("open the file for writing", &error))?;
+            // Review: a hard link inside the roots can name a file outside
+            // them; a file with more than one name is never written.
+            if link_count(&file)? > 1 {
+                return Err(failure(
+                    FailureCode::PathEscape,
+                    "the file has more than one name (a hard link); it is not written",
+                ));
+            }
+            file.set_len(0)
+                .map_err(|error| io_failure("truncate the file", &error))?;
             file.write_all(text.as_bytes())
                 .and_then(|()| file.sync_all())
                 .map_err(|error| io_failure("write the file", &error))?;
@@ -427,9 +470,8 @@ pub(crate) use launch::JobLauncher;
 #[cfg_attr(not(test), allow(dead_code))]
 mod launch {
     use super::{WorkerOp, WorkerReply, WorkerRequest, MAX_FRAME_BYTES, WORKER_CONTRACT};
-    use crate::full_control_dispatch::WorkerLauncher;
+    use crate::full_control_dispatch::{JobGrant, WorkerLauncher};
     use orcel_authority::core::Entropy;
-    use orcel_authority::win::jobs::{open_job, JOB_ASSIGN_PROCESS, JOB_TERMINATE};
     use orcel_authority::win::Owned;
     use orcel_contracts::FailureCode;
     use orcel_provider_fs::ProviderError;
@@ -443,8 +485,7 @@ mod launch {
     use std::ptr;
     use std::time::Duration;
     use windows_sys::Win32::Foundation::{
-        SetHandleInformation, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, GENERIC_WRITE, HANDLE,
-        HANDLE_FLAG_INHERIT, WAIT_OBJECT_0,
+        SetHandleInformation, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT, WAIT_OBJECT_0,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -577,43 +618,6 @@ mod launch {
         }
     }
 
-    /// Opens the dispatch job for assignment. A job that is gone means the
-    /// lease ended after `Authorize`; with `service_owned`, a job this
-    /// session could terminate is not the installed service's.
-    fn open_dispatch_job(name: &str, service_owned: bool) -> Result<Owned, ProviderError> {
-        let job = open_job(name, JOB_ASSIGN_PROCESS).map_err(|error| {
-            if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) {
-                ProviderError::new(
-                    FailureCode::LeaseInvalid,
-                    "the dispatch's Job Object is gone: the lease was revoked, stopped or expired after Authorize",
-                )
-            } else {
-                ProviderError::new(
-                    FailureCode::AuthorityUnavailable,
-                    format!("the dispatch's Job Object could not be opened: {error}"),
-                )
-            }
-        })?;
-        if service_owned {
-            match open_job(name, JOB_TERMINATE) {
-                Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {}
-                Ok(_) => {
-                    return Err(ProviderError::new(
-                        FailureCode::AuthorityUnavailable,
-                        "this session can terminate the dispatch's Job Object, so the authority service did not make it",
-                    ))
-                }
-                Err(error) => {
-                    return Err(ProviderError::new(
-                        FailureCode::AuthorityUnavailable,
-                        format!("the dispatch's Job Object could not be checked: {error}"),
-                    ))
-                }
-            }
-        }
-        Ok(job)
-    }
-
     /// Starts `orceld fc-worker` into dispatch jobs.
     pub(crate) struct JobLauncher {
         program: PathBuf,
@@ -649,9 +653,14 @@ mod launch {
         }
 
         /// Starts the worker suspended, assigns it to `job`, closes the
-        /// job handle and resumes it. Returns the process and orceld's ends
+        /// job handle, asks `confirm`, and resumes it only if that succeeds
+        /// (terminating it otherwise). Returns the process and orceld's ends
         /// of its stdin and stdout.
-        fn start(&self, job: Owned) -> Result<(Owned, File, File), ProviderError> {
+        fn start(
+            &self,
+            job: Owned,
+            confirm: &dyn Fn() -> Result<(), ProviderError>,
+        ) -> Result<(Owned, File, File), ProviderError> {
             let (child_stdin, host_stdin) = pipe(true)?;
             let (child_stdout, host_stdout) = pipe(false)?;
             let child_stderr = null_output()?;
@@ -705,6 +714,15 @@ mod launch {
             }
             // Only the service holds the job from here on.
             drop(job);
+            // Review of 291e045e: the worker is in the job but has not run;
+            // it runs only if the authorization still stands now. A revoke,
+            // Stop or expiry from here on terminates the job, worker
+            // included.
+            if let Err(error) = confirm() {
+                // SAFETY: the suspended process's own handle.
+                unsafe { TerminateProcess(process.0, 1) };
+                return Err(error);
+            }
             // SAFETY: the suspended process's primary thread.
             if unsafe { ResumeThread(thread.0) } == u32::MAX {
                 let error = platform("ResumeThread(fc-worker)");
@@ -725,12 +743,15 @@ mod launch {
     impl WorkerLauncher for JobLauncher {
         fn run(
             &self,
-            job_name: &str,
+            job: &JobGrant,
             roots: &[String],
             op: &WorkerOp,
-            service_owned: bool,
+            confirm: &dyn Fn() -> Result<(), ProviderError>,
         ) -> Result<Value, ProviderError> {
-            let job = open_dispatch_job(job_name, service_owned)?;
+            // The assign-only handle the service duplicated into this
+            // process for this dispatch: owned from here, closed on every
+            // path.
+            let job = Owned(job.handle as HANDLE);
             let token = Self::token()?;
             let request = serde_json::to_vec(&WorkerRequest {
                 contract: WORKER_CONTRACT.to_owned(),
@@ -739,7 +760,7 @@ mod launch {
                 op: op.clone(),
             })
             .map_err(|error| ProviderError::new(FailureCode::InternalError, error.to_string()))?;
-            let (process, mut stdin, stdout) = self.start(job)?;
+            let (process, mut stdin, stdout) = self.start(job, confirm)?;
             let (sender, receiver) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let mut bytes = Vec::new();

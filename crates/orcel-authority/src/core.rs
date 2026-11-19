@@ -55,7 +55,7 @@
 // to the core's own audit and Event Log paths).
 #[path = "chain_anchor.rs"]
 pub mod chain_anchor;
-// WP1-12: the named Job Object each filesystem and shell/process dispatch
+// WP1-12: the unnamed Job Object each filesystem and shell/process dispatch
 // runs in, created and held by the service, and the dispatch outcomes.
 #[path = "dispatch_jobs.rs"]
 pub mod dispatch_jobs;
@@ -784,6 +784,9 @@ impl AuthorityCore {
                 outcome,
                 code,
             } => self.outcome(caller, role, &authorization_id, outcome, code),
+            Request::DispatchActive { authorization_id } => {
+                self.dispatch_active(caller, role, &authorization_id)
+            }
             Request::Revoke { lease_id } => self.revoke(caller, role, &lease_id),
             Request::Stop => self.stop(caller, role),
             Request::Anchor {
@@ -2018,7 +2021,8 @@ impl AuthorityCore {
         let authorization_id = format!("az-{}", hex(&self.random(16)?));
         // WP1-12: the dispatch's Job Object exists before the allow record
         // names it; if the record cannot be written the job is terminated.
-        let job_name = self.create_dispatch_job(caller, executor, lease_id, &authorization_id)?;
+        let job = self.create_dispatch_job(caller, executor, lease_id, &authorization_id)?;
+        let job_id = job.as_ref().map(|job| job.id.clone());
         // Write before dispatch: the record is on disk before the answer.
         let recorded = self.audit(
             "authorize",
@@ -2039,22 +2043,24 @@ impl AuthorityCore {
                 "authorization_id": authorization_id,
                 "lease_id": lease_id,
                 "epoch": self.state.epoch,
-                "job_name": job_name,
+                "job_id": job_id,
             }),
         );
         if let Err(error) = recorded {
-            if let Some(name) = &job_name {
-                self.end_job(name);
+            if let Some(id) = &job_id {
+                self.withdraw_job(id);
             }
             return Err(error);
         }
-        self.open_dispatch(caller, &authorization_id, lease_id, job_name.as_deref());
+        self.open_dispatch(caller, &authorization_id, lease_id, job_id.as_deref());
         Ok(json!({
             "authorization_id": authorization_id,
             "lease_id": lease_id,
             "epoch": self.state.epoch,
             "revocations": self.state.revocations,
-            "job_name": job_name,
+            "job_id": job_id,
+            // The value of the assign-only handle duplicated into orceld.
+            "job_handle": job.as_ref().map(|job| job.handle),
             "deferred": DEFERRED,
         }))
     }

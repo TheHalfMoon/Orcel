@@ -13,12 +13,15 @@
 //! 3. asks the service's `Authorize`, which checks lease, epoch, binding,
 //!    executor and roots again and writes its audit record before it
 //!    answers; for the filesystem and process/git families the answer must
-//!    name the dispatch's service-made Job Object (`job_name`), or nothing
-//!    runs;
+//!    carry the dispatch's service-made, unnamed Job Object as an
+//!    assign-only handle the service duplicated into this process
+//!    (`job_id`, `job_handle`), or nothing runs;
 //! 4. runs the action: desktop input in orceld as before (SG-000095's
 //!    per-action approval unchanged); filesystem, process and git operations
 //!    only in `orceld fc-worker` inside that Job Object ([`crate::fc_worker`]),
-//!    never in this long-lived process;
+//!    never in this long-lived process. The worker is assigned while
+//!    suspended and resumed only after the service confirms the
+//!    authorization still stands (`DispatchActive`);
 //! 5. reports the outcome (`Outcome`), on which the service terminates the
 //!    job.
 //!
@@ -27,14 +30,14 @@
 //! store is never consulted. Only desktop input, and only where no service
 //! is installed at all, keeps the deprecated store's existing behaviour
 //! (slice 2, section 5); the filesystem, process and git families need the
-//! service. A revoke, Stop or expiry between `Authorize` and the launch
-//! ends the job, so the launch refuses (`LEASE_INVALID`); one during the
-//! run kills the worker.
+//! service. A revoke, Stop or expiry between `Authorize` and the resume
+//! refuses at `DispatchActive` (`LEASE_INVALID`) and the suspended worker is
+//! terminated; one during the run kills the worker with its job.
 //!
 //! Approvals and grants stay with the service's own Windows dialogs and the
 //! per-action approval; nothing here approves or grants anything.
 
-use orcel_authority::core::dispatch_jobs::is_job_name;
+use orcel_authority::core::dispatch_jobs::is_job_id;
 use orcel_authority::lease::{check_dispatch_path, path_within_roots, LeaseBody, LeaseScope};
 use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome};
 use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
@@ -106,9 +109,19 @@ pub(crate) struct Action<'a> {
 pub(crate) struct Grant {
     pub authorization_id: String,
     pub lease_id: String,
-    pub job_name: Option<String>,
+    /// The dispatch's Job Object, for the job families.
+    pub job: Option<JobGrant>,
     /// The lease's roots, which `fc-worker` resolves before acting.
     pub roots: Vec<String>,
+}
+
+/// A dispatch Job Object as `Authorize` handed it over: its id (for the
+/// audit) and the value of the assign-only handle the service duplicated
+/// into this process. The launcher owns and closes the handle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct JobGrant {
+    pub id: String,
+    pub handle: u64,
 }
 
 /// The dispatcher's answer: the deprecated store (desktop input, no service
@@ -143,20 +156,26 @@ pub(crate) trait AuthorityPort {
         outcome: DispatchOutcome,
         code: Option<FailureCode>,
     ) -> Result<(), ProviderError>;
-    /// Whether the jobs come from the installed service, so this session
-    /// must be unable to terminate them (false for the console harness).
-    fn jobs_are_service_owned(&self) -> bool;
+    /// Whether the authorization still stands (lease active, job held);
+    /// asked after the worker is assigned and before it is resumed.
+    fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError>;
+    /// Closes a job handle the service duplicated into this process that
+    /// will not be used (an answer refused here).
+    fn release_job_handle(&self, handle: u64);
 }
 
 /// Runs a worker operation inside a dispatch job (`fc_worker::JobLauncher`
 /// on Windows; a fake in tests).
 pub(crate) trait WorkerLauncher {
+    /// Starts the worker suspended, assigns it with `job.handle` (and closes
+    /// that handle on every path), calls `confirm`, and resumes the worker
+    /// only if it succeeds (terminating it otherwise).
     fn run(
         &self,
-        job_name: &str,
+        job: &JobGrant,
         roots: &[String],
         op: &crate::fc_worker::WorkerOp,
-        service_owned: bool,
+        confirm: &dyn Fn() -> Result<(), ProviderError>,
     ) -> Result<Value, ProviderError>;
 }
 
@@ -299,34 +318,52 @@ pub(crate) fn authorize(
         paths: (!action.paths.is_empty()).then(|| action.paths.clone()),
     };
     let answer = port.authorize(&body.lease_id, executor, claims)?;
-    let authorization_id = answer["authorization_id"]
+    let release = |answer: &Value| {
+        if let Some(handle) = answer["job_handle"].as_u64().filter(|handle| *handle != 0) {
+            port.release_job_handle(handle);
+        }
+    };
+    let Some(authorization_id) = answer["authorization_id"]
         .as_str()
         .filter(|id| id.starts_with("az-"))
-        .ok_or_else(|| unavailable("the authority's Authorize answer names no authorization"))?
-        .to_owned();
+        .map(str::to_owned)
+    else {
+        release(&answer);
+        return Err(unavailable(
+            "the authority's Authorize answer names no authorization",
+        ));
+    };
     if answer["lease_id"].as_str() != Some(body.lease_id.as_str()) {
+        release(&answer);
         return Err(unavailable(
             "the authority authorized a different lease than the one asked for",
         ));
     }
-    let job_name = match (&answer["job_name"], action.family.runs_in_job()) {
-        (Value::String(name), true) if is_job_name(name) => Some(name.clone()),
-        (Value::Null, false) => None,
-        (Value::Null, true) => {
+    let handle = answer["job_handle"].as_u64().filter(|handle| *handle != 0);
+    let job = match (&answer["job_id"], handle, action.family.runs_in_job()) {
+        (Value::String(id), Some(handle), true) if is_job_id(id) => Some(JobGrant {
+            id: id.clone(),
+            handle,
+        }),
+        (Value::Null, None, false) => None,
+        (Value::Null, None, true) => {
             return Err(unavailable(
                 "the authority made no Job Object for this dispatch; nothing runs outside one",
             ))
         }
         _ => {
+            if let Some(handle) = handle {
+                port.release_job_handle(handle);
+            }
             return Err(unavailable(
-                "the authority's job_name is malformed or unexpected for this family",
-            ))
+                "the authority's job is malformed or unexpected for this family",
+            ));
         }
     };
     Ok(Ticket::Service(Grant {
         authorization_id,
         lease_id: body.lease_id.clone(),
-        job_name,
+        job,
         roots: roots_of(&body),
     }))
 }
@@ -355,19 +392,27 @@ pub(crate) fn record_outcome<T>(
     }
 }
 
-/// The filesystem, process and git families end to end: authorize, run the
-/// operation in `orceld fc-worker` inside the dispatch's Job Object, report
-/// the outcome. Its request-facing caller (SG-000097's filesystem, process
-/// and git capabilities) is a later WP1-12 step.
+/// The filesystem, process and git families end to end: the operation is
+/// the request's own arguments (so the digest the service records is over
+/// exactly what runs), authorize, run it in `orceld fc-worker` inside the
+/// dispatch's Job Object, report the outcome. Its request-facing caller
+/// (SG-000097's filesystem, process and git capabilities) is a later WP1-12
+/// step.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn run_in_worker(
     port: &dyn AuthorityPort,
     launcher: &dyn WorkerLauncher,
     request: &RequestEnvelope,
     principal_id: Option<&str>,
-    op: &crate::fc_worker::WorkerOp,
     now_ms: u64,
 ) -> Result<Value, ProviderError> {
+    let op: crate::fc_worker::WorkerOp = serde_json::from_value(request.arguments.clone())
+        .map_err(|error| {
+            ProviderError::new(
+                FailureCode::InvalidRequest,
+                format!("the arguments are not one Full Control worker operation: {error}"),
+            )
+        })?;
     let action = Action {
         family: op.family(),
         request,
@@ -380,12 +425,13 @@ pub(crate) fn run_in_worker(
             "Full Control worker operations run only through the Orcel authority service",
         ));
     };
-    let Some(job_name) = grant.job_name.as_deref() else {
+    let Some(job) = grant.job.as_ref() else {
         return Err(unavailable(
             "the authority made no Job Object for this dispatch",
         ));
     };
-    let result = launcher.run(job_name, &grant.roots, op, port.jobs_are_service_owned());
+    let confirm = || port.dispatch_active(&grant.authorization_id);
+    let result = launcher.run(job, &grant.roots, &op, &confirm);
     record_outcome(port, &ticket, &result);
     result
 }

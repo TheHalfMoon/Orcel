@@ -4,8 +4,8 @@
 
 use crate::fc_worker::WorkerOp;
 use crate::full_control_dispatch::{
-    action_digest, authorize, desktop_gate, run_in_worker, with_desktop_outcomes, Action,
-    AuthorityPort, Family, Ticket, WorkerLauncher,
+    action_digest, authorize, desktop_gate, run_in_worker as dispatch_worker,
+    with_desktop_outcomes, Action, AuthorityPort, Family, JobGrant, Ticket, WorkerLauncher,
 };
 use orcel_authority::lease::{
     BrowserFamily, GrantEvidence, LeaseBody, LeaseScope, ObservedRequester, LEASE_CONTRACT,
@@ -87,6 +87,10 @@ struct FakeService {
     /// between Authorize and the launch).
     revoke_after_authorize: bool,
     live_jobs: BTreeSet<String>,
+    /// Authorization id to its job id.
+    job_of: std::collections::BTreeMap<String, String>,
+    /// Job handles the dispatcher gave back unused.
+    released: Vec<u64>,
     authorized: Vec<(String, ExecutorClass, AuthorizeClaims)>,
     outcomes: Vec<(String, DispatchOutcome, Option<FailureCode>)>,
     deprecated_checks: u32,
@@ -150,20 +154,26 @@ impl AuthorityPort for FakePort {
             executor,
             ExecutorClass::Filesystem | ExecutorClass::ShellProcess
         )
-        .then(|| format!("Local\\orcel-fc-{:032x}", service.next));
+        .then(|| format!("fcj-{:032x}", service.next));
+        let authorization = format!("az-{:032x}", service.next);
         if let Some(job) = &job {
-            if !service.revoke_after_authorize {
-                service.live_jobs.insert(job.clone());
+            service.live_jobs.insert(job.clone());
+            service.job_of.insert(authorization.clone(), job.clone());
+            if service.revoke_after_authorize {
+                // The revoke lands after the answer and before the resume.
+                service.live_jobs.remove(job);
             }
         }
         service
             .authorized
             .push((lease_id.to_owned(), executor, claims));
+        let handle = job.as_ref().map(|_| 0x4000 + 4 * u64::from(service.next));
         Ok(service.answer.clone().unwrap_or_else(|| {
             json!({
-                "authorization_id": format!("az-{:032x}", service.next),
+                "authorization_id": authorization,
                 "lease_id": lease_id,
-                "job_name": job,
+                "job_id": job,
+                "job_handle": handle,
             })
         }))
     }
@@ -181,13 +191,24 @@ impl AuthorityPort for FakePort {
         Ok(())
     }
 
-    fn jobs_are_service_owned(&self) -> bool {
-        true
+    fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError> {
+        let service = self.0.borrow();
+        match service.job_of.get(authorization_id) {
+            Some(job) if service.live_jobs.contains(job) => Ok(()),
+            _ => Err(ProviderError::new(
+                FailureCode::LeaseInvalid,
+                "the dispatch's lease ended or its Job Object was terminated",
+            )),
+        }
+    }
+
+    fn release_job_handle(&self, handle: u64) {
+        self.0.borrow_mut().released.push(handle);
     }
 }
 
-/// A fake launcher: refuses a job the fake service no longer holds, as the
-/// real one does when the job's name is gone.
+/// A fake launcher: "assigns" the suspended worker, then resumes it only if
+/// `confirm` (the service's DispatchActive) succeeds, as the real one does.
 struct FakeLauncher {
     service: FakePort,
     fails: Option<FailureCode>,
@@ -197,18 +218,14 @@ struct FakeLauncher {
 impl WorkerLauncher for FakeLauncher {
     fn run(
         &self,
-        job_name: &str,
+        job: &JobGrant,
         roots: &[String],
         op: &WorkerOp,
-        service_owned: bool,
+        confirm: &dyn Fn() -> Result<(), ProviderError>,
     ) -> Result<Value, ProviderError> {
-        assert!(service_owned);
-        if !self.service.0.borrow().live_jobs.contains(job_name) {
-            return Err(ProviderError::new(
-                FailureCode::LeaseInvalid,
-                "the dispatch's Job Object is gone",
-            ));
-        }
+        assert!(job.handle != 0 && job.id.starts_with("fcj-"));
+        let _ = &self.service;
+        confirm()?;
         self.runs.set(self.runs.get() + 1);
         assert_eq!(roots, [r"C:\work".to_owned()]);
         match &self.fails {
@@ -237,8 +254,23 @@ fn fs_request() -> RequestEnvelope {
     request(
         "full_control.fs",
         "read_text",
-        json!({"path": r"C:\work\a.txt"}),
+        serde_json::to_value(read_op(r"C:\work\a.txt")).expect("op"),
     )
+}
+
+/// `run_in_worker` with `op` as the request's arguments (the dispatcher
+/// runs exactly what the request says).
+fn run_in_worker(
+    port: &dyn AuthorityPort,
+    launcher: &dyn WorkerLauncher,
+    base: &RequestEnvelope,
+    principal_id: Option<&str>,
+    op: &WorkerOp,
+    now_ms: u64,
+) -> Result<Value, ProviderError> {
+    let mut request = base.clone();
+    request.arguments = serde_json::to_value(op).expect("op");
+    dispatch_worker(port, launcher, &request, principal_id, now_ms)
 }
 
 fn code<T: std::fmt::Debug>(result: Result<T, ProviderError>) -> Option<FailureCode> {
@@ -399,7 +431,7 @@ fn fc_dispatch_the_digest_binds_family_target_arguments_and_paths() {
     let other_args = request(
         "full_control.fs",
         "read_text",
-        json!({"path": r"C:\work\b.txt"}),
+        serde_json::to_value(read_op(r"C:\work\b.txt")).expect("op"),
     );
     for other in [
         action(Family::Git, &base_request, &[r"C:\work\a.txt"]),
@@ -447,11 +479,14 @@ fn fc_dispatch_the_digest_binds_family_target_arguments_and_paths() {
 fn fc_dispatch_a_job_family_needs_its_service_made_job() {
     let port = FakePort::installed(vec![lease('1', full_scope())]);
     let lease_id = format!("al-{}", "1".repeat(32));
+    let good_job = format!("fcj-{}", "0".repeat(32));
     for answer in [
-        json!({"authorization_id": "az-1", "lease_id": lease_id, "job_name": null}),
-        json!({"authorization_id": "az-1", "lease_id": lease_id, "job_name": "Local\\someone-elses-job"}),
-        json!({"authorization_id": "az-1", "lease_id": format!("al-{}", "9".repeat(32)), "job_name": format!("Local\\orcel-fc-{}", "0".repeat(32))}),
-        json!({"lease_id": lease_id, "job_name": format!("Local\\orcel-fc-{}", "0".repeat(32))}),
+        json!({"authorization_id": "az-1", "lease_id": lease_id, "job_id": null}),
+        json!({"authorization_id": "az-1", "lease_id": lease_id, "job_id": "Local\\someone-elses-job", "job_handle": 12}),
+        json!({"authorization_id": "az-1", "lease_id": lease_id, "job_id": good_job}),
+        json!({"authorization_id": "az-1", "lease_id": lease_id, "job_id": good_job, "job_handle": 0}),
+        json!({"authorization_id": "az-1", "lease_id": format!("al-{}", "9".repeat(32)), "job_id": good_job, "job_handle": 16}),
+        json!({"lease_id": lease_id, "job_id": good_job, "job_handle": 20}),
     ] {
         port.with(|service| service.answer = Some(answer.clone()));
         let launched = launcher(&port);
@@ -475,7 +510,8 @@ fn fc_dispatch_a_job_family_needs_its_service_made_job() {
         service.answer = Some(json!({
             "authorization_id": "az-1",
             "lease_id": lease_id,
-            "job_name": format!("Local\\orcel-fc-{}", "0".repeat(32)),
+            "job_id": format!("fcj-{}", "0".repeat(32)),
+            "job_handle": 24,
         }))
     });
     let desktop = request("desktop.input", "execute", json!({"x": 1}));
@@ -483,6 +519,46 @@ fn fc_dispatch_a_job_family_needs_its_service_made_job() {
         code(desktop_gate(&port, &desktop, 5)),
         Some(FailureCode::AuthorityUnavailable)
     );
+    // Every handle the service sent with a refused answer was closed.
+    assert_eq!(port.0.borrow().released, vec![12, 16, 20, 24]);
+}
+
+/// Review of 291e045e (low 2): the operation that runs is the request's own
+/// arguments, which the digest covers; anything else is refused before
+/// Authorize.
+#[test]
+fn fc_dispatch_the_operation_is_the_request_arguments_or_nothing() {
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    for arguments in [
+        json!({"path": r"C:\work\a.txt"}),
+        json!({"op": "read_text", "path": r"C:\work\a.txt", "max_bytes": 4, "also": 1}),
+        json!({"op": "delete_tree", "path": r"C:\work"}),
+        json!([]),
+    ] {
+        let mut request = fs_request();
+        request.arguments = arguments.clone();
+        let refused = dispatch_worker(&port, &launcher(&port), &request, None, 5);
+        assert_eq!(
+            code(refused),
+            Some(FailureCode::InvalidRequest),
+            "{arguments}"
+        );
+    }
+    assert!(port.0.borrow().authorized.is_empty());
+    let ran = dispatch_worker(&port, &launcher(&port), &fs_request(), None, 5).expect("ran");
+    assert_eq!(ran["ran"][0], r"C:\work\a.txt");
+    let service = port.0.borrow();
+    let digest = &service.authorized[0].2.action_digest;
+    let expected = action_digest(
+        &Action {
+            family: Family::Filesystem,
+            request: &fs_request(),
+            principal_id: None,
+            paths: vec![r"C:\work\a.txt".to_owned()],
+        },
+        5,
+    );
+    assert_eq!(digest, &expected);
 }
 
 #[test]

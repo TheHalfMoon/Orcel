@@ -159,6 +159,19 @@ pub fn token_elevated(token: &Owned) -> bool {
     }
 }
 
+/// WP1-12: runs `work` while impersonating the client of `pipe` (the
+/// security context of the last message read), reverting on every path.
+pub fn as_client<T>(pipe: HANDLE, work: impl FnOnce() -> T) -> Result<T, AuthorityError> {
+    // SAFETY: `pipe` is a connected server end.
+    if unsafe { ImpersonateNamedPipeClient(pipe) } == 0 {
+        return Err(os_error("ImpersonateNamedPipeClient"));
+    }
+    let guard = Impersonation;
+    let out = work();
+    drop(guard);
+    Ok(out)
+}
+
 /// Everything the service observes about the client of `pipe`.
 pub fn client_facts(pipe: HANDLE) -> Result<CallerFacts, AuthorityError> {
     let mut pid = 0u32;

@@ -1,36 +1,42 @@
 //! WP1-12 (SG-000132): the dispatch Job Objects, made and held by the
 //! service (spec 4.14).
 //!
-//! Each job is created under a random name (`Global\orcel-fc-<32 hex>` for
-//! the installed service, `Local\` in console mode, where a standard user
-//! cannot create `Global\` objects), refusing a name that already exists.
-//! Its security descriptor is protected (no inherited ACEs) and its DACL has
-//! exactly two entries:
+//! Each job is UNNAMED: no process can open it by name, squat its name, or
+//! keep it alive under a name after the service ends it. Review of
+//! `291e045e`: a standard user can create `Global\` objects on this PC, so
+//! named jobs could be pre-created or held open, and the earlier name-based
+//! design was replaced.
 //!
-//! - the service's SID: `JOB_OBJECT_TERMINATE | JOB_OBJECT_QUERY`;
-//! - the calling user's SID: `JOB_OBJECT_ASSIGN_PROCESS`, nothing else.
+//! The service creates the job (default security of its own token), sets
+//! the limits, and duplicates ONE handle into the verified orceld process
+//! (the pipe client whose PID and creation time the service observed) with
+//! exactly `JOB_OBJECT_ASSIGN_PROCESS`, not inheritable. The process handle
+//! it needs for that (`PROCESS_DUP_HANDLE`) is opened while impersonating
+//! the pipe client ([`ClientProcess::open_impersonating`]), because the
+//! service account has no rights on user processes. orceld assigns its
+//! suspended worker with that handle and closes it. The service keeps the
+//! creating handle (every right) and the client process handle, so it can
+//! also close the duplicated handle in orceld when it ends the job.
 //!
-//! The owner is the service (its token's default owner), so the user gets
-//! no implicit `WRITE_DAC` or `READ_CONTROL` either. The service keeps the
-//! creating handle, which has every right. The limits are
-//! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION`
-//! and an active-process limit of [`ACTIVE_PROCESS_LIMIT`]; neither
-//! `JOB_OBJECT_LIMIT_BREAKAWAY_OK` nor `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`,
-//! so `CREATE_BREAKAWAY_FROM_JOB` fails for every process in the job.
+//! Limits: `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`,
+//! `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION` and an active-process limit
+//! of [`ACTIVE_PROCESS_LIMIT`]; never `JOB_OBJECT_LIMIT_BREAKAWAY_OK` or
+//! `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`, so `CREATE_BREAKAWAY_FROM_JOB`
+//! fails inside the job.
 //!
-//! In console mode the service SID is the console user's, so that user also
-//! holds terminate and query: console mode shows the mechanism, not the
-//! separation (SG132_SLICE3.md).
+//! Residual: a process running as the user can duplicate the assign-only
+//! handle out of orceld (it holds `PROCESS_DUP_HANDLE` on orceld) and assign
+//! its own processes to the job. That only puts them where the service will
+//! terminate them, and can hold a dispatch's job busy until the service's
+//! age limit ends it (SG132_SLICE3.md).
 
-use super::{os_error, wide, Owned};
-use crate::core::dispatch_jobs::JobHost;
+use super::{os_error, Owned};
+use crate::caller::CallerFacts;
+use crate::core::dispatch_jobs::{DispatchJob, JobHost};
 use crate::error::AuthorityError;
 use std::collections::BTreeMap;
-use windows_sys::Win32::Foundation::{GetLastError, LocalFree, ERROR_ALREADY_EXISTS};
-use windows_sys::Win32::Security::Authorization::{
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-};
-use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use std::sync::{Arc, Mutex};
+use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_CLOSE_SOURCE, FILETIME, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
     CreateJobObjectW, JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
     QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
@@ -38,16 +44,17 @@ use windows_sys::Win32::System::JobObjects::{
     JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
+use windows_sys::Win32::System::Threading::{
+    GetCurrentProcess, GetProcessTimes, OpenProcess, PROCESS_DUP_HANDLE,
+    PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
-/// `JOB_OBJECT_ASSIGN_PROCESS`: the only right the calling user gets.
+/// `JOB_OBJECT_ASSIGN_PROCESS`: the only right orceld's handle carries.
 pub const JOB_ASSIGN_PROCESS: u32 = 0x0001;
 /// `JOB_OBJECT_QUERY`.
 pub const JOB_QUERY: u32 = 0x0004;
 /// `JOB_OBJECT_TERMINATE`.
 pub const JOB_TERMINATE: u32 = 0x0008;
-/// The service's rights through the DACL (it also keeps the creating
-/// handle).
-pub const SERVICE_JOB_ACCESS: u32 = JOB_TERMINATE | JOB_QUERY;
 /// Processes one dispatch job may hold at once (a git operation starts a
 /// few helpers; a worker may start a tool).
 pub const ACTIVE_PROCESS_LIMIT: u32 = 64;
@@ -56,64 +63,118 @@ pub const JOB_LIMIT_FLAGS: u32 = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
     | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
 
-fn is_sid(text: &str) -> bool {
-    text.strip_prefix("S-1-").is_some_and(|rest| {
-        !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit() || b == b'-')
-    })
+/// A pipe client's process, opened for handle duplication, with the
+/// creation time it was opened at.
+pub struct ClientProcess {
+    pub pid: u32,
+    pub generation: u64,
+    handle: Owned,
 }
 
-/// The job's security descriptor as SDDL: protected DACL, the service
-/// terminate and query, `assign_sid` assign-process only.
-pub fn job_sddl(service_sid: &str, assign_sid: &str) -> Result<String, AuthorityError> {
-    if !is_sid(service_sid) || !is_sid(assign_sid) {
-        return Err(AuthorityError::invalid("a job ACE names a malformed SID"));
+fn creation_time(process: HANDLE) -> Result<u64, AuthorityError> {
+    let mut times = [FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    }; 4];
+    let [creation, exit, kernel, user] = &mut times;
+    // SAFETY: a live handle with query rights and four live FILETIMEs.
+    if unsafe { GetProcessTimes(process, creation, exit, kernel, user) } == 0 {
+        return Err(os_error("GetProcessTimes"));
     }
-    Ok(format!(
-        "D:P(A;;0x{SERVICE_JOB_ACCESS:x};;;{service_sid})(A;;0x{JOB_ASSIGN_PROCESS:x};;;{assign_sid})"
-    ))
+    Ok(((times[0].dwHighDateTime as u64) << 32) | times[0].dwLowDateTime as u64)
 }
 
-/// Creates the named job with `sddl`, refusing an existing name, and sets
-/// the dispatch limits. The returned handle has every right.
-pub fn create_job(name: &str, sddl: &str) -> Result<Owned, AuthorityError> {
-    let wide_sddl = wide(sddl);
-    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-    // SAFETY: NUL-terminated SDDL and a valid out-pointer; the descriptor is
-    // freed below with LocalFree.
+impl ClientProcess {
+    /// Opens `pid` with `PROCESS_DUP_HANDLE` as this process (tests: a
+    /// process of the same user).
+    pub fn open(pid: u32) -> Result<Self, AuthorityError> {
+        // SAFETY: plain call; the handle is owned below.
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_DUP_HANDLE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            )
+        };
+        if handle == 0 {
+            return Err(os_error("OpenProcess(PROCESS_DUP_HANDLE)"));
+        }
+        let handle = Owned(handle);
+        let generation = creation_time(handle.0)?;
+        Ok(Self {
+            pid,
+            generation,
+            handle,
+        })
+    }
+
+    /// Opens the client of `pipe` (the process the service observed in
+    /// `facts`) while impersonating it, and checks it is the same process
+    /// instance (creation time), not a recycled PID.
+    pub fn open_impersonating(pipe: HANDLE, facts: &CallerFacts) -> Result<Self, AuthorityError> {
+        let opened = super::identity::as_client(pipe, || Self::open(facts.pid))??;
+        // Checked after the revert: the instance must be the observed one.
+        if facts.process_generation == 0 || opened.generation != facts.process_generation {
+            return Err(AuthorityError::denied(
+                "the pipe client's process is not the instance the service observed",
+            ));
+        }
+        Ok(opened)
+    }
+}
+
+/// Where the runtime puts the current Authorize caller's process for the
+/// job host (set and cleared under the core lock).
+pub type ClientSlot = Arc<Mutex<Option<ClientProcess>>>;
+
+/// The job's limit flags as the kernel reports them.
+pub fn limit_flags(job: HANDLE) -> Result<u32, AuthorityError> {
+    // SAFETY: zeroed limit information is a valid out-parameter.
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: pointer and size describe `limits`.
     if unsafe {
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            wide_sddl.as_ptr(),
-            SDDL_REVISION_1,
-            &mut descriptor,
+        QueryInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             std::ptr::null_mut(),
         )
     } == 0
     {
-        return Err(os_error(
-            "ConvertStringSecurityDescriptorToSecurityDescriptorW(job)",
-        ));
+        return Err(os_error("QueryInformationJobObject(limits)"));
     }
-    let attributes = SECURITY_ATTRIBUTES {
-        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: descriptor,
-        bInheritHandle: 0,
-    };
-    let wide_name = wide(name);
-    // SAFETY: the attributes and the name outlive the call.
-    let handle = unsafe { CreateJobObjectW(&attributes, wide_name.as_ptr()) };
-    // SAFETY: read before any other call can change it.
-    let last = unsafe { GetLastError() };
-    // SAFETY: allocated by the conversion above, freed once.
-    unsafe { LocalFree(descriptor as _) };
+    Ok(limits.BasicLimitInformation.LimitFlags)
+}
+
+/// Processes in the job now.
+pub fn active_processes(job: HANDLE) -> Result<u32, AuthorityError> {
+    // SAFETY: zeroed accounting information is a valid out-parameter.
+    let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: pointer and size describe `info`.
+    if unsafe {
+        QueryInformationJobObject(
+            job,
+            JobObjectBasicAccountingInformation,
+            (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+            std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(os_error("QueryInformationJobObject(accounting)"));
+    }
+    Ok(info.ActiveProcesses)
+}
+
+/// Creates an unnamed job with the dispatch limits.
+pub fn create_job() -> Result<Owned, AuthorityError> {
+    // SAFETY: no attributes and no name: an unnamed job, not inheritable.
+    let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
     if handle == 0 {
         return Err(os_error("CreateJobObjectW"));
     }
     let job = Owned(handle);
-    if last == ERROR_ALREADY_EXISTS {
-        return Err(AuthorityError::denied(format!(
-            "the job name {name} already exists; refusing a job the service did not make"
-        )));
-    }
     // SAFETY: zeroed limit information is valid before the fields are set.
     let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
     limits.BasicLimitInformation.LimitFlags = JOB_LIMIT_FLAGS;
@@ -133,103 +194,120 @@ pub fn create_job(name: &str, sddl: &str) -> Result<Owned, AuthorityError> {
     Ok(job)
 }
 
-/// The job's limit flags as the kernel reports them.
-pub fn limit_flags(job: &Owned) -> Result<u32, AuthorityError> {
-    // SAFETY: zeroed limit information is a valid out-parameter.
-    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-    // SAFETY: pointer and size describe `limits`.
-    if unsafe {
-        QueryInformationJobObject(
-            job.0,
-            JobObjectExtendedLimitInformation,
-            (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            std::ptr::null_mut(),
-        )
-    } == 0
-    {
-        return Err(os_error("QueryInformationJobObject(limits)"));
-    }
-    Ok(limits.BasicLimitInformation.LimitFlags)
+struct Held {
+    job: Owned,
+    client: ClientProcess,
+    remote: u64,
 }
 
-/// Processes in the job now.
-pub fn active_processes(job: &Owned) -> Result<u32, AuthorityError> {
-    // SAFETY: zeroed accounting information is a valid out-parameter.
-    let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
-    // SAFETY: pointer and size describe `info`.
-    if unsafe {
-        QueryInformationJobObject(
-            job.0,
-            JobObjectBasicAccountingInformation,
-            (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
-            std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
-            std::ptr::null_mut(),
-        )
-    } == 0
-    {
-        return Err(os_error("QueryInformationJobObject(accounting)"));
+impl Held {
+    /// Closes orceld's duplicated handle, if it still has it.
+    fn close_remote(&mut self) {
+        if self.remote == 0 {
+            return;
+        }
+        // SAFETY: closes the handle value in the client process that the
+        // service itself duplicated there; nothing is duplicated back.
+        unsafe {
+            DuplicateHandle(
+                self.client.handle.0,
+                self.remote as HANDLE,
+                0,
+                std::ptr::null_mut(),
+                0,
+                0,
+                DUPLICATE_CLOSE_SOURCE,
+            )
+        };
+        self.remote = 0;
     }
-    Ok(info.ActiveProcesses)
-}
-
-/// Client side (orceld): opens the dispatch job `name` asking for exactly
-/// `access`. The OS error is kept so a caller can tell "gone" from
-/// "denied".
-pub fn open_job(name: &str, access: u32) -> Result<Owned, std::io::Error> {
-    use windows_sys::Win32::System::JobObjects::OpenJobObjectW;
-    let wide_name = wide(name);
-    // SAFETY: NUL-terminated name; the handle is not inheritable.
-    let handle = unsafe { OpenJobObjectW(access, 0, wide_name.as_ptr()) };
-    if handle == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(Owned(handle))
 }
 
 /// The service's dispatch jobs.
 pub struct ServiceJobs {
-    namespace: &'static str,
-    service_sid: String,
-    /// A BTreeMap, not a HashMap: std's HashMap seeds itself through
-    /// bcryptprimitives.dll, which is not a KnownDLL (install_script.rs).
-    held: BTreeMap<String, Owned>,
+    slot: ClientSlot,
+    held: BTreeMap<String, Held>,
 }
 
 impl ServiceJobs {
-    /// `namespace` is `Global` for the installed service and `Local` for
-    /// the console harness; `service_sid` is the SID the service runs as.
-    pub fn new(namespace: &'static str, service_sid: &str) -> Self {
+    /// `slot` is where the runtime puts the Authorize caller's process.
+    pub fn new(slot: ClientSlot) -> Self {
         Self {
-            namespace,
-            service_sid: service_sid.to_owned(),
+            slot,
             held: BTreeMap::new(),
         }
     }
 }
 
 impl JobHost for ServiceJobs {
-    fn namespace(&self) -> &'static str {
-        self.namespace
+    fn create(&mut self, id: &str, caller: &CallerFacts) -> Result<DispatchJob, AuthorityError> {
+        let client = self
+            .slot
+            .lock()
+            .map_err(|_| AuthorityError::internal("the client slot is poisoned"))?
+            .take()
+            .ok_or_else(|| AuthorityError::internal("the caller's process was not opened"))?;
+        if client.pid != caller.pid || client.generation != caller.process_generation {
+            return Err(AuthorityError::denied(
+                "the opened process is not the observed caller",
+            ));
+        }
+        let job = create_job()?;
+        let mut remote: HANDLE = 0;
+        // SAFETY: duplicates the job handle into the verified client with
+        // exactly assign-process, not inheritable.
+        if unsafe {
+            DuplicateHandle(
+                GetCurrentProcess(),
+                job.0,
+                client.handle.0,
+                &mut remote,
+                JOB_ASSIGN_PROCESS,
+                0,
+                0,
+            )
+        } == 0
+        {
+            return Err(os_error("DuplicateHandle(job into orceld)"));
+        }
+        let handle = remote as u64;
+        self.held.insert(
+            id.to_owned(),
+            Held {
+                job,
+                client,
+                remote: handle,
+            },
+        );
+        Ok(DispatchJob {
+            id: id.to_owned(),
+            handle,
+        })
     }
 
-    fn create(&mut self, name: &str, assign_sid: &str) -> Result<(), AuthorityError> {
-        let job = create_job(name, &job_sddl(&self.service_sid, assign_sid)?)?;
-        self.held.insert(name.to_owned(), job);
-        Ok(())
-    }
-
-    fn terminate(&mut self, name: &str) {
-        if let Some(job) = self.held.remove(name) {
-            // SAFETY: the creating handle has JOB_OBJECT_TERMINATE. Closing
-            // it afterwards (kill-on-close) ends anything assigned later.
-            unsafe { TerminateJobObject(job.0, 1) };
+    fn terminate(&mut self, id: &str) {
+        if let Some(held) = self.held.remove(id) {
+            // SAFETY: the creating handle has JOB_OBJECT_TERMINATE. orceld's
+            // handle is its own to close (it may already have, and the value
+            // may be reused): a worker orceld assigns afterwards is never
+            // resumed, because `DispatchActive` refuses first.
+            unsafe { TerminateJobObject(held.job.0, 1) };
         }
     }
 
-    fn active_processes(&self, name: &str) -> Option<u32> {
+    fn withdraw(&mut self, id: &str) {
+        if let Some(mut held) = self.held.remove(id) {
+            // The answer carrying the handle was never sent, so orceld has
+            // not used the value: closing it in orceld is safe.
+            held.close_remote();
+            // SAFETY: the creating handle has JOB_OBJECT_TERMINATE.
+            unsafe { TerminateJobObject(held.job.0, 1) };
+        }
+    }
+
+    fn active_processes(&self, id: &str) -> Option<u32> {
         self.held
-            .get(name)
-            .and_then(|job| active_processes(job).ok())
+            .get(id)
+            .and_then(|held| active_processes(held.job.0).ok())
     }
 }
