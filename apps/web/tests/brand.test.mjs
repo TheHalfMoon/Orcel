@@ -9,24 +9,31 @@ const file=(path)=>readFileSync(join(root,path));
 const str=(path)=>file(path).toString("utf8");
 const hash=(path)=>createHash("sha256").update(file(path)).digest("hex");
 
-test("Founder-selected Night Window mark and outlined wordmark are canonical",()=>{
- const mark=str("assets/brand/orcel-o-white.svg");
- const logo=str("assets/brand/orcel-wordmark-white.svg");
- assert.match(mark,/Orcel Night Window mark/);
- assert.match(mark,/class="orcel-night-window"/);
- assert.ok(mark.includes('<rect x="28" y="40" width="200" height="176" rx="52" fill="none" stroke="#FFFFFF" stroke-width="22"/>'),"window frame");
- assert.ok(mark.includes('<path d="M128 96A50 50 0 0 1 128 196Z" fill="#A6ACE6"/>'),"lavender half moon");
- assert.equal(str("apps/web/public/brand/orcel-o-white.svg"),mark);
- assert.match(str("assets/brand/orcel-o-black.svg"),/stroke="#090C12"/);
- assert.match(logo,/class="orcel-wordmark" transform="translate\(16 223\) scale\(\.28\)"/);
- assert.ok(logo.includes("M1945 0V-690H2072V0Z"),"l stem outline");
- for(const path of ["assets/brand/orcel-o-white.svg","assets/brand/orcel-wordmark-white.svg","assets/brand/orcel-lockup-white.svg"]){
+test("Founder-approved People First figure and outlined wordmark are canonical",()=>{
+ const mark=str("assets/brand/orcel-mark-red.svg");
+ const logo=str("assets/brand/orcel-wordmark-black.svg");
+ assert.match(mark,/Orcel figure, vermilion/);
+ assert.match(mark,/class="orcel-figure"/);
+ assert.match(mark,/fill="#DB2532"/);
+ assert.equal(str("apps/web/public/brand/orcel-mark-red.svg"),mark);
+ assert.match(str("assets/brand/orcel-o-white.svg"),/fill="#FFFFFF"/);
+ assert.match(str("assets/brand/orcel-o-black.svg"),/fill="#141414"/);
+ assert.match(logo,/class="orcel-wordmark"/);
+ assert.match(logo,/fill="#141414"/);
+ const lockup=str("assets/brand/orcel-lockup-black.svg");
+ assert.match(lockup,/class="orcel-figure"[^>]*fill="#DB2532"/);
+ assert.match(lockup,/class="orcel-wordmark"[^>]*fill="#141414"/);
+ for(const path of ["assets/brand/orcel-mark-red.svg","assets/brand/orcel-wordmark-black.svg","assets/brand/orcel-lockup-black.svg","assets/brand/orcel-lockup-white.svg"]){
   const svg=str(path);
-  assert.doesNotMatch(svg,/#FF813E|#D4FF3F/i,"no retired orange or lime: "+path);
+  assert.doesNotMatch(svg,/#FF813E|#D4FF3F|#A6ACE6|#090C12/i,"no retired palette: "+path);
   assert.doesNotMatch(svg,/<text\b|<image\b|<circle|linearGradient/i,path);
  }
- assert.match(str("assets/brand/orcel-app-icon.svg"),/class="orcel-moon-tile"/);
- assert.match(str("assets/brand/orcel-accent-icon.svg"),/fill="#A6ACE6"/);
+ assert.match(str("assets/brand/orcel-app-icon.svg"),/fill="#F7F3EB"/);
+ for(const [name,colour] of [["browser","#F5724D"],["agent","#DB2532"],["mcp","#182437"],["cluster","#C8102E"]]){
+  const icon=str("assets/brand/orcel-icon-"+name+".svg");
+  assert.ok(icon.includes(colour),name+" icon colour");
+  assert.equal(str("apps/web/public/brand/orcel-icon-"+name+".svg"),icon);
+ }
 });
 
 test("OpenAI/Codex app icons and Next favicon are byte-identical",()=>{
@@ -39,8 +46,8 @@ test("OpenAI/Codex app icons and Next favicon are byte-identical",()=>{
  ]) assert.deepEqual(file(path),master,path);
  const openai=JSON.parse(str("distribution/openai/plugin.config.json"));
  const codex=JSON.parse(str("distribution/codex/orcel/plugin.json"));
- assert.equal(openai.brandColor,"#090C12");
- assert.equal(codex.extensions["com.openai"].interface.brandColor,"#090C12");
+ assert.equal(openai.brandColor,"#DB2532");
+ assert.equal(codex.extensions["com.openai"].interface.brandColor,"#DB2532");
 });
 
 test("Identity delivers full mono and editorial system without distributing fonts",()=>{
@@ -64,16 +71,16 @@ test("Identity delivers full mono and editorial system without distributing font
  const readme=str("README.md");
  assert.match(readme,/orcel-readme-lockup\.svg/);
  const hero=str("assets/brand/orcel-readme-lockup.svg");
- assert.match(hero,/fill="#090C12"/);
- assert.match(hero,/orcel-night-window/);
+ assert.match(hero,/fill="#F7F3EB"/);
+ assert.match(hero,/orcel-figure/);
  const page=str("apps/web/app/brand/page.tsx");
- assert.match(page,/The Night Window\./);
- assert.match(page,/Your computer is the window/);
- assert.match(page,/orcel-lockup-white\.svg/);
+ assert.match(page,/People first\./);
+ assert.match(page,/One person\. Many agents\./);
+ assert.match(page,/orcel-lockup-black\.svg/);
  assert.match(page,/Download kit/);
  const css=str("apps/web/app/globals.css");
- assert.match(css,/--accent-a:\s*#A6ACE6/);
- assert.match(css,/--accent-b:\s*#C3C7F0/);
+ assert.match(css,/--accent-a:\s*#DB2532/);
+ assert.match(css,/--bg:\s*#F7F3EB/);
  assert.doesNotMatch(css,/#FF813E|255,\s*129,\s*62|#D4FF3F|212,\s*255,\s*63/i);
  assert.doesNotMatch(css,/#78c8ff|#8278ff|#d4a6ff|rgba\(\s*96,\s*104,\s*255/i);
  assert.match(str("apps/web/app/page.tsx"),/\/brand\.html/);
@@ -83,8 +90,8 @@ test("Identity delivers full mono and editorial system without distributing font
 test("Every raster export is validated and delivered via deterministic ZIP",()=>{
  const manifest=JSON.parse(str("assets/brand/ASSET_MANIFEST.json"));
  assert.equal(manifest.name,"Orcel");
- assert.equal(manifest.brand_version,"4.0");
- assert.equal(manifest.source,"Orcel Identity v4 2026");
+ assert.equal(manifest.brand_version,"5.0");
+ assert.equal(manifest.source,"Orcel Identity v5 2026");
  assert.ok(manifest.assets.length>=50);
  for (const item of manifest.assets) {
   assert.equal(hash(item.path),item.sha256,item.path);
@@ -96,7 +103,7 @@ test("Every raster export is validated and delivered via deterministic ZIP",()=>
   assert.equal(png.readUInt32BE(16),n);
   assert.equal(png.readUInt32BE(20),n);
  }
- const zip=file("assets/brand/downloads/Orcel-Identity-Kit-v4.zip");
+ const zip=file("assets/brand/downloads/Orcel-Identity-Kit-v5.zip");
  assert.equal(zip.subarray(0,4).toString("hex"),"504b0304");
  assert.ok(zip.length>25000&&zip.length<3000000);
 });

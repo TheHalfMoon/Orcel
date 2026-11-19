@@ -1,7 +1,7 @@
 # Orcel
 
 <p align="center">
-  <img src="assets/brand/orcel-readme-lockup.svg" alt="Orcel, a Halfmoon product: white Night Window mark and lowercase orcel wordmark" width="630">
+  <img src="assets/brand/orcel-readme-lockup.svg" alt="Orcel: vermilion figure and black lowercase orcel wordmark" width="630">
 </p>
 
 <p align="center"><strong>Your computer, your terms.</strong></p>

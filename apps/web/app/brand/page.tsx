@@ -2,68 +2,66 @@ import type { Metadata } from "next";
 import "./brand.css";
 
 export const metadata: Metadata = {
-  title: "Orcel Identity v4",
-  description: "The Orcel identity: a desktop window holding Halfmoon's half moon, in the Halfmoon palette and type.",
+  title: "Orcel Identity v5",
+  description: "The Orcel identity: People first. A vermilion figure, a black lowercase name, and one person directing many agents.",
 };
 
 const basePath=process.env.ORCEL_WEB_BASE_PATH??"";
 const asset=(file:string)=>basePath+"/brand/"+file;
-const kit=asset("Orcel-Identity-Kit-v4.zip");
-const neutrals=[
- {name:"Midnight",hex:"#090C12"},{name:"White",hex:"#FFFFFF"},
- {name:"Lunar",hex:"#F5F4F0"},{name:"Lavender",hex:"#A6ACE6"},
- {name:"Mist",hex:"#F5F6F7"},{name:"Graphite",hex:"#565D66"}
+const kit=asset("Orcel-Identity-Kit-v5.zip");
+const palette=[
+ {name:"Vermilion",hex:"#DB2532"},{name:"Ink",hex:"#141414"},
+ {name:"Deep Navy",hex:"#182437"},{name:"Cobalt",hex:"#2354D4"},
+ {name:"Orange",hex:"#F5724D"},{name:"Sky",hex:"#BFD8F7"},{name:"Ivory",hex:"#F7F3EB"}
 ];
-const variants=[
- {label:"02 / Dark application",image:"orcel-app-icon.svg",alt:"White Moon Tile with a lavender moon on a midnight application tile",light:false,detail:"ChatGPT, Codex and app"},
- {label:"03 / Light application",image:"orcel-app-icon-light.svg",alt:"Midnight Moon Tile on a lunar application tile",light:true,detail:"Light UI and print"},
- {label:"04 / Horizontal lockup",image:"orcel-lockup-white.svg",alt:"Orcel Night Window mark and white wordmark",light:false,detail:"Website, presentations and headers",wide:true},
- {label:"05 / Inverse lockup",image:"orcel-lockup-black.svg",alt:"Orcel Night Window mark and midnight wordmark",light:true,detail:"Docs and light surfaces",wide:true},
- {label:"06 / Stacked lockup",image:"orcel-lockup-stacked-white.svg",alt:"Orcel stacked Night Window mark and wordmark",light:false,detail:"Square promotional layouts"},
- {label:"07 / Accent tile",image:"orcel-accent-icon.svg",alt:"Midnight Night Window mark on a lavender tile",light:false,detail:"Avatars and moments of action"}
+const icons=[
+ {label:"Orcel",image:"orcel-app-icon.svg",alt:"Vermilion figure on an ivory application tile",detail:"Desktop, favicon, ChatGPT and Codex"},
+ {label:"Orcel Browser",image:"orcel-icon-browser.svg",alt:"Ink figure on an orange disc inside an ink ring",detail:"Browse with an agent"},
+ {label:"Orcel Agent",image:"orcel-icon-agent.svg",alt:"One person connected to two agents",detail:"One person, many agents"},
+ {label:"Orcel MCP",image:"orcel-icon-mcp.svg",alt:"Ivory connection hub on a navy tile",detail:"Connect your tools"},
+ {label:"Orcel Cluster",image:"orcel-icon-cluster.svg",alt:"Four red dots joined in a ring on a sky tile",detail:"Many machines"}
 ];
 export default function BrandPage(){
  return <main className="orcel-brand-system">
    <div className="brand-shell">
     <header className="brand-nav">
      <a href={basePath+"/"} aria-label="Return to Orcel homepage">orcel</a>
-     <span>A HALFMOON PRODUCT / 2026</span>
+     <span>PEOPLE FIRST / 2026</span>
      <a href={kit}>Download kit ↗</a>
     </header>
     <section className="brand-intro">
      <div className="brand-eyebrow">OFFICIAL VISUAL IDENTITY</div>
-     <h1>The Night Window.</h1>
-     <p>Your computer is the window. The half moon inside comes from Halfmoon's own shapes:
-     what you choose to let through, and nothing more.</p>
+     <h1>People first.</h1>
+     <p>One person. Many agents. A vermilion figure, a black lowercase name, and agents that
+     act on your computer only with your yes.</p>
     </section>
     <section className="brand-hero" aria-label="Primary Orcel logo">
       <div className="brand-main-lockup">
-       <img src={asset("orcel-lockup-white.svg")} width="940" height="256"
-         alt="Orcel primary horizontal logo: white Night Window mark and wordmark"/>
+       <img src={asset("orcel-lockup-black.svg")} width="1350" height="384"
+         alt="Orcel primary logo: vermilion figure and black lowercase orcel wordmark"/>
       </div>
       <div className="brand-hero-caption">
-       <span>01 / PRIMARY LOGO</span><strong>orcel</strong><span>White / Midnight / Lavender</span>
+       <span>01 / PRIMARY LOGO</span><strong>orcel</strong><span>Vermilion / Ink / Ivory</span>
       </div>
     </section>
     <div className="brand-heading">
-      <h2>One system. Every surface.</h2>
-      <p>Artwork is generated from a single editable vector source.</p>
+      <h2>One figure. Five products.</h2>
+      <p>Every icon is generated from a single editable vector source.</p>
     </div>
-    <section className="brand-tiles" aria-label="Orcel identity variants">
-      {variants.map((variant)=><article key={variant.image} className={"brand-tile "+(variant.light?"light":"dark")}>
-       <p>{variant.label}</p>
-       <img className={variant.wide?"brand-wide":""} src={asset(variant.image)}
-         width={variant.wide?425:210} height={variant.wide?116:210} alt={variant.alt}/>
-       <span>{variant.detail}</span>
+    <section className="brand-tiles" aria-label="Orcel product icons">
+      {icons.map((icon)=><article key={icon.image} className="brand-tile">
+       <p>{icon.label}</p>
+       <img src={asset(icon.image)} width={160} height={160} alt={icon.alt}/>
+       <span>{icon.detail}</span>
       </article>)}
     </section>
     <section className="brand-palette" aria-labelledby="color-title">
       <div className="brand-heading">
-       <h2 id="color-title">Made of essentials.</h2>
-       <p>Halfmoon's palette: Midnight and white, Lunar for reading, Lavender for the moon, Red only to stop.</p>
+       <h2 id="color-title">Vermilion, ink, cobalt.</h2>
+       <p>Vermilion for the figure and the one thing that needs you; ink for the name; ivory for the page.</p>
       </div>
       <div className="brand-swatches">
-       {neutrals.map(p=><div className="brand-swatch" key={p.hex}>
+       {palette.map(p=><div className="brand-swatch" key={p.hex}>
         <span className="brand-swatch-color" style={{backgroundColor:p.hex}}/>
         <strong>{p.name}</strong><code>{p.hex}</code>
        </div>)}
@@ -71,9 +69,9 @@ export default function BrandPage(){
     </section>
     <section className="brand-principle">
       <span>A CONSISTENT VISUAL LANGUAGE</span>
-      <h2>Simple at 16px.<br/>Distinctive at every scale.</h2>
-      <p>Keep one moon-width clear on every side. The crescent belongs to Halfmoon alone; Orcel uses
-      it only in the line "a Halfmoon product". No shadows, gradients, or extra cuts.</p>
+      <h2>A person, then a name.<br/>Clear at 16px.</h2>
+      <p>The figure is as tall as the l of orcel. Keep half its height clear on every side. Never
+      retype the wordmark; no shadows, gradients or effects on any mark.</p>
       <a className="brand-download" href={kit}>Download complete Orcel identity kit ↗</a>
       <p><a href="https://github.com/TheHalfMoon/Orcel/blob/main/assets/brand/IDENTITY.md">Read the vector construction and usage guide ↗</a></p>
     </section>
