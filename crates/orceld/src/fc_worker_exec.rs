@@ -13,7 +13,10 @@
 //! in-box Windows programs are hard-linked into WinSxS), and not be one of
 //! [`REFUSED_PROGRAMS`]: shells, script hosts, launchers that start
 //! programs outside the job on request, and Git (which runs only through
-//! the hardened git operations). The arguments are an argument vector,
+//! the hardened git operations), nor lie under a Git installation. It is
+//! held open without write or delete sharing from its checks until it has
+//! started, and re-resolved right before the start (same path, same volume
+//! serial and file index). The arguments are an argument vector,
 //! quoted for `CreateProcessW` by the standard library; a `.exe` never
 //! reinterprets them through `cmd.exe`. The working folder is an existing
 //! folder inside the roots. The environment is [`CHILD_ENVIRONMENT`] only.
@@ -36,7 +39,15 @@
 //! device as editor, hooks pointed at an empty folder it just made,
 //! fsmonitor off, no external diff or textconv, no signing, and every
 //! configured filter driver emptied; `safe.directory` is never set, so
-//! Git's ownership check stays on.
+//! Git's ownership check stays on. Before any Git command runs, the
+//! provider's configuration gate (review of #824) reads the repository's
+//! `.git` pointer and configuration files itself and refuses hooks defined
+//! in configuration (`hook.*`, which `core.hooksPath` and `--no-verify` do
+//! not turn off), aliases, includes, credential, transport, proxy, editor,
+//! pager, diff, merge and signing programs, URL and HTTP rewrites, and any
+//! value or `gitdir:` naming a network share or device; discovery stops at
+//! the lease root (`GIT_CEILING_DIRECTORIES`) and implicit bare
+//! repositories are refused (`safe.bareRepository=explicit`).
 
 use super::{existing, failure, io_failure, refuse_hard_links, resolved_roots};
 use orcel_contracts::FailureCode;
@@ -71,8 +82,10 @@ pub(crate) const MAX_GIT_LOG: usize = 100;
 /// Program file names (without `.exe`, lowercase) the process family never
 /// runs: shells and script hosts, programs that start other programs
 /// outside the job on request (Task Scheduler, WMI, the shell, BITS, the
-/// COM surrogate, services, `runas`), and Git, which runs only through the
-/// hardened git operations. A cheap mitigation, not a boundary: a renamed
+/// COM surrogate, services, `runas`), the shells and tools Git for Windows
+/// ships, and Git itself (every name starting with `git`, which runs only
+/// through the hardened git operations; anything under a Git installation
+/// is refused as well). A cheap mitigation, not a boundary: a renamed
 /// copy, or any program that can run code (an interpreter, a build tool),
 /// can still ask those brokers (SG132_SLICE4.md, residuals).
 pub(crate) const REFUSED_PROGRAMS: &[&str] = &[
@@ -103,7 +116,14 @@ pub(crate) const REFUSED_PROGRAMS: &[&str] = &[
     "wt",
     "winrs",
     "conhost",
-    "git",
+    "dash",
+    "env",
+    "perl",
+    "busybox",
+    "mintty",
+    "winpty",
+    "scalar",
+    "tig",
 ];
 
 /// Environment variables a started program receives, when orceld has them
@@ -159,9 +179,98 @@ pub(crate) fn child_environment(
         .collect()
 }
 
+/// A resolved program, held open from its checks until it has started.
+pub(crate) struct ResolvedProgram {
+    pub(crate) path: PathBuf,
+    /// Opened without write or delete sharing: while it is held, the file
+    /// cannot be written, renamed, deleted or replaced. Kept, not read.
+    #[allow(dead_code)]
+    pub(crate) held: std::fs::File,
+    /// Volume serial and file index (device and inode elsewhere).
+    pub(crate) identity: String,
+}
+
+/// The file's identity: volume serial number and file index on Windows,
+/// device and inode elsewhere.
+#[cfg(windows)]
+pub(crate) fn file_identity(file: &std::fs::File) -> Result<String, ProviderError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    // SAFETY: a zeroed BY_HANDLE_FILE_INFORMATION is a valid out-parameter.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: an open file handle and a live out-parameter.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+        return Err(io_failure(
+            "read the program's identity",
+            &std::io::Error::last_os_error(),
+        ));
+    }
+    Ok(format!(
+        "{:08x}-{:08x}{:08x}",
+        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+    ))
+}
+
+#[cfg(unix)]
+pub(crate) fn file_identity(file: &std::fs::File) -> Result<String, ProviderError> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file
+        .metadata()
+        .map_err(|error| io_failure("read the program's identity", &error))?;
+    Ok(format!("{:x}-{:x}", metadata.dev(), metadata.ino()))
+}
+
+/// Opens `path` for reading, sharing read access only (Windows).
+fn open_held(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ);
+    }
+    options.open(path)
+}
+
+/// The Git installations' folders (`...\Git` above each `cmd\git.exe`
+/// candidate) that exist, resolved. Nothing under them runs through `run`.
+fn git_install_folders() -> Vec<PathBuf> {
+    git_candidates()
+        .iter()
+        .filter_map(|candidate| candidate.parent()?.parent().map(Path::to_path_buf))
+        .filter_map(|folder| std::fs::canonicalize(folder).ok())
+        .collect()
+}
+
+impl ResolvedProgram {
+    /// Right before the start: the path still resolves to the same place
+    /// and the file there is the one held (same identity). The held handle
+    /// keeps the file itself from changing; this catches a folder on the
+    /// path swapped since the checks.
+    pub(crate) fn reverify(&self) -> Result<(), ProviderError> {
+        let again = std::fs::canonicalize(&self.path)
+            .map_err(|error| io_failure("resolve the program again", &error))?;
+        let reopened =
+            open_held(&again).map_err(|error| io_failure("open the program again", &error))?;
+        if plain(&again) != self.path || file_identity(&reopened)? != self.identity {
+            return Err(failure(
+                FailureCode::TargetStale,
+                "the program changed between its checks and its start",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// The program a run names, resolved: an existing `.exe` with one name,
-/// inside the resolved roots, not a refused program.
-pub(crate) fn resolve_program(program: &str, roots: &[String]) -> Result<PathBuf, ProviderError> {
+/// inside the resolved roots, not a refused program and not under a Git
+/// installation, held open (no write or delete sharing) with its identity.
+pub(crate) fn resolve_program(
+    program: &str,
+    roots: &[String],
+) -> Result<ResolvedProgram, ProviderError> {
     let refused_name = |path: &Path| -> Result<(), ProviderError> {
         let extension = path
             .extension()
@@ -178,7 +287,7 @@ pub(crate) fn resolve_program(program: &str, roots: &[String]) -> Result<PathBuf
             .and_then(|stem| stem.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        if REFUSED_PROGRAMS.contains(&stem.as_str()) {
+        if REFUSED_PROGRAMS.contains(&stem.as_str()) || stem.starts_with("git") {
             return Err(failure(
                 FailureCode::CapabilityDenied,
                 format!(
@@ -191,8 +300,18 @@ pub(crate) fn resolve_program(program: &str, roots: &[String]) -> Result<PathBuf
     refused_name(Path::new(program))?;
     let resolved = existing(program, roots)?;
     refused_name(&resolved)?;
-    let file =
-        std::fs::File::open(&resolved).map_err(|error| io_failure("open the program", &error))?;
+    // Review of #824: Git's installation carries shells, Perl, `scalar`,
+    // the upload and receive packs and more; none of it runs through `run`.
+    if git_install_folders()
+        .iter()
+        .any(|folder| resolved.starts_with(folder))
+    {
+        return Err(failure(
+            FailureCode::CapabilityDenied,
+            "programs under the Git installation run only through the git operations",
+        ));
+    }
+    let file = open_held(&resolved).map_err(|error| io_failure("open the program", &error))?;
     let metadata = file
         .metadata()
         .map_err(|error| io_failure("read the program's metadata", &error))?;
@@ -203,7 +322,12 @@ pub(crate) fn resolve_program(program: &str, roots: &[String]) -> Result<PathBuf
         ));
     }
     refuse_hard_links(&file)?;
-    Ok(plain(&resolved))
+    let identity = file_identity(&file)?;
+    Ok(ResolvedProgram {
+        path: plain(&resolved),
+        held: file,
+        identity,
+    })
 }
 
 /// An existing folder inside the resolved roots.
@@ -312,7 +436,7 @@ pub(crate) fn run_program(
     }
     let resolved = resolve_program(program, roots)?;
     let folder = plain(&resolve_folder(cwd, roots)?);
-    let mut command = Command::new(&resolved);
+    let mut command = Command::new(&resolved.path);
     command
         .args(args)
         .current_dir(&folder)
@@ -329,6 +453,8 @@ pub(crate) fn run_program(
         // outside the job: CreateProcessW puts the child in this job.
         command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     }
+    // Review of #824: the program started is the one checked.
+    resolved.reverify()?;
     let mut child = command
         .spawn()
         .map_err(|error| io_failure("start the program", &error))?;
@@ -376,7 +502,8 @@ pub(crate) fn run_program(
     let (stdout, stdout_bytes, stdout_truncated) = captured(&out);
     let (stderr, stderr_bytes, stderr_truncated) = captured(&err);
     Ok(json!({
-        "program": resolved.display().to_string(),
+        "program": resolved.path.display().to_string(),
+        "program_identity": resolved.identity,
         "exit_code": status.code(),
         "stdout": stdout,
         "stderr": stderr,

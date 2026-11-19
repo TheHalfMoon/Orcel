@@ -26,9 +26,10 @@
 //!
 //! WP1-15 (SG-000097, SG-000096; SG132_SLICE4.md): every dispatch job also
 //! carries the UI restrictions of [`JOB_UI_LIMITS`]. The worker and the
-//! programs it runs are headless (no window, no clipboard, no desktop), so
-//! the restrictions cost them nothing, and they close the cheap
-//! window-message and DDE routes to processes outside the job: a process in
+//! console programs it runs need none of what they take away, and they
+//! reduce the window-message and DDE routes to processes outside the job
+//! (they are not a boundary: no job restriction covers synthesized input,
+//! and a GUI program can still make its own windows): a process in
 //! the job cannot use USER handles (windows, hooks) of processes outside it,
 //! has its own global atom table (DDE conversations with the shell need the
 //! shared one), cannot create or switch desktops, read or write the

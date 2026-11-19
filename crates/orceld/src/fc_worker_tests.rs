@@ -830,8 +830,85 @@ mod windows {
         assert!(status.success(), "{args:?}");
     }
 
-    /// A repository whose hooks, configuration and attributes each try to
-    /// run a program that leaves a marker file next to the repository.
+    /// The marker file a planted program named `name` would leave.
+    fn marker(root: &Path, name: &str) -> PathBuf {
+        root.join(format!("marker-{name}"))
+    }
+
+    /// A shell command that leaves `name`'s marker.
+    fn marker_command(root: &Path, name: &str) -> String {
+        format!(
+            "echo ran > '{}'",
+            marker(root, name).display().to_string().replace('\\', "/")
+        )
+    }
+
+    /// Review of #824: configuration that names programs (hooks defined in
+    /// configuration, which `core.hooksPath` and `--no-verify` do not turn
+    /// off, a hooks folder, transport, editor, pager, diff and signing
+    /// programs, credentials). The gate refuses the repository.
+    fn configure_programs(root: &Path, repo: &Path) -> Vec<PathBuf> {
+        let custom = repo.join("myhooks");
+        std::fs::create_dir_all(&custom).expect("custom hooks");
+        for name in ["pre-commit", "post-commit", "post-index-change"] {
+            std::fs::write(
+                custom.join(name),
+                format!(
+                    "#!/bin/sh\n{}\n",
+                    marker_command(root, &format!("custom-{name}"))
+                ),
+            )
+            .expect("hook");
+        }
+        setup_git(repo, &["config", "core.hooksPath", "myhooks"]);
+        let mut names = vec![
+            "custom-pre-commit".to_owned(),
+            "custom-post-commit".to_owned(),
+            "custom-post-index-change".to_owned(),
+        ];
+        for (index, event) in ["post-index-change", "reference-transaction", "post-commit"]
+            .iter()
+            .enumerate()
+        {
+            let name = format!("config-hook-{event}");
+            setup_git(
+                repo,
+                &[
+                    "config",
+                    &format!("hook.evil{index}.command"),
+                    &marker_command(root, &name),
+                ],
+            );
+            setup_git(repo, &["config", &format!("hook.evil{index}.event"), event]);
+            names.push(name);
+        }
+        for (key, name) in [
+            ("core.fsmonitor", "fsmonitor"),
+            ("core.pager", "pager"),
+            ("diff.external", "diff-external"),
+            ("gpg.program", "gpg"),
+            ("core.sshCommand", "ssh"),
+            ("core.askPass", "askpass"),
+            ("credential.helper", "credential"),
+            ("diff.evil.textconv", "textconv"),
+        ] {
+            setup_git(
+                repo,
+                &[
+                    "config",
+                    key,
+                    &format!("!sh -c \"{}\"", marker_command(root, name)),
+                ],
+            );
+            names.push(name.to_owned());
+        }
+        names.iter().map(|name| marker(root, name)).collect()
+    }
+
+    /// A repository whose `.git/hooks`, filter drivers and attributes try
+    /// to run programs that leave a marker file next to the repository;
+    /// its configuration names no program the gate refuses (filters are
+    /// neutralized, not refused).
     fn hostile_repository(root: &Path) -> (PathBuf, Vec<PathBuf>) {
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).expect("repo");
@@ -843,14 +920,6 @@ mod windows {
         std::fs::write(repo.join("a.txt"), "zero\n").expect("a");
         setup_git(&repo, &["add", "a.txt"]);
         setup_git(&repo, &["commit", "-q", "-m", "initial"]);
-        let marker = |name: &str| root.join(format!("marker-{name}"));
-        let shell = |name: &str| {
-            format!(
-                "echo ran > '{}'",
-                marker(name).display().to_string().replace('\\', "/")
-            )
-        };
-        let hook = |name: &str| format!("#!/bin/sh\n{}\n", shell(name));
         let hooks = repo.join(".git").join("hooks");
         for name in [
             "pre-commit",
@@ -858,31 +927,26 @@ mod windows {
             "post-commit",
             "post-checkout",
             "post-index-change",
+            "reference-transaction",
         ] {
-            std::fs::write(hooks.join(name), hook(name)).expect("hook");
+            std::fs::write(
+                hooks.join(name),
+                format!("#!/bin/sh\n{}\n", marker_command(root, name)),
+            )
+            .expect("hook");
         }
-        let custom = repo.join("myhooks");
-        std::fs::create_dir_all(&custom).expect("custom hooks");
-        for name in ["pre-commit", "post-commit", "post-checkout"] {
-            std::fs::write(custom.join(name), hook(&format!("custom-{name}"))).expect("hook");
-        }
-        setup_git(&repo, &["config", "core.hooksPath", "myhooks"]);
         for (key, name) in [
-            ("core.fsmonitor", "fsmonitor"),
-            ("core.pager", "pager"),
-            ("diff.external", "diff-external"),
-            ("gpg.program", "gpg"),
-            ("core.sshCommand", "ssh"),
-            ("core.askPass", "askpass"),
-            ("credential.helper", "credential"),
             ("filter.evil.clean", "filter-clean"),
             ("filter.evil.smudge", "filter-smudge"),
             ("filter.evil.process", "filter-process"),
-            ("diff.evil.textconv", "textconv"),
         ] {
             setup_git(
                 &repo,
-                &["config", key, &format!("!sh -c \"{}\"", shell(name))],
+                &[
+                    "config",
+                    key,
+                    &format!("!sh -c \"{}\"", marker_command(root, name)),
+                ],
             );
         }
         setup_git(&repo, &["config", "commit.gpgSign", "true"]);
@@ -900,25 +964,220 @@ mod windows {
             "post-commit",
             "post-checkout",
             "post-index-change",
-            "custom-pre-commit",
-            "custom-post-commit",
-            "custom-post-checkout",
-            "fsmonitor",
-            "pager",
-            "diff-external",
-            "gpg",
-            "ssh",
-            "askpass",
-            "credential",
+            "reference-transaction",
             "filter-clean",
             "filter-smudge",
             "filter-process",
-            "textconv",
         ]
         .iter()
-        .map(|name| marker(name))
+        .map(|name| marker(root, name))
         .collect();
         (repo, markers)
+    }
+
+    /// Review of #824 (high): a repository whose configuration defines
+    /// hooks (`hook.<name>.command` and `.event`, run by Git 2.36 and later
+    /// despite `core.hooksPath` and `--no-verify`) or names other programs
+    /// is refused before Git runs in it, for reads and mutations alike.
+    #[test]
+    fn fc_worker_git_refuses_a_repository_whose_configuration_runs_programs() {
+        let root = root();
+        let (repo, mut markers) = hostile_repository(&root);
+        markers.extend(configure_programs(&root, &repo));
+        let port = JobPort::new(&root);
+        let repository = repo.display().to_string();
+        for op in [
+            WorkerOp::GitStatus {
+                repository: repository.clone(),
+            },
+            WorkerOp::GitDiff {
+                repository: repository.clone(),
+                staged: false,
+            },
+            WorkerOp::GitLog {
+                repository: repository.clone(),
+                max_count: 5,
+            },
+            WorkerOp::GitAdd {
+                repository: repository.clone(),
+                paths: vec!["a.txt".to_owned()],
+            },
+            WorkerOp::GitBranchCreate {
+                repository: repository.clone(),
+                branch: "topic".to_owned(),
+            },
+        ] {
+            assert_eq!(
+                run(&port, op.clone()).err().map(|e| e.code),
+                Some(FailureCode::CapabilityDenied),
+                "{op:?}"
+            );
+        }
+        for marker in &markers {
+            assert!(!marker.exists(), "{} ran", marker.display());
+        }
+        // Each refused key alone is enough.
+        setup_git(&repo, &["config", "--unset", "core.hooksPath"]);
+        for key in [
+            "core.fsmonitor",
+            "core.pager",
+            "diff.external",
+            "gpg.program",
+            "core.sshCommand",
+            "core.askPass",
+            "credential.helper",
+            "diff.evil.textconv",
+        ] {
+            setup_git(&repo, &["config", "--unset", key]);
+        }
+        for section in ["hook.evil1", "hook.evil2"] {
+            setup_git(&repo, &["config", "--remove-section", section]);
+        }
+        assert_eq!(
+            run(
+                &port,
+                WorkerOp::GitDiff {
+                    repository: repository.clone(),
+                    staged: false,
+                }
+            )
+            .err()
+            .map(|e| e.code),
+            Some(FailureCode::CapabilityDenied),
+            "one post-index-change hook in configuration"
+        );
+        setup_git(&repo, &["config", "--remove-section", "hook.evil0"]);
+        run(
+            &port,
+            WorkerOp::GitDiff {
+                repository,
+                staged: false,
+            },
+        )
+        .expect("the same repository without program keys");
+        for marker in &markers {
+            assert!(!marker.exists(), "{} ran", marker.display());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Review of #824: Full Control's filesystem operations never write
+    /// into a `.git` folder or create a `.git` entry, so they cannot plant
+    /// a hook or configuration for Git to follow.
+    #[test]
+    fn fc_worker_filesystem_never_writes_into_git_folders() {
+        let root = root();
+        let (repo, _) = hostile_repository(&root);
+        let roots = vec![root.display().to_string()];
+        for op in [
+            WorkerOp::WriteText {
+                path: repo.join(".git").join("config").display().to_string(),
+                text: "[hook \"x\"]\n\tcommand = evil\n".to_owned(),
+                create_new: false,
+            },
+            WorkerOp::WriteText {
+                path: repo
+                    .join(".GIT")
+                    .join("hooks")
+                    .join("pre-commit")
+                    .display()
+                    .to_string(),
+                text: "evil".to_owned(),
+                create_new: true,
+            },
+            WorkerOp::Mkdir {
+                path: repo.join(".git").join("more").display().to_string(),
+            },
+            WorkerOp::WriteText {
+                path: root.join("other").join(".git").display().to_string(),
+                text: "gitdir: //host/share/x".to_owned(),
+                create_new: true,
+            },
+            WorkerOp::Mkdir {
+                path: root.join(".git").display().to_string(),
+            },
+        ] {
+            let _ = std::fs::create_dir_all(root.join("other"));
+            assert_eq!(
+                perform(&op, &roots).err().map(|e| e.code),
+                Some(FailureCode::CapabilityDenied),
+                "{op:?}"
+            );
+        }
+        assert!(!root.join("other").join(".git").exists());
+        assert!(!root.join(".git").exists());
+        // Ordinary files next to them still work.
+        perform(
+            &WorkerOp::WriteText {
+                path: repo.join("notes.txt").display().to_string(),
+                text: "fine".to_owned(),
+                create_new: true,
+            },
+            &roots,
+        )
+        .expect("an ordinary file");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Review of #824: the program is held from its checks to its start
+    /// (no write, rename or delete meanwhile), and nothing under a Git
+    /// installation runs through `run`.
+    #[test]
+    fn fc_worker_holds_the_checked_program_and_refuses_the_git_installation() {
+        let (root, _cwd) = helper_root("hold", "exit7");
+        let roots = vec![root.display().to_string()];
+        let program = root.join(HELPER_EXE);
+        let resolved =
+            crate::fc_worker::exec::resolve_program(&program.display().to_string(), &roots)
+                .expect("resolved");
+        assert!(!resolved.identity.is_empty());
+        assert!(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&program)
+                .is_err(),
+            "no write while held"
+        );
+        assert!(
+            std::fs::rename(&program, root.join("moved.exe")).is_err(),
+            "no rename while held"
+        );
+        resolved.reverify().expect("still the same program");
+        drop(resolved);
+        std::fs::rename(&program, root.join("moved.exe")).expect("released");
+        // Git for Windows' own programs, wherever the roots reach.
+        for candidate in crate::fc_worker::exec::git_candidates() {
+            let Some(install) = candidate.parent().and_then(Path::parent) else {
+                continue;
+            };
+            for tool in [
+                r"cmd\scalar.exe",
+                r"usr\bin\env.exe",
+                r"usr\bin\tr.exe",
+                r"mingw64\bin\git-upload-pack.exe",
+            ] {
+                let tool = install.join(tool);
+                if tool.is_file() {
+                    let refused = perform(
+                        &WorkerOp::Run {
+                            program: tool.display().to_string(),
+                            args: Vec::new(),
+                            cwd: root.display().to_string(),
+                            timeout_ms: 5_000,
+                            max_output_bytes: 64,
+                        },
+                        &[install.display().to_string(), root.display().to_string()],
+                    );
+                    assert_eq!(
+                        refused.err().map(|e| e.code),
+                        Some(FailureCode::CapabilityDenied),
+                        "{}",
+                        tool.display()
+                    );
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1029,7 +1288,7 @@ mod windows {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .status();
         assert!(
-            root.join("marker-custom-pre-commit").exists(),
+            root.join("marker-pre-commit").exists(),
             "plain Git runs the planted hook"
         );
         let _ = std::fs::remove_dir_all(&root);

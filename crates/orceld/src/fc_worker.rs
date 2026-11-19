@@ -299,6 +299,24 @@ fn creatable(path: &str, roots: &[String]) -> Result<PathBuf, ProviderError> {
         std::fs::canonicalize(parent).map_err(|error| io_failure("resolve the parent", &error))?;
     inside(&parent, &resolved_roots(roots))?;
     let resolved = parent.join(name);
+    // Review of #824: a Git repository's own folder (its configuration,
+    // hooks and pointers) is never written or created through Full
+    // Control's filesystem operations, so they cannot plant a hook or a
+    // configuration Git would follow. The names are resolved, so a short
+    // name (`GIT~1`) of the parent arrives here as `.git`.
+    // An existing entry is resolved too, so a short name (`GIT~1`) for an
+    // existing `.git` file is caught as well.
+    let existing_name = std::fs::canonicalize(&resolved).ok();
+    if std::iter::once(&resolved)
+        .chain(existing_name.as_ref())
+        .flat_map(|path| path.components())
+        .any(|component| component.as_os_str().eq_ignore_ascii_case(".git"))
+    {
+        return Err(failure(
+            FailureCode::CapabilityDenied,
+            "Full Control does not write inside a .git folder or create a .git entry",
+        ));
+    }
     if let Ok(metadata) = std::fs::symlink_metadata(&resolved) {
         if metadata.file_type().is_symlink() {
             return Err(failure(

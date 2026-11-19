@@ -664,9 +664,16 @@ fn push_rejects_unsafe_config_set_outside_the_local_file() {
         }
         let provider = GitProvider::new(&work).unwrap();
         let destination = anonymous_destination();
-        let preview = provider
-            .push_preview(".", &destination, "main", "main", "anonymous")
-            .unwrap();
+        // Review of #824: the repository configuration gate may refuse
+        // already at the preview, before any Git command runs.
+        let preview = match provider.push_preview(".", &destination, "main", "main", "anonymous") {
+            Ok(preview) => preview,
+            Err(error) => {
+                assert_eq!(error.code, orcel_contracts::FailureCode::CapabilityDenied);
+                let _ = std::fs::remove_dir_all(base);
+                continue;
+            }
+        };
         let resolver = StaticResolver {
             addresses: vec![public_ip()],
         };
@@ -713,9 +720,16 @@ fn push_rejects_unsafe_repository_local_config() {
         git(&work, &["config", "--local", key, value]);
         let provider = GitProvider::new(&work).unwrap();
         let destination = anonymous_destination();
-        let preview = provider
-            .push_preview(".", &destination, "main", "main", "anonymous")
-            .unwrap();
+        // Review of #824: the repository configuration gate may refuse
+        // already at the preview, before any Git command runs.
+        let preview = match provider.push_preview(".", &destination, "main", "main", "anonymous") {
+            Ok(preview) => preview,
+            Err(error) => {
+                assert_eq!(error.code, orcel_contracts::FailureCode::CapabilityDenied);
+                let _ = std::fs::remove_dir_all(base);
+                continue;
+            }
+        };
         let resolver = StaticResolver {
             addresses: vec![public_ip()],
         };

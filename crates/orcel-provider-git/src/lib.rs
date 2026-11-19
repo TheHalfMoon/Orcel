@@ -1,6 +1,7 @@
 pub mod fetch;
 mod mutation;
 pub mod push;
+mod repo_config;
 
 pub use fetch::{
     destination_ref, parse_destination, source_ref, ApprovedFetch, FetchPreview,
@@ -271,10 +272,15 @@ impl GitProvider {
     }
 
     fn run_git_raw(&self, cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderError> {
-        let neutral = neutralizing_args_with(&self.program, cwd)?;
+        // Review of #824: the repository's own configuration files are
+        // read and checked before any Git command runs in it (hooks defined
+        // in configuration, includes, command-valued keys, shares).
+        repo_config::check_repository(&self.workspace_root, cwd)?;
+        let ceiling = self.workspace_root.parent();
+        let neutral = neutralizing_args_with(&self.program, ceiling, cwd)?;
         let mut all: Vec<&str> = neutral.args.iter().map(String::as_str).collect();
         all.extend_from_slice(args);
-        run_plain_with(&self.program, cwd, &all)
+        run_plain_with(&self.program, ceiling, cwd, &all)
     }
 }
 
@@ -314,18 +320,30 @@ pub(crate) fn repository_config_keys(listed: &str) -> Vec<String> {
 /// in that window is not seen. Closing it needs one Git process for
 /// both, which Git does not offer.
 pub(crate) fn neutralizing_args(cwd: &Path) -> Result<Neutralized, GitProviderError> {
-    neutralizing_args_with(Path::new("git"), cwd)
+    neutralizing_args_with(Path::new("git"), None, cwd)
 }
 
 /// [`neutralizing_args`] with the Git program at `program`.
-fn neutralizing_args_with(program: &Path, cwd: &Path) -> Result<Neutralized, GitProviderError> {
-    let listed = run_plain_with(program, cwd, &["config", "--list", "-z"])?;
+fn neutralizing_args_with(
+    program: &Path,
+    ceiling: Option<&Path>,
+    cwd: &Path,
+) -> Result<Neutralized, GitProviderError> {
+    // Includes are never followed (the gate refuses them); every entry is
+    // checked again against the gate's rules, as Git itself read it.
+    let listed = run_plain_with(
+        program,
+        ceiling,
+        cwd,
+        &["config", "--list", "--show-scope", "--no-includes", "-z"],
+    )?;
     if listed.stdout_truncated {
         return Err(GitProviderError::new(
             FailureCode::ProviderUnavailable,
             "Git configuration exceeded the bounded output limit",
         ));
     }
+    repo_config::check_listed(&listed.stdout)?;
     // An empty directory this process just created: no hook is found, and
     // nothing in the workspace can name or fill it.
     let hooks = mutation::DisabledHooksDir::create()?;
@@ -340,7 +358,8 @@ fn neutralizing_args_with(program: &Path, cwd: &Path) -> Result<Neutralized, Git
         "core.alternateRefsCommand=".to_owned(),
     ];
     let mut drivers: Vec<&str> = Vec::new();
-    for entry in listed.stdout.split('\0') {
+    let mut fields = listed.stdout.split('\0');
+    while let (Some(_scope), Some(entry)) = (fields.next(), fields.next()) {
         let key = entry.split('\n').next().unwrap_or_default();
         // Section and variable names are case-insensitive; the driver
         // (subsection) name is kept as written.
@@ -395,12 +414,17 @@ pub(crate) struct Neutralized {
 /// [`neutralizing_args`] unless they are reading the configuration itself.
 fn run_plain_with(
     program: &Path,
+    ceiling: Option<&Path>,
     cwd: &Path,
     args: &[&str],
 ) -> Result<CommandOutput, GitProviderError> {
     let mut command = Command::new(program);
     command
         .args([
+            // A bare repository is used only when named explicitly (never
+            // found by discovery, where the gate would not look).
+            "-c",
+            "safe.bareRepository=explicit",
             "-c",
             "core.fsmonitor=false",
             "-c",
@@ -423,6 +447,11 @@ fn run_plain_with(
     copy_env_if_present(&mut command, "WINDIR");
     copy_env_if_present(&mut command, "TEMP");
     copy_env_if_present(&mut command, "TMP");
+    // Discovery stops at the workspace root: Git never looks for a
+    // repository (or its configuration) above it.
+    if let Some(ceiling) = ceiling {
+        command.env("GIT_CEILING_DIRECTORIES", plain_path(ceiling));
+    }
 
     command
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -553,6 +582,14 @@ fn read_bounded_inner(
     Ok((kept, truncated))
 }
 
+/// `\\?\C:\x` as `C:\x` (Git does not understand verbatim paths).
+fn plain_path(path: &Path) -> OsString {
+    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => OsString::from(rest),
+        _ => path.as_os_str().to_owned(),
+    }
+}
+
 fn copy_env_if_present(command: &mut Command, name: &str) {
     if let Some(value) = std::env::var_os(name) {
         command.env(name, value);
@@ -637,7 +674,11 @@ mod tests {
         git(&root, &["config", "extensions.worktreeConfig", "true"]);
         git(&root, &["config", "--worktree", "http.sslVerify", "false"]);
         let provider = GitProvider::new(&root).unwrap();
-        let listed = provider.run_git(&root, &REPOSITORY_CONFIG_ARGS).unwrap();
+        // The gate refuses include.path (review of #824); the listing's
+        // parsing is checked here with Git run directly.
+        let _ = provider;
+        let listed =
+            run_plain_with(Path::new("git"), None, &root, &REPOSITORY_CONFIG_ARGS).unwrap();
         let keys = repository_config_keys(&listed.stdout);
         assert!(keys.contains(&"include.path".to_owned()), "{keys:?}");
         assert!(
@@ -778,12 +819,9 @@ mod tests {
         .unwrap();
         git(&root, &["config", "filter.evil.clean", &program_text]);
         git(&root, &["config", "filter.evil.process", &program_text]);
-        fs::write(
-            root.join("extra.gitconfig"),
-            format!("[filter \"other.name\"]\n\tclean = {program_text}\n"),
-        )
-        .unwrap();
-        git(&root, &["config", "include.path", "../extra.gitconfig"]);
+        // Review of #824: includes are refused now, so the second driver is
+        // in the repository's own file.
+        git(&root, &["config", "filter.other.name.clean", &program_text]);
         git(&root, &["config", "gc.auto", "1"]);
         fs::write(root.join("b.txt"), "b\n").unwrap();
         let touch = || {
@@ -822,6 +860,15 @@ mod tests {
             "a provider command ran a repository-configured program: {}",
             fs::read_to_string(&marker).unwrap_or_default()
         );
+        // An include is refused before any Git command runs.
+        fs::write(
+            root.join("extra.gitconfig"),
+            "[core]\n\tquotepath = false\n",
+        )
+        .unwrap();
+        git(&root, &["config", "include.path", "../extra.gitconfig"]);
+        let refused = provider.status(".").unwrap_err();
+        assert_eq!(refused.code, FailureCode::CapabilityDenied);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1037,12 +1084,22 @@ mod tests {
         let control = marker.exists();
         let _ = fs::remove_file(&marker);
 
+        // Review of #824: a repository that configures a signing program is
+        // now refused before any Git command runs in it.
         let provider = GitProvider::new(&root).unwrap();
+        let refused = provider.branch_tip(".", "signed").unwrap_err();
+        assert_eq!(refused.code, FailureCode::CapabilityDenied);
+        git(&root, &["switch", "-q", "signed"]);
+        let refused = provider.log(".", 5).unwrap_err();
+        assert_eq!(refused.code, FailureCode::CapabilityDenied);
+        assert!(!marker.exists(), "a read ran the configured program");
+        // Without the program key, the signed tip reads as before (the
+        // provider never verifies a signature).
+        git(&root, &["config", "--unset", "gpg.program"]);
         let tip = provider.branch_tip(".", "signed").unwrap().unwrap();
         assert_eq!(tip.head, signed);
         assert_eq!(tip.parents, vec![parent]);
         assert_eq!(tip.message, "signed");
-        git(&root, &["switch", "-q", "signed"]);
         provider.log(".", 5).unwrap();
         assert!(!marker.exists(), "a read ran the configured program");
         assert!(

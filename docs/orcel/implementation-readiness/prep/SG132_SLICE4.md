@@ -1,6 +1,7 @@
 # SG-000132 slice 4: process and git operations in `orceld fc-worker`, and the escape routes
 
-Status: implemented and tested on branch `authority/fc-worker-process-git`; not installed. Nothing in this slice was
+Status: implemented and tested on branch `authority/fc-worker-process-git`; not installed. Revision 2 answers the
+independent security review of `b79a8599` (one high, one medium, two lows; listed at the end). Nothing in this slice was
 installed or run elevated, no UAC, Windows Hello or Orcel dialog was shown or answered, and no system, registry,
 firewall or ACL setting changed. Earlier slices: [SG132_SLICE1.md](SG132_SLICE1.md),
 [SG132_SLICE2.md](SG132_SLICE2.md), [SG132_SLICE3.md](SG132_SLICE3.md); installing:
@@ -37,8 +38,17 @@ the person's fresh approval of that exact action. No request capability or MCP t
   `REFUSED_PROGRAMS` by file name, checked on the requested and the resolved path: shells and script hosts (`cmd`,
   `powershell`, `pwsh`, `wsl`, `bash`, `sh`, `wscript`, `cscript`, `mshta`), programs that start other programs
   outside the job on request (`schtasks`, `at`, `wmic`, `explorer`, `rundll32`, `regsvr32`, `bitsadmin`, `dllhost`,
-  `sc`, `runas`, `pcalua`, `forfiles`, `cmstp`, `wt`, `winrs`, `conhost`), and `git` (Git runs only through the
-  hardened git operations, so `-c core.sshCommand=...` or `--upload-pack` can never reach it through `run`).
+  `sc`, `runas`, `pcalua`, `forfiles`, `cmstp`, `wt`, `winrs`, `conhost`), the shells and tools Git for Windows
+  ships (`dash`, `env`, `perl`, `busybox`, `mintty`, `winpty`, `scalar`, `tig`), and every name starting with `git`
+  (`git`, `gitk`, `git-gui`, `git-upload-pack`, ...: Git runs only through the hardened git operations, so
+  `-c core.sshCommand=...` or `--upload-pack` can never reach it through `run`). Nothing under a Git installation
+  (the `...\Git` folder above each `cmd\git.exe` candidate) runs through `run`, whatever its name.
+- **The program started is the one checked (review low 3).** The worker opens the program without write or delete
+  sharing and holds it from its checks until it has started, so the file cannot be written, renamed, deleted or
+  replaced meanwhile; right before the start it resolves the path again and requires the same path and the same
+  file identity (volume serial number and file index), which catches a folder on the path swapped since the checks.
+  The reply names the identity (`program_identity`). The identity is not in the action digest: orceld does not
+  open the user's files before `Authorize` (only the worker does, inside the job); the digest binds the path.
   Allowlist decision: the specs name no fixed program list for one-shot processes (SG-000096 lets a Full User run
   "ordinary user-token commands"; SG-000097 adds application launch), so the allowlist is by location, the roots the
   person authorized at grant, plus the refused names as a cheap extra. When the roots include a whole drive, the
@@ -67,7 +77,41 @@ credential, submodule, gc, checkout or switch to another commit, restore of the 
 hooks installation. Checkout and working-tree restore are left out because they write many files whose names come
 from the repository (links, case-folding) and need their own root checks.
 
-The git operations reuse the existing, reviewed provider (`orcel-provider-git`), as SG-000097 asks:
+The git operations reuse the existing provider (`orcel-provider-git`), as SG-000097 asks; the review's fixes below
+are in the provider, so the Safe-mode git capabilities get them too:
+
+- **Configuration gate (review high 1 and medium 2; `orcel-provider-git/src/repo_config.rs`).** Before any Git
+  command runs, the provider reads the repository's files itself, without Git: from the working folder up to the
+  workspace root, the nearest `.git`; for a `.git` file its `gitdir:`, and the `commondir` of the folder it names;
+  then the `config` and `config.worktree` files they lead to. It refuses a `.git`, `gitdir:` target, `commondir`
+  target or configuration file that is a link or junction; a `gitdir:` or `commondir` naming a network share or a
+  device (`\\host\share`, `//host/share`, `\\?\UNC\...`, `\\.\`); a working folder inside a `.git` folder; and any
+  configuration entry that can make Git run a program, follow an include or use a transport: the whole `hook`
+  section (hooks defined in configuration, `hook.<name>.command` with `hook.<name>.event`, which Git 2.36 and later
+  run despite `core.hooksPath` and `--no-verify`; the review reproduced them on 2.56 from `diff`, `add`,
+  `restore --staged`, `commit --no-verify` and branch creation), `alias`, `include`, `includeIf`, `credential`,
+  `protocol`, `url`, `http`, `uploadpack`, `receivepack`, `sequence`, `gpg`, `pager`, `difftool`, `mergetool`,
+  `guitool`, `browser`, `man`, `instaweb`, `sendemail`, `trace2`; `core.sshCommand`, `gitProxy`, `fsmonitor`,
+  `editor`, `pager`, `askPass`, `hooksPath`, `alternateRefsCommand`, `worktree`; `diff.external`,
+  `diff.<driver>.command` and `.textconv`, `merge.<driver>.driver`, `remote.<name>.uploadpack`, `.receivepack`,
+  `.vcs`, `.proxy`, `submodule.<name>.update`; and any value naming a share or a device (`core.excludesFile`,
+  `core.attributesFile`, `mailmap.file` and the like, which Git would open: an SMB connection sends the user's NTLM
+  credentials). With includes refused and system and global configuration never read, those files are the whole
+  repository configuration. The parser follows Git's syntax (quotes, escapes, `\` continuations, comments, the old
+  `[section.subsection]` form, a byte-order mark) and refuses what it cannot parse. Git's own listing
+  (`config --list --show-scope --no-includes`) is checked against the same rules before every command, in case the
+  two ever read a file differently. Decision: filter drivers stay neutralized rather than refused (every driver's
+  `clean`, `smudge` and `process` emptied on every command, and adding a file a filter attribute names is
+  refused), so repositories set up for Git LFS keep working; the review listed `filter` among sections to deny.
+- **Discovery.** `GIT_CEILING_DIRECTORIES` is the workspace root's parent, so Git never looks for a repository or
+  its configuration above the root, and `-c safe.bareRepository=explicit` refuses a bare repository found by
+  discovery (where the gate does not look). `GIT_DISCOVERY_ACROSS_FILESYSTEM` stays unset (Git's default: no
+  crossing of file system boundaries).
+- **Full Control writes into `.git` (review high 1).** The worker's `write_text` and `mkdir` refuse any path whose
+  resolved parent, or whose existing entry, has a `.git` component (case-insensitive, so `.GIT` and the short name
+  `GIT~1` are caught), so Full Control's filesystem operations cannot plant a configuration, hook or `.git` pointer.
+  Decision: `.gitattributes` and `.gitmodules` stay writable (a filter attribute only makes the add refuse; no
+  submodule operation exists, and status and diff ignore submodules); reads inside `.git` stay allowed.
 
 - The provider's workspace root is the lease root holding the repository, so the repository's top level, its Git
   directory and its common directory must all resolve inside that root (a `.git` file pointing outside is
@@ -106,9 +150,10 @@ program's descendants) never holds orceld's request or reply pipe; the reply lim
 | --- | --- |
 | A child or grandchild leaves the job (`CREATE_BREAKAWAY_FROM_JOB`) | Closed: dispatch jobs never set `BREAKAWAY_OK` or `SILENT_BREAKAWAY_OK`; children inherit the job; nothing in the worker asks for breakaway |
 | Too many processes | `JOB_OBJECT_LIMIT_ACTIVE_PROCESS` 64 (slice 3), unchanged |
-| Window messages, hooks and DDE to processes outside the job; desktops; clipboard; log off and shutdown; system parameters; display settings | Closed by UI restrictions the service now sets on every dispatch job (`win::jobs::JOB_UI_LIMITS`): `HANDLES`, `GLOBALATOMS`, `DESKTOP`, `EXITWINDOWS`, `SYSTEMPARAMETERS`, `DISPLAYSETTINGS`, `READCLIPBOARD`, `WRITECLIPBOARD`. The worker and the programs it runs are headless, so this costs them nothing (the tests run real programs and real Git under these limits) |
+| Window messages, hooks and DDE to processes outside the job; desktops; clipboard; log off and shutdown; system parameters; display settings | Reduced, not closed (review low 4): the service now sets UI restrictions on every dispatch job (`win::jobs::JOB_UI_LIMITS`): `HANDLES`, `GLOBALATOMS`, `DESKTOP`, `EXITWINDOWS`, `SYSTEMPARAMETERS`, `DISPLAYSETTINGS`, `READCLIPBOARD`, `WRITECLIPBOARD`. No job restriction covers synthesized input (`SendInput`), and a `run` program is not necessarily headless (`CREATE_NO_WINDOW` only hides a console; a GUI program can still make windows on the user's desktop). The tests run real programs and real Git under these restrictions. Residual in section 5 |
 | Shell, script host or launcher started directly | Refused by name and kind (`.exe` only, `REFUSED_PROGRAMS`) |
-| Git run outside the hardened operations | Refused: `git.exe` is a refused program name |
+| Git run outside the hardened operations | Refused: names starting with `git` and everything under a Git installation (its shells, Perl, `scalar`, the pack programs) are refused |
+| A repository's configuration runs a program (hooks defined in configuration, aliases, command-valued keys) or names a share | Closed: the configuration gate refuses the repository before any Git command (section 1), in the shared provider |
 | Restricted token, low integrity or a separate desktop for process-family workers | Not done. C-26 replaced the revision 4 and 5 restricted-token profiles with the authority service, FD-UP-9 says executors run on the user's desktop with the user's token, and SG-000096 asks for an ordinary current-user token (not `apps/orcel-contain`'s AppContainer mode). Low integrity would also stop Full User programs writing the user's files. Recorded, not contradicted |
 | COM activation, WMI `Win32_Process.Create`, Task Scheduler (API or `schtasks`), the shell (`ShellExecute` through `explorer.exe`), BITS, services, any other out-of-job broker | Residual (section 5): cannot be closed for a process running as the user |
 
@@ -144,7 +189,12 @@ show it.
 | Run forever or flood orceld | Timeout ends the program (`PROCESS_TIMEOUT`, outcome failed, job terminated); output bounded per stream with counts | `fc_worker_tests::windows::fc_worker_a_run_has_a_timeout_and_bounded_output` |
 | Run a program outside the roots, through a junction or a hard link, or from a working folder outside them | Refused (`PATH_ESCAPE`) by the dispatcher, the service (lexical) and the worker (resolved, link count) | `fc_worker_tests::windows::fc_worker_runs_only_resolved_exe_programs_inside_the_roots`, `full_control_dispatch_tests::fc_dispatch_process_and_git_paths_stay_in_the_roots_and_take_no_free_arguments` |
 | Run a shell, script host, launcher, batch file or Git through `run` | Refused (`CAPABILITY_DENIED`) before anything starts | `fc_worker_tests::windows::fc_worker_runs_only_resolved_exe_programs_inside_the_roots` |
-| A repository's hooks, `core.hooksPath`, fsmonitor, pager, external diff, textconv, filter drivers, signing program, ssh command, askpass or credential helper run a program | None runs through status, add, diff, commit, branch, unstage or log; a filter-attributed file is refused; the same repository with plain Git does run its hook (control) | `fc_worker_tests::windows::fc_worker_git_honors_no_hook_or_hostile_configuration` |
+| A repository's `.git/hooks` or filter drivers run a program | None runs through status, add, diff, commit, branch, unstage or log; a filter-attributed file is refused; the same repository with plain Git does run its hook (control) | `fc_worker_tests::windows::fc_worker_git_honors_no_hook_or_hostile_configuration` |
+| Hooks defined in configuration (`hook.<name>.command` and `.event`: post-index-change from a diff, reference-transaction, post-commit), `core.hooksPath`, fsmonitor, pager, external diff, textconv, signing program, ssh command, askpass or credential helper (review high 1) | The repository is refused before any Git command runs, for reads and mutations; one configured hook is enough; Git on this PC (2.56) and the CI runners does run such hooks (control printed by the provider test) | `fc_worker_tests::windows::fc_worker_git_refuses_a_repository_whose_configuration_runs_programs`; `review824_config_gate::review824_config_defined_hooks_refuse_the_repository_before_git_runs`, `review824_hooks_in_the_worktree_config_and_old_section_forms_are_refused`, `review824_command_valued_keys_and_includes_are_refused` (Linux, macOS and Windows); parser and rules: `repo_config::tests` |
+| A `.git` file, `commondir` or configuration value names a network share or device (NTLM leak; review medium 2) | Refused from the files themselves before Git could open anything | `review824_config_gate::review824_a_git_file_naming_a_share_is_refused_before_git_opens_it`, `review824_command_valued_keys_and_includes_are_refused`, `repo_config::tests::command_valued_and_share_valued_keys_are_refused` |
+| Plant a hook, configuration or `.git` pointer through Full Control's filesystem writes | Refused (`CAPABILITY_DENIED`) | `fc_worker_tests::windows::fc_worker_filesystem_never_writes_into_git_folders` |
+| Swap the program between its checks and its start (review low 3) | The file is held without write or delete sharing; the path is resolved again and its identity compared right before the start | `fc_worker_tests::windows::fc_worker_holds_the_checked_program_and_refuses_the_git_installation` |
+| Run Git for Windows' bundled programs (`scalar`, `git-upload-pack`, `usr\bin` shells and tools) through `run` (review low 4) | Refused by name and by location | `fc_worker_tests::windows::fc_worker_holds_the_checked_program_and_refuses_the_git_installation`, `fc_worker_runs_only_resolved_exe_programs_inside_the_roots` |
 | Argument injection into Git (`-c core.sshCommand=...`, `--upload-pack`, options as paths, pathspec magic, `.git` paths) | No free arguments exist; branch names starting with `-` refused; paths go after `--` as literal pathspecs; a message is only a message | `fc_worker_tests::windows::fc_worker_git_refuses_injected_options_and_repositories_outside_the_roots`, `full_control_dispatch_tests::fc_dispatch_process_and_git_paths_stay_in_the_roots_and_take_no_free_arguments` |
 | A repository outside the roots, or a `.git` file pointing out of them | Refused (`PATH_ESCAPE`) | `fc_worker_tests::windows::fc_worker_git_refuses_injected_options_and_repositories_outside_the_roots` |
 | Run a process or change a repository without the person's approval, or with an approval for another action | The approval comes before `Authorize` and is bound to the digest the service records; a refusal authorizes and runs nothing; no lease, no prompt | `full_control_dispatch_tests::fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_digest`. The Windows approval dialog for these actions: arrives with section 6 |
@@ -156,21 +206,32 @@ show it.
   programs or act for it: COM out-of-process activation (including the Task Scheduler and WMI COM APIs), WMI
   `Win32_Process.Create`, the Task Scheduler, BITS notification commands, services the user may control, the shell
   through `ShellExecute` or an existing shell window, and any other program that launches programs on request. Those
-  processes are not in the job and survive Stop. The UI restrictions close the window-message, hook, DDE and
-  clipboard routes; they do not close RPC, ALPC or COM. Refusing `schtasks`, `wmic`, `explorer`, `rundll32`, `mshta`
+  processes are not in the job and survive Stop. The UI restrictions reduce the window-message, hook, DDE and
+  clipboard routes; they do not close synthesized input, RPC, ALPC or COM. Refusing `schtasks`, `wmic`, `explorer`, `rundll32`, `mshta`
   and the shells by name only stops the obvious direct launches: a renamed copy passes the name check (its single
   name and location in the roots are still required), and any program that can run code (an interpreter, a build
   tool, a program the agent wrote into the roots) can call those brokers itself. This cannot be closed for a
   same-user process without the restricted-token profiles C-26 replaced; the grant prompt's C-27 text says effects
   made through the OS outside Orcel's process trees can persist.
+- **Input and windows (review low 4).** A program started by `run` can synthesize input (`SendInput`) and, if it
+  is a GUI program, make windows on the user's desktop; no Job Object restriction covers synthesized input. The UI
+  restrictions stop it from using window handles of processes outside the job and from the clipboard, atoms,
+  desktops and system settings, not from typing into the focused window. Same-user residual (C-27), like any
+  program the agent could start.
 - **Descendants after a timeout or exit** keep running in the job until the outcome is reported (the service then
   terminates it) or, if reporting fails, until the job's 10-minute limit. They cannot leave the job.
-- **TOCTOU.** A same-user process can swap the program or a path component between the worker's checks and the
-  start, as for filesystem operations (slice 3).
-- **Git's own inputs.** Git reads `include.path` files the repository names, which may lie outside the roots (read
-  only; every program-running key is overridden). Git searches `PATH` for its helpers and Git for Windows' launcher
-  adjusts it; no hook, alias or transport is reachable. A per-user Git install under `%LOCALAPPDATA%` is
-  user-writable, so a same-user agent could replace it; that is a same-user effect like running any program.
+- **TOCTOU.** The program itself cannot change while held, and its path is re-resolved and its identity compared
+  right before the start; a same-user process can still swap a folder on the path in the instant between that
+  re-check and `CreateProcessW` (the standard library cannot start a process suspended to compare afterwards). For
+  filesystem operations the slice 3 residual stands. The configuration gate reads files that a same-user process
+  could change between the gate and Git's own read; Git's listing is checked again before every command, which
+  narrows but does not close that window.
+- **Git's own inputs.** Git searches `PATH` for its helpers and Git for Windows' launcher adjusts it; no hook,
+  alias or transport is reachable. A per-user Git install under `%LOCALAPPDATA%` is user-writable, so a same-user
+  agent could replace it; that is a same-user effect like running any program. Command-valued keys Git adds in a
+  future version are not on the refused list until added; the list is a denylist of known keys (the review's
+  preferred allowlist of tolerated keys would refuse ordinary repositories whose configuration carries editor or
+  tool settings, and is recorded as a possible tightening).
 - **Approval binding.** The per-action approval binds the request (paths, message, branch), not the file contents
   staged at that moment (the Safe-mode git mutation binds that material); the worker's own state check still
   refuses a repository that changed between its read and its write.
@@ -202,9 +263,21 @@ show it.
 At head (Windows, unelevated):
 
 - `cargo test -p orceld --bin orceld -- fc_worker full_control_dispatch`: 11 dispatcher tests (2 new) with a fake
-  service, launcher and approval; 13 `fc_worker` tests (7 new: 6 Windows-only with real jobs, real programs and real
-  Git, plus the helper entry point).
+  service, launcher and approval; 16 `fc_worker` tests (10 new: 9 Windows-only with real jobs, real programs and
+  real Git, plus the helper entry point).
 - `cargo test -p orcel-authority`: unit, `console_harness`, `dispatch_jobs` (UI restrictions read back) and
-  `install_script` suites; `cargo test -p orcel-provider-git` (the provider with an explicit program).
+  `install_script` suites; `cargo test -p orcel-provider-git`: the provider with an explicit program, the
+  configuration gate (`repo_config::tests`, `tests/review824_config_gate.rs`), and the existing suites, of which
+  three now expect the gate's earlier refusal (a signing program, an include, URL and HTTP keys at push preview).
+- `cargo test -p orceld --bin orceld -- git_`: the Safe-mode git capabilities on the gated provider.
 - Some unrelated orceld tests fail on this PC because of its AppData permissions (`InsecureAcl`, before this
   slice); CI runs them.
+
+## Review of `b79a8599` and the answers
+
+| Finding | Answer |
+| --- | --- |
+| High 1: hooks defined in configuration (`hook.<name>.command` and `.event`) run despite `core.hooksPath` and `--no-verify`, from a diff (no approval) and from mutations; `.git/config` writable through `write_text`; same flaw in the Safe-mode provider | The configuration gate in the shared provider refuses the `hook` section and the other command-valued, include, credential, transport and rewrite keys before any Git command, and Git's own listing is checked again before each command; Full Control's filesystem writes refuse `.git` paths; regression tests with real Git, including post-index-change from a diff and reference-transaction (sections 1 and 4). Filter drivers stay neutralized, not refused (Git LFS), recorded as a deviation |
+| Medium 2: `config --list` and `rev-parse` ran before the in-roots check, so a share in `gitdir:` or a path-valued key could make Git open SMB (NTLM leak) | The gate reads the `.git` pointer, `commondir` and configuration files without Git and refuses shares, devices and links; includes are refused; `GIT_CEILING_DIRECTORIES` stops discovery at the root; `safe.bareRepository=explicit` |
+| Low-medium 3: the program could change between the checks and the start | Held without write or delete sharing from the checks to the start; re-resolved with its identity compared right before the start; identity reported. Not in the digest (orceld does not open the user's files before `Authorize`); the remaining instant is in section 5 |
+| Low 4: Git's bundled programs; "Closed" overclaimed for window routes | Names starting with `git`, Git for Windows' shells and tools, and everything under a Git installation are refused; the window row now says reduced, with `SendInput` and GUI windows as residuals |
