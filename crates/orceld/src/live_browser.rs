@@ -583,6 +583,11 @@ pub struct LiveBrowser {
     /// SG-000135 OB-07 (browser_full only): what the challenge detector
     /// last reported for each page that waits for the person, by page id.
     challenges: std::collections::HashMap<String, ChallengeNote>,
+    /// SG-000135 OB-07b: a page of this session was detected as a sign-in
+    /// page. From then on every agent-facing URL of the session shows no
+    /// query or fragment value (`agent_url`): a later URL may carry what the
+    /// person typed (a GET sign-in form). Never cleared.
+    sign_in_seen: bool,
     /// SG-000135 OB-07: the HTTP status of each page's latest committed
     /// navigation that orceld dispatched, with the URL it committed (the
     /// detector counts a status only while the page still shows that URL).
@@ -1103,6 +1108,7 @@ impl LiveBrowser {
             full_access: None,
             navigation_also: None,
             challenges: std::collections::HashMap::new(),
+            sign_in_seen: false,
             page_status: std::collections::HashMap::new(),
             last_challenge_check: None,
             #[cfg(test)]
@@ -3065,6 +3071,9 @@ impl LiveBrowser {
         let reported = self.challenges.get(&page_id).is_some_and(|note| note.gone);
         match challenge_step(detection, waiting, reported) {
             ChallengeStep::Hold(kind, signals) => {
+                if kind == ChallengeKind::SignIn {
+                    self.sign_in_seen = true;
+                }
                 if self.takeover.challenge_detected(&page_id, kind) {
                     self.challenges.insert(
                         page_id,
@@ -3087,6 +3096,18 @@ impl LiveBrowser {
             }
             ChallengeStep::StillGone | ChallengeStep::Later => {}
         }
+    }
+
+    /// SG-000135 OB-07b: a page URL as the agent may read it: every reply
+    /// field that carries a page URL goes through here (the vault scan
+    /// checks it). See `agent_url.rs`.
+    pub fn agent_url(&self, url: &str) -> String {
+        crate::agent_url::agent_url(url, self.sign_in_seen)
+    }
+
+    /// SG-000135 OB-07b: whether a page of this session was a sign-in page.
+    pub fn sign_in_seen(&self) -> bool {
+        self.sign_in_seen
     }
 
     /// SG-000135 OB-07: the pages that wait for the person now ("Needs
@@ -3576,6 +3597,7 @@ mod tests {
             full_access: None,
             navigation_also: None,
             challenges: std::collections::HashMap::new(),
+            sign_in_seen: false,
             page_status: std::collections::HashMap::new(),
             last_challenge_check: None,
             reply_timeout: None,
@@ -3588,6 +3610,32 @@ mod tests {
     /// generation), one on another site is never adopted, a tab that closed
     /// itself is closed for good, and the active page is the worker's
     /// active tab.
+    /// SG-000135 OB-07b: once a page of the session was a sign-in page,
+    /// every agent-facing URL loses its query and fragment values (a GET
+    /// sign-in form puts the password in the query).
+    #[test]
+    fn ob07b_agent_urls_are_redacted_and_strict_after_a_sign_in() {
+        let dir = scratch("ob07b-agent-url");
+        let mut browser = hostless(false, None, &dir);
+        let after_get_sign_in = "https://user:pw@fixture.test/home?user=ann&pw2=hunter2&lang=en";
+        assert!(!browser.sign_in_seen());
+        assert_eq!(
+            browser.agent_url(after_get_sign_in),
+            "https://fixture.test/home?user=ann&pw2=[redacted]&lang=en"
+        );
+        assert_eq!(
+            browser.agent_url("https://fixture.test/a?password=hunter2"),
+            "https://fixture.test/a?password=[redacted]"
+        );
+        browser.sign_in_seen = true;
+        let shown = browser.agent_url(after_get_sign_in);
+        assert_eq!(
+            shown,
+            "https://fixture.test/home?user=[redacted]&pw2=[redacted]&lang=[redacted]"
+        );
+        assert!(!shown.contains("hunter2") && !shown.contains("ann"));
+    }
+
     #[test]
     fn ob03_tabs_follow_the_workers_report() {
         use orcel_browser_host::page_capture::{TabsState, WorkerTab};

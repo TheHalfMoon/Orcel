@@ -102,10 +102,13 @@ const SCANNED_MARKERS: &[(&str, &str)] = &[
         "crates/orceld/src/browser_profiles.rs",
         "fn engine_running(",
     ),
-    ("crates/orceld/src/live_browser.rs", "fn sha256_bytes("),
+    (
+        "crates/orceld/src/live_browser.rs",
+        "pub fn shutdown(mut self)",
+    ),
     (
         "crates/orceld/src/live_dispatch.rs",
-        "fn regex_free_dated_pdfs(",
+        "fn tab_json(view: &TabView)",
     ),
     ("crates/orceld/src/takeover_gate.rs", "fn refused(refusal"),
     ("crates/orceld/src/human_input.rs", "pub(crate) fn in_job("),
@@ -178,8 +181,14 @@ fn opens_module(line: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Whether an attribute line compiles its item only in tests: exactly
+/// `#[cfg(test)]`, or `#[cfg(all(test, ...))]` (test and more).
+fn is_test_cfg(line: &str) -> bool {
+    line == "#[cfg(test)]" || (line.starts_with("#[cfg(all(test, ") && line.ends_with(")]"))
+}
+
 /// The lines of a Rust source outside its test modules, with their line
-/// numbers. Only a `#[cfg(test)]` attribute on an inline module is cut, from
+/// numbers. Only a test-only cfg (`is_test_cfg`) on an inline module is cut, from
 /// the attribute to the module's closing brace at the module's own
 /// indentation (rustfmt's layout). A `#[cfg(test)]` on anything else (a
 /// function, a statement, a `use`, an out-of-line `mod name;`) cuts
@@ -190,7 +199,7 @@ fn production_lines(text: &str) -> Vec<(usize, &str)> {
     let mut keep = vec![true; lines.len()];
     let mut i = 0;
     while i < lines.len() {
-        if lines[i].trim() == "#[cfg(test)]" {
+        if is_test_cfg(lines[i].trim()) {
             let mut j = i + 1;
             while j < lines.len() && {
                 let next = lines[j].trim();
@@ -262,6 +271,16 @@ fn ob07b_production_lines_leave_out_test_modules_only() {
     assert!(!kept.contains(&"    fn t() { \"}\" }"));
     assert!(kept.contains(&"    fn kept() {}"));
     assert!(kept.contains(&"fn last() {}"));
+    // A module only for tests and more is left out; a cfg that is not
+    // test-only cuts nothing.
+    let more = "#[cfg(all(test, windows))]\nmod native {\n    fn n() {}\n}\n\
+                #[cfg(any(test, windows))]\nmod either {\n    fn e() {}\n}\n";
+    let kept: Vec<&str> = production_lines(more)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert!(!kept.contains(&"    fn n() {}"));
+    assert!(kept.contains(&"    fn e() {}"));
     assert!(opens_module("pub(crate) mod a_b {"));
     assert!(!opens_module("mod tests;"));
     assert!(!opens_module("fn mod_x() {"));
@@ -340,5 +359,71 @@ fn ob07b_a_request_body_leaves_the_worker_only_for_an_armed_execution() -> Outco
     ));
     assert_eq!(worker.matches("frame: \"route_request\"").count(), 1);
     assert_eq!(worker.matches("this.executing = true;").count(), 1);
+    Ok(())
+}
+
+/// The reply builders an agent reads page URLs from.
+const REPLY_BUILDERS: &[&str] = &[
+    "crates/orceld/src/live_dispatch.rs",
+    "crates/orceld/src/browser_broker.rs",
+];
+
+#[test]
+fn ob07b_every_agent_facing_url_goes_through_the_sanitizer() -> Outcome {
+    // A reply field that names a page URL ("url", or any key ending in
+    // "url") must be built by `agent_url` (the redacting sanitizer) or
+    // `agent_url::bare` (tab lists); agent_url.rs tests the sanitizer, and
+    // live_browser.rs its strict mode after a sign-in.
+    let root = repo();
+    let mut unsanitized = Vec::new();
+    let mut sanitized = 0;
+    for file in REPLY_BUILDERS {
+        let text = std::fs::read_to_string(root.join(file))?;
+        for (number, line) in production_lines(&text) {
+            if is_comment(line) {
+                continue;
+            }
+            let names_url = line.match_indices("url\":").any(|(at, _)| {
+                line[..at].rfind('"').is_some_and(|open| {
+                    line[open + 1..at]
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c == '_')
+                })
+            });
+            if !names_url {
+                continue;
+            }
+            if line.contains("agent_url(") || line.contains("agent_url::bare") {
+                sanitized += 1;
+            } else {
+                unsanitized.push(format!("{file}:{}: {}", number + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        unsanitized.is_empty(),
+        "agent-facing URL fields without the sanitizer: {unsanitized:#?}"
+    );
+    // open, click, form action, verify (live shapes); open, click, form
+    // action, verify, extract, tab navigation (browser_full); tab list.
+    assert!(
+        sanitized >= 11,
+        "only {sanitized} sanitized URL fields were found"
+    );
+    Ok(())
+}
+
+#[test]
+fn ob07b_the_native_host_keeps_cuas_browser_tooling_compiled_out() -> Outcome {
+    // The vendored cua-driver has its own CDP browser tooling (it types
+    // with Input.insertText); Orcel builds it with `orcel-minimal`, which
+    // compiles that out (P-03).
+    let manifest = std::fs::read_to_string(repo().join("apps/orcel-native-host/Cargo.toml"))?;
+    let line = manifest
+        .lines()
+        .find(|line| line.trim_start().starts_with("cua-driver-core = "))
+        .ok_or("the native host depends on cua-driver-core")?;
+    assert!(line.contains("default-features = false"), "{line}");
+    assert!(line.contains("features = [\"orcel-minimal\"]"), "{line}");
     Ok(())
 }

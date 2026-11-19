@@ -1,6 +1,6 @@
 # OB-07b: saved-login autofill through the browser vault
 
-**Status: decided and implemented on `browser/ob07b-vault-autofill` (SG-000135 work packet OB-07, second half; acceptance FA-I in part). Not merged. The independent security review of 80e6ffe9 confirmed the decision and failed the head on seven findings; section 8 lists each and its fix. Unit and source-scan tests only. No live sign-in, no founder-present run.**
+**Status: decided and implemented on `browser/ob07b-vault-autofill` (SG-000135 work packet OB-07, second half; acceptance FA-I in part). Not merged. The independent security review of 80e6ffe9 confirmed the decision and failed the head on seven findings; section 8 lists each and its fix. The re-review of 67307e87 confirmed them and failed one more item (page URLs in replies); section 9 has its fix. Unit and source-scan tests only. No live sign-in, no founder-present run.**
 
 The first half of OB-07 (PR #810, merge 27b86f0d) hands every sign-in page to the person ([`OB07_CHALLENGE_HANDOFF.md`](OB07_CHALLENGE_HANDOFF.md), section 6: "a sign-in page is handed to the person"). This packet had to decide whether Orcel can instead let the browser's own password manager fill a saved login for a persistent Orcel-managed profile, without Orcel ever handling the secret.
 
@@ -84,7 +84,9 @@ So the only path through the browser's vault that keeps the secret out of Orcel 
 - **Shadow cannot sign in.** A Shadow session that meets a sign-in page ends there. The person signs in once in a Visible session on the same persistent profile. Cookies then carry the sign-in into later Shadow runs, until the site expires them.
 - **Ephemeral profiles keep nothing.** A sign-in in an ephemeral session is lost when the session ends.
 - **No single sign-on across sites, and no sign-in after a lease was used** (section 1).
-- **A GET sign-in form** puts its fields in the URL's query. The host sees that URL to apply the route rules, as for any navigation. Receipts keep only a digest of the URL. Sign-in forms that use GET are rare, and the scan cannot catch them.
+- **A GET sign-in form** puts its fields in the URL's query. The host and orceld see that URL to apply the route rules, as for any navigation, and receipts keep only a digest of it. The agent never sees the values (section 9). The URL's path is shown as it is: a site that puts a secret in the path itself (for example `/reset/<token>`) is not redacted.
+- **`<label for>` text is not read by the secret-field check.** `isSecretField` reads the field's own type, `autocomplete`, name, id, `aria-label` and `placeholder`, and the page's toggle memory. A plain text field whose only hint is a separate `<label>` saying "Password" is not refused by that check. The detector still holds a page with a real password field, and the toggle memory covers a field that was one.
+- **Node swap residual.** A fill acts on the element its locator resolves at that moment, and the locator itself excludes every secret field. A page that swaps the element for an innocuous one between the check and the fill, then copies the typed text elsewhere by its own script, is outside what a read-only check can see. The agent only ever fills values it was approved to type, never a credential.
 - **The toggle memory** covers fields the detector has seen as password fields on that page. It runs before every action and on status reads. A field that is never seen as a password field before it is shown in clear, and has no secret-looking name, label or placeholder, is not covered.
 - **The detector's known false negatives stay** (OB07_CHALLENGE_HANDOFF.md, section 2). For example, a password field with no form and no button is not flagged. Fill and type stay refused on it either way.
 - **A person's saved passwords live in the profile folder,** encrypted by the engine under the person's Windows account. Orcel's tools never expose profile files. A local process running as the same Windows account is outside what Orcel can stop.
@@ -109,3 +111,18 @@ The independent review confirmed the decision and failed the head. Each finding 
 5. **Low: missing tokens and a substring-only selector check.** Fixed: the HTTP-auth, typing, recording and `postData` tokens; `Cookies` with path separators; the native host's own sources; PIN in `NOT_SECRET`. The selector substring test is replaced by behavioural fill tests.
 6. **Low: fill checked the field only before focus.** Fixed: it checks again after focus.
 7. **Info.** The #810 merge (27b86f0d) and the OB-10 future mechanism are recorded.
+
+## 9. After the re-review of 67307e87: page URLs the agent reads
+
+The re-review confirmed all seven fixes and failed the head on one item: agent-facing replies returned the full committed URL, query and fragment included. After a person's GET sign-in, the agent's next reply could carry `?password=...` to the MCP client (and later, through OB-09, off the machine). Only the tab list stripped the query.
+
+**Fix: one sanitizer** (`crates/orceld/src/agent_url.rs`) for every page URL in an agent-facing reply. That covers the live `browser_structured` shapes (open, click, form action, verify) and `browser_full` (open, click, fill and select, verify, extract, a new tab's navigation). The tab list keeps the stricter `bare` form from the same module (no query or fragment at all). `needs_you`, snapshots and errors carry no URL. Receipts digest the reply as sent, so they digest the sanitized URL. `LiveBrowser::agent_url` applies the rules:
+
+- Userinfo (`user:password@`) is always dropped.
+- The scheme, host and path are kept. A URL that is not http or https shows only its scheme (`about:blank` stays).
+- A query or fragment parameter keeps its name. Its value becomes `[redacted]` when the name looks secret: it contains, case-insensitively and after `%XX` decoding, pass, pw, secret, token, otp, code, key, auth, session, sid, sig, signature, credential, cred, saml, assertion, ticket, jwt, bearer, access, refresh or nonce, or it has `pin` as a whole word. A token-like name (a run of 16 or more token characters, or longer than 64) is redacted too.
+- A bare query item (no `=`) is kept only when it is short, not token-like and not secret-looking.
+- A fragment with `=` is read as parameters (the OAuth implicit flow's `#access_token=...`). Any other fragment is a plain anchor. It is kept only when it is at most 64 characters, has no run of 16 or more token characters and is not secret-looking; otherwise it becomes `[redacted]`.
+- **After a sign-in page:** once the detector saw a `sign_in` page in the session, every query and fragment value and every bare query item is redacted for the rest of the session, whatever the names. Any later URL may carry what the person typed. The flag is per session and never cleared, the cheapest form that fails closed. Plain anchor fragments keep the rule above. `browser_structured` has no detector (its gate is off), so only the name rules apply there.
+
+The agent keeps the path and the parameter names, enough to know where it is. Tests: `agent_url.rs` checks each rule, including the strict mode and the tab form. `live_browser.rs` checks the session's switch to strict after a sign-in. The vault scan requires every reply field named `url` (or ending in `url`) in `live_dispatch.rs` and `browser_broker.rs` to be built by `agent_url` or `agent_url::bare`, at least 11 of them. It also now cuts `#[cfg(all(test, ...))]` modules as test code, and it checks that the native host keeps cua-driver-core on `orcel-minimal` with default features off.
