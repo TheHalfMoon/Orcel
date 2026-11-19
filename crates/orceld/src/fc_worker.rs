@@ -112,7 +112,6 @@ pub(crate) enum WorkerOp {
     },
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl WorkerOp {
     pub(crate) fn family(&self) -> Family {
         match self {
@@ -133,9 +132,17 @@ impl WorkerOp {
     }
 
     /// Whether the operation needs the person's fresh per-action approval
-    /// before Authorize (SG-000096: every new process; git operations that
-    /// change the repository). Filesystem operations and git reads do not
-    /// ask in this slice (SG132_SLICE4.md).
+    /// before Authorize (SG-000096 A3: every new process; git operations
+    /// that change the repository), on every call: standing approvals
+    /// (WP1-14) do not exist yet.
+    ///
+    /// Founder decision of 2026-11-19 (SG132_SLICE8.md, amending decision 2
+    /// of FC_TOOL_SURFACE_OPTIONS.md for these two operations only): the
+    /// Full Control file writes, `write_text` and `mkdir`, are covered by
+    /// the lease the person granted with Windows Hello and ask nothing per
+    /// call; their roots, link and `.git` checks, the service's
+    /// audit-first `Authorize` and the dispatch job still apply. Reads
+    /// (filesystem and git) ask nothing, like the Safe-mode read tools.
     pub(crate) fn needs_approval(&self) -> bool {
         matches!(
             self,

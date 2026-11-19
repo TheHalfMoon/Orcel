@@ -293,7 +293,9 @@ show it.
    the capability names, the tool shapes and their documentation are product decisions the specs leave open
    (SG-000097 and SG-000096 name the behaviour, not the tools), so this slice stops at the dispatcher. That slice
    adds the production `ActionApproval` over orceld's `ApprovalBroker` (Windows dialog, digest-bound, SOFT class),
-   the MCP client principal, and the contract tests.
+   the MCP client principal, and the contract tests. Done for orceld in [SG132_SLICE8.md](SG132_SLICE8.md) (founder
+   decision of 2026-11-19: `fc.fs`, `fc.process`, `fc.git`, `fc.status`; file writes covered by the lease, program
+   runs and Git changes asking on every call); the MCP tools are its next step.
 2. Checkout and switch to other commits, and working-tree restore, with root and link checks on every file they
    write.
 3. SG-000096 interactive shells (ConPTY, PowerShell, cmd, Git Bash, WSL) in service-made jobs: they need a job

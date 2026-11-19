@@ -58,11 +58,8 @@ use std::cell::RefCell;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Family {
     DesktopInput,
-    #[cfg_attr(not(test), allow(dead_code))]
     Filesystem,
-    #[cfg_attr(not(test), allow(dead_code))]
     Process,
-    #[cfg_attr(not(test), allow(dead_code))]
     Git,
 }
 
@@ -184,10 +181,10 @@ pub(crate) trait AuthorityPort {
 
 /// The person's fresh approval of one worker operation (SG-000096's
 /// per-action SOFT approval), asked through orceld's approval broker, whose
-/// prompt is a Windows dialog, never an in-app control. The production
-/// adapter arrives with the request-side capabilities (SG132_SLICE4.md);
-/// until then nothing reaches [`run_in_worker`] outside tests.
-#[cfg_attr(not(test), allow(dead_code))]
+/// prompt is a Windows dialog, never an in-app control. SG132_SLICE8.md:
+/// the production adapter is `fc_requests::BrokerApproval`, used by the
+/// `fc.*` request capabilities; which operations ask is
+/// [`crate::fc_worker::WorkerOp::needs_approval`].
 pub(crate) trait ActionApproval {
     /// Asks the person to approve `op`, whose digest the service will
     /// record; an error (`APPROVAL_DENIED`, `APPROVAL_UNAVAILABLE`, ...)
@@ -452,10 +449,10 @@ pub(crate) fn record_outcome<T>(
 /// the request's own arguments (so the digest the service records is over
 /// exactly what runs), the person's per-action approval where the operation
 /// needs one, authorize, run it in `orceld fc-worker` inside the dispatch's
-/// Job Object, report the outcome. Its request-facing caller (SG-000097's
-/// and SG-000096's capabilities and MCP tools) is the next WP1-15 slice
-/// (SG132_SLICE4.md).
-#[cfg_attr(not(test), allow(dead_code))]
+/// Job Object, report the outcome. SG132_SLICE8.md: its request-facing
+/// caller is `fc_requests` (`fc.fs`, `fc.process`, `fc.git`), which names
+/// the calling client's reference as `principal_id`; the MCP tools are the
+/// next slice.
 pub(crate) fn run_in_worker(
     port: &dyn AuthorityPort,
     launcher: &dyn WorkerLauncher,
