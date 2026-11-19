@@ -206,9 +206,9 @@ lease. A Hello failure cancels the intent.
   only an active, signature-verified, service-issued desktop lease of this user and logon session counts, and
   the service's `Authorize` (DesktopInput, audit first) must allow it; an unreachable service refuses, never
   falls back. Without the service, the deprecated store check is unchanged. Residual: the desktop gate names the
-  lease's own principal in `Authorize` (orceld does not know the MCP client at that gate); WP1-12's dispatcher
+  lease's own principal in `Authorize` (orceld does not know the MCP client at that gate); WP1-10's dispatcher
   carries the real client.
-- Next: WP1-12 moves every lease-gated executor behind `Authorize` with Job Objects, then the store is retired.
+- Next: WP1-10 moves every lease-gated executor behind `Authorize` with Job Objects, then the store is retired.
   The dispatcher, the service-made Job Objects and `orceld fc-worker` are in [SG132_SLICE3.md](SG132_SLICE3.md).
 
 ## 6. Threat model updates (same-user agent with Full Control)

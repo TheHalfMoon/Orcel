@@ -184,7 +184,7 @@ commands. Every failure is `AUTHORITY_UNAVAILABLE`; nothing falls back to the us
 issuance is replaced by the service's grant flow; interim-store leases end at migration and are never converted.
 
 Desktop lease migration plan (SG-000095 path, unchanged in this slice): (1) slice 2 adds enrollment and the
-user-session grant CLI; (2) WP1-12's `full_control_dispatch.rs` calls `Authorize` before every DesktopInput
+user-session grant CLI; (2) WP1-10's `full_control_dispatch.rs` calls `Authorize` before every DesktopInput
 dispatch and `uia.rs` switches from `full_control_store::check_current_desktop_input` to it; (3) once a
 service-issued desktop lease works end to end, issuance in `orcel-lifecycle/src/full_control.rs` is removed and
 the per-user `authority.key` store is retired. Until step 2 the user-readable store remains the desktop path's

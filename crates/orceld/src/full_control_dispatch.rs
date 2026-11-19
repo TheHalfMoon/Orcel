@@ -1,5 +1,7 @@
-//! SG-000132 WP1-12: the Full Control dispatcher, the only path a
+//! SG-000132 WP1-10: the Full Control dispatcher, the only path a
 //! lease-gated executor (desktop input, filesystem, process, git) takes.
+//! The worker operations themselves (filesystem, process, git) are WP1-15's
+//! executors (SG-000097, SG-000096).
 //!
 //! For every dispatch it:
 //!
@@ -9,7 +11,10 @@
 //! 2. finds an active lease of this Windows user and logon session that the
 //!    verified service reported and whose ECDSA signature verified with the
 //!    service's key, and that covers the family (executor, client principal,
-//!    roots for paths);
+//!    roots for paths); a process run or a git operation that changes the
+//!    repository then needs the person's fresh per-action approval
+//!    ([`ActionApproval`], SG-000096), bound to the action digest, before
+//!    anything is authorized;
 //! 3. asks the service's `Authorize`, which checks lease, epoch, binding,
 //!    executor and roots again and writes its audit record before it
 //!    answers; for the filesystem and process/git families the answer must
@@ -77,9 +82,11 @@ impl Family {
     }
 
     /// Whether the family names the paths it touches (checked against the
-    /// lease's roots here and by the service).
+    /// lease's roots here and by the service): the path of a filesystem
+    /// operation, the working folder and program of a run, the repository
+    /// of a git operation.
     pub(crate) fn names_paths(self) -> bool {
-        matches!(self, Self::Filesystem | Self::Git)
+        matches!(self, Self::Filesystem | Self::Process | Self::Git)
     }
 
     pub(crate) fn as_str(self) -> &'static str {
@@ -164,6 +171,24 @@ pub(crate) trait AuthorityPort {
     fn release_job_handle(&self, handle: u64);
 }
 
+/// The person's fresh approval of one worker operation (SG-000096's
+/// per-action SOFT approval), asked through orceld's approval broker, whose
+/// prompt is a Windows dialog, never an in-app control. The production
+/// adapter arrives with the request-side capabilities (SG132_SLICE4.md);
+/// until then nothing reaches [`run_in_worker`] outside tests.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) trait ActionApproval {
+    /// Asks the person to approve `op`, whose digest the service will
+    /// record; an error (`APPROVAL_DENIED`, `APPROVAL_UNAVAILABLE`, ...)
+    /// refuses it before anything is authorized.
+    fn approve(
+        &self,
+        op: &crate::fc_worker::WorkerOp,
+        request: &RequestEnvelope,
+        action_digest: &str,
+    ) -> Result<(), ProviderError>;
+}
+
 /// Runs a worker operation inside a dispatch job (`fc_worker::JobLauncher`
 /// on Windows; a fake in tests).
 pub(crate) trait WorkerLauncher {
@@ -237,6 +262,18 @@ pub(crate) fn authorize(
     action: &Action<'_>,
     now_ms: u64,
 ) -> Result<Ticket, ProviderError> {
+    authorize_with(port, action, now_ms, &|_| Ok(()))
+}
+
+/// [`authorize`], calling `before` with the action digest once a lease
+/// covers the action and before the service is asked (the per-action
+/// approval; a refusal there authorizes nothing).
+fn authorize_with(
+    port: &dyn AuthorityPort,
+    action: &Action<'_>,
+    now_ms: u64,
+    before: &dyn Fn(&str) -> Result<(), ProviderError>,
+) -> Result<Ticket, ProviderError> {
     if !port.installed() {
         return match action.family {
             // DEPRECATED path, unchanged: only where no service exists.
@@ -304,6 +341,8 @@ pub(crate) fn authorize(
             )
         }));
     };
+    let digest = action_digest(action, now_ms);
+    before(&digest)?;
     let claims = AuthorizeClaims {
         request_id: request_id_for_audit(action.request, now_ms),
         capability: action.request.capability.clone(),
@@ -313,7 +352,7 @@ pub(crate) fn authorize(
             .map(str::to_owned)
             .unwrap_or_else(|| body.principal_id.clone()),
         task: body.task.clone(),
-        action_digest: action_digest(action, now_ms),
+        action_digest: digest,
         origin: None,
         paths: (!action.paths.is_empty()).then(|| action.paths.clone()),
     };
@@ -394,14 +433,16 @@ pub(crate) fn record_outcome<T>(
 
 /// The filesystem, process and git families end to end: the operation is
 /// the request's own arguments (so the digest the service records is over
-/// exactly what runs), authorize, run it in `orceld fc-worker` inside the
-/// dispatch's Job Object, report the outcome. Its request-facing caller
-/// (SG-000097's filesystem, process and git capabilities) is a later WP1-12
-/// step.
+/// exactly what runs), the person's per-action approval where the operation
+/// needs one, authorize, run it in `orceld fc-worker` inside the dispatch's
+/// Job Object, report the outcome. Its request-facing caller (SG-000097's
+/// and SG-000096's capabilities and MCP tools) is the next WP1-15 slice
+/// (SG132_SLICE4.md).
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn run_in_worker(
     port: &dyn AuthorityPort,
     launcher: &dyn WorkerLauncher,
+    approval: &dyn ActionApproval,
     request: &RequestEnvelope,
     principal_id: Option<&str>,
     now_ms: u64,
@@ -425,7 +466,14 @@ pub(crate) fn run_in_worker(
         principal_id,
         paths: op.paths(),
     };
-    let ticket = authorize(port, &action, now_ms)?;
+    let approve = |digest: &str| {
+        if op.needs_approval() {
+            approval.approve(&op, request, digest)
+        } else {
+            Ok(())
+        }
+    };
+    let ticket = authorize_with(port, &action, now_ms, &approve)?;
     let Ticket::Service(grant) = &ticket else {
         return Err(unavailable(
             "Full Control worker operations run only through the Orcel authority service",

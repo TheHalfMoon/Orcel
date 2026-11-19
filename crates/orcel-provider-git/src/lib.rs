@@ -39,6 +39,9 @@ impl GitProviderError {
 #[derive(Debug, Clone)]
 pub struct GitProvider {
     workspace_root: PathBuf,
+    /// The Git program: `git` (found by the OS's program search) unless
+    /// [`GitProvider::with_program`] named an absolute path.
+    program: PathBuf,
 }
 
 #[derive(Debug)]
@@ -63,6 +66,27 @@ impl GitProvider {
         }
         Ok(Self {
             workspace_root: root,
+            program: PathBuf::from("git"),
+        })
+    }
+
+    /// As [`GitProvider::new`], running the Git program at `program`, an
+    /// absolute path to an existing file, so no program search happens
+    /// (SG-000132's `orceld fc-worker` resolves the program itself).
+    pub fn with_program(
+        workspace_root: impl AsRef<Path>,
+        program: impl Into<PathBuf>,
+    ) -> Result<Self, GitProviderError> {
+        let program = program.into();
+        if !program.is_absolute() || !program.is_file() {
+            return Err(GitProviderError::new(
+                FailureCode::ProviderUnavailable,
+                "the Git program is an absolute path to an existing file",
+            ));
+        }
+        Ok(Self {
+            program,
+            ..Self::new(workspace_root)?
         })
     }
 
@@ -247,10 +271,10 @@ impl GitProvider {
     }
 
     fn run_git_raw(&self, cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderError> {
-        let neutral = neutralizing_args(cwd)?;
+        let neutral = neutralizing_args_with(&self.program, cwd)?;
         let mut all: Vec<&str> = neutral.args.iter().map(String::as_str).collect();
         all.extend_from_slice(args);
-        run_plain(cwd, &all)
+        run_plain_with(&self.program, cwd, &all)
     }
 }
 
@@ -290,7 +314,12 @@ pub(crate) fn repository_config_keys(listed: &str) -> Vec<String> {
 /// in that window is not seen. Closing it needs one Git process for
 /// both, which Git does not offer.
 pub(crate) fn neutralizing_args(cwd: &Path) -> Result<Neutralized, GitProviderError> {
-    let listed = run_plain(cwd, &["config", "--list", "-z"])?;
+    neutralizing_args_with(Path::new("git"), cwd)
+}
+
+/// [`neutralizing_args`] with the Git program at `program`.
+fn neutralizing_args_with(program: &Path, cwd: &Path) -> Result<Neutralized, GitProviderError> {
+    let listed = run_plain_with(program, cwd, &["config", "--list", "-z"])?;
     if listed.stdout_truncated {
         return Err(GitProviderError::new(
             FailureCode::ProviderUnavailable,
@@ -364,8 +393,12 @@ pub(crate) struct Neutralized {
 
 /// Runs Git with the hardened environment only; callers add
 /// [`neutralizing_args`] unless they are reading the configuration itself.
-fn run_plain(cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderError> {
-    let mut command = Command::new("git");
+fn run_plain_with(
+    program: &Path,
+    cwd: &Path,
+    args: &[&str],
+) -> Result<CommandOutput, GitProviderError> {
+    let mut command = Command::new(program);
     command
         .args([
             "-c",

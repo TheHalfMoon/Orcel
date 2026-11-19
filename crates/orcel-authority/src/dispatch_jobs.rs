@@ -1,4 +1,4 @@
-//! WP1-12 (SG-000132): the Job Object of each Full Control dispatch.
+//! WP1-10 (SG-000132): the Job Object of each Full Control dispatch.
 //!
 //! For the filesystem and shell/process executors (filesystem, process and
 //! git operations), `Authorize` creates a fresh UNNAMED Job Object for that
@@ -10,7 +10,8 @@
 //! handle, asks `DispatchActive` whether the authorization still stands, and
 //! only then resumes it (otherwise it terminates the worker). The job is
 //! kill-on-close with no breakaway limit, so nothing the worker starts can
-//! leave it.
+//! leave it, and carries UI restrictions (`win::jobs::JOB_UI_LIMITS`, WP1-15)
+//! that close window-message, DDE, desktop and clipboard routes out of it.
 //!
 //! No names: review of `291e045e` showed a standard user can create
 //! `Global\` objects and hold a named job open past its end, so a name could
@@ -288,6 +289,16 @@ impl AuthorityCore {
             "max_age_ms": JOB_MAX_MS,
             "kill_on_close": true,
             "breakaway": false,
+            "ui_restrictions": [
+                "handles",
+                "global_atoms",
+                "desktop",
+                "exit_windows",
+                "system_parameters",
+                "display_settings",
+                "read_clipboard",
+                "write_clipboard",
+            ],
             "client_access": "JOB_OBJECT_ASSIGN_PROCESS (duplicated handle)",
         })
     }

@@ -196,7 +196,7 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
         uac: Box::new(super::uac::MachineUacPolicy),
         events,
         entropy: Box::new(SystemEntropy),
-        // WP1-12: unnamed dispatch jobs, an assign-only handle duplicated
+        // WP1-10: unnamed dispatch jobs, an assign-only handle duplicated
         // into the Authorize caller, whose process the connection opens
         // into `client_slot` while impersonating it.
         jobs: Box::new(super::jobs::ServiceJobs::new(client_slot.clone())),
@@ -366,7 +366,7 @@ fn serve_connection(mut conn: Pipe, core: &Arc<Mutex<AuthorityCore>>, serving: &
                     {
                         let _ = guard.enroll_scripted(&facts.user_sid);
                     }
-                    // WP1-12: an Authorize may duplicate a job handle into
+                    // WP1-10: an Authorize may duplicate a job handle into
                     // its caller: open the caller's process now, as the
                     // client, checked against the observed instance. The
                     // core lock is held, so the slot is this request's.

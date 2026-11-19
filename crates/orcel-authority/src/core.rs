@@ -55,7 +55,7 @@
 // to the core's own audit and Event Log paths).
 #[path = "chain_anchor.rs"]
 pub mod chain_anchor;
-// WP1-12: the unnamed Job Object each filesystem and shell/process dispatch
+// WP1-10: the unnamed Job Object each filesystem and shell/process dispatch
 // runs in, created and held by the service, and the dispatch outcomes.
 #[path = "dispatch_jobs.rs"]
 pub mod dispatch_jobs;
@@ -109,7 +109,7 @@ const ENROLL_DOMAIN: &[u8] = b"orcel-authority-enrollment-challenge/1\n";
 /// What this slice does not do yet; returned by `Status` and `Authorize`.
 pub const DEFERRED: [&str; 8] = [
     "TPM attestation freshness and AIK revocation checks (see SG132_SLICE2.md)",
-    "a service-owned Job Object for the desktop input host (WP1-12 gives one to every filesystem and shell/process dispatch)",
+    "a service-owned Job Object for the desktop input host (WP1-10 gives one to every filesystem and shell/process dispatch)",
     "standing approvals (spec 4.15)",
     "indicator heartbeat",
     "TPM-backed signing key (the key is a CNG software key wrapped by DPAPI)",
@@ -201,7 +201,7 @@ pub struct Services {
     pub uac: Box<dyn UacPolicy>,
     pub events: Box<dyn EventSink>,
     pub entropy: Box<dyn Entropy>,
-    /// WP1-12: creates and terminates the dispatch Job Objects.
+    /// WP1-10: creates and terminates the dispatch Job Objects.
     pub jobs: Box<dyn dispatch_jobs::JobHost>,
     pub clock: fn() -> u64,
 }
@@ -391,10 +391,10 @@ pub struct AuthorityCore {
     /// Confirmations requests asked for (enrollment), for the runtime to
     /// render outside the lock.
     pending_confirmations: Vec<ConfirmationTask>,
-    /// WP1-12: the dispatch Job Objects the service holds (in memory only:
+    /// WP1-10: the dispatch Job Objects the service holds (in memory only:
     /// a restarted service holds no handle, so kill-on-close ended them).
     jobs: Vec<dispatch_jobs::HeldJob>,
-    /// WP1-12: authorizations whose outcome orceld has not reported yet.
+    /// WP1-10: authorizations whose outcome orceld has not reported yet.
     open_dispatches: std::collections::VecDeque<dispatch_jobs::OpenDispatch>,
 }
 
@@ -715,7 +715,7 @@ impl AuthorityCore {
         let role = self.policy.classify(caller);
         let op = request.op();
         let result = self.dispatch(caller, role, request);
-        // WP1-12: a lease this request ended (revoke, stop, enrollment)
+        // WP1-10: a lease this request ended (revoke, stop, enrollment)
         // takes its Job Objects with it before the answer leaves.
         self.sweep_jobs();
         if let Err(error) = &result {
@@ -2015,11 +2015,11 @@ impl AuthorityCore {
                 }
             }
         }
-        // WP1-12: paths lie inside the lease's roots; a filesystem
+        // WP1-10: paths lie inside the lease's roots; a filesystem
         // dispatch names at least one.
         Self::check_dispatch_paths(&body.scope, executor, claims.paths.as_deref())?;
         let authorization_id = format!("az-{}", hex(&self.random(16)?));
-        // WP1-12: the dispatch's Job Object exists before the allow record
+        // WP1-10: the dispatch's Job Object exists before the allow record
         // names it; if the record cannot be written the job is terminated.
         let job = self.create_dispatch_job(caller, executor, lease_id, &authorization_id)?;
         let job_id = job.as_ref().map(|job| job.id.clone());
@@ -2201,7 +2201,7 @@ impl AuthorityCore {
                 self.end_lease(index, LeaseState::Expired, now);
             }
         }
-        // WP1-12: idle dispatch jobs are closed; jobs of ended leases go.
+        // WP1-10: idle dispatch jobs are closed; jobs of ended leases go.
         self.reap_idle_jobs(now);
         self.sweep_jobs();
         if ended.is_empty() {

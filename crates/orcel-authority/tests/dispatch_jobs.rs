@@ -1,4 +1,4 @@
-//! WP1-12 (SG-000132): the dispatch Job Objects the service makes, created
+//! WP1-10 (SG-000132): the dispatch Job Objects the service makes, created
 //! for real in this unelevated test process. The test process plays both
 //! sides: the service (creating the unnamed job and holding the full
 //! handle) and orceld (receiving the duplicated assign-only handle).
@@ -18,7 +18,8 @@
 use orcel_authority::caller::CallerFacts;
 use orcel_authority::core::dispatch_jobs::{DispatchJob, JobHost};
 use orcel_authority::win::jobs::{
-    active_processes, create_job, limit_flags, ClientProcess, ClientSlot, ServiceJobs,
+    active_processes, create_job, limit_flags, ui_limits, ClientProcess, ClientSlot, ServiceJobs,
+    JOB_UI_LIMITS,
 };
 use std::io::Write;
 use std::os::windows::io::AsRawHandle;
@@ -138,7 +139,7 @@ fn exits_within(child: &mut Child, limit: Duration) -> Option<i32> {
 }
 
 #[test]
-fn wp112_the_duplicated_handle_carries_assign_process_only() {
+fn wp110_the_duplicated_handle_carries_assign_process_only() {
     let (facts, slot) = me();
     let mut jobs = ServiceJobs::new(slot.clone());
     let job = service_job(&mut jobs, &slot, &facts);
@@ -164,7 +165,7 @@ fn wp112_the_duplicated_handle_carries_assign_process_only() {
 }
 
 #[test]
-fn wp112_a_job_is_made_only_for_the_observed_caller_instance() {
+fn wp110_a_job_is_made_only_for_the_observed_caller_instance() {
     let (facts, slot) = me();
     let mut jobs = ServiceJobs::new(slot.clone());
     // Another PID than the opened process: refused.
@@ -192,12 +193,16 @@ fn wp112_a_job_is_made_only_for_the_observed_caller_instance() {
 }
 
 #[test]
-fn wp112_the_job_kills_on_close_and_allows_no_breakaway() {
+fn wp110_the_job_kills_on_close_and_allows_no_breakaway() {
     let job = create_job().expect("create the job");
     let flags = limit_flags(job.0).expect("limits");
     assert_ne!(flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0);
     assert_eq!(flags & JOB_OBJECT_LIMIT_BREAKAWAY_OK, 0);
     assert_eq!(flags & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK, 0);
+    // WP1-15: the UI restrictions (USER handles, atoms, desktop, clipboard,
+    // exit, system parameters, display settings) are set on every job.
+    assert_eq!(ui_limits(job.0).expect("UI restrictions"), JOB_UI_LIMITS);
+    assert_eq!(JOB_UI_LIMITS, 0xff);
 
     let mut child = helper("breakaway");
     assign(job.0, &child);
@@ -223,7 +228,7 @@ fn wp112_the_job_kills_on_close_and_allows_no_breakaway() {
 }
 
 #[test]
-fn wp112_the_service_terminates_a_dispatch_job_within_a_second() {
+fn wp110_the_service_terminates_a_dispatch_job_within_a_second() {
     let (facts, slot) = me();
     let mut jobs = ServiceJobs::new(slot.clone());
     let job = service_job(&mut jobs, &slot, &facts);

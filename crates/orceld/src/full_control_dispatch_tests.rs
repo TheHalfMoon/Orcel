@@ -1,11 +1,14 @@
-//! SG-000132 WP1-12: the Full Control dispatcher against a fake authority
-//! service and a fake worker launcher, on every OS. The real Job Objects and
-//! the real `orceld fc-worker` are in `fc_worker_tests.rs` (Windows).
+//! SG-000132 WP1-10: the Full Control dispatcher against a fake authority
+//! service, a fake worker launcher and a fake per-action approval, on every
+//! OS, including the WP1-15 process and git families (SG132_SLICE4.md). The
+//! real Job Objects and the real `orceld fc-worker` are in
+//! `fc_worker_tests.rs` (Windows).
 
 use crate::fc_worker::WorkerOp;
 use crate::full_control_dispatch::{
     action_digest, authorize, desktop_gate, run_in_worker as dispatch_worker,
-    with_desktop_outcomes, Action, AuthorityPort, Family, JobGrant, Ticket, WorkerLauncher,
+    with_desktop_outcomes, Action, ActionApproval, AuthorityPort, Family, JobGrant, Ticket,
+    WorkerLauncher,
 };
 use orcel_authority::lease::{
     BrowserFamily, GrantEvidence, LeaseBody, LeaseScope, ObservedRequester, LEASE_CONTRACT,
@@ -235,6 +238,34 @@ impl WorkerLauncher for FakeLauncher {
     }
 }
 
+/// A fake per-action approval: what it was asked, and its answer.
+#[derive(Default)]
+pub(crate) struct FakeApproval {
+    pub(crate) deny: bool,
+    pub(crate) asked: RefCell<Vec<(String, String)>>,
+}
+
+impl ActionApproval for FakeApproval {
+    fn approve(
+        &self,
+        op: &WorkerOp,
+        _request: &RequestEnvelope,
+        action_digest: &str,
+    ) -> Result<(), ProviderError> {
+        self.asked
+            .borrow_mut()
+            .push((op.name().to_owned(), action_digest.to_owned()));
+        if self.deny {
+            Err(ProviderError::new(
+                FailureCode::ApprovalDenied,
+                "the person declined",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 fn launcher(service: &FakePort) -> FakeLauncher {
     FakeLauncher {
         service: service.clone(),
@@ -271,7 +302,14 @@ fn run_in_worker(
     let mut request = base.clone();
     request.operation = op.name().to_owned();
     request.arguments = serde_json::to_value(op).expect("op");
-    dispatch_worker(port, launcher, &request, principal_id, now_ms)
+    dispatch_worker(
+        port,
+        launcher,
+        &FakeApproval::default(),
+        &request,
+        principal_id,
+        now_ms,
+    )
 }
 
 fn code<T: std::fmt::Debug>(result: Result<T, ProviderError>) -> Option<FailureCode> {
@@ -370,7 +408,7 @@ fn fc_dispatch_a_wrong_family_or_scope_is_refused_before_authorize() {
             family: Family::Process,
             request: &fs_request(),
             principal_id: None,
-            paths: Vec::new(),
+            paths: vec![r"C:\work".to_owned(), r"C:\work\tool.exe".to_owned()],
         },
         5,
     );
@@ -390,17 +428,23 @@ fn fc_dispatch_a_wrong_family_or_scope_is_refused_before_authorize() {
         code(run(read_op(r"C:\work\a.txt"), Some("cl-another"))),
         Some(FailureCode::CapabilityDenied)
     );
-    let git_without_paths = authorize(
-        &port,
-        &Action {
-            family: Family::Git,
-            request: &fs_request(),
-            principal_id: None,
-            paths: Vec::new(),
-        },
-        5,
-    );
-    assert_eq!(code(git_without_paths), Some(FailureCode::InvalidRequest));
+    for family in [Family::Git, Family::Process] {
+        let without_paths = authorize(
+            &port,
+            &Action {
+                family,
+                request: &fs_request(),
+                principal_id: None,
+                paths: Vec::new(),
+            },
+            5,
+        );
+        assert_eq!(
+            code(without_paths),
+            Some(FailureCode::InvalidRequest),
+            "{family:?}"
+        );
+    }
     assert!(
         port.0.borrow().authorized.is_empty(),
         "no refusal reached Authorize"
@@ -538,7 +582,14 @@ fn fc_dispatch_the_operation_is_the_request_arguments_or_nothing() {
     ] {
         let mut request = fs_request();
         request.arguments = arguments.clone();
-        let refused = dispatch_worker(&port, &launcher(&port), &request, None, 5);
+        let refused = dispatch_worker(
+            &port,
+            &launcher(&port),
+            &FakeApproval::default(),
+            &request,
+            None,
+            5,
+        );
         assert_eq!(
             code(refused),
             Some(FailureCode::InvalidRequest),
@@ -549,11 +600,26 @@ fn fc_dispatch_the_operation_is_the_request_arguments_or_nothing() {
     let mut renamed = fs_request();
     renamed.operation = "stat".into();
     assert_eq!(
-        code(dispatch_worker(&port, &launcher(&port), &renamed, None, 5)),
+        code(dispatch_worker(
+            &port,
+            &launcher(&port),
+            &FakeApproval::default(),
+            &renamed,
+            None,
+            5
+        )),
         Some(FailureCode::InvalidRequest)
     );
     assert!(port.0.borrow().authorized.is_empty());
-    let ran = dispatch_worker(&port, &launcher(&port), &fs_request(), None, 5).expect("ran");
+    let ran = dispatch_worker(
+        &port,
+        &launcher(&port),
+        &FakeApproval::default(),
+        &fs_request(),
+        None,
+        5,
+    )
+    .expect("ran");
     assert_eq!(ran["ran"][0], r"C:\work\a.txt");
     let service = port.0.borrow();
     let digest = &service.authorized[0].2.action_digest;
@@ -675,4 +741,226 @@ fn fc_dispatch_desktop_requests_report_each_authorization_once() {
     assert_eq!(quiet.ok(), Some(1));
     assert_eq!(made.get(), 1);
     assert_eq!(port.0.borrow().outcomes.len(), 2);
+}
+
+// ---------------------------------------------------------------------
+// WP1-15 (SG132_SLICE4.md): the process and git families.
+// ---------------------------------------------------------------------
+
+fn run_op(program: &str, cwd: &str) -> WorkerOp {
+    WorkerOp::Run {
+        program: program.to_owned(),
+        args: vec!["--version".to_owned()],
+        cwd: cwd.to_owned(),
+        timeout_ms: 5_000,
+        max_output_bytes: 1_024,
+    }
+}
+
+fn worker_request(op: &WorkerOp) -> RequestEnvelope {
+    request(
+        "full_control.process",
+        op.name(),
+        serde_json::to_value(op).expect("op"),
+    )
+}
+
+#[test]
+fn fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_digest() {
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let approval = FakeApproval::default();
+    let launched = launcher(&port);
+    let run = run_op(r"C:\work\tools\tool.exe", r"C:\work");
+    let ran = dispatch_worker(&port, &launched, &approval, &worker_request(&run), None, 5)
+        .expect("approved and ran");
+    assert_eq!(ran["ran"], json!([r"C:\work", r"C:\work\tools\tool.exe"]));
+    {
+        let service = port.0.borrow();
+        let (_, executor, claims) = &service.authorized[0];
+        assert_eq!(*executor, ExecutorClass::ShellProcess);
+        assert_eq!(
+            claims.paths,
+            Some(vec![
+                r"C:\work".to_owned(),
+                r"C:\work\tools\tool.exe".to_owned()
+            ])
+        );
+        // The person approved exactly what the service recorded.
+        assert_eq!(
+            approval.asked.borrow().as_slice(),
+            [("run".to_owned(), claims.action_digest.clone())]
+        );
+    }
+    // Git reads and filesystem operations do not ask; git mutations do.
+    let repository = r"C:\work\repo".to_owned();
+    for (op, asks) in [
+        (
+            WorkerOp::GitStatus {
+                repository: repository.clone(),
+            },
+            false,
+        ),
+        (
+            WorkerOp::GitLog {
+                repository: repository.clone(),
+                max_count: 5,
+            },
+            false,
+        ),
+        (read_op(r"C:\work\a.txt"), false),
+        (
+            WorkerOp::GitAdd {
+                repository: repository.clone(),
+                paths: vec!["a.txt".to_owned()],
+            },
+            true,
+        ),
+        (
+            WorkerOp::GitCommit {
+                repository: repository.clone(),
+                message: "change".to_owned(),
+            },
+            true,
+        ),
+        (
+            WorkerOp::GitBranchCreate {
+                repository: repository.clone(),
+                branch: "topic".to_owned(),
+            },
+            true,
+        ),
+    ] {
+        let before = approval.asked.borrow().len();
+        dispatch_worker(&port, &launched, &approval, &worker_request(&op), None, 6).expect("ran");
+        assert_eq!(
+            approval.asked.borrow().len() - before,
+            usize::from(asks),
+            "{op:?}"
+        );
+    }
+    assert_eq!(launched.runs.get(), 7);
+
+    // A declined approval authorizes nothing, runs nothing, records nothing.
+    let declined = FakeApproval {
+        deny: true,
+        ..FakeApproval::default()
+    };
+    let authorized = port.0.borrow().authorized.len();
+    let outcomes = port.0.borrow().outcomes.len();
+    assert_eq!(
+        code(dispatch_worker(
+            &port,
+            &launched,
+            &declined,
+            &worker_request(&run),
+            None,
+            7
+        )),
+        Some(FailureCode::ApprovalDenied)
+    );
+    assert_eq!(declined.asked.borrow().len(), 1);
+    assert_eq!(port.0.borrow().authorized.len(), authorized);
+    assert_eq!(port.0.borrow().outcomes.len(), outcomes);
+    assert_eq!(launched.runs.get(), 7);
+
+    // No lease that covers the action: the person is never asked.
+    let narrow = FakePort::installed(vec![lease(
+        '2',
+        LeaseScope::DesktopFullUser {
+            executors: vec![ExecutorClass::Filesystem],
+            roots: vec![r"C:\work".to_owned()],
+            shells: false,
+        },
+    )]);
+    let unasked = FakeApproval::default();
+    assert_eq!(
+        code(dispatch_worker(
+            &narrow,
+            &launcher(&narrow),
+            &unasked,
+            &worker_request(&run),
+            None,
+            8
+        )),
+        Some(FailureCode::LeaseRequired)
+    );
+    assert!(unasked.asked.borrow().is_empty());
+}
+
+#[test]
+fn fc_dispatch_process_and_git_paths_stay_in_the_roots_and_take_no_free_arguments() {
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let approval = FakeApproval::default();
+    for op in [
+        run_op(r"C:\Windows\System32\cmd.exe", r"C:\work"),
+        run_op(r"C:\work\tool.exe", r"C:\Windows"),
+        run_op(r"C:\work\tool.exe", r"C:\workshop"),
+        WorkerOp::GitStatus {
+            repository: r"C:\other\repo".to_owned(),
+        },
+    ] {
+        assert_eq!(
+            code(dispatch_worker(
+                &port,
+                &launcher(&port),
+                &approval,
+                &worker_request(&op),
+                None,
+                5
+            )),
+            Some(FailureCode::PathEscape),
+            "{op:?}"
+        );
+    }
+    // Relative, stream and dot paths are refused before any lease is chosen.
+    for op in [
+        run_op("tool.exe", r"C:\work"),
+        run_op(r"C:\work\tool.exe:evil", r"C:\work"),
+        run_op(r"C:\work\..\Windows\System32\cmd.exe", r"C:\work"),
+    ] {
+        assert_eq!(
+            code(dispatch_worker(
+                &port,
+                &launcher(&port),
+                &approval,
+                &worker_request(&op),
+                None,
+                5
+            )),
+            Some(FailureCode::InvalidRequest),
+            "{op:?}"
+        );
+    }
+    // Git takes no free argument list and no operation outside the fixed
+    // set (fetch, push, config, ...); a run takes no shell, environment or
+    // command string: such arguments are not one worker operation.
+    for arguments in [
+        json!({"op": "git_status", "repository": r"C:\work\repo", "args": ["-c", "core.sshCommand=evil"]}),
+        json!({"op": "git_fetch", "repository": r"C:\work\repo", "remote": "--upload-pack=evil"}),
+        json!({"op": "git_push", "repository": r"C:\work\repo"}),
+        json!({"op": "git_config", "repository": r"C:\work\repo", "key": "core.hooksPath"}),
+        json!({"op": "run", "program": r"C:\work\tool.exe", "args": [], "cwd": r"C:\work", "timeout_ms": 5, "max_output_bytes": 5, "shell": true}),
+        json!({"op": "run", "program": r"C:\work\tool.exe", "args": [], "cwd": r"C:\work", "timeout_ms": 5, "max_output_bytes": 5, "env": {"GIT_SSH_COMMAND": "evil"}}),
+        json!({"op": "run", "command_line": "tool.exe && evil"}),
+    ] {
+        let mut request = worker_request(&run_op(r"C:\work\tool.exe", r"C:\work"));
+        if let Some(name) = arguments["op"].as_str() {
+            request.operation = name.to_owned();
+        }
+        request.arguments = arguments.clone();
+        assert_eq!(
+            code(dispatch_worker(
+                &port,
+                &launcher(&port),
+                &approval,
+                &request,
+                None,
+                5
+            )),
+            Some(FailureCode::InvalidRequest),
+            "{arguments}"
+        );
+    }
+    assert!(port.0.borrow().authorized.is_empty());
+    assert!(approval.asked.borrow().is_empty());
 }

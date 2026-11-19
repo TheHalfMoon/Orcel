@@ -159,7 +159,7 @@ pub fn token_elevated(token: &Owned) -> bool {
     }
 }
 
-/// WP1-12: runs `work` while impersonating the client of `pipe` (the
+/// WP1-10: runs `work` while impersonating the client of `pipe` (the
 /// security context of the last message read), reverting on every path.
 pub fn as_client<T>(pipe: HANDLE, work: impl FnOnce() -> T) -> Result<T, AuthorityError> {
     // SAFETY: `pipe` is a connected server end.

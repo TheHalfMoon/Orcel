@@ -8,11 +8,12 @@ and no system, registry, firewall or ACL setting changed. Slice 1 is [SG132_SLIC
 `.specgrain/specs/SG-000132.json` (in scope: `crates/orceld/src/full_control_dispatch.rs` as the only path for
 lease-gated executors; service-made Job Objects; `orceld fc-worker`).
 
-Naming: the slice 1 and 2 documents call this work WP1-12 ("Next slices" item 2 and 3, slice 2 section 5), and
-the code and tests here follow them (`wp112_` test names). The work packet table of
-[UNIFIED_INTEGRATION_SPEC.md](UNIFIED_INTEGRATION_SPEC.md) puts the dispatcher, the service-owned Job Objects
-and `fc-worker` under WP1-10 and names the indicator WP1-12 and standing approvals WP1-14. Same work, two labels;
-nothing here is the indicator or standing approvals.
+Naming: the work packet table of [UNIFIED_INTEGRATION_SPEC.md](UNIFIED_INTEGRATION_SPEC.md) (section 8.2) is
+authoritative: the dispatcher, the service-owned Job Objects and `fc-worker` are WP1-10; the indicator is WP1-12,
+standing approvals WP1-14, and the executors (SG-000096 shells, SG-000097 filesystem, processes and apps) WP1-15.
+Earlier revisions of these documents, the code comments and the test names (`wp112_`) called this work WP1-12;
+slice 4 relabelled them to WP1-10 (`wp110_`). The branch name above is historical. Nothing here is the indicator
+or standing approvals.
 
 **What this slice makes possible:** every lease-gated Full Control executor goes through one dispatcher in
 orceld. The service's `Authorize` now also checks paths against the lease's roots and, for filesystem and
@@ -153,19 +154,19 @@ Test names: `core_tests` in `crates/orcel-authority/src/`, `dispatch_jobs` and `
 | Attack | Claim | Evidence |
 | --- | --- | --- |
 | Run a Full Control file, process or git operation without the service | Refused: these families need the service; nothing falls back to the user-readable store | `full_control_dispatch_tests::fc_dispatch_without_a_service_only_desktop_keeps_the_deprecated_store`, `fc_dispatch_an_unreachable_service_refuses_and_never_uses_the_store` |
-| Use a lease beyond its executor, client or roots | Refused in orceld and again by the service | `full_control_dispatch_tests::fc_dispatch_a_wrong_family_or_scope_is_refused_before_authorize`; `core_tests::wp112_filesystem_dispatches_name_paths_inside_the_roots` |
-| Escape the roots lexically (`..`, streams, trailing dots, UNC, `\\?\`) | Refused by the dispatcher, the service and the worker | `core_tests::wp112_job_ids_and_dispatch_paths_are_checked_lexically`, `core_tests::wp112_filesystem_dispatches_name_paths_inside_the_roots` |
+| Use a lease beyond its executor, client or roots | Refused in orceld and again by the service | `full_control_dispatch_tests::fc_dispatch_a_wrong_family_or_scope_is_refused_before_authorize`; `core_tests::wp110_filesystem_dispatches_name_paths_inside_the_roots` |
+| Escape the roots lexically (`..`, streams, trailing dots, UNC, `\\?\`) | Refused by the dispatcher, the service and the worker | `core_tests::wp110_job_ids_and_dispatch_paths_are_checked_lexically`, `core_tests::wp110_filesystem_dispatches_name_paths_inside_the_roots` |
 | Escape the roots through a junction, link or hard link | The worker resolves path and roots, never writes over a link, never reads, writes or describes a file with more than one name | `fc_worker_tests::windows::fc_worker_resolves_links_and_stays_inside_the_roots`, `fc_worker_tests::windows::fc_worker_never_uses_a_hard_link`. Residual: TOCTOU (section 3) |
-| Make the audit name something other than what ran | The operation is the request's arguments and the request's `operation` must name it; the digest binds family, target, arguments, paths and time; the record names the paths and the job | `full_control_dispatch_tests::fc_dispatch_the_operation_is_the_request_arguments_or_nothing`, `fc_dispatch_the_digest_binds_family_target_arguments_and_paths`, `core_tests::wp112_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop` |
-| Run a job-family operation outside a job | No job, nothing runs; the worker is assigned before it ever runs | `full_control_dispatch_tests::fc_dispatch_a_job_family_needs_its_service_made_job`, `fc_worker_tests::windows::fc_worker_is_in_the_job_before_it_runs_and_a_refusal_ends_it`, `core_tests::wp112_a_job_that_cannot_be_made_refuses_before_any_allow_record`; the worker's own check: `fc_worker_tests::fc_worker_acts_only_inside_a_job_and_echoes_the_token` (sanity check, not a boundary) |
-| Pre-create, squat or reopen a job by name (review blocker) | Jobs have no name; orceld uses only the handle the verified service duplicated into it | Structural (no name anywhere: `win::jobs::create_job` passes none; the dispatcher accepts only `job_handle`); `dispatch_jobs::wp112_the_duplicated_handle_carries_assign_process_only` |
-| Terminate, query or re-limit the job from the session | orceld's handle carries assign-process only; nothing else exists outside the service | `dispatch_jobs::wp112_the_duplicated_handle_carries_assign_process_only` (terminate and query refused through it, not inheritable). From `NT SERVICE\OrcelAuthority` into a real orceld: UNVERIFIED (founder run) |
-| Get a job made for another process or a recycled PID | The handle goes only to the process instance the service observed (PID and creation time), opened while impersonating it | `dispatch_jobs::wp112_a_job_is_made_only_for_the_observed_caller_instance`, `core_tests::wp112_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop` |
-| Break away from the job | Refused: no breakaway limit | `dispatch_jobs::wp112_the_job_kills_on_close_and_allows_no_breakaway` (`CREATE_BREAKAWAY_FROM_JOB` fails with access denied inside the job) |
-| Keep a worker running after revoke, Stop, lock or expiry | The service ends the lease's jobs; terminate kills within 1 s; kill-on-close covers a service exit | `core_tests::wp112_revoke_stop_lock_and_expiry_terminate_the_dispatch_jobs`, `dispatch_jobs::wp112_the_service_terminates_a_dispatch_job_within_a_second`, `dispatch_jobs::wp112_the_job_kills_on_close_and_allows_no_breakaway`. Stop through the installed service killing an in-flight worker: UNVERIFIED (founder run) |
-| Launch after a revoke that landed between Authorize and the resume (review blocker) | `DispatchActive` refuses; the suspended worker is terminated without having run; the outcome is recorded | `fc_worker_tests::windows::fc_worker_a_revoke_before_the_resume_means_the_worker_never_runs`, `core_tests::wp112_dispatch_active_refuses_once_the_lease_or_job_ended`, `full_control_dispatch_tests::fc_dispatch_a_revoke_between_authorize_and_run_refuses_and_is_recorded` |
-| Forge or replay an outcome or a DispatchActive | orceld role only, same user and logon session, once per authorization | `core_tests::wp112_outcomes_are_orcelds_once_per_authorization_and_end_the_job`, `core_tests::wp112_dispatch_active_refuses_once_the_lease_or_job_ended`, `console_harness::wp112_dispatch_jobs_need_a_live_lease_and_outcomes_are_orcelds` |
-| Fill or pin jobs (review low 4) | 16 per lease, 128 in all; empty jobs closed after 60 s; every job terminated at 10 minutes, busy or not; an evicted open dispatch ends its job | `core_tests::wp112_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number`, `core_tests::wp112_an_evicted_open_dispatch_ends_its_job`. Residual: a same-user process can duplicate orceld's assign-only handle out of orceld (it holds `PROCESS_DUP_HANDLE` on orceld) and put its own processes into a job, where the service terminates them; until then it can hold that dispatch's slot (denial of service only). Across a service restart such a copy keeps the job and its processes alive beyond 10 minutes (section 2) |
+| Make the audit name something other than what ran | The operation is the request's arguments and the request's `operation` must name it; the digest binds family, target, arguments, paths and time; the record names the paths and the job | `full_control_dispatch_tests::fc_dispatch_the_operation_is_the_request_arguments_or_nothing`, `fc_dispatch_the_digest_binds_family_target_arguments_and_paths`, `core_tests::wp110_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop` |
+| Run a job-family operation outside a job | No job, nothing runs; the worker is assigned before it ever runs | `full_control_dispatch_tests::fc_dispatch_a_job_family_needs_its_service_made_job`, `fc_worker_tests::windows::fc_worker_is_in_the_job_before_it_runs_and_a_refusal_ends_it`, `core_tests::wp110_a_job_that_cannot_be_made_refuses_before_any_allow_record`; the worker's own check: `fc_worker_tests::fc_worker_acts_only_inside_a_job_and_echoes_the_token` (sanity check, not a boundary) |
+| Pre-create, squat or reopen a job by name (review blocker) | Jobs have no name; orceld uses only the handle the verified service duplicated into it | Structural (no name anywhere: `win::jobs::create_job` passes none; the dispatcher accepts only `job_handle`); `dispatch_jobs::wp110_the_duplicated_handle_carries_assign_process_only` |
+| Terminate, query or re-limit the job from the session | orceld's handle carries assign-process only; nothing else exists outside the service | `dispatch_jobs::wp110_the_duplicated_handle_carries_assign_process_only` (terminate and query refused through it, not inheritable). From `NT SERVICE\OrcelAuthority` into a real orceld: UNVERIFIED (founder run) |
+| Get a job made for another process or a recycled PID | The handle goes only to the process instance the service observed (PID and creation time), opened while impersonating it | `dispatch_jobs::wp110_a_job_is_made_only_for_the_observed_caller_instance`, `core_tests::wp110_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop` |
+| Break away from the job | Refused: no breakaway limit | `dispatch_jobs::wp110_the_job_kills_on_close_and_allows_no_breakaway` (`CREATE_BREAKAWAY_FROM_JOB` fails with access denied inside the job) |
+| Keep a worker running after revoke, Stop, lock or expiry | The service ends the lease's jobs; terminate kills within 1 s; kill-on-close covers a service exit | `core_tests::wp110_revoke_stop_lock_and_expiry_terminate_the_dispatch_jobs`, `dispatch_jobs::wp110_the_service_terminates_a_dispatch_job_within_a_second`, `dispatch_jobs::wp110_the_job_kills_on_close_and_allows_no_breakaway`. Stop through the installed service killing an in-flight worker: UNVERIFIED (founder run) |
+| Launch after a revoke that landed between Authorize and the resume (review blocker) | `DispatchActive` refuses; the suspended worker is terminated without having run; the outcome is recorded | `fc_worker_tests::windows::fc_worker_a_revoke_before_the_resume_means_the_worker_never_runs`, `core_tests::wp110_dispatch_active_refuses_once_the_lease_or_job_ended`, `full_control_dispatch_tests::fc_dispatch_a_revoke_between_authorize_and_run_refuses_and_is_recorded` |
+| Forge or replay an outcome or a DispatchActive | orceld role only, same user and logon session, once per authorization | `core_tests::wp110_outcomes_are_orcelds_once_per_authorization_and_end_the_job`, `core_tests::wp110_dispatch_active_refuses_once_the_lease_or_job_ended`, `console_harness::wp110_dispatch_jobs_need_a_live_lease_and_outcomes_are_orcelds` |
+| Fill or pin jobs (review low 4) | 16 per lease, 128 in all; empty jobs closed after 60 s; every job terminated at 10 minutes, busy or not; an evicted open dispatch ends its job | `core_tests::wp110_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number`, `core_tests::wp110_an_evicted_open_dispatch_ends_its_job`. Residual: a same-user process can duplicate orceld's assign-only handle out of orceld (it holds `PROCESS_DUP_HANDLE` on orceld) and put its own processes into a job, where the service terminates them; until then it can hold that dispatch's slot (denial of service only). Across a service restart such a copy keeps the job and its processes alive beyond 10 minutes (section 2) |
 | Reply for another launch or connect to the worker | Anonymous pipes only; the reply must echo the per-launch token | `fc_worker_tests::fc_worker_acts_only_inside_a_job_and_echoes_the_token` |
 | Desktop input without an outcome record | Every desktop authorization's outcome is reported when the request returns | `full_control_dispatch_tests::fc_dispatch_desktop_requests_report_each_authorization_once`. Against the installed service: UNVERIFIED (founder run) |
 | The whole filesystem path end to end | Authorize, unnamed job, assign-only handle, suspended worker, assign, DispatchActive, resume, operation in the roots, outcome | `fc_worker_tests::windows::fc_worker_runs_filesystem_operations_inside_the_service_job_end_to_end` (a stand-in service makes real jobs and duplicates real handles into the test process). Through the installed service and a real grant: UNVERIFIED (founder run) |
@@ -195,7 +196,7 @@ persist.
 
 ## 7. Next steps
 
-WP1-12 (as these documents name it):
+WP1-10 and WP1-15 (the step numbers below are referred to by slice 4):
 
 1. Process and git operations in `fc-worker` (the `Process` and `Git` families; programs resolved by the worker,
    argv only, the repository path in the roots, the broker residuals of section 5 closed) and the
@@ -213,7 +214,7 @@ WP1-12 (as these documents name it):
    impersonating it; Stop through the installed service killing an in-flight `fc-worker`; a desktop action's
    outcome in the service's audit.
 
-Then the indicator and its heartbeat (Authorize refusing `INDICATOR_UNAVAILABLE`) and standing approvals
+Then the indicator and its heartbeat (WP1-12; Authorize refusing `INDICATOR_UNAVAILABLE`) and standing approvals
 (spec 4.15; WP1-14).
 
 ## Review of `291e045e` and the answers
@@ -231,7 +232,7 @@ Re-review of `073b7fee` (pass, with lows):
 | Finding | Answer |
 | --- | --- |
 | `read_text` and `stat` followed hard links | Both refuse a file with more than one name, as writes do |
-| An evicted open dispatch kept its job | Eviction terminates the evicted dispatch's job (`core_tests::wp112_an_evicted_open_dispatch_ends_its_job`) |
+| An evicted open dispatch kept its job | Eviction terminates the evicted dispatch's job (`core_tests::wp110_an_evicted_open_dispatch_ends_its_job`) |
 | The request's `operation` could differ from the operation run | Refused (`full_control_dispatch_tests::fc_dispatch_the_operation_is_the_request_arguments_or_nothing`) |
 | Optional: `IsProcessInJob(worker, job)` after assigning | Not done: it needs `JOB_OBJECT_QUERY`, which orceld's handle deliberately lacks (section 2) |
 | Residuals: a lost Authorize reply leaks the handle in orceld; a same-user copy keeps a job alive across a service restart | Documented in section 2 and the threat model; the acknowledgement is next step 5 |
@@ -240,7 +241,7 @@ Re-review of `073b7fee` (pass, with lows):
 
 At head (Windows, unelevated):
 
-- `cargo test -p orcel-authority`: 75 unit tests (9 `core_tests::wp112_*`), 10 `console_harness` (1 for this
+- `cargo test -p orcel-authority`: 75 unit tests (9 `core_tests::wp110_*`), 10 `console_harness` (1 for this
   slice), 5 `dispatch_jobs` (real unnamed jobs and duplicated handles in the test process), 11 `install_script`.
 - `cargo test -p orceld full_control_dispatch_ fc_worker_ sg132`: 9 dispatcher tests with a fake service, 6
   `fc_worker` tests (5 Windows-only with real jobs and the built `orceld.exe`), the slice 2 `authority_link`
