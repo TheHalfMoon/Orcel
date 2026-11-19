@@ -94,7 +94,7 @@ Decisions:
 - **Open dispatches:** the service remembers at most 256 authorizations awaiting their outcome; evicting the
   oldest also terminates its job (it can no longer be confirmed or reported).
 - **Residual, lost reply:** if an `Authorize` answer never reaches orceld (the pipe breaks after the service
-  wrote it), the duplicated assign-only handle stays in orceld's handle table until orceld exits. Its job is
+  wrote it, or orceld's client times out waiting for it), the duplicated assign-only handle stays in orceld's handle table until orceld exits. Its job is
   terminated by the service (age limit, lease end); nothing can be resumed in it because `DispatchActive`
   refuses an authorization whose job the service no longer holds. Cost: one leaked handle per lost reply. Not
   fixed in this slice (an acknowledgement with the handle value, and terminating unacknowledged jobs after a
@@ -102,9 +102,10 @@ Decisions:
 - **Residual, service restart:** a same-user process that copied orceld's assign-only handle (it holds
   `PROCESS_DUP_HANDLE` on orceld) keeps the job object alive. If the service restarts while processes run in
   that job, the restarted service no longer knows the job, kill-on-close does not fire while that copy exists,
-  and the processes keep running past the 10-minute limit. A restart already ends every lease (the epoch and
-  state survive, the in-memory jobs do not), so no new dispatch can use the job; the processes are same-user
-  processes like any other the agent could start (spec C-27).
+  and the processes keep running past the 10-minute limit. No new dispatch can use the job: jobs are per
+  dispatch and unnamed, and the restarted service makes new ones. Leases themselves survive a service restart;
+  a restart is not an emergency stop. The processes are same-user processes like any other the agent could
+  start (spec C-27).
 - **Not done:** orceld does not call `IsProcessInJob(worker, job)` after assigning: that needs
   `JOB_OBJECT_QUERY`, which its handle deliberately lacks. A successful `AssignProcessToJobObject` on the
   suspended worker is the evidence.
@@ -204,7 +205,10 @@ WP1-12 (as these documents name it):
 3. Retire `authority.key` and the deprecated store (section 6) after the founder's first real desktop grant.
 4. The real MCP client principal at the desktop gate (slice 2 residual).
 5. An acknowledgement of each job handle by orceld, with unacknowledged jobs terminated (and their handles
-   closed in orceld) after a short timeout, for the lost-reply residual of section 2.
+   closed in orceld) after a short timeout, for the lost-reply residual of section 2. The acknowledgement names
+   the `authorization_id` and the handle value, is accepted only from the same user, logon session and orceld
+   instance (PID and creation time) the handle went to, and the timeout fires only before that authorization's
+   `DispatchActive`.
 6. Founder runs (UNVERIFIED rows above): a handle duplicated by the installed service into a real orceld after
    impersonating it; Stop through the installed service killing an in-flight `fc-worker`; a desktop action's
    outcome in the service's audit.
